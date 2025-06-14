@@ -1,3 +1,89 @@
+### “Palladium α” v0.5 — **Core‑Freeze Decision**
+
+*(통합 PDF 화이트페이퍼와 Einstein‑Turing 리뷰 반영 , 2025‑06‑14)*
+
+---
+
+## 0. 왜 또 한 차례 컷을 하는가
+
+아키텍트에게 남은 숙제는 \*\*“최소한의 물리 법칙”\*\*만 고정하고, 나머지는 **레이어·플러그인**으로 밀어 버리는 것이다.
+Einstein‑Turing 리뷰가 지적한 “통일성의 균열 + 컴퓨팅 한계”를 수용해 **v0.4**에서조차 과했던 부분을 덜어낸다.
+
+---
+
+## 1. 이번 컷의 핵심 변화 (Δ v0.4 → v0.5)
+
+| 줄이는 것                       | 조치 · 이유                                                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **Safe‑GC Tier**            | *1.0 범위 밖*으로 이동. GC 런타임은 **공식 외부 플러그인**(pd‑gc)로 개발; 코어는 두 포인터(`own`, `Rc/Arc`)만 규정. 3‑Tier→2‑Tier로 단순화. |
+| **C++/D 전용 ABI**            | 1.0 목표 → 1.x 마이너 릴리스로 연기. 코어는 **`extern "C"` 단일 ABI** 보장. C++/D는 clang‑driven stub 툴을 *선행 리서치*로만 유지.    |
+| **Fat‑VTable 전면 해제**        | 객체‑안전 제한 완전 제거는 구현 비용 ↑. **v0.5 코어**는 Rust‑동급 `dyn` 규칙을 유지하되, fat‑vtable 은 *후행 feature‑flag*.           |
+| **내장 스케줄러 / green threads** | 초기 컴파일러·런타임 부하 축소. 1.0 까지는 **OS threads + channel**만 표준. 경량 스케줄러는 표준 라이브러리 `pd::task` preview에 머무른다.    |
+| **REPL & JIT**              | Cranelift‑JIT 기반 REPL 은 1.0 이후 `pd-repl` 독립 툴로 제공. 코어는 AOT 확정.                                          |
+
+---
+
+## 2. 추가·강화된 원칙
+
+| #      | 추가 원칙                               | 설명                                                                     |
+| ------ | ----------------------------------- | ---------------------------------------------------------------------- |
+| **P1** | **Memory Equivalence Principle**    | *“관찰 가능한 동작은 메모리 전략과 무관하다.”* — `own` 과 `Rc/Arc` 의 행동이 동일함을 사양 최상단에 명시. |
+| **P2** | **Formal Semantics → Public Paper** | MIR‑Pd 운영 의미론을 EBNF·SOS로 독립 출판. Coq 증명 경계(보장·미보장)도 명시.                 |
+| **P3** | **Decidability Boundary** 문서        | borrow/escape 해석이 포기·보수 전략으로 전환되는 모든 조건을 명문화.                          |
+| **P4** | **Complexity Budget**               | 새 RFC마다 *학습·컴파일 비용*을 정량 첨부. 예산 초과 기능은 자동  defer.                       |
+
+---
+
+## 3. v0.5 코어 스펙 요약
+
+* 언어 표면: **Rust 1.31 + 암시 lifetime + 단일 String + `?` 오류**
+* 타입 · 메모리: `own T`, borrowed `&T / &mut T`, `Rc/Arc<T>`
+* 모듈: **파일 = 모듈**, `mod` 키워드 없음
+* 메타프로그래밍: **Macro 2.0** (위생, 아이템 가시성) — proc‑macro tier 분리
+* Concurrency: `thread::spawn`, `channel`, `Send`/`Sync` auto‑traits
+* 오류: `Result` + `?`; `panic = abort` 단일 정책
+* ABI: **`extern "C"`** 만 규정 (stable v0.1)
+* 도구 체계: `pdc`, `pdpkg`, `pdtest`, `pddoc` — JIT/REPL 툴은 외부 모듈
+* 형식 검증: MIR‑Pd → LLVM 패스 의미론 보존 Coq 증명 범위는 **safe code** 한정
+
+---
+
+## 4. 새 로드맵 (간소화 버전)
+
+| 분기          | 릴리스           | 내용                                                        |
+| ----------- | ------------- | --------------------------------------------------------- |
+| **2025 Q4** | 0.1‑bootstrap | parser+typeck+MIR, `own`/borrow, OS threads, `extern "C"` |
+| **2026 Q2** | 0.2‑macro     | Macro 2.0, 암시 lifetime, 모듈=파일, `Rc/Arc`                   |
+| **2026 Q4** | 0.3‑interop   | 완성도 높은 C FFI, `bindgen-pd`, Coq β 증명 공개                   |
+| **2027 Q2** | 0.4‑opt       | ThinLTO · incremental build, complexity‑budget 대시보드       |
+| **2027 Q4** | **1.0‑LTS**   | 기능 동결·안정 보장. GC / green threads / C++ ABI는 1.1\~1.2 타겟    |
+
+---
+
+## 5. 즉시 행동 Check‑list
+
+1. **스펙 diff**: `/docs/spec/core-v0_5.md` 업로드 → RFC 0001 치환
+2. **컴파일러**: `mem.rs` 에서 GC 포인터 타입 제거, `Rc` 만 유지
+3. **테스트**: panic‑abort 모드 통합 CI 녹색 확인
+4. **ABI**: `abi.rs` 정리 → only C, `cpp` feature flag로 가드
+5. **Complexity Budget bot**: GitHub‑action 작성 → PR 템플릿에 필드 추가
+
+---
+
+## 6. 최종 메시지
+
+> 더 적게, 더 단단하게. **v0.5**는 “필요 최소한”만을 헌법으로 고정했다.
+> GC·fat‑vtable·green threads·멀티 ABI는 **언제든 추가할 수 있지만, 뺄 수는 없다.**
+> 이제 코어 구현과 Coq 증명에 올인해 *안전·성능·단순*의 세 값을 실측하자.
+
+다음 회의 안건은 **0.1‑bootstrap 브랜치 머지**와 첫 CI 그린 배지다.
+
+
+
+---
+
+
+
 ### “Palladium α” **v0.4 – Final‑Lock Draft**
 
 *(통합 리서치·PDF 화이트페이퍼  반영, 2025‑06‑14)*
