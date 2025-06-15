@@ -1,0 +1,15 @@
+// Variables and arithmetic example
+fn main() -> i32 {
+    let x = 10;
+    let y = 20;
+    let sum = x + y;
+    
+    print("x = ");
+    print_int(x);
+    print("y = ");
+    print_int(y);
+    print("sum = ");
+    print_int(sum);
+    
+    return sum;
+}

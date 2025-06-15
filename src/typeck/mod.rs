@@ -11,6 +11,7 @@ pub enum CheckerType {
     Unit,
     String,
     Int,
+    Bool,
     Function(Vec<CheckerType>, Box<CheckerType>),
 }
 
@@ -20,7 +21,7 @@ impl From<&crate::ast::Type> for CheckerType {
             crate::ast::Type::Unit => CheckerType::Unit,
             crate::ast::Type::String => CheckerType::String,
             crate::ast::Type::I32 | crate::ast::Type::I64 => CheckerType::Int,
-            crate::ast::Type::Bool => CheckerType::Unit, // TODO: Add Bool type
+            crate::ast::Type::Bool => CheckerType::Bool,
             crate::ast::Type::U32 | crate::ast::Type::U64 => CheckerType::Int,
             crate::ast::Type::Custom(_) => CheckerType::Unit, // TODO: Handle custom types
         }
@@ -33,6 +34,7 @@ impl std::fmt::Display for CheckerType {
             CheckerType::Unit => write!(f, "()"),
             CheckerType::String => write!(f, "String"),
             CheckerType::Int => write!(f, "Int"),
+            CheckerType::Bool => write!(f, "Bool"),
             CheckerType::Function(params, ret) => {
                 write!(f, "fn(")?;
                 for (i, param) in params.iter().enumerate() {
@@ -47,11 +49,64 @@ impl std::fmt::Display for CheckerType {
     }
 }
 
+/// Symbol table for storing variable types with scope support
+#[derive(Debug, Clone)]
+struct SymbolTable {
+    scopes: Vec<HashMap<String, CheckerType>>,
+}
+
+impl SymbolTable {
+    fn new() -> Self {
+        Self {
+            scopes: vec![HashMap::new()], // Start with global scope
+        }
+    }
+    
+    /// Enter a new scope
+    fn enter_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+    
+    /// Exit the current scope
+    fn exit_scope(&mut self) {
+        if self.scopes.len() > 1 {
+            self.scopes.pop();
+        }
+    }
+    
+    /// Define a variable in the current scope
+    fn define(&mut self, name: String, ty: CheckerType) -> Result<()> {
+        if let Some(scope) = self.scopes.last_mut() {
+            if scope.contains_key(&name) {
+                return Err(CompileError::Generic(
+                    format!("Variable '{}' already defined in this scope", name)
+                ));
+            }
+            scope.insert(name, ty);
+            Ok(())
+        } else {
+            Err(CompileError::Generic("No active scope".to_string()))
+        }
+    }
+    
+    /// Look up a variable type (searches all scopes from innermost to outermost)
+    fn lookup(&self, name: &str) -> Option<&CheckerType> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(ty) = scope.get(name) {
+                return Some(ty);
+            }
+        }
+        None
+    }
+}
+
 pub struct TypeChecker {
     /// Function signatures
     functions: HashMap<String, CheckerType>,
     /// Current function return type (for checking return statements)
     current_function_return: Option<CheckerType>,
+    /// Symbol table for variables
+    symbols: SymbolTable,
 }
 
 impl TypeChecker {
@@ -64,9 +119,16 @@ impl TypeChecker {
             CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Unit)),
         );
         
+        // print_int built-in function
+        functions.insert(
+            "print_int".to_string(),
+            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Unit)),
+        );
+        
         Self {
             functions,
             current_function_return: None,
+            symbols: SymbolTable::new(),
         }
     }
     
@@ -108,6 +170,9 @@ impl TypeChecker {
     
     /// Type check a function
     fn check_function(&mut self, func: &Function) -> Result<()> {
+        // Enter function scope
+        self.symbols.enter_scope();
+        
         // Set current function return type
         let return_type = func.return_type.as_ref()
             .map(|t| CheckerType::from(t))
@@ -119,6 +184,8 @@ impl TypeChecker {
             self.check_statement(stmt)?;
         }
         
+        // Exit function scope
+        self.symbols.exit_scope();
         self.current_function_return = None;
         Ok(())
     }
@@ -152,11 +219,55 @@ impl TypeChecker {
                 }
                 Ok(())
             }
-            Stmt::Let { .. } => {
-                // Not implemented in v0.1
-                Err(CompileError::Generic(
-                    "Let bindings not yet implemented".to_string()
-                ))
+            Stmt::Let { name, ty, value, .. } => {
+                // Type check the value expression
+                let value_type = self.check_expression(value)?;
+                
+                // If type annotation is provided, check that it matches
+                if let Some(annotated_type) = ty {
+                    let expected_type = CheckerType::from(annotated_type);
+                    if value_type != expected_type {
+                        return Err(CompileError::TypeMismatch {
+                            expected: expected_type.to_string(),
+                            found: value_type.to_string(),
+                        });
+                    }
+                    // Define variable with annotated type
+                    self.symbols.define(name.clone(), expected_type)?;
+                } else {
+                    // Define variable with inferred type
+                    self.symbols.define(name.clone(), value_type)?;
+                }
+                
+                Ok(())
+            }
+            Stmt::If { condition, then_branch, else_branch, .. } => {
+                // Type check the condition - must be Bool
+                let cond_type = self.check_expression(condition)?;
+                if cond_type != CheckerType::Bool {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "Bool".to_string(),
+                        found: cond_type.to_string(),
+                    });
+                }
+                
+                // Type check then branch in new scope
+                self.symbols.enter_scope();
+                for stmt in then_branch {
+                    self.check_statement(stmt)?;
+                }
+                self.symbols.exit_scope();
+                
+                // Type check else branch in new scope if it exists
+                if let Some(else_stmts) = else_branch {
+                    self.symbols.enter_scope();
+                    for stmt in else_stmts {
+                        self.check_statement(stmt)?;
+                    }
+                    self.symbols.exit_scope();
+                }
+                
+                Ok(())
             }
         }
     }
@@ -166,13 +277,19 @@ impl TypeChecker {
         match expr {
             Expr::String(_) => Ok(CheckerType::String),
             Expr::Integer(_) => Ok(CheckerType::Int),
+            Expr::Bool(_) => Ok(CheckerType::Bool),
             Expr::Ident(name) => {
-                // For now, identifiers can only be functions
+                // First check if it's a variable
+                if let Some(var_type) = self.symbols.lookup(name) {
+                    return Ok(var_type.clone());
+                }
+                
+                // Then check if it's a function
                 self.functions.get(name)
                     .cloned()
-                    .ok_or_else(|| CompileError::UndefinedFunction {
-                        name: name.clone(),
-                    })
+                    .ok_or_else(|| CompileError::Generic(
+                        format!("Undefined variable or function: '{}'", name)
+                    ))
             }
             Expr::Call { func, args, .. } => {
                 // Get function name (for v0.1, only direct calls)
@@ -220,11 +337,39 @@ impl TypeChecker {
                     )),
                 }
             }
-            Expr::Binary { .. } => {
-                // Not implemented in v0.1
-                Err(CompileError::Generic(
-                    "Binary operations not yet implemented".to_string()
-                ))
+            Expr::Binary { op, left, right, .. } => {
+                let left_type = self.check_expression(left)?;
+                let right_type = self.check_expression(right)?;
+                
+                match op {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                        // Arithmetic operations require both operands to be Int
+                        if left_type != CheckerType::Int {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "Int".to_string(),
+                                found: left_type.to_string(),
+                            });
+                        }
+                        if right_type != CheckerType::Int {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "Int".to_string(),
+                                found: right_type.to_string(),
+                            });
+                        }
+                        Ok(CheckerType::Int)
+                    }
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+                        // Comparison operations require same types
+                        if left_type != right_type {
+                            return Err(CompileError::TypeMismatch {
+                                expected: left_type.to_string(),
+                                found: right_type.to_string(),
+                            });
+                        }
+                        // Comparison operations return Bool
+                        Ok(CheckerType::Bool)
+                    }
+                }
             }
         }
     }
@@ -269,9 +414,145 @@ mod tests {
         let mut type_checker = TypeChecker::new();
         let result = type_checker.check(&ast);
         assert!(result.is_err());
-        
-        if let Err(CompileError::UndefinedFunction { name }) = result {
-            assert_eq!(name, "unknown_function");
+    }
+    
+    #[test]
+    fn test_let_binding() {
+        let source = r#"
+        fn main() {
+            let x = 42;
+            let y: i32 = 10;
+            let message = "Hello";
         }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_variable_usage() {
+        let source = r#"
+        fn main() {
+            let x = 42;
+            let y = x;
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_undefined_variable() {
+        let source = r#"
+        fn main() {
+            let x = y;
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        let result = type_checker.check(&ast);
+        assert!(result.is_err());
+    }
+    
+    #[test]
+    fn test_binary_operations() {
+        let source = r#"
+        fn main() {
+            let x = 10 + 20;
+            let y = x - 5;
+            let z = y * 2;
+            let w = z / 3;
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_type_mismatch_in_binary() {
+        let source = r#"
+        fn main() {
+            let x = "hello" + 42;
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        let result = type_checker.check(&ast);
+        assert!(result.is_err());
+        
+        if let Err(CompileError::TypeMismatch { expected, found }) = result {
+            assert_eq!(expected, "Int");
+            assert_eq!(found, "String");
+        }
+    }
+    
+    #[test]
+    fn test_type_annotation_mismatch() {
+        let source = r#"
+        fn main() {
+            let x: i32 = "not an int";
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        let result = type_checker.check(&ast);
+        assert!(result.is_err());
+        
+        if let Err(CompileError::TypeMismatch { expected, found }) = result {
+            assert_eq!(expected, "Int");
+            assert_eq!(found, "String");
+        }
+    }
+    
+    #[test]
+    fn test_variable_redefinition() {
+        let source = r#"
+        fn main() {
+            let x = 42;
+            let x = "redefined";
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        let result = type_checker.check(&ast);
+        assert!(result.is_err());
     }
 }

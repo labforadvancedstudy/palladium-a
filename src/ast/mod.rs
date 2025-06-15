@@ -48,10 +48,18 @@ pub enum Stmt {
     Expr(Expr),
     /// Return statement
     Return(Option<Expr>),
-    /// Let binding (for future use)
+    /// Let binding
     Let {
         name: String,
+        ty: Option<Type>,
         value: Expr,
+        span: Span,
+    },
+    /// If statement
+    If {
+        condition: Expr,
+        then_branch: Vec<Stmt>,
+        else_branch: Option<Vec<Stmt>>,
         span: Span,
     },
 }
@@ -63,6 +71,8 @@ pub enum Expr {
     String(String),
     /// Integer literal (for future use)
     Integer(i64),
+    /// Boolean literal
+    Bool(bool),
     /// Identifier
     Ident(String),
     /// Function call
@@ -87,6 +97,7 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Mod,
     Eq,
     Ne,
     Lt,
@@ -100,6 +111,7 @@ impl Expr {
         match self {
             Expr::String(_) => Span::dummy(), // TODO: track spans
             Expr::Integer(_) => Span::dummy(),
+            Expr::Bool(_) => Span::dummy(),
             Expr::Ident(_) => Span::dummy(),
             Expr::Call { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
@@ -175,7 +187,28 @@ impl std::fmt::Display for Stmt {
             Stmt::Expr(expr) => write!(f, "{};", expr),
             Stmt::Return(None) => write!(f, "return;"),
             Stmt::Return(Some(expr)) => write!(f, "return {};", expr),
-            Stmt::Let { name, value, .. } => write!(f, "let {} = {};", name, value),
+            Stmt::Let { name, ty, value, .. } => {
+                if let Some(ty) = ty {
+                    write!(f, "let {}: {} = {};", name, ty, value)
+                } else {
+                    write!(f, "let {} = {};", name, value)
+                }
+            }
+            Stmt::If { condition, then_branch, else_branch, .. } => {
+                write!(f, "if {} {{", condition)?;
+                for stmt in then_branch {
+                    write!(f, " {} ", stmt)?;
+                }
+                write!(f, "}}")?;
+                if let Some(else_stmts) = else_branch {
+                    write!(f, " else {{")?;
+                    for stmt in else_stmts {
+                        write!(f, " {} ", stmt)?;
+                    }
+                    write!(f, "}}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -185,6 +218,7 @@ impl std::fmt::Display for Expr {
         match self {
             Expr::String(s) => write!(f, "\"{}\"", s),
             Expr::Integer(n) => write!(f, "{}", n),
+            Expr::Bool(b) => write!(f, "{}", b),
             Expr::Ident(name) => write!(f, "{}", name),
             Expr::Call { func, args, .. } => {
                 write!(f, "{}(", func)?;
@@ -210,6 +244,7 @@ impl std::fmt::Display for BinOp {
             BinOp::Sub => write!(f, "-"),
             BinOp::Mul => write!(f, "*"),
             BinOp::Div => write!(f, "/"),
+            BinOp::Mod => write!(f, "%"),
             BinOp::Eq => write!(f, "=="),
             BinOp::Ne => write!(f, "!="),
             BinOp::Lt => write!(f, "<"),

@@ -64,6 +64,9 @@ pub enum Token {
     #[token("/")]
     Slash,
     
+    #[token("%")]
+    Percent,
+    
     #[token("=")]
     Eq,
     
@@ -158,6 +161,7 @@ impl std::fmt::Display for Token {
             Token::Minus => write!(f, "'-'"),
             Token::Star => write!(f, "'*'"),
             Token::Slash => write!(f, "'/'"),
+            Token::Percent => write!(f, "'%'"),
             Token::Eq => write!(f, "'='"),
             Token::EqEq => write!(f, "'=='"),
             Token::Ne => write!(f, "'!='"),

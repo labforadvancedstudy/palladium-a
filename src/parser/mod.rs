@@ -86,7 +86,9 @@ impl Parser {
     /// Parse a statement
     fn parse_statement(&mut self) -> Result<Stmt> {
         match self.peek()? {
+            Token::Let => self.parse_let(),
             Token::Return => self.parse_return(),
+            Token::If => self.parse_if(),
             _ => {
                 // Expression statement
                 let expr = self.parse_expression()?;
@@ -110,9 +112,202 @@ impl Parser {
         }
     }
     
+    /// Parse a let statement
+    fn parse_let(&mut self) -> Result<Stmt> {
+        let start_span = self.consume(Token::Let, "Expected 'let'")?;
+        
+        let name = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "variable name".to_string(),
+                    found: token.to_string(),
+                });
+            }
+        };
+        
+        // Optional type annotation
+        let ty = if self.check(&Token::Colon) {
+            self.advance()?; // consume ':'
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        
+        self.consume(Token::Eq, "Expected '=' after variable name")?;
+        let value = self.parse_expression()?;
+        let end_span = self.consume(Token::Semicolon, "Expected ';' after let statement")?;
+        
+        Ok(Stmt::Let { 
+            name, 
+            ty,
+            value, 
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column) 
+        })
+    }
+    
+    /// Parse an if statement
+    fn parse_if(&mut self) -> Result<Stmt> {
+        let start_span = self.consume(Token::If, "Expected 'if'")?;
+        
+        let condition = self.parse_expression()?;
+        
+        self.consume(Token::LeftBrace, "Expected '{' after if condition")?;
+        
+        let mut then_branch = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            then_branch.push(self.parse_statement()?);
+        }
+        
+        self.consume(Token::RightBrace, "Expected '}' after if body")?;
+        
+        let else_branch = if self.check(&Token::Else) {
+            self.advance()?; // consume 'else'
+            self.consume(Token::LeftBrace, "Expected '{' after else")?;
+            
+            let mut else_stmts = Vec::new();
+            while !self.check(&Token::RightBrace) && !self.is_at_end() {
+                else_stmts.push(self.parse_statement()?);
+            }
+            
+            let end_span = self.consume(Token::RightBrace, "Expected '}' after else body")?;
+            Some(else_stmts)
+        } else {
+            None
+        };
+        
+        let end_span = if else_branch.is_some() {
+            self.tokens[self.current - 1].1
+        } else {
+            self.tokens[self.current - 1].1
+        };
+        
+        Ok(Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        })
+    }
+    
     /// Parse an expression
     fn parse_expression(&mut self) -> Result<Expr> {
-        self.parse_primary()
+        self.parse_equality()
+    }
+    
+    /// Parse equality operators (==, !=)
+    fn parse_equality(&mut self) -> Result<Expr> {
+        let mut left = self.parse_comparison()?;
+        
+        while let Ok(token) = self.peek() {
+            match token {
+                Token::EqEq | Token::Ne => {
+                    let op = match self.advance()?.0 {
+                        Token::EqEq => BinOp::Eq,
+                        Token::Ne => BinOp::Ne,
+                        _ => unreachable!(),
+                    };
+                    let right = self.parse_comparison()?;
+                    let span = Span::dummy(); // TODO: proper span tracking
+                    left = Expr::Binary {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                _ => break,
+            }
+        }
+        
+        Ok(left)
+    }
+    
+    /// Parse comparison operators (<, >, <=, >=)
+    fn parse_comparison(&mut self) -> Result<Expr> {
+        let mut left = self.parse_addition()?;
+        
+        while let Ok(token) = self.peek() {
+            match token {
+                Token::Lt | Token::Gt | Token::Le | Token::Ge => {
+                    let op = match self.advance()?.0 {
+                        Token::Lt => BinOp::Lt,
+                        Token::Gt => BinOp::Gt,
+                        Token::Le => BinOp::Le,
+                        Token::Ge => BinOp::Ge,
+                        _ => unreachable!(),
+                    };
+                    let right = self.parse_addition()?;
+                    let span = Span::dummy(); // TODO: proper span tracking
+                    left = Expr::Binary {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                _ => break,
+            }
+        }
+        
+        Ok(left)
+    }
+    
+    /// Parse addition and subtraction
+    fn parse_addition(&mut self) -> Result<Expr> {
+        let mut left = self.parse_multiplication()?;
+        
+        while let Ok(token) = self.peek() {
+            match token {
+                Token::Plus | Token::Minus => {
+                    let op = match self.advance()?.0 {
+                        Token::Plus => BinOp::Add,
+                        Token::Minus => BinOp::Sub,
+                        _ => unreachable!(),
+                    };
+                    let right = self.parse_multiplication()?;
+                    let span = Span::dummy(); // TODO: proper span tracking
+                    left = Expr::Binary {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                _ => break,
+            }
+        }
+        
+        Ok(left)
+    }
+    
+    /// Parse multiplication and division
+    fn parse_multiplication(&mut self) -> Result<Expr> {
+        let mut left = self.parse_primary()?;
+        
+        while let Ok(token) = self.peek() {
+            match token {
+                Token::Star | Token::Slash | Token::Percent => {
+                    let op = match self.advance()?.0 {
+                        Token::Star => BinOp::Mul,
+                        Token::Slash => BinOp::Div,
+                        Token::Percent => BinOp::Mod,
+                        _ => unreachable!(),
+                    };
+                    let right = self.parse_primary()?;
+                    let span = Span::dummy(); // TODO: proper span tracking
+                    left = Expr::Binary {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                _ => break,
+            }
+        }
+        
+        Ok(left)
     }
     
     /// Parse a type
@@ -145,6 +340,8 @@ impl Parser {
         match self.advance()? {
             (Token::String(s), _) => Ok(Expr::String(s)),
             (Token::Integer(n), _) => Ok(Expr::Integer(n)),
+            (Token::True, _) => Ok(Expr::Bool(true)),
+            (Token::False, _) => Ok(Expr::Bool(false)),
             (Token::Identifier(name), span) => {
                 // Check if this is a function call
                 if self.check(&Token::LeftParen) {
@@ -173,6 +370,12 @@ impl Parser {
                 } else {
                     Ok(Expr::Ident(name))
                 }
+            }
+            (Token::LeftParen, _) => {
+                // Parse parenthesized expression
+                let expr = self.parse_expression()?;
+                self.consume(Token::RightParen, "Expected ')' after expression")?;
+                Ok(expr)
             }
             (token, _) => Err(CompileError::UnexpectedToken {
                 expected: "expression".to_string(),

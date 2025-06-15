@@ -32,6 +32,11 @@ impl CodeGenerator {
         self.output.push_str("    printf(\"%s\\n\", str);\n");
         self.output.push_str("}\n\n");
         
+        // Generate print_int function wrapper
+        self.output.push_str("void __pd_print_int(long long value) {\n");
+        self.output.push_str("    printf(\"%lld\\n\", value);\n");
+        self.output.push_str("}\n\n");
+        
         // Generate functions
         for item in &program.items {
             match item {
@@ -98,10 +103,56 @@ impl CodeGenerator {
                 self.generate_expression(expr)?;
                 self.output.push_str(";\n");
             }
-            Stmt::Let { .. } => {
-                return Err(CompileError::Generic(
-                    "Let bindings not yet implemented in codegen".to_string()
-                ));
+            Stmt::Let { name, ty, value, .. } => {
+                self.output.push_str("    ");
+                
+                // Determine C type
+                let c_type = match ty {
+                    Some(Type::I32) => "int",
+                    Some(Type::I64) => "long long",
+                    Some(Type::U32) => "unsigned int",
+                    Some(Type::U64) => "unsigned long long",
+                    Some(Type::Bool) => "int",
+                    Some(Type::String) => "const char*",
+                    Some(Type::Unit) => "void",
+                    Some(Type::Custom(_)) => "void",  // TODO: Handle custom types
+                    None => {
+                        // Infer type from value for now
+                        match value {
+                            Expr::Integer(_) => "long long",
+                            Expr::String(_) => "const char*",
+                            Expr::Bool(_) => "int",
+                            _ => "long long",  // Default to int for now
+                        }
+                    }
+                };
+                
+                self.output.push_str(&format!("{} {} = ", c_type, name));
+                self.generate_expression(value)?;
+                self.output.push_str(";\n");
+            }
+            Stmt::If { condition, then_branch, else_branch, .. } => {
+                self.output.push_str("    if (");
+                self.generate_expression(condition)?;
+                self.output.push_str(") {\n");
+                
+                // Generate then branch
+                for stmt in then_branch {
+                    self.generate_statement(stmt)?;
+                }
+                
+                self.output.push_str("    }");
+                
+                // Generate else branch if present
+                if let Some(else_stmts) = else_branch {
+                    self.output.push_str(" else {\n");
+                    for stmt in else_stmts {
+                        self.generate_statement(stmt)?;
+                    }
+                    self.output.push_str("    }");
+                }
+                
+                self.output.push_str("\n");
             }
         }
         Ok(())
@@ -120,9 +171,14 @@ impl CodeGenerator {
                 self.output.push_str(&format!("\"{}\"", escaped));
             }
             Expr::Integer(n) => {
-                self.output.push_str(&n.to_string());
+                self.output.push_str(&format!("{}", n));
+            }
+            Expr::Bool(b) => {
+                // C represents bool as 1 or 0
+                self.output.push_str(if *b { "1" } else { "0" });
             }
             Expr::Ident(name) => {
+                // Direct variable reference
                 self.output.push_str(name);
             }
             Expr::Call { func, args, .. } => {
@@ -132,6 +188,7 @@ impl CodeGenerator {
                         // Map built-in functions
                         match name.as_str() {
                             "print" => self.output.push_str("__pd_print"),
+                            "print_int" => self.output.push_str("__pd_print_int"),
                             _ => self.output.push_str(name),
                         }
                     }
@@ -152,10 +209,33 @@ impl CodeGenerator {
                 }
                 self.output.push_str(")");
             }
-            Expr::Binary { .. } => {
-                return Err(CompileError::Generic(
-                    "Binary operations not yet implemented in codegen".to_string()
-                ));
+            Expr::Binary { left, op, right, .. } => {
+                // Generate parentheses for proper precedence
+                self.output.push_str("(");
+                
+                // Generate left operand
+                self.generate_expression(left)?;
+                
+                // Generate operator
+                let op_str = match op {
+                    BinOp::Add => " + ",
+                    BinOp::Sub => " - ",
+                    BinOp::Mul => " * ",
+                    BinOp::Div => " / ",
+                    BinOp::Mod => " % ",
+                    BinOp::Eq => " == ",
+                    BinOp::Ne => " != ",
+                    BinOp::Lt => " < ",
+                    BinOp::Gt => " > ",
+                    BinOp::Le => " <= ",
+                    BinOp::Ge => " >= ",
+                };
+                self.output.push_str(op_str);
+                
+                // Generate right operand
+                self.generate_expression(right)?;
+                
+                self.output.push_str(")");
             }
         }
         Ok(())
@@ -204,5 +284,82 @@ mod tests {
         // Check generated code contains expected elements
         assert!(codegen.output.contains("int main()"));
         assert!(codegen.output.contains("__pd_print(\"Hello, World!\")"));
+    }
+    
+    #[test]
+    fn test_codegen_let_binding() {
+        let source = r#"
+        fn main() {
+            let x: i32 = 42;
+            let y = 100;
+            print_int(x);
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut codegen = CodeGenerator::new("test").unwrap();
+        assert!(codegen.compile(&ast).is_ok());
+        
+        // Check generated code contains expected elements
+        assert!(codegen.output.contains("int x = 42;"));
+        assert!(codegen.output.contains("long long y = 100;"));
+        assert!(codegen.output.contains("__pd_print_int(x)"));
+    }
+    
+    #[test]
+    fn test_codegen_binary_operations() {
+        let source = r#"
+        fn main() {
+            let x = 10;
+            let y = 20;
+            let sum = x + y;
+            let product = x * y;
+            print_int(sum);
+            print_int(product);
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut codegen = CodeGenerator::new("test").unwrap();
+        assert!(codegen.compile(&ast).is_ok());
+        
+        // Check generated code contains expected elements
+        assert!(codegen.output.contains("long long sum = (x + y);"));
+        assert!(codegen.output.contains("long long product = (x * y);"));
+        assert!(codegen.output.contains("__pd_print_int(sum)"));
+        assert!(codegen.output.contains("__pd_print_int(product)"));
+    }
+    
+    #[test]
+    fn test_codegen_comparison_operations() {
+        let source = r#"
+        fn main() -> i32 {
+            let a = 5;
+            let b = 10;
+            let result = a < b;
+            return result;
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut codegen = CodeGenerator::new("test").unwrap();
+        assert!(codegen.compile(&ast).is_ok());
+        
+        // Check generated code contains expected elements
+        assert!(codegen.output.contains("int main()"));
+        assert!(codegen.output.contains("long long result = (a < b);"));
+        assert!(codegen.output.contains("return result;"));
     }
 }
