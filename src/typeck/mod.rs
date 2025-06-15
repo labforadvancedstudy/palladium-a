@@ -183,6 +183,32 @@ impl TypeChecker {
             CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
         );
         
+        // File I/O functions
+        functions.insert(
+            "file_open".to_string(),
+            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
+        );
+        functions.insert(
+            "file_read_all".to_string(),
+            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::String)),
+        );
+        functions.insert(
+            "file_read_line".to_string(),
+            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::String)),
+        );
+        functions.insert(
+            "file_write".to_string(),
+            CheckerType::Function(vec![CheckerType::Int, CheckerType::String], Box::new(CheckerType::Bool)),
+        );
+        functions.insert(
+            "file_close".to_string(),
+            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Bool)),
+        );
+        functions.insert(
+            "file_exists".to_string(),
+            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Bool)),
+        );
+        
         Self {
             functions,
             structs: HashMap::new(),
@@ -1168,6 +1194,65 @@ mod tests {
         fn main() {
             let n = 42;
             let len = string_len(n); // Error: expects string
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_err());
+    }
+    
+    #[test]
+    fn test_file_io_typecheck() {
+        let source = r#"
+        fn main() {
+            let path = "test.txt";
+            let exists = file_exists(path);
+            if exists {
+                let handle = file_open(path);
+                let content = file_read_all(handle);
+                file_close(handle);
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_file_write_typecheck() {
+        let source = r#"
+        fn main() {
+            let handle = file_open("output.txt");
+            let success = file_write(handle, "test content");
+            let closed = file_close(handle);
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_file_io_type_errors() {
+        let source = r#"
+        fn main() {
+            let handle = file_open(123); // Error: expects string
         }
         "#;
         

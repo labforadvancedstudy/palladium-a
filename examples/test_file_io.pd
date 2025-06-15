@@ -1,0 +1,139 @@
+// Test file I/O functions
+
+fn test_file_exists() {
+    print("Testing file_exists:");
+    
+    // Test with existing file
+    if file_exists("examples/hello.pd") {
+        print("examples/hello.pd exists: PASS");
+    } else {
+        print("examples/hello.pd exists: FAIL");
+    }
+    
+    // Test with non-existing file
+    if file_exists("nonexistent.txt") {
+        print("nonexistent.txt exists: FAIL");
+    } else {
+        print("nonexistent.txt not exists: PASS");
+    }
+}
+
+fn test_file_read() {
+    print("Testing file reading:");
+    
+    let handle = file_open("examples/hello.pd");
+    if handle == -1 {
+        print("Failed to open file");
+        return;
+    }
+    
+    let content = file_read_all(handle);
+    let len = string_len(content);
+    print("File length:");
+    print_int(len);
+    
+    if len > 0 {
+        print("First 60 characters:");
+        let preview = string_substring(content, 0, 60);
+        print(preview);
+    }
+    
+    file_close(handle);
+}
+
+fn test_file_write_read() {
+    print("Testing file write and read:");
+    
+    let test_file = "test_output.txt";
+    let test_content = "Hello from Palladium!\nLine 2\nLine 3";
+    
+    // Write file
+    let write_handle = file_open(test_file);
+    if write_handle == -1 {
+        print("Failed to create file");
+        return;
+    }
+    
+    if file_write(write_handle, test_content) {
+        print("Write successful");
+    } else {
+        print("Write failed");
+        file_close(write_handle);
+        return;
+    }
+    
+    file_close(write_handle);
+    
+    // Read it back
+    let read_handle = file_open(test_file);
+    if read_handle == -1 {
+        print("Failed to open file for reading");
+        return;
+    }
+    
+    let read_content = file_read_all(read_handle);
+    file_close(read_handle);
+    
+    if string_eq(test_content, read_content) {
+        print("Content matches: PASS");
+    } else {
+        print("Content mismatch: FAIL");
+        print("Expected:");
+        print(test_content);
+        print("Got:");
+        print(read_content);
+    }
+}
+
+fn test_line_reading() {
+    print("Testing line-by-line reading:");
+    
+    // First create a test file
+    let write_handle = file_open("test_lines.txt");
+    if write_handle == -1 {
+        print("Failed to create test file");
+        return;
+    }
+    
+    file_write(write_handle, "Line 1\nLine 2\nLine 3\n");
+    file_close(write_handle);
+    
+    // Read line by line
+    let read_handle = file_open("test_lines.txt");
+    if read_handle == -1 {
+        print("Failed to open test file");
+        return;
+    }
+    
+    let mut line_count = 0;
+    let mut line = file_read_line(read_handle);
+    while string_len(line) > 0 {
+        line_count = line_count + 1;
+        print("Read line:");
+        print(line);
+        line = file_read_line(read_handle);
+    }
+    
+    file_close(read_handle);
+    
+    print("Total lines read:");
+    print_int(line_count);
+}
+
+fn main() {
+    print("=== File I/O Tests ===");
+    
+    test_file_exists();
+    print("");
+    
+    test_file_read();
+    print("");
+    
+    test_file_write_read();
+    print("");
+    
+    test_line_reading();
+    print("");
+    
+    print("=== All file I/O tests complete ===");
+}

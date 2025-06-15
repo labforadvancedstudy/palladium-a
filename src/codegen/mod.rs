@@ -109,6 +109,74 @@ impl CodeGenerator {
         self.output.push_str("    return atoll(str);\n");
         self.output.push_str("}\n\n");
         
+        // File I/O functions
+        self.output.push_str("// File I/O support\n");
+        self.output.push_str("#define MAX_FILES 256\n");
+        self.output.push_str("static FILE* __pd_file_handles[MAX_FILES] = {0};\n");
+        self.output.push_str("static int __pd_next_handle = 1;\n\n");
+        
+        // file_open
+        self.output.push_str("long long __pd_file_open(const char* path) {\n");
+        self.output.push_str("    if (__pd_next_handle >= MAX_FILES) return -1;\n");
+        self.output.push_str("    FILE* f = fopen(path, \"r+\");\n");
+        self.output.push_str("    if (!f) f = fopen(path, \"w+\");\n");
+        self.output.push_str("    if (!f) return -1;\n");
+        self.output.push_str("    int handle = __pd_next_handle++;\n");
+        self.output.push_str("    __pd_file_handles[handle] = f;\n");
+        self.output.push_str("    return handle;\n");
+        self.output.push_str("}\n\n");
+        
+        // file_read_all
+        self.output.push_str("const char* __pd_file_read_all(long long handle) {\n");
+        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return \"\";\n");
+        self.output.push_str("    FILE* f = __pd_file_handles[handle];\n");
+        self.output.push_str("    fseek(f, 0, SEEK_END);\n");
+        self.output.push_str("    long size = ftell(f);\n");
+        self.output.push_str("    fseek(f, 0, SEEK_SET);\n");
+        self.output.push_str("    char* buffer = (char*)malloc(size + 1);\n");
+        self.output.push_str("    fread(buffer, 1, size, f);\n");
+        self.output.push_str("    buffer[size] = '\\0';\n");
+        self.output.push_str("    return buffer;\n");
+        self.output.push_str("}\n\n");
+        
+        // file_read_line
+        self.output.push_str("const char* __pd_file_read_line(long long handle) {\n");
+        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return \"\";\n");
+        self.output.push_str("    static char line_buffer[4096];\n");
+        self.output.push_str("    FILE* f = __pd_file_handles[handle];\n");
+        self.output.push_str("    if (fgets(line_buffer, sizeof(line_buffer), f)) {\n");
+        self.output.push_str("        size_t len = strlen(line_buffer);\n");
+        self.output.push_str("        if (len > 0 && line_buffer[len-1] == '\\n') line_buffer[len-1] = '\\0';\n");
+        self.output.push_str("        return strdup(line_buffer);\n");
+        self.output.push_str("    }\n");
+        self.output.push_str("    return \"\";\n");
+        self.output.push_str("}\n\n");
+        
+        // file_write
+        self.output.push_str("int __pd_file_write(long long handle, const char* content) {\n");
+        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n");
+        self.output.push_str("    FILE* f = __pd_file_handles[handle];\n");
+        self.output.push_str("    return fputs(content, f) >= 0;\n");
+        self.output.push_str("}\n\n");
+        
+        // file_close
+        self.output.push_str("int __pd_file_close(long long handle) {\n");
+        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n");
+        self.output.push_str("    FILE* f = __pd_file_handles[handle];\n");
+        self.output.push_str("    __pd_file_handles[handle] = NULL;\n");
+        self.output.push_str("    return fclose(f) == 0;\n");
+        self.output.push_str("}\n\n");
+        
+        // file_exists
+        self.output.push_str("int __pd_file_exists(const char* path) {\n");
+        self.output.push_str("    FILE* f = fopen(path, \"r\");\n");
+        self.output.push_str("    if (f) {\n");
+        self.output.push_str("        fclose(f);\n");
+        self.output.push_str("        return 1;\n");
+        self.output.push_str("    }\n");
+        self.output.push_str("    return 0;\n");
+        self.output.push_str("}\n\n");
+        
         // Generate struct definitions first
         for item in &program.items {
             match item {
@@ -350,11 +418,15 @@ impl CodeGenerator {
                                             "string_concat" | "string_substring" | "string_from_char" => {
                                                 ("const char*".to_string(), false, None)
                                             }
-                                            "string_len" | "string_char_at" | "string_to_int" => {
+                                            "string_len" | "string_char_at" | "string_to_int" | "file_open" => {
                                                 ("long long".to_string(), false, None)
                                             }
-                                            "string_eq" | "char_is_digit" | "char_is_alpha" | "char_is_whitespace" => {
+                                            "string_eq" | "char_is_digit" | "char_is_alpha" | "char_is_whitespace" 
+                                            | "file_write" | "file_close" | "file_exists" => {
                                                 ("int".to_string(), false, None)
+                                            }
+                                            "file_read_all" | "file_read_line" => {
+                                                ("const char*".to_string(), false, None)
                                             }
                                             _ => ("long long".to_string(), false, None)
                                         }
@@ -577,6 +649,12 @@ impl CodeGenerator {
                             "char_is_alpha" => self.output.push_str("__pd_char_is_alpha"),
                             "char_is_whitespace" => self.output.push_str("__pd_char_is_whitespace"),
                             "string_to_int" => self.output.push_str("__pd_string_to_int"),
+                            "file_open" => self.output.push_str("__pd_file_open"),
+                            "file_read_all" => self.output.push_str("__pd_file_read_all"),
+                            "file_read_line" => self.output.push_str("__pd_file_read_line"),
+                            "file_write" => self.output.push_str("__pd_file_write"),
+                            "file_close" => self.output.push_str("__pd_file_close"),
+                            "file_exists" => self.output.push_str("__pd_file_exists"),
                             _ => self.output.push_str(name),
                         }
                     }
