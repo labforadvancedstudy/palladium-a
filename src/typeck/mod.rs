@@ -141,6 +141,48 @@ impl TypeChecker {
             CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Unit)),
         );
         
+        // String manipulation functions
+        functions.insert(
+            "string_len".to_string(),
+            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
+        );
+        functions.insert(
+            "string_concat".to_string(),
+            CheckerType::Function(vec![CheckerType::String, CheckerType::String], Box::new(CheckerType::String)),
+        );
+        functions.insert(
+            "string_eq".to_string(),
+            CheckerType::Function(vec![CheckerType::String, CheckerType::String], Box::new(CheckerType::Bool)),
+        );
+        functions.insert(
+            "string_char_at".to_string(),
+            CheckerType::Function(vec![CheckerType::String, CheckerType::Int], Box::new(CheckerType::Int)),
+        );
+        functions.insert(
+            "string_substring".to_string(),
+            CheckerType::Function(vec![CheckerType::String, CheckerType::Int, CheckerType::Int], Box::new(CheckerType::String)),
+        );
+        functions.insert(
+            "string_from_char".to_string(),
+            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::String)),
+        );
+        functions.insert(
+            "char_is_digit".to_string(),
+            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Bool)),
+        );
+        functions.insert(
+            "char_is_alpha".to_string(),
+            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Bool)),
+        );
+        functions.insert(
+            "char_is_whitespace".to_string(),
+            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Bool)),
+        );
+        functions.insert(
+            "string_to_int".to_string(),
+            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
+        );
+        
         Self {
             functions,
             structs: HashMap::new(),
@@ -1056,5 +1098,85 @@ mod tests {
         
         let mut type_checker = TypeChecker::new();
         assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_string_len_typecheck() {
+        let source = r#"
+        fn main() {
+            let s = "Hello";
+            let len = string_len(s);
+            print_int(len);
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_string_concat_typecheck() {
+        let source = r#"
+        fn main() {
+            let s1 = "Hello";
+            let s2 = " World";
+            let s3 = string_concat(s1, s2);
+            print(s3);
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_string_char_predicates() {
+        let source = r#"
+        fn main() {
+            let c = 65;
+            let is_alpha = char_is_alpha(c);
+            let is_digit = char_is_digit(c);
+            let is_space = char_is_whitespace(c);
+            if is_alpha {
+                print("Is alphabetic");
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_string_type_errors() {
+        let source = r#"
+        fn main() {
+            let n = 42;
+            let len = string_len(n); // Error: expects string
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_err());
     }
 }

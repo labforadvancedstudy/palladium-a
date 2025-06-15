@@ -1,0 +1,157 @@
+// Test string manipulation functions
+
+fn test_string_len() {
+    print("Testing string_len:");
+    
+    let s1 = "Hello";
+    let len1 = string_len(s1);
+    print_int(len1); // Should print 5
+    
+    let s2 = "";
+    let len2 = string_len(s2);
+    print_int(len2); // Should print 0
+    
+    let s3 = "Hello, World!";
+    let len3 = string_len(s3);
+    print_int(len3); // Should print 13
+}
+
+fn test_string_concat() {
+    print("Testing string_concat:");
+    
+    let s1 = "Hello";
+    let s2 = ", ";
+    let s3 = "World!";
+    
+    let result1 = string_concat(s1, s2);
+    let result2 = string_concat(result1, s3);
+    print(result2); // Should print "Hello, World!"
+}
+
+fn test_string_eq() {
+    print("Testing string_eq:");
+    
+    let s1 = "Hello";
+    let s2 = "Hello";
+    let s3 = "World";
+    
+    if string_eq(s1, s2) {
+        print("s1 equals s2: PASS");
+    } else {
+        print("s1 equals s2: FAIL");
+    }
+    
+    if string_eq(s1, s3) {
+        print("s1 equals s3: FAIL");
+    } else {
+        print("s1 not equals s3: PASS");
+    }
+}
+
+fn test_string_char_at() {
+    print("Testing string_char_at:");
+    
+    let s = "Hello";
+    let c0 = string_char_at(s, 0); // 'H' = 72
+    let c1 = string_char_at(s, 1); // 'e' = 101
+    let c4 = string_char_at(s, 4); // 'o' = 111
+    
+    print_int(c0); // Should print 72
+    print_int(c1); // Should print 101
+    print_int(c4); // Should print 111
+}
+
+fn test_string_substring() {
+    print("Testing string_substring:");
+    
+    let s = "Hello, World!";
+    let sub1 = string_substring(s, 0, 5);
+    print(sub1); // Should print "Hello"
+    
+    let sub2 = string_substring(s, 7, 12);
+    print(sub2); // Should print "World"
+    
+    let sub3 = string_substring(s, 0, 0);
+    print(sub3); // Should print ""
+}
+
+fn test_string_from_char() {
+    print("Testing string_from_char:");
+    
+    let c1 = string_from_char(72);  // 'H'
+    let c2 = string_from_char(105); // 'i'
+    let c3 = string_from_char(33);  // '!'
+    
+    let s1 = string_concat(c1, c2);
+    let s2 = string_concat(s1, c3);
+    print(s2); // Should print "Hi!"
+}
+
+fn test_char_predicates() {
+    print("Testing char predicates:");
+    
+    let digit = 49; // '1'
+    let alpha = 65; // 'A'
+    let space = 32; // ' '
+    
+    if char_is_digit(digit) {
+        print("'1' is digit: PASS");
+    }
+    
+    if char_is_alpha(alpha) {
+        print("'A' is alpha: PASS");
+    }
+    
+    if char_is_whitespace(space) {
+        print("' ' is whitespace: PASS");
+    }
+    
+    if char_is_digit(alpha) == false {
+        print("'A' is not digit: PASS");
+    }
+}
+
+fn test_string_to_int() {
+    print("Testing string_to_int:");
+    
+    let s1 = "42";
+    let n1 = string_to_int(s1);
+    print_int(n1); // Should print 42
+    
+    let s2 = "-17";
+    let n2 = string_to_int(s2);
+    print_int(n2); // Should print -17
+    
+    let s3 = "0";
+    let n3 = string_to_int(s3);
+    print_int(n3); // Should print 0
+}
+
+fn main() {
+    print("=== String Function Tests ===");
+    test_string_len();
+    print("");
+    
+    test_string_concat();
+    print("");
+    
+    test_string_eq();
+    print("");
+    
+    test_string_char_at();
+    print("");
+    
+    test_string_substring();
+    print("");
+    
+    test_string_from_char();
+    print("");
+    
+    test_char_predicates();
+    print("");
+    
+    test_string_to_int();
+    print("");
+    
+    print("=== All tests complete ===");
+}

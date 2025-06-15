@@ -25,7 +25,10 @@ impl CodeGenerator {
         // For v0.1, we'll generate a simple C file that we can compile with gcc
         // This is a temporary solution until LLVM integration is complete
         
-        self.output.push_str("#include <stdio.h>\n\n");
+        self.output.push_str("#include <stdio.h>\n");
+        self.output.push_str("#include <string.h>\n");
+        self.output.push_str("#include <stdlib.h>\n");
+        self.output.push_str("#include <ctype.h>\n\n");
         
         // Generate print function wrapper
         self.output.push_str("void __pd_print(const char* str) {\n");
@@ -35,6 +38,75 @@ impl CodeGenerator {
         // Generate print_int function wrapper
         self.output.push_str("void __pd_print_int(long long value) {\n");
         self.output.push_str("    printf(\"%lld\\n\", value);\n");
+        self.output.push_str("}\n\n");
+        
+        // Generate string manipulation functions
+        
+        // string_len
+        self.output.push_str("long long __pd_string_len(const char* str) {\n");
+        self.output.push_str("    return strlen(str);\n");
+        self.output.push_str("}\n\n");
+        
+        // string_concat
+        self.output.push_str("const char* __pd_string_concat(const char* s1, const char* s2) {\n");
+        self.output.push_str("    size_t len1 = strlen(s1);\n");
+        self.output.push_str("    size_t len2 = strlen(s2);\n");
+        self.output.push_str("    char* result = (char*)malloc(len1 + len2 + 1);\n");
+        self.output.push_str("    strcpy(result, s1);\n");
+        self.output.push_str("    strcat(result, s2);\n");
+        self.output.push_str("    return result;\n");
+        self.output.push_str("}\n\n");
+        
+        // string_eq
+        self.output.push_str("int __pd_string_eq(const char* s1, const char* s2) {\n");
+        self.output.push_str("    return strcmp(s1, s2) == 0;\n");
+        self.output.push_str("}\n\n");
+        
+        // string_char_at
+        self.output.push_str("long long __pd_string_char_at(const char* str, long long index) {\n");
+        self.output.push_str("    if (index < 0 || index >= (long long)strlen(str)) return -1;\n");
+        self.output.push_str("    return (long long)(unsigned char)str[index];\n");
+        self.output.push_str("}\n\n");
+        
+        // string_substring
+        self.output.push_str("const char* __pd_string_substring(const char* str, long long start, long long end) {\n");
+        self.output.push_str("    size_t len = strlen(str);\n");
+        self.output.push_str("    if (start < 0) start = 0;\n");
+        self.output.push_str("    if (end > (long long)len) end = len;\n");
+        self.output.push_str("    if (start >= end) return \"\";\n");
+        self.output.push_str("    size_t sub_len = end - start;\n");
+        self.output.push_str("    char* result = (char*)malloc(sub_len + 1);\n");
+        self.output.push_str("    strncpy(result, str + start, sub_len);\n");
+        self.output.push_str("    result[sub_len] = '\\0';\n");
+        self.output.push_str("    return result;\n");
+        self.output.push_str("}\n\n");
+        
+        // string_from_char
+        self.output.push_str("const char* __pd_string_from_char(long long c) {\n");
+        self.output.push_str("    char* result = (char*)malloc(2);\n");
+        self.output.push_str("    result[0] = (char)c;\n");
+        self.output.push_str("    result[1] = '\\0';\n");
+        self.output.push_str("    return result;\n");
+        self.output.push_str("}\n\n");
+        
+        // char_is_digit
+        self.output.push_str("int __pd_char_is_digit(long long c) {\n");
+        self.output.push_str("    return isdigit((int)c);\n");
+        self.output.push_str("}\n\n");
+        
+        // char_is_alpha
+        self.output.push_str("int __pd_char_is_alpha(long long c) {\n");
+        self.output.push_str("    return isalpha((int)c);\n");
+        self.output.push_str("}\n\n");
+        
+        // char_is_whitespace
+        self.output.push_str("int __pd_char_is_whitespace(long long c) {\n");
+        self.output.push_str("    return isspace((int)c);\n");
+        self.output.push_str("}\n\n");
+        
+        // string_to_int
+        self.output.push_str("long long __pd_string_to_int(const char* str) {\n");
+        self.output.push_str("    return atoll(str);\n");
         self.output.push_str("}\n\n");
         
         // Generate struct definitions first
@@ -270,6 +342,26 @@ impl CodeGenerator {
                                 (elem_type.to_string(), true, Some(elements.len()))
                             }
                             Expr::StructLiteral { name, .. } => (name.to_string(), false, None),
+                            Expr::Call { func, .. } => {
+                                // Infer type from function name for built-ins
+                                match func.as_ref() {
+                                    Expr::Ident(fname) => {
+                                        match fname.as_str() {
+                                            "string_concat" | "string_substring" | "string_from_char" => {
+                                                ("const char*".to_string(), false, None)
+                                            }
+                                            "string_len" | "string_char_at" | "string_to_int" => {
+                                                ("long long".to_string(), false, None)
+                                            }
+                                            "string_eq" | "char_is_digit" | "char_is_alpha" | "char_is_whitespace" => {
+                                                ("int".to_string(), false, None)
+                                            }
+                                            _ => ("long long".to_string(), false, None)
+                                        }
+                                    }
+                                    _ => ("long long".to_string(), false, None)
+                                }
+                            }
                             _ => ("long long".to_string(), false, None),  // Default to int for now
                         }
                     }
@@ -475,6 +567,16 @@ impl CodeGenerator {
                         match name.as_str() {
                             "print" => self.output.push_str("__pd_print"),
                             "print_int" => self.output.push_str("__pd_print_int"),
+                            "string_len" => self.output.push_str("__pd_string_len"),
+                            "string_concat" => self.output.push_str("__pd_string_concat"),
+                            "string_eq" => self.output.push_str("__pd_string_eq"),
+                            "string_char_at" => self.output.push_str("__pd_string_char_at"),
+                            "string_substring" => self.output.push_str("__pd_string_substring"),
+                            "string_from_char" => self.output.push_str("__pd_string_from_char"),
+                            "char_is_digit" => self.output.push_str("__pd_char_is_digit"),
+                            "char_is_alpha" => self.output.push_str("__pd_char_is_alpha"),
+                            "char_is_whitespace" => self.output.push_str("__pd_char_is_whitespace"),
+                            "string_to_int" => self.output.push_str("__pd_string_to_int"),
                             _ => self.output.push_str(name),
                         }
                     }
