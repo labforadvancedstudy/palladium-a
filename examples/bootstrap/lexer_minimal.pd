@@ -1,0 +1,348 @@
+// Minimal lexer for Palladium - bootstrap proof of concept
+// Demonstrates basic tokenization capabilities
+
+// Simple token types as integers
+let TOK_EOF: i64 = 0;
+let TOK_IDENT: i64 = 1;
+let TOK_NUMBER: i64 = 2;
+let TOK_STRING: i64 = 3;
+let TOK_LET: i64 = 4;
+let TOK_FN: i64 = 5;
+let TOK_RETURN: i64 = 6;
+let TOK_IF: i64 = 7;
+let TOK_LPAREN: i64 = 8;
+let TOK_RPAREN: i64 = 9;
+let TOK_LBRACE: i64 = 10;
+let TOK_RBRACE: i64 = 11;
+let TOK_SEMI: i64 = 12;
+let TOK_EQ: i64 = 13;
+let TOK_PLUS: i64 = 14;
+let TOK_MINUS: i64 = 15;
+let TOK_STAR: i64 = 16;
+let TOK_UNKNOWN: i64 = 99;
+
+// Convert token type to string for display
+fn token_type_name(tok: i64) -> String {
+    if tok == TOK_EOF {
+        return "EOF";
+    }
+    if tok == TOK_IDENT {
+        return "IDENT";
+    }
+    if tok == TOK_NUMBER {
+        return "NUMBER";
+    }
+    if tok == TOK_STRING {
+        return "STRING";
+    }
+    if tok == TOK_LET {
+        return "LET";
+    }
+    if tok == TOK_FN {
+        return "FN";
+    }
+    if tok == TOK_RETURN {
+        return "RETURN";
+    }
+    if tok == TOK_IF {
+        return "IF";
+    }
+    if tok == TOK_LPAREN {
+        return "LPAREN";
+    }
+    if tok == TOK_RPAREN {
+        return "RPAREN";
+    }
+    if tok == TOK_LBRACE {
+        return "LBRACE";
+    }
+    if tok == TOK_RBRACE {
+        return "RBRACE";
+    }
+    if tok == TOK_SEMI {
+        return "SEMI";
+    }
+    if tok == TOK_EQ {
+        return "EQ";
+    }
+    if tok == TOK_PLUS {
+        return "PLUS";
+    }
+    if tok == TOK_MINUS {
+        return "MINUS";
+    }
+    if tok == TOK_STAR {
+        return "STAR";
+    }
+    return "UNKNOWN";
+}
+
+// Check if character is whitespace
+fn is_space(c: i64) -> bool {
+    if c == 32 {  // space
+        return true;
+    }
+    if c == 9 {   // tab
+        return true;
+    }
+    if c == 10 {  // newline
+        return true;
+    }
+    if c == 13 {  // carriage return
+        return true;
+    }
+    return false;
+}
+
+// Skip whitespace and return new position
+fn skip_space(input: String, pos: i64) -> i64 {
+    let len = string_len(input);
+    let mut i = pos;
+    
+    while i < len {
+        if is_space(string_char_at(input, i)) == false {
+            break;
+        }
+        i = i + 1;
+    }
+    
+    return i;
+}
+
+// Check if character starts identifier
+fn is_ident_start(c: i64) -> bool {
+    if char_is_alpha(c) {
+        return true;
+    }
+    if c == 95 {  // underscore
+        return true;
+    }
+    return false;
+}
+
+// Check if character continues identifier
+fn is_ident_cont(c: i64) -> bool {
+    if is_ident_start(c) {
+        return true;
+    }
+    if char_is_digit(c) {
+        return true;
+    }
+    return false;
+}
+
+// Read identifier and return its length
+fn read_ident_len(input: String, start: i64) -> i64 {
+    let len = string_len(input);
+    let mut i = start;
+    
+    if i >= len {
+        return 0;
+    }
+    
+    if is_ident_start(string_char_at(input, i)) == false {
+        return 0;
+    }
+    
+    i = i + 1;
+    
+    while i < len {
+        if is_ident_cont(string_char_at(input, i)) == false {
+            break;
+        }
+        i = i + 1;
+    }
+    
+    return i - start;
+}
+
+// Check keyword
+fn check_keyword(s: String) -> i64 {
+    if string_eq(s, "let") {
+        return TOK_LET;
+    }
+    if string_eq(s, "fn") {
+        return TOK_FN;
+    }
+    if string_eq(s, "return") {
+        return TOK_RETURN;
+    }
+    if string_eq(s, "if") {
+        return TOK_IF;
+    }
+    return TOK_IDENT;
+}
+
+// Read number and return its length
+fn read_number_len(input: String, start: i64) -> i64 {
+    let len = string_len(input);
+    let mut i = start;
+    
+    while i < len {
+        if char_is_digit(string_char_at(input, i)) == false {
+            break;
+        }
+        i = i + 1;
+    }
+    
+    return i - start;
+}
+
+// Simple string reading (no escape sequences)
+fn read_string_len(input: String, start: i64) -> i64 {
+    let len = string_len(input);
+    
+    if start >= len {
+        return 0;
+    }
+    
+    if string_char_at(input, start) != 34 {  // not a quote
+        return 0;
+    }
+    
+    let mut i = start + 1;
+    
+    while i < len {
+        if string_char_at(input, i) == 34 {  // closing quote
+            return i - start + 1;
+        }
+        i = i + 1;
+    }
+    
+    return 0;  // unterminated
+}
+
+// Get next token type and advance position
+fn next_token(input: String, pos: i64) -> (i64, i64, i64) {
+    // Returns (token_type, new_position, token_length)
+    
+    let len = string_len(input);
+    let start = skip_space(input, pos);
+    
+    if start >= len {
+        return (TOK_EOF, start, 0);
+    }
+    
+    let c = string_char_at(input, start);
+    
+    // Single character tokens
+    if c == 40 {  // (
+        return (TOK_LPAREN, start + 1, 1);
+    }
+    if c == 41 {  // )
+        return (TOK_RPAREN, start + 1, 1);
+    }
+    if c == 123 { // {
+        return (TOK_LBRACE, start + 1, 1);
+    }
+    if c == 125 { // }
+        return (TOK_RBRACE, start + 1, 1);
+    }
+    if c == 59 {  // ;
+        return (TOK_SEMI, start + 1, 1);
+    }
+    if c == 61 {  // =
+        return (TOK_EQ, start + 1, 1);
+    }
+    if c == 43 {  // +
+        return (TOK_PLUS, start + 1, 1);
+    }
+    if c == 45 {  // -
+        return (TOK_MINUS, start + 1, 1);
+    }
+    if c == 42 {  // *
+        return (TOK_STAR, start + 1, 1);
+    }
+    
+    // String
+    if c == 34 {  // "
+        let str_len = read_string_len(input, start);
+        if str_len > 0 {
+            return (TOK_STRING, start + str_len, str_len);
+        }
+        return (TOK_UNKNOWN, start + 1, 1);
+    }
+    
+    // Number
+    if char_is_digit(c) {
+        let num_len = read_number_len(input, start);
+        return (TOK_NUMBER, start + num_len, num_len);
+    }
+    
+    // Identifier or keyword
+    if is_ident_start(c) {
+        let ident_len = read_ident_len(input, start);
+        if ident_len > 0 {
+            let ident = string_substring(input, start, start + ident_len);
+            let tok_type = check_keyword(ident);
+            return (tok_type, start + ident_len, ident_len);
+        }
+    }
+    
+    return (TOK_UNKNOWN, start + 1, 1);
+}
+
+// Tokenize and display
+fn tokenize_string(input: String) {
+    print("Input:");
+    print(input);
+    print("\nTokens:");
+    
+    let mut pos = 0;
+    let mut count = 0;
+    
+    while true {
+        let (tok_type, new_pos, tok_len) = next_token(input, pos);
+        
+        if tok_type == TOK_EOF {
+            print("  EOF");
+            break;
+        }
+        
+        let token_name = token_type_name(tok_type);
+        let token_value = string_substring(input, pos, pos + tok_len);
+        
+        print(string_concat("  ", token_name));
+        if tok_len > 0 {
+            print(string_concat("    Value: ", token_value));
+        }
+        
+        pos = new_pos;
+        count = count + 1;
+        
+        if count > 100 {  // Safety limit
+            print("  ... (truncated)");
+            break;
+        }
+    }
+    
+    print("\nToken count:");
+    print_int(count);
+}
+
+// Test the lexer
+fn test_lexer() {
+    print("=== Test 1: Variable Declaration ===");
+    tokenize_string("let x = 42;");
+    
+    print("\n=== Test 2: Function ===");
+    tokenize_string("fn add(a, b) { return a + b; }");
+    
+    print("\n=== Test 3: String ===");
+    tokenize_string("let msg = \"Hello\";");
+    
+    print("\n=== Test 4: Expression ===");
+    tokenize_string("result = (x + y) * 2;");
+    
+    print("\n=== Test 5: If Statement ===");
+    tokenize_string("if (x > 0) { print(x); }");
+}
+
+fn main() {
+    print("=== Palladium Bootstrap Lexer (Minimal) ===\n");
+    
+    test_lexer();
+    
+    print("\n=== Lexer tests complete ===");
+    print("This demonstrates basic tokenization in Palladium!");
+}
