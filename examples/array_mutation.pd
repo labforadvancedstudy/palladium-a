@@ -1,0 +1,34 @@
+// Test array element assignment
+fn main() {
+    let mut arr = [1, 2, 3, 4, 5];
+    
+    print("Original array:");
+    print_int(arr[0]);
+    print_int(arr[1]);
+    print_int(arr[2]);
+    print_int(arr[3]);
+    print_int(arr[4]);
+    
+    // Modify array elements
+    arr[0] = 10;
+    arr[2] = 30;
+    arr[4] = 50;
+    
+    print("Modified array:");
+    print_int(arr[0]);
+    print_int(arr[1]);
+    print_int(arr[2]);
+    print_int(arr[3]);
+    print_int(arr[4]);
+    
+    // Test with expressions
+    arr[1] = arr[0] + 5;
+    arr[3] = arr[2] * 2;
+    
+    print("After expression updates:");
+    print_int(arr[0]);
+    print_int(arr[1]);
+    print_int(arr[2]);
+    print_int(arr[3]);
+    print_int(arr[4]);
+}

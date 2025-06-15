@@ -1,7 +1,7 @@
 // Code generation for Palladium
 // "Forging legends into machine code"
 
-use crate::ast::*;
+use crate::ast::{*, AssignTarget};
 use crate::errors::{CompileError, Result};
 use std::fs::File;
 use std::io::Write;
@@ -76,7 +76,46 @@ impl CodeGenerator {
             return_type
         };
         
-        self.output.push_str(&format!("{} {}() {{\n", actual_return_type, func.name));
+        // Generate function parameters
+        self.output.push_str(&format!("{} {}(", actual_return_type, func.name));
+        
+        for (i, (param_name, param_type)) in func.params.iter().enumerate() {
+            if i > 0 {
+                self.output.push_str(", ");
+            }
+            
+            let c_type = match param_type {
+                Type::I32 => "int",
+                Type::I64 => "long long",
+                Type::U32 => "unsigned int",
+                Type::U64 => "unsigned long long",
+                Type::Bool => "int",
+                Type::String => "const char*",
+                Type::Array(elem_type, size) => {
+                    // For arrays, we need to generate proper C array parameter syntax
+                    let elem_c_type = match elem_type.as_ref() {
+                        Type::I32 => "int",
+                        Type::I64 => "long long",
+                        Type::U32 => "unsigned int",
+                        Type::U64 => "unsigned long long",
+                        Type::Bool => "int",
+                        _ => return Err(CompileError::Generic(
+                            "Unsupported array element type in function parameter".to_string()
+                        )),
+                    };
+                    // In C, array parameters are passed as pointers
+                    // We'll generate: type name[size] for clarity, though it decays to pointer
+                    self.output.push_str(&format!("{} {}[{}]", elem_c_type, param_name, size));
+                    continue;
+                }
+                Type::Unit => "void",
+                Type::Custom(_) => "void", // TODO: Handle custom types
+            };
+            
+            self.output.push_str(&format!("{} {}", c_type, param_name));
+        }
+        
+        self.output.push_str(") {\n");
         
         // Function body
         for stmt in &func.body {
@@ -182,7 +221,17 @@ impl CodeGenerator {
             }
             Stmt::Assign { target, value, .. } => {
                 self.output.push_str("    ");
-                self.output.push_str(&format!("{} = ", target));
+                match target {
+                    AssignTarget::Ident(name) => {
+                        self.output.push_str(&format!("{} = ", name));
+                    }
+                    AssignTarget::Index { array, index } => {
+                        self.generate_expression(array)?;
+                        self.output.push_str("[");
+                        self.generate_expression(index)?;
+                        self.output.push_str("] = ");
+                    }
+                }
                 self.generate_expression(value)?;
                 self.output.push_str(";\n");
             }

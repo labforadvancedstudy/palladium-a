@@ -1,7 +1,7 @@
 // Type checker for Palladium
 // "Ensuring legends are logically sound"
 
-use crate::ast::*;
+use crate::ast::{*, AssignTarget};
 use crate::errors::{CompileError, Result};
 use std::collections::HashMap;
 
@@ -150,12 +150,17 @@ impl TypeChecker {
         for item in &program.items {
             match item {
                 Item::Function(func) => {
+                    // Extract parameter types
+                    let param_types: Vec<CheckerType> = func.params.iter()
+                        .map(|(_, ty)| CheckerType::from(ty))
+                        .collect();
+                    
                     // Extract return type from function
                     let return_type = func.return_type.as_ref()
                         .map(|t| CheckerType::from(t))
                         .unwrap_or(CheckerType::Unit);
                     
-                    let func_type = CheckerType::Function(vec![], Box::new(return_type));
+                    let func_type = CheckerType::Function(param_types, Box::new(return_type));
                     self.functions.insert(func.name.clone(), func_type);
                 }
             }
@@ -184,6 +189,12 @@ impl TypeChecker {
     fn check_function(&mut self, func: &Function) -> Result<()> {
         // Enter function scope
         self.symbols.enter_scope();
+        
+        // Add function parameters to symbol table
+        for (param_name, param_type) in &func.params {
+            let checker_type = CheckerType::from(param_type);
+            self.symbols.define(param_name.clone(), checker_type, false)?;
+        }
         
         // Set current function return type
         let return_type = func.return_type.as_ref()
@@ -254,34 +265,74 @@ impl TypeChecker {
                 Ok(())
             }
             Stmt::Assign { target, value, .. } => {
-                // Look up the variable and clone necessary info
-                let (var_type, var_mutable) = {
-                    let var_info = self.symbols.lookup(target)
-                        .ok_or_else(|| CompileError::Generic(
-                            format!("Undefined variable: '{}'", target)
-                        ))?;
-                    (var_info.ty.clone(), var_info.mutable)
-                };
-                
-                // Check if variable is mutable
-                if !var_mutable {
-                    return Err(CompileError::Generic(
-                        format!("Cannot assign to immutable variable '{}'", target)
-                    ));
+                match target {
+                    AssignTarget::Ident(name) => {
+                        // Look up the variable and clone necessary info
+                        let (var_type, var_mutable) = {
+                            let var_info = self.symbols.lookup(name)
+                                .ok_or_else(|| CompileError::Generic(
+                                    format!("Undefined variable: '{}'", name)
+                                ))?;
+                            (var_info.ty.clone(), var_info.mutable)
+                        };
+                        
+                        // Check if variable is mutable
+                        if !var_mutable {
+                            return Err(CompileError::Generic(
+                                format!("Cannot assign to immutable variable '{}'", name)
+                            ));
+                        }
+                        
+                        // Type check the value expression
+                        let value_type = self.check_expression(value)?;
+                        
+                        // Check that types match
+                        if value_type != var_type {
+                            return Err(CompileError::TypeMismatch {
+                                expected: var_type.to_string(),
+                                found: value_type.to_string(),
+                            });
+                        }
+                        
+                        Ok(())
+                    }
+                    AssignTarget::Index { array, index } => {
+                        // Type check the array expression
+                        let array_type = self.check_expression(array)?;
+                        
+                        // Type check the index expression (must be Int)
+                        let index_type = self.check_expression(index)?;
+                        if index_type != CheckerType::Int {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "Int".to_string(),
+                                found: index_type.to_string(),
+                            });
+                        }
+                        
+                        // Extract element type from array type
+                        let elem_type = match array_type {
+                            CheckerType::Array(elem_type, _size) => elem_type.as_ref().clone(),
+                            _ => {
+                                return Err(CompileError::Generic(
+                                    format!("Cannot index into non-array type: {}", array_type)
+                                ));
+                            }
+                        };
+                        
+                        // Type check the value expression
+                        let value_type = self.check_expression(value)?;
+                        
+                        // Check that types match
+                        if value_type != elem_type {
+                            return Err(CompileError::TypeMismatch {
+                                expected: elem_type.to_string(),
+                                found: value_type.to_string(),
+                            });
+                        }
+                        
+                        Ok(())
+                    }
                 }
-                
-                // Type check the value expression
-                let value_type = self.check_expression(value)?;
-                
-                // Check that types match
-                if value_type != var_type {
-                    return Err(CompileError::TypeMismatch {
-                        expected: var_type.to_string(),
-                        found: value_type.to_string(),
-                    });
-                }
-                
-                Ok(())
             }
             Stmt::If { condition, then_branch, else_branch, .. } => {
                 // Type check the condition - must be Bool

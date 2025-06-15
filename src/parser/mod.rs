@@ -1,7 +1,7 @@
 // Parser for Palladium
 // "Constructing legends from tokens"
 
-use crate::ast::*;
+use crate::ast::{*, AssignTarget};
 use crate::errors::{CompileError, Result, Span};
 use crate::lexer::Token;
 
@@ -52,8 +52,34 @@ impl Parser {
         
         self.consume(Token::LeftParen, "Expected '('")?;
         
-        // For v0.1, we don't support parameters
-        let params = Vec::new();
+        // Parse function parameters
+        let mut params = Vec::new();
+        
+        if !self.check(&Token::RightParen) {
+            loop {
+                // Parse parameter name
+                let param_name = match self.advance()? {
+                    (Token::Identifier(name), _) => name,
+                    (token, _) => {
+                        return Err(CompileError::UnexpectedToken {
+                            expected: "parameter name".to_string(),
+                            found: token.to_string(),
+                        });
+                    }
+                };
+                
+                // Parse parameter type
+                self.consume(Token::Colon, "Expected ':' after parameter name")?;
+                let param_type = self.parse_type()?;
+                
+                params.push((param_name, param_type));
+                
+                if !self.check(&Token::Comma) {
+                    break;
+                }
+                self.advance()?; // consume ','
+            }
+        }
         
         self.consume(Token::RightParen, "Expected ')'")?;
         
@@ -92,26 +118,37 @@ impl Parser {
             Token::While => self.parse_while(),
             Token::Identifier(_) => {
                 // Could be assignment or expression statement
+                // Parse the left-hand side as an expression first
                 let checkpoint = self.current;
-                let (token, span) = self.advance()?;
+                let expr = self.parse_postfix()?;  // Parse identifier and any indexing
                 
-                if let Token::Identifier(name) = token {
-                    if self.check(&Token::Eq) && !self.check_at(1, &Token::Eq) {
-                        // This is an assignment
-                        let start_span = span;
-                        self.advance()?; // consume '='
-                        let value = self.parse_expression()?;
-                        let end_span = self.consume(Token::Semicolon, "Expected ';' after assignment")?;
-                        
-                        return Ok(Stmt::Assign {
-                            target: name,
-                            value,
-                            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
-                        });
-                    }
+                // Check if this is an assignment
+                if self.check(&Token::Eq) && !self.check_at(1, &Token::Eq) {
+                    // This is an assignment
+                    let start_span = expr.span();
+                    self.advance()?; // consume '='
+                    let value = self.parse_expression()?;
+                    let end_span = self.consume(Token::Semicolon, "Expected ';' after assignment")?;
+                    
+                    // Convert expression to assignment target
+                    let target = match expr {
+                        Expr::Ident(name) => AssignTarget::Ident(name),
+                        Expr::Index { array, index, .. } => AssignTarget::Index { array, index },
+                        _ => {
+                            return Err(CompileError::SyntaxError {
+                                message: "Invalid assignment target".to_string(),
+                            });
+                        }
+                    };
+                    
+                    return Ok(Stmt::Assign {
+                        target,
+                        value,
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                    });
                 }
                 
-                // Not an assignment, rewind and parse as expression
+                // Not an assignment, continue parsing as expression
                 self.current = checkpoint;
                 let expr = self.parse_expression()?;
                 self.consume(Token::Semicolon, "Expected ';' after expression")?;

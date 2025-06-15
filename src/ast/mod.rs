@@ -19,7 +19,7 @@ pub enum Item {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
-    pub params: Vec<String>,
+    pub params: Vec<(String, Type)>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub span: Span,
@@ -60,7 +60,7 @@ pub enum Stmt {
     },
     /// Assignment statement
     Assign {
-        target: String,
+        target: AssignTarget,
         value: Expr,
         span: Span,
     },
@@ -113,6 +113,18 @@ pub enum Expr {
         op: BinOp,
         right: Box<Expr>,
         span: Span,
+    },
+}
+
+/// Assignment targets
+#[derive(Debug, Clone)]
+pub enum AssignTarget {
+    /// Simple variable assignment
+    Ident(String),
+    /// Array element assignment
+    Index {
+        array: Box<Expr>,
+        index: Box<Expr>,
     },
 }
 
@@ -176,11 +188,11 @@ impl std::fmt::Display for Item {
 impl std::fmt::Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "fn {}(", self.name)?;
-        for (i, param) in self.params.iter().enumerate() {
+        for (i, (param_name, param_type)) in self.params.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", param)?;
+            write!(f, "{}: {}", param_name, param_type)?;
         }
         write!(f, ")")?;
         if let Some(ret_type) = &self.return_type {
@@ -225,7 +237,10 @@ impl std::fmt::Display for Stmt {
                 }
             }
             Stmt::Assign { target, value, .. } => {
-                write!(f, "{} = {};", target, value)
+                match target {
+                    AssignTarget::Ident(name) => write!(f, "{} = {};", name, value),
+                    AssignTarget::Index { array, index } => write!(f, "{}[{}] = {};", array, index, value),
+                }
             }
             Stmt::If { condition, then_branch, else_branch, .. } => {
                 write!(f, "if {} {{", condition)?;
