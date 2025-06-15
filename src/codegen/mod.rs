@@ -409,6 +409,21 @@ impl CodeGenerator {
                                 };
                                 (elem_type.to_string(), true, Some(elements.len()))
                             }
+                            Expr::ArrayRepeat { value, count, .. } => {
+                                // Infer array element type from value
+                                let elem_type = match value.as_ref() {
+                                    Expr::Integer(_) => "long long",
+                                    Expr::String(_) => "const char*",
+                                    Expr::Bool(_) => "int",
+                                    _ => "long long",
+                                };
+                                let size = if let Expr::Integer(n) = count.as_ref() {
+                                    *n as usize
+                                } else {
+                                    0  // This should have been caught by type checker
+                                };
+                                (elem_type.to_string(), true, Some(size))
+                            }
                             Expr::StructLiteral { name, .. } => (name.to_string(), false, None),
                             Expr::Call { func, .. } => {
                                 // Infer type from function name for built-ins
@@ -711,6 +726,20 @@ impl CodeGenerator {
                         self.output.push_str(", ");
                     }
                     self.generate_expression(elem)?;
+                }
+                self.output.push_str("}");
+            }
+            Expr::ArrayRepeat { value, count, .. } => {
+                // Generate array repeat initialization
+                // For [0; 10], generate: {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+                self.output.push_str("{");
+                if let Expr::Integer(n) = count.as_ref() {
+                    for i in 0..*n {
+                        if i > 0 {
+                            self.output.push_str(", ");
+                        }
+                        self.generate_expression(value)?;
+                    }
                 }
                 self.output.push_str("}");
             }

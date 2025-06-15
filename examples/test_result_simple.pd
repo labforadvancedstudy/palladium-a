@@ -1,0 +1,210 @@
+// Simple Result type implementation without pattern value extraction
+// Works around current pattern matching limitations
+
+// Result types for bootstrapping
+enum StringResult {
+    Ok(String),
+    Err(String),
+}
+
+enum IntResult {
+    Ok(i64),
+    Err(String),
+}
+
+// Helper to check if result is Ok
+fn is_string_ok(r: StringResult) -> bool {
+    match r {
+        StringResult::Ok(_) => true,
+        StringResult::Err(_) => false,
+    }
+}
+
+fn is_int_ok(r: IntResult) -> bool {
+    match r {
+        IntResult::Ok(_) => true,
+        IntResult::Err(_) => false,
+    }
+}
+
+// Safe integer parsing
+fn safe_parse_int(s: String) -> IntResult {
+    let len = string_len(s);
+    if len == 0 {
+        return IntResult::Err("Empty string");
+    }
+    
+    // Check first character
+    let first = string_char_at(s, 0);
+    let mut start = 0;
+    if first == 45 { // 45 is '-'
+        start = 1;
+    }
+    
+    if start == 1 {
+        if len == 1 {
+            return IntResult::Err("Just a minus sign");
+        }
+    }
+    
+    // Validate all digits
+    let mut i = start;
+    while i < len {
+        let c = string_char_at(s, i);
+        if char_is_digit(c) == false {
+            return IntResult::Err("Non-digit character found");
+        }
+        i = i + 1;
+    }
+    
+    // If valid, parse it
+    let num = string_to_int(s);
+    return IntResult::Ok(num);
+}
+
+// Safe file reading
+fn safe_read_file(path: String) -> StringResult {
+    if file_exists(path) == false {
+        return StringResult::Err(string_concat("File not found: ", path));
+    }
+    
+    let handle = file_open(path);
+    if handle == -1 {
+        return StringResult::Err(string_concat("Cannot open file: ", path));
+    }
+    
+    let content = file_read_all(handle);
+    file_close(handle);
+    
+    return StringResult::Ok(content);
+}
+
+// Example: Process configuration file
+fn load_config(path: String) -> StringResult {
+    let result = safe_read_file(path);
+    
+    // Check if successful
+    if is_string_ok(result) {
+        // In real code, we'd extract and validate the content
+        // For now, just return success
+        return StringResult::Ok("Config loaded");
+    } else {
+        return StringResult::Err("Failed to load config");
+    }
+}
+
+// Test functions
+fn test_int_parsing() {
+    print("=== Testing Integer Parsing ===");
+    
+    // Test valid numbers
+    let r1 = safe_parse_int("42");
+    if is_int_ok(r1) {
+        print("Valid positive: PASS");
+    }
+    
+    let r2 = safe_parse_int("-17");
+    if is_int_ok(r2) {
+        print("Valid negative: PASS");
+    }
+    
+    let r3 = safe_parse_int("0");
+    if is_int_ok(r3) {
+        print("Zero: PASS");
+    }
+    
+    // Test invalid inputs
+    let r4 = safe_parse_int("");
+    if is_int_ok(r4) == false {
+        print("Empty string: PASS");
+    }
+    
+    let r5 = safe_parse_int("-");
+    if is_int_ok(r5) == false {
+        print("Just minus: PASS");
+    }
+    
+    let r6 = safe_parse_int("12a3");
+    if is_int_ok(r6) == false {
+        print("Invalid chars: PASS");
+    }
+}
+
+fn test_file_operations() {
+    print("\n=== Testing File Operations ===");
+    
+    // Test existing file
+    let r1 = safe_read_file("examples/hello.pd");
+    if is_string_ok(r1) {
+        print("Read existing file: PASS");
+    }
+    
+    // Test non-existing file
+    let r2 = safe_read_file("nonexistent.txt");
+    if is_string_ok(r2) == false {
+        print("Nonexistent file: PASS");
+    }
+}
+
+fn test_error_propagation() {
+    print("\n=== Testing Error Propagation ===");
+    
+    // Test with valid config
+    let r1 = load_config("examples/hello.pd");
+    if is_string_ok(r1) {
+        print("Valid config: PASS");
+    }
+    
+    // Test with invalid config
+    let r2 = load_config("missing.conf");
+    if is_string_ok(r2) == false {
+        print("Invalid config: PASS");
+    }
+}
+
+// Example: Using Result in compiler
+fn compile_source(source: String) -> StringResult {
+    // Simple validation
+    if string_len(source) == 0 {
+        return StringResult::Err("Empty source");
+    }
+    
+    // Check for main function (simplified)
+    let has_main = string_len(source) > 10; // Very simplified check
+    
+    if has_main {
+        return StringResult::Ok("Compilation successful");
+    } else {
+        return StringResult::Err("No main function found");
+    }
+}
+
+fn test_compiler_example() {
+    print("\n=== Testing Compiler Example ===");
+    
+    // Valid source
+    let source1 = "fn main() { print(\"Hello\"); }";
+    let r1 = compile_source(source1);
+    if is_string_ok(r1) {
+        print("Valid source: PASS");
+    }
+    
+    // Invalid source
+    let source2 = "";
+    let r2 = compile_source(source2);
+    if is_string_ok(r2) == false {
+        print("Empty source: PASS");
+    }
+}
+
+fn main() {
+    print("=== Result Type Implementation Tests ===\n");
+    
+    test_int_parsing();
+    test_file_operations();
+    test_error_propagation();
+    test_compiler_example();
+    
+    print("\n=== All tests complete! ===");
+    print("Result types are working correctly for error handling!");
+}

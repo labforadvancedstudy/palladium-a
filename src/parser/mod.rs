@@ -869,26 +869,50 @@ impl Parser {
                 Ok(expr)
             }
             (Token::LeftBracket, span) => {
-                // Parse array literal: [1, 2, 3]
-                let mut elements = Vec::new();
-                
-                if !self.check(&Token::RightBracket) {
-                    loop {
-                        elements.push(self.parse_expression()?);
-                        
-                        if !self.check(&Token::Comma) {
-                            break;
-                        }
-                        self.advance()?; // consume ','
-                    }
+                // Parse array literal: [1, 2, 3] or array repeat: [0; 10]
+                if self.check(&Token::RightBracket) {
+                    // Empty array
+                    let end_span = self.advance()?.1;
+                    return Ok(Expr::ArrayLiteral {
+                        elements: Vec::new(),
+                        span: Span::new(span.start, end_span.end, span.line, span.column),
+                    });
                 }
                 
-                let end_span = self.consume(Token::RightBracket, "Expected ']' after array elements")?;
+                // Parse first element
+                let first_elem = self.parse_expression()?;
                 
-                Ok(Expr::ArrayLiteral {
-                    elements,
-                    span: Span::new(span.start, end_span.end, span.line, span.column),
-                })
+                // Check if this is array repeat syntax
+                if self.check(&Token::Semicolon) {
+                    self.advance()?; // consume ';'
+                    let count = self.parse_expression()?;
+                    let end_span = self.consume(Token::RightBracket, "Expected ']' after array repeat count")?;
+                    
+                    Ok(Expr::ArrayRepeat {
+                        value: Box::new(first_elem),
+                        count: Box::new(count),
+                        span: Span::new(span.start, end_span.end, span.line, span.column),
+                    })
+                } else {
+                    // Regular array literal
+                    let mut elements = vec![first_elem];
+                    
+                    while self.check(&Token::Comma) {
+                        self.advance()?; // consume ','
+                        if self.check(&Token::RightBracket) {
+                            // Trailing comma
+                            break;
+                        }
+                        elements.push(self.parse_expression()?);
+                    }
+                    
+                    let end_span = self.consume(Token::RightBracket, "Expected ']' after array elements")?;
+                    
+                    Ok(Expr::ArrayLiteral {
+                        elements,
+                        span: Span::new(span.start, end_span.end, span.line, span.column),
+                    })
+                }
             }
             (token, _) => Err(CompileError::UnexpectedToken {
                 expected: "expression".to_string(),
@@ -997,7 +1021,7 @@ impl Parser {
                                 }
                             }
                             
-                            let end_span = self.consume(Token::RightParen, "Expected ')'")?;
+                            let _end_span = self.consume(Token::RightParen, "Expected ')'")?;
                             Some(EnumConstructorData::Tuple(args))
                             
                         } else if self.check(&Token::LeftBrace) {
@@ -1026,7 +1050,7 @@ impl Parser {
                                 }
                             }
                             
-                            let end_span = self.consume(Token::RightBrace, "Expected '}'")?;
+                            let _end_span = self.consume(Token::RightBrace, "Expected '}'")?;
                             Some(EnumConstructorData::Struct(fields))
                         } else {
                             None
@@ -1707,6 +1731,68 @@ mod tests {
             if let Stmt::Match { arms, .. } = &func.body[0] {
                 assert_eq!(arms[0].body.len(), 2);
             }
+        }
+    }
+    
+    #[test]
+    fn test_parse_array_repeat() {
+        let source = r#"
+        fn main() {
+            let arr = [0; 10];
+            let arr2 = [42; 5];
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        assert_eq!(ast.items.len(), 1);
+        
+        if let Item::Function(func) = &ast.items[0] {
+            assert_eq!(func.name, "main");
+            assert_eq!(func.body.len(), 2);
+            
+            // First statement: [0; 10]
+            if let Stmt::Let { name, value, .. } = &func.body[0] {
+                assert_eq!(name, "arr");
+                if let Expr::ArrayRepeat { value, count, .. } = value {
+                    if let Expr::Integer(n) = value.as_ref() {
+                        assert_eq!(*n, 0);
+                    } else {
+                        panic!("Expected integer value");
+                    }
+                    if let Expr::Integer(n) = count.as_ref() {
+                        assert_eq!(*n, 10);
+                    } else {
+                        panic!("Expected integer count");
+                    }
+                } else {
+                    panic!("Expected array repeat expression");
+                }
+            }
+            
+            // Second statement: [42; 5]
+            if let Stmt::Let { name, value, .. } = &func.body[1] {
+                assert_eq!(name, "arr2");
+                if let Expr::ArrayRepeat { value, count, .. } = value {
+                    if let Expr::Integer(n) = value.as_ref() {
+                        assert_eq!(*n, 42);
+                    } else {
+                        panic!("Expected integer value");
+                    }
+                    if let Expr::Integer(n) = count.as_ref() {
+                        assert_eq!(*n, 5);
+                    } else {
+                        panic!("Expected integer count");
+                    }
+                } else {
+                    panic!("Expected array repeat expression");
+                }
+            }
+        } else {
+            panic!("Expected function");
         }
     }
 }

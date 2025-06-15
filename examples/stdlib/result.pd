@@ -1,0 +1,197 @@
+// Standard library Result type implementation
+// Specific instantiations for bootstrapping compiler
+
+// Result for string operations
+enum StringResult {
+    Ok(String),
+    Err(String),
+}
+
+// Result for integer operations
+enum IntResult {
+    Ok(i64),
+    Err(String),
+}
+
+// Result for file handle operations
+enum FileResult {
+    Ok(i64),    // file handle
+    Err(String),
+}
+
+// Helper functions for StringResult
+fn string_result_is_ok(r: StringResult) -> bool {
+    match r {
+        StringResult::Ok(_) => true,
+        StringResult::Err(_) => false,
+    }
+}
+
+fn string_result_unwrap(r: StringResult) -> String {
+    match r {
+        StringResult::Ok(value) => value,
+        StringResult::Err(msg) => {
+            print("Error: unwrap() called on Err:");
+            print(msg);
+            return "";
+        }
+    }
+}
+
+fn string_result_unwrap_or(r: StringResult, default: String) -> String {
+    match r {
+        StringResult::Ok(value) => value,
+        StringResult::Err(_) => default,
+    }
+}
+
+fn string_result_expect(r: StringResult, msg: String) -> String {
+    match r {
+        StringResult::Ok(value) => value,
+        StringResult::Err(err) => {
+            print(msg);
+            print(err);
+            return "";
+        }
+    }
+}
+
+// Helper functions for IntResult
+fn int_result_is_ok(r: IntResult) -> bool {
+    match r {
+        IntResult::Ok(_) => true,
+        IntResult::Err(_) => false,
+    }
+}
+
+fn int_result_unwrap(r: IntResult) -> i64 {
+    match r {
+        IntResult::Ok(value) => value,
+        IntResult::Err(msg) => {
+            print("Error: unwrap() called on Err:");
+            print(msg);
+            return -1;
+        }
+    }
+}
+
+fn int_result_unwrap_or(r: IntResult, default: i64) -> i64 {
+    match r {
+        IntResult::Ok(value) => value,
+        IntResult::Err(_) => default,
+    }
+}
+
+// Safe string to integer parsing
+fn parse_int(s: String) -> IntResult {
+    let len = string_len(s);
+    if len == 0 {
+        return IntResult::Err("Cannot parse empty string");
+    }
+    
+    let mut i = 0;
+    let mut is_negative = false;
+    
+    // Check for negative sign
+    let first_char = string_char_at(s, 0);
+    if first_char == 45 { // '-'
+        is_negative = true;
+        i = 1;
+        if len == 1 {
+            return IntResult::Err("Invalid number: only minus sign");
+        }
+    }
+    
+    // Validate all digits
+    while i < len {
+        let c = string_char_at(s, i);
+        if char_is_digit(c) == false {
+            return IntResult::Err("Invalid character in number");
+        }
+        i = i + 1;
+    }
+    
+    // Parse the number
+    let num = string_to_int(s);
+    return IntResult::Ok(num);
+}
+
+// Safe file operations
+fn safe_file_open(path: String) -> FileResult {
+    if file_exists(path) == false {
+        return FileResult::Err(string_concat("File not found: ", path));
+    }
+    
+    let handle = file_open(path);
+    if handle == -1 {
+        return FileResult::Err(string_concat("Failed to open: ", path));
+    }
+    
+    return FileResult::Ok(handle);
+}
+
+fn safe_file_read(path: String) -> StringResult {
+    let handle_result = safe_file_open(path);
+    match handle_result {
+        FileResult::Ok(handle) => {
+            let content = file_read_all(handle);
+            file_close(handle);
+            return StringResult::Ok(content);
+        }
+        FileResult::Err(msg) => {
+            return StringResult::Err(msg);
+        }
+    }
+}
+
+// Example: Chain multiple operations
+fn read_and_parse_number(path: String) -> IntResult {
+    let content_result = safe_file_read(path);
+    match content_result {
+        StringResult::Ok(content) => {
+            // Trim whitespace (simplified - just take first line)
+            let line = string_substring(content, 0, string_len(content));
+            return parse_int(line);
+        }
+        StringResult::Err(msg) => {
+            return IntResult::Err(msg);
+        }
+    }
+}
+
+// Compiler-specific result type
+enum CompileResult {
+    Success(String),  // Generated code
+    Error(String),    // Error message
+}
+
+fn compile_result_is_success(r: CompileResult) -> bool {
+    match r {
+        CompileResult::Success(_) => true,
+        CompileResult::Error(_) => false,
+    }
+}
+
+// Example compiler function using Result
+fn compile_file(source_path: String) -> CompileResult {
+    // Read source file
+    let source_result = safe_file_read(source_path);
+    if string_result_is_ok(source_result) == false {
+        match source_result {
+            StringResult::Err(msg) => return CompileResult::Error(msg),
+            _ => return CompileResult::Error("Unknown error"),
+        }
+    }
+    
+    let source = string_result_unwrap(source_result);
+    
+    // Validate source (simplified)
+    if string_len(source) == 0 {
+        return CompileResult::Error("Empty source file");
+    }
+    
+    // "Compile" (just add a comment for now)
+    let output = string_concat("// Compiled from Palladium\n", source);
+    
+    return CompileResult::Success(output);
+}

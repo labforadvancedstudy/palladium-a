@@ -1,0 +1,325 @@
+// String utility functions for standard library
+// Works within current compiler limitations
+
+// Split a string by delimiter (returns first part)
+fn string_split_first(s: String, delimiter: i64) -> String {
+    let len = string_len(s);
+    let mut i = 0;
+    
+    while i < len {
+        let c = string_char_at(s, i);
+        if c == delimiter {
+            return string_substring(s, 0, i);
+        }
+        i = i + 1;
+    }
+    
+    // No delimiter found, return whole string
+    return s;
+}
+
+// Split a string by delimiter (returns part after first delimiter)
+fn string_split_rest(s: String, delimiter: i64) -> String {
+    let len = string_len(s);
+    let mut i = 0;
+    
+    while i < len {
+        let c = string_char_at(s, i);
+        if c == delimiter {
+            if i + 1 < len {
+                return string_substring(s, i + 1, len);
+            } else {
+                return "";
+            }
+        }
+        i = i + 1;
+    }
+    
+    // No delimiter found, return empty
+    return "";
+}
+
+// Trim whitespace from start
+fn string_trim_start(s: String) -> String {
+    let len = string_len(s);
+    let mut i = 0;
+    
+    while i < len {
+        let c = string_char_at(s, i);
+        // Check for space (32), tab (9), newline (10), carriage return (13)
+        if c != 32 {
+            if c != 9 {
+                if c != 10 {
+                    if c != 13 {
+                        break;
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    
+    if i == len {
+        return "";
+    }
+    
+    return string_substring(s, i, len);
+}
+
+// Trim whitespace from end
+fn string_trim_end(s: String) -> String {
+    let len = string_len(s);
+    if len == 0 {
+        return s;
+    }
+    
+    let mut i = len - 1;
+    
+    while i >= 0 {
+        let c = string_char_at(s, i);
+        // Check for space (32), tab (9), newline (10), carriage return (13)
+        if c != 32 {
+            if c != 9 {
+                if c != 10 {
+                    if c != 13 {
+                        break;
+                    }
+                }
+            }
+        }
+        if i == 0 {
+            return "";
+        }
+        i = i - 1;
+    }
+    
+    return string_substring(s, 0, i + 1);
+}
+
+// Trim whitespace from both ends
+fn string_trim(s: String) -> String {
+    let trimmed_start = string_trim_start(s);
+    return string_trim_end(trimmed_start);
+}
+
+// Check if string starts with prefix
+fn string_starts_with(s: String, prefix: String) -> bool {
+    let s_len = string_len(s);
+    let prefix_len = string_len(prefix);
+    
+    if prefix_len > s_len {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < prefix_len {
+        let s_char = string_char_at(s, i);
+        let p_char = string_char_at(prefix, i);
+        if s_char != p_char {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+// Check if string ends with suffix
+fn string_ends_with(s: String, suffix: String) -> bool {
+    let s_len = string_len(s);
+    let suffix_len = string_len(suffix);
+    
+    if suffix_len > s_len {
+        return false;
+    }
+    
+    let start = s_len - suffix_len;
+    let mut i = 0;
+    
+    while i < suffix_len {
+        let s_char = string_char_at(s, start + i);
+        let suffix_char = string_char_at(suffix, i);
+        if s_char != suffix_char {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+// Replace first occurrence of old with new
+fn string_replace_first(s: String, old: String, new: String) -> String {
+    let s_len = string_len(s);
+    let old_len = string_len(old);
+    
+    if old_len == 0 || old_len > s_len {
+        return s;
+    }
+    
+    let mut i = 0;
+    while i <= s_len - old_len {
+        // Check if substring matches
+        let mut matches = true;
+        let mut j = 0;
+        while j < old_len {
+            if string_char_at(s, i + j) != string_char_at(old, j) {
+                matches = false;
+                break;
+            }
+            j = j + 1;
+        }
+        
+        if matches {
+            // Found match, construct result
+            let before = string_substring(s, 0, i);
+            let after = string_substring(s, i + old_len, s_len);
+            let temp = string_concat(before, new);
+            return string_concat(temp, after);
+        }
+        
+        i = i + 1;
+    }
+    
+    return s;
+}
+
+// Convert string to uppercase (ASCII only)
+fn string_to_upper(s: String) -> String {
+    let len = string_len(s);
+    let mut result = "";
+    let mut i = 0;
+    
+    while i < len {
+        let c = string_char_at(s, i);
+        // Check if lowercase letter (97-122 are 'a'-'z')
+        if c >= 97 {
+            if c <= 122 {
+                // Convert to uppercase by subtracting 32
+                let upper = c - 32;
+                result = string_concat(result, string_from_char(upper));
+            } else {
+                result = string_concat(result, string_from_char(c));
+            }
+        } else {
+            result = string_concat(result, string_from_char(c));
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Convert string to lowercase (ASCII only)
+fn string_to_lower(s: String) -> String {
+    let len = string_len(s);
+    let mut result = "";
+    let mut i = 0;
+    
+    while i < len {
+        let c = string_char_at(s, i);
+        // Check if uppercase letter (65-90 are 'A'-'Z')
+        if c >= 65 {
+            if c <= 90 {
+                // Convert to lowercase by adding 32
+                let lower = c + 32;
+                result = string_concat(result, string_from_char(lower));
+            } else {
+                result = string_concat(result, string_from_char(c));
+            }
+        } else {
+            result = string_concat(result, string_from_char(c));
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Count occurrences of character in string
+fn string_count_char(s: String, target: i64) -> i64 {
+    let len = string_len(s);
+    let mut count = 0;
+    let mut i = 0;
+    
+    while i < len {
+        if string_char_at(s, i) == target {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    
+    return count;
+}
+
+// Reverse a string
+fn string_reverse(s: String) -> String {
+    let len = string_len(s);
+    if len <= 1 {
+        return s;
+    }
+    
+    let mut result = "";
+    let mut i = len - 1;
+    
+    while i >= 0 {
+        let c = string_char_at(s, i);
+        result = string_concat(result, string_from_char(c));
+        if i == 0 {
+            break;
+        }
+        i = i - 1;
+    }
+    
+    return result;
+}
+
+// Join strings with separator (limited to 2 strings due to no arrays)
+fn string_join2(s1: String, s2: String, sep: String) -> String {
+    let temp = string_concat(s1, sep);
+    return string_concat(temp, s2);
+}
+
+// Join strings with separator (limited to 3 strings)
+fn string_join3(s1: String, s2: String, s3: String, sep: String) -> String {
+    let temp1 = string_concat(s1, sep);
+    let temp2 = string_concat(temp1, s2);
+    let temp3 = string_concat(temp2, sep);
+    return string_concat(temp3, s3);
+}
+
+// Pad string to the left with character
+fn string_pad_left(s: String, width: i64, pad_char: i64) -> String {
+    let len = string_len(s);
+    if len >= width {
+        return s;
+    }
+    
+    let mut result = s;
+    let mut i = len;
+    while i < width {
+        let pad_str = string_from_char(pad_char);
+        result = string_concat(pad_str, result);
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Pad string to the right with character
+fn string_pad_right(s: String, width: i64, pad_char: i64) -> String {
+    let len = string_len(s);
+    if len >= width {
+        return s;
+    }
+    
+    let mut result = s;
+    let mut i = len;
+    while i < width {
+        let pad_str = string_from_char(pad_char);
+        result = string_concat(result, pad_str);
+        i = i + 1;
+    }
+    
+    return result;
+}

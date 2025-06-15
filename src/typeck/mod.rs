@@ -699,6 +699,25 @@ impl TypeChecker {
                 
                 Ok(CheckerType::Array(Box::new(elem_type), elements.len()))
             }
+            Expr::ArrayRepeat { value, count, .. } => {
+                // Type check the value
+                let elem_type = self.check_expression(value)?;
+                
+                // Type check the count - must be an integer literal
+                match count.as_ref() {
+                    Expr::Integer(n) => {
+                        if *n < 0 {
+                            return Err(CompileError::Generic(
+                                "Array size must be non-negative".to_string()
+                            ));
+                        }
+                        Ok(CheckerType::Array(Box::new(elem_type), *n as usize))
+                    }
+                    _ => Err(CompileError::Generic(
+                        "Array repeat count must be an integer literal".to_string()
+                    )),
+                }
+            }
             Expr::Index { array, index, .. } => {
                 // Type check the array expression
                 let array_type = self.check_expression(array)?;
@@ -1263,5 +1282,106 @@ mod tests {
         
         let mut type_checker = TypeChecker::new();
         assert!(type_checker.check(&ast).is_err());
+    }
+    
+    #[test]
+    fn test_result_enum_definition() {
+        let source = r#"
+        enum Result {
+            Ok(String),
+            Err(String),
+        }
+        
+        fn main() {
+            let ok = Result::Ok("success");
+            let err = Result::Err("failure");
+            
+            match ok {
+                Result::Ok(_) => print("ok"),
+                Result::Err(_) => print("err"),
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_result_pattern_matching() {
+        let source = r#"
+        enum IntResult {
+            Ok(i64),
+            Err(String),
+        }
+        
+        fn main() {
+            let result = IntResult::Ok(42);
+            
+            match result {
+                IntResult::Ok(_) => print("Success"),
+                IntResult::Err(_) => print("Error"),
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_multiple_result_types() {
+        let source = r#"
+        enum StringResult {
+            Ok(String),
+            Err(String),
+        }
+        
+        enum FileResult {
+            Ok(i64),
+            Err(String),
+        }
+        
+        fn main() {
+            let s_result = StringResult::Ok("test");
+            let f_result = FileResult::Err("not found");
+            
+            match s_result {
+                StringResult::Ok(_) => {
+                    print("string ok");
+                }
+                StringResult::Err(_) => {
+                    print("string err");
+                }
+            }
+            
+            match f_result {
+                FileResult::Ok(_) => {
+                    print("file ok");
+                }
+                FileResult::Err(_) => {
+                    print("file err");
+                }
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
     }
 }

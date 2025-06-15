@@ -183,6 +183,12 @@ pub enum Expr {
         elements: Vec<Expr>,
         span: Span,
     },
+    /// Array repeat literal [value; count]
+    ArrayRepeat {
+        value: Box<Expr>,
+        count: Box<Expr>,
+        span: Span,
+    },
     /// Array indexing
     Index {
         array: Box<Expr>,
@@ -273,6 +279,7 @@ impl Expr {
             Expr::Bool(_) => Span::dummy(),
             Expr::Ident(_) => Span::dummy(),
             Expr::ArrayLiteral { span, .. } => *span,
+            Expr::ArrayRepeat { span, .. } => *span,
             Expr::Index { span, .. } => *span,
             Expr::Call { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
@@ -494,6 +501,9 @@ impl std::fmt::Display for Expr {
                     write!(f, "{}", elem)?;
                 }
                 write!(f, "]")
+            }
+            Expr::ArrayRepeat { value, count, .. } => {
+                write!(f, "[{}; {}]", value, count)
             }
             Expr::Index { array, index, .. } => {
                 write!(f, "{}[{}]", array, index)
