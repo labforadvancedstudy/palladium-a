@@ -37,15 +37,76 @@ impl CodeGenerator {
         self.output.push_str("    printf(\"%lld\\n\", value);\n");
         self.output.push_str("}\n\n");
         
+        // Generate struct definitions first
+        for item in &program.items {
+            match item {
+                Item::Struct(struct_def) => {
+                    self.generate_struct(struct_def)?;
+                }
+                _ => {}
+            }
+        }
+        
         // Generate functions
         for item in &program.items {
             match item {
                 Item::Function(func) => {
                     self.generate_function(func)?;
                 }
+                Item::Struct(_) => {
+                    // Already generated above
+                }
+                Item::Enum(_) => {
+                    // TODO: Generate enum definitions for C
+                    // For now, skip enum generation
+                }
             }
         }
         
+        Ok(())
+    }
+    
+    /// Generate code for a struct definition
+    fn generate_struct(&mut self, struct_def: &StructDef) -> Result<()> {
+        self.output.push_str(&format!("typedef struct {} {{\n", struct_def.name));
+        
+        for (field_name, field_type) in &struct_def.fields {
+            self.output.push_str("    ");
+            
+            let c_type = match field_type {
+                Type::I32 => "int",
+                Type::I64 => "long long",
+                Type::U32 => "unsigned int",
+                Type::U64 => "unsigned long long",
+                Type::Bool => "int",
+                Type::String => "const char*",
+                Type::Array(elem_type, size) => {
+                    // For arrays in structs, we need to handle them specially
+                    let elem_c_type = match elem_type.as_ref() {
+                        Type::I32 => "int",
+                        Type::I64 => "long long",
+                        Type::U32 => "unsigned int",
+                        Type::U64 => "unsigned long long",
+                        Type::Bool => "int",
+                        _ => return Err(CompileError::Generic(
+                            "Unsupported array element type in struct field".to_string()
+                        )),
+                    };
+                    self.output.push_str(&format!("{} {}[{}];\n", elem_c_type, field_name, size));
+                    continue;
+                }
+                Type::Unit => "void",
+                Type::Custom(name) => {
+                    // For custom types (other structs), we use the struct name directly
+                    self.output.push_str(&format!("struct {} {};\n", name, field_name));
+                    continue;
+                }
+            };
+            
+            self.output.push_str(&format!("{} {};\n", c_type, field_name));
+        }
+        
+        self.output.push_str(&format!("}} {};\n\n", struct_def.name));
         Ok(())
     }
     
@@ -66,7 +127,13 @@ impl CodeGenerator {
                     "Returning arrays from functions is not yet supported".to_string()
                 ));
             }
-            Some(Type::Custom(_)) => "void",  // TODO: Handle custom types
+            Some(Type::Custom(name)) => {
+                // For custom types (structs), we return by value
+                // Note: In real C, returning large structs by value might not be ideal
+                return Err(CompileError::Generic(
+                    format!("Returning structs from functions is not yet supported: {}", name)
+                ));
+            }
         };
         
         // Special case: main always returns int in C
@@ -109,7 +176,11 @@ impl CodeGenerator {
                     continue;
                 }
                 Type::Unit => "void",
-                Type::Custom(_) => "void", // TODO: Handle custom types
+                Type::Custom(name) => {
+                    // For custom types (structs), pass by value
+                    self.output.push_str(&format!("{} {}", name, param_name));
+                    continue;
+                }
             };
             
             self.output.push_str(&format!("{} {}", c_type, param_name));
@@ -164,7 +235,7 @@ impl CodeGenerator {
                         Type::Array(elem_type, size) => {
                             format!("{}[{}]", type_to_c(elem_type), size)
                         }
-                        Type::Custom(_) => "void".to_string(),  // TODO: Handle custom types
+                        Type::Custom(name) => name.to_string(),
                     }
                 }
                 
@@ -198,6 +269,7 @@ impl CodeGenerator {
                                 };
                                 (elem_type.to_string(), true, Some(elements.len()))
                             }
+                            Expr::StructLiteral { name, .. } => (name.to_string(), false, None),
                             _ => ("long long".to_string(), false, None),  // Default to int for now
                         }
                     }
@@ -230,6 +302,10 @@ impl CodeGenerator {
                         self.output.push_str("[");
                         self.generate_expression(index)?;
                         self.output.push_str("] = ");
+                    }
+                    AssignTarget::FieldAccess { object, field } => {
+                        self.generate_expression(object)?;
+                        self.output.push_str(&format!(".{} = ", field));
                     }
                 }
                 self.generate_expression(value)?;
@@ -404,6 +480,33 @@ impl CodeGenerator {
                 self.output.push_str("[");
                 self.generate_expression(index)?;
                 self.output.push_str("]");
+            }
+            Expr::StructLiteral { name, fields, .. } => {
+                // Generate struct literal: (StructName){.field1 = value1, .field2 = value2}
+                self.output.push_str(&format!("({})", name));
+                self.output.push_str("{");
+                for (i, (field_name, field_expr)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        self.output.push_str(", ");
+                    }
+                    self.output.push_str(&format!(".{} = ", field_name));
+                    self.generate_expression(field_expr)?;
+                }
+                self.output.push_str("}");
+            }
+            Expr::FieldAccess { object, field, .. } => {
+                // Generate field access: obj.field
+                self.generate_expression(object)?;
+                self.output.push_str(&format!(".{}", field));
+            }
+            Expr::EnumConstructor { enum_name, variant, data, .. } => {
+                // TODO: Properly generate enum constructors for C
+                // For now, just generate a placeholder
+                self.output.push_str(&format!("/* enum {}::{}", enum_name, variant));
+                if data.is_some() {
+                    self.output.push_str(" with data");
+                }
+                self.output.push_str(" */ 0");
             }
         }
         Ok(())

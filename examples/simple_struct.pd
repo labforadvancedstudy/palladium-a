@@ -1,0 +1,31 @@
+// Simple struct example
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn main() {
+    // Create a point
+    let p1 = Point { x: 10, y: 20 };
+    
+    // Access fields
+    print("Point p1:");
+    print("x =");
+    print_int(p1.x);
+    print("y =");
+    print_int(p1.y);
+    
+    // Create another point
+    let mut p2 = Point { x: 0, y: 0 };
+    
+    // Modify fields
+    p2.x = 5;
+    p2.y = 15;
+    
+    print("");
+    print("Point p2 after modification:");
+    print("x =");
+    print_int(p2.x);
+    print("y =");
+    print_int(p2.y);
+}

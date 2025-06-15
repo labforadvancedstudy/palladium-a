@@ -1,0 +1,53 @@
+// Enum design for Palladium
+// This is a design document, not yet compilable
+
+// Simple enum without data
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+// Enum with data (algebraic data type)
+enum Option {
+    Some(i64),
+    None,
+}
+
+// More complex enum
+enum Result {
+    Ok(i64),
+    Err(String),
+}
+
+// Enum with multiple fields
+enum Shape {
+    Circle { radius: i64 },
+    Rectangle { width: i64, height: i64 },
+    Point,
+}
+
+fn main() {
+    // Simple enum usage
+    let color = Color::Red;
+    
+    // Pattern matching (future feature)
+    match color {
+        Color::Red => print("It's red!"),
+        Color::Green => print("It's green!"),
+        Color::Blue => print("It's blue!"),
+    }
+    
+    // Option enum usage
+    let some_value = Option::Some(42);
+    let no_value = Option::None;
+    
+    // Result enum usage
+    let success = Result::Ok(100);
+    let failure = Result::Err("Something went wrong");
+    
+    // Shape enum usage
+    let circle = Shape::Circle { radius: 10 };
+    let rect = Shape::Rectangle { width: 20, height: 30 };
+    let point = Shape::Point;
+}

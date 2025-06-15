@@ -30,8 +30,10 @@ impl Parser {
     fn parse_item(&mut self) -> Result<Item> {
         match self.peek()? {
             Token::Fn => Ok(Item::Function(self.parse_function()?)),
+            Token::Struct => Ok(Item::Struct(self.parse_struct()?)),
+            Token::Enum => Ok(Item::Enum(self.parse_enum()?)),
             _ => Err(CompileError::SyntaxError {
-                message: "Expected function declaration".to_string(),
+                message: "Expected function, struct, or enum declaration".to_string(),
             }),
         }
     }
@@ -109,6 +111,159 @@ impl Parser {
         })
     }
     
+    /// Parse a struct definition
+    fn parse_struct(&mut self) -> Result<StructDef> {
+        let start_span = self.consume(Token::Struct, "Expected 'struct'")?;
+        
+        let name = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "struct name".to_string(),
+                    found: token.to_string(),
+                });
+            }
+        };
+        
+        self.consume(Token::LeftBrace, "Expected '{' after struct name")?;
+        
+        let mut fields = Vec::new();
+        
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            // Parse field name
+            let field_name = match self.advance()? {
+                (Token::Identifier(name), _) => name,
+                (token, _) => {
+                    return Err(CompileError::UnexpectedToken {
+                        expected: "field name".to_string(),
+                        found: token.to_string(),
+                    });
+                }
+            };
+            
+            self.consume(Token::Colon, "Expected ':' after field name")?;
+            let field_type = self.parse_type()?;
+            
+            fields.push((field_name, field_type));
+            
+            // Fields are separated by commas
+            if !self.check(&Token::RightBrace) {
+                self.consume(Token::Comma, "Expected ',' after field")?;
+            }
+        }
+        
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after struct fields")?;
+        
+        Ok(StructDef {
+            name,
+            fields,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        })
+    }
+    
+    /// Parse an enum definition
+    fn parse_enum(&mut self) -> Result<EnumDef> {
+        let start_span = self.consume(Token::Enum, "Expected 'enum'")?;
+        
+        let name = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "enum name".to_string(),
+                    found: token.to_string(),
+                });
+            }
+        };
+        
+        self.consume(Token::LeftBrace, "Expected '{' after enum name")?;
+        
+        let mut variants = Vec::new();
+        
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            // Parse variant name
+            let variant_name = match self.advance()? {
+                (Token::Identifier(name), _) => name,
+                (token, _) => {
+                    return Err(CompileError::UnexpectedToken {
+                        expected: "variant name".to_string(),
+                        found: token.to_string(),
+                    });
+                }
+            };
+            
+            // Parse variant data
+            let data = if self.check(&Token::LeftParen) {
+                // Tuple variant
+                self.advance()?; // consume '('
+                let mut types = Vec::new();
+                
+                if !self.check(&Token::RightParen) {
+                    loop {
+                        types.push(self.parse_type()?);
+                        if !self.check(&Token::Comma) {
+                            break;
+                        }
+                        self.advance()?; // consume ','
+                    }
+                }
+                
+                self.consume(Token::RightParen, "Expected ')' after tuple variant types")?;
+                EnumVariantData::Tuple(types)
+                
+            } else if self.check(&Token::LeftBrace) {
+                // Struct variant
+                self.advance()?; // consume '{'
+                let mut fields = Vec::new();
+                
+                while !self.check(&Token::RightBrace) && !self.is_at_end() {
+                    let field_name = match self.advance()? {
+                        (Token::Identifier(name), _) => name,
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "field name".to_string(),
+                                found: token.to_string(),
+                            });
+                        }
+                    };
+                    
+                    self.consume(Token::Colon, "Expected ':' after field name")?;
+                    let field_type = self.parse_type()?;
+                    
+                    fields.push((field_name, field_type));
+                    
+                    if !self.check(&Token::RightBrace) {
+                        self.consume(Token::Comma, "Expected ',' after field")?;
+                    }
+                }
+                
+                self.consume(Token::RightBrace, "Expected '}' after struct variant fields")?;
+                EnumVariantData::Struct(fields)
+                
+            } else {
+                // Unit variant
+                EnumVariantData::Unit
+            };
+            
+            variants.push(EnumVariant {
+                name: variant_name,
+                data,
+            });
+            
+            // Variants are separated by commas
+            if !self.check(&Token::RightBrace) {
+                self.consume(Token::Comma, "Expected ',' after variant")?;
+            }
+        }
+        
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after enum variants")?;
+        
+        Ok(EnumDef {
+            name,
+            variants,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        })
+    }
+    
     /// Parse a statement
     fn parse_statement(&mut self) -> Result<Stmt> {
         match self.peek()? {
@@ -137,6 +292,7 @@ impl Parser {
                     let target = match expr {
                         Expr::Ident(name) => AssignTarget::Ident(name),
                         Expr::Index { array, index, .. } => AssignTarget::Index { array, index },
+                        Expr::FieldAccess { object, field, .. } => AssignTarget::FieldAccess { object, field },
                         _ => {
                             return Err(CompileError::SyntaxError {
                                 message: "Invalid assignment target".to_string(),
@@ -522,8 +678,48 @@ impl Parser {
             (Token::Integer(n), _) => Ok(Expr::Integer(n)),
             (Token::True, _) => Ok(Expr::Bool(true)),
             (Token::False, _) => Ok(Expr::Bool(false)),
-            (Token::Identifier(name), _span) => {
-                Ok(Expr::Ident(name))
+            (Token::Identifier(name), span) => {
+                // Check if this is a struct literal
+                // We need to be careful here - only parse as struct literal if we see
+                // identifier followed by field pattern (identifier + colon)
+                if self.check(&Token::LeftBrace) && self.check_struct_literal_pattern() {
+                    let start_span = span;
+                    self.advance()?; // consume '{'
+                    
+                    let mut fields = Vec::new();
+                    
+                    while !self.check(&Token::RightBrace) && !self.is_at_end() {
+                        // Parse field name
+                        let field_name = match self.advance()? {
+                            (Token::Identifier(fname), _) => fname,
+                            (token, _) => {
+                                return Err(CompileError::UnexpectedToken {
+                                    expected: "field name".to_string(),
+                                    found: token.to_string(),
+                                });
+                            }
+                        };
+                        
+                        self.consume(Token::Colon, "Expected ':' after field name")?;
+                        let field_expr = self.parse_expression()?;
+                        
+                        fields.push((field_name, field_expr));
+                        
+                        if !self.check(&Token::RightBrace) {
+                            self.consume(Token::Comma, "Expected ',' after field")?;
+                        }
+                    }
+                    
+                    let end_span = self.consume(Token::RightBrace, "Expected '}' after struct fields")?;
+                    
+                    Ok(Expr::StructLiteral {
+                        name,
+                        fields,
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                    })
+                } else {
+                    Ok(Expr::Ident(name))
+                }
             }
             (Token::LeftParen, _) => {
                 // Parse parenthesized expression
@@ -601,6 +797,112 @@ impl Parser {
                         span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                     };
                 }
+                Ok(Token::Dot) => {
+                    let start_span = if let Expr::FieldAccess { span, .. } = &expr {
+                        *span
+                    } else {
+                        Span::dummy()
+                    };
+                    
+                    self.advance()?; // consume '.'
+                    
+                    match self.advance()? {
+                        (Token::Identifier(name), span) => {
+                            let end_span = span;
+                            expr = Expr::FieldAccess {
+                                object: Box::new(expr),
+                                field: name,
+                                span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                            };
+                            continue;
+                        }
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "field name".to_string(),
+                                found: token.to_string(),
+                            });
+                        }
+                    };
+                }
+                Ok(Token::DoubleColon) => {
+                    // Handle enum constructor: EnumName::Variant
+                    if let Expr::Ident(enum_name) = expr {
+                        let start_span = Span::dummy(); // TODO: proper span tracking
+                        self.advance()?; // consume '::'
+                        
+                        let variant = match self.advance()? {
+                            (Token::Identifier(name), _) => name,
+                            (token, _) => {
+                                return Err(CompileError::UnexpectedToken {
+                                    expected: "variant name".to_string(),
+                                    found: token.to_string(),
+                                });
+                            }
+                        };
+                        
+                        // Check for constructor data
+                        let data = if self.check(&Token::LeftParen) {
+                            // Tuple constructor
+                            self.advance()?; // consume '('
+                            let mut args = Vec::new();
+                            
+                            if !self.check(&Token::RightParen) {
+                                loop {
+                                    args.push(self.parse_expression()?);
+                                    if !self.check(&Token::Comma) {
+                                        break;
+                                    }
+                                    self.advance()?; // consume ','
+                                }
+                            }
+                            
+                            let end_span = self.consume(Token::RightParen, "Expected ')'")?;
+                            Some(EnumConstructorData::Tuple(args))
+                            
+                        } else if self.check(&Token::LeftBrace) {
+                            // Struct constructor
+                            self.advance()?; // consume '{'
+                            let mut fields = Vec::new();
+                            
+                            while !self.check(&Token::RightBrace) && !self.is_at_end() {
+                                let field_name = match self.advance()? {
+                                    (Token::Identifier(fname), _) => fname,
+                                    (token, _) => {
+                                        return Err(CompileError::UnexpectedToken {
+                                            expected: "field name".to_string(),
+                                            found: token.to_string(),
+                                        });
+                                    }
+                                };
+                                
+                                self.consume(Token::Colon, "Expected ':' after field name")?;
+                                let field_expr = self.parse_expression()?;
+                                
+                                fields.push((field_name, field_expr));
+                                
+                                if !self.check(&Token::RightBrace) {
+                                    self.consume(Token::Comma, "Expected ',' after field")?;
+                                }
+                            }
+                            
+                            let end_span = self.consume(Token::RightBrace, "Expected '}'")?;
+                            Some(EnumConstructorData::Struct(fields))
+                        } else {
+                            None
+                        };
+                        
+                        expr = Expr::EnumConstructor {
+                            enum_name,
+                            variant,
+                            data,
+                            span: start_span,
+                        };
+                    } else {
+                        return Err(CompileError::SyntaxError {
+                            message: "Double colon can only be used after an identifier".to_string(),
+                        });
+                    }
+                }
                 _ => break,
             }
         }
@@ -609,6 +911,28 @@ impl Parser {
     }
     
     // Helper methods
+    
+    /// Check if the pattern ahead looks like a struct literal
+    /// We look for: { identifier : ... or { }
+    fn check_struct_literal_pattern(&self) -> bool {
+        if self.current + 1 >= self.tokens.len() {
+            return false;
+        }
+        
+        // Check if next token after { is an identifier or }
+        match &self.tokens[self.current + 1].0 {
+            Token::Identifier(_) => {
+                // Check if token after identifier is :
+                if self.current + 2 < self.tokens.len() {
+                    matches!(&self.tokens[self.current + 2].0, Token::Colon)
+                } else {
+                    false
+                }
+            }
+            Token::RightBrace => true, // Empty struct literal
+            _ => false,
+        }
+    }
     
     /// Check if we're at the end of tokens
     fn is_at_end(&self) -> bool {
@@ -863,6 +1187,241 @@ mod tests {
                 assert!(matches!(&body[2], Stmt::Expr(_)));
             } else {
                 panic!("Expected for loop");
+            }
+        } else {
+            panic!("Expected function");
+        }
+    }
+    
+    #[test]
+    fn test_parse_struct() {
+        let source = r#"
+        struct Point {
+            x: i64,
+            y: i64,
+        }
+        
+        fn main() {
+            let p = Point { x: 10, y: 20 };
+            print_int(p.x);
+            p.y = 30;
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        assert_eq!(ast.items.len(), 2);
+        
+        // Check struct definition
+        if let Item::Struct(struct_def) = &ast.items[0] {
+            assert_eq!(struct_def.name, "Point");
+            assert_eq!(struct_def.fields.len(), 2);
+            assert_eq!(struct_def.fields[0].0, "x");
+            assert_eq!(struct_def.fields[0].1, Type::I64);
+            assert_eq!(struct_def.fields[1].0, "y");
+            assert_eq!(struct_def.fields[1].1, Type::I64);
+        } else {
+            panic!("Expected struct definition");
+        }
+        
+        // Check function with struct usage
+        if let Item::Function(func) = &ast.items[1] {
+            assert_eq!(func.name, "main");
+            assert_eq!(func.body.len(), 3);
+            
+            // First statement: struct literal
+            if let Stmt::Let { name, value, .. } = &func.body[0] {
+                assert_eq!(name, "p");
+                if let Expr::StructLiteral { name, fields, .. } = value {
+                    assert_eq!(name, "Point");
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].0, "x");
+                    assert_eq!(fields[1].0, "y");
+                } else {
+                    panic!("Expected struct literal");
+                }
+            }
+            
+            // Second statement: field access
+            if let Stmt::Expr(Expr::Call { args, .. }) = &func.body[1] {
+                assert_eq!(args.len(), 1);
+                if let Expr::FieldAccess { field, .. } = &args[0] {
+                    assert_eq!(field, "x");
+                } else {
+                    panic!("Expected field access");
+                }
+            }
+            
+            // Third statement: field assignment
+            if let Stmt::Assign { target, .. } = &func.body[2] {
+                if let AssignTarget::FieldAccess { field, .. } = target {
+                    assert_eq!(field, "y");
+                } else {
+                    panic!("Expected field assignment");
+                }
+            }
+        } else {
+            panic!("Expected function");
+        }
+    }
+    
+    #[test]
+    fn test_parse_enum() {
+        let source = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+        
+        enum Option {
+            Some(i64),
+            None,
+        }
+        
+        enum Shape {
+            Circle { radius: i64 },
+            Rectangle { width: i64, height: i64 },
+            Point,
+        }
+        
+        fn main() {
+            let c = Color::Red;
+            let opt = Option::Some(42);
+            let shape = Shape::Circle { radius: 10 };
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        assert_eq!(ast.items.len(), 4);
+        
+        // Check first enum (simple)
+        if let Item::Enum(enum_def) = &ast.items[0] {
+            assert_eq!(enum_def.name, "Color");
+            assert_eq!(enum_def.variants.len(), 3);
+            assert_eq!(enum_def.variants[0].name, "Red");
+            assert!(matches!(enum_def.variants[0].data, EnumVariantData::Unit));
+            assert_eq!(enum_def.variants[1].name, "Green");
+            assert!(matches!(enum_def.variants[1].data, EnumVariantData::Unit));
+            assert_eq!(enum_def.variants[2].name, "Blue");
+            assert!(matches!(enum_def.variants[2].data, EnumVariantData::Unit));
+        } else {
+            panic!("Expected enum definition");
+        }
+        
+        // Check second enum (with tuple variant)
+        if let Item::Enum(enum_def) = &ast.items[1] {
+            assert_eq!(enum_def.name, "Option");
+            assert_eq!(enum_def.variants.len(), 2);
+            assert_eq!(enum_def.variants[0].name, "Some");
+            if let EnumVariantData::Tuple(types) = &enum_def.variants[0].data {
+                assert_eq!(types.len(), 1);
+                assert_eq!(types[0], Type::I64);
+            } else {
+                panic!("Expected tuple variant");
+            }
+            assert_eq!(enum_def.variants[1].name, "None");
+            assert!(matches!(enum_def.variants[1].data, EnumVariantData::Unit));
+        } else {
+            panic!("Expected enum definition");
+        }
+        
+        // Check third enum (with struct variant)
+        if let Item::Enum(enum_def) = &ast.items[2] {
+            assert_eq!(enum_def.name, "Shape");
+            assert_eq!(enum_def.variants.len(), 3);
+            
+            assert_eq!(enum_def.variants[0].name, "Circle");
+            if let EnumVariantData::Struct(fields) = &enum_def.variants[0].data {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].0, "radius");
+                assert_eq!(fields[0].1, Type::I64);
+            } else {
+                panic!("Expected struct variant");
+            }
+            
+            assert_eq!(enum_def.variants[1].name, "Rectangle");
+            if let EnumVariantData::Struct(fields) = &enum_def.variants[1].data {
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].0, "width");
+                assert_eq!(fields[0].1, Type::I64);
+                assert_eq!(fields[1].0, "height");
+                assert_eq!(fields[1].1, Type::I64);
+            } else {
+                panic!("Expected struct variant");
+            }
+            
+            assert_eq!(enum_def.variants[2].name, "Point");
+            assert!(matches!(enum_def.variants[2].data, EnumVariantData::Unit));
+        } else {
+            panic!("Expected enum definition");
+        }
+        
+        // Check function with enum usage
+        if let Item::Function(func) = &ast.items[3] {
+            assert_eq!(func.name, "main");
+            assert_eq!(func.body.len(), 3);
+            
+            // First statement: unit enum constructor
+            if let Stmt::Let { name, value, .. } = &func.body[0] {
+                assert_eq!(name, "c");
+                if let Expr::EnumConstructor { enum_name, variant, data, .. } = value {
+                    assert_eq!(enum_name, "Color");
+                    assert_eq!(variant, "Red");
+                    assert!(data.is_none());
+                } else {
+                    panic!("Expected enum constructor");
+                }
+            }
+            
+            // Second statement: tuple enum constructor
+            if let Stmt::Let { name, value, .. } = &func.body[1] {
+                assert_eq!(name, "opt");
+                if let Expr::EnumConstructor { enum_name, variant, data, .. } = value {
+                    assert_eq!(enum_name, "Option");
+                    assert_eq!(variant, "Some");
+                    if let Some(EnumConstructorData::Tuple(args)) = data {
+                        assert_eq!(args.len(), 1);
+                        if let Expr::Integer(n) = &args[0] {
+                            assert_eq!(*n, 42);
+                        } else {
+                            panic!("Expected integer argument");
+                        }
+                    } else {
+                        panic!("Expected tuple constructor data");
+                    }
+                } else {
+                    panic!("Expected enum constructor");
+                }
+            }
+            
+            // Third statement: struct enum constructor
+            if let Stmt::Let { name, value, .. } = &func.body[2] {
+                assert_eq!(name, "shape");
+                if let Expr::EnumConstructor { enum_name, variant, data, .. } = value {
+                    assert_eq!(enum_name, "Shape");
+                    assert_eq!(variant, "Circle");
+                    if let Some(EnumConstructorData::Struct(fields)) = data {
+                        assert_eq!(fields.len(), 1);
+                        assert_eq!(fields[0].0, "radius");
+                        if let Expr::Integer(n) = &fields[0].1 {
+                            assert_eq!(*n, 10);
+                        } else {
+                            panic!("Expected integer field value");
+                        }
+                    } else {
+                        panic!("Expected struct constructor data");
+                    }
+                } else {
+                    panic!("Expected enum constructor");
+                }
             }
         } else {
             panic!("Expected function");

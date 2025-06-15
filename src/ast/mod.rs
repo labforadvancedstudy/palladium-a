@@ -13,6 +13,8 @@ pub struct Program {
 #[derive(Debug, Clone)]
 pub enum Item {
     Function(Function),
+    Struct(StructDef),
+    Enum(EnumDef),
 }
 
 /// Function definition
@@ -23,6 +25,40 @@ pub struct Function {
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub span: Span,
+}
+
+/// Struct definition
+#[derive(Debug, Clone)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
+    pub span: Span,
+}
+
+/// Enum definition
+#[derive(Debug, Clone)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+    pub span: Span,
+}
+
+/// Enum variant
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub data: EnumVariantData,
+}
+
+/// Enum variant data
+#[derive(Debug, Clone)]
+pub enum EnumVariantData {
+    /// Unit variant (no data)
+    Unit,
+    /// Tuple variant with types
+    Tuple(Vec<Type>),
+    /// Struct variant with named fields
+    Struct(Vec<(String, Type)>),
 }
 
 /// Type representation
@@ -129,6 +165,34 @@ pub enum Expr {
         right: Box<Expr>,
         span: Span,
     },
+    /// Struct literal
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, Expr)>,
+        span: Span,
+    },
+    /// Field access
+    FieldAccess {
+        object: Box<Expr>,
+        field: String,
+        span: Span,
+    },
+    /// Enum constructor
+    EnumConstructor {
+        enum_name: String,
+        variant: String,
+        data: Option<EnumConstructorData>,
+        span: Span,
+    },
+}
+
+/// Enum constructor data
+#[derive(Debug, Clone)]
+pub enum EnumConstructorData {
+    /// Tuple constructor: Color::Red(255)
+    Tuple(Vec<Expr>),
+    /// Struct constructor: Shape::Rectangle { width: 10, height: 20 }
+    Struct(Vec<(String, Expr)>),
 }
 
 /// Assignment targets
@@ -140,6 +204,11 @@ pub enum AssignTarget {
     Index {
         array: Box<Expr>,
         index: Box<Expr>,
+    },
+    /// Field assignment
+    FieldAccess {
+        object: Box<Expr>,
+        field: String,
     },
 }
 
@@ -170,6 +239,9 @@ impl Expr {
             Expr::Index { span, .. } => *span,
             Expr::Call { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
+            Expr::StructLiteral { span, .. } => *span,
+            Expr::FieldAccess { span, .. } => *span,
+            Expr::EnumConstructor { span, .. } => *span,
         }
     }
 }
@@ -196,6 +268,8 @@ impl std::fmt::Display for Item {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Item::Function(func) => write!(f, "{}", func),
+            Item::Struct(struct_def) => write!(f, "{}", struct_def),
+            Item::Enum(enum_def) => write!(f, "{}", enum_def),
         }
     }
 }
@@ -216,6 +290,56 @@ impl std::fmt::Display for Function {
         writeln!(f, " {{")?;
         for stmt in &self.body {
             writeln!(f, "    {}", stmt)?;
+        }
+        write!(f, "}}")
+    }
+}
+
+impl std::fmt::Display for StructDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "struct {} {{", self.name)?;
+        for (i, (field_name, field_type)) in self.fields.iter().enumerate() {
+            if i == 0 {
+                writeln!(f)?;
+            }
+            writeln!(f, "    {}: {},", field_name, field_type)?;
+        }
+        write!(f, "}}")
+    }
+}
+
+impl std::fmt::Display for EnumDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "enum {} {{", self.name)?;
+        for (i, variant) in self.variants.iter().enumerate() {
+            if i == 0 {
+                writeln!(f)?;
+            }
+            write!(f, "    {}", variant.name)?;
+            match &variant.data {
+                EnumVariantData::Unit => {},
+                EnumVariantData::Tuple(types) => {
+                    write!(f, "(")?;
+                    for (j, ty) in types.iter().enumerate() {
+                        if j > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", ty)?;
+                    }
+                    write!(f, ")")?;
+                }
+                EnumVariantData::Struct(fields) => {
+                    write!(f, " {{ ")?;
+                    for (j, (fname, ftype)) in fields.iter().enumerate() {
+                        if j > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}: {}", fname, ftype)?;
+                    }
+                    write!(f, " }}")?;
+                }
+            }
+            writeln!(f, ",")?;
         }
         write!(f, "}}")
     }
@@ -255,6 +379,7 @@ impl std::fmt::Display for Stmt {
                 match target {
                     AssignTarget::Ident(name) => write!(f, "{} = {};", name, value),
                     AssignTarget::Index { array, index } => write!(f, "{}[{}] = {};", array, index, value),
+                    AssignTarget::FieldAccess { object, field } => write!(f, "{}.{} = {};", object, field, value),
                 }
             }
             Stmt::If { condition, then_branch, else_branch, .. } => {
@@ -324,6 +449,45 @@ impl std::fmt::Display for Expr {
             }
             Expr::Binary { left, op, right, .. } => {
                 write!(f, "({} {} {})", left, op, right)
+            }
+            Expr::StructLiteral { name, fields, .. } => {
+                write!(f, "{} {{ ", name)?;
+                for (i, (field_name, field_expr)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", field_name, field_expr)?;
+                }
+                write!(f, " }}")
+            }
+            Expr::FieldAccess { object, field, .. } => {
+                write!(f, "{}.{}", object, field)
+            }
+            Expr::EnumConstructor { enum_name, variant, data, .. } => {
+                write!(f, "{}::{}", enum_name, variant)?;
+                match data {
+                    Some(EnumConstructorData::Tuple(args)) => {
+                        write!(f, "(")?;
+                        for (i, arg) in args.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "{}", arg)?;
+                        }
+                        write!(f, ")")
+                    }
+                    Some(EnumConstructorData::Struct(fields)) => {
+                        write!(f, " {{ ")?;
+                        for (i, (fname, fexpr)) in fields.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "{}: {}", fname, fexpr)?;
+                        }
+                        write!(f, " }}")
+                    }
+                    None => Ok(())
+                }
             }
         }
     }

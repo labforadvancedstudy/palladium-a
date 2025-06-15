@@ -69,6 +69,15 @@ pub enum Token {
     #[token("continue")]
     Continue,
     
+    #[token("struct")]
+    Struct,
+    
+    #[token("enum")]
+    Enum,
+    
+    #[token("match")]
+    Match,
+    
     // Operators
     #[token("+")]
     Plus,
@@ -134,8 +143,14 @@ pub enum Token {
     #[token(":")]
     Colon,
     
+    #[token(".")]
+    Dot,
+    
     #[token("->")]
     Arrow,
+    
+    #[token("::")]
+    DoubleColon,
 }
 
 impl Token {
@@ -181,6 +196,9 @@ impl std::fmt::Display for Token {
             Token::In => write!(f, "'in'"),
             Token::Break => write!(f, "'break'"),
             Token::Continue => write!(f, "'continue'"),
+            Token::Struct => write!(f, "'struct'"),
+            Token::Enum => write!(f, "'enum'"),
+            Token::Match => write!(f, "'match'"),
             Token::Plus => write!(f, "'+'"),
             Token::Minus => write!(f, "'-'"),
             Token::Star => write!(f, "'*'"),
@@ -202,7 +220,9 @@ impl std::fmt::Display for Token {
             Token::Semicolon => write!(f, "';'"),
             Token::Comma => write!(f, "','"),
             Token::Colon => write!(f, "':'"),
+            Token::Dot => write!(f, "'.'"),
             Token::Arrow => write!(f, "'->'"),
+            Token::DoubleColon => write!(f, "'::'"),
         }
     }
 }
@@ -246,5 +266,30 @@ mod tests {
         assert_eq!(lex.next(), Some(Ok(Token::While)));
         assert_eq!(lex.next(), Some(Ok(Token::Break)));
         assert_eq!(lex.next(), Some(Ok(Token::Continue)));
+    }
+    
+    #[test]
+    fn test_struct_and_dot() {
+        let mut lex = Token::lexer("struct Point { x: i32 } p.x");
+        assert_eq!(lex.next(), Some(Ok(Token::Struct)));
+        assert_eq!(lex.next(), Some(Ok(Token::Identifier("Point".to_string()))));
+        assert_eq!(lex.next(), Some(Ok(Token::LeftBrace)));
+        assert_eq!(lex.next(), Some(Ok(Token::Identifier("x".to_string()))));
+        assert_eq!(lex.next(), Some(Ok(Token::Colon)));
+        assert_eq!(lex.next(), Some(Ok(Token::Identifier("i32".to_string()))));
+        assert_eq!(lex.next(), Some(Ok(Token::RightBrace)));
+        assert_eq!(lex.next(), Some(Ok(Token::Identifier("p".to_string()))));
+        assert_eq!(lex.next(), Some(Ok(Token::Dot)));
+        assert_eq!(lex.next(), Some(Ok(Token::Identifier("x".to_string()))));
+    }
+    
+    #[test]
+    fn test_enum_keywords() {
+        let mut lex = Token::lexer("enum match Color::Red");
+        assert_eq!(lex.next(), Some(Ok(Token::Enum)));
+        assert_eq!(lex.next(), Some(Ok(Token::Match)));
+        assert_eq!(lex.next(), Some(Ok(Token::Identifier("Color".to_string()))));
+        assert_eq!(lex.next(), Some(Ok(Token::DoubleColon)));
+        assert_eq!(lex.next(), Some(Ok(Token::Identifier("Red".to_string()))));
     }
 }

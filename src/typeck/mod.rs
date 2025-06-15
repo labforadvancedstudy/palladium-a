@@ -14,6 +14,7 @@ pub enum CheckerType {
     Bool,
     Array(Box<CheckerType>, usize),
     Function(Vec<CheckerType>, Box<CheckerType>),
+    Struct(String),
 }
 
 impl From<&crate::ast::Type> for CheckerType {
@@ -27,7 +28,7 @@ impl From<&crate::ast::Type> for CheckerType {
             crate::ast::Type::Array(elem_type, size) => {
                 CheckerType::Array(Box::new(CheckerType::from(elem_type.as_ref())), *size)
             }
-            crate::ast::Type::Custom(_) => CheckerType::Unit, // TODO: Handle custom types
+            crate::ast::Type::Custom(name) => CheckerType::Struct(name.clone()),
         }
     }
 }
@@ -50,6 +51,7 @@ impl std::fmt::Display for CheckerType {
                 }
                 write!(f, ") -> {}", ret)
             }
+            CheckerType::Struct(name) => write!(f, "{}", name),
         }
     }
 }
@@ -115,6 +117,8 @@ impl SymbolTable {
 pub struct TypeChecker {
     /// Function signatures
     functions: HashMap<String, CheckerType>,
+    /// Struct definitions
+    structs: HashMap<String, Vec<(String, CheckerType)>>,
     /// Current function return type (for checking return statements)
     current_function_return: Option<CheckerType>,
     /// Symbol table for variables
@@ -139,6 +143,7 @@ impl TypeChecker {
         
         Self {
             functions,
+            structs: HashMap::new(),
             current_function_return: None,
             symbols: SymbolTable::new(),
         }
@@ -146,7 +151,7 @@ impl TypeChecker {
     
     /// Type check a program
     pub fn check(&mut self, program: &Program) -> Result<()> {
-        // First pass: collect all function signatures
+        // First pass: collect all function signatures and struct definitions
         for item in &program.items {
             match item {
                 Item::Function(func) => {
@@ -163,6 +168,18 @@ impl TypeChecker {
                     let func_type = CheckerType::Function(param_types, Box::new(return_type));
                     self.functions.insert(func.name.clone(), func_type);
                 }
+                Item::Struct(struct_def) => {
+                    // Convert field types to CheckerType
+                    let fields: Vec<(String, CheckerType)> = struct_def.fields.iter()
+                        .map(|(name, ty)| (name.clone(), CheckerType::from(ty)))
+                        .collect();
+                    
+                    self.structs.insert(struct_def.name.clone(), fields);
+                }
+                Item::Enum(_enum_def) => {
+                    // TODO: Store enum variants for type checking
+                    // For now, we'll just track that the enum exists
+                }
             }
         }
         
@@ -178,6 +195,12 @@ impl TypeChecker {
             match item {
                 Item::Function(func) => {
                     self.check_function(func)?;
+                }
+                Item::Struct(_) => {
+                    // Structs are already processed in the first pass
+                }
+                Item::Enum(_) => {
+                    // Enums are already processed in the first pass
                 }
             }
         }
@@ -326,6 +349,47 @@ impl TypeChecker {
                         if value_type != elem_type {
                             return Err(CompileError::TypeMismatch {
                                 expected: elem_type.to_string(),
+                                found: value_type.to_string(),
+                            });
+                        }
+                        
+                        Ok(())
+                    }
+                    AssignTarget::FieldAccess { object, field } => {
+                        // Type check the object expression
+                        let object_type = self.check_expression(object)?;
+                        
+                        // Get the struct name and check if it exists
+                        let struct_name = match object_type {
+                            CheckerType::Struct(name) => name,
+                            _ => {
+                                return Err(CompileError::Generic(
+                                    format!("Cannot access field on non-struct type: {}", object_type)
+                                ));
+                            }
+                        };
+                        
+                        // Look up the struct fields
+                        let fields = self.structs.get(&struct_name)
+                            .ok_or_else(|| CompileError::Generic(
+                                format!("Unknown struct type: {}", struct_name)
+                            ))?;
+                        
+                        // Find the field type
+                        let field_type = fields.iter()
+                            .find(|(fname, _)| fname == field)
+                            .map(|(_, ftype)| ftype.clone())
+                            .ok_or_else(|| CompileError::Generic(
+                                format!("Struct '{}' has no field '{}'", struct_name, field)
+                            ))?;
+                        
+                        // Type check the value expression
+                        let value_type = self.check_expression(value)?;
+                        
+                        // Check that types match
+                        if value_type != field_type {
+                            return Err(CompileError::TypeMismatch {
+                                expected: field_type.to_string(),
                                 found: value_type.to_string(),
                             });
                         }
@@ -560,6 +624,78 @@ impl TypeChecker {
                         format!("Cannot index into non-array type: {}", array_type)
                     )),
                 }
+            }
+            Expr::StructLiteral { name, fields, .. } => {
+                // Look up the struct definition
+                let struct_fields = self.structs.get(name)
+                    .ok_or_else(|| CompileError::Generic(
+                        format!("Unknown struct type: {}", name)
+                    ))?
+                    .clone();
+                
+                // Check that all fields are provided and have correct types
+                for (field_name, field_type) in &struct_fields {
+                    let provided_expr = fields.iter()
+                        .find(|(fname, _)| fname == field_name)
+                        .map(|(_, expr)| expr)
+                        .ok_or_else(|| CompileError::Generic(
+                            format!("Missing field '{}' in struct literal", field_name)
+                        ))?;
+                    
+                    let provided_type = self.check_expression(provided_expr)?;
+                    if provided_type != *field_type {
+                        return Err(CompileError::TypeMismatch {
+                            expected: field_type.to_string(),
+                            found: provided_type.to_string(),
+                        });
+                    }
+                }
+                
+                // Check that no extra fields are provided
+                for (provided_name, _) in fields {
+                    if !struct_fields.iter().any(|(fname, _)| fname == provided_name) {
+                        return Err(CompileError::Generic(
+                            format!("Unknown field '{}' for struct '{}'", provided_name, name)
+                        ));
+                    }
+                }
+                
+                Ok(CheckerType::Struct(name.clone()))
+            }
+            Expr::FieldAccess { object, field, .. } => {
+                // Type check the object expression
+                let object_type = self.check_expression(object)?;
+                
+                // Get the struct name and check if it exists
+                let struct_name = match object_type {
+                    CheckerType::Struct(name) => name,
+                    _ => {
+                        return Err(CompileError::Generic(
+                            format!("Cannot access field on non-struct type: {}", object_type)
+                        ));
+                    }
+                };
+                
+                // Look up the struct fields
+                let fields = self.structs.get(&struct_name)
+                    .ok_or_else(|| CompileError::Generic(
+                        format!("Unknown struct type: {}", struct_name)
+                    ))?;
+                
+                // Find the field type
+                let field_type = fields.iter()
+                    .find(|(fname, _)| fname == field)
+                    .map(|(_, ftype)| ftype.clone())
+                    .ok_or_else(|| CompileError::Generic(
+                        format!("Struct '{}' has no field '{}'", struct_name, field)
+                    ))?;
+                
+                Ok(field_type)
+            }
+            Expr::EnumConstructor { enum_name, variant: _, data: _, .. } => {
+                // TODO: Properly type check enum constructors
+                // For now, just return the enum type
+                Ok(CheckerType::Struct(enum_name.clone()))
             }
         }
     }
