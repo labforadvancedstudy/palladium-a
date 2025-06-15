@@ -1,0 +1,17 @@
+// Minimal pattern matching test with wildcard
+
+enum Option {
+    Some(i64),
+    None,
+}
+
+fn main() {
+    let opt = Option::Some(100);
+    
+    // Only wildcard pattern for now
+    match opt {
+        _ => print("Matched with wildcard"),
+    }
+    
+    print("Pattern matching test complete!");
+}

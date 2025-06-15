@@ -128,6 +128,43 @@ pub enum Stmt {
     Continue {
         span: Span,
     },
+    /// Match statement
+    Match {
+        expr: Expr,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+}
+
+/// Match arm
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Vec<Stmt>,
+}
+
+/// Pattern for matching
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    /// Wildcard pattern (_)
+    Wildcard,
+    /// Identifier pattern (binds value)
+    Ident(String),
+    /// Enum pattern
+    EnumPattern {
+        enum_name: String,
+        variant: String,
+        data: Option<PatternData>,
+    },
+}
+
+/// Pattern data for enum variants
+#[derive(Debug, Clone)]
+pub enum PatternData {
+    /// Tuple pattern: Some(x)
+    Tuple(Vec<Pattern>),
+    /// Struct pattern: Rectangle { width: w, height: h }
+    Struct(Vec<(String, Pattern)>),
 }
 
 /// Expressions
@@ -413,6 +450,30 @@ impl std::fmt::Display for Stmt {
             }
             Stmt::Break { .. } => write!(f, "break;"),
             Stmt::Continue { .. } => write!(f, "continue;"),
+            Stmt::Match { expr, arms, .. } => {
+                write!(f, "match {} {{\n", expr)?;
+                for arm in arms {
+                    write!(f, "    {} => ", arm.pattern)?;
+                    if arm.body.len() == 1 {
+                        if let Stmt::Expr(e) = &arm.body[0] {
+                            write!(f, "{},\n", e)?;
+                        } else {
+                            write!(f, "{{\n")?;
+                            for stmt in &arm.body {
+                                write!(f, "        {}\n", stmt)?;
+                            }
+                            write!(f, "    }}\n")?;
+                        }
+                    } else {
+                        write!(f, "{{\n")?;
+                        for stmt in &arm.body {
+                            write!(f, "        {}\n", stmt)?;
+                        }
+                        write!(f, "    }}\n")?;
+                    }
+                }
+                write!(f, "}}")
+            }
         }
     }
 }
@@ -483,6 +544,41 @@ impl std::fmt::Display for Expr {
                                 write!(f, ", ")?;
                             }
                             write!(f, "{}: {}", fname, fexpr)?;
+                        }
+                        write!(f, " }}")
+                    }
+                    None => Ok(())
+                }
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Pattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Pattern::Wildcard => write!(f, "_"),
+            Pattern::Ident(name) => write!(f, "{}", name),
+            Pattern::EnumPattern { enum_name, variant, data } => {
+                write!(f, "{}::{}", enum_name, variant)?;
+                match data {
+                    Some(PatternData::Tuple(patterns)) => {
+                        write!(f, "(")?;
+                        for (i, pattern) in patterns.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "{}", pattern)?;
+                        }
+                        write!(f, ")")
+                    }
+                    Some(PatternData::Struct(field_patterns)) => {
+                        write!(f, " {{ ")?;
+                        for (i, (field_name, pattern)) in field_patterns.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ", ")?;
+                            }
+                            write!(f, "{}: {}", field_name, pattern)?;
                         }
                         write!(f, " }}")
                     }

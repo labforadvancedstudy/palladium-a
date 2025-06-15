@@ -479,6 +479,33 @@ impl TypeChecker {
                 // For now, just allow them
                 Ok(())
             }
+            Stmt::Match { expr, arms, .. } => {
+                // Type check the match expression
+                let expr_type = self.check_expression(expr)?;
+                
+                // For each arm, check the pattern matches the expression type
+                // and type check the body
+                for arm in arms {
+                    // Check pattern compatibility with expression type
+                    self.check_pattern(&arm.pattern, &expr_type)?;
+                    
+                    // Type check arm body in new scope
+                    self.symbols.enter_scope();
+                    
+                    // Bind pattern variables if any
+                    self.bind_pattern_variables(&arm.pattern, &expr_type)?;
+                    
+                    for stmt in &arm.body {
+                        self.check_statement(stmt)?;
+                    }
+                    
+                    self.symbols.exit_scope();
+                }
+                
+                // TODO: Check pattern exhaustiveness
+                
+                Ok(())
+            }
         }
     }
     
@@ -696,6 +723,69 @@ impl TypeChecker {
                 // TODO: Properly type check enum constructors
                 // For now, just return the enum type
                 Ok(CheckerType::Struct(enum_name.clone()))
+            }
+        }
+    }
+    
+    /// Check that a pattern is compatible with the given type
+    fn check_pattern(&self, pattern: &Pattern, expected_type: &CheckerType) -> Result<()> {
+        match pattern {
+            Pattern::Wildcard => {
+                // Wildcard matches any type
+                Ok(())
+            }
+            Pattern::Ident(_) => {
+                // Identifier pattern matches any type and binds it
+                Ok(())
+            }
+            Pattern::EnumPattern { enum_name, variant: _, data: _ } => {
+                // Check that the expected type matches the enum
+                match expected_type {
+                    CheckerType::Struct(name) if name == enum_name => Ok(()),
+                    _ => Err(CompileError::TypeMismatch {
+                        expected: format!("enum {}", enum_name),
+                        found: expected_type.to_string(),
+                    }),
+                }
+            }
+        }
+    }
+    
+    /// Bind variables from patterns to the symbol table
+    fn bind_pattern_variables(&mut self, pattern: &Pattern, value_type: &CheckerType) -> Result<()> {
+        match pattern {
+            Pattern::Wildcard => {
+                // No bindings
+                Ok(())
+            }
+            Pattern::Ident(name) => {
+                // Bind the identifier to the value type
+                self.symbols.define(
+                    name.clone(),
+                    value_type.clone(),
+                    false, // Pattern bindings are immutable by default
+                )?;
+                Ok(())
+            }
+            Pattern::EnumPattern { data, .. } => {
+                // TODO: Bind variables from nested patterns
+                if let Some(pattern_data) = data {
+                    match pattern_data {
+                        PatternData::Tuple(patterns) => {
+                            // TODO: Get tuple element types and bind each pattern
+                            for _pattern in patterns {
+                                // For now, skip nested pattern bindings
+                            }
+                        }
+                        PatternData::Struct(field_patterns) => {
+                            // TODO: Get struct field types and bind each pattern
+                            for (_field_name, _pattern) in field_patterns {
+                                // For now, skip nested pattern bindings
+                            }
+                        }
+                    }
+                }
+                Ok(())
             }
         }
     }

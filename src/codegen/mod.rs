@@ -380,6 +380,66 @@ impl CodeGenerator {
             Stmt::Continue { .. } => {
                 self.output.push_str("    continue;\n");
             }
+            Stmt::Match { expr, arms, .. } => {
+                // Generate a series of if-else statements for pattern matching
+                self.output.push_str("    // Match statement\n");
+                self.output.push_str("    {\n");
+                
+                // Store the match expression in a temporary variable
+                self.output.push_str("        // Temporary for match expression\n");
+                self.output.push_str("        long long _match_expr = ");
+                self.generate_expression(expr)?;
+                self.output.push_str(";\n");
+                
+                // Generate if-else chain for each arm
+                for (i, arm) in arms.iter().enumerate() {
+                    if i == 0 {
+                        self.output.push_str("        if (");
+                    } else {
+                        self.output.push_str(" else if (");
+                    }
+                    
+                    // Generate pattern matching condition
+                    match &arm.pattern {
+                        Pattern::Wildcard => {
+                            // Wildcard always matches
+                            self.output.push_str("1");
+                        }
+                        Pattern::Ident(name) => {
+                            // Identifier pattern always matches and binds
+                            self.output.push_str("1) {\n");
+                            self.output.push_str(&format!("            long long {} = _match_expr;\n", name));
+                            // Continue with body generation below
+                            for stmt in &arm.body {
+                                self.output.push_str("        ");
+                                self.generate_statement(stmt)?;
+                            }
+                            self.output.push_str("        }");
+                            continue;
+                        }
+                        Pattern::EnumPattern { enum_name, variant, data: _ } => {
+                            // For now, simple enum matching based on variant index
+                            // TODO: Implement proper enum variant matching
+                            self.output.push_str(&format!("/* match {}::{} */ 1", enum_name, variant));
+                        }
+                    }
+                    
+                    self.output.push_str(") {\n");
+                    
+                    // Generate arm body
+                    for stmt in &arm.body {
+                        self.output.push_str("        ");
+                        self.generate_statement(stmt)?;
+                    }
+                    
+                    self.output.push_str("        }");
+                }
+                
+                // If no wildcard pattern, we might need a default case
+                // TODO: Add exhaustiveness checking
+                
+                self.output.push_str("\n    }\n");
+            }
         }
         Ok(())
     }

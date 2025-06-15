@@ -274,6 +274,7 @@ impl Parser {
             Token::For => self.parse_for(),
             Token::Break => self.parse_break(),
             Token::Continue => self.parse_continue(),
+            Token::Match => self.parse_match(),
             Token::Identifier(_) => {
                 // Could be assignment or expression statement
                 // Parse the left-hand side as an expression first
@@ -500,6 +501,146 @@ impl Parser {
         Ok(Stmt::Continue {
             span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
+    }
+    
+    /// Parse a match statement
+    fn parse_match(&mut self) -> Result<Stmt> {
+        let start_span = self.consume(Token::Match, "Expected 'match'")?;
+        
+        let expr = self.parse_expression()?;
+        
+        self.consume(Token::LeftBrace, "Expected '{' after match expression")?;
+        
+        let mut arms = Vec::new();
+        
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            // Parse pattern
+            let pattern = self.parse_pattern()?;
+            
+            self.consume(Token::FatArrow, "Expected '=>' after pattern")?;
+            
+            // Parse arm body
+            let body = if self.check(&Token::LeftBrace) {
+                // Block body
+                self.advance()?; // consume '{'
+                let mut stmts = Vec::new();
+                while !self.check(&Token::RightBrace) && !self.is_at_end() {
+                    stmts.push(self.parse_statement()?);
+                }
+                self.consume(Token::RightBrace, "Expected '}' after match arm body")?;
+                stmts
+            } else {
+                // Single expression body
+                let expr = self.parse_expression()?;
+                self.consume(Token::Comma, "Expected ',' after match arm expression")?;
+                vec![Stmt::Expr(expr)]
+            };
+            
+            arms.push(MatchArm { pattern, body });
+        }
+        
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after match arms")?;
+        
+        Ok(Stmt::Match {
+            expr,
+            arms,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        })
+    }
+    
+    /// Parse a pattern
+    fn parse_pattern(&mut self) -> Result<Pattern> {
+        // First, peek and clone the token to avoid borrowing issues
+        let token = self.peek()?.clone();
+        
+        match token {
+            Token::Underscore => {
+                self.advance()?;
+                Ok(Pattern::Wildcard)
+            }
+            Token::Identifier(name) => {
+                self.advance()?;
+                
+                // Check if this is an enum pattern
+                if self.check(&Token::DoubleColon) {
+                    self.advance()?; // consume '::'
+                    
+                    let variant = match self.advance()? {
+                        (Token::Identifier(v), _) => v,
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "variant name".to_string(),
+                                found: token.to_string(),
+                            });
+                        }
+                    };
+                    
+                    // Check for pattern data
+                    let data = if self.check(&Token::LeftParen) {
+                        // Tuple pattern
+                        self.advance()?; // consume '('
+                        let mut patterns = Vec::new();
+                        
+                        if !self.check(&Token::RightParen) {
+                            loop {
+                                patterns.push(self.parse_pattern()?);
+                                if !self.check(&Token::Comma) {
+                                    break;
+                                }
+                                self.advance()?; // consume ','
+                            }
+                        }
+                        
+                        self.consume(Token::RightParen, "Expected ')' after tuple pattern")?;
+                        Some(PatternData::Tuple(patterns))
+                        
+                    } else if self.check(&Token::LeftBrace) {
+                        // Struct pattern
+                        self.advance()?; // consume '{'
+                        let mut fields = Vec::new();
+                        
+                        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+                            let field_name = match self.advance()? {
+                                (Token::Identifier(fname), _) => fname,
+                                (token, _) => {
+                                    return Err(CompileError::UnexpectedToken {
+                                        expected: "field name".to_string(),
+                                        found: token.to_string(),
+                                    });
+                                }
+                            };
+                            
+                            self.consume(Token::Colon, "Expected ':' after field name in pattern")?;
+                            let field_pattern = self.parse_pattern()?;
+                            
+                            fields.push((field_name, field_pattern));
+                            
+                            if !self.check(&Token::RightBrace) {
+                                self.consume(Token::Comma, "Expected ',' after field pattern")?;
+                            }
+                        }
+                        
+                        self.consume(Token::RightBrace, "Expected '}' after struct pattern")?;
+                        Some(PatternData::Struct(fields))
+                    } else {
+                        None
+                    };
+                    
+                    Ok(Pattern::EnumPattern {
+                        enum_name: name,
+                        variant,
+                        data,
+                    })
+                } else {
+                    // Simple identifier pattern
+                    Ok(Pattern::Ident(name))
+                }
+            }
+            _ => Err(CompileError::UnexpectedToken {
+                expected: "pattern".to_string(),
+                found: token.to_string(),
+            }),
+        }
     }
     
     /// Parse an expression
@@ -1425,6 +1566,147 @@ mod tests {
             }
         } else {
             panic!("Expected function");
+        }
+    }
+    
+    #[test]
+    fn test_parse_match_wildcard() {
+        let source = r#"
+        fn main() {
+            let x = 42;
+            match x {
+                _ => print("wildcard"),
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        if let Item::Function(func) = &ast.items[0] {
+            assert_eq!(func.body.len(), 2);
+            if let Stmt::Match { arms, .. } = &func.body[1] {
+                assert_eq!(arms.len(), 1);
+                match &arms[0].pattern {
+                    Pattern::Wildcard => {},
+                    _ => panic!("Expected wildcard pattern"),
+                }
+                assert_eq!(arms[0].body.len(), 1);
+            } else {
+                panic!("Expected match statement");
+            }
+        } else {
+            panic!("Expected function");
+        }
+    }
+    
+    #[test]
+    fn test_parse_match_identifier() {
+        let source = r#"
+        fn main() {
+            match x {
+                value => print("bound"),
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        if let Item::Function(func) = &ast.items[0] {
+            if let Stmt::Match { arms, .. } = &func.body[0] {
+                match &arms[0].pattern {
+                    Pattern::Ident(name) => {
+                        assert_eq!(name, "value");
+                    },
+                    _ => panic!("Expected identifier pattern"),
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_parse_match_enum_patterns() {
+        let source = r#"
+        enum Option {
+            Some(i64),
+            None,
+        }
+        
+        fn main() {
+            match opt {
+                Option::Some(n) => print_int(n),
+                Option::None => print("none"),
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        if let Item::Function(func) = &ast.items[1] {
+            if let Stmt::Match { arms, .. } = &func.body[0] {
+                assert_eq!(arms.len(), 2);
+                
+                // First arm: Option::Some(n)
+                match &arms[0].pattern {
+                    Pattern::EnumPattern { enum_name, variant, data } => {
+                        assert_eq!(enum_name, "Option");
+                        assert_eq!(variant, "Some");
+                        if let Some(PatternData::Tuple(patterns)) = data {
+                            assert_eq!(patterns.len(), 1);
+                            match &patterns[0] {
+                                Pattern::Ident(name) => assert_eq!(name, "n"),
+                                _ => panic!("Expected identifier pattern in tuple"),
+                            }
+                        } else {
+                            panic!("Expected tuple pattern data");
+                        }
+                    },
+                    _ => panic!("Expected enum pattern"),
+                }
+                
+                // Second arm: Option::None
+                match &arms[1].pattern {
+                    Pattern::EnumPattern { enum_name, variant, data } => {
+                        assert_eq!(enum_name, "Option");
+                        assert_eq!(variant, "None");
+                        assert!(data.is_none());
+                    },
+                    _ => panic!("Expected enum pattern"),
+                }
+            }
+        }
+    }
+    
+    #[test]
+    fn test_parse_match_block_body() {
+        let source = r#"
+        fn main() {
+            match x {
+                _ => {
+                    print("line 1");
+                    print("line 2");
+                }
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        if let Item::Function(func) = &ast.items[0] {
+            if let Stmt::Match { arms, .. } = &func.body[0] {
+                assert_eq!(arms[0].body.len(), 2);
+            }
         }
     }
 }

@@ -151,6 +151,12 @@ pub enum Token {
     
     #[token("::")]
     DoubleColon,
+    
+    #[token("_", priority = 10)]
+    Underscore,
+    
+    #[token("=>")]
+    FatArrow,
 }
 
 impl Token {
@@ -172,7 +178,7 @@ impl Token {
     pub fn can_start_stmt(&self) -> bool {
         matches!(
             self,
-            Token::Let | Token::Return | Token::If | Token::While | Token::For | Token::Break | Token::Continue
+            Token::Let | Token::Return | Token::If | Token::While | Token::For | Token::Break | Token::Continue | Token::Match
         ) || self.can_start_expr()
     }
 }
@@ -223,6 +229,8 @@ impl std::fmt::Display for Token {
             Token::Dot => write!(f, "'.'"),
             Token::Arrow => write!(f, "'->'"),
             Token::DoubleColon => write!(f, "'::'"),
+            Token::Underscore => write!(f, "'_'"),
+            Token::FatArrow => write!(f, "'=>'"),
         }
     }
 }
