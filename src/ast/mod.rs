@@ -37,6 +37,8 @@ pub enum Type {
     String,
     /// Unit type (void)
     Unit,
+    /// Array type: element type and size
+    Array(Box<Type>, usize),
     /// Custom type
     Custom(String),
 }
@@ -53,6 +55,13 @@ pub enum Stmt {
         name: String,
         ty: Option<Type>,
         value: Expr,
+        mutable: bool,
+        span: Span,
+    },
+    /// Assignment statement
+    Assign {
+        target: String,
+        value: Expr,
         span: Span,
     },
     /// If statement
@@ -60,6 +69,12 @@ pub enum Stmt {
         condition: Expr,
         then_branch: Vec<Stmt>,
         else_branch: Option<Vec<Stmt>>,
+        span: Span,
+    },
+    /// While loop
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
         span: Span,
     },
 }
@@ -75,6 +90,17 @@ pub enum Expr {
     Bool(bool),
     /// Identifier
     Ident(String),
+    /// Array literal
+    ArrayLiteral {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    /// Array indexing
+    Index {
+        array: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
     /// Function call
     Call {
         func: Box<Expr>,
@@ -113,6 +139,8 @@ impl Expr {
             Expr::Integer(_) => Span::dummy(),
             Expr::Bool(_) => Span::dummy(),
             Expr::Ident(_) => Span::dummy(),
+            Expr::ArrayLiteral { span, .. } => *span,
+            Expr::Index { span, .. } => *span,
             Expr::Call { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
         }
@@ -176,6 +204,7 @@ impl std::fmt::Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "String"),
             Type::Unit => write!(f, "()"),
+            Type::Array(elem_type, size) => write!(f, "[{}; {}]", elem_type, size),
             Type::Custom(name) => write!(f, "{}", name),
         }
     }
@@ -187,12 +216,16 @@ impl std::fmt::Display for Stmt {
             Stmt::Expr(expr) => write!(f, "{};", expr),
             Stmt::Return(None) => write!(f, "return;"),
             Stmt::Return(Some(expr)) => write!(f, "return {};", expr),
-            Stmt::Let { name, ty, value, .. } => {
+            Stmt::Let { name, ty, value, mutable, .. } => {
+                let mut_str = if *mutable { "mut " } else { "" };
                 if let Some(ty) = ty {
-                    write!(f, "let {}: {} = {};", name, ty, value)
+                    write!(f, "let {}{}: {} = {};", mut_str, name, ty, value)
                 } else {
-                    write!(f, "let {} = {};", name, value)
+                    write!(f, "let {}{} = {};", mut_str, name, value)
                 }
+            }
+            Stmt::Assign { target, value, .. } => {
+                write!(f, "{} = {};", target, value)
             }
             Stmt::If { condition, then_branch, else_branch, .. } => {
                 write!(f, "if {} {{", condition)?;
@@ -209,6 +242,13 @@ impl std::fmt::Display for Stmt {
                 }
                 Ok(())
             }
+            Stmt::While { condition, body, .. } => {
+                write!(f, "while {} {{", condition)?;
+                for stmt in body {
+                    write!(f, " {} ", stmt)?;
+                }
+                write!(f, "}}")
+            }
         }
     }
 }
@@ -220,6 +260,19 @@ impl std::fmt::Display for Expr {
             Expr::Integer(n) => write!(f, "{}", n),
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Ident(name) => write!(f, "{}", name),
+            Expr::ArrayLiteral { elements, .. } => {
+                write!(f, "[")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", elem)?;
+                }
+                write!(f, "]")
+            }
+            Expr::Index { array, index, .. } => {
+                write!(f, "{}[{}]", array, index)
+            }
             Expr::Call { func, args, .. } => {
                 write!(f, "{}(", func)?;
                 for (i, arg) in args.iter().enumerate() {

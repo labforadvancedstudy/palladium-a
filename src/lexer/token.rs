@@ -36,11 +36,17 @@ pub enum Token {
     #[token("let")]
     Let,
     
+    #[token("mut")]
+    Mut,
+    
     #[token("if")]
     If,
     
     #[token("else")]
     Else,
+    
+    #[token("while")]
+    While,
     
     #[token("return")]
     Return,
@@ -139,7 +145,7 @@ impl Token {
     pub fn can_start_stmt(&self) -> bool {
         matches!(
             self,
-            Token::Let | Token::Return | Token::If
+            Token::Let | Token::Return | Token::If | Token::While
         ) || self.can_start_expr()
     }
 }
@@ -152,8 +158,10 @@ impl std::fmt::Display for Token {
             Token::Identifier(name) => write!(f, "identifier '{}'", name),
             Token::Fn => write!(f, "'fn'"),
             Token::Let => write!(f, "'let'"),
+            Token::Mut => write!(f, "'mut'"),
             Token::If => write!(f, "'if'"),
             Token::Else => write!(f, "'else'"),
+            Token::While => write!(f, "'while'"),
             Token::Return => write!(f, "'return'"),
             Token::True => write!(f, "'true'"),
             Token::False => write!(f, "'false'"),

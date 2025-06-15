@@ -1,6 +1,0 @@
-// Greetings from Palladium
-fn main() -> i32 {
-    print("Welcome to the future of programming!");
-    print("Where Legends Compile!");
-    return 0;
-}

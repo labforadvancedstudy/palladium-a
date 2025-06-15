@@ -60,6 +60,12 @@ impl CodeGenerator {
             Some(Type::Bool) => "int",  // C doesn't have bool by default
             Some(Type::String) => "const char*",
             Some(Type::Unit) | None => "void",
+            Some(Type::Array(_, _)) => {
+                // Arrays cannot be returned by value in C, would need to return pointer
+                return Err(CompileError::Generic(
+                    "Returning arrays from functions is not yet supported".to_string()
+                ));
+            }
             Some(Type::Custom(_)) => "void",  // TODO: Handle custom types
         };
         
@@ -106,28 +112,77 @@ impl CodeGenerator {
             Stmt::Let { name, ty, value, .. } => {
                 self.output.push_str("    ");
                 
+                // Helper function to convert Type to C type string
+                fn type_to_c(ty: &Type) -> String {
+                    match ty {
+                        Type::I32 => "int".to_string(),
+                        Type::I64 => "long long".to_string(),
+                        Type::U32 => "unsigned int".to_string(),
+                        Type::U64 => "unsigned long long".to_string(),
+                        Type::Bool => "int".to_string(),
+                        Type::String => "const char*".to_string(),
+                        Type::Unit => "void".to_string(),
+                        Type::Array(elem_type, size) => {
+                            format!("{}[{}]", type_to_c(elem_type), size)
+                        }
+                        Type::Custom(_) => "void".to_string(),  // TODO: Handle custom types
+                    }
+                }
+                
                 // Determine C type
-                let c_type = match ty {
-                    Some(Type::I32) => "int",
-                    Some(Type::I64) => "long long",
-                    Some(Type::U32) => "unsigned int",
-                    Some(Type::U64) => "unsigned long long",
-                    Some(Type::Bool) => "int",
-                    Some(Type::String) => "const char*",
-                    Some(Type::Unit) => "void",
-                    Some(Type::Custom(_)) => "void",  // TODO: Handle custom types
+                let (c_type, is_array, array_size) = match ty {
+                    Some(t) => {
+                        match t {
+                            Type::Array(elem_type, size) => {
+                                (type_to_c(elem_type), true, Some(*size))
+                            }
+                            _ => (type_to_c(t), false, None)
+                        }
+                    }
                     None => {
                         // Infer type from value for now
                         match value {
-                            Expr::Integer(_) => "long long",
-                            Expr::String(_) => "const char*",
-                            Expr::Bool(_) => "int",
-                            _ => "long long",  // Default to int for now
+                            Expr::Integer(_) => ("long long".to_string(), false, None),
+                            Expr::String(_) => ("const char*".to_string(), false, None),
+                            Expr::Bool(_) => ("int".to_string(), false, None),
+                            Expr::ArrayLiteral { elements, .. } => {
+                                // Infer array element type from first element
+                                let elem_type = if !elements.is_empty() {
+                                    match &elements[0] {
+                                        Expr::Integer(_) => "long long",
+                                        Expr::String(_) => "const char*",
+                                        Expr::Bool(_) => "int",
+                                        _ => "long long",
+                                    }
+                                } else {
+                                    "long long"
+                                };
+                                (elem_type.to_string(), true, Some(elements.len()))
+                            }
+                            _ => ("long long".to_string(), false, None),  // Default to int for now
                         }
                     }
                 };
                 
-                self.output.push_str(&format!("{} {} = ", c_type, name));
+                if is_array {
+                    // Array declaration
+                    self.output.push_str(&format!("{} {}", c_type, name));
+                    if let Some(size) = array_size {
+                        self.output.push_str(&format!("[{}]", size));
+                    }
+                    self.output.push_str(" = ");
+                    self.generate_expression(value)?;
+                    self.output.push_str(";\n");
+                } else {
+                    // Regular variable declaration
+                    self.output.push_str(&format!("{} {} = ", c_type, name));
+                    self.generate_expression(value)?;
+                    self.output.push_str(";\n");
+                }
+            }
+            Stmt::Assign { target, value, .. } => {
+                self.output.push_str("    ");
+                self.output.push_str(&format!("{} = ", target));
                 self.generate_expression(value)?;
                 self.output.push_str(";\n");
             }
@@ -153,6 +208,18 @@ impl CodeGenerator {
                 }
                 
                 self.output.push_str("\n");
+            }
+            Stmt::While { condition, body, .. } => {
+                self.output.push_str("    while (");
+                self.generate_expression(condition)?;
+                self.output.push_str(") {\n");
+                
+                // Generate body
+                for stmt in body {
+                    self.generate_statement(stmt)?;
+                }
+                
+                self.output.push_str("    }\n");
             }
         }
         Ok(())
@@ -236,6 +303,24 @@ impl CodeGenerator {
                 self.generate_expression(right)?;
                 
                 self.output.push_str(")");
+            }
+            Expr::ArrayLiteral { elements, .. } => {
+                // Generate array literal: {1, 2, 3}
+                self.output.push_str("{");
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.output.push_str(", ");
+                    }
+                    self.generate_expression(elem)?;
+                }
+                self.output.push_str("}");
+            }
+            Expr::Index { array, index, .. } => {
+                // Generate array indexing: arr[i]
+                self.generate_expression(array)?;
+                self.output.push_str("[");
+                self.generate_expression(index)?;
+                self.output.push_str("]");
             }
         }
         Ok(())

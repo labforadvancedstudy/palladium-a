@@ -89,6 +89,34 @@ impl Parser {
             Token::Let => self.parse_let(),
             Token::Return => self.parse_return(),
             Token::If => self.parse_if(),
+            Token::While => self.parse_while(),
+            Token::Identifier(_) => {
+                // Could be assignment or expression statement
+                let checkpoint = self.current;
+                let (token, span) = self.advance()?;
+                
+                if let Token::Identifier(name) = token {
+                    if self.check(&Token::Eq) && !self.check_at(1, &Token::Eq) {
+                        // This is an assignment
+                        let start_span = span;
+                        self.advance()?; // consume '='
+                        let value = self.parse_expression()?;
+                        let end_span = self.consume(Token::Semicolon, "Expected ';' after assignment")?;
+                        
+                        return Ok(Stmt::Assign {
+                            target: name,
+                            value,
+                            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                        });
+                    }
+                }
+                
+                // Not an assignment, rewind and parse as expression
+                self.current = checkpoint;
+                let expr = self.parse_expression()?;
+                self.consume(Token::Semicolon, "Expected ';' after expression")?;
+                Ok(Stmt::Expr(expr))
+            }
             _ => {
                 // Expression statement
                 let expr = self.parse_expression()?;
@@ -116,6 +144,14 @@ impl Parser {
     fn parse_let(&mut self) -> Result<Stmt> {
         let start_span = self.consume(Token::Let, "Expected 'let'")?;
         
+        // Check for optional 'mut' keyword
+        let mutable = if self.check(&Token::Mut) {
+            self.advance()?; // consume 'mut'
+            true
+        } else {
+            false
+        };
+        
         let name = match self.advance()? {
             (Token::Identifier(name), _) => name,
             (token, _) => {
@@ -141,7 +177,8 @@ impl Parser {
         Ok(Stmt::Let { 
             name, 
             ty,
-            value, 
+            value,
+            mutable,
             span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column) 
         })
     }
@@ -170,7 +207,7 @@ impl Parser {
                 else_stmts.push(self.parse_statement()?);
             }
             
-            let end_span = self.consume(Token::RightBrace, "Expected '}' after else body")?;
+            let _end_span = self.consume(Token::RightBrace, "Expected '}' after else body")?;
             Some(else_stmts)
         } else {
             None
@@ -186,6 +223,28 @@ impl Parser {
             condition,
             then_branch,
             else_branch,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        })
+    }
+    
+    /// Parse a while statement
+    fn parse_while(&mut self) -> Result<Stmt> {
+        let start_span = self.consume(Token::While, "Expected 'while'")?;
+        
+        let condition = self.parse_expression()?;
+        
+        self.consume(Token::LeftBrace, "Expected '{' after while condition")?;
+        
+        let mut body = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            body.push(self.parse_statement()?);
+        }
+        
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after while body")?;
+        
+        Ok(Stmt::While {
+            condition,
+            body,
             span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
@@ -283,7 +342,7 @@ impl Parser {
     
     /// Parse multiplication and division
     fn parse_multiplication(&mut self) -> Result<Expr> {
-        let mut left = self.parse_primary()?;
+        let mut left = self.parse_postfix()?;
         
         while let Ok(token) = self.peek() {
             match token {
@@ -294,7 +353,7 @@ impl Parser {
                         Token::Percent => BinOp::Mod,
                         _ => unreachable!(),
                     };
-                    let right = self.parse_primary()?;
+                    let right = self.parse_postfix()?;
                     let span = Span::dummy(); // TODO: proper span tracking
                     left = Expr::Binary {
                         left: Box::new(left),
@@ -328,6 +387,30 @@ impl Parser {
                 self.consume(Token::RightParen, "Expected ')' for unit type")?;
                 Ok(Type::Unit)
             }
+            (Token::LeftBracket, _) => {
+                // Parse array type: [T; N]
+                let elem_type = self.parse_type()?;
+                self.consume(Token::Semicolon, "Expected ';' in array type")?;
+                
+                // Parse the size
+                let size = match self.advance()? {
+                    (Token::Integer(n), _) => {
+                        if n < 0 {
+                            return Err(CompileError::Generic("Array size must be non-negative".to_string()));
+                        }
+                        n as usize
+                    }
+                    (token, _) => {
+                        return Err(CompileError::UnexpectedToken {
+                            expected: "array size".to_string(),
+                            found: token.to_string(),
+                        });
+                    }
+                };
+                
+                self.consume(Token::RightBracket, "Expected ']' after array type")?;
+                Ok(Type::Array(Box::new(elem_type), size))
+            }
             (token, _) => Err(CompileError::UnexpectedToken {
                 expected: "type".to_string(),
                 found: token.to_string(),
@@ -342,10 +425,63 @@ impl Parser {
             (Token::Integer(n), _) => Ok(Expr::Integer(n)),
             (Token::True, _) => Ok(Expr::Bool(true)),
             (Token::False, _) => Ok(Expr::Bool(false)),
-            (Token::Identifier(name), span) => {
-                // Check if this is a function call
-                if self.check(&Token::LeftParen) {
-                    self.advance()?; // consume '('
+            (Token::Identifier(name), _span) => {
+                Ok(Expr::Ident(name))
+            }
+            (Token::LeftParen, _) => {
+                // Parse parenthesized expression
+                let expr = self.parse_expression()?;
+                self.consume(Token::RightParen, "Expected ')' after expression")?;
+                Ok(expr)
+            }
+            (Token::LeftBracket, span) => {
+                // Parse array literal: [1, 2, 3]
+                let mut elements = Vec::new();
+                
+                if !self.check(&Token::RightBracket) {
+                    loop {
+                        elements.push(self.parse_expression()?);
+                        
+                        if !self.check(&Token::Comma) {
+                            break;
+                        }
+                        self.advance()?; // consume ','
+                    }
+                }
+                
+                let end_span = self.consume(Token::RightBracket, "Expected ']' after array elements")?;
+                
+                Ok(Expr::ArrayLiteral {
+                    elements,
+                    span: Span::new(span.start, end_span.end, span.line, span.column),
+                })
+            }
+            (token, _) => Err(CompileError::UnexpectedToken {
+                expected: "expression".to_string(),
+                found: token.to_string(),
+            }),
+        }
+    }
+    
+    /// Parse postfix expressions (array indexing, function calls)
+    fn parse_postfix(&mut self) -> Result<Expr> {
+        let mut expr = self.parse_primary()?;
+        
+        loop {
+            match self.peek() {
+                Ok(Token::LeftBracket) => {
+                    let start_span = self.advance()?.1; // consume '['
+                    let index = self.parse_expression()?;
+                    let end_span = self.consume(Token::RightBracket, "Expected ']' after array index")?;
+                    
+                    expr = Expr::Index {
+                        array: Box::new(expr),
+                        index: Box::new(index),
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                    };
+                }
+                Ok(Token::LeftParen) => {
+                    let start_span = self.advance()?.1; // consume '('
                     
                     let mut args = Vec::new();
                     
@@ -362,26 +498,17 @@ impl Parser {
                     
                     let end_span = self.consume(Token::RightParen, "Expected ')'")?;
                     
-                    Ok(Expr::Call {
-                        func: Box::new(Expr::Ident(name)),
+                    expr = Expr::Call {
+                        func: Box::new(expr),
                         args,
-                        span: Span::new(span.start, end_span.end, span.line, span.column),
-                    })
-                } else {
-                    Ok(Expr::Ident(name))
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                    };
                 }
+                _ => break,
             }
-            (Token::LeftParen, _) => {
-                // Parse parenthesized expression
-                let expr = self.parse_expression()?;
-                self.consume(Token::RightParen, "Expected ')' after expression")?;
-                Ok(expr)
-            }
-            (token, _) => Err(CompileError::UnexpectedToken {
-                expected: "expression".to_string(),
-                found: token.to_string(),
-            }),
         }
+        
+        Ok(expr)
     }
     
     // Helper methods
@@ -408,6 +535,16 @@ impl Parser {
             false
         } else {
             std::mem::discriminant(&self.tokens[self.current].0) == std::mem::discriminant(token)
+        }
+    }
+    
+    /// Check if a token at offset matches the given token
+    fn check_at(&self, offset: usize, token: &Token) -> bool {
+        let index = self.current + offset;
+        if index >= self.tokens.len() {
+            false
+        } else {
+            std::mem::discriminant(&self.tokens[index].0) == std::mem::discriminant(token)
         }
     }
     

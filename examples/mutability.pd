@@ -1,0 +1,26 @@
+// Demonstrating mutability and variable reassignment in Palladium v0.3
+fn main() {
+    // Immutable variable (cannot be reassigned)
+    let immutable_var = 10;
+    print_int(immutable_var);
+    
+    // Mutable variable (can be reassigned)
+    let mut counter = 0;
+    print_int(counter);
+    
+    // Reassign mutable variable
+    counter = counter + 1;
+    print_int(counter);
+    
+    counter = counter + 1;
+    print_int(counter);
+    
+    // Use mutable variable in a while loop
+    let mut i = 0;
+    while i < 5 {
+        print_int(i);
+        i = i + 1;
+    }
+    
+    print("Loop finished!");
+}

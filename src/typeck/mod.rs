@@ -12,6 +12,7 @@ pub enum CheckerType {
     String,
     Int,
     Bool,
+    Array(Box<CheckerType>, usize),
     Function(Vec<CheckerType>, Box<CheckerType>),
 }
 
@@ -23,6 +24,9 @@ impl From<&crate::ast::Type> for CheckerType {
             crate::ast::Type::I32 | crate::ast::Type::I64 => CheckerType::Int,
             crate::ast::Type::Bool => CheckerType::Bool,
             crate::ast::Type::U32 | crate::ast::Type::U64 => CheckerType::Int,
+            crate::ast::Type::Array(elem_type, size) => {
+                CheckerType::Array(Box::new(CheckerType::from(elem_type.as_ref())), *size)
+            }
             crate::ast::Type::Custom(_) => CheckerType::Unit, // TODO: Handle custom types
         }
     }
@@ -35,6 +39,7 @@ impl std::fmt::Display for CheckerType {
             CheckerType::String => write!(f, "String"),
             CheckerType::Int => write!(f, "Int"),
             CheckerType::Bool => write!(f, "Bool"),
+            CheckerType::Array(elem_type, size) => write!(f, "[{}; {}]", elem_type, size),
             CheckerType::Function(params, ret) => {
                 write!(f, "fn(")?;
                 for (i, param) in params.iter().enumerate() {
@@ -49,10 +54,17 @@ impl std::fmt::Display for CheckerType {
     }
 }
 
+/// Variable information including type and mutability
+#[derive(Debug, Clone)]
+struct VarInfo {
+    ty: CheckerType,
+    mutable: bool,
+}
+
 /// Symbol table for storing variable types with scope support
 #[derive(Debug, Clone)]
 struct SymbolTable {
-    scopes: Vec<HashMap<String, CheckerType>>,
+    scopes: Vec<HashMap<String, VarInfo>>,
 }
 
 impl SymbolTable {
@@ -75,25 +87,25 @@ impl SymbolTable {
     }
     
     /// Define a variable in the current scope
-    fn define(&mut self, name: String, ty: CheckerType) -> Result<()> {
+    fn define(&mut self, name: String, ty: CheckerType, mutable: bool) -> Result<()> {
         if let Some(scope) = self.scopes.last_mut() {
             if scope.contains_key(&name) {
                 return Err(CompileError::Generic(
                     format!("Variable '{}' already defined in this scope", name)
                 ));
             }
-            scope.insert(name, ty);
+            scope.insert(name, VarInfo { ty, mutable });
             Ok(())
         } else {
             Err(CompileError::Generic("No active scope".to_string()))
         }
     }
     
-    /// Look up a variable type (searches all scopes from innermost to outermost)
-    fn lookup(&self, name: &str) -> Option<&CheckerType> {
+    /// Look up a variable (searches all scopes from innermost to outermost)
+    fn lookup(&self, name: &str) -> Option<&VarInfo> {
         for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(name) {
-                return Some(ty);
+            if let Some(info) = scope.get(name) {
+                return Some(info);
             }
         }
         None
@@ -219,7 +231,7 @@ impl TypeChecker {
                 }
                 Ok(())
             }
-            Stmt::Let { name, ty, value, .. } => {
+            Stmt::Let { name, ty, value, mutable, .. } => {
                 // Type check the value expression
                 let value_type = self.check_expression(value)?;
                 
@@ -233,10 +245,40 @@ impl TypeChecker {
                         });
                     }
                     // Define variable with annotated type
-                    self.symbols.define(name.clone(), expected_type)?;
+                    self.symbols.define(name.clone(), expected_type, *mutable)?;
                 } else {
                     // Define variable with inferred type
-                    self.symbols.define(name.clone(), value_type)?;
+                    self.symbols.define(name.clone(), value_type, *mutable)?;
+                }
+                
+                Ok(())
+            }
+            Stmt::Assign { target, value, .. } => {
+                // Look up the variable and clone necessary info
+                let (var_type, var_mutable) = {
+                    let var_info = self.symbols.lookup(target)
+                        .ok_or_else(|| CompileError::Generic(
+                            format!("Undefined variable: '{}'", target)
+                        ))?;
+                    (var_info.ty.clone(), var_info.mutable)
+                };
+                
+                // Check if variable is mutable
+                if !var_mutable {
+                    return Err(CompileError::Generic(
+                        format!("Cannot assign to immutable variable '{}'", target)
+                    ));
+                }
+                
+                // Type check the value expression
+                let value_type = self.check_expression(value)?;
+                
+                // Check that types match
+                if value_type != var_type {
+                    return Err(CompileError::TypeMismatch {
+                        expected: var_type.to_string(),
+                        found: value_type.to_string(),
+                    });
                 }
                 
                 Ok(())
@@ -269,6 +311,25 @@ impl TypeChecker {
                 
                 Ok(())
             }
+            Stmt::While { condition, body, .. } => {
+                // Type check the condition - must be Bool
+                let cond_type = self.check_expression(condition)?;
+                if cond_type != CheckerType::Bool {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "Bool".to_string(),
+                        found: cond_type.to_string(),
+                    });
+                }
+                
+                // Type check body in new scope
+                self.symbols.enter_scope();
+                for stmt in body {
+                    self.check_statement(stmt)?;
+                }
+                self.symbols.exit_scope();
+                
+                Ok(())
+            }
         }
     }
     
@@ -280,8 +341,8 @@ impl TypeChecker {
             Expr::Bool(_) => Ok(CheckerType::Bool),
             Expr::Ident(name) => {
                 // First check if it's a variable
-                if let Some(var_type) = self.symbols.lookup(name) {
-                    return Ok(var_type.clone());
+                if let Some(var_info) = self.symbols.lookup(name) {
+                    return Ok(var_info.ty.clone());
                 }
                 
                 // Then check if it's a function
@@ -369,6 +430,50 @@ impl TypeChecker {
                         // Comparison operations return Bool
                         Ok(CheckerType::Bool)
                     }
+                }
+            }
+            Expr::ArrayLiteral { elements, .. } => {
+                if elements.is_empty() {
+                    return Err(CompileError::Generic(
+                        "Empty array literals are not supported (cannot infer type)".to_string()
+                    ));
+                }
+                
+                // Type check first element
+                let elem_type = self.check_expression(&elements[0])?;
+                
+                // Check that all elements have the same type
+                for elem in &elements[1..] {
+                    let elem_expr_type = self.check_expression(elem)?;
+                    if elem_expr_type != elem_type {
+                        return Err(CompileError::TypeMismatch {
+                            expected: elem_type.to_string(),
+                            found: elem_expr_type.to_string(),
+                        });
+                    }
+                }
+                
+                Ok(CheckerType::Array(Box::new(elem_type), elements.len()))
+            }
+            Expr::Index { array, index, .. } => {
+                // Type check the array expression
+                let array_type = self.check_expression(array)?;
+                
+                // Type check the index expression (must be Int)
+                let index_type = self.check_expression(index)?;
+                if index_type != CheckerType::Int {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "Int".to_string(),
+                        found: index_type.to_string(),
+                    });
+                }
+                
+                // Extract element type from array type
+                match array_type {
+                    CheckerType::Array(elem_type, _size) => Ok(elem_type.as_ref().clone()),
+                    _ => Err(CompileError::Generic(
+                        format!("Cannot index into non-array type: {}", array_type)
+                    )),
                 }
             }
         }

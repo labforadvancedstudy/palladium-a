@@ -1,0 +1,17 @@
+// While loop example in Palladium v0.3
+fn main() {
+    let mut i = 0;
+    while i < 5 {
+        print_int(i);
+        i = i + 1;  // Now using proper reassignment with mutable variables!
+    }
+    
+    // Example with boolean variable
+    let mut running = true;
+    let mut count = 0;
+    while running {
+        print_int(count);
+        count = count + 1;
+        running = count < 3;
+    }
+}

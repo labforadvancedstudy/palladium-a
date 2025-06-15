@@ -1,0 +1,21 @@
+// Fibonacci sequence using iterative approach with mutable variables
+fn main() {
+    let n = 10; // Calculate first 10 Fibonacci numbers
+    
+    let mut a = 0;
+    let mut b = 1;
+    let mut i = 0;
+    
+    print("Fibonacci sequence:");
+    
+    while i < n {
+        print_int(a);
+        
+        // Calculate next Fibonacci number
+        let temp = a + b;
+        a = b;
+        b = temp;
+        
+        i = i + 1;
+    }
+}
