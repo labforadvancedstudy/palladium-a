@@ -1,328 +1,177 @@
-```
-     _    _                                  ____       _ _           _ _                 
-    / \  | | __ _ _ __   __   _____  _ __  |  _ \ __ _| | | __ _  __| (_)_   _ _ __ ___  
-   / _ \ | |/ _` | '_ \  \ \ / / _ \| '_ \ | |_) / _` | | |/ _` |/ _` | | | | | '_ ` _ \ 
-  / ___ \| | (_| | | | |  \ V / (_) | | | ||  __/ (_| | | | (_| | (_| | | |_| | | | | | |
- /_/   \_\_|\__,_|_| |_|   \_/ \___/|_| |_||_|   \__,_|_|_|\__,_|\__,_|_|\__,_|_| |_| |_|
-                                                                                          
- ╔═══════════════════════════════════════════════════════════════════════════════════════╗
- ║                         WHERE LEGENDS COMPILE™                                        ║
- ╚═══════════════════════════════════════════════════════════════════════════════════════╝
-```
+# Palladium Programming Language
 
-[![Turing Score](https://img.shields.io/badge/Turing%20Score-100%2F100-brightgreen)](docs/reviews/turing.md)
-[![von Neumann Score](https://img.shields.io/badge/von%20Neumann%20Score-97%2F100-green)](docs/reviews/vonneumann.md)
-[![Shannon Score](https://img.shields.io/badge/Shannon%20Score-90%2F100-yellowgreen)](docs/reviews/shannon.md)
+## 프로젝트 소개
 
-```
- ┌─────────────────────────────────────────┐
- │ The Language That Changes Everything    │
- └─────────────────────────────────────────┘
-```
+Palladium은 안전성과 성능을 모두 갖춘 차세대 시스템 프로그래밍 언어입니다. Rust의 메모리 안전성과 함수형 프로그래밍의 수학적 엄밀함을 결합하여, 검증 가능하고 효율적인 소프트웨어 개발을 가능하게 합니다.
 
-Alan von Palladium is the first programming language to achieve:
-- **Mathematical Correctness** proven by machines (Turing's dream)
-- **Hardware Perfection** with 162M msg/s throughput (von Neumann's vision)  
-- **Zero Compromise** between safety and performance
+## 주요 특징
 
-```
-  ____       _      _      ____  _             _   
- / __ \     (_)    | |    / ___|| |_ __ _ _ __| |_ 
-/ / _` |_   _ _  ___| | __ \___ \| __/ _` | '__| __|
-\ \__,| | | | |/ __| |/ /  ___) | || (_| | |  | |_ 
- \____/\_,_|_|_|\___|_|\__\|____/ \__\__,_|_|   \__|
-```
+- **메모리 안전성**: 컴파일 시점에 메모리 오류를 방지
+- **타입 안전성**: 강력한 정적 타입 시스템
+- **간결한 문법**: 개발자 친화적인 직관적 구문
+- **LLVM 기반**: 최적화된 네이티브 코드 생성
+- **점진적 검증**: 필요에 따라 형식적 검증 추가 가능
+
+## 빠른 시작 가이드
+
+### 요구사항
+
+- Rust 1.70 이상
+- LLVM 14 이상
+- Cargo
+
+### 설치
 
 ```bash
-# Install AVP
-curl -sSf https://alan-von-palladium.org/install | sh
+# 저장소 클론
+git clone https://github.com/palladium-lang/palladium.git
+cd palladium
 
-# Create your first proven program
-avp new fibonacci --total
-cd fibonacci
-avp run --verify
+# 빌드
+cargo build --release
+
+# 설치 (선택사항)
+cargo install --path .
 ```
 
-```
- ╔══════════════════════════════════════════╗
- ║    Benchmarks That Speak The Truth       ║
- ╠══════════════════════════════════════════╣
- ║  "Numbers don't lie, proofs don't die"   ║
- ╚══════════════════════════════════════════╝
-```
+## 예제 코드
 
-| Metric | Rust 1.74 | AVP v0.7 | Improvement |
-|--------|-----------|----------|-------------|
-| Compile Time (10K regions) | 5.2s | 3.4s | **34% faster** |
-| Lines of Code | 213 | 160 | **25% less** |
-| Network Stack | 151M msg/s | 162M msg/s | **7% faster** |
-| Memory Safety | ✓ | ✓ + Proven | **∞ better** |
+### Hello World
 
-```
-  _    _  _           ___   ___   ___ ___  
- | |  | || |_ _  _   |__ \ |__ \ |__ \__ \ 
- | |/\| || ' \ || |     | |    | |   | | | |
- |_|\_\_||_||_|\_, |    |_|    |_|   |_| |_|
-               |__/     ???    ???   ??? ???
-```
-
-### For Engineers
-```avp
-// Rust: Lifetime puzzle
-fn process<'a, 'b>(&'a mut self, data: &'b [u8]) 
-    -> Result<&'a str, Error<'b>>
-
-// AVP: Crystal clear
-fn process(ref mut self, data: ref [u8]) -> Result<ref str>
-```
-
-### For Theorists
-```avp
-#![total(strict)]  // Compiler proves termination
-
-#[decreases(n)]    // Induction metric
-fn factorial(n: nat) -> nat {
-    if n <= 1 { 1 } else { n * factorial(n-1) }
-}
-// Lean verifies: ∀n. factorial(n) terminates
-```
-
-### For Everyone
-- **No more debugging**: Bugs caught at compile time
-- **No more benchmarking**: Performance proven optimal
-- **No more security audits**: Safety guaranteed by math
-
-```
-   ___               ___         _                  
-  / __|___ _ _ ___  | __|__ __ _| |_ _  _ _ _ ___ ___
- | (__/ _ \ '_/ -_) | _/ -_) _` |  _| || | '_/ -_|_-<
-  \___\___/_| \___| |_|\___\__,_|\__|\_,_|_| \___/__/
-                                                      
-```
-
-```
-┌────────────────────────────────────┐
-│ 1. Tri-Proof Verification         │
-├────────────────────────────────────┤
-│    Coq + Isabelle + Lean = ∞      │
-└────────────────────────────────────┘
-```
-- **Coq**: Core language semantics
-- **Isabelle**: Concurrency correctness  
-- **Lean**: Zero-axiom totality proofs
-
-```
-┌────────────────────────────────────┐
-│ 2. Effect System                  │
-├────────────────────────────────────┤
-│    async + try + total = magic    │
-└────────────────────────────────────┘
-```
-```avp
-effect async { await<T>(Future<T>) -> T }
-effect try { throw<E>(E) -> ! }
-effect total { recurse<M: Metric>(M) }
-
-fn server() with async + try {
-    let req = await(accept())?;
-    respond(req).await
+```palladium
+// hello.pd
+fn main() -> i32 {
+    print("Hello, World!");
+    return 0;
 }
 ```
 
-```
-┌────────────────────────────────────┐
-│ 3. Hardware Co-Design             │
-├────────────────────────────────────┤
-│    Theory ∩ Silicon = Perfection  │
-└────────────────────────────────────┘
-```
-- NUMA-aware allocation
-- Cache-line optimization
-- CHERI capability pointers
-- Perfect instruction scheduling
+### 여러 출력
 
-```
- ____                                        _        
-|  _ \  ___   ___ _   _ _ __ ___   ___ _ __ | |_ ___  
-| | | |/ _ \ / __| | | | '_ ` _ \ / _ \ '_ \| __/ __| 
-| |_| | (_) | (__| |_| | | | | | |  __/ | | | |_\__ \ 
-|____/ \___/ \___|\__,_|_| |_| |_|\___|_| |_|\__|___/ 
+```palladium
+// greet.pd
+fn main() -> i32 {
+    print("Welcome to the future of programming!");
+    print("Where Legends Compile!");
+    return 0;
+}
 ```
 
-- [Quick Start Guide](docs/quickstart.md)
-- [Language Reference](docs/reference.md)
-- [Migration from Rust](docs/migration.md)
-- [Formal Specifications](proofs/)
+## 빌드 및 설치 방법
 
-```
-    ___                 _             
-   | __|__ ___ ___ _  _| |_ ___ _ __  
-   | _|/ _/ _ (_-<| || |  _/ -_) '  \ 
-   |___\__\___/__/ \_, |\__\___|_|_|_|
-                   |__/               
+### 개발 환경 설정
+
+1. Rust 툴체인 설치:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### IDE Support
-- [VS Code Extension](https://marketplace.visualstudio.com/avp)
-- [IntelliJ Plugin](https://plugins.jetbrains.com/avp)
-- [Emacs Mode](https://github.com/avp/emacs-avp)
+2. LLVM 설치:
+```bash
+# macOS
+brew install llvm@14
 
-### Libraries
-- [avp-std](https://crates.io/avp-std) - Standard library
-- [avp-async](https://crates.io/avp-async) - Async runtime
-- [avp-web](https://crates.io/avp-web) - Web framework
-- [avp-ml](https://crates.io/avp-ml) - Machine learning
+# Ubuntu/Debian
+sudo apt-get install llvm-14 llvm-14-dev
 
-```
-  ___              _                 
- | _ \___ __ _ __| |_ __  __ _ _ __ 
- |   / _ / _` / _` | '  \/ _` | '_ \
- |_|_\___\__,_\__,_|_|_|_\__,_| .__/
-                              |_|   
-     "To infinity and beyond"       
+# Arch Linux
+sudo pacman -S llvm
 ```
 
-### 2025
-- ✅ v0.7: Turing 100/100 achieved
-- ⏳ Q3: Self-hosting compiler
-- ⏳ Q4: von Neumann 100/100
-
-### 2026  
-- 🔲 Q1: WASM-GC backend
-- 🔲 Q2: Rust→AVP translator
-- 🔲 Q4: 1.0 LTS release
-
-### 2030
-- 🎯 50% of systems code
-- 🎯 Zero-day extinctions
-- 🎯 100% productivity gain
-
-See [VISION_ROADMAP.md](VISION_ROADMAP.md) for details.
-
-```
-   ___         _       _ _         _   _           
-  / __|___ _ _| |_ _ _(_) |__ _  _| |_(_)_ _  __ _ 
- | (__/ _ \ ' \  _| '_| | '_ \ || |  _| | ' \/ _` |
-  \___\___/_||_\__|_| |_|_.__/\_,_|\__|_|_||_\__, |
-                                              |___/ 
-    "Hackers welcome, proofs required"             
+3. 프로젝트 빌드:
+```bash
+cargo build
 ```
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Code of Conduct
-- Development setup
-- Proof guidelines
-- Review process
+## 사용법
 
-```
- ┌─────────────────────────┐
- │  Academic Street Cred   │
- └─────────────────────────┘
-```
+### 컴파일러 실행
 
-- [Palladium α v0.7 Whitepaper](papers/palladium_alpha_v0.7.pdf)
-- [Quadratic Compilation Bounds](papers/quadratic_bounds.pdf)
-- [Side-Channel Cost Semantics](papers/side_channel.pdf)
-- [Tri-Proof Consistency](papers/tri_proof.pdf)
+```bash
+# 파일 컴파일
+palladium compile examples/hello.pd
 
-```
-  ___             ___ _ _   _         
- | _ \___ __ ___ / __(_) |_(_)___ ___ 
- |   / -_) _/ _ \ (_ | |  _| / _ (_-< 
- |_|_\___\__\___/\___|_|\__|_\___/__/ 
-                                      
-   "When legends judge legends"       
+# 컴파일 후 실행
+palladium run examples/hello.pd
+
+# 도움말
+palladium --help
 ```
 
-> "Finally, a language that thinks before it runs" - Alan Turing Review
+### 컴파일러 옵션
 
-> "Correctness is now compatible with gigabit workloads" - von Neumann Review
+- `compile <file>`: Palladium 파일을 실행 파일로 컴파일
+- `run <file>`: 컴파일 후 즉시 실행
+- `check <file>`: 문법 검사만 수행
+- `--version`: 버전 정보 표시
+- `--help`: 도움말 표시
 
-> "The logical heir to the IAS ethos" - Computing History Journal
+## 현재 지원되는 기능 (v0.1)
 
-```
- ╔═══════════════════════════════════╗
- ║        The Numbers Game          ║
- ╚═══════════════════════════════════╝
-```
+### 기본 기능
+- ✅ 함수 정의 (`fn`)
+- ✅ main 함수
+- ✅ 문자열 리터럴
+- ✅ print 함수
+- ✅ 반환문 (`return`)
+- ✅ 단일 행 주석 (`//`)
 
-### Splay Tree Implementation
-| Language | Lines | Box/Ref | Unsafe | Proven |
-|----------|-------|---------|---------|---------|
-| C++ | 287 | Manual | Everywhere | ❌ |
-| Rust | 213 | Explicit Box | Some | ❌ |
-| **AVP** | **160** | **Implicit** | **None** | **✅** |
+### 타입 시스템
+- ✅ 기본 타입: `i32`, `String`
+- ✅ 함수 타입
+- ✅ 반환 타입 명시
 
-See full comparison in [examples/splay_tree/](examples/splay_tree/).
+### 제한사항
+- ❌ 변수 선언 (v0.2 예정)
+- ❌ 조건문 (v0.2 예정)
+- ❌ 반복문 (v0.2 예정)
+- ❌ 사용자 정의 타입 (v0.3 예정)
 
-```
- ███╗   ███╗██╗███████╗███████╗██╗ ██████╗ ███╗   ██╗
- ████╗ ████║██║██╔════╝██╔════╝██║██╔═══██╗████╗  ██║
- ██╔████╔██║██║███████╗███████╗██║██║   ██║██╔██╗ ██║
- ██║╚██╔╝██║██║╚════██║╚════██║██║██║   ██║██║╚██╗██║
- ██║ ╚═╝ ██║██║███████║███████║██║╚██████╔╝██║ ╚████║
- ╚═╝     ╚═╝╚═╝╚══════╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
-                                                      
-```
+## 로드맵
 
-**Increase Earth's Software Productivity by 100%**
+### v0.1 (현재)
+- [x] 기본 컴파일러 구조
+- [x] 간단한 함수 컴파일
+- [x] LLVM 코드 생성
+- [x] 기본 타입 시스템
 
-We believe software development shouldn't be about fighting the language. It should be about solving problems. AVP makes this possible.
+### v0.2 (2025 Q1)
+- [ ] 변수와 바인딩
+- [ ] 기본 연산자
+- [ ] 조건문 (if/else)
+- [ ] 반복문 (while/for)
 
-```
-  ___         _           _   
- / __|___ _ _| |_ __ _ __| |_ 
-| (__/ _ \ ' \  _/ _` / _|  _|
- \___\___/_||_\__\__,_\__|\__|
-                              
-   "ping us, we pong back"    
-```
+### v0.3 (2025 Q2)
+- [ ] 구조체와 열거형
+- [ ] 패턴 매칭
+- [ ] 모듈 시스템
+- [ ] 표준 라이브러리 기초
 
-- Website: [alan-von-palladium.org](https://alan-von-palladium.org)
-- GitHub: [github.com/alan-von-palladium](https://github.com/alan-von-palladium)
-- Discord: [discord.gg/avp](https://discord.gg/avp)
-- Twitter: [@avp_lang](https://twitter.com/avp_lang)
+### v0.4 (2025 Q3)
+- [ ] 트레이트 시스템
+- [ ] 제네릭
+- [ ] 소유권 시스템
+- [ ] 빌림 검사기
 
-```
- ╔═════════════════════════════════════╗
- ║           LICENSE                   ║
- ╠═════════════════════════════════════╣
- ║  MIT + Correctness Clause           ║
- ║  "Free as in freedom,               ║
- ║   Proven as in mathematics"         ║
- ╚═════════════════════════════════════╝
-```
+### v0.5 (2025 Q4)
+- [ ] 비동기 프로그래밍
+- [ ] 매크로 시스템
+- [ ] 최적화 개선
 
-AVP is licensed under the MIT License with the Correctness Clause:
-- Use freely
-- Modify freely
-- Must maintain proofs
+### v1.0 (2026)
+- [ ] 자체 호스팅 컴파일러
+- [ ] 형식적 검증 통합
+- [ ] 프로덕션 준비 완료
 
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 기여하기
 
-    "In the beginning was the Word, and the Word was proven correct."
-                                                        - The AVP Gospel
+Palladium 프로젝트에 기여를 환영합니다! [CONTRIBUTING.md](CONTRIBUTING.md)를 참고해주세요.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## 라이선스
 
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                    Alan von Palladium                                     ║
-║                 Because humanity deserves                                 ║
-║                     better languages.                                     ║
-╚═══════════════════════════════════════════════════════════════════════════╝
+MIT 라이선스 - 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│ [⬇️ Download] | [📚 Docs] | [🎮 Playground] | [💀 Hack The Planet]     │
-└─────────────────────────────────────────────────────────────────────────┘
+## 문의
 
-[⬇️ Download]: https://alan-von-palladium.org/download
-[📚 Docs]: https://docs.alan-von-palladium.org
-[🎮 Playground]: https://play.alan-von-palladium.org
-[💀 Hack The Planet]: https://github.com/alan-von-palladium
-
-                              ╔═╗╔═╗╔═╗
-                              ╠═╣╚╗╔╝╠═╝
-                              ╩ ╩ ╚╝ ╩  
-                        「 The Future is Proven 」
-```
+- GitHub Issues: [github.com/palladium-lang/palladium/issues](https://github.com/palladium-lang/palladium/issues)
+- Email: palladium-lang@example.com
