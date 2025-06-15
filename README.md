@@ -11,6 +11,7 @@ Palladium은 안전성과 성능을 모두 갖춘 차세대 시스템 프로그�
 - **간결한 문법**: 개발자 친화적인 직관적 구문
 - **LLVM 기반**: 최적화된 네이티브 코드 생성
 - **점진적 검증**: 필요에 따라 형식적 검증 추가 가능
+- **표현력 높은 제어 구조**: 변수, 산술 연산, 조건문 지원
 
 ## 빠른 시작 가이드
 
@@ -34,26 +35,104 @@ cargo build --release
 cargo install --path .
 ```
 
-## 예제 코드
-
-### Hello World
+### 첫 번째 프로그램
 
 ```palladium
-// hello.pd
+// calculator.pd
 fn main() -> i32 {
-    print("Hello, World!");
+    let a = 42;
+    let b = 8;
+    let result = a + b;
+    
+    print("The answer is: ");
+    print_int(result);
+    
+    if result == 50 {
+        print("Correct!");
+    } else {
+        print("Something went wrong!");
+    }
+    
     return 0;
 }
 ```
 
-### 여러 출력
+```bash
+# 컴파일하고 실행
+palladium run calculator.pd
+```
+
+## 예제 코드
+
+### 변수와 산술 연산
 
 ```palladium
-// greet.pd
+// variables.pd
 fn main() -> i32 {
-    print("Welcome to the future of programming!");
-    print("Where Legends Compile!");
+    let x = 10;
+    let y = 20;
+    let sum = x + y;
+    
+    print("x = ");
+    print_int(x);
+    print("y = ");
+    print_int(y);
+    print("sum = ");
+    print_int(sum);
+    
+    return sum;
+}
+```
+
+### 조건문과 비교 연산
+
+```palladium
+// conditions.pd
+fn main() -> i32 {
+    let age = 25;
+    
+    if age >= 18 {
+        print("Adult");
+        if age >= 65 {
+            print("Senior");
+        } else {
+            print("Not a senior");
+        }
+    } else {
+        print("Minor");
+    }
+    
     return 0;
+}
+```
+
+### 복잡한 연산과 표현식
+
+```palladium
+// complex_calc.pd
+fn main() -> i32 {
+    let score1 = 85;
+    let score2 = 92;
+    let score3 = 78;
+    
+    // 평균 계산 (정수 나눗셈)
+    let average = (score1 + score2 + score3) / 3;
+    
+    print("Average score: ");
+    print_int(average);
+    
+    // 등급 판정
+    if average >= 90 {
+        print("Grade: A");
+    } else if average >= 80 {
+        print("Grade: B");
+    } else if average >= 70 {
+        print("Grade: C");
+    } else {
+        print("Grade: F");
+    }
+    
+    return average;
 }
 ```
 
@@ -106,39 +185,48 @@ palladium --help
 - `--version`: 버전 정보 표시
 - `--help`: 도움말 표시
 
-## 현재 지원되는 기능 (v0.1)
+## 현재 지원되는 기능 (v0.2-alpha)
 
 ### 기본 기능
 - ✅ 함수 정의 (`fn`)
 - ✅ main 함수
 - ✅ 문자열 리터럴
 - ✅ print 함수
+- ✅ print_int 함수 (정수 출력)
 - ✅ 반환문 (`return`)
 - ✅ 단일 행 주석 (`//`)
+- ✅ 변수 선언 (`let`)
+- ✅ 조건문 (`if`/`else`)
+
+### 연산자
+- ✅ 산술 연산자: `+`, `-`, `*`, `/`
+- ✅ 비교 연산자: `<`, `>`, `<=`, `>=`, `==`, `!=`
+- ✅ 복잡한 표현식 지원 (괄호 포함)
 
 ### 타입 시스템
 - ✅ 기본 타입: `i32`, `String`
 - ✅ 함수 타입
 - ✅ 반환 타입 명시
+- ✅ 타입 추론 (변수 선언 시)
 
 ### 제한사항
-- ❌ 변수 선언 (v0.2 예정)
-- ❌ 조건문 (v0.2 예정)
-- ❌ 반복문 (v0.2 예정)
+- ❌ 반복문 (v0.3 예정)
 - ❌ 사용자 정의 타입 (v0.3 예정)
+- ❌ 배열과 컬렉션 (v0.3 예정)
+- ❌ 모듈 시스템 (v0.3 예정)
 
 ## 로드맵
 
-### v0.1 (현재)
+### v0.1 (완료)
 - [x] 기본 컴파일러 구조
 - [x] 간단한 함수 컴파일
 - [x] LLVM 코드 생성
 - [x] 기본 타입 시스템
 
-### v0.2 (2025 Q1)
-- [ ] 변수와 바인딩
-- [ ] 기본 연산자
-- [ ] 조건문 (if/else)
+### v0.2 (현재 - alpha)
+- [x] 변수와 바인딩
+- [x] 기본 연산자 (산술, 비교)
+- [x] 조건문 (if/else)
 - [ ] 반복문 (while/for)
 
 ### v0.3 (2025 Q2)
