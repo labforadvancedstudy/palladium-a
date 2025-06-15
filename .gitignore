@@ -24,3 +24,22 @@ target/
 # Added by cargo
 
 /target
+
+# Palladium compiler outputs
+build_output/
+*.c
+!examples/*.c
+!src/**/*.c
+!tests/**/*.c
+
+# Compiled binaries from examples
+/array_sum
+/arrays_basic
+/complex_calculation
+/fibonacci_iterative
+/fibonacci_unrolled
+/hello
+/mutability
+/test_hello
+/while_loop
+/bubble_sort

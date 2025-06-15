@@ -1,0 +1,146 @@
+// Prime number checker - Complex mathematical computation
+// Demonstrates Palladium's simplicity for mathematical algorithms
+
+fn main() -> i32 {
+    print("=== Prime Number Checker ===");
+    
+    // Check if these numbers are prime
+    let num1 = 17;
+    let num2 = 24;
+    let num3 = 29;
+    let num4 = 100;
+    let num5 = 97;
+    
+    // Check num1 = 17
+    print("Checking if 17 is prime:");
+    // Manually check divisibility (no loops yet)
+    if num1 % 2 == 0 {
+        print("17 is NOT prime (divisible by 2)");
+    } else {
+        if num1 % 3 == 0 {
+            print("17 is NOT prime (divisible by 3)");
+        } else {
+            if num1 % 5 == 0 {
+                print("17 is NOT prime (divisible by 5)");
+            } else {
+                if num1 % 7 == 0 {
+                    print("17 is NOT prime (divisible by 7)");
+                } else {
+                    if num1 % 11 == 0 {
+                        print("17 is NOT prime (divisible by 11)");
+                    } else {
+                        if num1 % 13 == 0 {
+                            print("17 is NOT prime (divisible by 13)");
+                        } else {
+                            print("17 IS PRIME!");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check num2 = 24
+    print("");
+    print("Checking if 24 is prime:");
+    if num2 % 2 == 0 {
+        print("24 is NOT prime (divisible by 2)");
+        print("24 / 2 = ");
+        print_int(num2 / 2);
+    }
+    
+    // Check num3 = 29
+    print("");
+    print("Checking if 29 is prime:");
+    if num3 % 2 == 0 {
+        print("29 is NOT prime (divisible by 2)");
+    } else {
+        if num3 % 3 == 0 {
+            print("29 is NOT prime (divisible by 3)");
+        } else {
+            if num3 % 5 == 0 {
+                print("29 is NOT prime (divisible by 5)");
+            } else {
+                if num3 % 7 == 0 {
+                    print("29 is NOT prime (divisible by 7)");
+                } else {
+                    if num3 % 11 == 0 {
+                        print("29 is NOT prime (divisible by 11)");
+                    } else {
+                        if num3 % 13 == 0 {
+                            print("29 is NOT prime (divisible by 13)");
+                        } else {
+                            if num3 % 17 == 0 {
+                                print("29 is NOT prime (divisible by 17)");
+                            } else {
+                                if num3 % 19 == 0 {
+                                    print("29 is NOT prime (divisible by 19)");
+                                } else {
+                                    if num3 % 23 == 0 {
+                                        print("29 is NOT prime (divisible by 23)");
+                                    } else {
+                                        print("29 IS PRIME!");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Mathematical operations demonstration
+    print("");
+    print("=== Mathematical Operations ===");
+    
+    let a = 144;
+    let b = 12;
+    
+    print("GCD-like calculation for 144 and 12:");
+    let remainder1 = a % b;  // 144 % 12 = 0
+    print("144 mod 12 = ");
+    print_int(remainder1);
+    
+    if remainder1 == 0 {
+        print("GCD is ");
+        print_int(b);
+    }
+    
+    // Factorial-like calculation (5!)
+    print("");
+    print("Factorial of 5 (manually calculated):");
+    let fact1 = 1;
+    let fact2 = fact1 * 2;
+    let fact3 = fact2 * 3;
+    let fact4 = fact3 * 4;
+    let fact5 = fact4 * 5;
+    
+    print("1! = ");
+    print_int(fact1);
+    print("2! = ");
+    print_int(fact2);
+    print("3! = ");
+    print_int(fact3);
+    print("4! = ");
+    print_int(fact4);
+    print("5! = ");
+    print_int(fact5);
+    
+    // Perfect square check
+    print("");
+    print("Perfect square check:");
+    let num = 64;
+    // Check if 64 is 8*8
+    if 8 * 8 == num {
+        print("64 is a perfect square (8 * 8)");
+    }
+    
+    let num2 = 50;
+    if 7 * 7 == num2 - 1 {
+        print("49 is a perfect square (7 * 7)");
+        print("50 is NOT a perfect square");
+    }
+    
+    return 0;
+}

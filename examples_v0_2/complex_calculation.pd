@@ -1,0 +1,104 @@
+// Complex calculation example: Simulating a simple game score system
+// Since we don't have loops or arrays yet, we'll unroll everything manually
+
+fn main() -> i32 {
+    print("=== Game Score Calculator ===");
+    
+    // Player 1 scores (3 rounds)
+    let p1_round1 = 85;
+    let p1_round2 = 92;
+    let p1_round3 = 78;
+    
+    // Player 2 scores (3 rounds)
+    let p2_round1 = 88;
+    let p2_round2 = 76;
+    let p2_round3 = 95;
+    
+    // Calculate totals
+    let p1_total = p1_round1 + p1_round2 + p1_round3;
+    let p2_total = p2_round1 + p2_round2 + p2_round3;
+    
+    // Calculate averages (integer division)
+    let p1_avg = p1_total / 3;
+    let p2_avg = p2_total / 3;
+    
+    // Display results
+    print("Player 1 Results:");
+    print("Round 1: ");
+    print_int(p1_round1);
+    print("Round 2: ");
+    print_int(p1_round2);
+    print("Round 3: ");
+    print_int(p1_round3);
+    print("Total Score: ");
+    print_int(p1_total);
+    print("Average: ");
+    print_int(p1_avg);
+    
+    print("");  // Empty line
+    
+    print("Player 2 Results:");
+    print("Round 1: ");
+    print_int(p2_round1);
+    print("Round 2: ");
+    print_int(p2_round2);
+    print("Round 3: ");
+    print_int(p2_round3);
+    print("Total Score: ");
+    print_int(p2_total);
+    print("Average: ");
+    print_int(p2_avg);
+    
+    print("");
+    print("=== Final Results ===");
+    
+    // Determine winner
+    if p1_total > p2_total {
+        print("Player 1 WINS!");
+        print("Winning margin: ");
+        print_int(p1_total - p2_total);
+    } else {
+        if p2_total > p1_total {
+            print("Player 2 WINS!");
+            print("Winning margin: ");
+            print_int(p2_total - p1_total);
+        } else {
+            print("It's a TIE!");
+        }
+    }
+    
+    // Performance rating
+    let combined_avg = (p1_avg + p2_avg) / 2;
+    print("");
+    print("Game Performance Rating:");
+    
+    if combined_avg >= 90 {
+        print("***** Outstanding!");
+    } else {
+        if combined_avg >= 80 {
+            print("**** Excellent!");
+        } else {
+            if combined_avg >= 70 {
+                print("*** Good!");
+            } else {
+                if combined_avg >= 60 {
+                    print("** Fair");
+                } else {
+                    print("* Needs Improvement");
+                }
+            }
+        }
+    }
+    
+    // Bonus calculations
+    let max_score = 100 * 3;  // Maximum possible total
+    let combined_total = p1_total + p2_total;
+    let efficiency = (combined_total * 100) / (max_score * 2);
+    
+    print("");
+    print("Overall Efficiency: ");
+    print_int(efficiency);
+    print("%");
+    
+    return 0;
+}

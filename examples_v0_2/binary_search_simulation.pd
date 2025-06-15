@@ -1,0 +1,130 @@
+// Binary search simulation (without arrays or loops)
+// Simulates searching for a value in a sorted "array" of 8 elements
+
+fn main() -> i32 {
+    print("=== Binary Search Simulation ===");
+    print("Sorted array: [2, 5, 8, 12, 16, 23, 38, 45]");
+    
+    // Our "array" (manually defined)
+    let arr0 = 2;
+    let arr1 = 5;
+    let arr2 = 8;
+    let arr3 = 12;
+    let arr4 = 16;
+    let arr5 = 23;
+    let arr6 = 38;
+    let arr7 = 45;
+    
+    // Target value to search
+    let target = 16;
+    print("");
+    print("Searching for: ");
+    print_int(target);
+    print("");
+    
+    // Binary search manually unrolled
+    // Start with middle (index 3 or 4, let's use 3)
+    let mid1_idx = 3;
+    let mid1_val = arr3; // 12
+    
+    print("Step 1: Check middle at index 3");
+    print("Value at index 3: ");
+    print_int(mid1_val);
+    
+    if target == mid1_val {
+        print("Found at index 3!");
+    } else {
+        if target < mid1_val {
+            print("Target is smaller, search left half");
+            // Check index 1 (middle of 0-2)
+            let mid2_idx = 1;
+            let mid2_val = arr1; // 5
+            
+            print("");
+            print("Step 2: Check index 1");
+            print("Value at index 1: ");
+            print_int(mid2_val);
+            
+            if target == mid2_val {
+                print("Found at index 1!");
+            } else {
+                if target < mid2_val {
+                    print("Target is smaller, check index 0");
+                    if target == arr0 {
+                        print("Found at index 0!");
+                    } else {
+                        print("Not found!");
+                    }
+                } else {
+                    print("Target is larger, check index 2");
+                    if target == arr2 {
+                        print("Found at index 2!");
+                    } else {
+                        print("Not found!");
+                    }
+                }
+            }
+        } else {
+            print("Target is larger, search right half");
+            // Check index 5 (middle of 4-7)
+            let mid2_idx = 5;
+            let mid2_val = arr5; // 23
+            
+            print("");
+            print("Step 2: Check index 5");
+            print("Value at index 5: ");
+            print_int(mid2_val);
+            
+            if target == mid2_val {
+                print("Found at index 5!");
+            } else {
+                if target < mid2_val {
+                    print("Target is smaller, check index 4");
+                    print("");
+                    print("Step 3: Check index 4");
+                    print("Value at index 4: ");
+                    print_int(arr4);
+                    
+                    if target == arr4 {
+                        print("Found at index 4!");
+                        print("Success! Value 16 found at index 4");
+                    } else {
+                        print("Not found!");
+                    }
+                } else {
+                    print("Target is larger, search indices 6-7");
+                    // Check index 6
+                    let mid3_val = arr6;
+                    print("");
+                    print("Step 3: Check index 6");
+                    print("Value at index 6: ");
+                    print_int(mid3_val);
+                    
+                    if target == mid3_val {
+                        print("Found at index 6!");
+                    } else {
+                        if target < mid3_val {
+                            print("Must be between 5 and 6, not found!");
+                        } else {
+                            print("Check index 7");
+                            if target == arr7 {
+                                print("Found at index 7!");
+                            } else {
+                                print("Not found!");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Summary statistics
+    print("");
+    print("=== Search Statistics ===");
+    print("Array size: 8");
+    print("Maximum comparisons needed: 3");
+    print("This demonstrates O(log n) complexity!");
+    
+    return 0;
+}
