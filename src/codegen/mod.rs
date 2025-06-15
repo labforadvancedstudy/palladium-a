@@ -270,6 +270,40 @@ impl CodeGenerator {
                 
                 self.output.push_str("    }\n");
             }
+            Stmt::For { var, iter, body, .. } => {
+                // For now, we only support iterating over arrays
+                // Generate a C-style for loop with index
+                self.output.push_str("    {\n");  // Create a new scope
+                
+                // Determine array size and element type
+                // For simplicity, we'll generate code that iterates with an index
+                self.output.push_str("        // For-in loop\n");
+                self.output.push_str("        for (long long _i = 0; _i < sizeof(");
+                self.generate_expression(iter)?;
+                self.output.push_str(")/sizeof(");
+                self.generate_expression(iter)?;
+                self.output.push_str("[0]); _i++) {\n");
+                
+                // Declare loop variable and assign current element
+                self.output.push_str(&format!("            long long {} = ", var));
+                self.generate_expression(iter)?;
+                self.output.push_str("[_i];\n");
+                
+                // Generate body
+                for stmt in body {
+                    self.output.push_str("        ");  // Extra indentation
+                    self.generate_statement(stmt)?;
+                }
+                
+                self.output.push_str("        }\n");
+                self.output.push_str("    }\n");
+            }
+            Stmt::Break { .. } => {
+                self.output.push_str("    break;\n");
+            }
+            Stmt::Continue { .. } => {
+                self.output.push_str("    continue;\n");
+            }
         }
         Ok(())
     }
@@ -501,5 +535,58 @@ mod tests {
         assert!(codegen.output.contains("int main()"));
         assert!(codegen.output.contains("long long result = (a < b);"));
         assert!(codegen.output.contains("return result;"));
+    }
+    
+    #[test]
+    fn test_codegen_for_loop() {
+        let source = r#"
+        fn main() {
+            let arr = [1, 2, 3, 4, 5];
+            for i in arr {
+                print_int(i);
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut codegen = CodeGenerator::new("test").unwrap();
+        assert!(codegen.compile(&ast).is_ok());
+        
+        // Check generated code contains for loop
+        assert!(codegen.output.contains("for (long long _i = 0;"));
+        assert!(codegen.output.contains("long long i = arr[_i];"));
+        assert!(codegen.output.contains("__pd_print_int(i)"));
+    }
+    
+    #[test]
+    fn test_codegen_break_continue() {
+        let source = r#"
+        fn main() {
+            while true {
+                if x > 10 {
+                    break;
+                }
+                if x == 5 {
+                    continue;
+                }
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut codegen = CodeGenerator::new("test").unwrap();
+        assert!(codegen.compile(&ast).is_ok());
+        
+        // Check generated code contains break and continue
+        assert!(codegen.output.contains("break;"));
+        assert!(codegen.output.contains("continue;"));
     }
 }

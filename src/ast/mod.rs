@@ -77,6 +77,21 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    /// For loop
+    For {
+        var: String,
+        iter: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
+    /// Break statement
+    Break {
+        span: Span,
+    },
+    /// Continue statement
+    Continue {
+        span: Span,
+    },
 }
 
 /// Expressions
@@ -264,6 +279,15 @@ impl std::fmt::Display for Stmt {
                 }
                 write!(f, "}}")
             }
+            Stmt::For { var, iter, body, .. } => {
+                write!(f, "for {} in {} {{", var, iter)?;
+                for stmt in body {
+                    write!(f, " {} ", stmt)?;
+                }
+                write!(f, "}}")
+            }
+            Stmt::Break { .. } => write!(f, "break;"),
+            Stmt::Continue { .. } => write!(f, "continue;"),
         }
     }
 }

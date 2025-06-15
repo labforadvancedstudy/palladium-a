@@ -57,6 +57,18 @@ pub enum Token {
     #[token("false")]
     False,
     
+    #[token("for")]
+    For,
+    
+    #[token("in")]
+    In,
+    
+    #[token("break")]
+    Break,
+    
+    #[token("continue")]
+    Continue,
+    
     // Operators
     #[token("+")]
     Plus,
@@ -145,7 +157,7 @@ impl Token {
     pub fn can_start_stmt(&self) -> bool {
         matches!(
             self,
-            Token::Let | Token::Return | Token::If | Token::While
+            Token::Let | Token::Return | Token::If | Token::While | Token::For | Token::Break | Token::Continue
         ) || self.can_start_expr()
     }
 }
@@ -165,6 +177,10 @@ impl std::fmt::Display for Token {
             Token::Return => write!(f, "'return'"),
             Token::True => write!(f, "'true'"),
             Token::False => write!(f, "'false'"),
+            Token::For => write!(f, "'for'"),
+            Token::In => write!(f, "'in'"),
+            Token::Break => write!(f, "'break'"),
+            Token::Continue => write!(f, "'continue'"),
             Token::Plus => write!(f, "'+'"),
             Token::Minus => write!(f, "'-'"),
             Token::Star => write!(f, "'*'"),
@@ -220,5 +236,15 @@ mod tests {
         assert_eq!(lex.next(), Some(Ok(Token::Fn)));
         assert_eq!(lex.next(), Some(Ok(Token::Identifier("main".to_string()))));
         assert_eq!(lex.next(), Some(Ok(Token::Identifier("print".to_string()))));
+    }
+    
+    #[test]
+    fn test_loop_keywords() {
+        let mut lex = Token::lexer("for in while break continue");
+        assert_eq!(lex.next(), Some(Ok(Token::For)));
+        assert_eq!(lex.next(), Some(Ok(Token::In)));
+        assert_eq!(lex.next(), Some(Ok(Token::While)));
+        assert_eq!(lex.next(), Some(Ok(Token::Break)));
+        assert_eq!(lex.next(), Some(Ok(Token::Continue)));
     }
 }

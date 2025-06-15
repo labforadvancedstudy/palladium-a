@@ -116,6 +116,9 @@ impl Parser {
             Token::Return => self.parse_return(),
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
+            Token::For => self.parse_for(),
+            Token::Break => self.parse_break(),
+            Token::Continue => self.parse_continue(),
             Token::Identifier(_) => {
                 // Could be assignment or expression statement
                 // Parse the left-hand side as an expression first
@@ -282,6 +285,63 @@ impl Parser {
         Ok(Stmt::While {
             condition,
             body,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        })
+    }
+    
+    /// Parse a for statement
+    fn parse_for(&mut self) -> Result<Stmt> {
+        let start_span = self.consume(Token::For, "Expected 'for'")?;
+        
+        // Parse the loop variable
+        let var = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "variable name".to_string(),
+                    found: token.to_string(),
+                });
+            }
+        };
+        
+        self.consume(Token::In, "Expected 'in' after for variable")?;
+        
+        // Parse the iterator expression (array or range)
+        let iter = self.parse_expression()?;
+        
+        self.consume(Token::LeftBrace, "Expected '{' after for header")?;
+        
+        let mut body = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            body.push(self.parse_statement()?);
+        }
+        
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after for body")?;
+        
+        Ok(Stmt::For {
+            var,
+            iter,
+            body,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        })
+    }
+    
+    /// Parse a break statement
+    fn parse_break(&mut self) -> Result<Stmt> {
+        let start_span = self.consume(Token::Break, "Expected 'break'")?;
+        let end_span = self.consume(Token::Semicolon, "Expected ';' after break")?;
+        
+        Ok(Stmt::Break {
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+        })
+    }
+    
+    /// Parse a continue statement
+    fn parse_continue(&mut self) -> Result<Stmt> {
+        let start_span = self.consume(Token::Continue, "Expected 'continue'")?;
+        let end_span = self.consume(Token::Semicolon, "Expected ';' after continue")?;
+        
+        Ok(Stmt::Continue {
             span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
@@ -674,6 +734,138 @@ mod tests {
             } else {
                 panic!("Expected return statement with integer");
             }
+        }
+    }
+    
+    #[test]
+    fn test_parse_for_loop() {
+        let source = r#"
+        fn main() {
+            for i in arr {
+                print_int(i);
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        assert_eq!(ast.items.len(), 1);
+        
+        if let Item::Function(func) = &ast.items[0] {
+            assert_eq!(func.name, "main");
+            assert_eq!(func.body.len(), 1);
+            
+            if let Stmt::For { var, iter, body, .. } = &func.body[0] {
+                assert_eq!(var, "i");
+                if let Expr::Ident(name) = iter {
+                    assert_eq!(name, "arr");
+                }
+                assert_eq!(body.len(), 1);
+            } else {
+                panic!("Expected for loop");
+            }
+        } else {
+            panic!("Expected function");
+        }
+    }
+    
+    #[test]
+    fn test_parse_break_continue() {
+        let source = r#"
+        fn main() {
+            while true {
+                if x > 10 {
+                    break;
+                }
+                if x == 5 {
+                    continue;
+                }
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        assert_eq!(ast.items.len(), 1);
+        
+        if let Item::Function(func) = &ast.items[0] {
+            assert_eq!(func.body.len(), 1);
+            
+            if let Stmt::While { body, .. } = &func.body[0] {
+                assert_eq!(body.len(), 2);
+                
+                if let Stmt::If { then_branch, .. } = &body[0] {
+                    assert_eq!(then_branch.len(), 1);
+                    assert!(matches!(&then_branch[0], Stmt::Break { .. }));
+                }
+                
+                if let Stmt::If { then_branch, .. } = &body[1] {
+                    assert_eq!(then_branch.len(), 1);
+                    assert!(matches!(&then_branch[0], Stmt::Continue { .. }));
+                }
+            } else {
+                panic!("Expected while loop");
+            }
+        } else {
+            panic!("Expected function");
+        }
+    }
+    
+    #[test]
+    fn test_parse_for_loop_with_break_continue() {
+        let source = r#"
+        fn main() {
+            for i in arr {
+                if i == 0 {
+                    continue;
+                }
+                if i > 10 {
+                    break;
+                }
+                print_int(i);
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        assert_eq!(ast.items.len(), 1);
+        
+        if let Item::Function(func) = &ast.items[0] {
+            assert_eq!(func.body.len(), 1);
+            
+            if let Stmt::For { var, body, .. } = &func.body[0] {
+                assert_eq!(var, "i");
+                assert_eq!(body.len(), 3);
+                
+                // First statement: if with continue
+                if let Stmt::If { then_branch, .. } = &body[0] {
+                    assert_eq!(then_branch.len(), 1);
+                    assert!(matches!(&then_branch[0], Stmt::Continue { .. }));
+                }
+                
+                // Second statement: if with break
+                if let Stmt::If { then_branch, .. } = &body[1] {
+                    assert_eq!(then_branch.len(), 1);
+                    assert!(matches!(&then_branch[0], Stmt::Break { .. }));
+                }
+                
+                // Third statement: print_int call
+                assert!(matches!(&body[2], Stmt::Expr(_)));
+            } else {
+                panic!("Expected for loop");
+            }
+        } else {
+            panic!("Expected function");
         }
     }
 }

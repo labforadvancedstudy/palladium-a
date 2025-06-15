@@ -381,6 +381,40 @@ impl TypeChecker {
                 
                 Ok(())
             }
+            Stmt::For { var, iter, body, .. } => {
+                // Type check the iterator expression
+                let iter_type = self.check_expression(iter)?;
+                
+                // Extract element type from array
+                let elem_type = match iter_type {
+                    CheckerType::Array(elem_type, _size) => elem_type.as_ref().clone(),
+                    _ => {
+                        return Err(CompileError::Generic(
+                            format!("For loop requires an array, found {}", iter_type)
+                        ));
+                    }
+                };
+                
+                // Enter new scope for loop body
+                self.symbols.enter_scope();
+                
+                // Define loop variable with element type
+                self.symbols.define(var.clone(), elem_type, false)?;
+                
+                // Type check body
+                for stmt in body {
+                    self.check_statement(stmt)?;
+                }
+                
+                self.symbols.exit_scope();
+                
+                Ok(())
+            }
+            Stmt::Break { .. } | Stmt::Continue { .. } => {
+                // TODO: Check that we're inside a loop
+                // For now, just allow them
+                Ok(())
+            }
         }
     }
     
@@ -710,5 +744,91 @@ mod tests {
         let mut type_checker = TypeChecker::new();
         let result = type_checker.check(&ast);
         assert!(result.is_err());
+    }
+    
+    #[test]
+    fn test_for_loop_type_checking() {
+        let source = r#"
+        fn main() {
+            let arr = [1, 2, 3, 4, 5];
+            for i in arr {
+                print_int(i);
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+    
+    #[test]
+    fn test_for_loop_wrong_type() {
+        let source = r#"
+        fn main() {
+            let x = 42;
+            for i in x {
+                print_int(i);
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        let result = type_checker.check(&ast);
+        assert!(result.is_err());
+        
+        if let Err(CompileError::Generic(msg)) = result {
+            assert!(msg.contains("For loop requires an array"));
+        }
+    }
+    
+    #[test]
+    fn test_break_continue_in_loops() {
+        let source = r#"
+        fn main() {
+            let arr = [1, 2, 3, 4, 5];
+            
+            // Test break and continue in while loop
+            let mut i = 0;
+            while i < 10 {
+                if i == 5 {
+                    break;
+                }
+                if i == 3 {
+                    i = i + 1;
+                    continue;
+                }
+                i = i + 1;
+            }
+            
+            // Test break and continue in for loop
+            for n in arr {
+                if n == 3 {
+                    continue;
+                }
+                if n > 4 {
+                    break;
+                }
+                print_int(n);
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
     }
 }
