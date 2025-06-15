@@ -3,7 +3,7 @@
 
 use crate::ast::{*, AssignTarget};
 use crate::errors::{CompileError, Result};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -377,13 +377,19 @@ impl CodeGenerator {
     
     /// Write the generated code to a file
     pub fn write_output(&self) -> Result<PathBuf> {
+        // Create build_output directory if it doesn't exist
+        let build_dir = PathBuf::from("build_output");
+        if !build_dir.exists() {
+            fs::create_dir_all(&build_dir)?;
+        }
+        
         // Clean module name (remove .pd extension if present)
         let base_name = Path::new(&self.module_name)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or(&self.module_name);
             
-        let output_path = PathBuf::from(format!("{}.c", base_name));
+        let output_path = build_dir.join(format!("{}.c", base_name));
         let mut file = File::create(&output_path)?;
         file.write_all(self.output.as_bytes())?;
         

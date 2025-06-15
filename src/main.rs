@@ -35,8 +35,16 @@ fn main() {
                 eprintln!("Error: Please specify a file to compile");
                 process::exit(1);
             }
+            
+            // Parse -o option for output name
+            let output_name = if args.len() >= 5 && args[3] == "-o" {
+                Some(args[4].as_str())
+            } else {
+                None
+            };
+            
             println!("Compiling {}...", args[2]);
-            compile_file(&args[2]);
+            compile_file(&args[2], output_name);
         }
         "run" => {
             if args.len() < 3 {
@@ -60,7 +68,7 @@ fn main() {
     }
 }
 
-fn compile_file(filename: &str) {
+fn compile_file(filename: &str, output_name: Option<&str>) {
     use std::path::Path;
     use palladium::driver::Driver;
     
@@ -68,7 +76,31 @@ fn compile_file(filename: &str) {
     let path = Path::new(filename);
     
     match driver.compile_file(path) {
-        Ok(_) => {},
+        Ok(c_path) => {
+            // If output name specified, also compile to executable
+            if let Some(name) = output_name {
+                use std::process::Command;
+                
+                let build_dir = Path::new("build_output");
+                let output_path = build_dir.join(name);
+                
+                println!("🔗 Linking with gcc...");
+                let gcc_output = Command::new("gcc")
+                    .arg(&c_path)
+                    .arg("-o")
+                    .arg(&output_path)
+                    .output()
+                    .expect("Failed to run gcc");
+                
+                if !gcc_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&gcc_output.stderr);
+                    eprintln!("❌ gcc compilation failed:\n{}", stderr);
+                    process::exit(1);
+                }
+                
+                println!("   Created executable: {}", output_path.display());
+            }
+        },
         Err(e) => {
             eprintln!("❌ Compilation failed: {}", e);
             process::exit(1);

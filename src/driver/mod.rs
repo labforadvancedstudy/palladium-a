@@ -70,11 +70,18 @@ impl Driver {
         // First compile to C
         let c_path = self.compile_file(path)?;
         
+        // Create build_output directory if it doesn't exist
+        let build_dir = PathBuf::from("build_output");
+        if !build_dir.exists() {
+            fs::create_dir_all(&build_dir)
+                .map_err(|e| CompileError::IoError(e))?;
+        }
+        
         // Determine output binary name
         let binary_name = path.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("a.out");
-        let binary_path = PathBuf::from(binary_name);
+        let binary_path = build_dir.join(binary_name);
         
         // Compile C code with gcc
         println!("🔗 Linking with gcc...");
@@ -96,7 +103,7 @@ impl Driver {
         println!("🚀 Running program...");
         println!("─────────────────────────────────────");
         
-        let run_output = Command::new(format!("./{}", binary_path.display()))
+        let run_output = Command::new(&binary_path)
             .output()
             .map_err(|e| CompileError::Generic(format!("Failed to run program: {}", e)))?;
         
