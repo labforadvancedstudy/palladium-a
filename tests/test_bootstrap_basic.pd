@@ -1,0 +1,163 @@
+// Basic tests for Palladium bootstrap components
+// Tests core functionality step by step
+
+fn test_strings() {
+    print("=== String Tests ===");
+    
+    let s1 = "Hello";
+    let len = string_len(s1);
+    if len == 5 {
+        print("✓ string_len");
+    } else {
+        print("✗ string_len");
+    }
+    
+    let s2 = string_concat("Hello", " World");
+    if string_eq(s2, "Hello World") {
+        print("✓ string_concat");
+    } else {
+        print("✗ string_concat");
+    }
+    
+    let sub = string_substring("Palladium", 0, 4);
+    if string_eq(sub, "Pall") {
+        print("✓ string_substring");
+    } else {
+        print("✗ string_substring");
+    }
+}
+
+fn test_arrays() {
+    print("\n=== Array Tests ===");
+    
+    let arr = [1, 2, 3, 4, 5];
+    if arr[0] == 1 {
+        print("✓ array[0]");
+    } else {
+        print("✗ array[0]");
+    }
+    
+    if arr[4] == 5 {
+        print("✓ array[4]");
+    } else {
+        print("✗ array[4]");
+    }
+    
+    let zeros = [0; 3];
+    if zeros[1] == 0 {
+        print("✓ array repeat");
+    } else {
+        print("✗ array repeat");
+    }
+}
+
+fn test_loops() {
+    print("\n=== Loop Tests ===");
+    
+    let mut sum = 0;
+    for i in 0..5 {
+        sum = sum + i;
+    }
+    if sum == 10 {
+        print("✓ for loop");
+    } else {
+        print("✗ for loop");
+    }
+    
+    let mut count = 0;
+    for i in 0..10 {
+        if i == 5 {
+            break;
+        }
+        count = count + 1;
+    }
+    if count == 5 {
+        print("✓ break");
+    } else {
+        print("✗ break");
+    }
+    
+    let mut i = 0;
+    let mut odd_sum = 0;
+    while i < 10 {
+        i = i + 1;
+        if i % 2 == 0 {
+            continue;
+        }
+        odd_sum = odd_sum + i;
+    }
+    if odd_sum == 25 {
+        print("✓ continue");
+    } else {
+        print("✗ continue");
+    }
+}
+
+fn test_enums() {
+    print("\n=== Enum Tests ===");
+    
+    enum Result {
+        Ok(i64),
+        Err(String),
+    }
+    
+    let ok = Result::Ok(42);
+    let err = Result::Err("error");
+    
+    match ok {
+        Result::Ok(_) => print("✓ enum Ok"),
+        Result::Err(_) => print("✗ enum Ok"),
+    }
+    
+    match err {
+        Result::Ok(_) => print("✗ enum Err"),
+        Result::Err(_) => print("✓ enum Err"),
+    }
+}
+
+fn test_arithmetic() {
+    print("\n=== Arithmetic Tests ===");
+    
+    if 2 + 3 == 5 {
+        print("✓ addition");
+    } else {
+        print("✗ addition");
+    }
+    
+    if 10 - 3 == 7 {
+        print("✓ subtraction");
+    } else {
+        print("✗ subtraction");
+    }
+    
+    if 4 * 5 == 20 {
+        print("✓ multiplication");
+    } else {
+        print("✗ multiplication");
+    }
+    
+    if 15 / 3 == 5 {
+        print("✓ division");
+    } else {
+        print("✗ division");
+    }
+    
+    if 17 % 5 == 2 {
+        print("✓ modulo");
+    } else {
+        print("✗ modulo");
+    }
+}
+
+fn main() {
+    print("=== Palladium Bootstrap Tests ===\n");
+    
+    test_strings();
+    test_arrays();
+    test_loops();
+    test_enums();
+    test_arithmetic();
+    
+    print("\n=== Tests Complete ===");
+    print("Core features verified! 🚀");
+}
