@@ -10,17 +10,21 @@ Self-hosting means a programming language's compiler is written in the language 
 
 ## Bootstrap Components Created
 
-We built **37 working compilers/components** totaling **6,508 lines** of Palladium code:
+We built **37 working compilers/components** totaling **6,508 lines** of Palladium code, now organized into a clean structure:
 
-### Core Compilers (in `bootstrap/` directory)
-- `bootstrap_compiler_v1.pd` - First working compiler
-- `simple_lexer_v1.pd` - Tokenization 
-- `parser_v1.pd` - Syntax parsing
-- `codegen_v1.pd` - Code generation
-- `type_checker_v1.pd` - Type analysis
-- `integrated_compiler_v1.pd` - Full pipeline
-- `ultimate_bootstrap_v1.pd` - Complete compiler
-- And 30+ more components!
+### Core Components (in `bootstrap/core/`)
+**USE THESE 6 FILES:**
+- `ultimate_bootstrap_v1.pd` - 🚀 THE BEST complete compiler
+- `simple_lexer_v1.pd` - Working tokenizer
+- `parser_v1.pd` - Working parser
+- `codegen_v1.pd` - Working code generator
+- `type_checker_v1.pd` - Working type checker
+- `integrated_compiler_v1.pd` - Full pipeline demo
+
+### Additional Components
+- `bootstrap/demos/` - 3 demonstration programs
+- `bootstrap/utilities/` - 3 helper utilities
+- `bootstrap/archive/` - 45 experimental/old versions
 
 ### Test Suite (in `tests/` directory)
 - `test_bootstrap_compilation.pd` - Comprehensive tests
@@ -30,7 +34,7 @@ We built **37 working compilers/components** totaling **6,508 lines** of Palladi
 
 ```bash
 # 1. Compile a Palladium compiler using Rust pdc
-$ cargo run -- compile bootstrap/ultimate_bootstrap_v1.pd -o ultimate_bootstrap
+$ cargo run -- compile bootstrap/core/ultimate_bootstrap_v1.pd -o ultimate_bootstrap
 ✅ Compilation successful!
 
 # 2. Use that compiler to compile a Palladium program
