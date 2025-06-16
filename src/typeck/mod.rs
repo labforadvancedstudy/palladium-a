@@ -154,6 +154,8 @@ pub struct TypeChecker {
     current_type_params: Vec<String>,
     /// Symbol table for variables
     symbols: SymbolTable,
+    /// Imported modules and their exported items
+    imported_modules: HashMap<String, crate::resolver::ModuleInfo>,
 }
 
 impl TypeChecker {
@@ -258,6 +260,71 @@ impl TypeChecker {
             current_function_return: None,
             current_type_params: Vec::new(),
             symbols: SymbolTable::new(),
+            imported_modules: HashMap::new(),
+        }
+    }
+    
+    /// Set imported modules for type checking
+    pub fn set_imported_modules(&mut self, modules: HashMap<String, crate::resolver::ModuleInfo>) {
+        self.imported_modules = modules;
+        
+        // Process imported functions and add them to our function table
+        for (module_name, module_info) in &self.imported_modules {
+            // For now, process all exported functions from the module
+            for item in &module_info.ast.items {
+                match item {
+                    crate::ast::Item::Function(func) => {
+                        // Only process exported (public) functions
+                        if matches!(func.visibility, crate::ast::Visibility::Public) {
+                            let qualified_name = format!("{}::{}", module_name, func.name);
+                            
+                            if !func.type_params.is_empty() {
+                                // Generic function
+                                let generic_func = GenericFunction {
+                                    type_params: func.type_params.clone(),
+                                    params: func.params.iter()
+                                        .map(|p| (p.name.clone(), p.ty.clone()))
+                                        .collect(),
+                                    return_type: func.return_type.clone(),
+                                    body: func.body.clone(),
+                                };
+                                self.generic_functions.insert(func.name.clone(), generic_func);
+                            } else {
+                                // Regular function
+                                let param_types: Vec<CheckerType> = func.params.iter()
+                                    .map(|param| CheckerType::from(&param.ty))
+                                    .collect();
+                                
+                                let return_type = func.return_type.as_ref()
+                                    .map(|t| CheckerType::from(t))
+                                    .unwrap_or(CheckerType::Unit);
+                                
+                                let func_type = CheckerType::Function(param_types, Box::new(return_type));
+                                
+                                // Add both qualified and unqualified names for now
+                                // TODO: Proper name resolution
+                                self.functions.insert(func.name.clone(), func_type.clone());
+                                self.functions.insert(qualified_name, func_type);
+                            }
+                        }
+                    }
+                    crate::ast::Item::Struct(struct_def) => {
+                        if matches!(struct_def.visibility, crate::ast::Visibility::Public) {
+                            // Convert field types to CheckerType
+                            let fields: Vec<(String, CheckerType)> = struct_def.fields.iter()
+                                .map(|(name, ty)| (name.clone(), CheckerType::from(ty)))
+                                .collect();
+                            
+                            // Add both qualified and unqualified names
+                            self.structs.insert(struct_def.name.clone(), fields.clone());
+                            self.structs.insert(format!("{}::{}", module_name, struct_def.name), fields);
+                        }
+                    }
+                    crate::ast::Item::Enum(_) => {
+                        // TODO: Handle enum imports
+                    }
+                }
+            }
         }
     }
     

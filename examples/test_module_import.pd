@@ -4,7 +4,7 @@ import std::math;
 
 fn main() {
     let x = -42;
-    let y = abs(x);  // Should resolve to std::math::abs
+    let y = pd_abs(x);  // Should resolve to std::math::pd_abs
     print_int(y);    // Should print 42
     
     let a = 10;

@@ -10,6 +10,7 @@ use crate::resolver::ModuleResolver;
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::process::Command;
+use std::collections::HashMap;
 
 pub struct Driver {
     // Future: compilation options, session state, etc.
@@ -37,24 +38,37 @@ impl Driver {
         println!("   Parsed {} top-level items", ast.items.len());
         
         // Phase 2.5: Module resolution
-        if !ast.imports.is_empty() {
+        let resolved_modules = if !ast.imports.is_empty() {
             println!("📦 Resolving modules...");
             let mut resolver = ModuleResolver::new();
             let modules = resolver.resolve_program(&ast)?;
             println!("   Resolved {} modules", modules.len());
-            
-            // TODO: Pass resolved modules to type checker and code generator
-        }
+            modules
+        } else {
+            HashMap::new()
+        };
         
         // Phase 3: Type checking
         println!("🔍 Type checking...");
         let mut type_checker = TypeChecker::new();
+        
+        // Pass resolved modules to type checker
+        if !resolved_modules.is_empty() {
+            type_checker.set_imported_modules(resolved_modules.clone());
+        }
+        
         type_checker.check(&ast)?;
         println!("   All types check out!");
         
         // Phase 4: Code generation
         println!("⚡ Generating code...");
         let mut codegen = CodeGenerator::new(filename)?;
+        
+        // Pass resolved modules to code generator
+        if !resolved_modules.is_empty() {
+            codegen.set_imported_modules(resolved_modules);
+        }
+        
         codegen.compile(&ast)?;
         let output_path = codegen.write_output()?;
         

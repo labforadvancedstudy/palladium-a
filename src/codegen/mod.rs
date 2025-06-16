@@ -16,6 +16,8 @@ pub struct CodeGenerator {
     variables: std::collections::HashMap<String, String>,
     /// Map of parameter names to their mutability (for current function)
     mutable_params: std::collections::HashMap<String, bool>,
+    /// Imported modules
+    imported_modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
 }
 
 impl CodeGenerator {
@@ -26,7 +28,13 @@ impl CodeGenerator {
             functions: std::collections::HashMap::new(),
             variables: std::collections::HashMap::new(),
             mutable_params: std::collections::HashMap::new(),
+            imported_modules: std::collections::HashMap::new(),
         })
+    }
+    
+    /// Set imported modules for code generation
+    pub fn set_imported_modules(&mut self, modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>) {
+        self.imported_modules = modules;
     }
     
     /// Infer the C type of an expression
@@ -39,6 +47,29 @@ impl CodeGenerator {
             Expr::Ident(name) => {
                 // Look up variable type
                 self.variables.get(name).cloned().unwrap_or_else(|| "long long".to_string())
+            },
+            Expr::Call { func, .. } => {
+                // Look up function return type
+                if let Expr::Ident(func_name) = func.as_ref() {
+                    // Check built-in functions that return strings
+                    match func_name.as_str() {
+                        "string_concat" | "string_substring" | "string_from_char" | 
+                        "int_to_string" | "file_read_all" | "file_read_line" |
+                        "trim" | "trim_start" | "trim_end" => return "const char*".to_string(),
+                        _ => {}
+                    }
+                    
+                    // Look up user-defined function return type
+                    if let Some((_, ret_type)) = self.functions.get(func_name) {
+                        match ret_type {
+                            Some(Type::String) => return "const char*".to_string(),
+                            Some(Type::Bool) => return "int".to_string(),
+                            Some(Type::Custom(name)) => return name.to_string(),
+                            _ => return "long long".to_string(),
+                        }
+                    }
+                }
+                "long long".to_string()
             },
             Expr::Binary { left, op, right, .. } => {
                 // String concatenation returns a string
@@ -144,6 +175,13 @@ impl CodeGenerator {
         self.output.push_str("    return atoll(str);\n");
         self.output.push_str("}\n\n");
         
+        // int_to_string
+        self.output.push_str("const char* __pd_int_to_string(long long n) {\n");
+        self.output.push_str("    char* buffer = (char*)malloc(32);\n");
+        self.output.push_str("    snprintf(buffer, 32, \"%lld\", n);\n");
+        self.output.push_str("    return buffer;\n");
+        self.output.push_str("}\n\n");
+        
         // File I/O functions
         self.output.push_str("// File I/O support\n");
         self.output.push_str("#define MAX_FILES 256\n");
@@ -212,14 +250,37 @@ impl CodeGenerator {
         self.output.push_str("    return 0;\n");
         self.output.push_str("}\n\n");
         
-        // First pass: collect function signatures
+        // First pass: collect function signatures from imported modules
+        for (_module_name, module_info) in &self.imported_modules {
+            for item in &module_info.ast.items {
+                if let Item::Function(func) = item {
+                    if matches!(func.visibility, crate::ast::Visibility::Public) {
+                        self.functions.insert(func.name.clone(), (func.params.clone(), func.return_type.clone()));
+                    }
+                }
+            }
+        }
+        
+        // Then collect function signatures from main program
         for item in &program.items {
             if let Item::Function(func) = item {
                 self.functions.insert(func.name.clone(), (func.params.clone(), func.return_type.clone()));
             }
         }
         
-        // Generate struct definitions first
+        // Generate struct definitions from imported modules first
+        let imported_modules = self.imported_modules.clone();
+        for (_module_name, module_info) in &imported_modules {
+            for item in &module_info.ast.items {
+                if let Item::Struct(struct_def) = item {
+                    if matches!(struct_def.visibility, crate::ast::Visibility::Public) {
+                        self.generate_struct(struct_def)?;
+                    }
+                }
+            }
+        }
+        
+        // Generate struct definitions from main program
         for item in &program.items {
             match item {
                 Item::Struct(struct_def) => {
@@ -229,7 +290,19 @@ impl CodeGenerator {
             }
         }
         
-        // Generate functions
+        // Generate functions from imported modules
+        for (_module_name, module_info) in &imported_modules {
+            for item in &module_info.ast.items {
+                if let Item::Function(func) = item {
+                    // Only generate public, non-generic functions
+                    if matches!(func.visibility, crate::ast::Visibility::Public) && func.type_params.is_empty() {
+                        self.generate_function(func)?;
+                    }
+                }
+            }
+        }
+        
+        // Generate functions from main program
         for item in &program.items {
             match item {
                 Item::Function(func) => {
@@ -516,39 +589,9 @@ impl CodeGenerator {
                                 (elem_type, true, Some(size))
                             }
                             Expr::StructLiteral { name, .. } => (name.to_string(), false, None),
-                            Expr::Call { func, .. } => {
-                                // Infer type from function name for built-ins
-                                match func.as_ref() {
-                                    Expr::Ident(fname) => {
-                                        match fname.as_str() {
-                                            "string_concat" | "string_substring" | "string_from_char" => {
-                                                ("const char*".to_string(), false, None)
-                                            }
-                                            "string_len" | "string_char_at" | "string_to_int" | "file_open" => {
-                                                ("long long".to_string(), false, None)
-                                            }
-                                            "string_eq" | "char_is_digit" | "char_is_alpha" | "char_is_whitespace" 
-                                            | "file_write" | "file_close" | "file_exists" => {
-                                                ("int".to_string(), false, None)
-                                            }
-                                            "file_read_all" | "file_read_line" => {
-                                                ("const char*".to_string(), false, None)
-                                            }
-                                            _ => {
-                                                // Look up user-defined function return type
-                                                if let Some((_, ret_type)) = self.functions.get(fname) {
-                                                    match ret_type {
-                                                        Some(t) => (type_to_c(t), false, None),
-                                                        None => ("void".to_string(), false, None),
-                                                    }
-                                                } else {
-                                                    ("long long".to_string(), false, None)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    _ => ("long long".to_string(), false, None)
-                                }
+                            Expr::Call { .. } => {
+                                // Use our unified type inference
+                                (inferred_type, false, None)
                             }
                             _ => ("long long".to_string(), false, None),  // Default to int for now
                         }
@@ -847,6 +890,7 @@ impl CodeGenerator {
                             "char_is_alpha" => self.output.push_str("__pd_char_is_alpha"),
                             "char_is_whitespace" => self.output.push_str("__pd_char_is_whitespace"),
                             "string_to_int" => self.output.push_str("__pd_string_to_int"),
+                            "int_to_string" => self.output.push_str("__pd_int_to_string"),
                             "file_open" => self.output.push_str("__pd_file_open"),
                             "file_read_all" => self.output.push_str("__pd_file_read_all"),
                             "file_read_line" => self.output.push_str("__pd_file_read_line"),

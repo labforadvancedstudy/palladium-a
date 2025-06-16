@@ -21,7 +21,7 @@ pub fn min(a: i64, b: i64) -> i64 {
     return b;
 }
 
-pub fn pow(base: i64, exp: i64) -> i64 {
+pub fn pd_pow(base: i64, exp: i64) -> i64 {
     let mut result = 1;
     let mut i = 0;
     while i < exp {
