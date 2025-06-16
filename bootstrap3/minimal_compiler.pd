@@ -1,0 +1,879 @@
+// Minimal Palladium Compiler - Bootstrap3
+// A simplified compiler that can compile itself
+// No Vec, Box, Option, or match - using arrays and if/else
+
+// Constants
+const MAX_TOKENS: i64 = 10000;
+const MAX_CHARS: i64 = 100000;
+const MAX_FUNCTIONS: i64 = 100;
+const MAX_LOCALS: i64 = 50;
+const MAX_STMTS: i64 = 1000;
+
+// Token types
+const TOK_EOF: i64 = 0;
+const TOK_IDENT: i64 = 1;
+const TOK_NUMBER: i64 = 2;
+const TOK_STRING: i64 = 3;
+const TOK_FN: i64 = 4;
+const TOK_LET: i64 = 5;
+const TOK_IF: i64 = 6;
+const TOK_ELSE: i64 = 7;
+const TOK_WHILE: i64 = 8;
+const TOK_RETURN: i64 = 9;
+const TOK_LPAREN: i64 = 10;
+const TOK_RPAREN: i64 = 11;
+const TOK_LBRACE: i64 = 12;
+const TOK_RBRACE: i64 = 13;
+const TOK_SEMICOLON: i64 = 14;
+const TOK_COMMA: i64 = 15;
+const TOK_COLON: i64 = 16;
+const TOK_ARROW: i64 = 17;
+const TOK_PLUS: i64 = 18;
+const TOK_MINUS: i64 = 19;
+const TOK_STAR: i64 = 20;
+const TOK_SLASH: i64 = 21;
+const TOK_EQ: i64 = 22;
+const TOK_EQEQ: i64 = 23;
+const TOK_NE: i64 = 24;
+const TOK_LT: i64 = 25;
+const TOK_GT: i64 = 26;
+const TOK_LE: i64 = 27;
+const TOK_GE: i64 = 28;
+const TOK_AMPAMP: i64 = 29;
+const TOK_PIPEPIPE: i64 = 30;
+const TOK_BANG: i64 = 31;
+const TOK_PUB: i64 = 32;
+const TOK_I64: i64 = 33;
+const TOK_BOOL: i64 = 34;
+const TOK_STRING_TYPE: i64 = 35;
+const TOK_TRUE: i64 = 36;
+const TOK_FALSE: i64 = 37;
+const TOK_MUT: i64 = 38;
+
+struct Token {
+    type: i64,
+    start: i64,
+    len: i64,
+    line: i64,
+    value: i64,  // For numbers
+}
+
+struct Lexer {
+    input: [char; MAX_CHARS],
+    input_len: i64,
+    pos: i64,
+    line: i64,
+    tokens: [Token; MAX_TOKENS],
+    token_count: i64,
+    string_table: [char; MAX_CHARS],
+    string_pos: i64,
+}
+
+// Create a new lexer
+fn create_lexer(input: String) -> Lexer {
+    let mut lex = Lexer {
+        input: [32; MAX_CHARS],  // 32 is space character
+        input_len: string_len(input),
+        pos: 0,
+        line: 1,
+        tokens: [Token { type: TOK_EOF, start: 0, len: 0, line: 0, value: 0 }; MAX_TOKENS],
+        token_count: 0,
+        string_table: [0; MAX_CHARS],
+        string_pos: 0,
+    };
+    
+    // Copy input string to char array
+    let mut i = 0;
+    while i < lex.input_len {
+        lex.input[i] = string_char_at(input, i);
+        i = i + 1;
+    }
+    
+    return lex;
+}
+
+// Skip whitespace
+fn skip_whitespace(lex: &mut Lexer) {
+    while lex.pos < lex.input_len {
+        let ch = lex.input[lex.pos];
+        if ch == 32 || ch == 9 || ch == 13 {  // space, tab, CR
+            lex.pos = lex.pos + 1;
+        } else if ch == 10 {  // newline
+            lex.pos = lex.pos + 1;
+            lex.line = lex.line + 1;
+        } else if ch == 47 && lex.pos + 1 < lex.input_len && lex.input[lex.pos + 1] == 47 {  // /
+            // Skip line comment
+            lex.pos = lex.pos + 2;
+            while lex.pos < lex.input_len && lex.input[lex.pos] != 10 {  // newline
+                lex.pos = lex.pos + 1;
+            }
+        } else {
+            break;
+        }
+    }
+}
+
+// Check if character is digit
+fn is_digit(ch: i64) -> bool {
+    return ch >= 48 && ch <= 57;  // '0' to '9'
+}
+
+// Check if character is alpha
+fn is_alpha(ch: i64) -> bool {
+    return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || ch == 95;  // a-z, A-Z, _
+}
+
+// Check if character is alphanumeric
+fn is_alnum(ch: i64) -> bool {
+    return is_alpha(ch) || is_digit(ch);
+}
+
+// Add string to string table
+fn add_string(lex: &mut Lexer, start: i64, len: i64) -> i64 {
+    let str_start = lex.string_pos;
+    let mut i = 0;
+    while i < len {
+        lex.string_table[lex.string_pos] = lex.input[start + i];
+        lex.string_pos = lex.string_pos + 1;
+        i = i + 1;
+    }
+    lex.string_table[lex.string_pos] = 0;  // null terminator
+    lex.string_pos = lex.string_pos + 1;
+    return str_start;
+}
+
+// Get string from string table
+fn get_string(lex: &Lexer, offset: i64) -> String {
+    let mut result = "";
+    let mut i = offset;
+    while i < lex.string_pos && lex.string_table[i] != 0 {  // null terminator
+        result = result + string_from_char(lex.string_table[i]);
+        i = i + 1;
+    }
+    return result;
+}
+
+// Compare string in input with keyword
+fn match_keyword(lex: &Lexer, start: i64, len: i64, keyword: String) -> bool {
+    if len != string_len(keyword) {
+        return false;
+    }
+    let mut i = 0;
+    while i < len {
+        if lex.input[start + i] != string_char_at(keyword, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Scan next token
+fn scan_token(lex: &mut Lexer) -> Token {
+    skip_whitespace(lex);
+    
+    if lex.pos >= lex.input_len {
+        return Token { type: TOK_EOF, start: lex.pos, len: 0, line: lex.line, value: 0 };
+    }
+    
+    let start = lex.pos;
+    let ch = lex.input[lex.pos];
+    lex.pos = lex.pos + 1;
+    
+    // Single character tokens
+    if ch == 40 { return Token { type: TOK_LPAREN, start: start, len: 1, line: lex.line, value: 0 }; }     // (
+    if ch == 41 { return Token { type: TOK_RPAREN, start: start, len: 1, line: lex.line, value: 0 }; }     // )
+    if ch == 123 { return Token { type: TOK_LBRACE, start: start, len: 1, line: lex.line, value: 0 }; }    // {
+    if ch == 125 { return Token { type: TOK_RBRACE, start: start, len: 1, line: lex.line, value: 0 }; }    // }
+    if ch == 59 { return Token { type: TOK_SEMICOLON, start: start, len: 1, line: lex.line, value: 0 }; }  // ;
+    if ch == 44 { return Token { type: TOK_COMMA, start: start, len: 1, line: lex.line, value: 0 }; }      // ,
+    if ch == 58 { return Token { type: TOK_COLON, start: start, len: 1, line: lex.line, value: 0 }; }      // :
+    if ch == 43 { return Token { type: TOK_PLUS, start: start, len: 1, line: lex.line, value: 0 }; }       // +
+    if ch == 42 { return Token { type: TOK_STAR, start: start, len: 1, line: lex.line, value: 0 }; }       // *
+    if ch == 47 { return Token { type: TOK_SLASH, start: start, len: 1, line: lex.line, value: 0 }; }      // /
+    
+    // Two character tokens
+    if ch == 45 {  // -
+        if lex.pos < lex.input_len && lex.input[lex.pos] == 62 {  // >
+            lex.pos = lex.pos + 1;
+            return Token { type: TOK_ARROW, start: start, len: 2, line: lex.line, value: 0 };
+        }
+        return Token { type: TOK_MINUS, start: start, len: 1, line: lex.line, value: 0 };
+    }
+    
+    if ch == 61 {  // =
+        if lex.pos < lex.input_len && lex.input[lex.pos] == 61 {  // =
+            lex.pos = lex.pos + 1;
+            return Token { type: TOK_EQEQ, start: start, len: 2, line: lex.line, value: 0 };
+        }
+        return Token { type: TOK_EQ, start: start, len: 1, line: lex.line, value: 0 };
+    }
+    
+    if ch == 33 {  // !
+        if lex.pos < lex.input_len && lex.input[lex.pos] == 61 {  // =
+            lex.pos = lex.pos + 1;
+            return Token { type: TOK_NE, start: start, len: 2, line: lex.line, value: 0 };
+        }
+        return Token { type: TOK_BANG, start: start, len: 1, line: lex.line, value: 0 };
+    }
+    
+    if ch == 60 {  // <
+        if lex.pos < lex.input_len && lex.input[lex.pos] == 61 {  // =
+            lex.pos = lex.pos + 1;
+            return Token { type: TOK_LE, start: start, len: 2, line: lex.line, value: 0 };
+        }
+        return Token { type: TOK_LT, start: start, len: 1, line: lex.line, value: 0 };
+    }
+    
+    if ch == 62 {  // >
+        if lex.pos < lex.input_len && lex.input[lex.pos] == 61 {  // =
+            lex.pos = lex.pos + 1;
+            return Token { type: TOK_GE, start: start, len: 2, line: lex.line, value: 0 };
+        }
+        return Token { type: TOK_GT, start: start, len: 1, line: lex.line, value: 0 };
+    }
+    
+    if ch == 38 {  // &
+        if lex.pos < lex.input_len && lex.input[lex.pos] == 38 {  // &
+            lex.pos = lex.pos + 1;
+            return Token { type: TOK_AMPAMP, start: start, len: 2, line: lex.line, value: 0 };
+        }
+    }
+    
+    if ch == 124 {  // |
+        if lex.pos < lex.input_len && lex.input[lex.pos] == 124 {  // |
+            lex.pos = lex.pos + 1;
+            return Token { type: TOK_PIPEPIPE, start: start, len: 2, line: lex.line, value: 0 };
+        }
+    }
+    
+    // Numbers
+    if is_digit(ch) {
+        let mut value = (ch - 48) as i64;  // '0'
+        while lex.pos < lex.input_len && is_digit(lex.input[lex.pos]) {
+            value = value * 10 + (lex.input[lex.pos] - 48) as i64;  // '0'
+            lex.pos = lex.pos + 1;
+        }
+        return Token { type: TOK_NUMBER, start: start, len: lex.pos - start, line: lex.line, value: value };
+    }
+    
+    // Strings
+    if ch == 34 {  // "
+        let str_start = lex.pos;
+        while lex.pos < lex.input_len && lex.input[lex.pos] != 34 {  // "
+            if lex.input[lex.pos] == 92 {  // \
+                lex.pos = lex.pos + 1;
+            }
+            lex.pos = lex.pos + 1;
+        }
+        if lex.pos < lex.input_len {
+            lex.pos = lex.pos + 1; // Skip closing quote
+        }
+        let str_offset = add_string(lex, str_start, lex.pos - str_start - 1);
+        return Token { type: TOK_STRING, start: start, len: lex.pos - start, line: lex.line, value: str_offset };
+    }
+    
+    // Identifiers and keywords
+    if is_alpha(ch) {
+        while lex.pos < lex.input_len && is_alnum(lex.input[lex.pos]) {
+            lex.pos = lex.pos + 1;
+        }
+        
+        let len = lex.pos - start;
+        
+        // Check keywords
+        if match_keyword(lex, start, len, "fn") { return Token { type: TOK_FN, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "let") { return Token { type: TOK_LET, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "if") { return Token { type: TOK_IF, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "else") { return Token { type: TOK_ELSE, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "while") { return Token { type: TOK_WHILE, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "return") { return Token { type: TOK_RETURN, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "pub") { return Token { type: TOK_PUB, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "i64") { return Token { type: TOK_I64, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "bool") { return Token { type: TOK_BOOL, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "String") { return Token { type: TOK_STRING_TYPE, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "true") { return Token { type: TOK_TRUE, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "false") { return Token { type: TOK_FALSE, start: start, len: len, line: lex.line, value: 0 }; }
+        if match_keyword(lex, start, len, "mut") { return Token { type: TOK_MUT, start: start, len: len, line: lex.line, value: 0 }; }
+        
+        // Regular identifier
+        let str_offset = add_string(lex, start, len);
+        return Token { type: TOK_IDENT, start: start, len: len, line: lex.line, value: str_offset };
+    }
+    
+    // Unknown character
+    return Token { type: TOK_EOF, start: start, len: 1, line: lex.line, value: 0 };
+}
+
+// Tokenize entire input
+fn tokenize(lex: &mut Lexer) {
+    while lex.token_count < MAX_TOKENS {
+        let tok = scan_token(lex);
+        lex.tokens[lex.token_count] = tok;
+        lex.token_count = lex.token_count + 1;
+        if tok.type == TOK_EOF {
+            break;
+        }
+    }
+}
+
+// Parser state
+struct Parser {
+    tokens: [Token; MAX_TOKENS],
+    token_count: i64,
+    current: i64,
+    lexer: Lexer,  // Keep lexer for string table access
+}
+
+// Create parser
+fn create_parser(lex: Lexer) -> Parser {
+    return Parser {
+        tokens: lex.tokens,
+        token_count: lex.token_count,
+        current: 0,
+        lexer: lex,
+    };
+}
+
+// Check if at end
+fn is_at_end(p: &Parser) -> bool {
+    return p.current >= p.token_count || p.tokens[p.current].type == TOK_EOF;
+}
+
+// Peek current token
+fn peek(p: &Parser) -> Token {
+    if p.current < p.token_count {
+        return p.tokens[p.current];
+    }
+    return Token { type: TOK_EOF, start: 0, len: 0, line: 0, value: 0 };
+}
+
+// Advance to next token
+fn advance(p: &mut Parser) -> Token {
+    if !is_at_end(p) {
+        p.current = p.current + 1;
+    }
+    return p.tokens[p.current - 1];
+}
+
+// Check if current token matches type
+fn check(p: &Parser, type: i64) -> bool {
+    if is_at_end(p) {
+        return false;
+    }
+    return peek(p).type == type;
+}
+
+// Consume token of expected type
+fn consume(p: &mut Parser, type: i64) -> Token {
+    if check(p, type) {
+        return advance(p);
+    }
+    print("Parse error: unexpected token");
+    return Token { type: TOK_EOF, start: 0, len: 0, line: 0, value: 0 };
+}
+
+// Code generator state  
+struct CodeGen {
+    output: String,
+    indent: i64,
+    functions: [String; MAX_FUNCTIONS],
+    func_count: i64,
+    locals: [String; MAX_LOCALS],
+    local_count: i64,
+}
+
+// Create code generator
+fn create_codegen() -> CodeGen {
+    return CodeGen {
+        output: "",
+        indent: 0,
+        functions: [""; MAX_FUNCTIONS],
+        func_count: 0,
+        locals: [""; MAX_LOCALS],
+        local_count: 0,
+    };
+}
+
+// Add indentation
+fn add_indent(gen: &mut CodeGen) {
+    let mut i = 0;
+    while i < gen.indent {
+        gen.output = gen.output + "    ";
+        i = i + 1;
+    }
+}
+
+// Generate C headers
+fn gen_headers(gen: &mut CodeGen) {
+    gen.output = gen.output + "#include <stdio.h>\n";
+    gen.output = gen.output + "#include <stdlib.h>\n";
+    gen.output = gen.output + "#include <string.h>\n";
+    gen.output = gen.output + "#include <ctype.h>\n\n";
+    
+    // Runtime functions
+    gen.output = gen.output + "// Runtime functions\n";
+    gen.output = gen.output + "void __pd_print(const char* s) { printf(\"%s\\n\", s); }\n";
+    gen.output = gen.output + "void __pd_print_int(long long n) { printf(\"%lld\\n\", n); }\n";
+    gen.output = gen.output + "long long __pd_string_len(const char* s) { return strlen(s); }\n";
+    gen.output = gen.output + "const char* __pd_string_concat(const char* a, const char* b) {\n";
+    gen.output = gen.output + "    char* r = malloc(strlen(a) + strlen(b) + 1);\n";
+    gen.output = gen.output + "    strcpy(r, a); strcat(r, b); return r;\n";
+    gen.output = gen.output + "}\n";
+    gen.output = gen.output + "long long __pd_string_char_at(const char* s, long long i) {\n";
+    gen.output = gen.output + "    if (i < 0 || i >= strlen(s)) return -1;\n";
+    gen.output = gen.output + "    return (unsigned char)s[i];\n";
+    gen.output = gen.output + "}\n";
+    gen.output = gen.output + "const char* __pd_string_from_char(long long c) {\n";
+    gen.output = gen.output + "    char* r = malloc(2); r[0] = c; r[1] = 0; return r;\n";
+    gen.output = gen.output + "}\n";
+    gen.output = gen.output + "const char* __pd_string_substring(const char* s, long long start, long long end) {\n";
+    gen.output = gen.output + "    long long len = strlen(s);\n";
+    gen.output = gen.output + "    if (start < 0) start = 0;\n";
+    gen.output = gen.output + "    if (end > len) end = len;\n";
+    gen.output = gen.output + "    if (start >= end) return \"\";\n";
+    gen.output = gen.output + "    char* r = malloc(end - start + 1);\n";
+    gen.output = gen.output + "    strncpy(r, s + start, end - start);\n";
+    gen.output = gen.output + "    r[end - start] = 0;\n";
+    gen.output = gen.output + "    return r;\n";
+    gen.output = gen.output + "}\n";
+    
+    // File I/O
+    gen.output = gen.output + "// File I/O\n";
+    gen.output = gen.output + "#define MAX_FILES 256\n";
+    gen.output = gen.output + "static FILE* __pd_files[MAX_FILES] = {0};\n";
+    gen.output = gen.output + "static int __pd_next_file = 1;\n";
+    gen.output = gen.output + "long long __pd_file_open(const char* path) {\n";
+    gen.output = gen.output + "    if (__pd_next_file >= MAX_FILES) return -1;\n";
+    gen.output = gen.output + "    FILE* f = fopen(path, \"r+\");\n";
+    gen.output = gen.output + "    if (!f) f = fopen(path, \"w+\");\n";
+    gen.output = gen.output + "    if (!f) return -1;\n";
+    gen.output = gen.output + "    int h = __pd_next_file++;\n";
+    gen.output = gen.output + "    __pd_files[h] = f;\n";
+    gen.output = gen.output + "    return h;\n";
+    gen.output = gen.output + "}\n";
+    gen.output = gen.output + "const char* __pd_file_read_all(long long h) {\n";
+    gen.output = gen.output + "    if (h < 1 || h >= MAX_FILES || !__pd_files[h]) return \"\";\n";
+    gen.output = gen.output + "    FILE* f = __pd_files[h];\n";
+    gen.output = gen.output + "    fseek(f, 0, SEEK_END);\n";
+    gen.output = gen.output + "    long size = ftell(f);\n";
+    gen.output = gen.output + "    fseek(f, 0, SEEK_SET);\n";
+    gen.output = gen.output + "    char* buf = malloc(size + 1);\n";
+    gen.output = gen.output + "    fread(buf, 1, size, f);\n";
+    gen.output = gen.output + "    buf[size] = 0;\n";
+    gen.output = gen.output + "    return buf;\n";
+    gen.output = gen.output + "}\n";
+    gen.output = gen.output + "int __pd_file_write(long long h, const char* s) {\n";
+    gen.output = gen.output + "    if (h < 1 || h >= MAX_FILES || !__pd_files[h]) return 0;\n";
+    gen.output = gen.output + "    return fputs(s, __pd_files[h]) >= 0;\n";
+    gen.output = gen.output + "}\n";
+    gen.output = gen.output + "int __pd_file_close(long long h) {\n";
+    gen.output = gen.output + "    if (h < 1 || h >= MAX_FILES || !__pd_files[h]) return 0;\n";
+    gen.output = gen.output + "    FILE* f = __pd_files[h];\n";
+    gen.output = gen.output + "    __pd_files[h] = NULL;\n";
+    gen.output = gen.output + "    return fclose(f) == 0;\n";
+    gen.output = gen.output + "}\n\n";
+}
+
+// Parse and generate expression
+fn parse_expr(p: &mut Parser, gen: &mut CodeGen) {
+    // Parse primary expression
+    if check(p, TOK_NUMBER) {
+        let tok = advance(p);
+        gen.output = gen.output + int_to_string(tok.value);
+    } else if check(p, TOK_STRING) {
+        let tok = advance(p);
+        gen.output = gen.output + "\"";
+        gen.output = gen.output + get_string(&p.lexer, tok.value);
+        gen.output = gen.output + "\"";
+    } else if check(p, TOK_TRUE) {
+        advance(p);
+        gen.output = gen.output + "1";
+    } else if check(p, TOK_FALSE) {
+        advance(p);
+        gen.output = gen.output + "0";
+    } else if check(p, TOK_IDENT) {
+        let tok = advance(p);
+        let name = get_string(&p.lexer, tok.value);
+        
+        // Check for function call
+        if check(p, TOK_LPAREN) {
+            advance(p);
+            
+            // Map function names
+            if name == "print" {
+                gen.output = gen.output + "__pd_print";
+            } else if name == "print_int" {
+                gen.output = gen.output + "__pd_print_int";
+            } else if name == "string_len" {
+                gen.output = gen.output + "__pd_string_len";
+            } else if name == "string_concat" {
+                gen.output = gen.output + "__pd_string_concat";
+            } else if name == "string_char_at" {
+                gen.output = gen.output + "__pd_string_char_at";
+            } else if name == "string_from_char" {
+                gen.output = gen.output + "__pd_string_from_char";
+            } else if name == "string_substring" {
+                gen.output = gen.output + "__pd_string_substring";
+            } else if name == "int_to_string" {
+                gen.output = gen.output + "__pd_int_to_string";
+            } else if name == "file_open" {
+                gen.output = gen.output + "__pd_file_open";
+            } else if name == "file_read_all" {
+                gen.output = gen.output + "__pd_file_read_all";
+            } else if name == "file_write" {
+                gen.output = gen.output + "__pd_file_write";
+            } else if name == "file_close" {
+                gen.output = gen.output + "__pd_file_close";
+            } else {
+                gen.output = gen.output + name;
+            }
+            
+            gen.output = gen.output + "(";
+            
+            // Parse arguments
+            let mut first = true;
+            while !check(p, TOK_RPAREN) && !is_at_end(p) {
+                if !first {
+                    consume(p, TOK_COMMA);
+                    gen.output = gen.output + ", ";
+                }
+                parse_expr(p, gen);
+                first = false;
+            }
+            
+            consume(p, TOK_RPAREN);
+            gen.output = gen.output + ")";
+        } else {
+            gen.output = gen.output + name;
+        }
+    } else if check(p, TOK_LPAREN) {
+        advance(p);
+        gen.output = gen.output + "(";
+        parse_expr(p, gen);
+        gen.output = gen.output + ")";
+        consume(p, TOK_RPAREN);
+    }
+    
+    // Parse binary operators (simplified - no precedence)
+    while true {
+        if check(p, TOK_PLUS) {
+            advance(p);
+            // Check if string concatenation
+            gen.output = gen.output + " + ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_MINUS) {
+            advance(p);
+            gen.output = gen.output + " - ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_STAR) {
+            advance(p);
+            gen.output = gen.output + " * ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_SLASH) {
+            advance(p);
+            gen.output = gen.output + " / ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_EQEQ) {
+            advance(p);
+            gen.output = gen.output + " == ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_NE) {
+            advance(p);
+            gen.output = gen.output + " != ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_LT) {
+            advance(p);
+            gen.output = gen.output + " < ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_GT) {
+            advance(p);
+            gen.output = gen.output + " > ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_LE) {
+            advance(p);
+            gen.output = gen.output + " <= ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_GE) {
+            advance(p);
+            gen.output = gen.output + " >= ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_AMPAMP) {
+            advance(p);
+            gen.output = gen.output + " && ";
+            parse_expr(p, gen);
+        } else if check(p, TOK_PIPEPIPE) {
+            advance(p);
+            gen.output = gen.output + " || ";
+            parse_expr(p, gen);
+        } else {
+            break;
+        }
+    }
+}
+
+// Parse type
+fn parse_type(p: &mut Parser, gen: &mut CodeGen) -> String {
+    if check(p, TOK_I64) {
+        advance(p);
+        return "long long";
+    } else if check(p, TOK_BOOL) {
+        advance(p);
+        return "int";
+    } else if check(p, TOK_STRING_TYPE) {
+        advance(p);
+        return "const char*";
+    }
+    return "long long"; // default
+}
+
+// Parse statement
+fn parse_stmt(p: &mut Parser, gen: &mut CodeGen) {
+    add_indent(gen);
+    
+    if check(p, TOK_LET) {
+        // Let statement
+        advance(p);
+        let mut is_mut = false;
+        if check(p, TOK_MUT) {
+            advance(p);
+            is_mut = true;
+        }
+        
+        let name_tok = consume(p, TOK_IDENT);
+        let name = get_string(&p.lexer, name_tok.value);
+        
+        consume(p, TOK_COLON);
+        let type_str = parse_type(p, gen);
+        
+        gen.output = gen.output + type_str + " " + name;
+        
+        if check(p, TOK_EQ) {
+            advance(p);
+            gen.output = gen.output + " = ";
+            parse_expr(p, gen);
+        }
+        
+        gen.output = gen.output + ";\n";
+        consume(p, TOK_SEMICOLON);
+        
+    } else if check(p, TOK_IF) {
+        // If statement
+        advance(p);
+        consume(p, TOK_LPAREN);
+        gen.output = gen.output + "if (";
+        parse_expr(p, gen);
+        gen.output = gen.output + ") {\n";
+        consume(p, TOK_RPAREN);
+        consume(p, TOK_LBRACE);
+        
+        gen.indent = gen.indent + 1;
+        while !check(p, TOK_RBRACE) && !is_at_end(p) {
+            parse_stmt(p, gen);
+        }
+        gen.indent = gen.indent - 1;
+        
+        consume(p, TOK_RBRACE);
+        add_indent(gen);
+        gen.output = gen.output + "}";
+        
+        if check(p, TOK_ELSE) {
+            advance(p);
+            gen.output = gen.output + " else {\n";
+            consume(p, TOK_LBRACE);
+            
+            gen.indent = gen.indent + 1;
+            while !check(p, TOK_RBRACE) && !is_at_end(p) {
+                parse_stmt(p, gen);
+            }
+            gen.indent = gen.indent - 1;
+            
+            consume(p, TOK_RBRACE);
+            add_indent(gen);
+            gen.output = gen.output + "}";
+        }
+        gen.output = gen.output + "\n";
+        
+    } else if check(p, TOK_WHILE) {
+        // While statement
+        advance(p);
+        consume(p, TOK_LPAREN);
+        gen.output = gen.output + "while (";
+        parse_expr(p, gen);
+        gen.output = gen.output + ") {\n";
+        consume(p, TOK_RPAREN);
+        consume(p, TOK_LBRACE);
+        
+        gen.indent = gen.indent + 1;
+        while !check(p, TOK_RBRACE) && !is_at_end(p) {
+            parse_stmt(p, gen);
+        }
+        gen.indent = gen.indent - 1;
+        
+        consume(p, TOK_RBRACE);
+        add_indent(gen);
+        gen.output = gen.output + "}\n";
+        
+    } else if check(p, TOK_RETURN) {
+        // Return statement
+        advance(p);
+        gen.output = gen.output + "return";
+        if !check(p, TOK_SEMICOLON) {
+            gen.output = gen.output + " ";
+            parse_expr(p, gen);
+        }
+        gen.output = gen.output + ";\n";
+        consume(p, TOK_SEMICOLON);
+        
+    } else if check(p, TOK_IDENT) {
+        // Assignment or expression statement
+        let tok = advance(p);
+        let name = get_string(&p.lexer, tok.value);
+        
+        if check(p, TOK_EQ) {
+            // Assignment
+            advance(p);
+            gen.output = gen.output + name + " = ";
+            parse_expr(p, gen);
+            gen.output = gen.output + ";\n";
+            consume(p, TOK_SEMICOLON);
+        } else {
+            // Put token back and parse as expression
+            p.current = p.current - 1;
+            parse_expr(p, gen);
+            gen.output = gen.output + ";\n";
+            consume(p, TOK_SEMICOLON);
+        }
+        
+    } else {
+        // Expression statement
+        parse_expr(p, gen);
+        gen.output = gen.output + ";\n";
+        consume(p, TOK_SEMICOLON);
+    }
+}
+
+// Parse function
+fn parse_function(p: &mut Parser, gen: &mut CodeGen, is_public: bool) {
+    consume(p, TOK_FN);
+    
+    let name_tok = consume(p, TOK_IDENT);
+    let name = get_string(&p.lexer, name_tok.value);
+    
+    // Return type (simplified)
+    let mut return_type = "void";
+    
+    consume(p, TOK_LPAREN);
+    
+    // For simplicity, skip parameters for now
+    while !check(p, TOK_RPAREN) && !is_at_end(p) {
+        advance(p);
+    }
+    
+    consume(p, TOK_RPAREN);
+    
+    if check(p, TOK_ARROW) {
+        advance(p);
+        return_type = parse_type(p, gen);
+    }
+    
+    // Generate function signature
+    if name == "main" {
+        gen.output = gen.output + "int main()";
+    } else {
+        gen.output = gen.output + return_type + " " + name + "()";
+    }
+    
+    gen.output = gen.output + " {\n";
+    consume(p, TOK_LBRACE);
+    
+    // Parse body
+    gen.indent = 1;
+    while !check(p, TOK_RBRACE) && !is_at_end(p) {
+        parse_stmt(p, gen);
+    }
+    gen.indent = 0;
+    
+    consume(p, TOK_RBRACE);
+    
+    // Add return 0 for main
+    if name == "main" {
+        gen.output = gen.output + "    return 0;\n";
+    }
+    
+    gen.output = gen.output + "}\n\n";
+}
+
+// Main compiler function
+fn compile(source: String) -> String {
+    print("=== Minimal Palladium Compiler ===");
+    
+    // Lex
+    print("Lexing...");
+    let mut lex = create_lexer(source);
+    tokenize(&mut lex);
+    print("Found " + int_to_string(lex.token_count) + " tokens");
+    
+    // Parse and generate
+    print("Parsing and generating code...");
+    let mut parser = create_parser(lex);
+    let mut gen = create_codegen();
+    
+    // Generate headers
+    gen_headers(&mut gen);
+    
+    // Parse all functions
+    while !is_at_end(&parser) {
+        let is_pub = false;
+        if check(&parser, TOK_PUB) {
+            advance(&mut parser);
+            let is_pub = true;
+        }
+        
+        if check(&parser, TOK_FN) {
+            parse_function(&mut parser, &mut gen, is_pub);
+        } else {
+            advance(&mut parser); // Skip unknown tokens
+        }
+    }
+    
+    print("Code generation complete!");
+    return gen.output;
+}
+
+// Entry point
+fn main() {
+    print("Minimal Palladium Bootstrap Compiler");
+    print("=====================================");
+    
+    // Read test file
+    let test_code = "
+fn main() {
+    print(\"Hello from minimal compiler!\");
+    let x: i64 = 42;
+    let y: i64 = 13;
+    let sum: i64 = x + y;
+    print_int(sum);
+    
+    if sum > 50 {
+        print(\"Sum is greater than 50\");
+    } else {
+        print(\"Sum is less than or equal to 50\");
+    }
+    
+    let mut i: i64 = 0;
+    while i < 5 {
+        print_int(i);
+        i = i + 1;
+    }
+}
+";
+    
+    // Compile
+    let c_code = compile(test_code);
+    
+    // Write output
+    print("\nGenerated C code:");
+    print("==================");
+    print(c_code);
+}

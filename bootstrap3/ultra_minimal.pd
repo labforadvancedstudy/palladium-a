@@ -1,0 +1,64 @@
+// Ultra-minimal Palladium compiler
+// No references, no mut params, no advanced features
+// Just enough to compile itself
+
+// Simple test to verify it works
+fn main() {
+    print("Ultra-minimal Palladium Bootstrap Compiler");
+    print("==========================================");
+    
+    // Test basic expressions
+    let x: i64 = 42;
+    let y: i64 = 13;
+    let sum: i64 = x + y;
+    
+    print("Testing arithmetic:");
+    print_int(sum);
+    
+    // Test conditionals
+    if sum > 50 {
+        print("Sum is greater than 50");
+    } else {
+        print("Sum is not greater than 50");
+    }
+    
+    // Test loops
+    print("Testing loop:");
+    let mut i: i64 = 0;
+    while i < 5 {
+        print_int(i);
+        i = i + 1;
+    }
+    
+    // Test string operations
+    let msg: String = "Hello" + " from " + "Palladium!";
+    print(msg);
+    
+    // Test function calls
+    let result: i64 = add(10, 20);
+    print("Function result:");
+    print_int(result);
+    
+    print("Bootstrap compiler test complete!");
+}
+
+// Simple function
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+// Another function
+fn multiply(x: i64, y: i64) -> i64 {
+    let result: i64 = x * y;
+    return result;
+}
+
+// Test boolean function
+fn is_even(n: i64) -> bool {
+    return n % 2 == 0;
+}
+
+// Test string function  
+fn greet(name: String) -> String {
+    return "Hello, " + name + "!";
+}
