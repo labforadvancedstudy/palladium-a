@@ -115,6 +115,12 @@ pub enum Token {
     #[token(">=")]
     Ge,
     
+    #[token("&&")]
+    AndAnd,
+    
+    #[token("||")]
+    OrOr,
+    
     // Delimiters
     #[token("(")]
     LeftParen,
@@ -145,6 +151,9 @@ pub enum Token {
     
     #[token(".")]
     Dot,
+    
+    #[token("..")]
+    DotDot,
     
     #[token("->")]
     Arrow,
@@ -217,6 +226,8 @@ impl std::fmt::Display for Token {
             Token::Gt => write!(f, "'>'"),
             Token::Le => write!(f, "'<='"),
             Token::Ge => write!(f, "'>='"),
+            Token::AndAnd => write!(f, "'&&'"),
+            Token::OrOr => write!(f, "'||'"),
             Token::LeftParen => write!(f, "'('"),
             Token::RightParen => write!(f, "')'"),
             Token::LeftBrace => write!(f, "'{{'"),
@@ -227,6 +238,7 @@ impl std::fmt::Display for Token {
             Token::Comma => write!(f, "','"),
             Token::Colon => write!(f, "':'"),
             Token::Dot => write!(f, "'.'"),
+            Token::DotDot => write!(f, "'..'"),
             Token::Arrow => write!(f, "'->'"),
             Token::DoubleColon => write!(f, "'::'"),
             Token::Underscore => write!(f, "'_'"),

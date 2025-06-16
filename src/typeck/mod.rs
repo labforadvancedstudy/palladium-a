@@ -674,6 +674,22 @@ impl TypeChecker {
                         // Comparison operations return Bool
                         Ok(CheckerType::Bool)
                     }
+                    BinOp::And | BinOp::Or => {
+                        // Logical operations require both operands to be Bool
+                        if left_type != CheckerType::Bool {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "Bool".to_string(),
+                                found: left_type.to_string(),
+                            });
+                        }
+                        if right_type != CheckerType::Bool {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "Bool".to_string(),
+                                found: right_type.to_string(),
+                            });
+                        }
+                        Ok(CheckerType::Bool)
+                    }
                 }
             }
             Expr::ArrayLiteral { elements, .. } => {
@@ -810,6 +826,29 @@ impl TypeChecker {
                 // TODO: Properly type check enum constructors
                 // For now, just return the enum type
                 Ok(CheckerType::Struct(enum_name.clone()))
+            }
+            Expr::Range { start, end, .. } => {
+                // Type check start and end expressions
+                let start_type = self.check_expression(start)?;
+                let end_type = self.check_expression(end)?;
+                
+                // Both must be integers
+                if start_type != CheckerType::Int {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "Int".to_string(),
+                        found: start_type.to_string(),
+                    });
+                }
+                if end_type != CheckerType::Int {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "Int".to_string(),
+                        found: end_type.to_string(),
+                    });
+                }
+                
+                // Range expressions have a special internal type
+                // For now, we'll treat them as arrays when used in for loops
+                Ok(CheckerType::Array(Box::new(CheckerType::Int), 0))
             }
         }
     }

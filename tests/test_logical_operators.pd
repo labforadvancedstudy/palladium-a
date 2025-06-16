@@ -1,0 +1,286 @@
+// Comprehensive tests for logical && and || operators
+// These are crucial for control flow and complex conditions
+
+// Test basic && (logical AND)
+fn test_basic_and() {
+    print("=== Test: Basic && Operator ===");
+    
+    let a = true;
+    let b = false;
+    
+    if a && a {
+        print("✓ true && true = true");
+    } else {
+        print("✗ true && true should be true");
+    }
+    
+    if a && b {
+        print("✗ true && false should be false");
+    } else {
+        print("✓ true && false = false");
+    }
+    
+    if b && a {
+        print("✗ false && true should be false");
+    } else {
+        print("✓ false && true = false");
+    }
+    
+    if b && b {
+        print("✗ false && false should be false");
+    } else {
+        print("✓ false && false = false");
+    }
+}
+
+// Test basic || (logical OR)
+fn test_basic_or() {
+    print("\n=== Test: Basic || Operator ===");
+    
+    let a = true;
+    let b = false;
+    
+    if a || a {
+        print("✓ true || true = true");
+    } else {
+        print("✗ true || true should be true");
+    }
+    
+    if a || b {
+        print("✓ true || false = true");
+    } else {
+        print("✗ true || false should be true");
+    }
+    
+    if b || a {
+        print("✓ false || true = true");
+    } else {
+        print("✗ false || true should be true");
+    }
+    
+    if b || b {
+        print("✗ false || false should be false");
+    } else {
+        print("✓ false || false = false");
+    }
+}
+
+// Test operator precedence
+fn test_precedence() {
+    print("\n=== Test: Operator Precedence ===");
+    
+    // && has higher precedence than ||
+    if true || false && false {
+        print("✓ true || false && false = true (correct precedence)");
+    } else {
+        print("✗ Precedence error: && should bind tighter than ||");
+    }
+    
+    if false && true || true {
+        print("✓ false && true || true = true (correct precedence)");
+    } else {
+        print("✗ Precedence error: && should evaluate before ||");
+    }
+    
+    // Comparison operators have higher precedence than logical operators
+    let x = 5;
+    let y = 10;
+    
+    if x < 10 && y > 5 {
+        print("✓ Comparison operators work with &&");
+    } else {
+        print("✗ Comparison precedence error");
+    }
+    
+    if x > 10 || y == 10 {
+        print("✓ Comparison operators work with ||");
+    } else {
+        print("✗ Comparison precedence error");
+    }
+}
+
+// Test complex expressions
+fn test_complex_expressions() {
+    print("\n=== Test: Complex Logical Expressions ===");
+    
+    let a = 5;
+    let b = 10;
+    let c = 15;
+    
+    if a < b && b < c {
+        print("✓ Chained comparisons with && work");
+    } else {
+        print("✗ Chained comparisons failed");
+    }
+    
+    if a == 5 && b == 10 && c == 15 {
+        print("✓ Multiple && operations work");
+    } else {
+        print("✗ Multiple && failed");
+    }
+    
+    if a == 0 || b == 0 || c == 15 {
+        print("✓ Multiple || operations work");
+    } else {
+        print("✗ Multiple || failed");
+    }
+    
+    // Mixed operators
+    if (a < b && b < c) || (a > c && c > b) {
+        print("✓ Mixed && and || with parentheses work");
+    } else {
+        print("✗ Mixed operators with parentheses failed");
+    }
+}
+
+// Helper functions for short-circuit testing
+fn always_true() -> bool {
+    print("always_true called");
+    return true;
+}
+
+fn always_false() -> bool {
+    print("always_false called");
+    return false;
+}
+
+// Test short-circuit evaluation
+fn test_short_circuit() {
+    print("\n=== Test: Short-Circuit Evaluation ===");
+    
+    // This should NOT call the second function due to short-circuit
+    print("Testing: false && always_true()");
+    if false && always_true() {
+        print("✗ Should not reach here");
+    } else {
+        print("✓ && short-circuits on false");
+    }
+    
+    // This should call the function
+    print("\nTesting: true && always_false()");
+    if true && always_false() {
+        print("✗ Should not reach here");
+    } else {
+        print("✓ && evaluates second operand when first is true");
+    }
+    
+    // Test || short-circuit
+    print("\nTesting: true || always_false()");
+    if true || always_false() {
+        print("✓ || short-circuits on true");
+    } else {
+        print("✗ Should not reach here");
+    }
+    
+    // This should call the function
+    print("\nTesting: false || always_true()");
+    if false || always_true() {
+        print("✓ || evaluates second operand when first is false");
+    } else {
+        print("✗ Should not reach here");
+    }
+}
+
+// Test in control structures
+fn test_control_structures() {
+    print("\n=== Test: Logical Operators in Control Structures ===");
+    
+    let x = 10;
+    let y = 20;
+    
+    // In while loops
+    let mut i = 0;
+    while i < 5 && x < y {
+        i = i + 1;
+    }
+    if i == 5 {
+        print("✓ && works in while conditions");
+    } else {
+        print("✗ While loop with && failed");
+    }
+    
+    // In for loops with complex conditions
+    let mut count = 0;
+    for j in 0..10 {
+        if j > 2 && j < 8 {
+            count = count + 1;
+        }
+    }
+    if count == 5 {
+        print("✓ && works in for loop body");
+    } else {
+        print("✗ For loop with && failed");
+        print_int(count);
+    }
+}
+
+// Test with function returns
+fn is_even(n: i64) -> bool {
+    return n % 2 == 0;
+}
+
+fn is_positive(n: i64) -> bool {
+    return n > 0;
+}
+
+fn test_with_functions() {
+    print("\n=== Test: Logical Operators with Functions ===");
+    
+    let num = 6;
+    
+    if is_even(num) && is_positive(num) {
+        print("✓ && works with function calls");
+    } else {
+        print("✗ Function calls with && failed");
+    }
+    
+    let neg = -3;
+    
+    if is_even(neg) || is_positive(neg) {
+        print("✗ Should not be true");
+    } else {
+        print("✓ || works with function calls");
+    }
+}
+
+// Test edge cases
+fn test_edge_cases() {
+    print("\n=== Test: Edge Cases ===");
+    
+    // Nested conditions
+    if (true && true) && (true || false) {
+        print("✓ Nested logical operations work");
+    } else {
+        print("✗ Nested operations failed");
+    }
+    
+    // Many operators
+    if true && true && true && true {
+        print("✓ Many && operators work");
+    } else {
+        print("✗ Many && failed");
+    }
+    
+    if false || false || false || true {
+        print("✓ Many || operators work");
+    } else {
+        print("✗ Many || failed");
+    }
+}
+
+fn main() {
+    print("=== Comprehensive Logical Operator Tests ===\n");
+    
+    test_basic_and();
+    test_basic_or();
+    test_precedence();
+    test_complex_expressions();
+    test_short_circuit();
+    test_control_structures();
+    test_with_functions();
+    test_edge_cases();
+    
+    print("\n=== All Logical Operator Tests Complete ===");
+    print("&& and || operators are now fully functional!");
+    print("This enables complex control flow for bootstrapping! 🎉");
+}

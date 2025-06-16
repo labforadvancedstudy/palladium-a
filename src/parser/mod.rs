@@ -645,7 +645,78 @@ impl Parser {
     
     /// Parse an expression
     fn parse_expression(&mut self) -> Result<Expr> {
-        self.parse_equality()
+        self.parse_range()
+    }
+    
+    /// Parse range operators (..)
+    fn parse_range(&mut self) -> Result<Expr> {
+        let mut left = self.parse_logical_or()?;
+        
+        while let Ok(token) = self.peek() {
+            match token {
+                Token::DotDot => {
+                    let start_span = self.advance()?.1; // consume '..'
+                    let right = self.parse_logical_or()?;
+                    let end_span = Span::dummy(); // TODO: proper span tracking
+                    left = Expr::Range {
+                        start: Box::new(left),
+                        end: Box::new(right),
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                    };
+                }
+                _ => break,
+            }
+        }
+        
+        Ok(left)
+    }
+    
+    /// Parse logical OR (||)
+    fn parse_logical_or(&mut self) -> Result<Expr> {
+        let mut left = self.parse_logical_and()?;
+        
+        while let Ok(token) = self.peek() {
+            match token {
+                Token::OrOr => {
+                    let _ = self.advance()?; // consume '||'
+                    let right = self.parse_logical_and()?;
+                    let span = Span::dummy(); // TODO: proper span tracking
+                    left = Expr::Binary {
+                        left: Box::new(left),
+                        op: BinOp::Or,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                _ => break,
+            }
+        }
+        
+        Ok(left)
+    }
+    
+    /// Parse logical AND (&&)
+    fn parse_logical_and(&mut self) -> Result<Expr> {
+        let mut left = self.parse_equality()?;
+        
+        while let Ok(token) = self.peek() {
+            match token {
+                Token::AndAnd => {
+                    let _ = self.advance()?; // consume '&&'
+                    let right = self.parse_equality()?;
+                    let span = Span::dummy(); // TODO: proper span tracking
+                    left = Expr::Binary {
+                        left: Box::new(left),
+                        op: BinOp::And,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                _ => break,
+            }
+        }
+        
+        Ok(left)
     }
     
     /// Parse equality operators (==, !=)
@@ -1434,6 +1505,85 @@ mod tests {
     }
     
     #[test]
+    fn test_parse_range_syntax() {
+        let source = r#"
+        fn main() {
+            for i in 0..10 {
+                print_int(i);
+            }
+            
+            let start = 5;
+            let end = 15;
+            for j in start..end {
+                print_int(j);
+            }
+            
+            for k in 0..n+1 {
+                print_int(k);
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        assert_eq!(ast.items.len(), 1);
+        
+        if let Item::Function(func) = &ast.items[0] {
+            assert_eq!(func.name, "main");
+            assert_eq!(func.body.len(), 5); // 3 for loops + 2 let statements
+            
+            // First for loop: 0..10
+            if let Stmt::For { var, iter, .. } = &func.body[0] {
+                assert_eq!(var, "i");
+                if let Expr::Range { start, end, .. } = iter {
+                    assert!(matches!(start.as_ref(), Expr::Integer(0)));
+                    assert!(matches!(end.as_ref(), Expr::Integer(10)));
+                } else {
+                    panic!("Expected range expression");
+                }
+            } else {
+                panic!("Expected for loop");
+            }
+            
+            // Check let statements
+            assert!(matches!(&func.body[1], Stmt::Let { name, .. } if name == "start"));
+            assert!(matches!(&func.body[2], Stmt::Let { name, .. } if name == "end"));
+            
+            // Second for loop: start..end (with variables)
+            if let Stmt::For { var, iter, .. } = &func.body[3] {
+                assert_eq!(var, "j");
+                if let Expr::Range { start, end, .. } = iter {
+                    assert!(matches!(start.as_ref(), Expr::Ident(s) if s == "start"));
+                    assert!(matches!(end.as_ref(), Expr::Ident(e) if e == "end"));
+                } else {
+                    panic!("Expected range expression");
+                }
+            } else {
+                panic!("Expected for loop");
+            }
+            
+            // Third for loop: 0..n+1
+            if let Stmt::For { var, iter, .. } = &func.body[4] {
+                assert_eq!(var, "k");
+                if let Expr::Range { start, end, .. } = iter {
+                    assert!(matches!(start.as_ref(), Expr::Integer(0)));
+                    // The end should be a binary expression (n+1)
+                    assert!(matches!(end.as_ref(), Expr::Binary { .. }));
+                } else {
+                    panic!("Expected range expression");
+                }
+            } else {
+                panic!("Expected for loop");
+            }
+        } else {
+            panic!("Expected function");
+        }
+    }
+    
+    #[test]
     fn test_parse_enum() {
         let source = r#"
         enum Color {
@@ -1789,6 +1939,234 @@ mod tests {
                     }
                 } else {
                     panic!("Expected array repeat expression");
+                }
+            }
+        } else {
+            panic!("Expected function");
+        }
+    }
+    
+    #[test]
+    fn test_parse_struct_returns() {
+        let source = r#"
+        struct Point {
+            x: i64,
+            y: i64,
+        }
+        
+        fn make_point(x: i64, y: i64) -> Point {
+            return Point { x: x, y: y };
+        }
+        
+        fn get_origin() -> Point {
+            return Point { x: 0, y: 0 };
+        }
+        
+        fn main() {
+            let p = make_point(10, 20);
+            let origin = get_origin();
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        assert_eq!(ast.items.len(), 4);
+        
+        // Check struct definition
+        if let Item::Struct(struct_def) = &ast.items[0] {
+            assert_eq!(struct_def.name, "Point");
+            assert_eq!(struct_def.fields.len(), 2);
+        } else {
+            panic!("Expected struct definition");
+        }
+        
+        // Check make_point function
+        if let Item::Function(func) = &ast.items[1] {
+            assert_eq!(func.name, "make_point");
+            assert_eq!(func.params.len(), 2);
+            assert_eq!(func.params[0].0, "x");
+            assert_eq!(func.params[0].1, Type::I64);
+            assert_eq!(func.params[1].0, "y");
+            assert_eq!(func.params[1].1, Type::I64);
+            assert_eq!(func.return_type, Some(Type::Custom("Point".to_string())));
+            
+            // Check return statement
+            assert_eq!(func.body.len(), 1);
+            if let Stmt::Return(Some(Expr::StructLiteral { name, fields, .. })) = &func.body[0] {
+                assert_eq!(name, "Point");
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].0, "x");
+                assert_eq!(fields[1].0, "y");
+            } else {
+                panic!("Expected return with struct literal");
+            }
+        } else {
+            panic!("Expected function");
+        }
+        
+        // Check get_origin function
+        if let Item::Function(func) = &ast.items[2] {
+            assert_eq!(func.name, "get_origin");
+            assert_eq!(func.params.len(), 0);
+            assert_eq!(func.return_type, Some(Type::Custom("Point".to_string())));
+            
+            // Check return statement
+            assert_eq!(func.body.len(), 1);
+            if let Stmt::Return(Some(Expr::StructLiteral { name, fields, .. })) = &func.body[0] {
+                assert_eq!(name, "Point");
+                assert_eq!(fields.len(), 2);
+                if let Expr::Integer(n) = &fields[0].1 {
+                    assert_eq!(*n, 0);
+                }
+                if let Expr::Integer(n) = &fields[1].1 {
+                    assert_eq!(*n, 0);
+                }
+            } else {
+                panic!("Expected return with struct literal");
+            }
+        } else {
+            panic!("Expected function");
+        }
+        
+        // Check main function
+        if let Item::Function(func) = &ast.items[3] {
+            assert_eq!(func.name, "main");
+            assert_eq!(func.body.len(), 2);
+            
+            // First statement: let p = make_point(10, 20)
+            if let Stmt::Let { name, value, .. } = &func.body[0] {
+                assert_eq!(name, "p");
+                if let Expr::Call { func, args, .. } = value {
+                    if let Expr::Ident(fname) = func.as_ref() {
+                        assert_eq!(fname, "make_point");
+                    }
+                    assert_eq!(args.len(), 2);
+                } else {
+                    panic!("Expected function call");
+                }
+            }
+            
+            // Second statement: let origin = get_origin()
+            if let Stmt::Let { name, value, .. } = &func.body[1] {
+                assert_eq!(name, "origin");
+                if let Expr::Call { func, args, .. } = value {
+                    if let Expr::Ident(fname) = func.as_ref() {
+                        assert_eq!(fname, "get_origin");
+                    }
+                    assert_eq!(args.len(), 0);
+                } else {
+                    panic!("Expected function call");
+                }
+            }
+        } else {
+            panic!("Expected function");
+        }
+    }
+    
+    #[test]
+    fn test_parse_logical_operators() {
+        let source = r#"
+        fn main() {
+            let a = true && false;
+            let b = true || false;
+            let c = x < 5 && y > 10;
+            let d = (a && b) || (c && d);
+            
+            if a && b || c {
+                print("complex condition");
+            }
+            
+            while i < 10 && running {
+                i = i + 1;
+            }
+        }
+        "#;
+        
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        
+        assert_eq!(ast.items.len(), 1);
+        
+        if let Item::Function(func) = &ast.items[0] {
+            assert_eq!(func.name, "main");
+            assert_eq!(func.body.len(), 6);
+            
+            // Check first statement: let a = true && false
+            if let Stmt::Let { name, value, .. } = &func.body[0] {
+                assert_eq!(name, "a");
+                if let Expr::Binary { op, left, right, .. } = value {
+                    assert_eq!(*op, BinOp::And);
+                    assert!(matches!(left.as_ref(), Expr::Bool(true)));
+                    assert!(matches!(right.as_ref(), Expr::Bool(false)));
+                } else {
+                    panic!("Expected && expression");
+                }
+            }
+            
+            // Check second statement: let b = true || false
+            if let Stmt::Let { name, value, .. } = &func.body[1] {
+                assert_eq!(name, "b");
+                if let Expr::Binary { op, left, right, .. } = value {
+                    assert_eq!(*op, BinOp::Or);
+                    assert!(matches!(left.as_ref(), Expr::Bool(true)));
+                    assert!(matches!(right.as_ref(), Expr::Bool(false)));
+                } else {
+                    panic!("Expected || expression");
+                }
+            }
+            
+            // Check third statement: let c = x < 5 && y > 10
+            if let Stmt::Let { name, value, .. } = &func.body[2] {
+                assert_eq!(name, "c");
+                if let Expr::Binary { op, left, right, .. } = value {
+                    assert_eq!(*op, BinOp::And);
+                    // Left should be x < 5
+                    if let Expr::Binary { op: left_op, .. } = left.as_ref() {
+                        assert_eq!(*left_op, BinOp::Lt);
+                    } else {
+                        panic!("Expected comparison on left side of &&");
+                    }
+                    // Right should be y > 10
+                    if let Expr::Binary { op: right_op, .. } = right.as_ref() {
+                        assert_eq!(*right_op, BinOp::Gt);
+                    } else {
+                        panic!("Expected comparison on right side of &&");
+                    }
+                } else {
+                    panic!("Expected && expression");
+                }
+            }
+            
+            // Check fourth statement: complex expression with parentheses
+            if let Stmt::Let { name, value, .. } = &func.body[3] {
+                assert_eq!(name, "d");
+                if let Expr::Binary { op, .. } = value {
+                    assert_eq!(*op, BinOp::Or);
+                } else {
+                    panic!("Expected || at top level");
+                }
+            }
+            
+            // Check if statement with logical operators
+            if let Stmt::If { condition, .. } = &func.body[4] {
+                if let Expr::Binary { op, .. } = condition {
+                    assert_eq!(*op, BinOp::Or); // || has lower precedence than &&
+                } else {
+                    panic!("Expected logical expression in if condition");
+                }
+            }
+            
+            // Check while statement with logical operators
+            if let Stmt::While { condition, .. } = &func.body[5] {
+                if let Expr::Binary { op, .. } = condition {
+                    assert_eq!(*op, BinOp::And);
+                } else {
+                    panic!("Expected && in while condition");
                 }
             }
         } else {

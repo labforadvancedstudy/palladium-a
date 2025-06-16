@@ -227,6 +227,12 @@ pub enum Expr {
         data: Option<EnumConstructorData>,
         span: Span,
     },
+    /// Range expression (start..end)
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        span: Span,
+    },
 }
 
 /// Enum constructor data
@@ -255,7 +261,7 @@ pub enum AssignTarget {
     },
 }
 
-/// Binary operators (for future use)
+/// Binary operators
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
     Add,
@@ -269,6 +275,8 @@ pub enum BinOp {
     Gt,
     Le,
     Ge,
+    And,
+    Or,
 }
 
 impl Expr {
@@ -286,6 +294,7 @@ impl Expr {
             Expr::StructLiteral { span, .. } => *span,
             Expr::FieldAccess { span, .. } => *span,
             Expr::EnumConstructor { span, .. } => *span,
+            Expr::Range { span, .. } => *span,
         }
     }
 }
@@ -560,6 +569,9 @@ impl std::fmt::Display for Expr {
                     None => Ok(())
                 }
             }
+            Expr::Range { start, end, .. } => {
+                write!(f, "{}..{}", start, end)
+            }
         }
     }
 }
@@ -613,6 +625,8 @@ impl std::fmt::Display for BinOp {
             BinOp::Gt => write!(f, ">"),
             BinOp::Le => write!(f, "<="),
             BinOp::Ge => write!(f, ">="),
+            BinOp::And => write!(f, "&&"),
+            BinOp::Or => write!(f, "||"),
         }
     }
 }
