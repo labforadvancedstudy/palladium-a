@@ -1,0 +1,110 @@
+// Final demo showcasing all working features
+import std::math;
+import std::string;
+
+fn format_result(label: String, value: i64) -> String {
+    return label + ": " + int_to_string(value);
+}
+
+fn calculate_factorial(n: i64) -> i64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * calculate_factorial(n - 1);
+}
+
+fn fibonacci(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn distance_squared(p1: Point, p2: Point) -> i64 {
+    let dx = pd_abs(p1.x - p2.x);
+    let dy = pd_abs(p1.y - p2.y);
+    return dx * dx + dy * dy;
+}
+
+fn main() {
+    print("🚀 Palladium Final Demo");
+    print("======================\n");
+    
+    // String concatenation
+    let greeting = "Hello" + ", " + "Palladium!";
+    print(greeting);
+    
+    // Math operations
+    print("\n📊 Math Operations:");
+    let a = -42;
+    let b = 25;
+    print(format_result("abs(-42)", pd_abs(a)));
+    print(format_result("max(-42, 25)", max(a, b)));
+    print(format_result("min(-42, 25)", min(a, b)));
+    print(format_result("2^10", pd_pow(2, 10)));
+    
+    // Factorial and Fibonacci
+    print("\n🔢 Recursive Functions:");
+    print(format_result("factorial(5)", calculate_factorial(5)));
+    print(format_result("fibonacci(10)", fibonacci(10)));
+    
+    // String operations
+    print("\n📝 String Operations:");
+    let text = "  Palladium Programming Language  ";
+    let trimmed = trim(text);
+    print("Original: '" + text + "'");
+    print("Trimmed: '" + trimmed + "'");
+    
+    if starts_with(trimmed, "Palladium") {
+        print("✓ Text starts with 'Palladium'");
+    }
+    
+    if ends_with(trimmed, "Language") {
+        print("✓ Text ends with 'Language'");
+    }
+    
+    if contains(trimmed, "Programming") {
+        print("✓ Text contains 'Programming'");
+    }
+    
+    // Structs and arrays
+    print("\n🎯 Structs and Arrays:");
+    let points = [
+        Point { x: 0, y: 0 },
+        Point { x: 3, y: 4 },
+        Point { x: -5, y: 12 },
+    ];
+    
+    let origin: Point = points[0];
+    let p1: Point = points[1];
+    let p2: Point = points[2];
+    
+    print(format_result("Distance² from origin to (3,4)", distance_squared(origin, p1)));
+    print(format_result("Distance² from origin to (-5,12)", distance_squared(origin, p2)));
+    
+    // Loops and control flow
+    print("\n🔄 Loops and Control Flow:");
+    let mut sum = 0;
+    for i in 1..11 {
+        sum = sum + i;
+    }
+    print(format_result("Sum of 1 to 10", sum));
+    
+    // Pattern matching simulation
+    print("\n🎲 Even/Odd Check:");
+    for n in 1..6 {
+        if n % 2 == 0 {
+            print(int_to_string(n) + " is even");
+        } else {
+            print(int_to_string(n) + " is odd");
+        }
+    }
+    
+    print("\n✅ All features working successfully!");
+    print("🎉 Palladium is ready for bootstrapping!");
+}

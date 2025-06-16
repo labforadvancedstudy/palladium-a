@@ -125,11 +125,11 @@ impl SymbolTable {
 
 /// Information about a generic function
 #[derive(Debug, Clone)]
-struct GenericFunction {
-    type_params: Vec<String>,
-    params: Vec<(String, crate::ast::Type)>,
-    return_type: Option<crate::ast::Type>,
-    body: Vec<crate::ast::Stmt>,
+pub struct GenericFunction {
+    pub type_params: Vec<String>,
+    pub params: Vec<(String, crate::ast::Type)>,
+    pub return_type: Option<crate::ast::Type>,
+    pub body: Vec<crate::ast::Stmt>,
 }
 
 /// A concrete instantiation of a generic function
@@ -1303,6 +1303,23 @@ impl TypeChecker {
                 func_name
             ))),
         }
+    }
+    
+    /// Get all generic function instantiations for code generation
+    pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
+        let mut result = Vec::new();
+        
+        for (instantiation, _func_type) in &self.instantiations {
+            if let Some(generic_func) = self.generic_functions.get(&instantiation.name) {
+                result.push((
+                    instantiation.name.clone(),
+                    instantiation.type_args.clone(),
+                    generic_func.clone()
+                ));
+            }
+        }
+        
+        result
     }
 }
 

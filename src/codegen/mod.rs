@@ -2,7 +2,7 @@
 // "Forging legends into machine code"
 
 use crate::ast::{*, AssignTarget, UnaryOp};
-use crate::errors::{CompileError, Result};
+use crate::errors::{CompileError, Result, Span};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -18,6 +18,8 @@ pub struct CodeGenerator {
     mutable_params: std::collections::HashMap<String, bool>,
     /// Imported modules
     imported_modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
+    /// Generic function instantiations to generate
+    generic_instantiations: Vec<(String, Vec<String>, crate::typeck::GenericFunction)>,
 }
 
 impl CodeGenerator {
@@ -29,12 +31,18 @@ impl CodeGenerator {
             variables: std::collections::HashMap::new(),
             mutable_params: std::collections::HashMap::new(),
             imported_modules: std::collections::HashMap::new(),
+            generic_instantiations: Vec::new(),
         })
     }
     
     /// Set imported modules for code generation
     pub fn set_imported_modules(&mut self, modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>) {
         self.imported_modules = modules;
+    }
+    
+    /// Set generic function instantiations for code generation
+    pub fn set_generic_instantiations(&mut self, instantiations: Vec<(String, Vec<String>, crate::typeck::GenericFunction)>) {
+        self.generic_instantiations = instantiations;
     }
     
     /// Infer the C type of an expression
@@ -288,6 +296,18 @@ impl CodeGenerator {
                 }
                 _ => {}
             }
+        }
+        
+        // Generate monomorphized versions of generic functions FIRST
+        if !self.generic_instantiations.is_empty() {
+            self.output.push_str("// Monomorphized generic functions\n");
+            
+            for (func_name, type_args, generic_func) in &self.generic_instantiations.clone() {
+                // Create a concrete function from the generic template
+                let concrete_func = self.monomorphize_function(func_name, type_args, generic_func)?;
+                self.generate_function(&concrete_func)?;
+            }
+            self.output.push_str("\n");
         }
         
         // Generate functions from imported modules
@@ -1110,6 +1130,96 @@ impl CodeGenerator {
             }
         }
         Ok(())
+    }
+    
+    /// Create a monomorphized version of a generic function
+    fn monomorphize_function(&self, func_name: &str, type_args: &[String], generic_func: &crate::typeck::GenericFunction) -> Result<Function> {
+        // Generate a mangled name for the concrete function
+        let mangled_name = format!("{}__{}", func_name, type_args.join("_"));
+        
+        // Create a mapping from type parameters to concrete types
+        let mut type_map = std::collections::HashMap::new();
+        for (i, type_param) in generic_func.type_params.iter().enumerate() {
+            if i < type_args.len() {
+                type_map.insert(type_param.clone(), type_args[i].clone());
+            }
+        }
+        
+        // Substitute types in parameters
+        let concrete_params = generic_func.params.iter().map(|(name, ty)| {
+            let concrete_type = self.substitute_type(ty, &type_map);
+            Param {
+                name: name.clone(),
+                ty: concrete_type,
+                mutable: false, // TODO: Preserve mutability from original
+            }
+        }).collect();
+        
+        // Substitute type in return type
+        let concrete_return_type = generic_func.return_type.as_ref()
+            .map(|ty| self.substitute_type(ty, &type_map));
+        
+        // Substitute types in the function body
+        let concrete_body = self.substitute_types_in_body(&generic_func.body, &type_map);
+        
+        // Create the concrete function
+        Ok(Function {
+            name: mangled_name,
+            params: concrete_params,
+            return_type: concrete_return_type,
+            body: concrete_body,
+            visibility: crate::ast::Visibility::Private, // Monomorphized functions are internal
+            type_params: vec![], // No longer generic
+            span: Span { start: 0, end: 0, line: 0, column: 0 }, // Synthetic span for generated function
+        })
+    }
+    
+    /// Substitute type parameters with concrete types in a type
+    fn substitute_type(&self, ty: &Type, type_map: &std::collections::HashMap<String, String>) -> Type {
+        match ty {
+            Type::TypeParam(name) => {
+                // Replace type parameter with concrete type
+                if let Some(concrete_name) = type_map.get(name) {
+                    // Parse the concrete type name
+                    match concrete_name.as_str() {
+                        "i32" | "I32" => Type::I32,
+                        "i64" | "I64" => Type::I64,
+                        "u32" | "U32" => Type::U32,
+                        "u64" | "U64" => Type::U64,
+                        "bool" | "Bool" => Type::Bool,
+                        "string" | "String" => Type::String,
+                        _ => Type::Custom(concrete_name.clone()),
+                    }
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Array(elem_type, size) => {
+                Type::Array(
+                    Box::new(self.substitute_type(elem_type, type_map)),
+                    *size
+                )
+            }
+            Type::Generic { name, args } => {
+                // Substitute in generic type arguments
+                let substituted_args = args.iter()
+                    .map(|arg| self.substitute_type(arg, type_map))
+                    .collect();
+                Type::Generic {
+                    name: name.clone(),
+                    args: substituted_args,
+                }
+            }
+            _ => ty.clone(),
+        }
+    }
+    
+    /// Substitute types in a statement body
+    fn substitute_types_in_body(&self, stmts: &[Stmt], _type_map: &std::collections::HashMap<String, String>) -> Vec<Stmt> {
+        // For now, we'll just clone the body
+        // In a full implementation, we'd need to walk the AST and substitute types
+        // This is a simplified version that works for basic cases
+        stmts.to_vec()
     }
     
     /// Write the generated code to a file

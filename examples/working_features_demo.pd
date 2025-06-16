@@ -1,0 +1,64 @@
+// Demonstration of working Palladium features
+// Module imports, string operations, string concatenation
+
+import std::math;
+import std::string;
+
+fn format_result(label: String, value: i64) -> String {
+    return label + ": " + int_to_string(value);
+}
+
+fn create_banner(text: String) -> String {
+    let border = "====================";
+    return border + "\n" + text + "\n" + border;
+}
+
+fn main() {
+    // String concatenation
+    let greeting = "Hello" + ", " + "Palladium" + "!";
+    print(greeting);
+    
+    // Module functions
+    let title = "   Module System Demo   ";
+    let clean_title = trim(title);
+    print(create_banner(clean_title));
+    
+    // Math operations from module
+    let x = -42;
+    let abs_x = pd_abs(x);
+    print(format_result("Absolute value of -42", abs_x));
+    
+    let a = 15;
+    let b = 25;
+    print(format_result("max(15, 25)", max(a, b)));
+    print(format_result("min(15, 25)", min(a, b)));
+    
+    // Power function
+    let base = 2;
+    let exp = 8;
+    let result = pd_pow(base, exp);
+    print(format_result("2^8", result));
+    
+    // String predicates
+    let filename = "test.pd";
+    if ends_with(filename, ".pd") {
+        print("\nFile check: " + filename + " is a Palladium source file");
+    }
+    
+    let text = "Palladium Programming Language";
+    if starts_with(text, "Palladium") {
+        print("Text starts with 'Palladium'");
+    }
+    
+    if contains(text, "Programming") {
+        print("Text contains 'Programming'");
+    }
+    
+    // Complex string building
+    let report = "\n" + "=== Final Report ===" + "\n";
+    let line1 = "Total calculations: " + int_to_string(5) + "\n";
+    let line2 = "Language: " + "Palladium" + "\n";
+    let line3 = "Status: " + "Working!" + "\n";
+    let full_report = report + line1 + line2 + line3;
+    print(full_report);
+}

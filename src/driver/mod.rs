@@ -60,6 +60,12 @@ impl Driver {
         type_checker.check(&ast)?;
         println!("   All types check out!");
         
+        // Get generic instantiations from type checker
+        let instantiations = type_checker.get_instantiations();
+        if !instantiations.is_empty() {
+            println!("   Found {} generic instantiations", instantiations.len());
+        }
+        
         // Phase 4: Code generation
         println!("⚡ Generating code...");
         let mut codegen = CodeGenerator::new(filename)?;
@@ -67,6 +73,11 @@ impl Driver {
         // Pass resolved modules to code generator
         if !resolved_modules.is_empty() {
             codegen.set_imported_modules(resolved_modules);
+        }
+        
+        // Pass generic instantiations to code generator
+        if !instantiations.is_empty() {
+            codegen.set_generic_instantiations(instantiations);
         }
         
         codegen.compile(&ast)?;
