@@ -8,6 +8,7 @@ pub mod ast;
 pub mod typeck;
 pub mod codegen;
 pub mod errors;
+pub mod runtime;
 
 // Re-export main components
 pub use driver::Driver;

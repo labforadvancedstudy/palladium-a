@@ -1,0 +1,5 @@
+fn main() {
+    print(42);
+    print(1337);
+    print(9999);
+}

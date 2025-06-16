@@ -44,3 +44,52 @@ build_output/
 /while_loop
 /bubble_sort
 CLAUDE.LOCAL.md
+
+# Executable files in root (no extension)
+/bootstrap_demo
+/demo
+/final
+/output
+/parsed
+/program
+/test_program
+/typed
+
+# Temporary files
+*.txt
+type_report.txt
+test_file.txt
+
+# Test files in root (should be in tests/)
+/test.pd
+/enhanced_test.pd
+/integrated_test.pd
+/ultimate_test.pd
+/input.pd
+
+# Demo files in root (should be in examples/)
+/demo.pd
+
+# Build artifacts
+/build/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# OS specific files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+
+# Temporary editor files
+*.bak
+*.tmp
+*.temp

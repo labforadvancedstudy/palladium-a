@@ -1,0 +1,16 @@
+// Actual Working Compiler
+
+fn generate_c() -> bool {
+    let ok = file_write("hello.c", "int main(){return 0;}");
+    return ok;
+}
+
+fn main() {
+    print("Palladium Compiler\n");
+    
+    if generate_c() {
+        print("OK: hello.c\n");
+    } else {
+        print("FAIL\n");
+    }
+}

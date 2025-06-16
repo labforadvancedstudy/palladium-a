@@ -209,6 +209,16 @@ impl TypeChecker {
             CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Bool)),
         );
         
+        // String operations
+        functions.insert(
+            "string_concat".to_string(),
+            CheckerType::Function(vec![CheckerType::String, CheckerType::String], Box::new(CheckerType::String)),
+        );
+        functions.insert(
+            "int_to_string".to_string(),
+            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::String)),
+        );
+        
         Self {
             functions,
             structs: HashMap::new(),

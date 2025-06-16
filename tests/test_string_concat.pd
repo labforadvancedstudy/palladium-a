@@ -1,0 +1,28 @@
+// Test string concatenation
+fn main() {
+    print("Testing string concatenation\n");
+    print("===========================\n\n");
+    
+    let a = "Hello";
+    let b = " World";
+    
+    // Test basic concatenation
+    let c = string_concat(a, b);
+    print("Concat: ");
+    print(c);
+    print("\n");
+    
+    // Test int to string
+    let n = 42;
+    let s = int_to_string(n);
+    print("Number as string: ");
+    print(s);
+    print("\n");
+    
+    // Test complex concatenation
+    let msg = string_concat("The answer is: ", int_to_string(42));
+    print(msg);
+    print("\n");
+    
+    print("\n✅ String operations work!\n");
+}

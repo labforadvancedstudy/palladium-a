@@ -1,0 +1,4 @@
+// Demo program
+fn main() {
+    print("Hello from self-hosted Palladium!");
+}

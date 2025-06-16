@@ -1,0 +1,83 @@
+// Simple Module Demo - Shows modular compilation approach
+
+fn generate_lexer_module(out: i64) {
+    print("Generating lexer module...\n");
+    
+    file_write(out, "// Lexer Module\n");
+    file_write(out, "typedef struct Token {\n");
+    file_write(out, "    int type;\n");
+    file_write(out, "    int pos;\n");
+    file_write(out, "} Token;\n\n");
+    
+    file_write(out, "Token* lex_source(const char* src) {\n");
+    file_write(out, "    // Tokenize source code\n");
+    file_write(out, "    return NULL; // Placeholder\n");
+    file_write(out, "}\n\n");
+}
+
+fn generate_parser_module(out: i64) {
+    print("Generating parser module...\n");
+    
+    file_write(out, "// Parser Module\n");
+    file_write(out, "typedef struct AST {\n");
+    file_write(out, "    int type;\n");
+    file_write(out, "    void* data;\n");
+    file_write(out, "} AST;\n\n");
+    
+    file_write(out, "AST* parse_tokens(Token* tokens) {\n");
+    file_write(out, "    // Parse token stream\n");
+    file_write(out, "    return NULL; // Placeholder\n");
+    file_write(out, "}\n\n");
+}
+
+fn generate_codegen_module(out: i64) {
+    print("Generating codegen module...\n");
+    
+    file_write(out, "// Code Generator Module\n");
+    file_write(out, "void generate_code(AST* ast, FILE* out) {\n");
+    file_write(out, "    fprintf(out, \"// Generated code\\n\");\n");
+    file_write(out, "    fprintf(out, \"int main() { return 0; }\\n\");\n");
+    file_write(out, "}\n\n");
+}
+
+fn generate_main_module(out: i64) {
+    print("Generating main module...\n");
+    
+    file_write(out, "#include <stdio.h>\n");
+    file_write(out, "#include <stdlib.h>\n\n");
+    
+    // Include all modules inline
+    generate_lexer_module(out);
+    generate_parser_module(out);
+    generate_codegen_module(out);
+    
+    file_write(out, "int main(int argc, char** argv) {\n");
+    file_write(out, "    printf(\"Modular Palladium Compiler\\n\");\n");
+    file_write(out, "    printf(\"==========================\\n\\n\");\n");
+    file_write(out, "    \n");
+    file_write(out, "    printf(\"Modules integrated:\\n\");\n");
+    file_write(out, "    printf(\"  - Lexer\\n\");\n");
+    file_write(out, "    printf(\"  - Parser\\n\");\n");
+    file_write(out, "    printf(\"  - Code Generator\\n\\n\");\n");
+    file_write(out, "    \n");
+    file_write(out, "    printf(\"This demonstrates modular compilation!\\n\");\n");
+    file_write(out, "    return 0;\n");
+    file_write(out, "}\n");
+}
+
+fn main() {
+    print("Simple Module System Demo\n");
+    print("========================\n\n");
+    
+    // Generate complete modular compiler
+    let out = file_open("modular_demo.c");
+    generate_main_module(out);
+    file_close(out);
+    
+    print("\nGenerated: modular_demo.c\n");
+    print("\nThis shows how Palladium can:\n");
+    print("  • Generate modular code\n");
+    print("  • Organize compiler components\n");
+    print("  • Build structured C programs\n");
+    print("\nCompile with: gcc modular_demo.c -o modular_demo\n");
+}
