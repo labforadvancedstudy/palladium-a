@@ -1,0 +1,55 @@
+// Test simple array of structs without passing to functions
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn test_struct_array() {
+    print("=== Testing Simple Struct Array ===\n");
+    
+    // Create individual points
+    let p1 = Point { x: 10, y: 20 };
+    let p2 = Point { x: 30, y: 40 };
+    let p3 = Point { x: 50, y: 60 };
+    
+    print("Created 3 points");
+    
+    // Try to create array
+    let points: [Point; 3] = [p1, p2, p3];
+    
+    print("Array created successfully!");
+    
+    // Access elements
+    print("\nAccessing array elements:");
+    print("Point 0 - x:");
+    print_int(points[0].x);
+    print("Point 0 - y:");
+    print_int(points[0].y);
+    
+    print("Point 1 - x:");
+    print_int(points[1].x);
+    print("Point 1 - y:");
+    print_int(points[1].y);
+    
+    print("Point 2 - x:");
+    print_int(points[2].x);
+    print("Point 2 - y:");
+    print_int(points[2].y);
+    
+    // Modify array elements
+    print("\nModifying array elements:");
+    points[0].x = 100;
+    points[0].y = 200;
+    
+    print("Modified Point 0 - x:");
+    print_int(points[0].x);
+    print("Modified Point 0 - y:");
+    print_int(points[0].y);
+    
+    print("\n=== Test Complete ===");
+}
+
+fn main() {
+    test_struct_array();
+}

@@ -1,0 +1,67 @@
+// Test arrays of structs as struct fields
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct PointCollection {
+    points: [Point; 5],
+    count: i64,
+}
+
+fn test_struct_array_field() {
+    print("=== Testing Struct with Array Field ===\n");
+    
+    // Create individual points
+    let p1 = Point { x: 10, y: 20 };
+    let p2 = Point { x: 30, y: 40 };
+    let p3 = Point { x: 50, y: 60 };
+    let p4 = Point { x: 70, y: 80 };
+    let p5 = Point { x: 90, y: 100 };
+    
+    // Create array
+    let points = [p1, p2, p3, p4, p5];
+    
+    // Create struct with array field
+    let collection = PointCollection {
+        points: points,
+        count: 5
+    };
+    
+    print("Created collection with:");
+    print_int(collection.count);
+    print("points");
+    
+    // Access array elements through struct
+    print("\nAccessing points through struct:");
+    for i in 0..5 {
+        print("Point");
+        print_int(i);
+        print("- x:");
+        print_int(collection.points[i].x);
+        print(", y:");
+        print_int(collection.points[i].y);
+    }
+    
+    // Test mutable struct with array field
+    print("\nModifying collection...");
+    let mut mutable_collection: PointCollection = collection;
+    mutable_collection.points[0].x = 111;
+    mutable_collection.points[0].y = 222;
+    mutable_collection.count = 6;  // pretend we added one
+    
+    print("Modified first point - x:");
+    print_int(mutable_collection.points[0].x);
+    print(", y:");
+    print_int(mutable_collection.points[0].y);
+    print("New count:");
+    print_int(mutable_collection.count);
+    
+    print("\n=== Struct Array Field Test Complete ===");
+}
+
+fn main() {
+    test_struct_array_field();
+    print("\nArrays of structs in struct fields work! 🎉");
+}

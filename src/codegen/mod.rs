@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 pub struct CodeGenerator {
     module_name: String,
     output: String,
+    /// Map of function names to their return types
+    functions: std::collections::HashMap<String, Option<Type>>,
 }
 
 impl CodeGenerator {
@@ -17,6 +19,7 @@ impl CodeGenerator {
         Ok(Self {
             module_name: module_name.to_string(),
             output: String::new(),
+            functions: std::collections::HashMap::new(),
         })
     }
     
@@ -177,6 +180,13 @@ impl CodeGenerator {
         self.output.push_str("    return 0;\n");
         self.output.push_str("}\n\n");
         
+        // First pass: collect function signatures
+        for item in &program.items {
+            if let Item::Function(func) = item {
+                self.functions.insert(func.name.clone(), func.return_type.clone());
+            }
+        }
+        
         // Generate struct definitions first
         for item in &program.items {
             match item {
@@ -228,6 +238,7 @@ impl CodeGenerator {
                         Type::U32 => "unsigned int",
                         Type::U64 => "unsigned long long",
                         Type::Bool => "int",
+                        Type::Custom(name) => &format!("struct {}", name),  // Support struct arrays
                         _ => return Err(CompileError::Generic(
                             "Unsupported array element type in struct field".to_string()
                         )),
@@ -270,9 +281,8 @@ impl CodeGenerator {
             Some(Type::Custom(name)) => {
                 // For custom types (structs), we return by value
                 // Note: In real C, returning large structs by value might not be ideal
-                return Err(CompileError::Generic(
-                    format!("Returning structs from functions is not yet supported: {}", name)
-                ));
+                // but it works and is simple to implement
+                name.as_str()
             }
         };
         
@@ -306,6 +316,7 @@ impl CodeGenerator {
                         Type::U32 => "unsigned int",
                         Type::U64 => "unsigned long long",
                         Type::Bool => "int",
+                        Type::Custom(name) => name.as_str(),  // Support struct arrays
                         _ => return Err(CompileError::Generic(
                             "Unsupported array element type in function parameter".to_string()
                         )),
@@ -443,7 +454,17 @@ impl CodeGenerator {
                                             "file_read_all" | "file_read_line" => {
                                                 ("const char*".to_string(), false, None)
                                             }
-                                            _ => ("long long".to_string(), false, None)
+                                            _ => {
+                                                // Look up user-defined function return type
+                                                if let Some(ret_type) = self.functions.get(fname) {
+                                                    match ret_type {
+                                                        Some(t) => (type_to_c(t), false, None),
+                                                        None => ("void".to_string(), false, None),
+                                                    }
+                                                } else {
+                                                    ("long long".to_string(), false, None)
+                                                }
+                                            }
                                         }
                                     }
                                     _ => ("long long".to_string(), false, None)
@@ -526,31 +547,50 @@ impl CodeGenerator {
                 self.output.push_str("    }\n");
             }
             Stmt::For { var, iter, body, .. } => {
-                // For now, we only support iterating over arrays
-                // Generate a C-style for loop with index
                 self.output.push_str("    {\n");  // Create a new scope
                 
-                // Determine array size and element type
-                // For simplicity, we'll generate code that iterates with an index
-                self.output.push_str("        // For-in loop\n");
-                self.output.push_str("        for (long long _i = 0; _i < sizeof(");
-                self.generate_expression(iter)?;
-                self.output.push_str(")/sizeof(");
-                self.generate_expression(iter)?;
-                self.output.push_str("[0]); _i++) {\n");
-                
-                // Declare loop variable and assign current element
-                self.output.push_str(&format!("            long long {} = ", var));
-                self.generate_expression(iter)?;
-                self.output.push_str("[_i];\n");
-                
-                // Generate body
-                for stmt in body {
-                    self.output.push_str("        ");  // Extra indentation
-                    self.generate_statement(stmt)?;
+                // Check if iterating over a range
+                match iter {
+                    Expr::Range { start, end, .. } => {
+                        // Generate C-style for loop for range
+                        self.output.push_str("        // For loop with range\n");
+                        self.output.push_str(&format!("        for (long long {} = ", var));
+                        self.generate_expression(start)?;
+                        self.output.push_str(&format!("; {} < ", var));
+                        self.generate_expression(end)?;
+                        self.output.push_str(&format!("; {}++) {{\n", var));
+                        
+                        // Generate body
+                        for stmt in body {
+                            self.output.push_str("        ");  // Extra indentation
+                            self.generate_statement(stmt)?;
+                        }
+                        
+                        self.output.push_str("        }\n");
+                    }
+                    _ => {
+                        // For arrays and other iterables
+                        self.output.push_str("        // For-in loop\n");
+                        self.output.push_str("        for (long long _i = 0; _i < sizeof(");
+                        self.generate_expression(iter)?;
+                        self.output.push_str(")/sizeof(");
+                        self.generate_expression(iter)?;
+                        self.output.push_str("[0]); _i++) {\n");
+                        
+                        // Declare loop variable and assign current element
+                        self.output.push_str(&format!("            long long {} = ", var));
+                        self.generate_expression(iter)?;
+                        self.output.push_str("[_i];\n");
+                        
+                        // Generate body
+                        for stmt in body {
+                            self.output.push_str("        ");  // Extra indentation
+                            self.generate_statement(stmt)?;
+                        }
+                        
+                        self.output.push_str("        }\n");
+                    }
                 }
-                
-                self.output.push_str("        }\n");
                 self.output.push_str("    }\n");
             }
             Stmt::Break { .. } => {
@@ -710,6 +750,8 @@ impl CodeGenerator {
                     BinOp::Gt => " > ",
                     BinOp::Le => " <= ",
                     BinOp::Ge => " >= ",
+                    BinOp::And => " && ",
+                    BinOp::Or => " || ",
                 };
                 self.output.push_str(op_str);
                 
@@ -776,6 +818,13 @@ impl CodeGenerator {
                     self.output.push_str(" with data");
                 }
                 self.output.push_str(" */ 0");
+            }
+            Expr::Range { start, end, .. } => {
+                // Range expressions are not directly translatable to C
+                // They should only appear in for loops which handle them specially
+                return Err(CompileError::Generic(
+                    "Range expressions can only be used in for loops".to_string()
+                ));
             }
         }
         Ok(())
