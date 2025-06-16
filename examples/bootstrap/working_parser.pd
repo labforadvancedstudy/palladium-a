@@ -1,0 +1,224 @@
+// Working Parser - A simple expression parser in Palladium
+// Parses expressions like: 2 + 3 * 4
+
+// Token types
+fn TK_EOF() -> i64 { return 0; }
+fn TK_NUMBER() -> i64 { return 1; }
+fn TK_PLUS() -> i64 { return 2; }
+fn TK_MINUS() -> i64 { return 3; }
+fn TK_STAR() -> i64 { return 4; }
+fn TK_SLASH() -> i64 { return 5; }
+fn TK_LPAREN() -> i64 { return 6; }
+fn TK_RPAREN() -> i64 { return 7; }
+
+// AST node types
+fn NODE_NUMBER() -> i64 { return 100; }
+fn NODE_BINARY() -> i64 { return 101; }
+
+// Simple token
+struct Token {
+    kind: i64,
+    value: i64,  // For numbers
+}
+
+// Simple AST node
+struct AstNode {
+    kind: i64,
+    value: i64,  // For numbers
+    op: i64,     // For binary operators
+    left_value: i64,   // Left operand value (simplified)
+    right_value: i64,  // Right operand value (simplified)
+}
+
+// Parser state
+struct Parser {
+    tokens: [Token; 100],
+    token_count: i64,
+    current: i64,
+}
+
+// Create parser
+fn parser_new() -> Parser {
+    let empty_token = Token { kind: TK_EOF(), value: 0 };
+    return Parser {
+        tokens: [empty_token; 100],
+        token_count: 0,
+        current: 0,
+    };
+}
+
+// Add token to parser
+fn add_token(mut parser: Parser, kind: i64, value: i64) {
+    if parser.token_count < 100 {
+        parser.tokens[parser.token_count] = Token { kind: kind, value: value };
+        parser.token_count = parser.token_count + 1;
+    }
+}
+
+// Get current token
+fn current_token(parser: Parser) -> Token {
+    if parser.current >= parser.token_count {
+        return Token { kind: TK_EOF(), value: 0 };
+    }
+    return parser.tokens[parser.current];
+}
+
+// Advance to next token
+fn advance(mut parser: Parser) {
+    if parser.current < parser.token_count {
+        parser.current = parser.current + 1;
+    }
+}
+
+// Parse primary expression (number or parenthesized expression)
+fn parse_primary(mut parser: Parser) -> AstNode {
+    let token = current_token(parser);
+    
+    if token.kind == TK_NUMBER() {
+        advance(parser);
+        return AstNode {
+            kind: NODE_NUMBER(),
+            value: token.value,
+            op: 0,
+            left_value: 0,
+            right_value: 0,
+        };
+    }
+    
+    if token.kind == TK_LPAREN() {
+        advance(parser);  // skip (
+        let expr = parse_expression(parser);
+        advance(parser);  // skip )
+        return expr;
+    }
+    
+    // Error - return 0
+    return AstNode {
+        kind: NODE_NUMBER(),
+        value: 0,
+        op: 0,
+        left_value: 0,
+        right_value: 0,
+    };
+}
+
+// Parse multiplication/division
+fn parse_term(mut parser: Parser) -> AstNode {
+    let mut left = parse_primary(parser);
+    
+    while true {
+        let token = current_token(parser);
+        if token.kind != TK_STAR() && token.kind != TK_SLASH() {
+            break;
+        }
+        
+        let op = token.kind;
+        advance(parser);
+        let right = parse_primary(parser);
+        
+        // For simplicity, just evaluate immediately
+        let mut result = 0;
+        if op == TK_STAR() {
+            result = left.value * right.value;
+        } else {
+            result = left.value / right.value;
+        }
+        
+        left = AstNode {
+            kind: NODE_NUMBER(),
+            value: result,
+            op: op,
+            left_value: left.value,
+            right_value: right.value,
+        };
+    }
+    
+    return left;
+}
+
+// Parse addition/subtraction
+fn parse_expression(mut parser: Parser) -> AstNode {
+    let mut left = parse_term(parser);
+    
+    while true {
+        let token = current_token(parser);
+        if token.kind != TK_PLUS() && token.kind != TK_MINUS() {
+            break;
+        }
+        
+        let op = token.kind;
+        advance(parser);
+        let right = parse_term(parser);
+        
+        // For simplicity, just evaluate immediately
+        let mut result = 0;
+        if op == TK_PLUS() {
+            result = left.value + right.value;
+        } else {
+            result = left.value - right.value;
+        }
+        
+        left = AstNode {
+            kind: NODE_NUMBER(),
+            value: result,
+            op: op,
+            left_value: left.value,
+            right_value: right.value,
+        };
+    }
+    
+    return left;
+}
+
+// Test the parser
+fn main() {
+    print("🌳 Working Palladium Parser\n");
+    print("==========================\n\n");
+    
+    // Create parser and add tokens for: 2 + 3 * 4
+    let mut parser = parser_new();
+    add_token(parser, TK_NUMBER(), 2);
+    add_token(parser, TK_PLUS(), 0);
+    add_token(parser, TK_NUMBER(), 3);
+    add_token(parser, TK_STAR(), 0);
+    add_token(parser, TK_NUMBER(), 4);
+    
+    print("Expression: 2 + 3 * 4\n");
+    print("Expected: 14 (because 3 * 4 = 12, then 2 + 12 = 14)\n");
+    
+    let result = parse_expression(parser);
+    print("Result: ");
+    print_int(result.value);
+    print("\n");
+    
+    if result.value == 14 {
+        print("\n✅ Parser correctly evaluated the expression!\n");
+    } else {
+        print("\n❌ Parser gave incorrect result\n");
+    }
+    
+    // Test another expression: (10 - 6) * 2
+    parser = parser_new();
+    add_token(parser, TK_LPAREN(), 0);
+    add_token(parser, TK_NUMBER(), 10);
+    add_token(parser, TK_MINUS(), 0);
+    add_token(parser, TK_NUMBER(), 6);
+    add_token(parser, TK_RPAREN(), 0);
+    add_token(parser, TK_STAR(), 0);
+    add_token(parser, TK_NUMBER(), 2);
+    
+    print("\nExpression: (10 - 6) * 2\n");
+    print("Expected: 8\n");
+    
+    let result2 = parse_expression(parser);
+    print("Result: ");
+    print_int(result2.value);
+    print("\n");
+    
+    if result2.value == 8 {
+        print("\n✅ Parser correctly handled parentheses!\n");
+    }
+    
+    print("\n🎯 This parser is written in Palladium!\n");
+    print("🚀 It demonstrates operator precedence and parentheses!\n");
+}

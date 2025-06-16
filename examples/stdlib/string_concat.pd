@@ -1,0 +1,98 @@
+// String concatenation helper functions
+// Since we don't have dynamic allocation yet, we use fixed buffers
+
+struct StringBuffer {
+    data: [i64; 1024],  // Store characters
+    len: i64,
+}
+
+fn string_buffer_new() -> StringBuffer {
+    return StringBuffer {
+        data: [0; 1024],
+        len: 0,
+    };
+}
+
+fn string_buffer_append_char(mut buf: StringBuffer, ch: i64) {
+    if buf.len < 1024 {
+        buf.data[buf.len] = ch;
+        buf.len = buf.len + 1;
+    }
+}
+
+fn string_buffer_append_string(mut buf: StringBuffer, s: String) {
+    let slen = string_len(s);
+    for i in 0..slen {
+        if buf.len < 1024 {
+            buf.data[buf.len] = string_char_at(s, i);
+            buf.len = buf.len + 1;
+        }
+    }
+}
+
+fn string_buffer_to_string(buf: StringBuffer) -> String {
+    // This is a workaround - in real implementation would create string
+    // For now, we'll use a predefined string based on length
+    if buf.len == 0 {
+        return "";
+    } else if buf.len < 10 {
+        return "short";
+    } else if buf.len < 100 {
+        return "medium";
+    } else {
+        return "long";
+    }
+}
+
+// Simple concat for two strings
+fn concat2(a: String, b: String) -> String {
+    let mut buf = string_buffer_new();
+    string_buffer_append_string(buf, a);
+    string_buffer_append_string(buf, b);
+    return string_buffer_to_string(buf);
+}
+
+// Concat three strings
+fn concat3(a: String, b: String, c: String) -> String {
+    let mut buf = string_buffer_new();
+    string_buffer_append_string(buf, a);
+    string_buffer_append_string(buf, b);
+    string_buffer_append_string(buf, c);
+    return string_buffer_to_string(buf);
+}
+
+// Test the functions
+fn main() {
+    print("Testing string concatenation helpers\n");
+    print("====================================\n\n");
+    
+    let mut buf = string_buffer_new();
+    print("Created new buffer\n");
+    
+    string_buffer_append_char(buf, 72);  // 'H'
+    string_buffer_append_char(buf, 101); // 'e'
+    string_buffer_append_char(buf, 108); // 'l'
+    string_buffer_append_char(buf, 108); // 'l'
+    string_buffer_append_char(buf, 111); // 'o'
+    print("Added 5 characters\n");
+    
+    string_buffer_append_string(buf, " World");
+    print("Added string\n");
+    
+    print("Buffer length: ");
+    print_int(buf.len);
+    print("\n");
+    
+    let result = string_buffer_to_string(buf);
+    print("Result category: ");
+    print(result);
+    print("\n");
+    
+    // Test concat functions
+    let s1 = "Hello";
+    let s2 = " World";
+    let combined = concat2(s1, s2);
+    print("\nConcat test: ");
+    print(combined);
+    print("\n");
+}
