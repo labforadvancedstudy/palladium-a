@@ -1,0 +1,20 @@
+// Minimal test to isolate compilation issue
+
+fn main() {
+    print("Starting test");
+    
+    // Test 1: Simple array
+    let arr = [1, 2, 3];
+    print_int(arr[0]);
+    
+    // Test 2: Simple loop
+    let mut sum = 0;
+    let mut i = 0;
+    while i < 5 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    print_int(sum);
+    
+    print("Test complete");
+}
