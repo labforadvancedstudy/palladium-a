@@ -239,6 +239,14 @@ fn stringify(value: JsonValue) -> String {
 - [x] Pattern matching
 - [x] Memory safety without GC
 - [x] Comprehensive test suite
+- [x] String concatenation with + operator
+- [x] Generic functions (type inference)
+- [x] Module imports (basic resolver)
+
+### In Progress 🔧
+- [ ] Module system (cross-module type checking)
+- [ ] Generic monomorphization
+- [ ] Error messages with suggestions
 
 ### Next Steps 🚧
 - [ ] Package manager
@@ -246,6 +254,7 @@ fn stringify(value: JsonValue) -> String {
 - [ ] LLVM backend for optimization
 - [ ] WebAssembly target
 - [ ] Async/await support
+- [ ] Traits/interfaces system
 
 ### The Dream 🌟
 - [ ] Formal verification framework
