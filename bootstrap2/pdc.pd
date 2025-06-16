@@ -1,0 +1,105 @@
+// Palladium Compiler (pdc) - Written in Palladium!
+// "The legendary compiler compiling itself"
+
+import lexer;
+import parser;
+import codegen;
+
+fn compile_source(source: String) -> String {
+    // Phase 1: Lexing
+    print("📖 Lexing...");
+    let tokens = tokenize_all(source);
+    
+    // Phase 2: Parsing
+    print("🌳 Parsing...");
+    let mut parser = create_parser(tokens);
+    let ast = parse_program(&mut parser);
+    
+    // Phase 3: Code Generation
+    print("⚡ Generating code...");
+    let mut gen = create_codegen();
+    gen_program(&mut gen, &ast);
+    
+    return gen.output;
+}
+
+fn read_file(filename: String) -> String {
+    let handle = file_open(filename);
+    if handle < 0 {
+        print("Error: Could not open file " + filename);
+        return "";
+    }
+    
+    let content = file_read_all(handle);
+    file_close(handle);
+    return content;
+}
+
+fn write_file(filename: String, content: String) -> bool {
+    let handle = file_open(filename);
+    if handle < 0 {
+        print("Error: Could not create file " + filename);
+        return false;
+    }
+    
+    let success = file_write(handle, content);
+    file_close(handle);
+    return success;
+}
+
+fn get_output_filename(input_file: String) -> String {
+    // Find the last dot
+    let len = string_len(input_file);
+    let mut i = len - 1;
+    
+    while i >= 0 {
+        if string_char_at(input_file, i) == 46 {  // '.'
+            break;
+        }
+        i = i - 1;
+    }
+    
+    if i >= 0 {
+        // Replace .pd with .c
+        let base = string_substring(input_file, 0, i);
+        return base + ".c";
+    }
+    
+    // No extension found, just append .c
+    return input_file + ".c";
+}
+
+fn main() {
+    print("🚀 Palladium Compiler v0.1");
+    print("   Written in Palladium itself!");
+    print("");
+    
+    // For now, hardcode the input file
+    // In a real compiler, we'd parse command line arguments
+    let input_file = "test.pd";
+    
+    print("🔨 Compiling " + input_file + "...");
+    
+    // Read source file
+    let source = read_file(input_file);
+    if string_len(source) == 0 {
+        print("Error: Empty or missing source file");
+        return;
+    }
+    
+    // Compile
+    let c_code = compile_source(source);
+    
+    // Write output
+    let output_file = get_output_filename(input_file);
+    if write_file(output_file, c_code) {
+        print("✅ Successfully generated " + output_file);
+        
+        // Compile with gcc
+        print("🔗 Compiling with gcc...");
+        // Note: In real implementation, we'd use system() or exec()
+        print("   Run: gcc " + output_file + " -o " + string_substring(output_file, 0, string_len(output_file) - 2));
+    } else {
+        print("❌ Failed to write output file");
+    }
+}
