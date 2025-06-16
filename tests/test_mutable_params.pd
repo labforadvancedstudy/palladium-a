@@ -1,0 +1,125 @@
+// Test mutable function parameters (pass by reference)
+// This feature is needed for efficient in-place modifications
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Counter {
+    value: i64,
+}
+
+// Test 1: Modify primitive by reference
+fn increment(mut n: i64) {
+    n = n + 1;
+}
+
+// Test 2: Modify struct field
+fn move_point(mut p: Point, dx: i64, dy: i64) {
+    p.x = p.x + dx;
+    p.y = p.y + dy;
+}
+
+// Test 3: Swap two values
+fn swap(mut a: i64, mut b: i64) {
+    let temp = a;
+    a = b;
+    b = temp;
+}
+
+// Test 4: Complex struct modification
+fn increment_counter(mut c: Counter) {
+    c.value = c.value + 1;
+}
+
+// Test 5: Array element modification
+fn double_array(mut arr: [i64; 5]) {
+    for i in 0..5 {
+        arr[i] = arr[i] * 2;
+    }
+}
+
+fn main() {
+    print("=== Testing Mutable Parameters ===\n");
+    
+    // Test 1: Basic increment
+    print("Test 1: Increment");
+    let mut x = 10;
+    print("Before:");
+    print_int(x);
+    increment(x);
+    print("After:");
+    print_int(x);
+    if x == 11 {
+        print("✓ Pass by reference works!");
+    } else {
+        print("✗ Still pass by value");
+    }
+    
+    // Test 2: Struct modification
+    print("\nTest 2: Move point");
+    let mut pt = Point { x: 5, y: 10 };
+    print("Before: x=");
+    print_int(pt.x);
+    print(", y=");
+    print_int(pt.y);
+    
+    move_point(pt, 3, 4);
+    print("After: x=");
+    print_int(pt.x);
+    print(", y=");
+    print_int(pt.y);
+    
+    // Test 3: Swap
+    print("\nTest 3: Swap");
+    let mut a = 100;
+    let mut b = 200;
+    print("Before: a=");
+    print_int(a);
+    print(", b=");
+    print_int(b);
+    
+    swap(a, b);
+    print("After: a=");
+    print_int(a);
+    print(", b=");
+    print_int(b);
+    
+    // Test 4: Counter
+    print("\nTest 4: Counter");
+    let mut counter = Counter { value: 0 };
+    print("Initial:");
+    print_int(counter.value);
+    
+    increment_counter(counter);
+    increment_counter(counter);
+    increment_counter(counter);
+    
+    print("After 3 increments:");
+    print_int(counter.value);
+    
+    // Test 5: Array modification
+    print("\nTest 5: Double array");
+    let mut nums = [1, 2, 3, 4, 5];
+    print("Before: [");
+    for i in 0..5 {
+        print_int(nums[i]);
+        if i < 4 {
+            print(", ");
+        }
+    }
+    print("]");
+    
+    double_array(nums);
+    print("\nAfter: [");
+    for i in 0..5 {
+        print_int(nums[i]);
+        if i < 4 {
+            print(", ");
+        }
+    }
+    print("]");
+    
+    print("\n\n=== Mutable Parameters Essential for Bootstrapping! ===");
+}

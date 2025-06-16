@@ -1,0 +1,167 @@
+// Minimal lexer for Palladium - bootstrap proof of concept
+// Modified to work with current compiler limitations
+
+// Token type functions instead of constants
+fn TOK_EOF() -> i64 { return 0; }
+fn TOK_IDENT() -> i64 { return 1; }
+fn TOK_NUMBER() -> i64 { return 2; }
+fn TOK_STRING() -> i64 { return 3; }
+fn TOK_LET() -> i64 { return 4; }
+fn TOK_FN() -> i64 { return 5; }
+fn TOK_RETURN() -> i64 { return 6; }
+fn TOK_IF() -> i64 { return 7; }
+fn TOK_LPAREN() -> i64 { return 8; }
+fn TOK_RPAREN() -> i64 { return 9; }
+fn TOK_LBRACE() -> i64 { return 10; }
+fn TOK_RBRACE() -> i64 { return 11; }
+fn TOK_SEMI() -> i64 { return 12; }
+fn TOK_EQ() -> i64 { return 13; }
+fn TOK_PLUS() -> i64 { return 14; }
+fn TOK_MINUS() -> i64 { return 15; }
+fn TOK_STAR() -> i64 { return 16; }
+fn TOK_UNKNOWN() -> i64 { return 99; }
+
+// Convert token type to string for display
+fn token_type_name(tok: i64) -> String {
+    if tok == 0 {
+        return "EOF";
+    }
+    if tok == 1 {
+        return "IDENT";
+    }
+    if tok == 2 {
+        return "NUMBER";
+    }
+    if tok == 3 {
+        return "STRING";
+    }
+    if tok == 4 {
+        return "LET";
+    }
+    if tok == 5 {
+        return "FN";
+    }
+    if tok == 6 {
+        return "RETURN";
+    }
+    if tok == 7 {
+        return "IF";
+    }
+    if tok == 8 {
+        return "LPAREN";
+    }
+    if tok == 9 {
+        return "RPAREN";
+    }
+    if tok == 10 {
+        return "LBRACE";
+    }
+    if tok == 11 {
+        return "RBRACE";
+    }
+    if tok == 12 {
+        return "SEMI";
+    }
+    if tok == 13 {
+        return "EQ";
+    }
+    if tok == 14 {
+        return "PLUS";
+    }
+    if tok == 15 {
+        return "MINUS";
+    }
+    if tok == 16 {
+        return "STAR";
+    }
+    return "UNKNOWN";
+}
+
+// Check if character is whitespace
+fn is_space(c: i64) -> bool {
+    if c == 32 {  // space
+        return true;
+    }
+    if c == 9 {   // tab
+        return true;
+    }
+    if c == 10 {  // newline
+        return true;
+    }
+    if c == 13 {  // carriage return
+        return true;
+    }
+    return false;
+}
+
+// Check if character is digit
+fn is_digit(c: i64) -> bool {
+    return c >= 48 && c <= 57;  // '0' to '9'
+}
+
+// Check if character is letter
+fn is_letter(c: i64) -> bool {
+    if c >= 65 && c <= 90 {  // A-Z
+        return true;
+    }
+    if c >= 97 && c <= 122 { // a-z
+        return true;
+    }
+    if c == 95 {  // underscore
+        return true;
+    }
+    return false;
+}
+
+// Simple test of tokenizer logic
+fn test_lexer_logic() {
+    print("=== Testing Lexer Logic ===\n");
+    
+    // Test character classification
+    print("Testing character classification:\n");
+    print("  is_space(' '): ");
+    if is_space(32) {
+        print("true\n");
+    } else {
+        print("false\n");
+    }
+    
+    print("  is_digit('5'): ");
+    if is_digit(53) {
+        print("true\n");
+    } else {
+        print("false\n");
+    }
+    
+    print("  is_letter('a'): ");
+    if is_letter(97) {
+        print("true\n");
+    } else {
+        print("false\n");
+    }
+    
+    // Test token type names
+    print("\nTesting token type names:\n");
+    print("  TOK_IDENT: ");
+    print(token_type_name(TOK_IDENT()));
+    print("\n");
+    
+    print("  TOK_NUMBER: ");
+    print(token_type_name(TOK_NUMBER()));
+    print("\n");
+    
+    print("  TOK_LET: ");
+    print(token_type_name(TOK_LET()));
+    print("\n");
+}
+
+fn main() -> i32 {
+    print("=== Palladium Bootstrap Lexer Test ===\n");
+    
+    test_lexer_logic();
+    
+    print("\n=== Test complete ===\n");
+    print("This demonstrates basic lexer components work in Palladium!\n");
+    
+    return 0;
+}

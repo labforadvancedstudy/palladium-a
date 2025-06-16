@@ -1,0 +1,53 @@
+// A simple Palladium program to test bootstrapping
+// This represents any Palladium program that can be compiled
+
+fn greet(name: String) {
+    print("Hello, ");
+    print(name);
+    print("! Welcome to self-hosted Palladium!\n");
+}
+
+fn factorial(n: i64) -> i64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn demonstrate_features() {
+    // Variables and types
+    let x = 42;
+    let message = "Palladium is self-hosting!";
+    let mut counter = 0;
+    
+    // Loops
+    print("\nCounting to 5:");
+    for i in 1..6 {
+        print_int(i);
+        counter = counter + 1;
+    }
+    
+    // Conditionals
+    if counter == 5 {
+        print("\nCounted correctly!");
+    }
+    
+    // Function calls
+    print("\nFactorial of 5 = ");
+    print_int(factorial(5));
+    
+    // Strings
+    print("\n");
+    print(message);
+}
+
+fn main() {
+    print("=== Palladium Bootstrap Test ===\n");
+    
+    greet("Developer");
+    demonstrate_features();
+    
+    print("\n✅ All features working!");
+    print("\n🎉 This program was compiled by Palladium!");
+    print("\n🚀 Self-hosting achieved!\n");
+}

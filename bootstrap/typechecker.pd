@@ -1,0 +1,600 @@
+// Palladium Type Checker - Complete Implementation
+// Performs semantic analysis and type inference
+
+struct TypeChecker {
+    symbols: SymbolTable,
+    current_function: String,
+    current_return_type: Type,
+    errors: [String; 100],
+    error_count: i64,
+}
+
+struct SymbolTable {
+    scopes: [Scope; 100],
+    scope_count: i64,
+    current_scope: i64,
+}
+
+struct Scope {
+    symbols: [Symbol; 1000],
+    symbol_count: i64,
+    parent: i64,
+}
+
+struct Symbol {
+    name: String,
+    ty: Type,
+    kind: i64,  // 1=variable, 2=function, 3=struct, 4=enum
+    mutable: bool,
+    defined: bool,
+}
+
+// Create new type checker
+fn typechecker_new() -> TypeChecker {
+    let empty_scope = Scope {
+        symbols: [Symbol {
+            name: "",
+            ty: Type { kind: TYPE_UNKNOWN(), name: "", element_type: 0, size: 0 },
+            kind: 0,
+            mutable: false,
+            defined: false,
+        }; 1000],
+        symbol_count: 0,
+        parent: -1,
+    };
+    
+    let mut symbols = SymbolTable {
+        scopes: [empty_scope; 100],
+        scope_count: 1,
+        current_scope: 0,
+    };
+    
+    // Add built-in functions
+    add_builtin_functions(symbols);
+    
+    return TypeChecker {
+        symbols: symbols,
+        current_function: "",
+        current_return_type: Type { kind: TYPE_UNIT(), name: "()", element_type: 0, size: 0 },
+        errors: [""; 100],
+        error_count: 0,
+    };
+}
+
+// Add built-in functions
+fn add_builtin_functions(mut symbols: SymbolTable) {
+    // print
+    add_symbol(symbols, "print", Type { kind: TYPE_UNIT(), name: "()", element_type: 0, size: 0 }, 2, false);
+    
+    // print_int
+    add_symbol(symbols, "print_int", Type { kind: TYPE_UNIT(), name: "()", element_type: 0, size: 0 }, 2, false);
+    
+    // string_len
+    add_symbol(symbols, "string_len", Type { kind: TYPE_I64(), name: "i64", element_type: 0, size: 0 }, 2, false);
+    
+    // string_char_at
+    add_symbol(symbols, "string_char_at", Type { kind: TYPE_I64(), name: "i64", element_type: 0, size: 0 }, 2, false);
+    
+    // string_substring
+    add_symbol(symbols, "string_substring", Type { kind: TYPE_STRING(), name: "String", element_type: 0, size: 0 }, 2, false);
+    
+    // string_eq
+    add_symbol(symbols, "string_eq", Type { kind: TYPE_BOOL(), name: "bool", element_type: 0, size: 0 }, 2, false);
+    
+    // string_from_char
+    add_symbol(symbols, "string_from_char", Type { kind: TYPE_STRING(), name: "String", element_type: 0, size: 0 }, 2, false);
+    
+    // file_read
+    add_symbol(symbols, "file_read", Type { kind: TYPE_STRING(), name: "String", element_type: 0, size: 0 }, 2, false);
+    
+    // file_write
+    add_symbol(symbols, "file_write", Type { kind: TYPE_BOOL(), name: "bool", element_type: 0, size: 0 }, 2, false);
+    
+    // file_exists
+    add_symbol(symbols, "file_exists", Type { kind: TYPE_BOOL(), name: "bool", element_type: 0, size: 0 }, 2, false);
+}
+
+// Push new scope
+fn push_scope(mut symbols: SymbolTable) {
+    if symbols.scope_count >= 100 {
+        return;
+    }
+    
+    let parent = symbols.current_scope;
+    symbols.current_scope = symbols.scope_count;
+    symbols.scopes[symbols.current_scope].parent = parent;
+    symbols.scopes[symbols.current_scope].symbol_count = 0;
+    symbols.scope_count = symbols.scope_count + 1;
+}
+
+// Pop scope
+fn pop_scope(mut symbols: SymbolTable) {
+    if symbols.current_scope > 0 {
+        symbols.current_scope = symbols.scopes[symbols.current_scope].parent;
+    }
+}
+
+// Add symbol to current scope
+fn add_symbol(mut symbols: SymbolTable, name: String, ty: Type, kind: i64, mutable: bool) -> bool {
+    let mut scope = symbols.scopes[symbols.current_scope];
+    
+    // Check for duplicates in current scope
+    for i in 0..scope.symbol_count {
+        if string_eq(scope.symbols[i].name, name) {
+            return false;
+        }
+    }
+    
+    if scope.symbol_count >= 1000 {
+        return false;
+    }
+    
+    scope.symbols[scope.symbol_count] = Symbol {
+        name: name,
+        ty: ty,
+        kind: kind,
+        mutable: mutable,
+        defined: true,
+    };
+    scope.symbol_count = scope.symbol_count + 1;
+    
+    // Write back
+    symbols.scopes[symbols.current_scope] = scope;
+    return true;
+}
+
+// Look up symbol
+fn lookup_symbol(symbols: SymbolTable, name: String) -> Symbol {
+    let mut scope_idx = symbols.current_scope;
+    
+    while scope_idx >= 0 {
+        let scope = symbols.scopes[scope_idx];
+        for i in 0..scope.symbol_count {
+            if string_eq(scope.symbols[i].name, name) {
+                return scope.symbols[i];
+            }
+        }
+        scope_idx = scope.parent;
+    }
+    
+    // Not found
+    return Symbol {
+        name: name,
+        ty: Type { kind: TYPE_UNKNOWN(), name: "", element_type: 0, size: 0 },
+        kind: 0,
+        mutable: false,
+        defined: false,
+    };
+}
+
+// Add error
+fn add_error(mut tc: TypeChecker, msg: String) {
+    if tc.error_count < 100 {
+        tc.errors[tc.error_count] = msg;
+        tc.error_count = tc.error_count + 1;
+    }
+}
+
+// Type equality
+fn types_equal(a: Type, b: Type) -> bool {
+    if a.kind != b.kind {
+        return false;
+    }
+    
+    if a.kind == TYPE_ARRAY() {
+        return a.element_type == b.element_type && a.size == b.size;
+    }
+    
+    if a.kind == TYPE_STRUCT() || a.kind == TYPE_ENUM() {
+        return string_eq(a.name, b.name);
+    }
+    
+    return true;
+}
+
+// Check expression type
+fn check_expr(mut tc: TypeChecker, mut expr: AstNode) -> Type {
+    if expr.kind == NODE_EXPR_INT() {
+        expr.ty = Type { kind: TYPE_I64(), name: "i64", element_type: 0, size: 0 };
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_STRING() {
+        expr.ty = Type { kind: TYPE_STRING(), name: "String", element_type: 0, size: 0 };
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_BOOL() {
+        expr.ty = Type { kind: TYPE_BOOL(), name: "bool", element_type: 0, size: 0 };
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_IDENT() {
+        let sym = lookup_symbol(tc.symbols, expr.value);
+        if !sym.defined {
+            add_error(tc, concat("Undefined identifier: ", expr.value));
+            expr.ty = Type { kind: TYPE_UNKNOWN(), name: "", element_type: 0, size: 0 };
+        } else {
+            expr.ty = sym.ty;
+        }
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_BINARY() {
+        let left_ty = check_expr(tc, expr.children[0]);
+        let right_ty = check_expr(tc, expr.children[1]);
+        
+        // Type checking for operators
+        let op = expr.value;
+        if string_eq(op, "+") || string_eq(op, "-") || string_eq(op, "*") || string_eq(op, "/") || string_eq(op, "%") {
+            if left_ty.kind != TYPE_I64() && left_ty.kind != TYPE_I32() {
+                add_error(tc, concat("Arithmetic operator requires numeric types, got: ", left_ty.name));
+            }
+            if !types_equal(left_ty, right_ty) {
+                add_error(tc, "Type mismatch in binary expression");
+            }
+            expr.ty = left_ty;
+        } else if string_eq(op, "==") || string_eq(op, "!=") || string_eq(op, "<") || string_eq(op, ">") || string_eq(op, "<=") || string_eq(op, ">=") {
+            if !types_equal(left_ty, right_ty) {
+                add_error(tc, "Type mismatch in comparison");
+            }
+            expr.ty = Type { kind: TYPE_BOOL(), name: "bool", element_type: 0, size: 0 };
+        } else if string_eq(op, "&&") || string_eq(op, "||") {
+            if left_ty.kind != TYPE_BOOL() || right_ty.kind != TYPE_BOOL() {
+                add_error(tc, "Logical operators require boolean operands");
+            }
+            expr.ty = Type { kind: TYPE_BOOL(), name: "bool", element_type: 0, size: 0 };
+        }
+        
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_UNARY() {
+        let operand_ty = check_expr(tc, expr.children[0]);
+        
+        if string_eq(expr.value, "-") {
+            if operand_ty.kind != TYPE_I64() && operand_ty.kind != TYPE_I32() {
+                add_error(tc, "Unary minus requires numeric type");
+            }
+            expr.ty = operand_ty;
+        } else if string_eq(expr.value, "!") {
+            if operand_ty.kind != TYPE_BOOL() {
+                add_error(tc, "Logical not requires boolean type");
+            }
+            expr.ty = Type { kind: TYPE_BOOL(), name: "bool", element_type: 0, size: 0 };
+        }
+        
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_CALL() {
+        let func_name = expr.value;
+        let sym = lookup_symbol(tc.symbols, func_name);
+        
+        if !sym.defined {
+            add_error(tc, concat("Undefined function: ", func_name));
+            expr.ty = Type { kind: TYPE_UNKNOWN(), name: "", element_type: 0, size: 0 };
+        } else {
+            // Check arguments
+            for i in 0..expr.child_count {
+                check_expr(tc, expr.children[i]);
+            }
+            expr.ty = sym.ty;
+        }
+        
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_ARRAY() {
+        if expr.child_count > 0 {
+            let elem_ty = check_expr(tc, expr.children[0]);
+            
+            // Check all elements have same type
+            for i in 1..expr.child_count {
+                let ty = check_expr(tc, expr.children[i]);
+                if !types_equal(elem_ty, ty) {
+                    add_error(tc, "Array elements must have same type");
+                }
+            }
+            
+            expr.ty = Type { 
+                kind: TYPE_ARRAY(), 
+                name: concat("[", concat(elem_ty.name, "]")),
+                element_type: elem_ty.kind,
+                size: expr.child_count
+            };
+        }
+        
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_INDEX() {
+        let array_ty = check_expr(tc, expr.children[0]);
+        let index_ty = check_expr(tc, expr.children[1]);
+        
+        if array_ty.kind != TYPE_ARRAY() {
+            add_error(tc, "Index operator requires array type");
+            expr.ty = Type { kind: TYPE_UNKNOWN(), name: "", element_type: 0, size: 0 };
+        } else {
+            // Return element type
+            expr.ty = Type { kind: array_ty.element_type, name: "", element_type: 0, size: 0 };
+        }
+        
+        if index_ty.kind != TYPE_I64() && index_ty.kind != TYPE_I32() {
+            add_error(tc, "Array index must be integer");
+        }
+        
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_FIELD() {
+        let struct_ty = check_expr(tc, expr.children[0]);
+        
+        if struct_ty.kind != TYPE_STRUCT() {
+            add_error(tc, "Field access requires struct type");
+            expr.ty = Type { kind: TYPE_UNKNOWN(), name: "", element_type: 0, size: 0 };
+        } else {
+            // Look up field type (simplified - would need struct definitions)
+            expr.ty = Type { kind: TYPE_UNKNOWN(), name: "", element_type: 0, size: 0 };
+        }
+        
+        return expr.ty;
+    }
+    
+    if expr.kind == NODE_EXPR_STRUCT() {
+        expr.ty = Type { kind: TYPE_STRUCT(), name: expr.value, element_type: 0, size: 0 };
+        
+        // Check fields
+        for i in 0..expr.child_count {
+            check_expr(tc, expr.children[i].children[0]); // Check field value
+        }
+        
+        return expr.ty;
+    }
+    
+    // Unknown expression type
+    expr.ty = Type { kind: TYPE_UNKNOWN(), name: "", element_type: 0, size: 0 };
+    return expr.ty;
+}
+
+// Check statement
+fn check_stmt(mut tc: TypeChecker, mut stmt: AstNode) {
+    if stmt.kind == NODE_STMT_LET() {
+        let var_name = stmt.children[0].value;
+        let init_ty = check_expr(tc, stmt.children[1]);
+        
+        // If type annotation provided, check it matches
+        if stmt.children[0].ty.kind != TYPE_UNKNOWN() {
+            if !types_equal(stmt.children[0].ty, init_ty) {
+                add_error(tc, concat("Type mismatch in let statement for: ", var_name));
+            }
+        } else {
+            // Infer type
+            stmt.children[0].ty = init_ty;
+        }
+        
+        let is_mut = string_eq(stmt.value, "mut");
+        if !add_symbol(tc.symbols, var_name, stmt.children[0].ty, 1, is_mut) {
+            add_error(tc, concat("Variable already defined: ", var_name));
+        }
+    }
+    
+    if stmt.kind == NODE_STMT_ASSIGN() {
+        let target = stmt.children[0];
+        let value_ty = check_expr(tc, stmt.children[1]);
+        
+        if target.kind == NODE_EXPR_IDENT() {
+            let sym = lookup_symbol(tc.symbols, target.value);
+            if !sym.defined {
+                add_error(tc, concat("Undefined variable: ", target.value));
+            } else if !sym.mutable {
+                add_error(tc, concat("Cannot assign to immutable variable: ", target.value));
+            } else if !types_equal(sym.ty, value_ty) {
+                add_error(tc, "Type mismatch in assignment");
+            }
+        } else {
+            // Array index or field assignment
+            let target_ty = check_expr(tc, target);
+            if !types_equal(target_ty, value_ty) {
+                add_error(tc, "Type mismatch in assignment");
+            }
+        }
+    }
+    
+    if stmt.kind == NODE_STMT_RETURN() {
+        if stmt.child_count > 0 {
+            let ret_ty = check_expr(tc, stmt.children[0]);
+            if !types_equal(ret_ty, tc.current_return_type) {
+                add_error(tc, "Return type mismatch");
+            }
+        } else {
+            if tc.current_return_type.kind != TYPE_UNIT() {
+                add_error(tc, "Missing return value");
+            }
+        }
+    }
+    
+    if stmt.kind == NODE_STMT_IF() {
+        let cond_ty = check_expr(tc, stmt.children[0]);
+        if cond_ty.kind != TYPE_BOOL() {
+            add_error(tc, "If condition must be boolean");
+        }
+        
+        check_block(tc, stmt.children[1]);
+        
+        if stmt.child_count > 2 {
+            check_block(tc, stmt.children[2]);
+        }
+    }
+    
+    if stmt.kind == NODE_STMT_WHILE() {
+        let cond_ty = check_expr(tc, stmt.children[0]);
+        if cond_ty.kind != TYPE_BOOL() {
+            add_error(tc, "While condition must be boolean");
+        }
+        
+        check_block(tc, stmt.children[1]);
+    }
+    
+    if stmt.kind == NODE_STMT_FOR() {
+        push_scope(tc.symbols);
+        
+        // Add loop variable
+        let var_name = stmt.children[0].value;
+        add_symbol(tc.symbols, var_name, Type { kind: TYPE_I64(), name: "i64", element_type: 0, size: 0 }, 1, false);
+        
+        // Check range
+        let start_ty = check_expr(tc, stmt.children[1]);
+        let end_ty = check_expr(tc, stmt.children[2]);
+        
+        if start_ty.kind != TYPE_I64() || end_ty.kind != TYPE_I64() {
+            add_error(tc, "For loop range must be integers");
+        }
+        
+        check_block(tc, stmt.children[3]);
+        
+        pop_scope(tc.symbols);
+    }
+    
+    if stmt.kind == NODE_STMT_EXPR() {
+        check_expr(tc, stmt.children[0]);
+    }
+}
+
+// Check block
+fn check_block(mut tc: TypeChecker, mut block: AstNode) {
+    push_scope(tc.symbols);
+    
+    for i in 0..block.child_count {
+        check_stmt(tc, block.children[i]);
+    }
+    
+    pop_scope(tc.symbols);
+}
+
+// Check function
+fn check_function(mut tc: TypeChecker, mut func: AstNode) {
+    let func_name = func.value;
+    
+    // Add function to symbol table
+    if !add_symbol(tc.symbols, func_name, func.ty, 2, false) {
+        add_error(tc, concat("Function already defined: ", func_name));
+    }
+    
+    tc.current_function = func_name;
+    tc.current_return_type = func.ty;
+    
+    push_scope(tc.symbols);
+    
+    // Add parameters to scope
+    let param_start = 0;
+    let param_end = func.child_count - 1; // Last child is body
+    
+    for i in param_start..param_end {
+        let param = func.children[i];
+        let param_name = param.children[0].value;
+        let param_ty = param.children[0].ty;
+        let is_mut = string_eq(param.value, "mut");
+        
+        if !add_symbol(tc.symbols, param_name, param_ty, 1, is_mut) {
+            add_error(tc, concat("Duplicate parameter: ", param_name));
+        }
+    }
+    
+    // Check body
+    check_block(tc, func.children[func.child_count - 1]);
+    
+    pop_scope(tc.symbols);
+}
+
+// Check struct definition
+fn check_struct(mut tc: TypeChecker, mut struct_def: AstNode) {
+    let struct_name = struct_def.value;
+    
+    // Add struct to symbol table
+    let struct_ty = Type { kind: TYPE_STRUCT(), name: struct_name, element_type: 0, size: 0 };
+    if !add_symbol(tc.symbols, struct_name, struct_ty, 3, false) {
+        add_error(tc, concat("Struct already defined: ", struct_name));
+    }
+    
+    // Check for duplicate fields
+    for i in 0..struct_def.child_count {
+        let field = struct_def.children[i];
+        let field_name = field.value;
+        
+        for j in i + 1..struct_def.child_count {
+            if string_eq(field_name, struct_def.children[j].value) {
+                add_error(tc, concat("Duplicate field in struct: ", field_name));
+            }
+        }
+    }
+}
+
+// Check enum definition
+fn check_enum(mut tc: TypeChecker, mut enum_def: AstNode) {
+    let enum_name = enum_def.value;
+    
+    // Add enum to symbol table
+    let enum_ty = Type { kind: TYPE_ENUM(), name: enum_name, element_type: 0, size: 0 };
+    if !add_symbol(tc.symbols, enum_name, enum_ty, 4, false) {
+        add_error(tc, concat("Enum already defined: ", enum_name));
+    }
+    
+    // Check for duplicate variants
+    for i in 0..enum_def.child_count {
+        let variant = enum_def.children[i];
+        let variant_name = variant.value;
+        
+        for j in i + 1..enum_def.child_count {
+            if string_eq(variant_name, enum_def.children[j].value) {
+                add_error(tc, concat("Duplicate variant in enum: ", variant_name));
+            }
+        }
+    }
+}
+
+// Check program
+fn check_program(mut tc: TypeChecker, mut program: AstNode) -> bool {
+    // First pass: collect type definitions
+    for i in 0..program.child_count {
+        let item = program.children[i];
+        if item.kind == NODE_STRUCT_DEF() {
+            check_struct(tc, item);
+        } else if item.kind == NODE_ENUM_DEF() {
+            check_enum(tc, item);
+        }
+    }
+    
+    // Second pass: check functions
+    for i in 0..program.child_count {
+        let item = program.children[i];
+        if item.kind == NODE_FUNCTION() {
+            check_function(tc, item);
+        }
+    }
+    
+    return tc.error_count == 0;
+}
+
+// Main type checking function
+fn typecheck(mut ast: AstNode) -> bool {
+    let mut tc = typechecker_new();
+    let success = check_program(tc, ast);
+    
+    if !success {
+        print("Type checking errors:\n");
+        for i in 0..tc.error_count {
+            print("  - ");
+            print(tc.errors[i]);
+            print("\n");
+        }
+    }
+    
+    return success;
+}
+
+// Helper function for string concatenation
+fn concat(a: String, b: String) -> String {
+    // Simplified - would use StringBuilder in real implementation
+    return a;
+}

@@ -1,7 +1,7 @@
 // Type checker for Palladium
 // "Ensuring legends are logically sound"
 
-use crate::ast::{*, AssignTarget};
+use crate::ast::{*, AssignTarget, UnaryOp};
 use crate::errors::{CompileError, Result};
 use std::collections::HashMap;
 
@@ -225,7 +225,7 @@ impl TypeChecker {
                 Item::Function(func) => {
                     // Extract parameter types
                     let param_types: Vec<CheckerType> = func.params.iter()
-                        .map(|(_, ty)| CheckerType::from(ty))
+                        .map(|param| CheckerType::from(&param.ty))
                         .collect();
                     
                     // Extract return type from function
@@ -282,9 +282,9 @@ impl TypeChecker {
         self.symbols.enter_scope();
         
         // Add function parameters to symbol table
-        for (param_name, param_type) in &func.params {
-            let checker_type = CheckerType::from(param_type);
-            self.symbols.define(param_name.clone(), checker_type, false)?;
+        for param in &func.params {
+            let checker_type = CheckerType::from(&param.ty);
+            self.symbols.define(param.name.clone(), checker_type, param.mutable)?;
         }
         
         // Set current function return type
@@ -849,6 +849,32 @@ impl TypeChecker {
                 // Range expressions have a special internal type
                 // For now, we'll treat them as arrays when used in for loops
                 Ok(CheckerType::Array(Box::new(CheckerType::Int), 0))
+            }
+            Expr::Unary { op, operand, .. } => {
+                let operand_type = self.check_expression(operand)?;
+                
+                match op {
+                    UnaryOp::Neg => {
+                        // Negation requires operand to be Int
+                        if operand_type != CheckerType::Int {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "Int".to_string(),
+                                found: operand_type.to_string(),
+                            });
+                        }
+                        Ok(CheckerType::Int)
+                    }
+                    UnaryOp::Not => {
+                        // Logical not requires operand to be Bool
+                        if operand_type != CheckerType::Bool {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "Bool".to_string(),
+                                found: operand_type.to_string(),
+                            });
+                        }
+                        Ok(CheckerType::Bool)
+                    }
+                }
             }
         }
     }

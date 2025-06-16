@@ -1,0 +1,621 @@
+// Complete lexer for Palladium - ready for bootstrapping!
+// This lexer can tokenize all Palladium syntax
+
+// Token representation
+struct Token {
+    kind: i64,      // TokenKind enum value
+    line: i64,      // Line number (1-based)
+    column: i64,    // Column number (1-based)
+    start: i64,     // Start position in input
+    length: i64,    // Token length
+}
+
+// Token kinds as constants (since we can't use enums as values easily)
+fn TK_EOF() -> i64 { return 0; }
+fn TK_IDENT() -> i64 { return 1; }
+fn TK_INTEGER() -> i64 { return 2; }
+fn TK_STRING() -> i64 { return 3; }
+fn TK_CHAR() -> i64 { return 4; }
+
+// Keywords
+fn TK_LET() -> i64 { return 10; }
+fn TK_MUT() -> i64 { return 11; }
+fn TK_FN() -> i64 { return 12; }
+fn TK_RETURN() -> i64 { return 13; }
+fn TK_IF() -> i64 { return 14; }
+fn TK_ELSE() -> i64 { return 15; }
+fn TK_WHILE() -> i64 { return 16; }
+fn TK_FOR() -> i64 { return 17; }
+fn TK_IN() -> i64 { return 18; }
+fn TK_BREAK() -> i64 { return 19; }
+fn TK_CONTINUE() -> i64 { return 20; }
+fn TK_STRUCT() -> i64 { return 21; }
+fn TK_ENUM() -> i64 { return 22; }
+fn TK_MATCH() -> i64 { return 23; }
+fn TK_TRUE() -> i64 { return 24; }
+fn TK_FALSE() -> i64 { return 25; }
+
+// Types
+fn TK_I32() -> i64 { return 30; }
+fn TK_I64() -> i64 { return 31; }
+fn TK_U32() -> i64 { return 32; }
+fn TK_U64() -> i64 { return 33; }
+fn TK_BOOL() -> i64 { return 34; }
+fn TK_STRING_TYPE() -> i64 { return 35; }
+
+// Operators
+fn TK_PLUS() -> i64 { return 40; }
+fn TK_MINUS() -> i64 { return 41; }
+fn TK_STAR() -> i64 { return 42; }
+fn TK_SLASH() -> i64 { return 43; }
+fn TK_PERCENT() -> i64 { return 44; }
+fn TK_EQ() -> i64 { return 45; }
+fn TK_EQ_EQ() -> i64 { return 46; }
+fn TK_NE() -> i64 { return 47; }
+fn TK_LT() -> i64 { return 48; }
+fn TK_GT() -> i64 { return 49; }
+fn TK_LE() -> i64 { return 50; }
+fn TK_GE() -> i64 { return 51; }
+fn TK_AND_AND() -> i64 { return 52; }
+fn TK_OR_OR() -> i64 { return 53; }
+fn TK_NOT() -> i64 { return 54; }
+fn TK_DOT() -> i64 { return 55; }
+fn TK_DOT_DOT() -> i64 { return 56; }
+fn TK_ARROW() -> i64 { return 57; }
+
+// Delimiters
+fn TK_LPAREN() -> i64 { return 60; }
+fn TK_RPAREN() -> i64 { return 61; }
+fn TK_LBRACE() -> i64 { return 62; }
+fn TK_RBRACE() -> i64 { return 63; }
+fn TK_LBRACKET() -> i64 { return 64; }
+fn TK_RBRACKET() -> i64 { return 65; }
+fn TK_COMMA() -> i64 { return 66; }
+fn TK_SEMICOLON() -> i64 { return 67; }
+fn TK_COLON() -> i64 { return 68; }
+fn TK_COLON_COLON() -> i64 { return 69; }
+fn TK_UNDERSCORE() -> i64 { return 70; }
+
+// Errors
+fn TK_UNKNOWN() -> i64 { return 99; }
+
+// Lexer state
+struct Lexer {
+    input: String,      // Input source code
+    pos: i64,          // Current position
+    line: i64,         // Current line (1-based)
+    column: i64,       // Current column (1-based)
+    tokens: [Token; 1000],  // Token buffer
+    token_count: i64,   // Number of tokens
+}
+
+// Create a new lexer
+fn lexer_new(input: String) -> Lexer {
+    let empty_token = Token { kind: 0, line: 0, column: 0, start: 0, length: 0 };
+    return Lexer {
+        input: input,
+        pos: 0,
+        line: 1,
+        column: 1,
+        tokens: [empty_token; 1000],
+        token_count: 0
+    };
+}
+
+// Character classification helpers
+fn is_whitespace(c: i64) -> bool {
+    return c == 32 || c == 9 || c == 10 || c == 13;  // space, tab, \n, \r
+}
+
+fn is_letter(c: i64) -> bool {
+    return char_is_alpha(c) || c == 95;  // letter or underscore
+}
+
+fn is_digit(c: i64) -> bool {
+    return char_is_digit(c);
+}
+
+fn is_ident_char(c: i64) -> bool {
+    return is_letter(c) || is_digit(c);
+}
+
+// Advance position and update line/column
+fn advance(lexer: Lexer, count: i64) -> Lexer {
+    let mut lex: Lexer = lexer;
+    let len = string_len(lex.input);
+    
+    for i in 0..count {
+        if lex.pos >= len {
+            break;
+        }
+        
+        let c = string_char_at(lex.input, lex.pos);
+        if c == 10 {  // newline
+            lex.line = lex.line + 1;
+            lex.column = 1;
+        } else {
+            lex.column = lex.column + 1;
+        }
+        lex.pos = lex.pos + 1;
+    }
+    
+    return lex;
+}
+
+// Peek at current character
+fn peek_char(lexer: Lexer) -> i64 {
+    if lexer.pos >= string_len(lexer.input) {
+        return -1;  // EOF
+    }
+    return string_char_at(lexer.input, lexer.pos);
+}
+
+// Peek ahead n characters
+fn peek_ahead(lexer: Lexer, n: i64) -> i64 {
+    let pos = lexer.pos + n;
+    if pos >= string_len(lexer.input) {
+        return -1;  // EOF
+    }
+    return string_char_at(lexer.input, pos);
+}
+
+// Skip whitespace and comments
+fn skip_whitespace(lexer: Lexer) -> Lexer {
+    let mut lex: Lexer = lexer;
+    
+    while true {
+        let c = peek_char(lex);
+        if c == -1 {
+            break;
+        }
+        
+        // Skip whitespace
+        if is_whitespace(c) {
+            lex = advance(lex, 1);
+            continue;
+        }
+        
+        // Skip line comments
+        if c == 47 && peek_ahead(lex, 1) == 47 {  // //
+            lex = advance(lex, 2);
+            // Skip until newline or EOF
+            while true {
+                let ch = peek_char(lex);
+                if ch == -1 || ch == 10 {
+                    break;
+                }
+                lex = advance(lex, 1);
+            }
+            continue;
+        }
+        
+        // Skip block comments
+        if c == 47 && peek_ahead(lex, 1) == 42 {  // /*
+            lex = advance(lex, 2);
+            // Skip until */
+            while true {
+                let ch = peek_char(lex);
+                if ch == -1 {
+                    break;
+                }
+                if ch == 42 && peek_ahead(lex, 1) == 47 {
+                    lex = advance(lex, 2);
+                    break;
+                }
+                lex = advance(lex, 1);
+            }
+            continue;
+        }
+        
+        break;
+    }
+    
+    return lex;
+}
+
+// Check if string is a keyword
+fn check_keyword(s: String) -> i64 {
+    if string_eq(s, "let") { return TK_LET(); }
+    if string_eq(s, "mut") { return TK_MUT(); }
+    if string_eq(s, "fn") { return TK_FN(); }
+    if string_eq(s, "return") { return TK_RETURN(); }
+    if string_eq(s, "if") { return TK_IF(); }
+    if string_eq(s, "else") { return TK_ELSE(); }
+    if string_eq(s, "while") { return TK_WHILE(); }
+    if string_eq(s, "for") { return TK_FOR(); }
+    if string_eq(s, "in") { return TK_IN(); }
+    if string_eq(s, "break") { return TK_BREAK(); }
+    if string_eq(s, "continue") { return TK_CONTINUE(); }
+    if string_eq(s, "struct") { return TK_STRUCT(); }
+    if string_eq(s, "enum") { return TK_ENUM(); }
+    if string_eq(s, "match") { return TK_MATCH(); }
+    if string_eq(s, "true") { return TK_TRUE(); }
+    if string_eq(s, "false") { return TK_FALSE(); }
+    if string_eq(s, "i32") { return TK_I32(); }
+    if string_eq(s, "i64") { return TK_I64(); }
+    if string_eq(s, "u32") { return TK_U32(); }
+    if string_eq(s, "u64") { return TK_U64(); }
+    if string_eq(s, "bool") { return TK_BOOL(); }
+    if string_eq(s, "String") { return TK_STRING_TYPE(); }
+    return TK_IDENT();
+}
+
+// Scan an identifier or keyword
+fn scan_identifier(lexer: Lexer) -> Lexer {
+    let mut lex: Lexer = lexer;
+    let start_pos = lex.pos;
+    let start_line = lex.line;
+    let start_col = lex.column;
+    
+    // First character already checked to be letter/underscore
+    lex = advance(lex, 1);
+    
+    // Read rest of identifier
+    while is_ident_char(peek_char(lex)) {
+        lex = advance(lex, 1);
+    }
+    
+    let length = lex.pos - start_pos;
+    let text = string_substring(lex.input, start_pos, lex.pos);
+    let kind = check_keyword(text);
+    
+    // Add token
+    if lex.token_count < 1000 {
+        lex.tokens[lex.token_count] = Token {
+            kind: kind,
+            line: start_line,
+            column: start_col,
+            start: start_pos,
+            length: length
+        };
+        lex.token_count = lex.token_count + 1;
+    }
+    
+    return lex;
+}
+
+// Scan a number
+fn scan_number(lexer: Lexer) -> Lexer {
+    let mut lex: Lexer = lexer;
+    let start_pos = lex.pos;
+    let start_line = lex.line;
+    let start_col = lex.column;
+    
+    // Read digits
+    while is_digit(peek_char(lex)) {
+        lex = advance(lex, 1);
+    }
+    
+    let length = lex.pos - start_pos;
+    
+    // Add token
+    if lex.token_count < 1000 {
+        lex.tokens[lex.token_count] = Token {
+            kind: TK_INTEGER(),
+            line: start_line,
+            column: start_col,
+            start: start_pos,
+            length: length
+        };
+        lex.token_count = lex.token_count + 1;
+    }
+    
+    return lex;
+}
+
+// Scan a string literal
+fn scan_string(lexer: Lexer) -> Lexer {
+    let mut lex: Lexer = lexer;
+    let start_pos = lex.pos;
+    let start_line = lex.line;
+    let start_col = lex.column;
+    
+    // Skip opening quote
+    lex = advance(lex, 1);
+    
+    // Read until closing quote
+    while true {
+        let c = peek_char(lex);
+        if c == -1 || c == 10 {  // EOF or newline
+            // Unterminated string
+            break;
+        }
+        
+        if c == 34 {  // closing quote
+            lex = advance(lex, 1);
+            break;
+        }
+        
+        if c == 92 {  // backslash
+            lex = advance(lex, 1);
+            if peek_char(lex) != -1 {
+                lex = advance(lex, 1);  // Skip escaped char
+            }
+        } else {
+            lex = advance(lex, 1);
+        }
+    }
+    
+    let length = lex.pos - start_pos;
+    
+    // Add token
+    if lex.token_count < 1000 {
+        lex.tokens[lex.token_count] = Token {
+            kind: TK_STRING(),
+            line: start_line,
+            column: start_col,
+            start: start_pos,
+            length: length
+        };
+        lex.token_count = lex.token_count + 1;
+    }
+    
+    return lex;
+}
+
+// Add a simple token
+fn add_token(lexer: Lexer, kind: i64, length: i64) -> Lexer {
+    let mut lex: Lexer = lexer;
+    
+    if lex.token_count < 1000 {
+        lex.tokens[lex.token_count] = Token {
+            kind: kind,
+            line: lex.line,
+            column: lex.column,
+            start: lex.pos,
+            length: length
+        };
+        lex.token_count = lex.token_count + 1;
+    }
+    
+    return advance(lex, length);
+}
+
+// Scan next token
+fn scan_token(lexer: Lexer) -> Lexer {
+    let mut lex: Lexer = skip_whitespace(lexer);
+    
+    let c = peek_char(lex);
+    if c == -1 {
+        // EOF
+        return add_token(lex, TK_EOF(), 0);
+    }
+    
+    // Identifiers and keywords
+    if is_letter(c) {
+        return scan_identifier(lex);
+    }
+    
+    // Numbers
+    if is_digit(c) {
+        return scan_number(lex);
+    }
+    
+    // Two-character operators
+    let next = peek_ahead(lex, 1);
+    
+    // ==
+    if c == 61 && next == 61 {
+        return add_token(lex, TK_EQ_EQ(), 2);
+    }
+    // !=
+    if c == 33 && next == 61 {
+        return add_token(lex, TK_NE(), 2);
+    }
+    // <=
+    if c == 60 && next == 61 {
+        return add_token(lex, TK_LE(), 2);
+    }
+    // >=
+    if c == 62 && next == 61 {
+        return add_token(lex, TK_GE(), 2);
+    }
+    // &&
+    if c == 38 && next == 38 {
+        return add_token(lex, TK_AND_AND(), 2);
+    }
+    // ||
+    if c == 124 && next == 124 {
+        return add_token(lex, TK_OR_OR(), 2);
+    }
+    // ->
+    if c == 45 && next == 62 {
+        return add_token(lex, TK_ARROW(), 2);
+    }
+    // ..
+    if c == 46 && next == 46 {
+        return add_token(lex, TK_DOT_DOT(), 2);
+    }
+    // ::
+    if c == 58 && next == 58 {
+        return add_token(lex, TK_COLON_COLON(), 2);
+    }
+    
+    // Single-character tokens
+    if c == 40 { return add_token(lex, TK_LPAREN(), 1); }
+    if c == 41 { return add_token(lex, TK_RPAREN(), 1); }
+    if c == 123 { return add_token(lex, TK_LBRACE(), 1); }
+    if c == 125 { return add_token(lex, TK_RBRACE(), 1); }
+    if c == 91 { return add_token(lex, TK_LBRACKET(), 1); }
+    if c == 93 { return add_token(lex, TK_RBRACKET(), 1); }
+    if c == 44 { return add_token(lex, TK_COMMA(), 1); }
+    if c == 59 { return add_token(lex, TK_SEMICOLON(), 1); }
+    if c == 58 { return add_token(lex, TK_COLON(), 1); }
+    if c == 46 { return add_token(lex, TK_DOT(), 1); }
+    if c == 43 { return add_token(lex, TK_PLUS(), 1); }
+    if c == 45 { return add_token(lex, TK_MINUS(), 1); }
+    if c == 42 { return add_token(lex, TK_STAR(), 1); }
+    if c == 47 { return add_token(lex, TK_SLASH(), 1); }
+    if c == 37 { return add_token(lex, TK_PERCENT(), 1); }
+    if c == 61 { return add_token(lex, TK_EQ(), 1); }
+    if c == 60 { return add_token(lex, TK_LT(), 1); }
+    if c == 62 { return add_token(lex, TK_GT(), 1); }
+    if c == 33 { return add_token(lex, TK_NOT(), 1); }
+    if c == 95 { return add_token(lex, TK_UNDERSCORE(), 1); }
+    
+    // String literal
+    if c == 34 {
+        return scan_string(lex);
+    }
+    
+    // Unknown character
+    return add_token(lex, TK_UNKNOWN(), 1);
+}
+
+// Tokenize entire input
+fn tokenize(input: String) -> Lexer {
+    let mut lex = lexer_new(input);
+    
+    while peek_char(lex) != -1 {
+        lex = scan_token(lex);
+        
+        // Check if we hit token limit
+        if lex.token_count >= 999 {
+            break;
+        }
+    }
+    
+    // Add EOF token
+    if lex.token_count < 1000 {
+        lex.tokens[lex.token_count] = Token {
+            kind: TK_EOF(),
+            line: lex.line,
+            column: lex.column,
+            start: lex.pos,
+            length: 0
+        };
+        lex.token_count = lex.token_count + 1;
+    }
+    
+    return lex;
+}
+
+// Get token kind name for printing
+fn token_kind_name(kind: i64) -> String {
+    if kind == TK_EOF() { return "EOF"; }
+    if kind == TK_IDENT() { return "IDENT"; }
+    if kind == TK_INTEGER() { return "INTEGER"; }
+    if kind == TK_STRING() { return "STRING"; }
+    if kind == TK_LET() { return "LET"; }
+    if kind == TK_MUT() { return "MUT"; }
+    if kind == TK_FN() { return "FN"; }
+    if kind == TK_RETURN() { return "RETURN"; }
+    if kind == TK_IF() { return "IF"; }
+    if kind == TK_ELSE() { return "ELSE"; }
+    if kind == TK_WHILE() { return "WHILE"; }
+    if kind == TK_FOR() { return "FOR"; }
+    if kind == TK_IN() { return "IN"; }
+    if kind == TK_STRUCT() { return "STRUCT"; }
+    if kind == TK_TRUE() { return "TRUE"; }
+    if kind == TK_FALSE() { return "FALSE"; }
+    if kind == TK_I64() { return "I64"; }
+    if kind == TK_BOOL() { return "BOOL"; }
+    if kind == TK_STRING_TYPE() { return "STRING_TYPE"; }
+    if kind == TK_LPAREN() { return "LPAREN"; }
+    if kind == TK_RPAREN() { return "RPAREN"; }
+    if kind == TK_LBRACE() { return "LBRACE"; }
+    if kind == TK_RBRACE() { return "RBRACE"; }
+    if kind == TK_SEMICOLON() { return "SEMICOLON"; }
+    if kind == TK_EQ() { return "EQ"; }
+    if kind == TK_PLUS() { return "PLUS"; }
+    if kind == TK_STAR() { return "STAR"; }
+    if kind == TK_DOT_DOT() { return "DOT_DOT"; }
+    if kind == TK_AND_AND() { return "AND_AND"; }
+    if kind == TK_OR_OR() { return "OR_OR"; }
+    return "UNKNOWN";
+}
+
+// Test the lexer
+fn test_lexer() {
+    print("=== Complete Palladium Lexer ===\n");
+    
+    // Test 1: Basic program
+    print("Test 1: Basic program");
+    let input1 = "let x = 42;
+let mut y = x + 10;
+print(y);";
+    
+    let lex1 = tokenize(input1);
+    print("Tokens:");
+    for i in 0..lex1.token_count {
+        let tok_kind = lex1.tokens[i].kind;
+        let tok_line = lex1.tokens[i].line;
+        let tok_col = lex1.tokens[i].column;
+        let tok_start = lex1.tokens[i].start;
+        let tok_length = lex1.tokens[i].length;
+        let text = string_substring(lex1.input, tok_start, tok_start + tok_length);
+        print(token_kind_name(tok_kind));
+        print("  Line:");
+        print_int(tok_line);
+        print("  Col:");
+        print_int(tok_col);
+        print("  Text:");
+        print(text);
+    }
+    
+    // Test 2: Function with types
+    print("\nTest 2: Function declaration");
+    let input2 = "fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}";
+    
+    let lex2 = tokenize(input2);
+    print("Token count:");
+    print_int(lex2.token_count);
+    
+    // Test 3: Comments
+    print("\nTest 3: Comments");
+    let input3 = "// This is a comment
+let x = 42; // inline comment
+/* Block comment */
+let y = x;";
+    
+    let lex3 = tokenize(input3);
+    print("Tokens (comments stripped):");
+    for i in 0..lex3.token_count {
+        let tok_kind = lex3.tokens[i].kind;
+        let tok_start = lex3.tokens[i].start;
+        let tok_length = lex3.tokens[i].length;
+        let text = string_substring(lex3.input, tok_start, tok_start + tok_length);
+        print(token_kind_name(tok_kind));
+        print(" ");
+        print(text);
+    }
+    
+    // Test 4: Complex expressions
+    print("\nTest 4: Complex expressions");
+    let input4 = "if x > 0 && y < 100 || z == 42 { }";
+    
+    let lex4 = tokenize(input4);
+    print("Logical operators found:");
+    for i in 0..lex4.token_count {
+        let tok_kind = lex4.tokens[i].kind;
+        if tok_kind == TK_AND_AND() || tok_kind == TK_OR_OR() {
+            print(token_kind_name(tok_kind));
+        }
+    }
+    
+    // Test 5: Strings and ranges
+    print("\nTest 5: Strings and ranges");
+    let input5 = "for i in 0..10 { print(\"Hello\"); }";
+    
+    let lex5 = tokenize(input5);
+    print("Special tokens:");
+    for i in 0..lex5.token_count {
+        let tok_kind = lex5.tokens[i].kind;
+        let tok_start = lex5.tokens[i].start;
+        let tok_length = lex5.tokens[i].length;
+        if tok_kind == TK_DOT_DOT() || tok_kind == TK_STRING() {
+            let text = string_substring(lex5.input, tok_start, tok_start + tok_length);
+            print(token_kind_name(tok_kind));
+            print(": ");
+            print(text);
+        }
+    }
+    
+    print("\n=== Lexer is ready for bootstrapping! ===");
+}
+
+fn main() {
+    test_lexer();
+}

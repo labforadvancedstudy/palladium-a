@@ -103,6 +103,9 @@ pub enum Token {
     #[token("!=")]
     Ne,
     
+    #[token("!")]
+    Not,
+    
     #[token("<")]
     Lt,
     
@@ -180,6 +183,7 @@ impl Token {
                 | Token::False
                 | Token::LeftParen
                 | Token::Minus
+                | Token::Not
         )
     }
     
@@ -222,6 +226,7 @@ impl std::fmt::Display for Token {
             Token::Eq => write!(f, "'='"),
             Token::EqEq => write!(f, "'=='"),
             Token::Ne => write!(f, "'!='"),
+            Token::Not => write!(f, "'!'"),
             Token::Lt => write!(f, "'<'"),
             Token::Gt => write!(f, "'>'"),
             Token::Le => write!(f, "'<='"),

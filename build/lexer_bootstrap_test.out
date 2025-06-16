@@ -1,0 +1,35 @@
+=== Palladium Bootstrap Lexer Test ===
+
+=== Testing Lexer Logic ===
+
+Testing character classification:
+
+  is_space(' '): 
+true
+
+  is_digit('5'): 
+true
+
+  is_letter('a'): 
+true
+
+
+Testing token type names:
+
+  TOK_IDENT: 
+IDENT
+
+
+  TOK_NUMBER: 
+NUMBER
+
+
+  TOK_LET: 
+LET
+
+
+
+=== Test complete ===
+
+This demonstrates basic lexer components work in Palladium!
+

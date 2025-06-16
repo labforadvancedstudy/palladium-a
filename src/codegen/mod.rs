@@ -1,7 +1,7 @@
 // Code generation for Palladium
 // "Forging legends into machine code"
 
-use crate::ast::{*, AssignTarget};
+use crate::ast::{*, AssignTarget, UnaryOp};
 use crate::errors::{CompileError, Result};
 use std::fs::{self, File};
 use std::io::Write;
@@ -10,8 +10,12 @@ use std::path::{Path, PathBuf};
 pub struct CodeGenerator {
     module_name: String,
     output: String,
-    /// Map of function names to their return types
-    functions: std::collections::HashMap<String, Option<Type>>,
+    /// Map of function names to their signatures (params and return type)
+    functions: std::collections::HashMap<String, (Vec<Param>, Option<Type>)>,
+    /// Map of variable names to their C types (for type inference)
+    variables: std::collections::HashMap<String, String>,
+    /// Map of parameter names to their mutability (for current function)
+    mutable_params: std::collections::HashMap<String, bool>,
 }
 
 impl CodeGenerator {
@@ -20,7 +24,24 @@ impl CodeGenerator {
             module_name: module_name.to_string(),
             output: String::new(),
             functions: std::collections::HashMap::new(),
+            variables: std::collections::HashMap::new(),
+            mutable_params: std::collections::HashMap::new(),
         })
+    }
+    
+    /// Infer the C type of an expression
+    fn infer_expr_type(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Integer(_) => "long long".to_string(),
+            Expr::String(_) => "const char*".to_string(),
+            Expr::Bool(_) => "int".to_string(),
+            Expr::StructLiteral { name, .. } => name.to_string(),
+            Expr::Ident(name) => {
+                // Look up variable type
+                self.variables.get(name).cloned().unwrap_or_else(|| "long long".to_string())
+            },
+            _ => "long long".to_string(), // fallback
+        }
     }
     
     /// Compile an AST to machine code
@@ -183,7 +204,7 @@ impl CodeGenerator {
         // First pass: collect function signatures
         for item in &program.items {
             if let Item::Function(func) = item {
-                self.functions.insert(func.name.clone(), func.return_type.clone());
+                self.functions.insert(func.name.clone(), (func.params.clone(), func.return_type.clone()));
             }
         }
         
@@ -296,18 +317,12 @@ impl CodeGenerator {
         // Generate function parameters
         self.output.push_str(&format!("{} {}(", actual_return_type, func.name));
         
-        for (i, (param_name, param_type)) in func.params.iter().enumerate() {
+        for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
                 self.output.push_str(", ");
             }
             
-            let c_type = match param_type {
-                Type::I32 => "int",
-                Type::I64 => "long long",
-                Type::U32 => "unsigned int",
-                Type::U64 => "unsigned long long",
-                Type::Bool => "int",
-                Type::String => "const char*",
+            match &param.ty {
                 Type::Array(elem_type, size) => {
                     // For arrays, we need to generate proper C array parameter syntax
                     let elem_c_type = match elem_type.as_ref() {
@@ -323,21 +338,49 @@ impl CodeGenerator {
                     };
                     // In C, array parameters are passed as pointers
                     // We'll generate: type name[size] for clarity, though it decays to pointer
-                    self.output.push_str(&format!("{} {}[{}]", elem_c_type, param_name, size));
-                    continue;
+                    self.output.push_str(&format!("{} {}[{}]", elem_c_type, param.name, size));
                 }
-                Type::Unit => "void",
                 Type::Custom(name) => {
-                    // For custom types (structs), pass by value
-                    self.output.push_str(&format!("{} {}", name, param_name));
-                    continue;
+                    // For custom types (structs)
+                    if param.mutable {
+                        // Pass by pointer for mutable parameters
+                        self.output.push_str(&format!("{}* {}", name, param.name));
+                    } else {
+                        // Pass by value for immutable parameters
+                        self.output.push_str(&format!("{} {}", name, param.name));
+                    }
                 }
-            };
-            
-            self.output.push_str(&format!("{} {}", c_type, param_name));
+                _ => {
+                    // For primitive types
+                    let c_type = match &param.ty {
+                        Type::I32 => "int",
+                        Type::I64 => "long long",
+                        Type::U32 => "unsigned int",
+                        Type::U64 => "unsigned long long",
+                        Type::Bool => "int",
+                        Type::String => "const char*",
+                        Type::Unit => "void",
+                        _ => unreachable!(),
+                    };
+                    
+                    if param.mutable {
+                        // Pass by pointer for mutable parameters
+                        self.output.push_str(&format!("{}* {}", c_type, param.name));
+                    } else {
+                        // Pass by value for immutable parameters
+                        self.output.push_str(&format!("{} {}", c_type, param.name));
+                    }
+                }
+            }
         }
         
         self.output.push_str(") {\n");
+        
+        // Clear mutable_params from previous function and populate with current function's params
+        self.mutable_params.clear();
+        for param in &func.params {
+            self.mutable_params.insert(param.name.clone(), param.mutable);
+        }
         
         // Function body
         for stmt in &func.body {
@@ -350,6 +393,9 @@ impl CodeGenerator {
             self.output.push_str("    return 0;\n");
         }
         self.output.push_str("}\n\n");
+        
+        // Clear parameter tracking after function
+        self.mutable_params.clear();
         
         Ok(())
     }
@@ -409,31 +455,21 @@ impl CodeGenerator {
                             Expr::ArrayLiteral { elements, .. } => {
                                 // Infer array element type from first element
                                 let elem_type = if !elements.is_empty() {
-                                    match &elements[0] {
-                                        Expr::Integer(_) => "long long",
-                                        Expr::String(_) => "const char*",
-                                        Expr::Bool(_) => "int",
-                                        _ => "long long",
-                                    }
+                                    self.infer_expr_type(&elements[0])
                                 } else {
-                                    "long long"
+                                    "long long".to_string()
                                 };
-                                (elem_type.to_string(), true, Some(elements.len()))
+                                (elem_type, true, Some(elements.len()))
                             }
                             Expr::ArrayRepeat { value, count, .. } => {
                                 // Infer array element type from value
-                                let elem_type = match value.as_ref() {
-                                    Expr::Integer(_) => "long long",
-                                    Expr::String(_) => "const char*",
-                                    Expr::Bool(_) => "int",
-                                    _ => "long long",
-                                };
+                                let elem_type = self.infer_expr_type(value);
                                 let size = if let Expr::Integer(n) = count.as_ref() {
                                     *n as usize
                                 } else {
                                     0  // This should have been caught by type checker
                                 };
-                                (elem_type.to_string(), true, Some(size))
+                                (elem_type, true, Some(size))
                             }
                             Expr::StructLiteral { name, .. } => (name.to_string(), false, None),
                             Expr::Call { func, .. } => {
@@ -456,7 +492,7 @@ impl CodeGenerator {
                                             }
                                             _ => {
                                                 // Look up user-defined function return type
-                                                if let Some(ret_type) = self.functions.get(fname) {
+                                                if let Some((_, ret_type)) = self.functions.get(fname) {
                                                     match ret_type {
                                                         Some(t) => (type_to_c(t), false, None),
                                                         None => ("void".to_string(), false, None),
@@ -474,6 +510,14 @@ impl CodeGenerator {
                         }
                     }
                 };
+                
+                // Track variable type for future inference
+                if is_array {
+                    // For arrays, store the full array type including brackets
+                    self.variables.insert(name.clone(), format!("{}[{}]", c_type, array_size.unwrap_or(0)));
+                } else {
+                    self.variables.insert(name.clone(), c_type.clone());
+                }
                 
                 if is_array {
                     // Array declaration
@@ -495,7 +539,17 @@ impl CodeGenerator {
                 self.output.push_str("    ");
                 match target {
                     AssignTarget::Ident(name) => {
-                        self.output.push_str(&format!("{} = ", name));
+                        // Check if this is a mutable parameter
+                        if let Some(&is_mutable) = self.mutable_params.get(name) {
+                            if is_mutable {
+                                // Dereference mutable parameters
+                                self.output.push_str(&format!("(*{}) = ", name));
+                            } else {
+                                self.output.push_str(&format!("{} = ", name));
+                            }
+                        } else {
+                            self.output.push_str(&format!("{} = ", name));
+                        }
                     }
                     AssignTarget::Index { array, index } => {
                         self.generate_expression(array)?;
@@ -504,8 +558,26 @@ impl CodeGenerator {
                         self.output.push_str("] = ");
                     }
                     AssignTarget::FieldAccess { object, field } => {
-                        self.generate_expression(object)?;
-                        self.output.push_str(&format!(".{} = ", field));
+                        // Check if object is a mutable parameter (pointer)
+                        let use_arrow = match object.as_ref() {
+                            Expr::Ident(name) => {
+                                self.mutable_params.get(name).copied().unwrap_or(false)
+                            }
+                            _ => false,
+                        };
+                        
+                        if use_arrow {
+                            // For mutable params, we need special handling
+                            if let Expr::Ident(name) = object.as_ref() {
+                                self.output.push_str(&format!("{}->{} = ", name, field));
+                            } else {
+                                self.generate_expression(object)?;
+                                self.output.push_str(&format!("->{} = ", field));
+                            }
+                        } else {
+                            self.generate_expression(object)?;
+                            self.output.push_str(&format!(".{} = ", field));
+                        }
                     }
                 }
                 self.generate_expression(value)?;
@@ -683,8 +755,35 @@ impl CodeGenerator {
                 self.output.push_str(if *b { "1" } else { "0" });
             }
             Expr::Ident(name) => {
-                // Direct variable reference
-                self.output.push_str(name);
+                // Check if this is a mutable parameter
+                if let Some(&is_mutable) = self.mutable_params.get(name) {
+                    if is_mutable {
+                        // For arrays, don't dereference as they're already pointers
+                        // We need to check the parameter type
+                        let is_array = self.functions.values()
+                            .find_map(|(params, _)| {
+                                params.iter().find(|p| &p.name == name)
+                                    .and_then(|p| match &p.ty {
+                                        Type::Array(_, _) => Some(true),
+                                        _ => None,
+                                    })
+                            })
+                            .unwrap_or(false);
+                        
+                        if is_array {
+                            // Arrays are already pointers, don't dereference
+                            self.output.push_str(name);
+                        } else {
+                            // Dereference mutable parameters
+                            self.output.push_str(&format!("(*{})", name));
+                        }
+                    } else {
+                        self.output.push_str(name);
+                    }
+                } else {
+                    // Regular variable
+                    self.output.push_str(name);
+                }
             }
             Expr::Call { func, args, .. } => {
                 // Generate function name
@@ -722,11 +821,58 @@ impl CodeGenerator {
                 
                 // Generate arguments
                 self.output.push_str("(");
+                
+                // Get function signature to check parameter mutability
+                let func_params = match func.as_ref() {
+                    Expr::Ident(name) => {
+                        self.functions.get(name).map(|(params, _)| params.clone())
+                    }
+                    _ => None,
+                };
+                
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
                     }
-                    self.generate_expression(arg)?;
+                    
+                    // Check if this parameter is mutable
+                    let needs_address = if let Some(params) = &func_params {
+                        if i < params.len() && params[i].mutable {
+                            // Need to pass address for mutable parameters
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    
+                    if needs_address {
+                        // Check if argument is already a pointer (mutable param) or array
+                        if let Expr::Ident(name) = arg {
+                            if self.mutable_params.get(name).copied().unwrap_or(false) {
+                                // Already a pointer, just pass it
+                                self.output.push_str(name);
+                            } else {
+                                // Check if it's an array variable - arrays are already pointers
+                                let var_type = self.variables.get(name).map(|s| s.as_str());
+                                if var_type.map_or(false, |t| t.contains("[")) {
+                                    // It's an array, don't take address
+                                    self.generate_expression(arg)?;
+                                } else {
+                                    // Need to take address
+                                    self.output.push_str("&");
+                                    self.generate_expression(arg)?;
+                                }
+                            }
+                        } else {
+                            // Need to take address
+                            self.output.push_str("&");
+                            self.generate_expression(arg)?;
+                        }
+                    } else {
+                        self.generate_expression(arg)?;
+                    }
                 }
                 self.output.push_str(")");
             }
@@ -806,9 +952,29 @@ impl CodeGenerator {
                 self.output.push_str("}");
             }
             Expr::FieldAccess { object, field, .. } => {
-                // Generate field access: obj.field
-                self.generate_expression(object)?;
-                self.output.push_str(&format!(".{}", field));
+                // Check if object is a mutable parameter (pointer)
+                let use_arrow = match object.as_ref() {
+                    Expr::Ident(name) => {
+                        self.mutable_params.get(name).copied().unwrap_or(false)
+                    }
+                    _ => false,
+                };
+                
+                // Generate field access: obj.field or obj->field
+                // Note: Don't generate expression for object if it's a mutable param
+                // because we already handle the dereference in Expr::Ident
+                if use_arrow {
+                    // For mutable params, we need special handling
+                    if let Expr::Ident(name) = object.as_ref() {
+                        self.output.push_str(&format!("{}->{}", name, field));
+                    } else {
+                        self.generate_expression(object)?;
+                        self.output.push_str(&format!("->{}", field));
+                    }
+                } else {
+                    self.generate_expression(object)?;
+                    self.output.push_str(&format!(".{}", field));
+                }
             }
             Expr::EnumConstructor { enum_name, variant, data, .. } => {
                 // TODO: Properly generate enum constructors for C
@@ -825,6 +991,21 @@ impl CodeGenerator {
                 return Err(CompileError::Generic(
                     "Range expressions can only be used in for loops".to_string()
                 ));
+            }
+            Expr::Unary { op, operand, .. } => {
+                // Generate unary expression
+                match op {
+                    UnaryOp::Neg => {
+                        self.output.push_str("(-(");
+                        self.generate_expression(operand)?;
+                        self.output.push_str("))");
+                    }
+                    UnaryOp::Not => {
+                        self.output.push_str("(!(");
+                        self.generate_expression(operand)?;
+                        self.output.push_str("))");
+                    }
+                }
             }
         }
         Ok(())

@@ -1,0 +1,25 @@
+// Test array repeat inference
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn main() {
+    print("Testing array repeat inference...\n");
+    
+    // Integer repeat (already works)
+    let zeros = [0; 5];
+    print("Integer repeat:");
+    print_int(zeros[0]);
+    
+    // Struct repeat (let's see if it works)
+    let origin = Point { x: 0, y: 0 };
+    let origins = [origin; 3];  // Should infer [Point; 3]
+    
+    print("Struct repeat worked!");
+    print("origins[0].x =");
+    print_int(origins[0].x);
+    print("origins[1].y =");
+    print_int(origins[1].y);
+}

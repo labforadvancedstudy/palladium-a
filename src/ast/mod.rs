@@ -17,11 +17,19 @@ pub enum Item {
     Enum(EnumDef),
 }
 
+/// Function parameter
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub name: String,
+    pub ty: Type,
+    pub mutable: bool,
+}
+
 /// Function definition
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
-    pub params: Vec<(String, Type)>,
+    pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub span: Span,
@@ -208,6 +216,12 @@ pub enum Expr {
         right: Box<Expr>,
         span: Span,
     },
+    /// Unary operation
+    Unary {
+        op: UnaryOp,
+        operand: Box<Expr>,
+        span: Span,
+    },
     /// Struct literal
     StructLiteral {
         name: String,
@@ -279,6 +293,15 @@ pub enum BinOp {
     Or,
 }
 
+/// Unary operators
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    /// Negation (-)
+    Neg,
+    /// Logical not (!)
+    Not,
+}
+
 impl Expr {
     pub fn span(&self) -> Span {
         match self {
@@ -291,6 +314,7 @@ impl Expr {
             Expr::Index { span, .. } => *span,
             Expr::Call { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
+            Expr::Unary { span, .. } => *span,
             Expr::StructLiteral { span, .. } => *span,
             Expr::FieldAccess { span, .. } => *span,
             Expr::EnumConstructor { span, .. } => *span,
@@ -330,11 +354,14 @@ impl std::fmt::Display for Item {
 impl std::fmt::Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "fn {}(", self.name)?;
-        for (i, (param_name, param_type)) in self.params.iter().enumerate() {
+        for (i, param) in self.params.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}: {}", param_name, param_type)?;
+            if param.mutable {
+                write!(f, "mut ")?;
+            }
+            write!(f, "{}: {}", param.name, param.ty)?;
         }
         write!(f, ")")?;
         if let Some(ret_type) = &self.return_type {
@@ -530,6 +557,9 @@ impl std::fmt::Display for Expr {
             Expr::Binary { left, op, right, .. } => {
                 write!(f, "({} {} {})", left, op, right)
             }
+            Expr::Unary { op, operand, .. } => {
+                write!(f, "({}{})", op, operand)
+            }
             Expr::StructLiteral { name, fields, .. } => {
                 write!(f, "{} {{ ", name)?;
                 for (i, (field_name, field_expr)) in fields.iter().enumerate() {
@@ -627,6 +657,15 @@ impl std::fmt::Display for BinOp {
             BinOp::Ge => write!(f, ">="),
             BinOp::And => write!(f, "&&"),
             BinOp::Or => write!(f, "||"),
+        }
+    }
+}
+
+impl std::fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnaryOp::Neg => write!(f, "-"),
+            UnaryOp::Not => write!(f, "!"),
         }
     }
 }

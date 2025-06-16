@@ -1,0 +1,66 @@
+// Test array literal type inference for structs
+// This should work but currently requires explicit type annotation
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Color {
+    r: i64,
+    g: i64,
+    b: i64,
+}
+
+fn test_array_literal_inference() {
+    print("=== Array Literal Type Inference Test ===\n");
+    
+    // Test 1: Basic integer array (already works)
+    print("Test 1: Integer array inference");
+    let nums = [1, 2, 3, 4, 5];
+    print("✓ Integer array works without type annotation");
+    
+    // Test 2: Boolean array (already works)
+    print("\nTest 2: Boolean array inference");
+    let bools = [true, false, true];
+    print("✓ Boolean array works without type annotation");
+    
+    // Test 3: Struct array (this is what we need to fix)
+    print("\nTest 3: Struct array inference");
+    let p1 = Point { x: 10, y: 20 };
+    let p2 = Point { x: 30, y: 40 };
+    let p3 = Point { x: 50, y: 60 };
+    
+    // This should work but currently doesn't:
+    // let points = [p1, p2, p3];
+    
+    // We have to do this instead:
+    let points: [Point; 3] = [p1, p2, p3];
+    print("✗ Struct array requires type annotation (should infer)");
+    
+    // Test 4: Nested struct usage
+    print("\nTest 4: Accessing inferred array");
+    print("First point x:");
+    print_int(points[0].x);
+    print("First point y:");
+    print_int(points[0].y);
+    
+    // Test 5: Mixed scenarios
+    print("\nTest 5: Array in expressions");
+    let colors: [Color; 2] = [
+        Color { r: 255, g: 0, b: 0 },
+        Color { r: 0, g: 255, b: 0 }
+    ];
+    
+    // This expression should work with inference
+    let total_red = colors[0].r + colors[1].r;
+    print("Total red:");
+    print_int(total_red);
+    
+    print("\n=== Test Complete ===");
+    print("Goal: Make 'let points = [p1, p2, p3]' work without type annotation");
+}
+
+fn main() {
+    test_array_literal_inference();
+}

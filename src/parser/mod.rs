@@ -1,7 +1,7 @@
 // Parser for Palladium
 // "Constructing legends from tokens"
 
-use crate::ast::{*, AssignTarget};
+use crate::ast::{*, AssignTarget, Param, UnaryOp};
 use crate::errors::{CompileError, Result, Span};
 use crate::lexer::Token;
 
@@ -59,6 +59,14 @@ impl Parser {
         
         if !self.check(&Token::RightParen) {
             loop {
+                // Check for optional 'mut' keyword
+                let mutable = if self.check(&Token::Mut) {
+                    self.advance()?; // consume 'mut'
+                    true
+                } else {
+                    false
+                };
+                
                 // Parse parameter name
                 let param_name = match self.advance()? {
                     (Token::Identifier(name), _) => name,
@@ -74,7 +82,11 @@ impl Parser {
                 self.consume(Token::Colon, "Expected ':' after parameter name")?;
                 let param_type = self.parse_type()?;
                 
-                params.push((param_name, param_type));
+                params.push(Param {
+                    name: param_name,
+                    ty: param_type,
+                    mutable,
+                });
                 
                 if !self.check(&Token::Comma) {
                     break;
@@ -807,7 +819,7 @@ impl Parser {
     
     /// Parse multiplication and division
     fn parse_multiplication(&mut self) -> Result<Expr> {
-        let mut left = self.parse_postfix()?;
+        let mut left = self.parse_unary()?;
         
         while let Ok(token) = self.peek() {
             match token {
@@ -989,6 +1001,33 @@ impl Parser {
                 expected: "expression".to_string(),
                 found: token.to_string(),
             }),
+        }
+    }
+    
+    /// Parse unary expressions (-, !)
+    fn parse_unary(&mut self) -> Result<Expr> {
+        match self.peek() {
+            Ok(Token::Minus) => {
+                let (_, start_span) = self.advance()?; // consume '-'
+                let operand = self.parse_unary()?; // Right associative
+                let end_span = operand.span();
+                Ok(Expr::Unary {
+                    op: UnaryOp::Neg,
+                    operand: Box::new(operand),
+                    span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                })
+            }
+            Ok(Token::Not) => {
+                let (_, start_span) = self.advance()?; // consume '!'
+                let operand = self.parse_unary()?; // Right associative
+                let end_span = operand.span();
+                Ok(Expr::Unary {
+                    op: UnaryOp::Not,
+                    operand: Box::new(operand),
+                    span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
+                })
+            }
+            _ => self.parse_postfix(),
         }
     }
     

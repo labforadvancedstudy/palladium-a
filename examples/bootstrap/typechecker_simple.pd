@@ -1,0 +1,405 @@
+// Simplified Palladium Type Checker - Bootstrap version
+// Uses integers instead of enums for type representation
+
+// Type kinds as constants
+fn TY_UNIT() -> i64 { return 0; }
+fn TY_BOOL() -> i64 { return 1; }
+fn TY_I32() -> i64 { return 2; }
+fn TY_I64() -> i64 { return 3; }
+fn TY_STRING() -> i64 { return 4; }
+fn TY_ARRAY() -> i64 { return 5; }
+fn TY_STRUCT() -> i64 { return 6; }
+fn TY_FUNCTION() -> i64 { return 7; }
+fn TY_UNKNOWN() -> i64 { return 8; }
+
+// Type representation
+struct Type {
+    kind: i64,
+    // For arrays: data1 = element type kind, data2 = size
+    // For structs: data1 = struct id
+    // For functions: data1 = param type, data2 = return type
+    data1: i64,
+    data2: i64,
+}
+
+// Variable info
+struct VarInfo {
+    name: String,
+    ty: Type,
+    mutable: bool,
+}
+
+// Simple symbol table using arrays
+struct SymbolTable {
+    vars: [VarInfo; 200],    // All variables in linear array
+    var_count: i64,
+    scope_starts: [i64; 20], // Where each scope starts
+    scope_count: i64,
+}
+
+// Type checker state
+struct TypeChecker {
+    symbols: SymbolTable,
+    error_msg: String,
+    has_error: bool,
+}
+
+// Create empty type
+fn empty_type() -> Type {
+    return Type { kind: TY_UNKNOWN(), data1: 0, data2: 0 };
+}
+
+// Create type constructors
+fn make_unit_type() -> Type {
+    return Type { kind: TY_UNIT(), data1: 0, data2: 0 };
+}
+
+fn make_bool_type() -> Type {
+    return Type { kind: TY_BOOL(), data1: 0, data2: 0 };
+}
+
+fn make_i32_type() -> Type {
+    return Type { kind: TY_I32(), data1: 0, data2: 0 };
+}
+
+fn make_i64_type() -> Type {
+    return Type { kind: TY_I64(), data1: 0, data2: 0 };
+}
+
+fn make_string_type() -> Type {
+    return Type { kind: TY_STRING(), data1: 0, data2: 0 };
+}
+
+fn make_array_type(elem_kind: i64, size: i64) -> Type {
+    return Type { kind: TY_ARRAY(), data1: elem_kind, data2: size };
+}
+
+fn make_struct_type(struct_id: i64) -> Type {
+    return Type { kind: TY_STRUCT(), data1: struct_id, data2: 0 };
+}
+
+// Create new type checker
+fn typechecker_new() -> TypeChecker {
+    let empty_var = VarInfo { 
+        name: "", 
+        ty: empty_type(), 
+        mutable: false 
+    };
+    
+    let empty_table = SymbolTable {
+        vars: [empty_var; 200],
+        var_count: 0,
+        scope_starts: [0; 20],
+        scope_count: 1,  // Start with global scope
+    };
+    
+    return TypeChecker {
+        symbols: empty_table,
+        error_msg: "",
+        has_error: false,
+    };
+}
+
+// Enter new scope
+fn enter_scope(mut tc: TypeChecker) {
+    if tc.symbols.scope_count < 20 {
+        tc.symbols.scope_starts[tc.symbols.scope_count] = tc.symbols.var_count;
+        tc.symbols.scope_count = tc.symbols.scope_count + 1;
+    }
+}
+
+// Exit scope and remove variables
+fn exit_scope(mut tc: TypeChecker) {
+    if tc.symbols.scope_count > 1 {
+        tc.symbols.scope_count = tc.symbols.scope_count - 1;
+        tc.symbols.var_count = tc.symbols.scope_starts[tc.symbols.scope_count];
+    }
+}
+
+// Define variable
+fn define_var(mut tc: TypeChecker, name: String, ty: Type, mutable: bool) -> bool {
+    // Check for redefinition in current scope
+    let current_scope = tc.symbols.scope_count - 1;
+    let scope_start = tc.symbols.scope_starts[current_scope];
+    
+    for i in scope_start..tc.symbols.var_count {
+        if string_eq(tc.symbols.vars[i].name, name) {
+            tc.error_msg = string_concat("Variable already defined: ", name);
+            tc.has_error = true;
+            return false;
+        }
+    }
+    
+    // Add variable
+    if tc.symbols.var_count < 200 {
+        tc.symbols.vars[tc.symbols.var_count] = VarInfo {
+            name: name,
+            ty: ty,
+            mutable: mutable,
+        };
+        tc.symbols.var_count = tc.symbols.var_count + 1;
+        return true;
+    }
+    
+    tc.error_msg = "Too many variables";
+    tc.has_error = true;
+    return false;
+}
+
+// Look up variable
+fn lookup_var(tc: TypeChecker, name: String) -> Type {
+    // Search from end to beginning (inner to outer scope)
+    let mut i = tc.symbols.var_count;
+    while i > 0 {
+        i = i - 1;
+        if string_eq(tc.symbols.vars[i].name, name) {
+            return tc.symbols.vars[i].ty;
+        }
+    }
+    
+    return empty_type();  // Not found
+}
+
+// Check if types are equal
+fn types_equal(t1: Type, t2: Type) -> bool {
+    if t1.kind != t2.kind {
+        return false;
+    }
+    
+    // For complex types, check additional data
+    if t1.kind == TY_ARRAY() {
+        return t1.data1 == t2.data1 && t1.data2 == t2.data2;
+    }
+    
+    if t1.kind == TY_STRUCT() {
+        return t1.data1 == t2.data1;
+    }
+    
+    return true;
+}
+
+// Get type name for error messages
+fn type_name(ty: Type) -> String {
+    if ty.kind == TY_UNIT() { return "()"; }
+    if ty.kind == TY_BOOL() { return "bool"; }
+    if ty.kind == TY_I32() { return "i32"; }
+    if ty.kind == TY_I64() { return "i64"; }
+    if ty.kind == TY_STRING() { return "String"; }
+    if ty.kind == TY_ARRAY() { return "array"; }
+    if ty.kind == TY_STRUCT() { return "struct"; }
+    if ty.kind == TY_FUNCTION() { return "function"; }
+    return "unknown";
+}
+
+// Check binary operation
+fn check_binary_op(mut tc: TypeChecker, op_kind: i64, left_ty: Type, right_ty: Type) -> Type {
+    // Arithmetic operators: +, -, *, /, %
+    if op_kind >= 40 && op_kind <= 44 {
+        if !types_equal(left_ty, right_ty) {
+            tc.error_msg = "Arithmetic operators require matching types";
+            tc.has_error = true;
+            return empty_type();
+        }
+        
+        if left_ty.kind == TY_I32() || left_ty.kind == TY_I64() {
+            return left_ty;
+        }
+        
+        tc.error_msg = "Arithmetic operators require numeric types";
+        tc.has_error = true;
+        return empty_type();
+    }
+    
+    // Comparison operators: <, >, <=, >=
+    if op_kind >= 48 && op_kind <= 51 {
+        if !types_equal(left_ty, right_ty) {
+            tc.error_msg = "Comparison operators require matching types";
+            tc.has_error = true;
+            return empty_type();
+        }
+        
+        if left_ty.kind == TY_I32() || left_ty.kind == TY_I64() {
+            return make_bool_type();
+        }
+        
+        tc.error_msg = "Comparison operators require numeric types";
+        tc.has_error = true;
+        return empty_type();
+    }
+    
+    // Equality operators: ==, !=
+    if op_kind == 46 || op_kind == 47 {
+        if !types_equal(left_ty, right_ty) {
+            tc.error_msg = "Equality operators require matching types";
+            tc.has_error = true;
+            return empty_type();
+        }
+        return make_bool_type();
+    }
+    
+    // Logical operators: &&, ||
+    if op_kind == 52 || op_kind == 53 {
+        if left_ty.kind != TY_BOOL() || right_ty.kind != TY_BOOL() {
+            tc.error_msg = "Logical operators require bool operands";
+            tc.has_error = true;
+            return empty_type();
+        }
+        return make_bool_type();
+    }
+    
+    tc.error_msg = "Unknown binary operator";
+    tc.has_error = true;
+    return empty_type();
+}
+
+// Check unary operation
+fn check_unary_op(mut tc: TypeChecker, op_kind: i64, operand_ty: Type) -> Type {
+    // Negation (-)
+    if op_kind == 100 {
+        if operand_ty.kind == TY_I32() || operand_ty.kind == TY_I64() {
+            return operand_ty;
+        }
+        tc.error_msg = "Negation requires numeric type";
+        tc.has_error = true;
+        return empty_type();
+    }
+    
+    // Logical not (!)
+    if op_kind == 101 {
+        if operand_ty.kind == TY_BOOL() {
+            return make_bool_type();
+        }
+        tc.error_msg = "Logical not requires bool type";
+        tc.has_error = true;
+        return empty_type();
+    }
+    
+    tc.error_msg = "Unknown unary operator";
+    tc.has_error = true;
+    return empty_type();
+}
+
+// Test the type checker
+fn test_typechecker() {
+    print("=== Testing Simplified Type Checker ===\n");
+    
+    let mut tc = typechecker_new();
+    
+    // Test 1: Basic types
+    print("Test 1: Type creation and equality");
+    let i64_ty = make_i64_type();
+    let i32_ty = make_i32_type();
+    let bool_ty = make_bool_type();
+    
+    if types_equal(i64_ty, i64_ty) {
+        print("✓ i64 == i64");
+    } else {
+        print("✗ i64 should equal i64");
+    }
+    
+    if !types_equal(i64_ty, i32_ty) {
+        print("✓ i64 != i32");
+    } else {
+        print("✗ i64 should not equal i32");
+    }
+    
+    // Test 2: Variable definition
+    print("\nTest 2: Variable definition and lookup");
+    if define_var(tc, "x", i64_ty, false) {
+        print("✓ Defined variable x: i64");
+    } else {
+        print(string_concat("✗ Failed to define x: ", tc.error_msg));
+    }
+    
+    let x_ty = lookup_var(tc, "x");
+    if types_equal(x_ty, i64_ty) {
+        print("✓ Found x with correct type");
+    } else {
+        print("✗ x has wrong type");
+    }
+    
+    // Test 3: Scoping
+    print("\nTest 3: Scoping");
+    enter_scope(tc);
+    
+    if define_var(tc, "y", bool_ty, true) {
+        print("✓ Defined y in inner scope");
+    }
+    
+    // Both should be accessible
+    if types_equal(lookup_var(tc, "x"), i64_ty) {
+        print("✓ Can access outer scope variable");
+    }
+    
+    if types_equal(lookup_var(tc, "y"), bool_ty) {
+        print("✓ Can access inner scope variable");
+    }
+    
+    exit_scope(tc);
+    
+    // Only x should be accessible
+    if types_equal(lookup_var(tc, "x"), i64_ty) {
+        print("✓ Outer variable still accessible");
+    }
+    
+    if lookup_var(tc, "y").kind == TY_UNKNOWN() {
+        print("✓ Inner variable correctly removed");
+    }
+    
+    // Test 4: Binary operators
+    print("\nTest 4: Binary operators");
+    tc.has_error = false;
+    
+    let add_result = check_binary_op(tc, 40, i64_ty, i64_ty);  // +
+    if !tc.has_error && types_equal(add_result, i64_ty) {
+        print("✓ i64 + i64 = i64");
+    }
+    
+    tc.has_error = false;
+    let cmp_result = check_binary_op(tc, 48, i64_ty, i64_ty);  // <
+    if !tc.has_error && types_equal(cmp_result, bool_ty) {
+        print("✓ i64 < i64 = bool");
+    }
+    
+    tc.has_error = false;
+    let and_result = check_binary_op(tc, 52, bool_ty, bool_ty);  // &&
+    if !tc.has_error && types_equal(and_result, bool_ty) {
+        print("✓ bool && bool = bool");
+    }
+    
+    // Test 5: Unary operators
+    print("\nTest 5: Unary operators");
+    tc.has_error = false;
+    
+    let neg_result = check_unary_op(tc, 100, i64_ty);  // -
+    if !tc.has_error && types_equal(neg_result, i64_ty) {
+        print("✓ -i64 = i64");
+    }
+    
+    tc.has_error = false;
+    let not_result = check_unary_op(tc, 101, bool_ty);  // !
+    if !tc.has_error && types_equal(not_result, bool_ty) {
+        print("✓ !bool = bool");
+    }
+    
+    // Test 6: Type errors
+    print("\nTest 6: Type error detection");
+    tc.has_error = false;
+    
+    let bad_add = check_binary_op(tc, 40, i64_ty, bool_ty);  // i64 + bool
+    if tc.has_error {
+        print("✓ Detected type mismatch in addition");
+    }
+    
+    tc.has_error = false;
+    let bad_neg = check_unary_op(tc, 100, bool_ty);  // -bool
+    if tc.has_error {
+        print("✓ Detected invalid negation of bool");
+    }
+    
+    print("\n=== Type Checker Working! ===");
+}
+
+fn main() {
+    test_typechecker();
+}

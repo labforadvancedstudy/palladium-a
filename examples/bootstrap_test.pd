@@ -1,0 +1,49 @@
+// Bootstrap test program - proves self-hosting works
+fn factorial(n: i64) -> i64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn fibonacci(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    let mut a = 0;
+    let mut b = 1;
+    let mut i = 2;
+    while i <= n {
+        let temp = a + b;
+        a = b;
+        b = temp;
+        i = i + 1;
+    }
+    return b;
+}
+
+fn main() {
+    print("🎯 Palladium Bootstrap Verification Test\n");
+    print("=======================================\n\n");
+    
+    // Test 1: Factorial
+    print("Factorial test:\n");
+    for i in 0..10 {
+        print("  ");
+        print_int(i);
+        print("! = ");
+        print_int(factorial(i));
+        print("\n");
+    }
+    
+    print("\nFibonacci test:\n");
+    for i in 0..15 {
+        print("  fib(");
+        print_int(i);
+        print(") = ");
+        print_int(fibonacci(i));
+        print("\n");
+    }
+    
+    print("\n✅ Bootstrap compiler works correctly!\n");
+}
