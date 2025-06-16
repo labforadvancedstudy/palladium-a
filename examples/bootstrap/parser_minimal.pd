@@ -1,0 +1,418 @@
+// Minimal parser for Palladium - demonstrating parsing without struct/tuple returns
+// This parser validates basic Palladium syntax
+
+// Token types
+fn tok_eof() -> i64 { return 0; }
+fn tok_ident() -> i64 { return 1; }
+fn tok_number() -> i64 { return 2; }
+fn tok_string() -> i64 { return 3; }
+fn tok_let() -> i64 { return 4; }
+fn tok_fn() -> i64 { return 5; }
+fn tok_return() -> i64 { return 6; }
+fn tok_if() -> i64 { return 7; }
+fn tok_lparen() -> i64 { return 8; }
+fn tok_rparen() -> i64 { return 9; }
+fn tok_lbrace() -> i64 { return 10; }
+fn tok_rbrace() -> i64 { return 11; }
+fn tok_semi() -> i64 { return 12; }
+fn tok_eq() -> i64 { return 13; }
+fn tok_plus() -> i64 { return 14; }
+fn tok_minus() -> i64 { return 15; }
+fn tok_star() -> i64 { return 16; }
+fn tok_unknown() -> i64 { return 99; }
+
+// Skip whitespace
+fn skip_whitespace(input: String, pos: i64) -> i64 {
+    let len = string_len(input);
+    let mut i = pos;
+    
+    while i < len {
+        let c = string_char_at(input, i);
+        if c == 32 {
+            i = i + 1;
+            continue;
+        }  // space
+        if c == 9 {
+            i = i + 1;
+            continue;
+        }   // tab
+        if c == 10 {
+            i = i + 1;
+            continue;
+        }  // newline
+        break;
+    }
+    
+    return i;
+}
+
+// Check if letter
+fn is_letter(c: i64) -> bool {
+    if c >= 65 {
+        if c <= 90 {
+            return true;
+        }  // A-Z
+    }
+    if c >= 97 {
+        if c <= 122 {
+            return true;
+        } // a-z
+    }
+    if c == 95 {
+        return true;
+    }      // underscore
+    return false;
+}
+
+// Get identifier length
+fn get_ident_len(input: String, start: i64) -> i64 {
+    let len = string_len(input);
+    let mut i = start;
+    
+    if i >= len {
+        return 0;
+    }
+    if is_letter(string_char_at(input, i)) == false {
+        return 0;
+    }
+    
+    i = i + 1;
+    
+    while i < len {
+        let c = string_char_at(input, i);
+        if is_letter(c) == false {
+            if char_is_digit(c) == false {
+                break;
+            }
+        }
+        i = i + 1;
+    }
+    
+    return i - start;
+}
+
+// Check keyword
+fn check_keyword(s: String) -> i64 {
+    if string_eq(s, "let") {
+        return tok_let();
+    }
+    if string_eq(s, "fn") {
+        return tok_fn();
+    }
+    if string_eq(s, "return") {
+        return tok_return();
+    }
+    if string_eq(s, "if") {
+        return tok_if();
+    }
+    return tok_ident();
+}
+
+// Get next token type
+fn get_token_at(input: String, pos: i64) -> i64 {
+    let start = skip_whitespace(input, pos);
+    let len = string_len(input);
+    
+    if start >= len {
+        return tok_eof();
+    }
+    
+    let c = string_char_at(input, start);
+    
+    // Single char tokens
+    if c == 40 {
+        return tok_lparen();
+    }   // (
+    if c == 41 {
+        return tok_rparen();
+    }   // )
+    if c == 123 {
+        return tok_lbrace();
+    }  // {
+    if c == 125 {
+        return tok_rbrace();
+    }  // }
+    if c == 59 {
+        return tok_semi();
+    }     // ;
+    if c == 61 {
+        return tok_eq();
+    }       // =
+    if c == 43 {
+        return tok_plus();
+    }     // +
+    if c == 45 {
+        return tok_minus();
+    }    // -
+    if c == 42 {
+        return tok_star();
+    }     // *
+    
+    // Numbers
+    if char_is_digit(c) {
+        return tok_number();
+    }
+    
+    // Identifiers/keywords
+    if is_letter(c) {
+        let ident_len = get_ident_len(input, start);
+        if ident_len > 0 {
+            let ident = string_substring(input, start, start + ident_len);
+            return check_keyword(ident);
+        }
+    }
+    
+    // Strings
+    if c == 34 { // quote
+        return tok_string();
+    }
+    
+    return tok_unknown();
+}
+
+// Get token length
+fn get_token_len(input: String, pos: i64) -> i64 {
+    let start = skip_whitespace(input, pos);
+    let len = string_len(input);
+    
+    if start >= len {
+        return 0;
+    }
+    
+    let c = string_char_at(input, start);
+    
+    // Single chars
+    if c == 40 {
+        return 1;
+    }  // (
+    if c == 41 {
+        return 1;
+    }  // )
+    if c == 123 {
+        return 1;
+    } // {
+    if c == 125 {
+        return 1;
+    } // }
+    if c == 59 {
+        return 1;
+    }  // ;
+    if c == 61 {
+        return 1;
+    }  // =
+    if c == 43 {
+        return 1;
+    }  // +
+    if c == 45 {
+        return 1;
+    }  // -
+    if c == 42 {
+        return 1;
+    }  // *
+    
+    // Numbers
+    if char_is_digit(c) {
+        let mut i = start;
+        while i < len {
+            if char_is_digit(string_char_at(input, i)) == false {
+                break;
+            }
+            i = i + 1;
+        }
+        return i - start;
+    }
+    
+    // Identifiers
+    if is_letter(c) {
+        return get_ident_len(input, start);
+    }
+    
+    // Strings
+    if c == 34 { // quote
+        let mut i = start + 1;
+        while i < len {
+            if string_char_at(input, i) == 34 {
+                return i - start + 1;
+            }
+            i = i + 1;
+        }
+        return 1; // unterminated
+    }
+    
+    return 1; // unknown
+}
+
+// Get token text
+fn get_token_text(input: String, pos: i64) -> String {
+    let start = skip_whitespace(input, pos);
+    let tok_len = get_token_len(input, pos);
+    if tok_len == 0 {
+        return "";
+    }
+    return string_substring(input, start, start + tok_len);
+}
+
+// Simple syntax validator
+fn validate_let_stmt(input: String, start_pos: i64) -> bool {
+    let mut pos = start_pos;
+    
+    // Expect 'let'
+    if get_token_at(input, pos) != tok_let() {
+        return false;
+    }
+    pos = pos + get_token_len(input, pos);
+    pos = skip_whitespace(input, pos);
+    
+    // Expect identifier
+    if get_token_at(input, pos) != tok_ident() {
+        print("Error: Expected identifier after 'let'");
+        return false;
+    }
+    let var_name: String = get_token_text(input, pos);
+    print(string_concat("  Variable: ", var_name));
+    pos = pos + get_token_len(input, pos);
+    pos = skip_whitespace(input, pos);
+    
+    // Expect '='
+    if get_token_at(input, pos) != tok_eq() {
+        print("Error: Expected '=' after identifier");
+        return false;
+    }
+    pos = pos + get_token_len(input, pos);
+    pos = skip_whitespace(input, pos);
+    
+    // Expect expression (simplified - just number, string, or identifier)
+    let expr_tok = get_token_at(input, pos);
+    if expr_tok == tok_number() {
+        let num: String = get_token_text(input, pos);
+        print(string_concat("  Value: ", num));
+    } else {
+        if expr_tok == tok_string() {
+            let str: String = get_token_text(input, pos);
+            print(string_concat("  Value: ", str));
+        } else {
+            if expr_tok == tok_ident() {
+                let ident: String = get_token_text(input, pos);
+                print(string_concat("  Value: ", ident));
+            } else {
+                print("Error: Expected expression");
+                return false;
+            }
+        }
+    }
+    pos = pos + get_token_len(input, pos);
+    pos = skip_whitespace(input, pos);
+    
+    // Expect ';'
+    if get_token_at(input, pos) != tok_semi() {
+        print("Error: Expected ';'");
+        return false;
+    }
+    
+    return true;
+}
+
+// Parse and validate a simple program
+fn parse_simple_program(input: String) {
+    print("=== Parsing Program ===");
+    print("Input:");
+    print(input);
+    print("\nValidation:\n");
+    
+    let mut pos = 0;
+    let mut stmt_count = 0;
+    
+    while get_token_at(input, pos) != tok_eof() {
+        let tok = get_token_at(input, pos);
+        
+        if tok == tok_let() {
+            print("Found let statement:");
+            if validate_let_stmt(input, pos) {
+                print("  ✓ Valid\n");
+                
+                // Skip to next statement
+                while pos < string_len(input) {
+                    if get_token_at(input, pos) == tok_semi() {
+                        pos = pos + get_token_len(input, pos);
+                        pos = skip_whitespace(input, pos);
+                        break;
+                    }
+                    pos = pos + get_token_len(input, pos);
+                    pos = skip_whitespace(input, pos);
+                }
+                
+                stmt_count = stmt_count + 1;
+            } else {
+                print("  ✗ Invalid\n");
+                break;
+            }
+        } else {
+            if tok == tok_ident() {
+            // Simple expression statement
+            print("Found expression statement:");
+            let ident: String = get_token_text(input, pos);
+            print(string_concat("  Expression: ", ident));
+            
+            // Skip to semicolon
+            while pos < string_len(input) {
+                if get_token_at(input, pos) == tok_semi() {
+                    pos = pos + get_token_len(input, pos);
+                    pos = skip_whitespace(input, pos);
+                    print("  ✓ Valid\n");
+                    stmt_count = stmt_count + 1;
+                    break;
+                }
+                pos = pos + get_token_len(input, pos);
+                pos = skip_whitespace(input, pos);
+            }
+            } else {
+                print("Error: Unexpected token");
+                break;
+            }
+        }
+    }
+    
+    print("\n=== Summary ===");
+    print(string_concat("Statements parsed: ", string_from_char(48 + stmt_count)));
+    if get_token_at(input, pos) == tok_eof() {
+        print("✓ Successfully parsed entire program");
+    } else {
+        print("✗ Parse error occurred");
+    }
+}
+
+// Test the parser
+fn test_minimal_parser() {
+    // Test 1: Single let statement
+    print("\n=== Test 1: Single Let Statement ===");
+    parse_simple_program("let x = 42;");
+    
+    // Test 2: Multiple let statements
+    print("\n\n=== Test 2: Multiple Let Statements ===");
+    parse_simple_program("let a = 10; let b = 20; let c = 30;");
+    
+    // Test 3: String assignment
+    print("\n\n=== Test 3: String Assignment ===");
+    parse_simple_program("let msg = \"Hello\";");
+    
+    // Test 4: Mixed statements
+    print("\n\n=== Test 4: Mixed Program ===");
+    let program = "let x = 100;\nlet name = \"Palladium\";\nprint(x);";
+    parse_simple_program(program);
+    
+    // Test 5: Error case
+    print("\n\n=== Test 5: Error Case ===");
+    parse_simple_program("let = 42;");
+}
+
+fn main() {
+    print("=== Palladium Bootstrap Parser (Minimal) ===\n");
+    print("This parser demonstrates basic syntax validation");
+    print("without using struct/tuple returns.\n");
+    
+    test_minimal_parser();
+    
+    print("\n\n=== Parser Demo Complete ===");
+    print("This shows we can parse Palladium syntax in Palladium!");
+    print("Despite limitations, we're making progress toward bootstrapping!");
+}

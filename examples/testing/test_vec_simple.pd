@@ -1,0 +1,60 @@
+// Simple test for Vec structure
+
+struct VecInt {
+    data: [i64; 10],
+    size: i64,
+}
+
+fn vec_new() -> VecInt {
+    let vec = VecInt {
+        data: [0; 10],
+        size: 0,
+    };
+    return vec;
+}
+
+fn vec_push(vec: mut VecInt, value: i64) -> VecInt {
+    if vec.size >= 10 {
+        print("Vec full");
+        return vec;
+    }
+    vec.data[vec.size] = value;
+    vec.size = vec.size + 1;
+    return vec;
+}
+
+fn vec_get(vec: VecInt, index: i64) -> i64 {
+    if index < 0 {
+        return -1;
+    }
+    if index >= vec.size {
+        return -1;
+    }
+    return vec.data[index];
+}
+
+fn main() {
+    print("=== Simple Vec Test ===");
+    
+    let mut v = vec_new();
+    
+    // Push some values
+    v = vec_push(v, 10);
+    v = vec_push(v, 20);
+    v = vec_push(v, 30);
+    
+    // Get values
+    let first = vec_get(v, 0);
+    let second = vec_get(v, 1);
+    let third = vec_get(v, 2);
+    
+    print("First element:");
+    print_int(first);
+    print("Second element:");
+    print_int(second);
+    print("Third element:");
+    print_int(third);
+    
+    print("Size:");
+    print_int(v.size);
+}

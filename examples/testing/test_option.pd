@@ -1,0 +1,363 @@
+// Comprehensive tests for Option type
+
+// Test OptionString
+fn test_option_string() {
+    print("=== Testing OptionString ===");
+    
+    // Test Some variant
+    let some_val = OptionString::Some("Hello, Option!");
+    if option_string_is_some(some_val) {
+        print("is_some test: PASS");
+    }
+    
+    if option_string_is_none(some_val) == false {
+        print("is_none on Some: PASS");
+    }
+    
+    let val = option_string_unwrap(some_val);
+    if string_eq(val, "Hello, Option!") {
+        print("unwrap test: PASS");
+    }
+    
+    // Test None variant
+    let none_val = OptionString::None;
+    if option_string_is_none(none_val) {
+        print("is_none test: PASS");
+    }
+    
+    if option_string_is_some(none_val) == false {
+        print("is_some on None: PASS");
+    }
+    
+    let default_val = option_string_unwrap_or(none_val, "default");
+    if string_eq(default_val, "default") {
+        print("unwrap_or test: PASS");
+    }
+}
+
+// Test OptionInt
+fn test_option_int() {
+    print("\n=== Testing OptionInt ===");
+    
+    // Test Some variant
+    let some_val = OptionInt::Some(42);
+    if option_int_is_some(some_val) {
+        print("is_some test: PASS");
+    }
+    
+    let val = option_int_unwrap(some_val);
+    if val == 42 {
+        print("unwrap test: PASS");
+    }
+    
+    // Test None variant
+    let none_val = OptionInt::None;
+    if option_int_is_none(none_val) {
+        print("is_none test: PASS");
+    }
+    
+    let default_val = option_int_unwrap_or(none_val, 99);
+    if default_val == 99 {
+        print("unwrap_or test: PASS");
+    }
+}
+
+// Test OptionBool
+fn test_option_bool() {
+    print("\n=== Testing OptionBool ===");
+    
+    // Test Some(true)
+    let some_true = OptionBool::Some(true);
+    if option_bool_is_some(some_true) {
+        print("is_some test: PASS");
+    }
+    
+    let val_true = option_bool_unwrap(some_true);
+    if val_true {
+        print("unwrap true: PASS");
+    }
+    
+    // Test Some(false)
+    let some_false = OptionBool::Some(false);
+    let val_false = option_bool_unwrap(some_false);
+    if val_false == false {
+        print("unwrap false: PASS");
+    }
+    
+    // Test None
+    let none_val = OptionBool::None;
+    if option_bool_is_none(none_val) {
+        print("is_none test: PASS");
+    }
+    
+    let default_val = option_bool_unwrap_or(none_val, true);
+    if default_val {
+        print("unwrap_or test: PASS");
+    }
+}
+
+// Test string_find_char
+fn test_string_find_char() {
+    print("\n=== Testing string_find_char ===");
+    
+    let text = "Hello, World!";
+    
+    // Find existing character
+    let pos1 = string_find_char(text, 72); // 'H'
+    match pos1 {
+        OptionInt::Some(p) => {
+            if p == 0 {
+                print("Find 'H': PASS");
+            }
+        }
+        OptionInt::None => print("Find 'H': FAIL"),
+    }
+    
+    // Find comma
+    let pos2 = string_find_char(text, 44); // ','
+    match pos2 {
+        OptionInt::Some(p) => {
+            if p == 5 {
+                print("Find ',': PASS");
+            }
+        }
+        OptionInt::None => print("Find ',': FAIL"),
+    }
+    
+    // Find non-existing character
+    let pos3 = string_find_char(text, 120); // 'x'
+    if option_int_is_none(pos3) {
+        print("Not found 'x': PASS");
+    }
+}
+
+// Test string_find
+fn test_string_find() {
+    print("\n=== Testing string_find ===");
+    
+    let text = "Hello, World!";
+    
+    // Find existing substring
+    let pos1 = string_find(text, "World");
+    match pos1 {
+        OptionInt::Some(p) => {
+            if p == 7 {
+                print("Find 'World': PASS");
+            }
+        }
+        OptionInt::None => print("Find 'World': FAIL"),
+    }
+    
+    // Find at beginning
+    let pos2 = string_find(text, "Hello");
+    match pos2 {
+        OptionInt::Some(p) => {
+            if p == 0 {
+                print("Find 'Hello': PASS");
+            }
+        }
+        OptionInt::None => print("Find 'Hello': FAIL"),
+    }
+    
+    // Find empty string
+    let pos3 = string_find(text, "");
+    match pos3 {
+        OptionInt::Some(p) => {
+            if p == 0 {
+                print("Find empty: PASS");
+            }
+        }
+        OptionInt::None => print("Find empty: FAIL"),
+    }
+    
+    // Find non-existing substring
+    let pos4 = string_find(text, "xyz");
+    if option_int_is_none(pos4) {
+        print("Not found 'xyz': PASS");
+    }
+    
+    // Substring longer than text
+    let pos5 = string_find("Hi", "Hello");
+    if option_int_is_none(pos5) {
+        print("Substring too long: PASS");
+    }
+}
+
+// Test string_first_line
+fn test_string_first_line() {
+    print("\n=== Testing string_first_line ===");
+    
+    // Single line
+    let single = "Hello, World!";
+    let line1 = string_first_line(single);
+    match line1 {
+        OptionString::Some(l) => {
+            if string_eq(l, "Hello, World!") {
+                print("Single line: PASS");
+            }
+        }
+        OptionString::None => print("Single line: FAIL"),
+    }
+    
+    // Multiple lines
+    let multi = string_concat("First line", string_from_char(10));
+    let multi2 = string_concat(multi, "Second line");
+    let line2 = string_first_line(multi2);
+    match line2 {
+        OptionString::Some(l) => {
+            if string_eq(l, "First line") {
+                print("Multi line: PASS");
+            }
+        }
+        OptionString::None => print("Multi line: FAIL"),
+    }
+    
+    // Empty string
+    let empty = "";
+    let line3 = string_first_line(empty);
+    if option_string_is_none(line3) {
+        print("Empty string: PASS");
+    }
+}
+
+// Test parse_int_safe
+fn test_parse_int_safe() {
+    print("\n=== Testing parse_int_safe ===");
+    
+    // Valid positive
+    let num1 = parse_int_safe("123");
+    match num1 {
+        OptionInt::Some(n) => {
+            if n == 123 {
+                print("Positive: PASS");
+            }
+        }
+        OptionInt::None => print("Positive: FAIL"),
+    }
+    
+    // Valid negative
+    let num2 = parse_int_safe("-456");
+    match num2 {
+        OptionInt::Some(n) => {
+            if n == -456 {
+                print("Negative: PASS");
+            }
+        }
+        OptionInt::None => print("Negative: FAIL"),
+    }
+    
+    // Zero
+    let num3 = parse_int_safe("0");
+    match num3 {
+        OptionInt::Some(n) => {
+            if n == 0 {
+                print("Zero: PASS");
+            }
+        }
+        OptionInt::None => print("Zero: FAIL"),
+    }
+    
+    // Invalid - empty
+    let num4 = parse_int_safe("");
+    if option_int_is_none(num4) {
+        print("Empty: PASS");
+    }
+    
+    // Invalid - just minus
+    let num5 = parse_int_safe("-");
+    if option_int_is_none(num5) {
+        print("Just minus: PASS");
+    }
+    
+    // Invalid - letters
+    let num6 = parse_int_safe("12a3");
+    if option_int_is_none(num6) {
+        print("Invalid chars: PASS");
+    }
+}
+
+// Test get_env
+fn test_get_env() {
+    print("\n=== Testing get_env ===");
+    
+    // Existing var
+    let home = get_env("HOME");
+    match home {
+        OptionString::Some(path) => {
+            if string_eq(path, "/home/user") {
+                print("Get HOME: PASS");
+            }
+        }
+        OptionString::None => print("Get HOME: FAIL"),
+    }
+    
+    // Non-existing var
+    let missing = get_env("NONEXISTENT");
+    if option_string_is_none(missing) {
+        print("Missing var: PASS");
+    }
+}
+
+// Test dict_get
+fn test_dict_get() {
+    print("\n=== Testing dict_get ===");
+    
+    // Existing key
+    let version = dict_get("version");
+    match version {
+        OptionString::Some(v) => {
+            if string_eq(v, "1.0.0") {
+                print("Get version: PASS");
+            }
+        }
+        OptionString::None => print("Get version: FAIL"),
+    }
+    
+    // Missing key
+    let missing = dict_get("nonexistent");
+    if option_string_is_none(missing) {
+        print("Missing key: PASS");
+    }
+}
+
+// Test chaining Options
+fn test_option_chaining() {
+    print("\n=== Testing Option Chaining ===");
+    
+    // Chain successful operations
+    let text = "123";
+    let num_opt = parse_int_safe(text);
+    if option_int_is_some(num_opt) {
+        let num = option_int_unwrap(num_opt);
+        if num > 100 {
+            print("Number is large");
+        } else {
+            print("Number is small: PASS");
+        }
+    }
+    
+    // Chain with failure
+    let bad_text = "abc";
+    let bad_num = parse_int_safe(bad_text);
+    let result = option_int_unwrap_or(bad_num, -1);
+    if result == -1 {
+        print("Failed parse handled: PASS");
+    }
+}
+
+fn main() {
+    print("=== Option Type Tests ===\n");
+    
+    test_option_string();
+    test_option_int();
+    test_option_bool();
+    test_string_find_char();
+    test_string_find();
+    test_string_first_line();
+    test_parse_int_safe();
+    test_get_env();
+    test_dict_get();
+    test_option_chaining();
+    
+    print("\n=== All Option tests complete ===");
+}

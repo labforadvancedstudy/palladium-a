@@ -1,0 +1,21 @@
+// Minimal Vec test
+
+struct VecInt {
+    data: [i64; 10],
+    size: i64,
+}
+
+fn vec_new() -> VecInt {
+    let vec = VecInt {
+        data: [0; 10],
+        size: 0,
+    };
+    return vec;
+}
+
+fn main() {
+    print("Creating vec");
+    let v = vec_new();
+    print("Vec created");
+    print_int(v.size);
+}

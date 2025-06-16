@@ -1,0 +1,11 @@
+// Test simple array declaration
+
+fn main() {
+    // Test array declaration
+    let arr: [i64; 5] = [1, 2, 3, 4, 5];
+    
+    print("Array test:");
+    print_int(arr[0]);
+    print_int(arr[1]);
+    print_int(arr[2]);
+}

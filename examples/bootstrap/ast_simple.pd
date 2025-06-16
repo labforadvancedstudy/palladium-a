@@ -1,0 +1,207 @@
+// Simple AST representation for Palladium - working within limitations
+// Since we can't return structs, we use integers to represent AST nodes
+
+// AST Node Types
+fn ast_program() -> i64 { return 1; }
+fn ast_function() -> i64 { return 2; }
+fn ast_let_stmt() -> i64 { return 3; }
+fn ast_return_stmt() -> i64 { return 4; }
+fn ast_expr_stmt() -> i64 { return 5; }
+fn ast_block() -> i64 { return 6; }
+
+// Expression Types
+fn ast_int_literal() -> i64 { return 10; }
+fn ast_string_literal() -> i64 { return 11; }
+fn ast_bool_literal() -> i64 { return 12; }
+fn ast_identifier() -> i64 { return 13; }
+fn ast_binary_expr() -> i64 { return 14; }
+fn ast_unary_expr() -> i64 { return 15; }
+fn ast_call_expr() -> i64 { return 16; }
+fn ast_if_expr() -> i64 { return 17; }
+fn ast_array_expr() -> i64 { return 18; }
+
+// Binary Operators
+fn op_plus() -> i64 { return 1; }
+fn op_minus() -> i64 { return 2; }
+fn op_star() -> i64 { return 3; }
+fn op_slash() -> i64 { return 4; }
+fn op_eq_eq() -> i64 { return 5; }
+fn op_not_eq() -> i64 { return 6; }
+fn op_lt() -> i64 { return 7; }
+fn op_gt() -> i64 { return 8; }
+fn op_lt_eq() -> i64 { return 9; }
+fn op_gt_eq() -> i64 { return 10; }
+
+// Unary Operators
+fn op_not() -> i64 { return 1; }
+fn op_neg() -> i64 { return 2; }
+
+// Type representations
+fn type_int() -> i64 { return 1; }
+fn type_string() -> i64 { return 2; }
+fn type_bool() -> i64 { return 3; }
+fn type_void() -> i64 { return 4; }
+fn type_array() -> i64 { return 5; }
+fn type_unknown() -> i64 { return 99; }
+
+// Convert AST node type to string
+fn ast_node_name(node_type: i64) -> String {
+    if node_type == ast_program() { return "Program"; }
+    if node_type == ast_function() { return "Function"; }
+    if node_type == ast_let_stmt() { return "LetStatement"; }
+    if node_type == ast_return_stmt() { return "ReturnStatement"; }
+    if node_type == ast_expr_stmt() { return "ExpressionStatement"; }
+    if node_type == ast_block() { return "Block"; }
+    
+    if node_type == ast_int_literal() { return "IntLiteral"; }
+    if node_type == ast_string_literal() { return "StringLiteral"; }
+    if node_type == ast_bool_literal() { return "BoolLiteral"; }
+    if node_type == ast_identifier() { return "Identifier"; }
+    if node_type == ast_binary_expr() { return "BinaryExpression"; }
+    if node_type == ast_unary_expr() { return "UnaryExpression"; }
+    if node_type == ast_call_expr() { return "CallExpression"; }
+    if node_type == ast_if_expr() { return "IfExpression"; }
+    if node_type == ast_array_expr() { return "ArrayExpression"; }
+    
+    return "Unknown";
+}
+
+// Convert operator to string
+fn op_to_string(op: i64) -> String {
+    if op == op_plus() { return "+"; }
+    if op == op_minus() { return "-"; }
+    if op == op_star() { return "*"; }
+    if op == op_slash() { return "/"; }
+    if op == op_eq_eq() { return "=="; }
+    if op == op_not_eq() { return "!="; }
+    if op == op_lt() { return "<"; }
+    if op == op_gt() { return ">"; }
+    if op == op_lt_eq() { return "<="; }
+    if op == op_gt_eq() { return ">="; }
+    if op == op_not() { return "!"; }
+    if op == op_neg() { return "-"; }
+    return "?";
+}
+
+// Convert type to string
+fn type_to_string(t: i64) -> String {
+    if t == type_int() { return "i64"; }
+    if t == type_string() { return "String"; }
+    if t == type_bool() { return "bool"; }
+    if t == type_void() { return "void"; }
+    if t == type_array() { return "array"; }
+    return "unknown";
+}
+
+// Simple AST printer (prints indented tree structure)
+fn print_ast_node(node_type: i64, indent: i64) {
+    let mut spaces = "";
+    let mut i = 0;
+    while i < indent {
+        spaces = string_concat(spaces, "  ");
+        i = i + 1;
+    }
+    
+    print(string_concat(spaces, ast_node_name(node_type)));
+}
+
+// Demo: Show AST structure for simple programs
+fn demo_ast_structure() {
+    print("=== AST Structure Demo ===\n");
+    
+    // Demo 1: Simple let statement
+    print("AST for: let x = 42;");
+    print_ast_node(ast_program(), 0);
+    print_ast_node(ast_let_stmt(), 1);
+    print("    name: x");
+    print("    value:");
+    print_ast_node(ast_int_literal(), 2);
+    print("      value: 42");
+    print("");
+    
+    // Demo 2: Binary expression
+    print("AST for: x + y * 2;");
+    print_ast_node(ast_program(), 0);
+    print_ast_node(ast_expr_stmt(), 1);
+    print_ast_node(ast_binary_expr(), 2);
+    print(string_concat("      operator: ", op_to_string(op_plus())));
+    print("      left:");
+    print_ast_node(ast_identifier(), 3);
+    print("        name: x");
+    print("      right:");
+    print_ast_node(ast_binary_expr(), 3);
+    print(string_concat("        operator: ", op_to_string(op_star())));
+    print("        left:");
+    print_ast_node(ast_identifier(), 4);
+    print("          name: y");
+    print("        right:");
+    print_ast_node(ast_int_literal(), 4);
+    print("          value: 2");
+    print("");
+    
+    // Demo 3: Function call
+    print("AST for: print(\"Hello\");");
+    print_ast_node(ast_program(), 0);
+    print_ast_node(ast_expr_stmt(), 1);
+    print_ast_node(ast_call_expr(), 2);
+    print("      function: print");
+    print("      arguments:");
+    print_ast_node(ast_string_literal(), 3);
+    print("        value: \"Hello\"");
+    print("");
+    
+    // Demo 4: Function definition
+    print("AST for: fn add(a, b) { return a + b; }");
+    print_ast_node(ast_program(), 0);
+    print_ast_node(ast_function(), 1);
+    print("    name: add");
+    print("    parameters: [a, b]");
+    print("    body:");
+    print_ast_node(ast_block(), 2);
+    print_ast_node(ast_return_stmt(), 3);
+    print_ast_node(ast_binary_expr(), 4);
+    print(string_concat("        operator: ", op_to_string(op_plus())));
+    print("        left: a");
+    print("        right: b");
+    print("");
+}
+
+// Type inference demo
+fn demo_type_inference() {
+    print("=== Type Inference Demo ===\n");
+    
+    print("Expression: 42");
+    print(string_concat("Inferred type: ", type_to_string(type_int())));
+    print("");
+    
+    print("Expression: \"Hello\"");
+    print(string_concat("Inferred type: ", type_to_string(type_string())));
+    print("");
+    
+    print("Expression: true");
+    print(string_concat("Inferred type: ", type_to_string(type_bool())));
+    print("");
+    
+    print("Expression: [1, 2, 3]");
+    let array_type = string_concat(type_to_string(type_array()), " of ");
+    let full_type = string_concat(array_type, type_to_string(type_int()));
+    print(string_concat("Inferred type: ", full_type));
+    print("");
+}
+
+fn main() {
+    print("=== Palladium Bootstrap AST Representation ===\n");
+    print("This demonstrates how we can represent AST nodes");
+    print("even without the ability to return structs.\n");
+    
+    demo_ast_structure();
+    print("");
+    demo_type_inference();
+    
+    print("\n=== AST Demo Complete ===");
+    print("Next steps:");
+    print("- Implement AST builder functions");
+    print("- Add semantic analysis");
+    print("- Generate code from AST");
+    print("\nWe're making progress toward self-hosting!");
+}
