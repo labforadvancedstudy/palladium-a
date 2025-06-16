@@ -23,7 +23,10 @@ impl Parser {
             items.push(self.parse_item()?);
         }
         
-        Ok(Program { items })
+        Ok(Program { 
+            imports: Vec::new(), // TODO: parse imports
+            items 
+        })
     }
     
     /// Parse a top-level item
@@ -51,6 +54,32 @@ impl Parser {
                 });
             }
         };
+        
+        // Parse generic type parameters if present
+        let mut type_params = Vec::new();
+        if self.check(&Token::Lt) {
+            self.advance()?; // consume '<'
+            
+            loop {
+                let param_name = match self.advance()? {
+                    (Token::Identifier(name), _) => name,
+                    (token, _) => {
+                        return Err(CompileError::UnexpectedToken {
+                            expected: "type parameter name".to_string(),
+                            found: token.to_string(),
+                        });
+                    }
+                };
+                type_params.push(param_name);
+                
+                if !self.check(&Token::Comma) {
+                    break;
+                }
+                self.advance()?; // consume ','
+            }
+            
+            self.consume(Token::Gt, "Expected '>' after type parameters")?;
+        }
         
         self.consume(Token::LeftParen, "Expected '('")?;
         
@@ -115,7 +144,9 @@ impl Parser {
         let end_span = self.consume(Token::RightBrace, "Expected '}'")?;
         
         Ok(Function {
+            visibility: crate::ast::Visibility::Private, // TODO: parse pub keyword
             name,
+            type_params,
             params,
             return_type,
             body,
@@ -167,6 +198,7 @@ impl Parser {
         let end_span = self.consume(Token::RightBrace, "Expected '}' after struct fields")?;
         
         Ok(StructDef {
+            visibility: crate::ast::Visibility::Private, // TODO: parse pub keyword
             name,
             fields,
             span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),

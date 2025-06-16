@@ -6,7 +6,15 @@ use crate::errors::Span;
 /// The root of a Palladium program
 #[derive(Debug, Clone)]
 pub struct Program {
+    pub imports: Vec<Import>,
     pub items: Vec<Item>,
+}
+
+/// Import statement
+#[derive(Debug, Clone)]
+pub struct Import {
+    pub path: Vec<String>, // e.g., ["math", "add"] for math::add
+    pub span: Span,
 }
 
 /// Top-level items in a program
@@ -15,6 +23,13 @@ pub enum Item {
     Function(Function),
     Struct(StructDef),
     Enum(EnumDef),
+}
+
+/// Visibility modifier
+#[derive(Debug, Clone, PartialEq)]
+pub enum Visibility {
+    Public,
+    Private,
 }
 
 /// Function parameter
@@ -28,7 +43,9 @@ pub struct Param {
 /// Function definition
 #[derive(Debug, Clone)]
 pub struct Function {
+    pub visibility: Visibility,
     pub name: String,
+    pub type_params: Vec<String>, // Generic type parameters like ["T", "U"]
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
@@ -38,6 +55,7 @@ pub struct Function {
 /// Struct definition
 #[derive(Debug, Clone)]
 pub struct StructDef {
+    pub visibility: Visibility,
     pub name: String,
     pub fields: Vec<(String, Type)>,
     pub span: Span,
@@ -85,6 +103,13 @@ pub enum Type {
     Array(Box<Type>, usize),
     /// Custom type
     Custom(String),
+    /// Generic type parameter (e.g., T, U)
+    TypeParam(String),
+    /// Generic type with concrete arguments (e.g., Vec<i32>)
+    Generic {
+        name: String,
+        args: Vec<Type>,
+    },
 }
 
 /// Statements
@@ -437,6 +462,17 @@ impl std::fmt::Display for Type {
             Type::Unit => write!(f, "()"),
             Type::Array(elem_type, size) => write!(f, "[{}; {}]", elem_type, size),
             Type::Custom(name) => write!(f, "{}", name),
+            Type::TypeParam(name) => write!(f, "{}", name),
+            Type::Generic { name, args } => {
+                write!(f, "{}<", name)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ">")
+            }
         }
     }
 }

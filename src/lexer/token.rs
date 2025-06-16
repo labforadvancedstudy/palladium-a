@@ -78,6 +78,12 @@ pub enum Token {
     #[token("match")]
     Match,
     
+    #[token("import")]
+    Import,
+    
+    #[token("pub")]
+    Pub,
+    
     // Operators
     #[token("+")]
     Plus,
@@ -218,6 +224,8 @@ impl std::fmt::Display for Token {
             Token::Struct => write!(f, "'struct'"),
             Token::Enum => write!(f, "'enum'"),
             Token::Match => write!(f, "'match'"),
+            Token::Import => write!(f, "'import'"),
+            Token::Pub => write!(f, "'pub'"),
             Token::Plus => write!(f, "'+'"),
             Token::Minus => write!(f, "'-'"),
             Token::Star => write!(f, "'*'"),

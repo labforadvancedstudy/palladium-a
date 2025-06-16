@@ -40,6 +40,17 @@ impl CodeGenerator {
                 // Look up variable type
                 self.variables.get(name).cloned().unwrap_or_else(|| "long long".to_string())
             },
+            Expr::Binary { left, op, right, .. } => {
+                // String concatenation returns a string
+                if matches!(op, BinOp::Add) {
+                    let left_type = self.infer_expr_type(left);
+                    let right_type = self.infer_expr_type(right);
+                    if left_type == "const char*" && right_type == "const char*" {
+                        return "const char*".to_string();
+                    }
+                }
+                "long long".to_string()
+            },
             _ => "long long".to_string(), // fallback
         }
     }
@@ -273,6 +284,11 @@ impl CodeGenerator {
                     self.output.push_str(&format!("struct {} {};\n", name, field_name));
                     continue;
                 }
+                Type::TypeParam(_) | Type::Generic { .. } => {
+                    return Err(CompileError::Generic(
+                        "Generic types in structs not yet supported".to_string()
+                    ));
+                }
             };
             
             self.output.push_str(&format!("{} {};\n", c_type, field_name));
@@ -304,6 +320,11 @@ impl CodeGenerator {
                 // Note: In real C, returning large structs by value might not be ideal
                 // but it works and is simple to implement
                 name.as_str()
+            }
+            Some(Type::TypeParam(_)) | Some(Type::Generic { .. }) => {
+                return Err(CompileError::Generic(
+                    "Generic return types not yet supported".to_string()
+                ));
             }
         };
         
@@ -378,8 +399,21 @@ impl CodeGenerator {
         
         // Clear mutable_params from previous function and populate with current function's params
         self.mutable_params.clear();
+        self.variables.clear(); // Clear variables from previous function
+        
         for param in &func.params {
             self.mutable_params.insert(param.name.clone(), param.mutable);
+            
+            // Also track parameter types for type inference
+            let c_type = match &param.ty {
+                Type::String => "const char*".to_string(),
+                Type::I32 => "int".to_string(),
+                Type::I64 => "long long".to_string(),
+                Type::Bool => "int".to_string(),
+                Type::Custom(name) => name.clone(),
+                _ => "long long".to_string(),
+            };
+            self.variables.insert(param.name.clone(), c_type);
         }
         
         // Function body
@@ -433,6 +467,10 @@ impl CodeGenerator {
                             format!("{}[{}]", type_to_c(elem_type), size)
                         }
                         Type::Custom(name) => name.to_string(),
+                        Type::TypeParam(_) | Type::Generic { .. } => {
+                            // TODO: Proper generic handling
+                            "void*".to_string() // Placeholder
+                        }
                     }
                 }
                 
@@ -447,11 +485,13 @@ impl CodeGenerator {
                         }
                     }
                     None => {
-                        // Infer type from value for now
+                        // Infer type from value using our helper
+                        let inferred_type = self.infer_expr_type(value);
                         match value {
                             Expr::Integer(_) => ("long long".to_string(), false, None),
                             Expr::String(_) => ("const char*".to_string(), false, None),
                             Expr::Bool(_) => ("int".to_string(), false, None),
+                            Expr::Binary { .. } => (inferred_type, false, None),
                             Expr::ArrayLiteral { elements, .. } => {
                                 // Infer array element type from first element
                                 let elem_type = if !elements.is_empty() {
@@ -877,34 +917,47 @@ impl CodeGenerator {
                 self.output.push_str(")");
             }
             Expr::Binary { left, op, right, .. } => {
-                // Generate parentheses for proper precedence
-                self.output.push_str("(");
+                // Check if this is string concatenation
+                let left_type = self.infer_expr_type(left);
+                let right_type = self.infer_expr_type(right);
                 
-                // Generate left operand
-                self.generate_expression(left)?;
-                
-                // Generate operator
-                let op_str = match op {
-                    BinOp::Add => " + ",
-                    BinOp::Sub => " - ",
-                    BinOp::Mul => " * ",
-                    BinOp::Div => " / ",
-                    BinOp::Mod => " % ",
-                    BinOp::Eq => " == ",
-                    BinOp::Ne => " != ",
-                    BinOp::Lt => " < ",
-                    BinOp::Gt => " > ",
-                    BinOp::Le => " <= ",
-                    BinOp::Ge => " >= ",
-                    BinOp::And => " && ",
-                    BinOp::Or => " || ",
-                };
-                self.output.push_str(op_str);
-                
-                // Generate right operand
-                self.generate_expression(right)?;
-                
-                self.output.push_str(")");
+                if matches!(op, BinOp::Add) && left_type == "const char*" && right_type == "const char*" {
+                    // String concatenation - use helper function
+                    self.output.push_str("__pd_string_concat(");
+                    self.generate_expression(left)?;
+                    self.output.push_str(", ");
+                    self.generate_expression(right)?;
+                    self.output.push_str(")");
+                } else {
+                    // Regular binary operation
+                    self.output.push_str("(");
+                    
+                    // Generate left operand
+                    self.generate_expression(left)?;
+                    
+                    // Generate operator
+                    let op_str = match op {
+                        BinOp::Add => " + ",
+                        BinOp::Sub => " - ",
+                        BinOp::Mul => " * ",
+                        BinOp::Div => " / ",
+                        BinOp::Mod => " % ",
+                        BinOp::Eq => " == ",
+                        BinOp::Ne => " != ",
+                        BinOp::Lt => " < ",
+                        BinOp::Gt => " > ",
+                        BinOp::Le => " <= ",
+                        BinOp::Ge => " >= ",
+                        BinOp::And => " && ",
+                        BinOp::Or => " || ",
+                    };
+                    self.output.push_str(op_str);
+                    
+                    // Generate right operand
+                    self.generate_expression(right)?;
+                    
+                    self.output.push_str(")");
+                }
             }
             Expr::ArrayLiteral { elements, .. } => {
                 // Generate array literal: {1, 2, 3}

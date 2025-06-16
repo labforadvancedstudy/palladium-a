@@ -29,6 +29,15 @@ impl From<&crate::ast::Type> for CheckerType {
                 CheckerType::Array(Box::new(CheckerType::from(elem_type.as_ref())), *size)
             }
             crate::ast::Type::Custom(name) => CheckerType::Struct(name.clone()),
+            crate::ast::Type::TypeParam(_) => {
+                // For now, treat type parameters as a placeholder
+                // In real implementation, we'd substitute with concrete types
+                CheckerType::Int // TODO: proper generic type handling
+            }
+            crate::ast::Type::Generic { name, .. } => {
+                // For now, treat generic types as their base type
+                CheckerType::Struct(name.clone())
+            }
         }
     }
 }
@@ -657,8 +666,19 @@ impl TypeChecker {
                 let right_type = self.check_expression(right)?;
                 
                 match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                        // Arithmetic operations require both operands to be Int
+                    BinOp::Add => {
+                        // Addition can work for both Int and String (concatenation)
+                        match (&left_type, &right_type) {
+                            (CheckerType::Int, CheckerType::Int) => Ok(CheckerType::Int),
+                            (CheckerType::String, CheckerType::String) => Ok(CheckerType::String),
+                            _ => Err(CompileError::TypeMismatch {
+                                expected: format!("{} or String", left_type),
+                                found: format!("{} + {}", left_type, right_type),
+                            }),
+                        }
+                    }
+                    BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                        // Other arithmetic operations require both operands to be Int
                         if left_type != CheckerType::Int {
                             return Err(CompileError::TypeMismatch {
                                 expected: "Int".to_string(),
