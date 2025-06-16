@@ -181,9 +181,9 @@ cargo test --test v0_2_features_test
 
 ### 📚 Resources
 
-- [Getting Started Guide](docs/GETTING_STARTED.md)
+- [Getting Started Guide](../GETTING_STARTED.md)
 - [v0.2 Examples](examples/)
-- [Architecture Overview](ARCHITECTURE.md)
+- [Architecture Overview](../design/ARCHITECTURE.md)
 
 ### 💬 Community
 

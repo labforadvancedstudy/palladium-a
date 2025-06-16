@@ -99,9 +99,9 @@ Special thanks to the Rust community for providing such excellent tools and libr
 
 ### 📚 Resources
 
-- [Getting Started Guide](docs/GETTING_STARTED.md)
-- [Architecture Overview](ARCHITECTURE.md)
-- [Contributing Guidelines](CONTRIBUTING.md) (coming soon)
+- [Getting Started Guide](../GETTING_STARTED.md)
+- [Architecture Overview](../design/ARCHITECTURE.md)
+- [Contributing Guidelines](../../CONTRIBUTING.md)
 
 ### 💬 Feedback
 
