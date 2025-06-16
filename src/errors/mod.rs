@@ -3,6 +3,8 @@
 
 use thiserror::Error;
 
+pub mod reporter;
+
 pub type Result<T> = std::result::Result<T, CompileError>;
 
 #[derive(Error, Debug)]

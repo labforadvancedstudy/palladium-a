@@ -1,0 +1,19 @@
+// Test module imports
+
+import std::math;
+
+fn main() {
+    let x = -42;
+    let y = abs(x);  // Should resolve to std::math::abs
+    print_int(y);    // Should print 42
+    
+    let a = 10;
+    let b = 20;
+    let bigger = max(a, b);
+    print_int(bigger); // Should print 20
+    
+    let base = 2;
+    let exp = 10;
+    let result = pow(base, exp);
+    print_int(result); // Should print 1024
+}

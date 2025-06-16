@@ -233,6 +233,10 @@ impl CodeGenerator {
         for item in &program.items {
             match item {
                 Item::Function(func) => {
+                    // Skip generic functions - they should only be generated when instantiated
+                    if !func.type_params.is_empty() {
+                        continue;
+                    }
                     self.generate_function(func)?;
                 }
                 Item::Struct(_) => {
@@ -1038,7 +1042,7 @@ impl CodeGenerator {
                 }
                 self.output.push_str(" */ 0");
             }
-            Expr::Range { start, end, .. } => {
+            Expr::Range { .. } => {
                 // Range expressions are not directly translatable to C
                 // They should only appear in for loops which handle them specially
                 return Err(CompileError::Generic(

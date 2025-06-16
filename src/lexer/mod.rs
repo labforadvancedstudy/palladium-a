@@ -19,7 +19,7 @@ mod tests {
         }
         "#;
         
-        let mut lexer = Lexer::new(source);
+        let lexer = Lexer::new(source);
         let tokens: Vec<Token> = lexer.collect();
         
         assert!(tokens.len() > 0);

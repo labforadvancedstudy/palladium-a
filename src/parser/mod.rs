@@ -8,32 +8,104 @@ use crate::lexer::Token;
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     current: usize,
+    /// Type parameters currently in scope (for parsing generic functions)
+    type_params_in_scope: Vec<String>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<(Token, Span)>) -> Self {
-        Self { tokens, current: 0 }
+        Self { 
+            tokens, 
+            current: 0,
+            type_params_in_scope: Vec::new(),
+        }
     }
     
     /// Parse a complete program
     pub fn parse(&mut self) -> Result<Program> {
+        let mut imports = Vec::new();
         let mut items = Vec::new();
         
+        // Parse imports first
+        while self.check(&Token::Import) {
+            imports.push(self.parse_import()?);
+        }
+        
+        // Then parse items
         while !self.is_at_end() {
             items.push(self.parse_item()?);
         }
         
         Ok(Program { 
-            imports: Vec::new(), // TODO: parse imports
+            imports,
             items 
+        })
+    }
+    
+    /// Parse an import statement
+    fn parse_import(&mut self) -> Result<crate::ast::Import> {
+        let start_span = self.consume(Token::Import, "Expected 'import'")?;
+        
+        let mut path = Vec::new();
+        
+        // Parse first part of path
+        let first = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "module name".to_string(),
+                    found: token.to_string(),
+                });
+            }
+        };
+        path.push(first);
+        
+        // Parse remaining path segments
+        while self.check(&Token::DoubleColon) {
+            self.advance()?; // consume '::'
+            
+            let segment = match self.advance()? {
+                (Token::Identifier(name), _) => name,
+                (Token::Star, _) => "*".to_string(), // wildcard import
+                (token, _) => {
+                    return Err(CompileError::UnexpectedToken {
+                        expected: "module name or '*'".to_string(),
+                        found: token.to_string(),
+                    });
+                }
+            };
+            path.push(segment);
+        }
+        
+        let end_span = self.consume(Token::Semicolon, "Expected ';' after import")?;
+        
+        Ok(crate::ast::Import {
+            path,
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
     
     /// Parse a top-level item
     fn parse_item(&mut self) -> Result<Item> {
+        // Check for visibility modifier
+        let visibility = if self.check(&Token::Pub) {
+            self.advance()?; // consume 'pub'
+            crate::ast::Visibility::Public
+        } else {
+            crate::ast::Visibility::Private
+        };
+        
         match self.peek()? {
-            Token::Fn => Ok(Item::Function(self.parse_function()?)),
-            Token::Struct => Ok(Item::Struct(self.parse_struct()?)),
+            Token::Fn => {
+                let mut func = self.parse_function()?;
+                func.visibility = visibility;
+                Ok(Item::Function(func))
+            },
+            Token::Struct => {
+                let mut struct_def = self.parse_struct()?;
+                struct_def.visibility = visibility;
+                Ok(Item::Struct(struct_def))
+            },
             Token::Enum => Ok(Item::Enum(self.parse_enum()?)),
             _ => Err(CompileError::SyntaxError {
                 message: "Expected function, struct, or enum declaration".to_string(),
@@ -70,7 +142,7 @@ impl Parser {
                         });
                     }
                 };
-                type_params.push(param_name);
+                type_params.push(param_name.clone());
                 
                 if !self.check(&Token::Comma) {
                     break;
@@ -80,6 +152,9 @@ impl Parser {
             
             self.consume(Token::Gt, "Expected '>' after type parameters")?;
         }
+        
+        // Set type parameters in scope for parsing function signature and body
+        self.type_params_in_scope = type_params.clone();
         
         self.consume(Token::LeftParen, "Expected '('")?;
         
@@ -142,6 +217,9 @@ impl Parser {
         }
         
         let end_span = self.consume(Token::RightBrace, "Expected '}'")?;
+        
+        // Clear type parameters from scope
+        self.type_params_in_scope.clear();
         
         Ok(Function {
             visibility: crate::ast::Visibility::Private, // TODO: parse pub keyword
@@ -882,6 +960,11 @@ impl Parser {
     fn parse_type(&mut self) -> Result<Type> {
         match self.advance()? {
             (Token::Identifier(name), _) => {
+                // First check if it's a type parameter in scope
+                if self.type_params_in_scope.contains(&name) {
+                    return Ok(Type::TypeParam(name));
+                }
+                
                 match name.as_str() {
                     "i32" => Ok(Type::I32),
                     "i64" => Ok(Type::I64),
@@ -1290,14 +1373,14 @@ impl Parser {
     }
     
     /// Consume a specific token or error
-    fn consume(&mut self, expected: Token, _message: &str) -> Result<Span> {
+    fn consume(&mut self, expected: Token, message: &str) -> Result<Span> {
         let (token, span) = self.advance()?;
         
         if std::mem::discriminant(&token) == std::mem::discriminant(&expected) {
             Ok(span)
         } else {
             Err(CompileError::UnexpectedToken {
-                expected: expected.to_string(),
+                expected: format!("{} ({})", expected.to_string(), message),
                 found: token.to_string(),
             })
         }
@@ -2058,10 +2141,10 @@ mod tests {
         if let Item::Function(func) = &ast.items[1] {
             assert_eq!(func.name, "make_point");
             assert_eq!(func.params.len(), 2);
-            assert_eq!(func.params[0].0, "x");
-            assert_eq!(func.params[0].1, Type::I64);
-            assert_eq!(func.params[1].0, "y");
-            assert_eq!(func.params[1].1, Type::I64);
+            assert_eq!(func.params[0].name, "x");
+            assert_eq!(func.params[0].ty, Type::I64);
+            assert_eq!(func.params[1].name, "y");
+            assert_eq!(func.params[1].ty, Type::I64);
             assert_eq!(func.return_type, Some(Type::Custom("Point".to_string())));
             
             // Check return statement

@@ -1,0 +1,11 @@
+// Simple generic test to debug type inference
+
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+fn main() {
+    // Test with explicit integer literal
+    let a = identity(42);
+    print_int(a);
+}

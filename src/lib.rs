@@ -9,6 +9,7 @@ pub mod typeck;
 pub mod codegen;
 pub mod errors;
 pub mod runtime;
+pub mod resolver;
 
 // Re-export main components
 pub use driver::Driver;

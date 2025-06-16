@@ -123,13 +123,35 @@ impl SymbolTable {
     }
 }
 
+/// Information about a generic function
+#[derive(Debug, Clone)]
+struct GenericFunction {
+    type_params: Vec<String>,
+    params: Vec<(String, crate::ast::Type)>,
+    return_type: Option<crate::ast::Type>,
+    body: Vec<crate::ast::Stmt>,
+}
+
+/// A concrete instantiation of a generic function
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FunctionInstantiation {
+    name: String,
+    type_args: Vec<String>, // Concrete types like "i64", "String"
+}
+
 pub struct TypeChecker {
     /// Function signatures
     functions: HashMap<String, CheckerType>,
+    /// Generic function definitions
+    generic_functions: HashMap<String, GenericFunction>,
+    /// Instantiated generic functions
+    instantiations: HashMap<FunctionInstantiation, CheckerType>,
     /// Struct definitions
     structs: HashMap<String, Vec<(String, CheckerType)>>,
     /// Current function return type (for checking return statements)
     current_function_return: Option<CheckerType>,
+    /// Current generic type parameters in scope
+    current_type_params: Vec<String>,
     /// Symbol table for variables
     symbols: SymbolTable,
 }
@@ -230,8 +252,11 @@ impl TypeChecker {
         
         Self {
             functions,
+            generic_functions: HashMap::new(),
+            instantiations: HashMap::new(),
             structs: HashMap::new(),
             current_function_return: None,
+            current_type_params: Vec::new(),
             symbols: SymbolTable::new(),
         }
     }
@@ -242,18 +267,30 @@ impl TypeChecker {
         for item in &program.items {
             match item {
                 Item::Function(func) => {
-                    // Extract parameter types
-                    let param_types: Vec<CheckerType> = func.params.iter()
-                        .map(|param| CheckerType::from(&param.ty))
-                        .collect();
-                    
-                    // Extract return type from function
-                    let return_type = func.return_type.as_ref()
-                        .map(|t| CheckerType::from(t))
-                        .unwrap_or(CheckerType::Unit);
-                    
-                    let func_type = CheckerType::Function(param_types, Box::new(return_type));
-                    self.functions.insert(func.name.clone(), func_type);
+                    if !func.type_params.is_empty() {
+                        // This is a generic function - store it for later instantiation
+                        let generic_func = GenericFunction {
+                            type_params: func.type_params.clone(),
+                            params: func.params.iter()
+                                .map(|p| (p.name.clone(), p.ty.clone()))
+                                .collect(),
+                            return_type: func.return_type.clone(),
+                            body: func.body.clone(),
+                        };
+                        self.generic_functions.insert(func.name.clone(), generic_func);
+                    } else {
+                        // Regular function - process as before
+                        let param_types: Vec<CheckerType> = func.params.iter()
+                            .map(|param| CheckerType::from(&param.ty))
+                            .collect();
+                        
+                        let return_type = func.return_type.as_ref()
+                            .map(|t| CheckerType::from(t))
+                            .unwrap_or(CheckerType::Unit);
+                        
+                        let func_type = CheckerType::Function(param_types, Box::new(return_type));
+                        self.functions.insert(func.name.clone(), func_type);
+                    }
                 }
                 Item::Struct(struct_def) => {
                     // Convert field types to CheckerType
@@ -297,6 +334,11 @@ impl TypeChecker {
     
     /// Type check a function
     fn check_function(&mut self, func: &Function) -> Result<()> {
+        // Skip generic functions - they'll be checked when instantiated
+        if !func.type_params.is_empty() {
+            return Ok(());
+        }
+        
         // Enter function scope
         self.symbols.enter_scope();
         
@@ -624,7 +666,30 @@ impl TypeChecker {
                     )),
                 };
                 
-                // Look up function type
+                // First check if it's a generic function that needs instantiation
+                if let Some(generic_func) = self.generic_functions.get(func_name).cloned() {
+                    // Infer type arguments from the call
+                    let type_args = self.infer_type_args(&generic_func, args)?;
+                    
+                    // Create instantiation key
+                    let instantiation = FunctionInstantiation {
+                        name: func_name.clone(),
+                        type_args: type_args.clone(),
+                    };
+                    
+                    // Check if we've already instantiated this combination
+                    if let Some(func_type) = self.instantiations.get(&instantiation) {
+                        return self.check_call_with_type(func_name, func_type.clone(), args);
+                    }
+                    
+                    // Need to instantiate the generic function
+                    let func_type = self.instantiate_generic_function(&generic_func, &type_args)?;
+                    self.instantiations.insert(instantiation, func_type.clone());
+                    
+                    return self.check_call_with_type(func_name, func_type, args);
+                }
+                
+                // Look up regular function type
                 let func_type = self.functions.get(func_name)
                     .ok_or_else(|| CompileError::UndefinedFunction {
                         name: func_name.clone(),
@@ -969,6 +1034,207 @@ impl TypeChecker {
                 }
                 Ok(())
             }
+        }
+    }
+    
+    /// Infer type arguments for a generic function call
+    fn infer_type_args(&self, generic_func: &GenericFunction, args: &[Expr]) -> Result<Vec<String>> {
+        let mut type_map: HashMap<String, String> = HashMap::new();
+        
+        // Check argument count
+        if args.len() != generic_func.params.len() {
+            return Err(CompileError::Generic(format!(
+                "Function expects {} arguments, got {}",
+                generic_func.params.len(),
+                args.len()
+            )));
+        }
+        
+        // Infer types from each argument
+        for (_i, (arg_expr, (_param_name, param_type))) in args.iter().zip(&generic_func.params).enumerate() {
+            self.infer_from_expr_and_type(arg_expr, param_type, &mut type_map)?;
+        }
+        
+        // Make sure all type parameters were inferred
+        let mut type_args = Vec::new();
+        for type_param in &generic_func.type_params {
+            match type_map.get(type_param) {
+                Some(concrete_type) => type_args.push(concrete_type.clone()),
+                None => {
+                    return Err(CompileError::Generic(format!(
+                        "Could not infer type parameter '{}' from function arguments",
+                        type_param
+                    )));
+                }
+            }
+        }
+        
+        Ok(type_args)
+    }
+    
+    /// Helper to infer type parameters from an expression and expected type
+    fn infer_from_expr_and_type(&self, expr: &Expr, expected_type: &crate::ast::Type, type_map: &mut HashMap<String, String>) -> Result<()> {
+        match expected_type {
+            crate::ast::Type::TypeParam(param_name) => {
+                // This is a type parameter - infer its type from the expression
+                let expr_type = self.infer_expr_type(expr)?;
+                
+                // Check if we already have a mapping for this type parameter
+                if let Some(existing_type) = type_map.get(param_name) {
+                    if existing_type != &expr_type {
+                        return Err(CompileError::Generic(format!(
+                            "Type parameter '{}' has conflicting types: '{}' and '{}'",
+                            param_name, existing_type, expr_type
+                        )));
+                    }
+                } else {
+                    type_map.insert(param_name.clone(), expr_type);
+                }
+                Ok(())
+            }
+            crate::ast::Type::Array(elem_type, _size) => {
+                // For arrays, we need to check the element type
+                // This is simplified - in reality we'd need to handle array literals
+                if let crate::ast::Type::TypeParam(_) = elem_type.as_ref() {
+                    self.infer_from_expr_and_type(expr, elem_type, type_map)?;
+                }
+                Ok(())
+            }
+            _ => {
+                // Non-generic type - nothing to infer
+                Ok(())
+            }
+        }
+    }
+    
+    /// Get a string representation of the expression's type for inference
+    fn infer_expr_type(&self, expr: &Expr) -> Result<String> {
+        match expr {
+            Expr::String(_) => Ok("String".to_string()),
+            Expr::Integer(_) => Ok("i64".to_string()), // Default to i64
+            Expr::Bool(_) => Ok("bool".to_string()),
+            Expr::Ident(name) => {
+                // Look up variable type
+                if let Some(var_info) = self.symbols.lookup(name) {
+                    Ok(self.checker_type_to_string(&var_info.ty))
+                } else {
+                    Err(CompileError::Generic(format!("Unknown variable: {}", name)))
+                }
+            }
+            _ => {
+                // For complex expressions, we'd need full type checking
+                // For now, we'll handle the basic cases
+                Err(CompileError::Generic("Cannot infer type from complex expression".to_string()))
+            }
+        }
+    }
+    
+    /// Convert CheckerType to string for type arguments
+    fn checker_type_to_string(&self, ty: &CheckerType) -> String {
+        match ty {
+            CheckerType::Unit => "()".to_string(),
+            CheckerType::String => "String".to_string(),
+            CheckerType::Int => "i64".to_string(),
+            CheckerType::Bool => "bool".to_string(),
+            CheckerType::Array(elem, size) => format!("[{}; {}]", self.checker_type_to_string(elem), size),
+            CheckerType::Struct(name) => name.clone(),
+            CheckerType::Function(params, ret) => {
+                let param_strs: Vec<String> = params.iter()
+                    .map(|p| self.checker_type_to_string(p))
+                    .collect();
+                format!("fn({}) -> {}", param_strs.join(", "), self.checker_type_to_string(ret))
+            }
+        }
+    }
+    
+    /// Instantiate a generic function with concrete types
+    fn instantiate_generic_function(&mut self, generic_func: &GenericFunction, type_args: &[String]) -> Result<CheckerType> {
+        // Create a substitution map
+        let mut subst_map: HashMap<String, String> = HashMap::new();
+        for (type_param, type_arg) in generic_func.type_params.iter().zip(type_args) {
+            subst_map.insert(type_param.clone(), type_arg.clone());
+        }
+        
+        // Substitute types in parameters
+        let mut param_types = Vec::new();
+        for (_param_name, param_type) in &generic_func.params {
+            let substituted_type = self.substitute_type(param_type, &subst_map)?;
+            param_types.push(CheckerType::from(&substituted_type));
+        }
+        
+        // Substitute return type
+        let return_type = match &generic_func.return_type {
+            Some(ret_type) => {
+                let substituted = self.substitute_type(ret_type, &subst_map)?;
+                CheckerType::from(&substituted)
+            }
+            None => CheckerType::Unit,
+        };
+        
+        Ok(CheckerType::Function(param_types, Box::new(return_type)))
+    }
+    
+    /// Substitute type parameters in a type
+    fn substitute_type(&self, ty: &crate::ast::Type, subst_map: &HashMap<String, String>) -> Result<crate::ast::Type> {
+        match ty {
+            crate::ast::Type::TypeParam(param_name) => {
+                match subst_map.get(param_name) {
+                    Some(concrete_type) => {
+                        // Convert string back to Type
+                        match concrete_type.as_str() {
+                            "()" => Ok(crate::ast::Type::Unit),
+                            "String" => Ok(crate::ast::Type::String),
+                            "i64" => Ok(crate::ast::Type::I64),
+                            "i32" => Ok(crate::ast::Type::I32),
+                            "u64" => Ok(crate::ast::Type::U64),
+                            "u32" => Ok(crate::ast::Type::U32),
+                            "bool" => Ok(crate::ast::Type::Bool),
+                            _ => Ok(crate::ast::Type::Custom(concrete_type.clone())),
+                        }
+                    }
+                    None => Err(CompileError::Generic(format!(
+                        "Type parameter '{}' not found in substitution map",
+                        param_name
+                    ))),
+                }
+            }
+            crate::ast::Type::Array(elem_type, size) => {
+                let substituted_elem = self.substitute_type(elem_type, subst_map)?;
+                Ok(crate::ast::Type::Array(Box::new(substituted_elem), *size))
+            }
+            _ => Ok(ty.clone()),
+        }
+    }
+    
+    /// Check a function call with a known function type
+    fn check_call_with_type(&mut self, func_name: &str, func_type: CheckerType, args: &[Expr]) -> Result<CheckerType> {
+        match func_type {
+            CheckerType::Function(param_types, return_type) => {
+                // Check argument count
+                if args.len() != param_types.len() {
+                    return Err(CompileError::Generic(format!(
+                        "Function '{}' expects {} arguments, got {}",
+                        func_name, param_types.len(), args.len()
+                    )));
+                }
+                
+                // Type check each argument
+                for (_i, (arg, expected_type)) in args.iter().zip(&param_types).enumerate() {
+                    let arg_type = self.check_expression(arg)?;
+                    if arg_type != *expected_type {
+                        return Err(CompileError::TypeMismatch {
+                            expected: expected_type.to_string(),
+                            found: arg_type.to_string(),
+                        });
+                    }
+                }
+                
+                Ok(*return_type)
+            }
+            _ => Err(CompileError::Generic(format!(
+                "'{}' is not a function",
+                func_name
+            ))),
         }
     }
 }

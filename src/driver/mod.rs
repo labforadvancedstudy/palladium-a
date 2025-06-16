@@ -6,6 +6,7 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::typeck::TypeChecker;
 use crate::codegen::CodeGenerator;
+use crate::resolver::ModuleResolver;
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::process::Command;
@@ -34,6 +35,16 @@ impl Driver {
         let mut parser = Parser::new(tokens);
         let ast = parser.parse()?;
         println!("   Parsed {} top-level items", ast.items.len());
+        
+        // Phase 2.5: Module resolution
+        if !ast.imports.is_empty() {
+            println!("📦 Resolving modules...");
+            let mut resolver = ModuleResolver::new();
+            let modules = resolver.resolve_program(&ast)?;
+            println!("   Resolved {} modules", modules.len());
+            
+            // TODO: Pass resolved modules to type checker and code generator
+        }
         
         // Phase 3: Type checking
         println!("🔍 Type checking...");
