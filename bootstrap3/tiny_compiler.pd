@@ -1,0 +1,91 @@
+// Tiny Palladium Compiler - Absolutely minimal
+// Can compile simple programs to C
+
+fn compile_program(source: String) -> String {
+    // For now, just handle a simple main function with print statements
+    let mut output: String = "#include <stdio.h>\n\n";
+    output = output + "void __pd_print(const char* s) { printf(\"%s\\n\", s); }\n";
+    output = output + "void __pd_print_int(long long n) { printf(\"%lld\\n\", n); }\n\n";
+    output = output + "int main(void) {\n";
+    
+    // Very simple parsing - look for print statements
+    let len: i64 = string_len(source);
+    let mut i: i64 = 0;
+    
+    while i < len {
+        // Skip whitespace
+        while i < len && (string_char_at(source, i) == 32 || string_char_at(source, i) == 10) {
+            i = i + 1;
+        }
+        
+        // Look for "print("
+        if i + 6 < len {
+            if string_char_at(source, i) == 112 &&     // p
+               string_char_at(source, i+1) == 114 &&   // r
+               string_char_at(source, i+2) == 105 &&   // i
+               string_char_at(source, i+3) == 110 &&   // n
+               string_char_at(source, i+4) == 116 &&   // t
+               string_char_at(source, i+5) == 40 {     // (
+                
+                i = i + 6;
+                
+                // Find string between quotes
+                while i < len && string_char_at(source, i) != 34 { // "
+                    i = i + 1;
+                }
+                i = i + 1; // Skip opening quote
+                
+                let start: i64 = i;
+                while i < len && string_char_at(source, i) != 34 { // "
+                    i = i + 1;
+                }
+                
+                // Extract string
+                let mut msg: String = "";
+                let mut j: i64 = start;
+                while j < i {
+                    msg = msg + string_from_char(string_char_at(source, j));
+                    j = j + 1;
+                }
+                
+                output = output + "    __pd_print(\"" + msg + "\");\n";
+                
+                // Skip to semicolon
+                while i < len && string_char_at(source, i) != 59 { // ;
+                    i = i + 1;
+                }
+            }
+        }
+        
+        i = i + 1;
+    }
+    
+    output = output + "    return 0;\n}\n";
+    return output;
+}
+
+fn main() {
+    print("Tiny Palladium Compiler");
+    print("=======================");
+    
+    let test: String = "
+fn main() {
+    print(\"Hello from tiny compiler!\");
+    print(\"This is a test\");
+    print(\"It works!\");
+}
+";
+    
+    let c_code: String = compile_program(test);
+    
+    print("Generated C code:");
+    print(c_code);
+    
+    // Save to file
+    let handle: i64 = file_open("tiny_output.c");
+    if handle > 0 {
+        file_write(handle, c_code);
+        file_close(handle);
+        print("Saved to tiny_output.c");
+    }
+}

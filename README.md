@@ -11,7 +11,7 @@
 
 > *"When Turing's Proofs Meet von Neumann's Performance"*
 
-## 🚀 Bootstrap Progress: 92% Complete! 🚀
+## 🚀 Bootstrap Progress: 94% Complete! 🚀
 
 **As of June 16, 2025** - **MAJOR MILESTONE: Self-hosting compiler created!**
 
@@ -25,17 +25,18 @@
 
 ### Progress Bar
 ```
-[██████████████████░░] 92% Complete - Est. 1-2 days to bootstrap!
+[███████████████████░] 94% Complete - Est. 1 day to bootstrap!
 ```
 
-### 🎉 Breaking: Ultra-Minimal Bootstrap Working!
+### 🎉 Breaking: Tiny Compiler Working!
 
-Major progress on self-hosting:
-- ✅ `bootstrap2/pdc.pd` - Full compiler (uses advanced features)
-- ✅ `bootstrap3/ultra_minimal.pd` - Successfully compiles and runs!
-- 🔧 Creating ultra-minimal compiler without Vec/Box/references
+Major bootstrap milestones:
+- ✅ `bootstrap2/pdc.pd` - Full compiler (1,220 lines)
+- ✅ `bootstrap3/ultra_minimal.pd` - Test program compiles and runs
+- ✅ `bootstrap3/tiny_compiler.pd` - Working compiler in Palladium!
+- ✅ Successfully generates executable C code
 
-**We can compile Palladium programs! Self-hosting imminent!**
+**We have a Palladium compiler written in Palladium that works!**
 
 ### Latest Features (June 2025)
 

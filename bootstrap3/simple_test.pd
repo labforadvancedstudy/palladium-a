@@ -1,0 +1,57 @@
+// Simple test to verify our approach works
+// This tests basic compilation without global state
+
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn fibonacci(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+fn test_string_ops() {
+    let s1: String = "Hello";
+    let s2: String = " World";
+    let combined: String = string_concat(s1, s2);
+    print(combined);
+    
+    let len: i64 = string_len(combined);
+    print("Length: " + int_to_string(len));
+}
+
+fn test_file_io() {
+    let filename: String = "test_output.txt";
+    let handle: i64 = file_open(filename);
+    
+    if handle > 0 {
+        let success: bool = file_write(handle, "Test file from Palladium!");
+        if success {
+            print("File written successfully");
+        }
+        file_close(handle);
+    }
+}
+
+fn main() {
+    print("Simple Palladium Test");
+    print("====================");
+    
+    // Test arithmetic
+    let result: i64 = add(5, 7);
+    print("5 + 7 = " + int_to_string(result));
+    
+    // Test recursion
+    let fib: i64 = fibonacci(10);
+    print("fibonacci(10) = " + int_to_string(fib));
+    
+    // Test strings
+    test_string_ops();
+    
+    // Test file I/O
+    test_file_io();
+    
+    print("All tests complete!");
+}
