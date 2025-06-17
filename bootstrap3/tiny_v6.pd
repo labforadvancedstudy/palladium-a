@@ -1,0 +1,545 @@
+// Tiny Palladium Compiler v6 - Adds function parameter parsing
+// Working towards self-hosting with function calls
+
+fn is_same_string(s1: String, s2: String) -> bool {
+    let len1 = string_len(s1);
+    let len2 = string_len(s2);
+    
+    if len1 != len2 {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < len1 {
+        if string_char_at(s1, i) != string_char_at(s2, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+fn compile_function(source: String, mut pos: i64, len: i64) -> String {
+    let mut output = "";
+    
+    // Skip "fn"
+    pos = pos + 2;
+    
+    // Skip whitespace
+    while pos < len && (string_char_at(source, pos) == 32 || 
+                       string_char_at(source, pos) == 9) {
+        pos = pos + 1;
+    }
+    
+    // Get function name
+    let mut func_name = "";
+    while pos < len && string_char_at(source, pos) != 40 && // (
+                      string_char_at(source, pos) != 32 &&  // space
+                      string_char_at(source, pos) != 9 {    // tab
+        func_name = func_name + string_from_char(string_char_at(source, pos));
+        pos = pos + 1;
+    }
+    
+    // Skip to parameters
+    while pos < len && string_char_at(source, pos) != 40 { // (
+        pos = pos + 1;
+    }
+    pos = pos + 1; // Skip (
+    
+    // Parse parameters
+    let mut params = "";
+    let mut param_count = 0;
+    
+    // Skip whitespace
+    while pos < len && (string_char_at(source, pos) == 32 || 
+                       string_char_at(source, pos) == 9) {
+        pos = pos + 1;
+    }
+    
+    // Check if we have parameters
+    if pos < len && string_char_at(source, pos) != 41 { // )
+        // Parse parameter list
+        while pos < len && string_char_at(source, pos) != 41 { // )
+            // Skip whitespace
+            while pos < len && (string_char_at(source, pos) == 32 || 
+                               string_char_at(source, pos) == 9) {
+                pos = pos + 1;
+            }
+            
+            // Get parameter name
+            let mut param_name = "";
+            while pos < len && string_char_at(source, pos) != 58 && // :
+                              string_char_at(source, pos) != 32 &&  // space
+                              string_char_at(source, pos) != 9 {    // tab
+                param_name = param_name + string_from_char(string_char_at(source, pos));
+                pos = pos + 1;
+            }
+            
+            // Skip whitespace
+            while pos < len && (string_char_at(source, pos) == 32 || 
+                               string_char_at(source, pos) == 9) {
+                pos = pos + 1;
+            }
+            
+            // Skip colon
+            if pos < len && string_char_at(source, pos) == 58 { // :
+                pos = pos + 1;
+            }
+            
+            // Skip whitespace
+            while pos < len && (string_char_at(source, pos) == 32 || 
+                               string_char_at(source, pos) == 9) {
+                pos = pos + 1;
+            }
+            
+            // Get parameter type
+            let mut param_type = "";
+            while pos < len && string_char_at(source, pos) != 44 && // ,
+                              string_char_at(source, pos) != 41 && // )
+                              string_char_at(source, pos) != 32 &&  // space
+                              string_char_at(source, pos) != 9 {    // tab
+                param_type = param_type + string_from_char(string_char_at(source, pos));
+                pos = pos + 1;
+            }
+            
+            // Convert type
+            let mut c_type = "long long";
+            if is_same_string(param_type, "String") {
+                c_type = "const char*";
+            }
+            if is_same_string(param_type, "bool") {
+                c_type = "int";
+            }
+            if is_same_string(param_type, "i64") {
+                c_type = "long long";
+            }
+            
+            // Add to params
+            if param_count > 0 {
+                params = params + ", ";
+            }
+            params = params + c_type + " " + param_name;
+            param_count = param_count + 1;
+            
+            // Skip whitespace
+            while pos < len && (string_char_at(source, pos) == 32 || 
+                               string_char_at(source, pos) == 9) {
+                pos = pos + 1;
+            }
+            
+            // Skip comma if present
+            if pos < len && string_char_at(source, pos) == 44 { // ,
+                pos = pos + 1;
+            }
+        }
+    }
+    
+    // Skip closing paren
+    if pos < len && string_char_at(source, pos) == 41 { // )
+        pos = pos + 1;
+    }
+    
+    // Skip whitespace
+    while pos < len && (string_char_at(source, pos) == 32 || 
+                       string_char_at(source, pos) == 9) {
+        pos = pos + 1;
+    }
+    
+    // Check for return type
+    let mut return_type = "void";
+    if pos + 1 < len && string_char_at(source, pos) == 45 && // -
+                       string_char_at(source, pos+1) == 62 { // >
+        pos = pos + 2;
+        // Skip whitespace
+        while pos < len && (string_char_at(source, pos) == 32 || 
+                           string_char_at(source, pos) == 9) {
+            pos = pos + 1;
+        }
+        
+        // Read return type
+        let mut type_name = "";
+        while pos < len && string_char_at(source, pos) != 32 &&
+                          string_char_at(source, pos) != 123 &&  // {
+                          string_char_at(source, pos) != 9 {
+            type_name = type_name + string_from_char(string_char_at(source, pos));
+            pos = pos + 1;
+        }
+        
+        if is_same_string(type_name, "String") {
+            return_type = "const char*";
+        }
+        if is_same_string(type_name, "bool") {
+            return_type = "int";
+        }
+        if is_same_string(type_name, "i64") {
+            return_type = "long long";
+        }
+    }
+    
+    // Generate function signature
+    if is_same_string(func_name, "main") {
+        output = output + "int main(void)";
+    } else {
+        output = output + return_type + " " + func_name + "(";
+        if param_count == 0 {
+            output = output + "void";
+        } else {
+            output = output + params;
+        }
+        output = output + ")";
+    }
+    
+    // Skip to opening brace
+    while pos < len && string_char_at(source, pos) != 123 { // {
+        pos = pos + 1;
+    }
+    
+    output = output + " {\n";
+    pos = pos + 1; // Skip {
+    
+    // Parse function body
+    while pos < len {
+        // Skip whitespace
+        while pos < len && (string_char_at(source, pos) == 32 || 
+                           string_char_at(source, pos) == 10 ||
+                           string_char_at(source, pos) == 9) {
+            pos = pos + 1;
+        }
+        
+        if pos >= len {
+            break;
+        }
+        
+        // Check for closing brace
+        if string_char_at(source, pos) == 125 { // }
+            if is_same_string(func_name, "main") {
+                output = output + "    return 0;\n";
+            }
+            output = output + "}\n\n";
+            return output;
+        }
+        
+        // Parse statement
+        output = output + "    ";
+        
+        // Look for "return"
+        if pos + 6 < len &&
+           string_char_at(source, pos) == 114 &&    // r
+           string_char_at(source, pos+1) == 101 &&  // e
+           string_char_at(source, pos+2) == 116 &&  // t
+           string_char_at(source, pos+3) == 117 &&  // u
+           string_char_at(source, pos+4) == 114 &&  // r
+           string_char_at(source, pos+5) == 110 {   // n
+            
+            output = output + "return";
+            pos = pos + 6;
+            
+            // Skip whitespace
+            while pos < len && (string_char_at(source, pos) == 32 || 
+                               string_char_at(source, pos) == 9) {
+                pos = pos + 1;
+            }
+            
+            // Copy return value
+            if string_char_at(source, pos) != 59 { // ;
+                output = output + " ";
+                while pos < len && string_char_at(source, pos) != 59 {
+                    output = output + string_from_char(string_char_at(source, pos));
+                    pos = pos + 1;
+                }
+            }
+            
+            output = output + ";\n";
+            if pos < len {
+                pos = pos + 1; // Skip ;
+            }
+            continue;
+        }
+        
+        // Look for "let"
+        if pos + 3 < len &&
+           string_char_at(source, pos) == 108 &&     // l
+           string_char_at(source, pos+1) == 101 &&   // e
+           string_char_at(source, pos+2) == 116 &&   // t
+           (string_char_at(source, pos+3) == 32 ||   // space
+            string_char_at(source, pos+3) == 9) {    // tab
+            
+            pos = pos + 3;
+            // Skip whitespace
+            while pos < len && (string_char_at(source, pos) == 32 || 
+                               string_char_at(source, pos) == 9) {
+                pos = pos + 1;
+            }
+            
+            // Skip "mut" if present
+            if pos + 3 < len &&
+               string_char_at(source, pos) == 109 &&     // m
+               string_char_at(source, pos+1) == 117 &&   // u
+               string_char_at(source, pos+2) == 116 {    // t
+                pos = pos + 3;
+                // Skip whitespace
+                while pos < len && (string_char_at(source, pos) == 32 || 
+                                   string_char_at(source, pos) == 9) {
+                    pos = pos + 1;
+                }
+            }
+            
+            // Get variable name
+            let mut var_name = "";
+            while pos < len && string_char_at(source, pos) != 58 && // :
+                              string_char_at(source, pos) != 32 &&  // space
+                              string_char_at(source, pos) != 61 &&  // =
+                              string_char_at(source, pos) != 9 {    // tab
+                var_name = var_name + string_from_char(string_char_at(source, pos));
+                pos = pos + 1;
+            }
+            
+            // Skip whitespace
+            while pos < len && (string_char_at(source, pos) == 32 || 
+                               string_char_at(source, pos) == 9) {
+                pos = pos + 1;
+            }
+            
+            // Parse type if present
+            let mut c_type = "long long"; // default
+            if pos < len && string_char_at(source, pos) == 58 { // :
+                pos = pos + 1;
+                // Skip whitespace
+                while pos < len && (string_char_at(source, pos) == 32 || 
+                                   string_char_at(source, pos) == 9) {
+                    pos = pos + 1;
+                }
+                
+                // Read type
+                let mut type_name = "";
+                while pos < len && string_char_at(source, pos) != 32 &&
+                                  string_char_at(source, pos) != 61 &&
+                                  string_char_at(source, pos) != 9 {
+                    type_name = type_name + string_from_char(string_char_at(source, pos));
+                    pos = pos + 1;
+                }
+                
+                if is_same_string(type_name, "String") {
+                    c_type = "const char*";
+                }
+                if is_same_string(type_name, "bool") {
+                    c_type = "int";
+                }
+                if is_same_string(type_name, "i64") {
+                    c_type = "long long";
+                }
+            }
+            
+            output = output + c_type + " " + var_name;
+            
+            // Skip whitespace
+            while pos < len && (string_char_at(source, pos) == 32 || 
+                               string_char_at(source, pos) == 9) {
+                pos = pos + 1;
+            }
+            
+            // Parse initialization
+            if pos < len && string_char_at(source, pos) == 61 { // =
+                pos = pos + 1;
+                output = output + " = ";
+                
+                // Skip whitespace
+                while pos < len && (string_char_at(source, pos) == 32 || 
+                                   string_char_at(source, pos) == 9) {
+                    pos = pos + 1;
+                }
+                
+                // Copy value
+                while pos < len && string_char_at(source, pos) != 59 { // ;
+                    output = output + string_from_char(string_char_at(source, pos));
+                    pos = pos + 1;
+                }
+            }
+            
+            output = output + ";\n";
+            if pos < len {
+                pos = pos + 1; // Skip ;
+            }
+            continue;
+        }
+        
+        // Look for "print"
+        if pos + 5 < len &&
+           string_char_at(source, pos) == 112 &&     // p
+           string_char_at(source, pos+1) == 114 &&   // r
+           string_char_at(source, pos+2) == 105 &&   // i
+           string_char_at(source, pos+3) == 110 &&   // n
+           string_char_at(source, pos+4) == 116 {    // t
+            
+            // Check if print or print_int
+            if pos + 9 < len &&
+               string_char_at(source, pos+5) == 95 &&      // _
+               string_char_at(source, pos+6) == 105 &&     // i
+               string_char_at(source, pos+7) == 110 &&     // n
+               string_char_at(source, pos+8) == 116 {      // t
+                
+                output = output + "__pd_print_int(";
+                pos = pos + 9;
+            } else {
+                output = output + "__pd_print(";
+                pos = pos + 5;
+            }
+            
+            // Skip to opening paren
+            while pos < len && string_char_at(source, pos) != 40 { // (
+                pos = pos + 1;
+            }
+            pos = pos + 1;
+            
+            // Copy argument
+            let mut paren_count = 1;
+            while pos < len && paren_count > 0 {
+                let ch = string_char_at(source, pos);
+                if ch == 40 { // (
+                    paren_count = paren_count + 1;
+                }
+                if ch == 41 { // )
+                    paren_count = paren_count - 1;
+                    if paren_count == 0 {
+                        break;
+                    }
+                }
+                output = output + string_from_char(ch);
+                pos = pos + 1;
+            }
+            
+            output = output + ");\n";
+            pos = pos + 1; // Skip )
+            
+            // Skip to semicolon
+            while pos < len && string_char_at(source, pos) != 59 {
+                pos = pos + 1;
+            }
+            if pos < len {
+                pos = pos + 1; // Skip ;
+            }
+            continue;
+        }
+        
+        // Skip unknown statement
+        while pos < len && string_char_at(source, pos) != 59 && 
+                          string_char_at(source, pos) != 125 &&
+                          string_char_at(source, pos) != 10 {
+            pos = pos + 1;
+        }
+        if pos < len && string_char_at(source, pos) == 59 {
+            pos = pos + 1;
+        }
+    }
+    
+    return output;
+}
+
+fn compile_program(source: String) -> String {
+    let mut output = "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n";
+    
+    // Runtime functions
+    output = output + "void __pd_print(const char* s) { printf(\"%s\\n\", s); }\n";
+    output = output + "void __pd_print_int(long long n) { printf(\"%lld\\n\", n); }\n";
+    output = output + "long long __pd_string_len(const char* s) { return strlen(s); }\n";
+    output = output + "const char* __pd_string_concat(const char* a, const char* b) {\n";
+    output = output + "    char* r = malloc(strlen(a) + strlen(b) + 1);\n";
+    output = output + "    strcpy(r, a); strcat(r, b); return r;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_int_to_string(long long n) {\n";
+    output = output + "    char* buf = malloc(32);\n";
+    output = output + "    snprintf(buf, 32, \"%lld\", n);\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n\n";
+    
+    let len = string_len(source);
+    let mut pos = 0;
+    
+    // Parse all functions
+    while pos < len {
+        // Skip whitespace
+        while pos < len && (string_char_at(source, pos) == 32 || 
+                           string_char_at(source, pos) == 10 ||
+                           string_char_at(source, pos) == 9) {
+            pos = pos + 1;
+        }
+        
+        if pos >= len {
+            break;
+        }
+        
+        // Look for "fn"
+        if pos + 2 < len &&
+           string_char_at(source, pos) == 102 &&    // f
+           string_char_at(source, pos+1) == 110 &&  // n
+           (string_char_at(source, pos+2) == 32 ||  // space
+            string_char_at(source, pos+2) == 9) {   // tab
+            
+            output = output + compile_function(source, pos, len);
+            
+            // Skip to end of function
+            let mut brace_count = 0;
+            while pos < len {
+                if string_char_at(source, pos) == 123 { // {
+                    brace_count = brace_count + 1;
+                }
+                if string_char_at(source, pos) == 125 { // }
+                    brace_count = brace_count - 1;
+                    if brace_count == 0 {
+                        pos = pos + 1;
+                        break;
+                    }
+                }
+                pos = pos + 1;
+            }
+        } else {
+            // Skip unknown content
+            pos = pos + 1;
+        }
+    }
+    
+    return output;
+}
+
+fn main() {
+    print("Tiny Palladium Compiler v6");
+    print("===========================");
+    
+    let test = "
+fn add(x: i64, y: i64) -> i64 {
+    return x + y;
+}
+
+fn greet(name: String) -> String {
+    return \"Hello, \" + name + \"!\";
+}
+
+fn main() {
+    print(\"Testing multiple functions:\");
+    
+    let a: i64 = 10;
+    let b: i64 = 20;
+    let sum: i64 = add(a, b);
+    
+    print(\"10 + 20 = \" + int_to_string(sum));
+    
+    let msg: String = greet(\"Palladium\");
+    print(msg);
+}
+";
+    
+    let c_code = compile_program(test);
+    
+    print("\nGenerated C code:");
+    print("=================");
+    print(c_code);
+    
+    // Save
+    let handle = file_open("tiny_v6_output.c");
+    if handle > 0 {
+        file_write(handle, c_code);
+        file_close(handle);
+        print("\nSaved to tiny_v6_output.c");
+    }
+}
