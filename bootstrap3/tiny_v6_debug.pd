@@ -1,0 +1,102 @@
+// Debug version of tiny_v6 to see why it only parses one function
+
+fn is_same_string(s1: String, s2: String) -> bool {
+    let len1 = string_len(s1);
+    let len2 = string_len(s2);
+    
+    if len1 != len2 {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < len1 {
+        if string_char_at(s1, i) != string_char_at(s2, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+fn main() {
+    print("Debug: Testing tiny compiler");
+    
+    let test = "
+fn first() -> i64 {
+    return 1;
+}
+
+fn second() -> i64 {
+    return 2;
+}
+";
+    
+    let len = string_len(test);
+    let mut pos = 0;
+    let mut func_count = 0;
+    
+    print("Starting parse...");
+    print_int(len);
+    
+    // Parse all functions
+    while pos < len {
+        // Skip whitespace
+        while pos < len && (string_char_at(test, pos) == 32 || 
+                           string_char_at(test, pos) == 10 ||
+                           string_char_at(test, pos) == 9) {
+            pos = pos + 1;
+        }
+        
+        if pos >= len {
+            print("Reached end of input");
+            break;
+        }
+        
+        print("Current pos:");
+        print_int(pos);
+        print("Current char:");
+        print_int(string_char_at(test, pos));
+        
+        // Look for "fn"
+        if pos + 2 < len &&
+           string_char_at(test, pos) == 102 &&    // f
+           string_char_at(test, pos+1) == 110 &&  // n
+           (string_char_at(test, pos+2) == 32 ||  // space
+            string_char_at(test, pos+2) == 9) {   // tab
+            
+            print("Found function!");
+            func_count = func_count + 1;
+            
+            // Skip to end of function
+            let mut brace_count = 0;
+            let mut found_brace = false;
+            
+            while pos < len {
+                if string_char_at(test, pos) == 123 { // {
+                    brace_count = brace_count + 1;
+                    found_brace = true;
+                    print("Found opening brace");
+                }
+                if string_char_at(test, pos) == 125 { // }
+                    brace_count = brace_count - 1;
+                    print("Found closing brace, count:");
+                    print_int(brace_count);
+                    if brace_count == 0 && found_brace {
+                        pos = pos + 1;
+                        print("Function complete, pos now:");
+                        print_int(pos);
+                        break;
+                    }
+                }
+                pos = pos + 1;
+            }
+        } else {
+            // Skip unknown content
+            pos = pos + 1;
+        }
+    }
+    
+    print("Functions found:");
+    print_int(func_count);
+}
