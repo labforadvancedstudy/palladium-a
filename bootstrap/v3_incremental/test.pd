@@ -1,12 +1,1 @@
-// Test program for tiny_v13 compiler
-fn main() {
-    print("Hello from file!");
-    print("This program was read from disk!");
-    
-    let x: i64 = 10;
-    let y: i64 = 20;
-    let sum: i64 = x + y;
-    
-    print("10 + 20 =");
-    print_int(sum);
-}
+test_parse_expr.pd
