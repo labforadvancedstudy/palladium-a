@@ -79,6 +79,21 @@ fn parse_expr(expr: String) -> String {
             }
         }
         
+        if i + 11 <= len {
+            let mut func_name = "";
+            let mut m = 0;
+            while m < 11 && i + m < len {
+                func_name = func_name + string_from_char(string_char_at(expr, i + m));
+                m = m + 1;
+            }
+            
+            if is_same_string(func_name, "file_exists") {
+                result = result + "__pd_file_exists";
+                i = i + 11;
+                continue;
+            }
+        }
+        
         if i + 10 <= len {
             let mut func_name = "";
             let mut m = 0;
@@ -90,6 +105,57 @@ fn parse_expr(expr: String) -> String {
             if is_same_string(func_name, "string_len") {
                 result = result + "__pd_string_len";
                 i = i + 10;
+                continue;
+            }
+        }
+        
+        if i + 13 <= len {
+            let mut func_name = "";
+            let mut m = 0;
+            while m < 13 && i + m < len {
+                func_name = func_name + string_from_char(string_char_at(expr, i + m));
+                m = m + 1;
+            }
+            
+            if is_same_string(func_name, "file_read_all") {
+                result = result + "__pd_file_read_all";
+                i = i + 13;
+                continue;
+            }
+        }
+        
+        if i + 10 <= len {
+            let mut func_name = "";
+            let mut m = 0;
+            while m < 10 && i + m < len {
+                func_name = func_name + string_from_char(string_char_at(expr, i + m));
+                m = m + 1;
+            }
+            
+            if is_same_string(func_name, "file_write") {
+                result = result + "__pd_file_write";
+                i = i + 10;
+                continue;
+            }
+            
+            if is_same_string(func_name, "file_close") {
+                result = result + "__pd_file_close";
+                i = i + 10;
+                continue;
+            }
+        }
+        
+        if i + 9 <= len {
+            let mut func_name = "";
+            let mut m = 0;
+            while m < 9 && i + m < len {
+                func_name = func_name + string_from_char(string_char_at(expr, i + m));
+                m = m + 1;
+            }
+            
+            if is_same_string(func_name, "file_open") {
+                result = result + "__pd_file_open";
+                i = i + 9;
                 continue;
             }
         }
@@ -813,6 +879,52 @@ fn compile_program(source: String) -> String {
     output = output + "    char* buf = malloc(32);\n";
     output = output + "    snprintf(buf, 32, \"%lld\", n);\n";
     output = output + "    return buf;\n";
+    output = output + "}\n";
+    
+    // File I/O runtime functions
+    output = output + "#define MAX_FILES 256\n";
+    output = output + "static FILE* __pd_file_handles[MAX_FILES] = {0};\n";
+    output = output + "static int __pd_next_handle = 1;\n\n";
+    
+    output = output + "long long __pd_file_open(const char* path) {\n";
+    output = output + "    if (__pd_next_handle >= MAX_FILES) return -1;\n";
+    output = output + "    FILE* f = fopen(path, \"r+\");\n";
+    output = output + "    if (!f) f = fopen(path, \"w+\");\n";
+    output = output + "    if (!f) return -1;\n";
+    output = output + "    int handle = __pd_next_handle++;\n";
+    output = output + "    __pd_file_handles[handle] = f;\n";
+    output = output + "    return handle;\n";
+    output = output + "}\n";
+    
+    output = output + "const char* __pd_file_read_all(long long handle) {\n";
+    output = output + "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return \"\";\n";
+    output = output + "    FILE* f = __pd_file_handles[handle];\n";
+    output = output + "    fseek(f, 0, SEEK_END);\n";
+    output = output + "    long size = ftell(f);\n";
+    output = output + "    fseek(f, 0, SEEK_SET);\n";
+    output = output + "    char* buffer = (char*)malloc(size + 1);\n";
+    output = output + "    fread(buffer, 1, size, f);\n";
+    output = output + "    buffer[size] = '\\0';\n";
+    output = output + "    return buffer;\n";
+    output = output + "}\n";
+    
+    output = output + "int __pd_file_write(long long handle, const char* content) {\n";
+    output = output + "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n";
+    output = output + "    FILE* f = __pd_file_handles[handle];\n";
+    output = output + "    return fputs(content, f) >= 0;\n";
+    output = output + "}\n";
+    
+    output = output + "int __pd_file_close(long long handle) {\n";
+    output = output + "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n";
+    output = output + "    FILE* f = __pd_file_handles[handle];\n";
+    output = output + "    __pd_file_handles[handle] = NULL;\n";
+    output = output + "    return fclose(f) == 0;\n";
+    output = output + "}\n";
+    
+    output = output + "int __pd_file_exists(const char* path) {\n";
+    output = output + "    FILE* f = fopen(path, \"r\");\n";
+    output = output + "    if (f) { fclose(f); return 1; }\n";
+    output = output + "    return 0;\n";
     output = output + "}\n\n";
     
     let len = string_len(source);
@@ -895,40 +1007,57 @@ fn compile_program(source: String) -> String {
 fn main() {
     print("Tiny Palladium Compiler");
     print("========================");
-    print("Arrays + Structs Support!");
+    print("Self-hosting ready!");
     print("");
     
-    // Test with struct example
-    let test_program = "struct Point {
+    // Read source file
+    let source_file = "test.pd";
+    
+    if file_exists(source_file) {
+        print("Reading source file: ");
+        print(source_file);
+        print("");
+        
+        let handle = file_open(source_file);
+        let source_code = file_read_all(handle);
+        file_close(handle);
+        let c_code = compile_program(source_code);
+        
+        // Write output to file
+        let output_file = file_open("output.c");
+        if output_file > 0 {
+            file_write(output_file, c_code);
+            file_close(output_file);
+            print("Generated: output.c");
+        }
+    } else {
+        // Fallback to test program if no file
+        print("No test.pd found, using built-in test");
+        print("");
+        
+        let test_program = "struct Point {
     x: i64,
     y: i64
 }
 
 fn main() {
-    // Test struct declaration and usage
-    let mut p: Point;
+    let p: Point;
     p.x = 10;
     p.y = 20;
     
     print(\"Point coordinates:\");
     print_int(p.x);
     print_int(p.y);
-    
-    // Test arrays too
-    let mut nums: [i64; 3] = [100, 200, 300];
-    print(\"Array sum:\");
-    print_int(nums[0] + nums[1] + nums[2]);
 }
 ";
+        
+        let c_code = compile_program(test_program);
+        
+        print("Generated C code:");
+        print("=================");
+        print(c_code);
+    }
     
-    print("Compiling struct example...");
     print("");
-    
-    let c_code = compile_program(test_program);
-    
-    print("Generated C code:");
-    print("=================");
-    print(c_code);
-    print("");
-    print("🎉 Structs added! Moving toward self-hosting! 🎉");
+    print("🎉 Compiler can read from files! 🎉");
 }
