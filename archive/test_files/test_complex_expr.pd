@@ -1,0 +1,19 @@
+fn main() {
+    let text = "Hello";
+    let len = 5;
+    
+    // Test complex expression in condition
+    if string_len(text) > 0 {
+        print("Text is not empty");
+    }
+    
+    // Test function call in condition
+    if string_len(text) == len {
+        print("Length matches");
+    }
+    
+    // Test nested conditions
+    if string_len(text) > 0 && len > 0 {
+        print("Both positive");
+    }
+}

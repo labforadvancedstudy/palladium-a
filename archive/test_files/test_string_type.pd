@@ -1,0 +1,16 @@
+fn main() {
+    // Test string type inference
+    let mut greeting = "Hello, World!";
+    print(greeting);
+    
+    let name = "Palladium";
+    print(name);
+    
+    // Test with explicit type
+    let mut message: String = "Explicit type";
+    print(message);
+    
+    // Test numbers
+    let mut count = 42;
+    print_int(count);
+}

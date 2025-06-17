@@ -1,0 +1,22 @@
+// Test string concatenation
+fn main() {
+    let greeting = "Hello, ";
+    let name = "World";
+    
+    // Test basic concatenation
+    let message = greeting + name;
+    print(message);
+    
+    // Test concatenation with literal
+    let exclaim = message + "!";
+    print(exclaim);
+    
+    // Test multiple concatenations
+    let full = "The " + "quick " + "brown " + "fox";
+    print(full);
+    
+    // Test concatenation in expressions
+    if string_len("Hello" + " World") == 11 {
+        print("Concatenation in expression works!");
+    }
+}
