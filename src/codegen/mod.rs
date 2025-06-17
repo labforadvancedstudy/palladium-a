@@ -259,7 +259,7 @@ impl CodeGenerator {
         self.output.push_str("}\n\n");
         
         // First pass: collect function signatures from imported modules
-        for (_module_name, module_info) in &self.imported_modules {
+        for module_info in self.imported_modules.values() {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     if matches!(func.visibility, crate::ast::Visibility::Public) {
@@ -278,7 +278,7 @@ impl CodeGenerator {
         
         // Generate struct definitions from imported modules first
         let imported_modules = self.imported_modules.clone();
-        for (_module_name, module_info) in &imported_modules {
+        for module_info in imported_modules.values() {
             for item in &module_info.ast.items {
                 if let Item::Struct(struct_def) = item {
                     if matches!(struct_def.visibility, crate::ast::Visibility::Public) {
@@ -290,11 +290,8 @@ impl CodeGenerator {
         
         // Generate struct definitions from main program
         for item in &program.items {
-            match item {
-                Item::Struct(struct_def) => {
-                    self.generate_struct(struct_def)?;
-                }
-                _ => {}
+            if let Item::Struct(struct_def) = item {
+                self.generate_struct(struct_def)?;
             }
         }
         
@@ -307,11 +304,11 @@ impl CodeGenerator {
                 let concrete_func = self.monomorphize_function(func_name, type_args, generic_func)?;
                 self.generate_function(&concrete_func)?;
             }
-            self.output.push_str("\n");
+            self.output.push('\n');
         }
         
         // Generate functions from imported modules
-        for (_module_name, module_info) in &imported_modules {
+        for module_info in imported_modules.values() {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     // Only generate public, non-generic functions
@@ -660,7 +657,7 @@ impl CodeGenerator {
                     }
                     AssignTarget::Index { array, index } => {
                         self.generate_expression(array)?;
-                        self.output.push_str("[");
+                        self.output.push('[');
                         self.generate_expression(index)?;
                         self.output.push_str("] = ");
                     }
@@ -711,7 +708,7 @@ impl CodeGenerator {
                     self.output.push_str("    }");
                 }
                 
-                self.output.push_str("\n");
+                self.output.push('\n');
             }
             Stmt::While { condition, body, .. } => {
                 self.output.push_str("    while (");
@@ -801,7 +798,7 @@ impl CodeGenerator {
                     match &arm.pattern {
                         Pattern::Wildcard => {
                             // Wildcard always matches
-                            self.output.push_str("1");
+                            self.output.push('1');
                         }
                         Pattern::Ident(name) => {
                             // Identifier pattern always matches and binds
@@ -928,7 +925,7 @@ impl CodeGenerator {
                 }
                 
                 // Generate arguments
-                self.output.push_str("(");
+                self.output.push('(');
                 
                 // Get function signature to check parameter mutability
                 let func_params = match func.as_ref() {
@@ -964,25 +961,25 @@ impl CodeGenerator {
                             } else {
                                 // Check if it's an array variable - arrays are already pointers
                                 let var_type = self.variables.get(name).map(|s| s.as_str());
-                                if var_type.map_or(false, |t| t.contains("[")) {
+                                if var_type.is_some_and(|t| t.contains("[")) {
                                     // It's an array, don't take address
                                     self.generate_expression(arg)?;
                                 } else {
                                     // Need to take address
-                                    self.output.push_str("&");
+                                    self.output.push('&');
                                     self.generate_expression(arg)?;
                                 }
                             }
                         } else {
                             // Need to take address
-                            self.output.push_str("&");
+                            self.output.push('&');
                             self.generate_expression(arg)?;
                         }
                     } else {
                         self.generate_expression(arg)?;
                     }
                 }
-                self.output.push_str(")");
+                self.output.push(')');
             }
             Expr::Binary { left, op, right, .. } => {
                 // Check if this is string concatenation
@@ -995,10 +992,10 @@ impl CodeGenerator {
                     self.generate_expression(left)?;
                     self.output.push_str(", ");
                     self.generate_expression(right)?;
-                    self.output.push_str(")");
+                    self.output.push(')');
                 } else {
                     // Regular binary operation
-                    self.output.push_str("(");
+                    self.output.push('(');
                     
                     // Generate left operand
                     self.generate_expression(left)?;
@@ -1024,24 +1021,24 @@ impl CodeGenerator {
                     // Generate right operand
                     self.generate_expression(right)?;
                     
-                    self.output.push_str(")");
+                    self.output.push(')');
                 }
             }
             Expr::ArrayLiteral { elements, .. } => {
                 // Generate array literal: {1, 2, 3}
-                self.output.push_str("{");
+                self.output.push('{');
                 for (i, elem) in elements.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
                     }
                     self.generate_expression(elem)?;
                 }
-                self.output.push_str("}");
+                self.output.push('}');
             }
             Expr::ArrayRepeat { value, count, .. } => {
                 // Generate array repeat initialization
                 // For [0; 10], generate: {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-                self.output.push_str("{");
+                self.output.push('{');
                 if let Expr::Integer(n) = count.as_ref() {
                     for i in 0..*n {
                         if i > 0 {
@@ -1050,19 +1047,19 @@ impl CodeGenerator {
                         self.generate_expression(value)?;
                     }
                 }
-                self.output.push_str("}");
+                self.output.push('}');
             }
             Expr::Index { array, index, .. } => {
                 // Generate array indexing: arr[i]
                 self.generate_expression(array)?;
-                self.output.push_str("[");
+                self.output.push('[');
                 self.generate_expression(index)?;
-                self.output.push_str("]");
+                self.output.push(']');
             }
             Expr::StructLiteral { name, fields, .. } => {
                 // Generate struct literal: (StructName){.field1 = value1, .field2 = value2}
                 self.output.push_str(&format!("({})", name));
-                self.output.push_str("{");
+                self.output.push('{');
                 for (i, (field_name, field_expr)) in fields.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
@@ -1070,7 +1067,7 @@ impl CodeGenerator {
                     self.output.push_str(&format!(".{} = ", field_name));
                     self.generate_expression(field_expr)?;
                 }
-                self.output.push_str("}");
+                self.output.push('}');
             }
             Expr::FieldAccess { object, field, .. } => {
                 // Check if object is a mutable parameter (pointer)
@@ -1175,6 +1172,7 @@ impl CodeGenerator {
     }
     
     /// Substitute type parameters with concrete types in a type
+    #[allow(clippy::only_used_in_recursion)]
     fn substitute_type(&self, ty: &Type, type_map: &std::collections::HashMap<String, String>) -> Type {
         match ty {
             Type::TypeParam(name) => {

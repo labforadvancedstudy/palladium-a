@@ -92,7 +92,7 @@ impl Driver {
     /// Compile a file and return the output path
     pub fn compile_file(&self, path: &Path) -> Result<PathBuf> {
         let source = fs::read_to_string(path)
-            .map_err(|e| CompileError::IoError(e))?;
+            .map_err(CompileError::IoError)?;
         
         let filename = path.file_name()
             .and_then(|n| n.to_str())
@@ -110,7 +110,7 @@ impl Driver {
         let build_dir = PathBuf::from("build_output");
         if !build_dir.exists() {
             fs::create_dir_all(&build_dir)
-                .map_err(|e| CompileError::IoError(e))?;
+                .map_err(CompileError::IoError)?;
         }
         
         // Determine output binary name

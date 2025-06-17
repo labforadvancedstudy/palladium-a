@@ -530,25 +530,25 @@ impl std::fmt::Display for Stmt {
             Stmt::Break { .. } => write!(f, "break;"),
             Stmt::Continue { .. } => write!(f, "continue;"),
             Stmt::Match { expr, arms, .. } => {
-                write!(f, "match {} {{\n", expr)?;
+                writeln!(f, "match {} {{", expr)?;
                 for arm in arms {
                     write!(f, "    {} => ", arm.pattern)?;
                     if arm.body.len() == 1 {
                         if let Stmt::Expr(e) = &arm.body[0] {
-                            write!(f, "{},\n", e)?;
+                            writeln!(f, "{},", e)?;
                         } else {
-                            write!(f, "{{\n")?;
+                            writeln!(f, "{{")?;
                             for stmt in &arm.body {
-                                write!(f, "        {}\n", stmt)?;
+                                writeln!(f, "        {}", stmt)?;
                             }
-                            write!(f, "    }}\n")?;
+                            writeln!(f, "    }}")?;
                         }
                     } else {
-                        write!(f, "{{\n")?;
+                        writeln!(f, "{{")?;
                         for stmt in &arm.body {
-                            write!(f, "        {}\n", stmt)?;
+                            writeln!(f, "        {}", stmt)?;
                         }
-                        write!(f, "    }}\n")?;
+                        writeln!(f, "    }}")?;
                     }
                 }
                 write!(f, "}}")

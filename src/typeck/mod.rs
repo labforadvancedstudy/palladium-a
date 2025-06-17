@@ -150,12 +150,16 @@ pub struct TypeChecker {
     structs: HashMap<String, Vec<(String, CheckerType)>>,
     /// Current function return type (for checking return statements)
     current_function_return: Option<CheckerType>,
-    /// Current generic type parameters in scope
-    current_type_params: Vec<String>,
     /// Symbol table for variables
     symbols: SymbolTable,
     /// Imported modules and their exported items
     imported_modules: HashMap<String, crate::resolver::ModuleInfo>,
+}
+
+impl Default for TypeChecker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TypeChecker {
@@ -258,7 +262,6 @@ impl TypeChecker {
             instantiations: HashMap::new(),
             structs: HashMap::new(),
             current_function_return: None,
-            current_type_params: Vec::new(),
             symbols: SymbolTable::new(),
             imported_modules: HashMap::new(),
         }
@@ -296,7 +299,7 @@ impl TypeChecker {
                                     .collect();
                                 
                                 let return_type = func.return_type.as_ref()
-                                    .map(|t| CheckerType::from(t))
+                                    .map(CheckerType::from)
                                     .unwrap_or(CheckerType::Unit);
                                 
                                 let func_type = CheckerType::Function(param_types, Box::new(return_type));
@@ -352,7 +355,7 @@ impl TypeChecker {
                             .collect();
                         
                         let return_type = func.return_type.as_ref()
-                            .map(|t| CheckerType::from(t))
+                            .map(CheckerType::from)
                             .unwrap_or(CheckerType::Unit);
                         
                         let func_type = CheckerType::Function(param_types, Box::new(return_type));
@@ -417,7 +420,7 @@ impl TypeChecker {
         
         // Set current function return type
         let return_type = func.return_type.as_ref()
-            .map(|t| CheckerType::from(t))
+            .map(CheckerType::from)
             .unwrap_or(CheckerType::Unit);
         self.current_function_return = Some(return_type);
         
@@ -803,10 +806,25 @@ impl TypeChecker {
                         match (&left_type, &right_type) {
                             (CheckerType::Int, CheckerType::Int) => Ok(CheckerType::Int),
                             (CheckerType::String, CheckerType::String) => Ok(CheckerType::String),
-                            _ => Err(CompileError::TypeMismatch {
-                                expected: format!("{} or String", left_type),
-                                found: format!("{} + {}", left_type, right_type),
-                            }),
+                            _ => {
+                                // For Add, we expect both operands to have the same type
+                                if left_type == CheckerType::String {
+                                    Err(CompileError::TypeMismatch {
+                                        expected: "String".to_string(),
+                                        found: right_type.to_string(),
+                                    })
+                                } else if left_type == CheckerType::Int {
+                                    Err(CompileError::TypeMismatch {
+                                        expected: "Int".to_string(),
+                                        found: right_type.to_string(),
+                                    })
+                                } else {
+                                    Err(CompileError::TypeMismatch {
+                                        expected: "Int or String".to_string(),
+                                        found: left_type.to_string(),
+                                    })
+                                }
+                            }
                         }
                     }
                     BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
@@ -1118,7 +1136,7 @@ impl TypeChecker {
         }
         
         // Infer types from each argument
-        for (_i, (arg_expr, (_param_name, param_type))) in args.iter().zip(&generic_func.params).enumerate() {
+        for (arg_expr, (_param_name, param_type)) in args.iter().zip(&generic_func.params) {
             self.infer_from_expr_and_type(arg_expr, param_type, &mut type_map)?;
         }
         
@@ -1197,6 +1215,7 @@ impl TypeChecker {
     }
     
     /// Convert CheckerType to string for type arguments
+    #[allow(clippy::only_used_in_recursion)]
     fn checker_type_to_string(&self, ty: &CheckerType) -> String {
         match ty {
             CheckerType::Unit => "()".to_string(),
@@ -1242,6 +1261,7 @@ impl TypeChecker {
     }
     
     /// Substitute type parameters in a type
+    #[allow(clippy::only_used_in_recursion)]
     fn substitute_type(&self, ty: &crate::ast::Type, subst_map: &HashMap<String, String>) -> Result<crate::ast::Type> {
         match ty {
             crate::ast::Type::TypeParam(param_name) => {
@@ -1286,7 +1306,7 @@ impl TypeChecker {
                 }
                 
                 // Type check each argument
-                for (_i, (arg, expected_type)) in args.iter().zip(&param_types).enumerate() {
+                for (arg, expected_type) in args.iter().zip(&param_types) {
                     let arg_type = self.check_expression(arg)?;
                     if arg_type != *expected_type {
                         return Err(CompileError::TypeMismatch {
@@ -1309,7 +1329,7 @@ impl TypeChecker {
     pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
         let mut result = Vec::new();
         
-        for (instantiation, _func_type) in &self.instantiations {
+        for instantiation in self.instantiations.keys() {
             if let Some(generic_func) = self.generic_functions.get(&instantiation.name) {
                 result.push((
                     instantiation.name.clone(),
@@ -1457,8 +1477,8 @@ mod tests {
         assert!(result.is_err());
         
         if let Err(CompileError::TypeMismatch { expected, found }) = result {
-            assert_eq!(expected, "Int");
-            assert_eq!(found, "String");
+            assert_eq!(expected, "String");
+            assert_eq!(found, "Int");
         }
     }
     

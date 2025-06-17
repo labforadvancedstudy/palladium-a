@@ -128,7 +128,7 @@ fn print_version() {
     println!("Alan von Palladium Compiler");
     println!("Version: 0.1-alpha");
     println!("Build: 2025-01-01");
-    println!("");
+    println!();
     println!("Features:");
     println!("  - Basic type system");
     println!("  - Function definitions");
@@ -138,18 +138,18 @@ fn print_version() {
 
 fn print_help() {
     println!("Alan von Palladium Compiler - The Future of Systems Programming");
-    println!("");
+    println!();
     println!("Usage: palladium <command> [options]");
-    println!("");
+    println!();
     println!("Commands:");
     println!("  compile <file>  - Compile a .pd source file");
     println!("  run <file>      - Compile and execute a .pd source file");
     println!("  --version, -v   - Display version information");
     println!("  --help, -h      - Display this help message");
-    println!("");
+    println!();
     println!("Examples:");
     println!("  palladium compile hello.pd");
     println!("  palladium run fibonacci.pd");
-    println!("");
+    println!();
     println!("For more information, visit: https://alan-von-palladium.org");
 }

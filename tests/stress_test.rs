@@ -50,7 +50,7 @@ fn main() {
 // Final comment
 "#;
     
-    let result = driver.compile_string(&source, "nested_comments.pd").map(|_| ());
+    let result = driver.compile_string(source, "nested_comments.pd").map(|_| ());
     assert!(result.is_ok(), "Should handle multiple comments");
 }
 
@@ -65,7 +65,7 @@ fn main() {
 }
 "#;
     
-    let result = driver.compile_string(&source, "unicode.pd").map(|_| ());
+    let result = driver.compile_string(source, "unicode.pd").map(|_| ());
     // Unicode support might not be in v0.1
     match result {
         Ok(_) => println!("Unicode is supported in v0.1"),
@@ -103,7 +103,7 @@ fn test_whitespace_variations() {
     let driver = Driver::new();
     
     // Test various whitespace styles
-    let test_cases = vec![
+    let test_cases = [
         // Minimal whitespace
         "fn main(){print(\"Minimal\");}",
         

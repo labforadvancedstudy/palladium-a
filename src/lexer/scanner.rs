@@ -7,8 +7,6 @@ use super::token::Token;
 
 pub struct Lexer<'a> {
     inner: LogosLexer<'a, Token>,
-    current_line: usize,
-    current_col: usize,
     source: &'a str,
 }
 
@@ -18,8 +16,6 @@ impl<'a> Lexer<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
             inner: Token::lexer(source),
-            current_line: 1,
-            current_col: 1,
             source,
         }
     }
@@ -87,7 +83,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
-impl<'a> Iterator for Lexer<'a> {
+impl Iterator for Lexer<'_> {
     type Item = Token;
     
     fn next(&mut self) -> Option<Self::Item> {

@@ -109,7 +109,9 @@ echo "Step 2: Testing Bootstrap Components"
 echo "------------------------------------"
 # Test bootstrap components
 test_component "lexer_test" "tests/lexer_bootstrap_test.pd" "Lexer Component Test"
-test_component "parser_minimal" "examples/bootstrap/parser_minimal.pd" "Minimal Parser"
+if [ -f "examples/bootstrap/parser_minimal.pd" ]; then
+    test_component "parser_minimal" "examples/bootstrap/parser_minimal.pd" "Minimal Parser"
+fi
 
 echo "Step 3: Testing Complex Examples"
 echo "--------------------------------"

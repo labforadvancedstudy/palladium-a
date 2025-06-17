@@ -23,8 +23,12 @@ pub struct ModuleResolver {
     search_paths: Vec<PathBuf>,
     /// Cache of already loaded modules
     loaded_modules: HashMap<String, ModuleInfo>,
-    /// Standard library location
-    std_lib_path: Option<PathBuf>,
+}
+
+impl Default for ModuleResolver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ModuleResolver {
@@ -54,7 +58,6 @@ impl ModuleResolver {
         Self {
             search_paths,
             loaded_modules: HashMap::new(),
-            std_lib_path: None,
         }
     }
     

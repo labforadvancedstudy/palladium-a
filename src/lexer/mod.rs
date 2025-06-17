@@ -22,7 +22,7 @@ mod tests {
         let lexer = Lexer::new(source);
         let tokens: Vec<Token> = lexer.collect();
         
-        assert!(tokens.len() > 0);
+        assert!(!tokens.is_empty());
         assert_eq!(tokens[0], Token::Fn);
         assert_eq!(tokens[1], Token::Identifier("main".to_string()));
     }

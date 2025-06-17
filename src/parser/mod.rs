@@ -532,11 +532,7 @@ impl Parser {
             None
         };
         
-        let end_span = if else_branch.is_some() {
-            self.tokens[self.current - 1].1
-        } else {
-            self.tokens[self.current - 1].1
-        };
+        let end_span = self.tokens[self.current - 1].1;
         
         Ok(Stmt::If {
             condition,
@@ -1380,7 +1376,7 @@ impl Parser {
             Ok(span)
         } else {
             Err(CompileError::UnexpectedToken {
-                expected: format!("{} ({})", expected.to_string(), message),
+                expected: format!("{} ({})", expected, message),
                 found: token.to_string(),
             })
         }
