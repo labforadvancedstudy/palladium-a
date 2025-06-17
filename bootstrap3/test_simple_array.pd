@@ -1,0 +1,6 @@
+fn main() {
+    let mut nums: [i64; 3] = [10, 20, 30];
+    print_int(nums[0]);
+    nums[1] = 100;
+    print_int(nums[1]);
+}
