@@ -6,6 +6,12 @@ READ and RESEPCT './CLAUDE.LOCAL.md'
 1.1 어디까지 했고 무엇을 진행하고 있었고 다음에 무엇을 해야할지 항상 확인해.
 1.2 모르겠다면 당장 중단해. 소리쳐! "나 뭘해야할지 모르겠어요!" 그리고 사용자에게 도움을 요청해.
 2. 루트 폴더에 파일과 디렉토리가 20개가 넘으면 유저에게 파일 정리 계획을 이야기해주고 정리 제안을 해줘.
+3. User special commands. 명령을 받으면 "얍!" 소리치고 명령 받았다는 말을 해줘. 항상 Ultrathink what to do.
+3.1 "1" or "t": build, lint, test, e2e test 하고 성공 확인. warning까지 모두 수정해.
+3.2 "2" or "c": TODO를 확인하고 이어서 해주고, TODO가 없으면 해야할 일을 TODO에 넣어서 진행해.
+3.3 "3" or "r": STATUS REPORT COMMAND
+3.4 "4" or "m": 버드아이로 프로젝틀르 바라고보 마일스톤 기준으로 무엇을 해야할지 분석해주고 다음 마일스톤을 제안해줘.
+3.4 "5" or "p": changeset을 확인하고 commits을 만들고 push 해줘.
 
 ---
 
