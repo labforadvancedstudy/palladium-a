@@ -11,28 +11,52 @@
 
 > *"When Turing's Proofs Meet von Neumann's Performance"*
 
-## 🎆 Bootstrap Progress: 100% Complete! 🎆
+## 🚀 Palladium Implementation Progress
 
-**As of June 17, 2025** - **FULL BOOTSTRAP ACHIEVED: Compilers with arrays, control flow, and all features!**
+### Overall Progress [████░░░░░░] 45%
 
-### Current Status
+#### Core Language [██████░░░░] 59%
+- ✅ **Type System** (90%) - Hindley-Milner with extensions
+- ✅ **Borrow Checker** (95%) - Rust-compatible ownership
+- ⏳ **Implicit Lifetimes** (80%) - Auto-inference for 90% of cases
+- ⏳ **Traits** (70%) - Simplified trait system
+- ⏳ **Async as Effect** (40%) - No more `.await` spam!
+- 🔲 **Const Generics** (0%) - Compile-time parameters
 
-- ✅ **Core Language Features** - All fundamental features implemented
-- ✅ **Module System** - Multi-file compilation with imports
-- ✅ **Generic Functions** - Basic monomorphization working  
-- ✅ **Standard Library** - Math and string utilities ready
-- ✅ **Bootstrap Compiler** - **Complete self-hosting achieved!**
+#### Bootstrap Compiler [██████░░░░] 60%
+- ✅ **Tiny Compilers** (100%) - Multiple working versions!
+  - `bootstrap3/tiny_v16.pd` - Arrays, functions, control flow
   - `bootstrap2/pdc.pd` - Full compiler (1,220 lines)
-  - `bootstrap3/tiny_v11.pd` - Functions with parameters!
-  - `bootstrap3/tiny_v14.pd` - Full if/else and while loops!
-  - `bootstrap3/tiny_v16.pd` - **Arrays work! 100% Bootstrap!**
+- ⏳ **Self-hosting** (60%) - Can compile simple programs
+- 🔲 **Full Bootstrap** (0%) - Compile the full compiler
 
-### Progress Bar
-```
-[████████████████████] 100% Complete - FULL BOOTSTRAP ACHIEVED!
-```
+#### Advanced Features [███░░░░░░░] 32%
+- ⏳ **Totality Checking** (30%) - Prove termination
+- ⏳ **Unified Macros** (50%) - No macro_rules!/proc split
+- ⏳ **Incremental Compilation** (70%) - Function-level
+- 🔲 **Proof Generation** (0%) - Export to Lean/Coq
+- 🔲 **Side-channel Safety** (0%) - Constant-time guarantees
 
-### 🚨 CRITICAL MILESTONE REACHED! 🚨
+#### Tooling [███░░░░░░░] 32%
+- ⏳ **pdc Compiler** (60%) - Main compiler
+- ⏳ **Formatter** (40%) - Code formatting
+- 🔲 **LSP Server** (10%) - IDE support
+- 🔲 **Debugger** (0%) - Integrated debugging
+
+#### Ecosystem [████░░░░░░] 42%
+- ⏳ **Standard Library** (43%) - Core types and collections
+- ⏳ **Rust FFI** (60%) - Call Rust from Palladium
+- ⏳ **C FFI** (50%) - C ABI compatibility
+- 🔲 **Package Registry** (0%) - crates.io equivalent
+
+### Status Legend
+- ✅ Complete (80-100%)
+- ⏳ In Progress (20-79%)
+- 🔲 Planned (0-19%)
+
+[📊 View Interactive Dashboard](./docs/features/status.yaml) | [📚 Feature Docs](./docs/features/)
+
+## 🎆 Major Milestone: Bootstrap Achieved! 🎆
 
 **We have working Palladium compilers that can compile real programs!**
 
@@ -263,38 +287,40 @@ fn stringify(value: JsonValue) -> String {
 }
 ```
 
-## Roadmap: Beyond Self-Hosting
+## Quick Links
 
-### Completed ✅
-- [x] Complete language implementation
-- [x] Self-hosting compiler (3500+ lines)
-- [x] Standard library (Vec, HashMap, Result)
-- [x] Pattern matching
-- [x] Memory safety without GC
-- [x] Comprehensive test suite
-- [x] String concatenation with + operator
-- [x] Generic functions (type inference)
-- [x] Module imports (basic resolver)
-- [x] **FULL BOOTSTRAP with arrays and control flow!**
+- [📖 Getting Started](./docs/guides/getting-started.md)
+- [📊 Implementation Status](./docs/features/status.yaml)
+- [🔨 Bootstrap Guide](./docs/bootstrap/)
+- [📚 Language Reference](./docs/reference/)
+- [🛠️ Compiler Internals](./docs/internals/)
 
-### In Progress 🔧
-- [ ] Module system (cross-module type checking)
-- [ ] Generic monomorphization
-- [ ] Error messages with suggestions
+## Key Innovations
 
-### Next Steps 🚧
-- [ ] Package manager
-- [ ] Language Server Protocol (LSP)
-- [ ] LLVM backend for optimization
-- [ ] WebAssembly target
-- [ ] Async/await support
-- [ ] Traits/interfaces system
+### 1. **Implicit Lifetimes** (80% complete)
+No more lifetime annotations for 90% of cases:
+```palladium
+fn longest(x: ref str, y: ref str) -> ref str {
+    if x.len() > y.len() { x } else { y }
+}
+```
 
-### The Dream 🌟
-- [ ] Formal verification framework
-- [ ] Dependent types
-- [ ] Compile-time evaluation
-- [ ] Industry adoption
+### 2. **Async as Effect** (40% complete)  
+No function coloring, no `.await` spam:
+```palladium
+fn fetch_all(ids: Vec<u64>) -> Vec<User> {
+    ids.map(fetch_user).collect()  // Parallel by default!
+}
+```
+
+### 3. **Totality Checking** (30% complete)
+Prove your functions terminate:
+```palladium
+#[total]
+fn factorial(n: u64) -> u64 {
+    if n == 0 { 1 } else { n * factorial(n - 1) }
+}
+```
 
 ## Philosophy Corner: Why Palladium Matters
 
