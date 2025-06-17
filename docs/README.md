@@ -1,51 +1,153 @@
-# Palladium Documentation
+# Palladium Language Documentation
 
-This directory contains all documentation for the Alan von Palladium programming language.
+Welcome to the official documentation for the Palladium programming language - where Turing's proofs meet von Neumann's performance!
 
-## Directory Structure
+## 🚀 Quick Navigation
 
-### 📐 design/
-Architecture and design documents:
-- `ARCHITECTURE.md` - System architecture overview
-- `PROJECT_SUMMARY.md` - Project goals and summary
-- `VISION_ROADMAP.md` - Future vision and roadmap
-- `avp_technical_manifesto.md` - Technical manifesto
-- `palladium_vs_rust_comparison.md` - Comparison with Rust
+### Getting Started
+- [📖 Getting Started Guide](./guides/getting-started.md) - Your first Palladium program
+- [🎯 Language Tour](./guides/language-tour.md) - Learn Palladium in 30 minutes
+- [🔄 Migrating from Rust](./guides/migration-from-rust.md) - For Rustaceans
 
-### 📦 release/
-Release notes and version history:
-- `RELEASE_NOTES_v0.1.md` - v0.1 release notes
-- `RELEASE_NOTES_v0.2.md` - v0.2 release notes
-- `Palladium_0_6.md` - v0.6 planning
-- `Palladium_0_7.md` - v0.7 planning
+### Implementation Status
+- [📊 Feature Status Dashboard](./features/status.yaml) - Real-time progress tracking
+- [🎉 Bootstrap Documentation](./bootstrap/) - Self-hosting journey
+- [📈 Progress Reports](../reports/) - Detailed milestone updates
 
-### 📋 planning/
-Development planning and TODO lists:
-- `TODO_v0.1.md` - v0.1 tasks
-- `TODO_v0.2.md` - v0.2 tasks
-- `TODO_v0.3.md` - v0.3 tasks
+### Language Features
+- [🧬 Core Language](./features/core-language/) - Type system, memory, control flow
+- [⚡ Async System](./features/async-system/) - Revolutionary async design
+- [🔬 Advanced Features](./features/advanced/) - Verification, proofs, safety
 
-### 🎯 marketing/
-Marketing materials and storytelling:
-- `avp_marketing.md` - Marketing strategy
-- `avp_headquarters_drama.md` - AVP HQ story
-- `Turing.md` - Alan Turing tribute
-- `Von.md` - John von Neumann tribute
+### Reference Documentation
+- [📚 Language Reference](./reference/) - Syntax and semantics
+- [🛠️ Standard Library](./reference/stdlib/) - Built-in types and functions
+- [🔧 Tools](./tools/) - Compiler, formatter, LSP
 
-### 📚 Main Documentation
-- `GETTING_STARTED.md` - Quick start guide
+### Developer Resources
+- [🏗️ Compiler Internals](./internals/) - How Palladium works under the hood
+- [🤝 Contributing Guide](../CONTRIBUTING.md) - Join the revolution
+- [📝 Design Documents](./design/) - Language philosophy and decisions
 
-## Navigation
+## 📊 Current Implementation Status
 
-- **New users**: Start with `GETTING_STARTED.md`
-- **Contributors**: Check `design/ARCHITECTURE.md` and relevant TODO files
-- **Release info**: See `release/` directory for version history
-- **Project vision**: Read `design/VISION_ROADMAP.md`
+### Overall Progress: 45% Complete
 
-## Contributing
+```
+Core Language    [██████░░░░] 59%  - Type system, borrowing, lifetimes
+Bootstrap        [██████░░░░] 60%  - Self-hosting compiler progress  
+Advanced         [███░░░░░░░] 32%  - Verification, macros, optimization
+Tooling          [███░░░░░░░] 32%  - Compiler, formatter, IDE support
+Ecosystem        [████░░░░░░] 42%  - Standard library, FFI, packages
+```
 
-When adding documentation:
-1. Place files in the appropriate subdirectory
-2. Update this README with new entries
-3. Use clear, descriptive filenames
-4. Include a header in each document explaining its purpose
+### 🎯 Next Milestones
+
+1. **Complete Self-hosting** (7-10 days)
+   - Fix string type inference in tiny compiler
+   - Add missing expression parsing
+   - Test full compiler self-compilation
+
+2. **Enhanced Type System** (2-3 weeks)
+   - Complete trait implementation
+   - Add const generics
+   - Improve type inference
+
+3. **Developer Experience** (1 month)
+   - LSP server for IDE support
+   - Better error messages
+   - Package manager alpha
+
+## 🌟 Why Palladium?
+
+Palladium solves the fundamental tension in systems programming:
+
+| Feature | Rust | Go | C++ | Palladium |
+|---------|------|-----|-----|-----------|
+| Memory Safety | ✅ Manual | 🤷 GC | ❌ Manual | ✅ Automatic |
+| Performance | ✅ Excellent | 🤷 Good | ✅ Excellent | ✅ Excellent |
+| Ergonomics | 🤷 Complex | ✅ Simple | 🤷 Complex | ✅ Simple |
+| Verification | ❌ External | ❌ None | ❌ None | ✅ Built-in |
+| Async | 🤷 Colored | 🤷 Goroutines | ❌ Library | ✅ Transparent |
+
+## 📚 Documentation Structure
+
+```
+docs/
+├── features/          # Feature specifications and status
+│   ├── status.yaml   # Progress tracking (single source of truth)
+│   ├── core-language/
+│   ├── async-system/
+│   └── advanced/
+├── guides/           # Tutorials and how-tos
+├── reference/        # Language and library reference
+├── bootstrap/        # Self-hosting documentation
+├── internals/        # Compiler design and implementation
+├── tools/           # Tooling documentation
+├── design/          # Architecture and vision documents
+├── release/         # Release notes and changelogs
+└── planning/        # Development planning
+```
+
+## 🔄 Staying Updated
+
+- **Status Updates**: Check [status.yaml](./features/status.yaml) for real-time progress
+- **Release Notes**: See [release/](./release/) for version history
+- **Blog**: Visit [palladium-lang.org/blog](https://palladium-lang.org/blog)
+- **Discord**: Join our [community](https://discord.gg/palladium)
+
+## 🤝 Contributing
+
+We welcome contributions! See our [Contributing Guide](../CONTRIBUTING.md) for:
+- Setting up the development environment
+- Understanding the codebase
+- Submitting pull requests
+- Coding standards
+
+## 📖 Learning Path
+
+1. **Beginner**: Start with [Getting Started](./guides/getting-started.md)
+2. **Intermediate**: Explore [Language Features](./features/)
+3. **Advanced**: Dive into [Compiler Internals](./internals/)
+4. **Expert**: Contribute to [Bootstrap Compiler](./bootstrap/)
+
+## 🗂️ Directory Overview
+
+### features/
+Feature specifications with implementation status:
+- `status.yaml` - Central progress tracking
+- Individual feature documentation with code examples
+
+### guides/
+User-friendly tutorials and guides:
+- Getting started
+- Migration guides
+- Best practices
+
+### bootstrap/
+Self-hosting compiler documentation:
+- Bootstrap strategy
+- Implementation progress
+- Tutorial for contributing
+
+### internals/
+Compiler design and implementation:
+- Architecture overview
+- Type system design
+- Code generation strategy
+
+### design/
+High-level design documents:
+- Technical manifesto
+- Vision and roadmap
+- Comparison with other languages
+
+### tools/
+Documentation for Palladium tooling:
+- pdc compiler usage
+- formatter configuration
+- IDE integration
+
+---
+
+*"In Palladium, your proofs compile to bare metal performance."*
