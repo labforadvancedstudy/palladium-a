@@ -1,0 +1,471 @@
+// Minimal Palladium Compiler v1
+// A simple compiler that can handle basic Palladium programs
+// Target: Functions, print, let, if/else, basic expressions
+
+// ============ Token Types ============
+
+// Token type constants - using functions to return constants
+fn TOK_EOF() -> i32 { return 0; }
+fn TOK_INT() -> i32 { return 1; }
+fn TOK_STRING() -> i32 { return 2; }
+fn TOK_IDENT() -> i32 { return 3; }
+fn TOK_FN() -> i32 { return 4; }
+fn TOK_LET() -> i32 { return 5; }
+fn TOK_IF() -> i32 { return 6; }
+fn TOK_ELSE() -> i32 { return 7; }
+fn TOK_RETURN() -> i32 { return 8; }
+fn TOK_PRINT() -> i32 { return 9; }
+fn TOK_TRUE() -> i32 { return 10; }
+fn TOK_FALSE() -> i32 { return 11; }
+fn TOK_PLUS() -> i32 { return 12; }
+fn TOK_MINUS() -> i32 { return 13; }
+fn TOK_STAR() -> i32 { return 14; }
+fn TOK_SLASH() -> i32 { return 15; }
+fn TOK_EQ() -> i32 { return 16; }
+fn TOK_EQEQ() -> i32 { return 17; }
+fn TOK_LT() -> i32 { return 18; }
+fn TOK_GT() -> i32 { return 19; }
+fn TOK_LPAREN() -> i32 { return 20; }
+fn TOK_RPAREN() -> i32 { return 21; }
+fn TOK_LBRACE() -> i32 { return 22; }
+fn TOK_RBRACE() -> i32 { return 23; }
+fn TOK_SEMICOLON() -> i32 { return 24; }
+fn TOK_COMMA() -> i32 { return 25; }
+fn TOK_COLON() -> i32 { return 26; }
+fn TOK_ARROW() -> i32 { return 27; }
+
+// ============ Helper Functions ============
+
+// Convert string to integer (simple version)
+fn string_to_int(s: String) -> i32 {
+    let mut result = 0;
+    let mut i = 0;
+    let len = string_len(s);
+    let mut negative = false;
+    
+    // Check for negative sign
+    if len > 0 && string_char_at(s, 0) == 45 { // '-'
+        negative = true;
+        i = 1;
+    }
+    
+    while i < len {
+        let ch = string_char_at(s, i);
+        if ch >= 48 && ch <= 57 { // '0' to '9'
+            result = result * 10 + (ch - 48);
+        }
+        i = i + 1;
+    }
+    
+    if negative {
+        result = -result;
+    }
+    return result;
+}
+
+// ============ Lexer ============
+
+fn is_digit(ch: i32) -> bool {
+    return ch >= 48 && ch <= 57; // '0' to '9'
+}
+
+fn is_alpha(ch: i32) -> bool {
+    return (ch >= 97 && ch <= 122) || // 'a' to 'z'
+           (ch >= 65 && ch <= 90);     // 'A' to 'Z'
+}
+
+fn is_alnum(ch: i32) -> bool {
+    return is_alpha(ch) || is_digit(ch) || ch == 95; // underscore
+}
+
+fn is_whitespace(ch: i32) -> bool {
+    return ch == 32 || ch == 9 || ch == 10 || ch == 13; // space, tab, newline, carriage return
+}
+
+// Simple token structure using strings
+// Format: "type:value"
+fn make_token(ty: i32, value: String) -> String {
+    return int_to_string(ty) + ":" + value;
+}
+
+fn token_type(token: String) -> i32 {
+    let mut i = 0;
+    let mut type_str = "";
+    while i < string_len(token) {
+        let ch = string_char_at(token, i);
+        if ch == 58 { // ':'
+            break;
+        }
+        type_str = type_str + string_from_char(ch);
+        i = i + 1;
+    }
+    return string_to_int(type_str);
+}
+
+fn token_value(token: String) -> String {
+    let mut i = 0;
+    let mut found_colon = false;
+    let mut value = "";
+    
+    while i < string_len(token) {
+        let ch = string_char_at(token, i);
+        if found_colon {
+            value = value + string_from_char(ch);
+        } else {
+            if ch == 58 { // ':'
+                found_colon = true;
+            }
+        }
+        i = i + 1;
+    }
+    return value;
+}
+
+// Lexer state
+struct Lexer {
+    input: String,
+    pos: i32,
+    len: i32
+}
+
+fn peek_char(lexer: Lexer) -> i32 {
+    if lexer.pos >= lexer.len {
+        return -1;
+    }
+    return string_char_at(lexer.input, lexer.pos);
+}
+
+fn advance_char(mut lexer: Lexer) -> i32 {
+    let ch = peek_char(lexer);
+    lexer.pos = lexer.pos + 1;
+    return ch;
+}
+
+fn skip_whitespace(mut lexer: Lexer) {
+    while is_whitespace(peek_char(lexer)) {
+        advance_char(lexer);
+    }
+}
+
+fn lex_number(mut lexer: Lexer) -> String {
+    let mut value = "";
+    while is_digit(peek_char(lexer)) {
+        value = value + string_from_char(advance_char(lexer));
+    }
+    return make_token(TOK_INT(), value);
+}
+
+fn lex_string(mut lexer: Lexer) -> String {
+    advance_char(lexer); // Skip opening quote
+    let mut value = "";
+    
+    while peek_char(lexer) != 34 && peek_char(lexer) != -1 { // '"'
+        let ch = advance_char(lexer);
+        if ch == 92 { // backslash
+            let next = advance_char(lexer);
+            if next == 110 { // 'n'
+                value = value + "\n";
+            }
+            if next == 116 { // 't'
+                value = value + "\t";
+            }
+            if next == 34 { // '"'
+                value = value + "\"";
+            }
+            if next == 92 { // '\'
+                value = value + "\\";
+            }
+            if next != 110 && next != 116 && next != 34 && next != 92 {
+                value = value + string_from_char(next);
+            }
+        } else {
+            value = value + string_from_char(ch);
+        }
+    }
+    
+    advance_char(lexer); // Skip closing quote
+    return make_token(TOK_STRING(), value);
+}
+
+fn lex_ident(mut lexer: Lexer) -> String {
+    let mut value = "";
+    while is_alnum(peek_char(lexer)) {
+        value = value + string_from_char(advance_char(lexer));
+    }
+    
+    // Check for keywords
+    if value == "fn" {
+        return make_token(TOK_FN(), value);
+    }
+    if value == "let" {
+        return make_token(TOK_LET(), value);
+    }
+    if value == "if" {
+        return make_token(TOK_IF(), value);
+    }
+    if value == "else" {
+        return make_token(TOK_ELSE(), value);
+    }
+    if value == "return" {
+        return make_token(TOK_RETURN(), value);
+    }
+    if value == "print" {
+        return make_token(TOK_PRINT(), value);
+    }
+    if value == "true" {
+        return make_token(TOK_TRUE(), value);
+    }
+    if value == "false" {
+        return make_token(TOK_FALSE(), value);
+    }
+    return make_token(TOK_IDENT(), value);
+}
+
+fn lex_next_token(mut lexer: Lexer) -> String {
+    skip_whitespace(lexer);
+    
+    let ch = peek_char(lexer);
+    if ch == -1 {
+        return make_token(TOK_EOF(), "");
+    }
+    
+    // Numbers
+    if is_digit(ch) {
+        return lex_number(lexer);
+    }
+    
+    // Strings
+    if ch == 34 { // '"'
+        return lex_string(lexer);
+    }
+    
+    // Identifiers and keywords
+    if is_alpha(ch) || ch == 95 { // underscore
+        return lex_ident(lexer);
+    }
+    
+    // Single character tokens
+    advance_char(lexer);
+    
+    if ch == 43 { // '+'
+        return make_token(TOK_PLUS(), "+");
+    }
+    if ch == 45 { // '-'
+        let next = peek_char(lexer);
+        if next == 62 { // '>'
+            advance_char(lexer);
+            return make_token(TOK_ARROW(), "->");
+        }
+        return make_token(TOK_MINUS(), "-");
+    }
+    if ch == 42 { // '*'
+        return make_token(TOK_STAR(), "*");
+    }
+    if ch == 47 { // '/'
+        // Check for comment
+        if peek_char(lexer) == 47 { // '/'
+            // Skip line comment
+            while peek_char(lexer) != 10 && peek_char(lexer) != -1 {
+                advance_char(lexer);
+            }
+            return lex_next_token(lexer);
+        }
+        return make_token(TOK_SLASH(), "/");
+    }
+    if ch == 61 { // '='
+        if peek_char(lexer) == 61 { // '='
+            advance_char(lexer);
+            return make_token(TOK_EQEQ(), "==");
+        }
+        return make_token(TOK_EQ(), "=");
+    }
+    if ch == 60 { // '<'
+        return make_token(TOK_LT(), "<");
+    }
+    if ch == 62 { // '>'
+        return make_token(TOK_GT(), ">");
+    }
+    if ch == 40 { // '('
+        return make_token(TOK_LPAREN(), "(");
+    }
+    if ch == 41 { // ')'
+        return make_token(TOK_RPAREN(), ")");
+    }
+    if ch == 123 { // '{'
+        return make_token(TOK_LBRACE(), "{");
+    }
+    if ch == 125 { // '}'
+        return make_token(TOK_RBRACE(), "}");
+    }
+    if ch == 59 { // ';'
+        return make_token(TOK_SEMICOLON(), ";");
+    }
+    if ch == 44 { // ','
+        return make_token(TOK_COMMA(), ",");
+    }
+    if ch == 58 { // ':'
+        return make_token(TOK_COLON(), ":");
+    }
+    
+    // Unknown character
+    return make_token(TOK_EOF, "");
+}
+
+// ============ Code Generation ============
+
+fn generate_c_header() -> String {
+    let mut output = "#include <stdio.h>\n";
+    output = output + "#include <stdlib.h>\n";
+    output = output + "#include <string.h>\n";
+    output = output + "#include <stdbool.h>\n\n";
+    
+    // Runtime functions
+    output = output + "// Runtime functions\n";
+    output = output + "void __pd_print(const char* s) { printf(\"%s\\n\", s); }\n";
+    output = output + "long long __pd_string_len(const char* s) { return strlen(s); }\n";
+    output = output + "long long __pd_string_char_at(const char* s, long long i) {\n";
+    output = output + "    if (i < 0 || i >= strlen(s)) return -1;\n";
+    output = output + "    return (unsigned char)s[i];\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_string_from_char(long long c) {\n";
+    output = output + "    char* buf = malloc(2);\n";
+    output = output + "    buf[0] = (char)c; buf[1] = '\\0';\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_string_concat(const char* a, const char* b) {\n";
+    output = output + "    char* result = malloc(strlen(a) + strlen(b) + 1);\n";
+    output = output + "    strcpy(result, a);\n";
+    output = output + "    strcat(result, b);\n";
+    output = output + "    return result;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_int_to_string(long long n) {\n";
+    output = output + "    char* buf = malloc(32);\n";
+    output = output + "    sprintf(buf, \"%lld\", n);\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n";
+    output = output + "long long __pd_string_to_int(const char* s) {\n";
+    output = output + "    return atoll(s);\n";
+    output = output + "}\n\n";
+    
+    // Function renames
+    output = output + "#define string_len __pd_string_len\n";
+    output = output + "#define string_char_at __pd_string_char_at\n";
+    output = output + "#define string_from_char __pd_string_from_char\n";
+    output = output + "#define string_concat __pd_string_concat\n";
+    output = output + "#define int_to_string __pd_int_to_string\n";
+    output = output + "#define string_to_int __pd_string_to_int\n";
+    output = output + "#define print __pd_print\n\n";
+    
+    return output;
+}
+
+// Simple expression compilation
+fn compile_expr(expr: String) -> String {
+    // For now, just handle simple cases
+    // Format: "type:data"
+    let first_char = string_char_at(expr, 0);
+    
+    if first_char == 34 { // String literal
+        return expr;
+    }
+    if is_digit(first_char) || first_char == 45 { // Number or negative
+        return expr;
+    }
+    if expr == "true" {
+        return "1";
+    }
+    if expr == "false" {
+        return "0";
+    }
+    // Variable or function call
+    return expr;
+}
+
+// Compile a simple print statement
+fn compile_print_stmt(content: String) -> String {
+    // Extract the expression inside print(...)
+    let mut i = 6; // Skip "print("
+    let mut expr = "";
+    let mut paren_count = 1;
+    
+    while i < string_len(content) && paren_count > 0 {
+        let ch = string_char_at(content, i);
+        if ch == 40 { // '('
+            paren_count = paren_count + 1;
+        }
+        if ch == 41 { // ')'
+            paren_count = paren_count - 1;
+            if paren_count == 0 {
+                break;
+            }
+        }
+        expr = expr + string_from_char(ch);
+        i = i + 1;
+    }
+    
+    return "    print(" + compile_expr(expr) + ");\n";
+}
+
+// Main compilation function
+fn compile_program(source: String) -> String {
+    let mut output = generate_c_header();
+    
+    // Initialize lexer
+    let mut lexer = Lexer { 
+        input: source, 
+        pos: 0, 
+        len: string_len(source) 
+    };
+    
+    // For now, just handle simple main function with print statements
+    output = output + "int main() {\n";
+    
+    // Process tokens
+    let mut token = lex_next_token(lexer);
+    while token_type(token) != TOK_EOF() {
+        let ty = token_type(token);
+        let val = token_value(token);
+        
+        // Handle print statements
+        if ty == TOK_PRINT() {
+            // Reconstruct print statement
+            let mut stmt = "print";
+            token = lex_next_token(lexer); // (
+            stmt = stmt + "(";
+            
+            token = lex_next_token(lexer); // expression
+            if token_type(token) == TOK_STRING() {
+                stmt = stmt + "\"" + token_value(token) + "\"";
+            } else {
+                stmt = stmt + token_value(token);
+            }
+            
+            token = lex_next_token(lexer); // )
+            stmt = stmt + ")";
+            
+            output = output + compile_print_stmt(stmt);
+            
+            token = lex_next_token(lexer); // ;
+        }
+        
+        token = lex_next_token(lexer);
+    }
+    
+    output = output + "    return 0;\n";
+    output = output + "}\n";
+    
+    return output;
+}
+
+// ============ Main ============
+
+fn main() {
+    // Simple test program
+    let source = "print(\"Hello from Palladium compiler!\");\nprint(\"This is a minimal compiler\");\n";
+    
+    let output = compile_program(source);
+    
+    print("Generated C code:");
+    print("==================");
+    print(output);
+}

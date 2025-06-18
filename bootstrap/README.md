@@ -1,19 +1,19 @@
-# Bootstrap Compilers
+# Palladium Bootstrap Compilers
 
-This directory contains the bootstrap compilers for Palladium.
+This directory contains the bootstrap implementations of the Palladium compiler, demonstrating the language's self-hosting capability.
 
 ## Directory Structure
 
 ```
 bootstrap/
-├── archived/          # Old bootstrap attempts (historical reference)
-├── core/             # Essential working compilers (6 files)
-├── demos/            # Demonstration programs (3 files)
-├── utilities/        # Helper utilities (3 files)
-├── archive/          # Old versions and experiments (45 files)
+├── v1_archive/       # First bootstrap attempt (historical reference)
+│   ├── archive/     # Old versions and experiments (45 files)
+│   ├── core/        # Essential working compilers (6 files)
+│   ├── demos/       # Demonstration programs (3 files)
+│   └── utilities/   # Helper utilities (3 files)
 ├── v2_full_compiler/ # Full compiler written in Palladium (1220 lines)
 │   └── pdc.pd       # Main compiler that compiles itself
-└── v3_incremental/   # Incremental bootstrap approach
+└── v3_incremental/   # Incremental bootstrap approach ✅
     └── tiny_v16.pd  # Minimal compiler with arrays (100% bootstrap)
 ```
 

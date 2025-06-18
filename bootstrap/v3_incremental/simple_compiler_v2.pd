@@ -1,0 +1,383 @@
+// Simple Palladium Compiler v2
+// Extends v1 to support let statements and variables
+// Can handle: print statements, let bindings, variable usage
+
+// ============ Helper Functions ============
+
+fn is_digit(ch: i32) -> bool {
+    return ch >= 48 && ch <= 57; // '0' to '9'
+}
+
+fn is_alpha(ch: i32) -> bool {
+    return (ch >= 97 && ch <= 122) || // 'a' to 'z'
+           (ch >= 65 && ch <= 90);     // 'A' to 'Z'
+}
+
+fn is_alphanum(ch: i32) -> bool {
+    return is_alpha(ch) || is_digit(ch) || ch == 95; // underscore
+}
+
+// Skip whitespace and return new position
+fn skip_whitespace(line: String, start: i32) -> i32 {
+    let mut i = start;
+    let len = string_len(line);
+    while i < len {
+        let ch = string_char_at(line, i);
+        if ch != 32 && ch != 9 { // space or tab
+            break;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+// Extract identifier starting at position
+fn extract_identifier(line: String, start: i32) -> String {
+    let mut result = "";
+    let mut i = start;
+    let len = string_len(line);
+    
+    while i < len {
+        let ch = string_char_at(line, i);
+        if is_alphanum(ch) {
+            result = result + string_from_char(ch);
+        } else {
+            break;
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Check if string starts with prefix at position
+fn starts_with_at(str: String, prefix: String, pos: i32) -> bool {
+    let str_len = string_len(str);
+    let prefix_len = string_len(prefix);
+    
+    if pos + prefix_len > str_len {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < prefix_len {
+        if string_char_at(str, pos + i) != string_char_at(prefix, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+// ============ Code Generation ============
+
+fn generate_c_header() -> String {
+    let mut output = "#include <stdio.h>\n";
+    output = output + "#include <stdlib.h>\n";
+    output = output + "#include <string.h>\n\n";
+    
+    // Runtime functions
+    output = output + "// Runtime functions\n";
+    output = output + "void __pd_print(const char* s) { printf(\"%s\\n\", s); }\n";
+    output = output + "void __pd_print_int(long long n) { printf(\"%lld\\n\", n); }\n";
+    output = output + "long long __pd_string_len(const char* s) { return strlen(s); }\n";
+    output = output + "long long __pd_string_char_at(const char* s, long long i) {\n";
+    output = output + "    if (i < 0 || i >= strlen(s)) return -1;\n";
+    output = output + "    return (unsigned char)s[i];\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_string_from_char(long long c) {\n";
+    output = output + "    char* buf = malloc(2);\n";
+    output = output + "    buf[0] = (char)c; buf[1] = '\\0';\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_string_concat(const char* a, const char* b) {\n";
+    output = output + "    char* result = malloc(strlen(a) + strlen(b) + 1);\n";
+    output = output + "    strcpy(result, a);\n";
+    output = output + "    strcat(result, b);\n";
+    output = output + "    return result;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_int_to_string(long long n) {\n";
+    output = output + "    char* buf = malloc(32);\n";
+    output = output + "    sprintf(buf, \"%lld\", n);\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n\n";
+    
+    // Function renames
+    output = output + "#define string_len __pd_string_len\n";
+    output = output + "#define string_char_at __pd_string_char_at\n";
+    output = output + "#define string_from_char __pd_string_from_char\n";
+    output = output + "#define string_concat __pd_string_concat\n";
+    output = output + "#define int_to_string __pd_int_to_string\n";
+    output = output + "#define print __pd_print\n";
+    output = output + "#define print_int __pd_print_int\n\n";
+    
+    return output;
+}
+
+// Extract string literal content
+fn extract_string_literal(line: String, start: i32) -> String {
+    let mut result = "";
+    let mut i = start + 1; // Skip opening quote
+    let len = string_len(line);
+    
+    while i < len {
+        let ch = string_char_at(line, i);
+        if ch == 34 { // '"'
+            break;
+        }
+        
+        // Handle escape sequences
+        if ch == 92 { // backslash
+            i = i + 1;
+            if i < len {
+                let next = string_char_at(line, i);
+                if next == 110 { // 'n'
+                    result = result + "\\n";
+                }
+                if next == 116 { // 't'
+                    result = result + "\\t";
+                }
+                if next == 34 { // '"'
+                    result = result + "\\\"";
+                }
+                if next == 92 { // '\'
+                    result = result + "\\\\";
+                }
+                if next != 110 && next != 116 && next != 34 && next != 92 {
+                    result = result + string_from_char(next);
+                }
+            }
+        } else {
+            result = result + string_from_char(ch);
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Extract number literal
+fn extract_number(line: String, start: i32) -> String {
+    let mut result = "";
+    let mut i = start;
+    let len = string_len(line);
+    
+    while i < len {
+        let ch = string_char_at(line, i);
+        if is_digit(ch) {
+            result = result + string_from_char(ch);
+        } else {
+            break;
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Compile an expression (simple for now)
+fn compile_expression(line: String, start: i32) -> String {
+    let i = skip_whitespace(line, start);
+    let ch = string_char_at(line, i);
+    
+    // String literal
+    if ch == 34 { // '"'
+        let content = extract_string_literal(line, i);
+        return "\"" + content + "\"";
+    }
+    
+    // Number literal
+    if is_digit(ch) {
+        let num = extract_number(line, i);
+        return num;
+    }
+    
+    // Identifier (variable reference)
+    if is_alpha(ch) {
+        let id = extract_identifier(line, i);
+        return id;
+    }
+    
+    return "0"; // Default
+}
+
+// Compile a let statement
+fn compile_let_statement(line: String) -> String {
+    // Skip "let"
+    let mut i = skip_whitespace(line, 3);
+    
+    // Get variable name
+    let var_name = extract_identifier(line, i);
+    i = i + string_len(var_name);
+    i = skip_whitespace(line, i);
+    
+    // Skip "="
+    if string_char_at(line, i) == 61 { // '='
+        i = i + 1;
+    }
+    i = skip_whitespace(line, i);
+    
+    // Get value
+    let value = compile_expression(line, i);
+    
+    // Determine type based on first character of value
+    let first_ch = string_char_at(value, 0);
+    if first_ch == 34 { // String
+        return "    const char* " + var_name + " = " + value + ";\n";
+    }
+    if is_digit(first_ch) { // Number
+        return "    long long " + var_name + " = " + value + ";\n";
+    }
+    
+    // Variable reference - assume long long for now
+    return "    long long " + var_name + " = " + value + ";\n";
+}
+
+// Compile a print statement (enhanced to handle variables)
+fn compile_print_statement(line: String) -> String {
+    // Find opening parenthesis
+    let mut i = 0;
+    let len = string_len(line);
+    while i < len && string_char_at(line, i) != 40 { // '('
+        i = i + 1;
+    }
+    
+    i = i + 1; // Skip '('
+    i = skip_whitespace(line, i);
+    
+    let ch = string_char_at(line, i);
+    
+    // String literal
+    if ch == 34 { // '"'
+        let content = extract_string_literal(line, i);
+        return "    print(\"" + content + "\");\n";
+    }
+    
+    // Number literal or identifier
+    if is_digit(ch) || is_alpha(ch) {
+        let expr = compile_expression(line, i);
+        // For now, assume integers for non-string prints
+        if is_digit(ch) {
+            return "    print_int(" + expr + ");\n";
+        }
+        // Variable - need to determine type at runtime
+        // For simplicity, try print first
+        return "    print(" + expr + ");\n";
+    }
+    
+    return "";
+}
+
+// Compile a single line
+fn compile_line(line: String) -> String {
+    // Skip empty lines
+    if string_len(line) == 0 {
+        return "";
+    }
+    
+    // Skip whitespace at start
+    let start = skip_whitespace(line, 0);
+    
+    // Get trimmed line
+    let mut trimmed = "";
+    let mut i = start;
+    while i < string_len(line) {
+        trimmed = trimmed + string_from_char(string_char_at(line, i));
+        i = i + 1;
+    }
+    
+    // Check for let statement
+    if starts_with_at(trimmed, "let ", 0) {
+        return compile_let_statement(trimmed);
+    }
+    
+    // Check for print statement
+    if starts_with_at(trimmed, "print(", 0) {
+        return compile_print_statement(trimmed);
+    }
+    
+    // Check for print_int statement
+    if starts_with_at(trimmed, "print_int(", 0) {
+        // Extract expression
+        let mut j = 10; // Skip "print_int("
+        let len = string_len(trimmed);
+        let mut expr_str = "";
+        let mut paren_count = 1;
+        
+        while j < len && paren_count > 0 {
+            let ch = string_char_at(trimmed, j);
+            if ch == 40 { // '('
+                paren_count = paren_count + 1;
+            }
+            if ch == 41 { // ')'
+                paren_count = paren_count - 1;
+                if paren_count == 0 {
+                    break;
+                }
+            }
+            expr_str = expr_str + string_from_char(ch);
+            j = j + 1;
+        }
+        
+        let expr = compile_expression(expr_str, 0);
+        return "    print_int(" + expr + ");\n";
+    }
+    
+    // Skip other lines for now
+    return "";
+}
+
+// Main compilation function
+fn compile_program(source: String) -> String {
+    let mut output = generate_c_header();
+    output = output + "int main() {\n";
+    
+    // Process line by line
+    let len = string_len(source);
+    let mut i = 0;
+    let mut current_line = "";
+    
+    while i < len {
+        let ch = string_char_at(source, i);
+        if ch == 10 { // newline
+            let compiled = compile_line(current_line);
+            output = output + compiled;
+            current_line = "";
+        }
+        if ch != 10 && ch != 13 { // not newline or carriage return
+            current_line = current_line + string_from_char(ch);
+        }
+        i = i + 1;
+    }
+    
+    // Handle last line if no trailing newline
+    if string_len(current_line) > 0 {
+        let compiled = compile_line(current_line);
+        output = output + compiled;
+    }
+    
+    output = output + "    return 0;\n";
+    output = output + "}\n";
+    
+    return output;
+}
+
+// ============ Main ============
+
+fn main() {
+    // Test program with let statements and variables
+    let source = "let greeting = \"Hello from v2!\";\nlet x = 42;\nlet y = 100;\nprint(greeting);\nprint_int(x);\nprint_int(y);\nlet z = x;\nprint_int(z);\n";
+    
+    print("Input program:");
+    print("==============");
+    print(source);
+    print("");
+    
+    let output = compile_program(source);
+    
+    print("Generated C code:");
+    print("==================");
+    print(output);
+    print("==================");
+}
