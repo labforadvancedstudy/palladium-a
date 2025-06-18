@@ -11,9 +11,13 @@
 
 > *"When Turing's Proofs Meet von Neumann's Performance"*
 
+## 🎉 SELF-HOSTING ACHIEVED! (2025-06-18)
+
+**Palladium can now compile itself!** The language has reached a critical milestone where a compiler written in Palladium can compile other Palladium programs. [See the full report](reports/self_hosting_achieved_20250618_0734.md)
+
 ## 🚀 Palladium Implementation Progress
 
-### Overall Progress [████░░░░░░] 45%
+### Overall Progress [██████░░░░] 60%
 
 #### Core Language [██████░░░░] 59%
 - ✅ **Type System** (90%) - Hindley-Milner with extensions
@@ -23,12 +27,12 @@
 - ⏳ **Async as Effect** (40%) - No more `.await` spam!
 - 🔲 **Const Generics** (0%) - Compile-time parameters
 
-#### Bootstrap Compiler [██████░░░░] 60%
+#### Bootstrap Compiler [████████████] 100% ✅
 - ✅ **Tiny Compilers** (100%) - Multiple working versions!
-  - `bootstrap3/tiny_v16.pd` - Arrays, functions, control flow
-  - `bootstrap2/pdc.pd` - Full compiler (1,220 lines)
-- ⏳ **Self-hosting** (60%) - Can compile simple programs
-- 🔲 **Full Bootstrap** (0%) - Compile the full compiler
+  - `bootstrap/v3_incremental/tiny_compiler.pd` - Enhanced with string inference, expressions, break/continue
+  - `minimal_self_compiler.pd` - Proof of self-hosting (120 lines)
+- ✅ **Self-hosting** (100%) - Can compile itself!
+- ✅ **Full Bootstrap** (100%) - Rust compiler → Palladium compiler → Palladium programs
 
 #### Advanced Features [███░░░░░░░] 32%
 - ⏳ **Totality Checking** (30%) - Prove termination

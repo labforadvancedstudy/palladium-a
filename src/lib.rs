@@ -1,15 +1,16 @@
 // Alan von Palladium Compiler Library
 // "The foundation where legends are built"
 
-pub mod driver;
-pub mod lexer;
-pub mod parser;
 pub mod ast;
-pub mod typeck;
 pub mod codegen;
+pub mod driver;
 pub mod errors;
-pub mod runtime;
+pub mod lexer;
+pub mod optimizer;
+pub mod parser;
 pub mod resolver;
+pub mod runtime;
+pub mod typeck;
 
 // Re-export main components
 pub use driver::Driver;

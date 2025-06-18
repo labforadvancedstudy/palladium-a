@@ -5,7 +5,8 @@ use std::env;
 use std::process;
 
 fn main() {
-    println!(r#"
+    println!(
+        r#"
      _    __     ______    ____                      _ _           
     / \   \ \   / /  _ \  / ___|___  _ __ ___  _ __ (_) | ___ _ __ 
    / _ \   \ \ / /| |_) || |   / _ \| '_ ` _ \| '_ \| | |/ _ \ '__|
@@ -15,10 +16,11 @@ fn main() {
     
     Alan von Palladium Compiler v0.1-alpha
     "Turing's Proofs Meet von Neumann's Performance"
-    "#);
+    "#
+    );
 
     let args: Vec<String> = env::args().collect();
-    
+
     if args.len() < 2 {
         eprintln!("Usage: {} <command> [options]", args[0]);
         eprintln!("Commands:");
@@ -35,14 +37,14 @@ fn main() {
                 eprintln!("Error: Please specify a file to compile");
                 process::exit(1);
             }
-            
+
             // Parse -o option for output name
             let output_name = if args.len() >= 5 && args[3] == "-o" {
                 Some(args[4].as_str())
             } else {
                 None
             };
-            
+
             println!("Compiling {}...", args[2]);
             compile_file(&args[2], output_name);
         }
@@ -69,21 +71,21 @@ fn main() {
 }
 
 fn compile_file(filename: &str, output_name: Option<&str>) {
-    use std::path::Path;
     use palladium::driver::Driver;
-    
+    use std::path::Path;
+
     let driver = Driver::new();
     let path = Path::new(filename);
-    
+
     match driver.compile_file(path) {
         Ok(c_path) => {
             // If output name specified, also compile to executable
             if let Some(name) = output_name {
                 use std::process::Command;
-                
+
                 let build_dir = Path::new("build_output");
                 let output_path = build_dir.join(name);
-                
+
                 println!("🔗 Linking with gcc...");
                 let gcc_output = Command::new("gcc")
                     .arg(&c_path)
@@ -91,34 +93,34 @@ fn compile_file(filename: &str, output_name: Option<&str>) {
                     .arg(&output_path)
                     .output()
                     .expect("Failed to run gcc");
-                
+
                 if !gcc_output.status.success() {
                     let stderr = String::from_utf8_lossy(&gcc_output.stderr);
-                    eprintln!("❌ gcc compilation failed:\n{}", stderr);
+                    eprintln!("\x1b[1;31m❌ gcc compilation failed:\x1b[0m\n{}", stderr);
                     process::exit(1);
                 }
-                
+
                 println!("   Created executable: {}", output_path.display());
             }
-        },
-        Err(e) => {
-            eprintln!("❌ Compilation failed: {}", e);
+        }
+        Err(_) => {
+            // Error already reported by driver with enhanced formatting
             process::exit(1);
         }
     }
 }
 
 fn compile_and_run(filename: &str) {
-    use std::path::Path;
     use palladium::driver::Driver;
-    
+    use std::path::Path;
+
     let driver = Driver::new();
     let path = Path::new(filename);
-    
+
     match driver.compile_and_run(path) {
-        Ok(()) => {},
-        Err(e) => {
-            eprintln!("❌ Error: {}", e);
+        Ok(()) => {}
+        Err(_) => {
+            // Error already reported by driver with enhanced formatting
             process::exit(1);
         }
     }
