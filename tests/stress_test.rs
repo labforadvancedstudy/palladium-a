@@ -15,7 +15,7 @@ fn main() {{
 "#,
         long_string
     );
-    
+
     let result = driver.compile_string(&source, "long_string.pd").map(|_| ());
     assert!(result.is_ok(), "Should handle long strings");
 }
@@ -24,13 +24,13 @@ fn main() {{
 fn test_many_print_statements() {
     let driver = Driver::new();
     let mut source = String::from("fn main() {\n");
-    
+
     // Generate 100 print statements
     for i in 0..100 {
         source.push_str(&format!("    print(\"Line {}\");\n", i));
     }
     source.push_str("}\n");
-    
+
     let result = driver.compile_string(&source, "many_prints.pd").map(|_| ());
     assert!(result.is_ok(), "Should handle many print statements");
 }
@@ -49,8 +49,10 @@ fn main() {
 }
 // Final comment
 "#;
-    
-    let result = driver.compile_string(source, "nested_comments.pd").map(|_| ());
+
+    let result = driver
+        .compile_string(source, "nested_comments.pd")
+        .map(|_| ());
     assert!(result.is_ok(), "Should handle multiple comments");
 }
 
@@ -64,7 +66,7 @@ fn main() {
     print("Math symbols: ∑ ∏ ∫");
 }
 "#;
-    
+
     let result = driver.compile_string(source, "unicode.pd").map(|_| ());
     // Unicode support might not be in v0.1
     match result {
@@ -89,8 +91,10 @@ fn main() {{
 "#,
         long_name
     );
-    
-    let result = driver.compile_string(&source, "long_func_name.pd").map(|_| ());
+
+    let result = driver
+        .compile_string(&source, "long_func_name.pd")
+        .map(|_| ());
     // Long function names might not be fully supported in v0.1
     match result {
         Ok(_) => println!("Long function names are supported"),
@@ -101,12 +105,11 @@ fn main() {{
 #[test]
 fn test_whitespace_variations() {
     let driver = Driver::new();
-    
+
     // Test various whitespace styles
     let test_cases = [
         // Minimal whitespace
         "fn main(){print(\"Minimal\");}",
-        
         // Excessive whitespace
         r#"
 
@@ -121,11 +124,10 @@ fn test_whitespace_variations() {
 
 
         "#,
-        
         // Mixed tabs and spaces (not recommended but should handle)
         "fn main() {\n\tprint(\"Tab\");\n    print(\"Spaces\");\n}",
     ];
-    
+
     for (i, source) in test_cases.iter().enumerate() {
         let result = driver
             .compile_string(source, &format!("whitespace_{}.pd", i))
@@ -147,7 +149,7 @@ fn main() {
     print("");
 }
 "#;
-    
+
     let result = driver.compile_string(source, "empty_string.pd").map(|_| ());
     assert!(result.is_ok(), "Should handle empty string literals");
 }
@@ -160,16 +162,21 @@ fn main() {
     print("Special: !@#$%^&*()_+-=[]{}|;:',.<>?/");
 }
 "#;
-    
-    let result = driver.compile_string(source, "special_chars.pd").map(|_| ());
-    assert!(result.is_ok(), "Should handle special characters in strings");
+
+    let result = driver
+        .compile_string(source, "special_chars.pd")
+        .map(|_| ());
+    assert!(
+        result.is_ok(),
+        "Should handle special characters in strings"
+    );
 }
 
 #[test]
 fn test_multiple_functions_same_line() {
     let driver = Driver::new();
     let source = "fn helper() { print(\"Helper\"); } fn main() { print(\"Main\"); }";
-    
+
     let result = driver.compile_string(source, "one_line.pd").map(|_| ());
     // This might not be supported in v0.1
     match result {
@@ -183,13 +190,15 @@ fn test_multiple_functions_same_line() {
 fn test_extremely_large_program() {
     let driver = Driver::new();
     let mut source = String::from("fn main() {\n");
-    
+
     // Generate 10,000 print statements
     for i in 0..10000 {
         source.push_str(&format!("    print(\"Line {}\");\n", i));
     }
     source.push_str("}\n");
-    
-    let result = driver.compile_string(&source, "huge_program.pd").map(|_| ());
+
+    let result = driver
+        .compile_string(&source, "huge_program.pd")
+        .map(|_| ());
     assert!(result.is_ok(), "Should handle very large programs");
 }

@@ -1,5 +1,5 @@
 fn main() {
-    print(42);
-    print(1337);
-    print(9999);
+    print_int(42);
+    print_int(1337);
+    print_int(9999);
 }

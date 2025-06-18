@@ -19,12 +19,13 @@ fn compile_and_check(name: &str, pd_code: &str, expected_output: &str) {
     // Extract the actual program output (between the dashed lines)
     let full_output = String::from_utf8_lossy(&run_output.stdout);
     let lines: Vec<&str> = full_output.lines().collect();
-    
+
     // Find the output between the dashed lines
     let mut start_idx = None;
     let mut end_idx = None;
     for (i, line) in lines.iter().enumerate() {
-        if line.contains("─────────────────────────────────────") {
+        if line.contains("─────────────────────────────────────")
+        {
             if start_idx.is_none() {
                 start_idx = Some(i + 1);
             } else {
@@ -33,7 +34,7 @@ fn compile_and_check(name: &str, pd_code: &str, expected_output: &str) {
             }
         }
     }
-    
+
     let actual_output = if let (Some(start), Some(end)) = (start_idx, end_idx) {
         lines[start..end].join("\n")
     } else {

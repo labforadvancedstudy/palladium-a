@@ -1,0 +1,4 @@
+// Simple hello world test
+fn main() {
+    print("Hello, Palladium!");
+}

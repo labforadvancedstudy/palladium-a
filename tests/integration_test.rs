@@ -1,7 +1,7 @@
 // Integration tests for Alan von Palladium Compiler v0.1
 // Testing the legendary compiler's basic functionality
 
-use palladium::{Driver, CompileError};
+use palladium::{CompileError, Driver};
 use std::fs;
 use std::path::Path;
 
@@ -26,9 +26,12 @@ fn main() {
     print("Hello, World!");
 }
 "#;
-    
+
     let result = compile_source(source, "hello.pd");
-    assert!(result.is_ok(), "Hello world program should compile successfully");
+    assert!(
+        result.is_ok(),
+        "Hello world program should compile successfully"
+    );
 }
 
 #[test]
@@ -41,9 +44,12 @@ fn main() {
     print("Third line");
 }
 "#;
-    
+
     let result = compile_source(source, "multi_print.pd");
-    assert!(result.is_ok(), "Multiple print statements should compile successfully");
+    assert!(
+        result.is_ok(),
+        "Multiple print statements should compile successfully"
+    );
 }
 
 #[test]
@@ -53,16 +59,19 @@ fn main() {
     print("Hello from Palladium!");
 }
 "#;
-    
+
     let test_file = create_test_file(source, "test_hello.pd");
     let driver = Driver::new();
-    
+
     let result = driver.compile_and_run(&test_file);
-    
+
     // Clean up
     fs::remove_file(&test_file).ok();
-    
-    assert!(result.is_ok(), "Hello world program should compile and run successfully");
+
+    assert!(
+        result.is_ok(),
+        "Hello world program should compile and run successfully"
+    );
 }
 
 #[test]
@@ -72,16 +81,23 @@ fn main() {
     print("Missing semicolon")  // Missing semicolon
 }
 "#;
-    
+
     let result = compile_source(source, "syntax_error.pd");
-    assert!(result.is_err(), "Missing semicolon should cause compilation error");
-    
+    assert!(
+        result.is_err(),
+        "Missing semicolon should cause compilation error"
+    );
+
     if let Err(e) = result {
         // Check that we get a meaningful error message
         let error_msg = e.to_string();
-        assert!(error_msg.contains("semicolon") || error_msg.contains("';'") || 
-                error_msg.contains("expected"), 
-                "Error message should mention missing semicolon: {}", error_msg);
+        assert!(
+            error_msg.contains("semicolon")
+                || error_msg.contains("';'")
+                || error_msg.contains("expected"),
+            "Error message should mention missing semicolon: {}",
+            error_msg
+        );
     }
 }
 
@@ -92,9 +108,12 @@ fn main() {
     print("Unclosed string);
 }
 "#;
-    
+
     let result = compile_source(source, "unclosed_string.pd");
-    assert!(result.is_err(), "Unclosed string should cause compilation error");
+    assert!(
+        result.is_err(),
+        "Unclosed string should cause compilation error"
+    );
 }
 
 #[test]
@@ -105,9 +124,12 @@ fn main {
     print("Invalid");
 }
 "#;
-    
+
     let result = compile_source(source, "invalid_func.pd");
-    assert!(result.is_err(), "Invalid function syntax should cause compilation error");
+    assert!(
+        result.is_err(),
+        "Invalid function syntax should cause compilation error"
+    );
 }
 
 #[test]
@@ -118,9 +140,12 @@ fn not_main() {
     print("This won't work");
 }
 "#;
-    
+
     let result = compile_source(source, "no_main.pd");
-    assert!(result.is_err(), "Missing main function should cause compilation error");
+    assert!(
+        result.is_err(),
+        "Missing main function should cause compilation error"
+    );
 }
 
 #[test]
@@ -130,9 +155,12 @@ fn main() {
     undefined_function();  // This function doesn't exist
 }
 "#;
-    
+
     let result = compile_source(source, "undefined_func.pd");
-    assert!(result.is_err(), "Calling undefined function should cause compilation error");
+    assert!(
+        result.is_err(),
+        "Calling undefined function should cause compilation error"
+    );
 }
 
 #[test]
@@ -143,9 +171,12 @@ fn main() {
     // Nothing here
 }
 "#;
-    
+
     let result = compile_source(source, "empty_main.pd");
-    assert!(result.is_ok(), "Empty main function should compile successfully");
+    assert!(
+        result.is_ok(),
+        "Empty main function should compile successfully"
+    );
 }
 
 #[test]
@@ -158,9 +189,12 @@ fn main() {
     // Final comment
 }
 "#;
-    
+
     let result = compile_source(source, "comments.pd");
-    assert!(result.is_ok(), "Program with comments should compile successfully");
+    assert!(
+        result.is_ok(),
+        "Program with comments should compile successfully"
+    );
 }
 
 #[test]
@@ -175,7 +209,7 @@ fn main() {
     print("Main function");
 }
 "#;
-    
+
     let result = compile_source(source, "multi_func.pd");
     // This might fail in v0.1 if function calls aren't fully implemented
     match result {
@@ -188,9 +222,9 @@ fn main() {
 fn test_compile_file_not_found() {
     let driver = Driver::new();
     let result = driver.compile_file(Path::new("nonexistent_file.pd"));
-    
+
     assert!(result.is_err(), "Compiling non-existent file should fail");
-    
+
     if let Err(e) = result {
         match e {
             CompileError::IoError(_) => {
@@ -205,16 +239,22 @@ fn test_compile_file_not_found() {
 fn test_empty_source_file() {
     let source = "";
     let result = compile_source(source, "empty.pd");
-    
-    assert!(result.is_err(), "Empty source file should cause compilation error");
+
+    assert!(
+        result.is_err(),
+        "Empty source file should cause compilation error"
+    );
 }
 
 #[test]
 fn test_whitespace_only_file() {
     let source = "   \n\n   \t\t  \n  ";
     let result = compile_source(source, "whitespace.pd");
-    
-    assert!(result.is_err(), "Whitespace-only file should cause compilation error");
+
+    assert!(
+        result.is_err(),
+        "Whitespace-only file should cause compilation error"
+    );
 }
 
 // Stress test with a longer program
@@ -235,7 +275,7 @@ fn main() {
     print("Line 10: End of test");
 }
 "#;
-    
+
     let result = compile_source(source, "longer.pd");
     assert!(result.is_ok(), "Longer program should compile successfully");
 }
@@ -248,26 +288,38 @@ fn main() {
     print("Testing C output");
 }
 "#;
-    
+
     let driver = Driver::new();
     let result = driver.compile_string(source, "test_output.pd");
-    
+
     assert!(result.is_ok(), "Should generate C output successfully");
-    
+
     if let Ok(output_path) = result {
         // Verify the output file exists
         assert!(output_path.exists(), "Output C file should exist");
-        
+
         // Verify it's a .c file
-        assert_eq!(output_path.extension().and_then(|s| s.to_str()), Some("c"),
-                   "Output should be a C file");
-        
+        assert_eq!(
+            output_path.extension().and_then(|s| s.to_str()),
+            Some("c"),
+            "Output should be a C file"
+        );
+
         // Read and verify basic C structure
         let c_content = fs::read_to_string(&output_path).unwrap();
-        assert!(c_content.contains("#include"), "C output should contain includes");
-        assert!(c_content.contains("int main"), "C output should contain main function");
-        assert!(c_content.contains("printf"), "C output should contain printf for print statements");
-        
+        assert!(
+            c_content.contains("#include"),
+            "C output should contain includes"
+        );
+        assert!(
+            c_content.contains("int main"),
+            "C output should contain main function"
+        );
+        assert!(
+            c_content.contains("printf"),
+            "C output should contain printf for print statements"
+        );
+
         // Clean up
         fs::remove_file(&output_path).ok();
     }

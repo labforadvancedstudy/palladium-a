@@ -1,1 +1,1 @@
-fn main() { print(42); }
+fn main() { print_int(42); }

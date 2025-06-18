@@ -11,7 +11,7 @@ fn test_parser_validation() {
     
     // Test expressions
     print("Testing expressions:");
-    print(x);
+    print_int(x);
     print(name);
     
     // Test arithmetic
