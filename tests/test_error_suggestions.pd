@@ -1,0 +1,21 @@
+// Test file to demonstrate enhanced error suggestions
+
+fn main() {
+    // Test 1: Typo in variable name
+    let hello = "world";
+    print(helo); // Should suggest 'hello'
+    
+    // Test 2: Undefined function with typo
+    printl("test"); // Should suggest 'println'
+    
+    // Test 3: Type mismatch with conversion suggestion
+    let num = 42;
+    let text = num; // Should suggest to_string()
+    
+    // Test 4: Immutable assignment
+    let x = 5;
+    x = 10; // Should suggest using 'let mut'
+    
+    // Test 5: Missing import
+    let result = pd_abs(-5); // Should suggest importing std::math
+}

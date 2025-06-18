@@ -1,0 +1,6 @@
+// Test immutable assignment suggestion
+
+fn main() {
+    let x = 5;
+    x = 10; // Should suggest using 'let mut'
+}

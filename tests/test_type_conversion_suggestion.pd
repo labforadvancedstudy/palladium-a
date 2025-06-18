@@ -1,0 +1,6 @@
+// Test type conversion suggestions
+
+fn main() {
+    let num = 42;
+    let text: String = num; // Should suggest int_to_string()
+}
