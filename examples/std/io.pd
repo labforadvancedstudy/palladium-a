@@ -1,0 +1,17 @@
+// Standard I/O module for Palladium
+
+pub fn file_exists(path: String) -> bool {
+    // This is a stub implementation for testing
+    // In a real implementation, this would call system functions
+    return false;
+}
+
+pub fn read_file(path: String) -> String {
+    // Stub implementation
+    return "";
+}
+
+pub fn write_file(path: String, content: String) -> bool {
+    // Stub implementation
+    return false;
+}

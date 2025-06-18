@@ -1,0 +1,22 @@
+// Simple test for break and continue
+fn main() {
+    print("Testing break:");
+    let mut i = 0;
+    while i < 5 {
+        if i == 3 {
+            break;
+        }
+        print_int(i);
+        i = i + 1;
+    }
+    
+    print("Testing continue:");
+    i = 0;
+    while i < 5 {
+        i = i + 1;
+        if i == 3 {
+            continue;
+        }
+        print_int(i);
+    }
+}

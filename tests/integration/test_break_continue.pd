@@ -1,0 +1,42 @@
+// Test break and continue statements
+fn main() {
+    print("Testing break statement:");
+    
+    let mut i = 0;
+    while i < 10 {
+        if i == 5 {
+            print("Breaking at 5");
+            break;
+        }
+        print_int(i);
+        i = i + 1;
+    }
+    
+    print("");
+    print("Testing continue statement:");
+    
+    i = 0;
+    while i < 10 {
+        i = i + 1;
+        if i == 3 || i == 5 || i == 7 {
+            continue;
+        }
+        print_int(i);
+    }
+    
+    print("");
+    print("Testing nested loops with break:");
+    
+    let mut j = 0;
+    while j < 3 {
+        let mut k = 0;
+        while k < 5 {
+            if k == 3 {
+                break;
+            }
+            print_int(j * 10 + k);
+            k = k + 1;
+        }
+        j = j + 1;
+    }
+}

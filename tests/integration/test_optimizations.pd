@@ -1,0 +1,34 @@
+// Test program to demonstrate optimization passes
+
+fn main() {
+    // Constant folding
+    let x = 10 + 20;        // Should be optimized to 30
+    let y = x * 2;          // Should be optimized to 60
+    let z = 100 / 5;        // Should be optimized to 20
+    
+    // Boolean constant folding
+    let a = true && false;  // Should be optimized to false
+    let b = true || false;  // Should be optimized to true
+    
+    // Algebraic simplifications
+    let n = 42;
+    let n1 = n + 0;         // Should be optimized to n
+    let n2 = n * 1;         // Should be optimized to n
+    let n3 = n / 1;         // Should be optimized to n
+    let n4 = n - 0;         // Should be optimized to n
+    
+    // Boolean simplifications
+    let flag = true;
+    let test1 = flag == true;   // Should be optimized to flag
+    let test2 = flag != false;  // Should be optimized to flag
+    
+    // Dead code elimination
+    print_int(x);
+    
+    // This code should be eliminated after the return
+    if false {
+        print("This should never be printed");
+        let dead_var = 999;
+        print_int(dead_var);
+    }
+}

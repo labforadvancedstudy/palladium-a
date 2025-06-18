@@ -1,0 +1,470 @@
+// Advanced Test Runner for Palladium
+// Uses file I/O and simulated process execution
+
+struct TestConfig {
+    compiler_path: String,
+    test_dir: String,
+    output_dir: String,
+    verbose: bool,
+    parallel: bool,
+    filter: String
+}
+
+struct TestMetadata {
+    name: String,
+    description: String,
+    tags: [String; 10],
+    tag_count: i64,
+    expected_exit_code: i64,
+    expected_output_file: String,
+    compile_only: bool,
+    should_fail: bool
+}
+
+// Global configuration
+let mut config: TestConfig;
+
+// Parse test metadata from comments
+fn parse_test_metadata(file_path: String) -> TestMetadata {
+    let mut metadata: TestMetadata;
+    metadata.name = extract_test_name(file_path);
+    metadata.description = "";
+    metadata.tag_count = 0;
+    metadata.expected_exit_code = 0;
+    metadata.expected_output_file = "";
+    metadata.compile_only = false;
+    metadata.should_fail = false;
+    
+    // Read file and parse metadata comments
+    let handle = file_open(file_path);
+    if handle >= 0 {
+        let content = file_read_all(handle);
+        file_close(handle);
+        
+        // Parse metadata from special comments
+        // Format: //@ key: value
+        let lines = split_lines(content);
+        let mut i = 0;
+        while i < lines.count {
+            let line = lines.items[i];
+            if string_starts_with(line, "//@") {
+                parse_metadata_line(line, metadata);
+            }
+            i = i + 1;
+        }
+    }
+    
+    return metadata;
+}
+
+// Parse a single metadata line
+fn parse_metadata_line(line: String, metadata: TestMetadata) {
+    // Remove //@ prefix
+    let content = string_substring(line, 3, string_len(line));
+    
+    // Find colon separator
+    let colon_pos = string_index_of(content, ":");
+    if colon_pos >= 0 {
+        let key = string_trim(string_substring(content, 0, colon_pos));
+        let value = string_trim(string_substring(content, colon_pos + 1, string_len(content)));
+        
+        // Handle different metadata keys
+        if string_equals(key, "description") {
+            metadata.description = value;
+        } else if string_equals(key, "tags") {
+            parse_tags(value, metadata);
+        } else if string_equals(key, "expect-exit-code") {
+            metadata.expected_exit_code = string_to_int(value);
+        } else if string_equals(key, "expect-output") {
+            metadata.expected_output_file = value;
+        } else if string_equals(key, "compile-only") {
+            metadata.compile_only = string_equals(value, "true");
+        } else if string_equals(key, "should-fail") {
+            metadata.should_fail = string_equals(value, "true");
+        }
+    }
+}
+
+// Parse comma-separated tags
+fn parse_tags(tags_str: String, metadata: TestMetadata) {
+    let tags = string_split(tags_str, ",");
+    let mut i = 0;
+    while i < tags.count && metadata.tag_count < 10 {
+        metadata.tags[metadata.tag_count] = string_trim(tags.items[i]);
+        metadata.tag_count = metadata.tag_count + 1;
+        i = i + 1;
+    }
+}
+
+// Discover all test files recursively
+fn discover_all_tests(dir: String) -> [String; 1000] {
+    let mut test_files: [String; 1000];
+    let mut count = 0;
+    
+    // TODO: Implement recursive directory traversal
+    // For now, use known test patterns
+    
+    // Unit tests
+    add_if_exists(test_files, count, dir + "/test_minimal.pd");
+    add_if_exists(test_files, count, dir + "/test_string_concat.pd");
+    add_if_exists(test_files, count, dir + "/test_array_literal_inference.pd");
+    add_if_exists(test_files, count, dir + "/test_struct_returns.pd");
+    add_if_exists(test_files, count, dir + "/test_logical_operators.pd");
+    add_if_exists(test_files, count, dir + "/test_unary_operators.pd");
+    add_if_exists(test_files, count, dir + "/test_range_syntax.pd");
+    
+    // Integration tests
+    add_if_exists(test_files, count, dir + "/integration/simple_test.pd");
+    add_if_exists(test_files, count, dir + "/integration/test_break_continue.pd");
+    add_if_exists(test_files, count, dir + "/integration/test_optimizations.pd");
+    
+    // Bootstrap tests
+    add_if_exists(test_files, count, dir + "/test_bootstrap_simple.pd");
+    add_if_exists(test_files, count, dir + "/test_bootstrap_basic.pd");
+    add_if_exists(test_files, count, dir + "/test_bootstrap_complete.pd");
+    
+    // Example tests
+    let examples_dir = "examples";
+    add_if_exists(test_files, count, examples_dir + "/basic/hello.pd");
+    add_if_exists(test_files, count, examples_dir + "/basic/variables.pd");
+    add_if_exists(test_files, count, examples_dir + "/basic/functions.pd");
+    add_if_exists(test_files, count, examples_dir + "/basic/control_flow.pd");
+    
+    test_files.count = count;
+    return test_files;
+}
+
+// Add file to list if it exists
+fn add_if_exists(files: [String; 1000], count: i64, path: String) {
+    if file_exists(path) && count < 1000 {
+        files[count] = path;
+        count = count + 1;
+    }
+}
+
+// Compile a test file
+fn compile_test_advanced(test_path: String, metadata: TestMetadata) -> TestResult {
+    let output_base = config.output_dir + "/" + metadata.name;
+    let c_output = output_base + ".c";
+    let exe_output = output_base;
+    
+    // Build compiler command
+    let cmd = config.compiler_path + " " + test_path + " -o " + c_output;
+    
+    if config.verbose {
+        print("  Compiling: " + cmd);
+    }
+    
+    // Execute compiler (simulated for now)
+    let compile_handle = file_open("/tmp/palladium_test_compile.sh");
+    if compile_handle >= 0 {
+        file_write(compile_handle, "#!/bin/bash\n" + cmd);
+        file_close(compile_handle);
+        
+        // TODO: Execute script and capture result
+        // For now, check if output was created
+        if file_exists(c_output) {
+            if metadata.compile_only {
+                return TestResult::Pass;
+            }
+            
+            // Compile C to executable
+            let gcc_cmd = "gcc " + c_output + " -o " + exe_output;
+            let gcc_handle = file_open("/tmp/palladium_test_gcc.sh");
+            if gcc_handle >= 0 {
+                file_write(gcc_handle, "#!/bin/bash\n" + gcc_cmd);
+                file_close(gcc_handle);
+                
+                if file_exists(exe_output) {
+                    return TestResult::Pass;
+                }
+            }
+        }
+    }
+    
+    if metadata.should_fail {
+        return TestResult::Pass; // Expected to fail
+    }
+    
+    return TestResult::Error("Compilation failed");
+}
+
+// Execute a compiled test
+fn execute_test_advanced(test_path: String, metadata: TestMetadata) -> TestResult {
+    let exe_path = config.output_dir + "/" + metadata.name;
+    let output_file = exe_path + ".out";
+    
+    // Create execution script
+    let script_path = "/tmp/palladium_test_run.sh";
+    let script_handle = file_open(script_path);
+    if script_handle >= 0 {
+        let script_content = "#!/bin/bash\n" + 
+                           exe_path + " > " + output_file + " 2>&1\n" +
+                           "echo $? > " + exe_path + ".exitcode";
+        file_write(script_handle, script_content);
+        file_close(script_handle);
+        
+        // TODO: Execute script
+        // For now, check output
+        if file_exists(output_file) {
+            // Read actual output
+            let output_handle = file_open(output_file);
+            if output_handle >= 0 {
+                let actual_output = file_read_all(output_handle);
+                file_close(output_handle);
+                
+                // Check expected output if specified
+                if string_len(metadata.expected_output_file) > 0 {
+                    if file_exists(metadata.expected_output_file) {
+                        let expected_handle = file_open(metadata.expected_output_file);
+                        if expected_handle >= 0 {
+                            let expected_output = file_read_all(expected_handle);
+                            file_close(expected_handle);
+                            
+                            if !string_equals(actual_output, expected_output) {
+                                return TestResult::Fail("Output mismatch");
+                            }
+                        }
+                    }
+                }
+                
+                // Check exit code
+                let exitcode_file = exe_path + ".exitcode";
+                if file_exists(exitcode_file) {
+                    let exitcode_handle = file_open(exitcode_file);
+                    if exitcode_handle >= 0 {
+                        let exitcode_str = file_read_all(exitcode_handle);
+                        file_close(exitcode_handle);
+                        
+                        let actual_exitcode = string_to_int(string_trim(exitcode_str));
+                        if actual_exitcode != metadata.expected_exit_code {
+                            return TestResult::Fail("Exit code mismatch: expected " + 
+                                                  int_to_string(metadata.expected_exit_code) + 
+                                                  ", got " + int_to_string(actual_exitcode));
+                        }
+                    }
+                }
+                
+                return TestResult::Pass;
+            }
+        }
+    }
+    
+    return TestResult::Error("Execution failed");
+}
+
+// Generate test report in multiple formats
+fn generate_test_report(report: TestReport, format: String) {
+    if string_equals(format, "json") {
+        generate_json_report(report);
+    } else if string_equals(format, "junit") {
+        generate_junit_report(report);
+    } else if string_equals(format, "markdown") {
+        generate_markdown_report(report);
+    } else {
+        // Default text format
+        print_report(report);
+    }
+}
+
+// Generate JSON test report
+fn generate_json_report(report: TestReport) {
+    let json = "{\n" +
+              "  \"total\": " + int_to_string(report.total) + ",\n" +
+              "  \"passed\": " + int_to_string(report.passed) + ",\n" +
+              "  \"failed\": " + int_to_string(report.failed) + ",\n" +
+              "  \"skipped\": " + int_to_string(report.skipped) + ",\n" +
+              "  \"errors\": " + int_to_string(report.errors) + ",\n" +
+              "  \"duration\": " + int_to_string(report.duration) + "\n" +
+              "}";
+    
+    let handle = file_open("test_report.json");
+    if handle >= 0 {
+        file_write(handle, json);
+        file_close(handle);
+        print("Test report written to test_report.json");
+    }
+}
+
+// Generate JUnit XML report
+fn generate_junit_report(report: TestReport) {
+    let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+             "<testsuites tests=\"" + int_to_string(report.total) + "\" " +
+             "failures=\"" + int_to_string(report.failed) + "\" " +
+             "errors=\"" + int_to_string(report.errors) + "\" " +
+             "skipped=\"" + int_to_string(report.skipped) + "\" " +
+             "time=\"" + int_to_string(report.duration) + "\">\n" +
+             "</testsuites>";
+    
+    let handle = file_open("test_report.xml");
+    if handle >= 0 {
+        file_write(handle, xml);
+        file_close(handle);
+        print("JUnit report written to test_report.xml");
+    }
+}
+
+// Generate Markdown report
+fn generate_markdown_report(report: TestReport) {
+    let success_rate = (report.passed * 100) / report.total;
+    
+    let md = "# Palladium Test Report\n\n" +
+            "## Summary\n\n" +
+            "| Metric | Value |\n" +
+            "|--------|-------|\n" +
+            "| Total Tests | " + int_to_string(report.total) + " |\n" +
+            "| Passed | " + int_to_string(report.passed) + " |\n" +
+            "| Failed | " + int_to_string(report.failed) + " |\n" +
+            "| Skipped | " + int_to_string(report.skipped) + " |\n" +
+            "| Errors | " + int_to_string(report.errors) + " |\n" +
+            "| Success Rate | " + int_to_string(success_rate) + "% |\n" +
+            "| Duration | " + int_to_string(report.duration) + "ms |\n";
+    
+    let handle = file_open("test_report.md");
+    if handle >= 0 {
+        file_write(handle, md);
+        file_close(handle);
+        print("Markdown report written to test_report.md");
+    }
+}
+
+// String helper functions
+fn string_starts_with(s: String, prefix: String) -> bool {
+    let s_len = string_len(s);
+    let prefix_len = string_len(prefix);
+    
+    if prefix_len > s_len {
+        return false;
+    }
+    
+    let sub = string_substring(s, 0, prefix_len);
+    return string_equals(sub, prefix);
+}
+
+fn string_index_of(s: String, needle: String) -> i64 {
+    let s_len = string_len(s);
+    let needle_len = string_len(needle);
+    
+    if needle_len > s_len {
+        return -1;
+    }
+    
+    let mut i = 0;
+    while i <= s_len - needle_len {
+        let sub = string_substring(s, i, i + needle_len);
+        if string_equals(sub, needle) {
+            return i;
+        }
+        i = i + 1;
+    }
+    
+    return -1;
+}
+
+fn string_trim(s: String) -> String {
+    let len = string_len(s);
+    let mut start = 0;
+    let mut end = len;
+    
+    // Trim from start
+    while start < len && char_is_whitespace(string_char_at(s, start)) {
+        start = start + 1;
+    }
+    
+    // Trim from end
+    while end > start && char_is_whitespace(string_char_at(s, end - 1)) {
+        end = end - 1;
+    }
+    
+    return string_substring(s, start, end);
+}
+
+// Split string into lines
+struct StringArray {
+    items: [String; 1000],
+    count: i64
+}
+
+fn split_lines(s: String) -> StringArray {
+    let mut result: StringArray;
+    result.count = 0;
+    
+    let len = string_len(s);
+    let mut start = 0;
+    let mut i = 0;
+    
+    while i < len && result.count < 1000 {
+        if string_char_at(s, i) == 10 { // newline
+            result.items[result.count] = string_substring(s, start, i);
+            result.count = result.count + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    
+    // Add last line if any
+    if start < len && result.count < 1000 {
+        result.items[result.count] = string_substring(s, start, len);
+        result.count = result.count + 1;
+    }
+    
+    return result;
+}
+
+fn string_split(s: String, delim: String) -> StringArray {
+    let mut result: StringArray;
+    result.count = 0;
+    
+    let len = string_len(s);
+    let delim_len = string_len(delim);
+    let mut start = 0;
+    let mut i = 0;
+    
+    while i <= len - delim_len && result.count < 1000 {
+        let sub = string_substring(s, i, i + delim_len);
+        if string_equals(sub, delim) {
+            result.items[result.count] = string_substring(s, start, i);
+            result.count = result.count + 1;
+            start = i + delim_len;
+            i = i + delim_len - 1;
+        }
+        i = i + 1;
+    }
+    
+    // Add last part if any
+    if start <= len && result.count < 1000 {
+        result.items[result.count] = string_substring(s, start, len);
+        result.count = result.count + 1;
+    }
+    
+    return result;
+}
+
+// Advanced main function with argument parsing
+fn main() {
+    // Initialize configuration
+    config.compiler_path = "./palladium";
+    config.test_dir = "tests";
+    config.output_dir = "test_output";
+    config.verbose = false;
+    config.parallel = false;
+    config.filter = "";
+    
+    // TODO: Parse command line arguments when available
+    
+    print_colored(COLOR_BLUE, "=== Palladium Advanced Test Runner ===");
+    print("");
+    
+    // Discover all tests
+    let test_files = discover_all_tests(config.test_dir);
+    print("Found " + int_to_string(test_files.count) + " test files");
+    print("");
+    
+    // Run tests and generate reports
+    let report = run_all_tests();
+    
+    generate_test_report(report, "text");
+    generate_test_report(report, "json");
+    generate_test_report(report, "junit");
+    generate_test_report(report, "markdown");
+}
