@@ -1,7 +1,7 @@
 // Code generation for Palladium
 // "Forging legends into machine code"
 
-use crate::ast::{*, AssignTarget, UnaryOp};
+use crate::ast::{AssignTarget, UnaryOp, *};
 use crate::errors::{CompileError, Result, Span};
 use std::fs::{self, File};
 use std::io::Write;
@@ -34,17 +34,23 @@ impl CodeGenerator {
             generic_instantiations: Vec::new(),
         })
     }
-    
+
     /// Set imported modules for code generation
-    pub fn set_imported_modules(&mut self, modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>) {
+    pub fn set_imported_modules(
+        &mut self,
+        modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
+    ) {
         self.imported_modules = modules;
     }
-    
+
     /// Set generic function instantiations for code generation
-    pub fn set_generic_instantiations(&mut self, instantiations: Vec<(String, Vec<String>, crate::typeck::GenericFunction)>) {
+    pub fn set_generic_instantiations(
+        &mut self,
+        instantiations: Vec<(String, Vec<String>, crate::typeck::GenericFunction)>,
+    ) {
         self.generic_instantiations = instantiations;
     }
-    
+
     /// Infer the C type of an expression
     fn infer_expr_type(&self, expr: &Expr) -> String {
         match expr {
@@ -54,19 +60,22 @@ impl CodeGenerator {
             Expr::StructLiteral { name, .. } => name.to_string(),
             Expr::Ident(name) => {
                 // Look up variable type
-                self.variables.get(name).cloned().unwrap_or_else(|| "long long".to_string())
-            },
+                self.variables
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| "long long".to_string())
+            }
             Expr::Call { func, .. } => {
                 // Look up function return type
                 if let Expr::Ident(func_name) = func.as_ref() {
                     // Check built-in functions that return strings
                     match func_name.as_str() {
-                        "string_concat" | "string_substring" | "string_from_char" | 
-                        "int_to_string" | "file_read_all" | "file_read_line" |
-                        "trim" | "trim_start" | "trim_end" => return "const char*".to_string(),
+                        "string_concat" | "string_substring" | "string_from_char"
+                        | "int_to_string" | "file_read_all" | "file_read_line" | "trim"
+                        | "trim_start" | "trim_end" => return "const char*".to_string(),
                         _ => {}
                     }
-                    
+
                     // Look up user-defined function return type
                     if let Some((_, ret_type)) = self.functions.get(func_name) {
                         match ret_type {
@@ -78,8 +87,10 @@ impl CodeGenerator {
                     }
                 }
                 "long long".to_string()
-            },
-            Expr::Binary { left, op, right, .. } => {
+            }
+            Expr::Binary {
+                left, op, right, ..
+            } => {
                 // String concatenation returns a string
                 if matches!(op, BinOp::Add) {
                     let left_type = self.infer_expr_type(left);
@@ -89,167 +100,212 @@ impl CodeGenerator {
                     }
                 }
                 "long long".to_string()
-            },
+            }
             _ => "long long".to_string(), // fallback
         }
     }
-    
+
     /// Compile an AST to machine code
     pub fn compile(&mut self, program: &Program) -> Result<()> {
         // For v0.1, we'll generate a simple C file that we can compile with gcc
         // This is a temporary solution until LLVM integration is complete
-        
+
         self.output.push_str("#include <stdio.h>\n");
         self.output.push_str("#include <string.h>\n");
         self.output.push_str("#include <stdlib.h>\n");
         self.output.push_str("#include <ctype.h>\n\n");
-        
+
         // Generate print function wrapper
         self.output.push_str("void __pd_print(const char* str) {\n");
         self.output.push_str("    printf(\"%s\\n\", str);\n");
         self.output.push_str("}\n\n");
-        
+
         // Generate print_int function wrapper
-        self.output.push_str("void __pd_print_int(long long value) {\n");
+        self.output
+            .push_str("void __pd_print_int(long long value) {\n");
         self.output.push_str("    printf(\"%lld\\n\", value);\n");
         self.output.push_str("}\n\n");
-        
+
         // Generate string manipulation functions
-        
+
         // string_len
-        self.output.push_str("long long __pd_string_len(const char* str) {\n");
+        self.output
+            .push_str("long long __pd_string_len(const char* str) {\n");
         self.output.push_str("    return strlen(str);\n");
         self.output.push_str("}\n\n");
-        
+
         // string_concat
-        self.output.push_str("const char* __pd_string_concat(const char* s1, const char* s2) {\n");
+        self.output
+            .push_str("const char* __pd_string_concat(const char* s1, const char* s2) {\n");
         self.output.push_str("    size_t len1 = strlen(s1);\n");
         self.output.push_str("    size_t len2 = strlen(s2);\n");
-        self.output.push_str("    char* result = (char*)malloc(len1 + len2 + 1);\n");
+        self.output
+            .push_str("    char* result = (char*)malloc(len1 + len2 + 1);\n");
         self.output.push_str("    strcpy(result, s1);\n");
         self.output.push_str("    strcat(result, s2);\n");
         self.output.push_str("    return result;\n");
         self.output.push_str("}\n\n");
-        
+
         // string_eq
-        self.output.push_str("int __pd_string_eq(const char* s1, const char* s2) {\n");
+        self.output
+            .push_str("int __pd_string_eq(const char* s1, const char* s2) {\n");
         self.output.push_str("    return strcmp(s1, s2) == 0;\n");
         self.output.push_str("}\n\n");
-        
+
         // string_char_at
-        self.output.push_str("long long __pd_string_char_at(const char* str, long long index) {\n");
-        self.output.push_str("    if (index < 0 || index >= (long long)strlen(str)) return -1;\n");
-        self.output.push_str("    return (long long)(unsigned char)str[index];\n");
+        self.output
+            .push_str("long long __pd_string_char_at(const char* str, long long index) {\n");
+        self.output
+            .push_str("    if (index < 0 || index >= (long long)strlen(str)) return -1;\n");
+        self.output
+            .push_str("    return (long long)(unsigned char)str[index];\n");
         self.output.push_str("}\n\n");
-        
+
         // string_substring
         self.output.push_str("const char* __pd_string_substring(const char* str, long long start, long long end) {\n");
         self.output.push_str("    size_t len = strlen(str);\n");
         self.output.push_str("    if (start < 0) start = 0;\n");
-        self.output.push_str("    if (end > (long long)len) end = len;\n");
+        self.output
+            .push_str("    if (end > (long long)len) end = len;\n");
         self.output.push_str("    if (start >= end) return \"\";\n");
         self.output.push_str("    size_t sub_len = end - start;\n");
-        self.output.push_str("    char* result = (char*)malloc(sub_len + 1);\n");
-        self.output.push_str("    strncpy(result, str + start, sub_len);\n");
+        self.output
+            .push_str("    char* result = (char*)malloc(sub_len + 1);\n");
+        self.output
+            .push_str("    strncpy(result, str + start, sub_len);\n");
         self.output.push_str("    result[sub_len] = '\\0';\n");
         self.output.push_str("    return result;\n");
         self.output.push_str("}\n\n");
-        
+
         // string_from_char
-        self.output.push_str("const char* __pd_string_from_char(long long c) {\n");
-        self.output.push_str("    char* result = (char*)malloc(2);\n");
+        self.output
+            .push_str("const char* __pd_string_from_char(long long c) {\n");
+        self.output
+            .push_str("    char* result = (char*)malloc(2);\n");
         self.output.push_str("    result[0] = (char)c;\n");
         self.output.push_str("    result[1] = '\\0';\n");
         self.output.push_str("    return result;\n");
         self.output.push_str("}\n\n");
-        
+
         // char_is_digit
-        self.output.push_str("int __pd_char_is_digit(long long c) {\n");
+        self.output
+            .push_str("int __pd_char_is_digit(long long c) {\n");
         self.output.push_str("    return isdigit((int)c);\n");
         self.output.push_str("}\n\n");
-        
+
         // char_is_alpha
-        self.output.push_str("int __pd_char_is_alpha(long long c) {\n");
+        self.output
+            .push_str("int __pd_char_is_alpha(long long c) {\n");
         self.output.push_str("    return isalpha((int)c);\n");
         self.output.push_str("}\n\n");
-        
+
         // char_is_whitespace
-        self.output.push_str("int __pd_char_is_whitespace(long long c) {\n");
+        self.output
+            .push_str("int __pd_char_is_whitespace(long long c) {\n");
         self.output.push_str("    return isspace((int)c);\n");
         self.output.push_str("}\n\n");
-        
+
         // string_to_int
-        self.output.push_str("long long __pd_string_to_int(const char* str) {\n");
+        self.output
+            .push_str("long long __pd_string_to_int(const char* str) {\n");
         self.output.push_str("    return atoll(str);\n");
         self.output.push_str("}\n\n");
-        
+
         // int_to_string
-        self.output.push_str("const char* __pd_int_to_string(long long n) {\n");
-        self.output.push_str("    char* buffer = (char*)malloc(32);\n");
-        self.output.push_str("    snprintf(buffer, 32, \"%lld\", n);\n");
+        self.output
+            .push_str("const char* __pd_int_to_string(long long n) {\n");
+        self.output
+            .push_str("    char* buffer = (char*)malloc(32);\n");
+        self.output
+            .push_str("    snprintf(buffer, 32, \"%lld\", n);\n");
         self.output.push_str("    return buffer;\n");
         self.output.push_str("}\n\n");
-        
+
         // File I/O functions
         self.output.push_str("// File I/O support\n");
         self.output.push_str("#define MAX_FILES 256\n");
-        self.output.push_str("static FILE* __pd_file_handles[MAX_FILES] = {0};\n");
+        self.output
+            .push_str("static FILE* __pd_file_handles[MAX_FILES] = {0};\n");
         self.output.push_str("static int __pd_next_handle = 1;\n\n");
-        
+
         // file_open
-        self.output.push_str("long long __pd_file_open(const char* path) {\n");
-        self.output.push_str("    if (__pd_next_handle >= MAX_FILES) return -1;\n");
+        self.output
+            .push_str("long long __pd_file_open(const char* path) {\n");
+        self.output
+            .push_str("    if (__pd_next_handle >= MAX_FILES) return -1;\n");
         self.output.push_str("    FILE* f = fopen(path, \"r+\");\n");
-        self.output.push_str("    if (!f) f = fopen(path, \"w+\");\n");
+        self.output
+            .push_str("    if (!f) f = fopen(path, \"w+\");\n");
         self.output.push_str("    if (!f) return -1;\n");
-        self.output.push_str("    int handle = __pd_next_handle++;\n");
+        self.output
+            .push_str("    int handle = __pd_next_handle++;\n");
         self.output.push_str("    __pd_file_handles[handle] = f;\n");
         self.output.push_str("    return handle;\n");
         self.output.push_str("}\n\n");
-        
+
         // file_read_all
-        self.output.push_str("const char* __pd_file_read_all(long long handle) {\n");
+        self.output
+            .push_str("const char* __pd_file_read_all(long long handle) {\n");
         self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return \"\";\n");
-        self.output.push_str("    FILE* f = __pd_file_handles[handle];\n");
+        self.output
+            .push_str("    FILE* f = __pd_file_handles[handle];\n");
         self.output.push_str("    fseek(f, 0, SEEK_END);\n");
         self.output.push_str("    long size = ftell(f);\n");
         self.output.push_str("    fseek(f, 0, SEEK_SET);\n");
-        self.output.push_str("    char* buffer = (char*)malloc(size + 1);\n");
+        self.output
+            .push_str("    char* buffer = (char*)malloc(size + 1);\n");
         self.output.push_str("    fread(buffer, 1, size, f);\n");
         self.output.push_str("    buffer[size] = '\\0';\n");
         self.output.push_str("    return buffer;\n");
         self.output.push_str("}\n\n");
-        
+
         // file_read_line
-        self.output.push_str("const char* __pd_file_read_line(long long handle) {\n");
+        self.output
+            .push_str("const char* __pd_file_read_line(long long handle) {\n");
         self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return \"\";\n");
         self.output.push_str("    static char line_buffer[4096];\n");
-        self.output.push_str("    FILE* f = __pd_file_handles[handle];\n");
-        self.output.push_str("    if (fgets(line_buffer, sizeof(line_buffer), f)) {\n");
-        self.output.push_str("        size_t len = strlen(line_buffer);\n");
-        self.output.push_str("        if (len > 0 && line_buffer[len-1] == '\\n') line_buffer[len-1] = '\\0';\n");
-        self.output.push_str("        return strdup(line_buffer);\n");
+        self.output
+            .push_str("    FILE* f = __pd_file_handles[handle];\n");
+        self.output
+            .push_str("    if (fgets(line_buffer, sizeof(line_buffer), f)) {\n");
+        self.output
+            .push_str("        size_t len = strlen(line_buffer);\n");
+        self.output.push_str(
+            "        if (len > 0 && line_buffer[len-1] == '\\n') line_buffer[len-1] = '\\0';\n",
+        );
+        self.output
+            .push_str("        return strdup(line_buffer);\n");
         self.output.push_str("    }\n");
         self.output.push_str("    return \"\";\n");
         self.output.push_str("}\n\n");
-        
+
         // file_write
-        self.output.push_str("int __pd_file_write(long long handle, const char* content) {\n");
-        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n");
-        self.output.push_str("    FILE* f = __pd_file_handles[handle];\n");
+        self.output
+            .push_str("int __pd_file_write(long long handle, const char* content) {\n");
+        self.output.push_str(
+            "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n",
+        );
+        self.output
+            .push_str("    FILE* f = __pd_file_handles[handle];\n");
         self.output.push_str("    return fputs(content, f) >= 0;\n");
         self.output.push_str("}\n\n");
-        
+
         // file_close
-        self.output.push_str("int __pd_file_close(long long handle) {\n");
-        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n");
-        self.output.push_str("    FILE* f = __pd_file_handles[handle];\n");
-        self.output.push_str("    __pd_file_handles[handle] = NULL;\n");
+        self.output
+            .push_str("int __pd_file_close(long long handle) {\n");
+        self.output.push_str(
+            "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n",
+        );
+        self.output
+            .push_str("    FILE* f = __pd_file_handles[handle];\n");
+        self.output
+            .push_str("    __pd_file_handles[handle] = NULL;\n");
         self.output.push_str("    return fclose(f) == 0;\n");
         self.output.push_str("}\n\n");
-        
+
         // file_exists
-        self.output.push_str("int __pd_file_exists(const char* path) {\n");
+        self.output
+            .push_str("int __pd_file_exists(const char* path) {\n");
         self.output.push_str("    FILE* f = fopen(path, \"r\");\n");
         self.output.push_str("    if (f) {\n");
         self.output.push_str("        fclose(f);\n");
@@ -257,25 +313,31 @@ impl CodeGenerator {
         self.output.push_str("    }\n");
         self.output.push_str("    return 0;\n");
         self.output.push_str("}\n\n");
-        
+
         // First pass: collect function signatures from imported modules
         for module_info in self.imported_modules.values() {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     if matches!(func.visibility, crate::ast::Visibility::Public) {
-                        self.functions.insert(func.name.clone(), (func.params.clone(), func.return_type.clone()));
+                        self.functions.insert(
+                            func.name.clone(),
+                            (func.params.clone(), func.return_type.clone()),
+                        );
                     }
                 }
             }
         }
-        
+
         // Then collect function signatures from main program
         for item in &program.items {
             if let Item::Function(func) = item {
-                self.functions.insert(func.name.clone(), (func.params.clone(), func.return_type.clone()));
+                self.functions.insert(
+                    func.name.clone(),
+                    (func.params.clone(), func.return_type.clone()),
+                );
             }
         }
-        
+
         // Generate struct definitions from imported modules first
         let imported_modules = self.imported_modules.clone();
         for module_info in imported_modules.values() {
@@ -287,38 +349,41 @@ impl CodeGenerator {
                 }
             }
         }
-        
+
         // Generate struct definitions from main program
         for item in &program.items {
             if let Item::Struct(struct_def) = item {
                 self.generate_struct(struct_def)?;
             }
         }
-        
+
         // Generate monomorphized versions of generic functions FIRST
         if !self.generic_instantiations.is_empty() {
             self.output.push_str("// Monomorphized generic functions\n");
-            
+
             for (func_name, type_args, generic_func) in &self.generic_instantiations.clone() {
                 // Create a concrete function from the generic template
-                let concrete_func = self.monomorphize_function(func_name, type_args, generic_func)?;
+                let concrete_func =
+                    self.monomorphize_function(func_name, type_args, generic_func)?;
                 self.generate_function(&concrete_func)?;
             }
             self.output.push('\n');
         }
-        
+
         // Generate functions from imported modules
         for module_info in imported_modules.values() {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     // Only generate public, non-generic functions
-                    if matches!(func.visibility, crate::ast::Visibility::Public) && func.type_params.is_empty() {
+                    if matches!(func.visibility, crate::ast::Visibility::Public)
+                        && func.type_params.is_empty()
+                    {
                         self.generate_function(func)?;
                     }
                 }
             }
         }
-        
+
         // Generate functions from main program
         for item in &program.items {
             match item {
@@ -338,17 +403,18 @@ impl CodeGenerator {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Generate code for a struct definition
     fn generate_struct(&mut self, struct_def: &StructDef) -> Result<()> {
-        self.output.push_str(&format!("typedef struct {} {{\n", struct_def.name));
-        
+        self.output
+            .push_str(&format!("typedef struct {} {{\n", struct_def.name));
+
         for (field_name, field_type) in &struct_def.fields {
             self.output.push_str("    ");
-            
+
             let c_type = match field_type {
                 Type::I32 => "int",
                 Type::I64 => "long long",
@@ -364,34 +430,40 @@ impl CodeGenerator {
                         Type::U32 => "unsigned int",
                         Type::U64 => "unsigned long long",
                         Type::Bool => "int",
-                        Type::Custom(name) => &format!("struct {}", name),  // Support struct arrays
-                        _ => return Err(CompileError::Generic(
-                            "Unsupported array element type in struct field".to_string()
-                        )),
+                        Type::Custom(name) => &format!("struct {}", name), // Support struct arrays
+                        _ => {
+                            return Err(CompileError::Generic(
+                                "Unsupported array element type in struct field".to_string(),
+                            ))
+                        }
                     };
-                    self.output.push_str(&format!("{} {}[{}];\n", elem_c_type, field_name, size));
+                    self.output
+                        .push_str(&format!("{} {}[{}];\n", elem_c_type, field_name, size));
                     continue;
                 }
                 Type::Unit => "void",
                 Type::Custom(name) => {
                     // For custom types (other structs), we use the struct name directly
-                    self.output.push_str(&format!("struct {} {};\n", name, field_name));
+                    self.output
+                        .push_str(&format!("struct {} {};\n", name, field_name));
                     continue;
                 }
                 Type::TypeParam(_) | Type::Generic { .. } => {
                     return Err(CompileError::Generic(
-                        "Generic types in structs not yet supported".to_string()
+                        "Generic types in structs not yet supported".to_string(),
                     ));
                 }
             };
-            
-            self.output.push_str(&format!("{} {};\n", c_type, field_name));
+
+            self.output
+                .push_str(&format!("{} {};\n", c_type, field_name));
         }
-        
-        self.output.push_str(&format!("}} {};\n\n", struct_def.name));
+
+        self.output
+            .push_str(&format!("}} {};\n\n", struct_def.name));
         Ok(())
     }
-    
+
     /// Generate code for a function
     fn generate_function(&mut self, func: &Function) -> Result<()> {
         // Function signature with return type
@@ -400,13 +472,13 @@ impl CodeGenerator {
             Some(Type::I64) => "long long",
             Some(Type::U32) => "unsigned int",
             Some(Type::U64) => "unsigned long long",
-            Some(Type::Bool) => "int",  // C doesn't have bool by default
+            Some(Type::Bool) => "int", // C doesn't have bool by default
             Some(Type::String) => "const char*",
             Some(Type::Unit) | None => "void",
             Some(Type::Array(_, _)) => {
                 // Arrays cannot be returned by value in C, would need to return pointer
                 return Err(CompileError::Generic(
-                    "Returning arrays from functions is not yet supported".to_string()
+                    "Returning arrays from functions is not yet supported".to_string(),
                 ));
             }
             Some(Type::Custom(name)) => {
@@ -417,26 +489,27 @@ impl CodeGenerator {
             }
             Some(Type::TypeParam(_)) | Some(Type::Generic { .. }) => {
                 return Err(CompileError::Generic(
-                    "Generic return types not yet supported".to_string()
+                    "Generic return types not yet supported".to_string(),
                 ));
             }
         };
-        
+
         // Special case: main always returns int in C
         let actual_return_type = if func.name == "main" && return_type == "void" {
             "int"
         } else {
             return_type
         };
-        
+
         // Generate function parameters
-        self.output.push_str(&format!("{} {}(", actual_return_type, func.name));
-        
+        self.output
+            .push_str(&format!("{} {}(", actual_return_type, func.name));
+
         for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
                 self.output.push_str(", ");
             }
-            
+
             match &param.ty {
                 Type::Array(elem_type, size) => {
                     // For arrays, we need to generate proper C array parameter syntax
@@ -446,14 +519,19 @@ impl CodeGenerator {
                         Type::U32 => "unsigned int",
                         Type::U64 => "unsigned long long",
                         Type::Bool => "int",
-                        Type::Custom(name) => name.as_str(),  // Support struct arrays
-                        _ => return Err(CompileError::Generic(
-                            "Unsupported array element type in function parameter".to_string()
-                        )),
+                        Type::String => "char*", // String arrays are arrays of char pointers
+                        Type::Custom(name) => name.as_str(), // Support struct arrays
+                        _ => {
+                            return Err(CompileError::Generic(format!(
+                                "Unsupported array element type in function parameter: {:?}",
+                                elem_type
+                            )))
+                        }
                     };
                     // In C, array parameters are passed as pointers
                     // We'll generate: type name[size] for clarity, though it decays to pointer
-                    self.output.push_str(&format!("{} {}[{}]", elem_c_type, param.name, size));
+                    self.output
+                        .push_str(&format!("{} {}[{}]", elem_c_type, param.name, size));
                 }
                 Type::Custom(name) => {
                     // For custom types (structs)
@@ -477,7 +555,7 @@ impl CodeGenerator {
                         Type::Unit => "void",
                         _ => unreachable!(),
                     };
-                    
+
                     if param.mutable {
                         // Pass by pointer for mutable parameters
                         self.output.push_str(&format!("{}* {}", c_type, param.name));
@@ -488,16 +566,17 @@ impl CodeGenerator {
                 }
             }
         }
-        
+
         self.output.push_str(") {\n");
-        
+
         // Clear mutable_params from previous function and populate with current function's params
         self.mutable_params.clear();
         self.variables.clear(); // Clear variables from previous function
-        
+
         for param in &func.params {
-            self.mutable_params.insert(param.name.clone(), param.mutable);
-            
+            self.mutable_params
+                .insert(param.name.clone(), param.mutable);
+
             // Also track parameter types for type inference
             let c_type = match &param.ty {
                 Type::String => "const char*".to_string(),
@@ -509,25 +588,25 @@ impl CodeGenerator {
             };
             self.variables.insert(param.name.clone(), c_type);
         }
-        
+
         // Function body
         for stmt in &func.body {
             self.generate_statement(stmt)?;
         }
-        
+
         // Close function
         // Only add default return for void main or if no explicit return
         if func.name == "main" && func.return_type.is_none() {
             self.output.push_str("    return 0;\n");
         }
         self.output.push_str("}\n\n");
-        
+
         // Clear parameter tracking after function
         self.mutable_params.clear();
-        
+
         Ok(())
     }
-    
+
     /// Generate code for a statement
     fn generate_statement(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
@@ -544,9 +623,11 @@ impl CodeGenerator {
                 self.generate_expression(expr)?;
                 self.output.push_str(";\n");
             }
-            Stmt::Let { name, ty, value, .. } => {
+            Stmt::Let {
+                name, ty, value, ..
+            } => {
                 self.output.push_str("    ");
-                
+
                 // Helper function to convert Type to C type string
                 fn type_to_c(ty: &Type) -> String {
                     match ty {
@@ -567,17 +648,13 @@ impl CodeGenerator {
                         }
                     }
                 }
-                
+
                 // Determine C type
                 let (c_type, is_array, array_size) = match ty {
-                    Some(t) => {
-                        match t {
-                            Type::Array(elem_type, size) => {
-                                (type_to_c(elem_type), true, Some(*size))
-                            }
-                            _ => (type_to_c(t), false, None)
-                        }
-                    }
+                    Some(t) => match t {
+                        Type::Array(elem_type, size) => (type_to_c(elem_type), true, Some(*size)),
+                        _ => (type_to_c(t), false, None),
+                    },
                     None => {
                         // Infer type from value using our helper
                         let inferred_type = self.infer_expr_type(value);
@@ -601,7 +678,7 @@ impl CodeGenerator {
                                 let size = if let Expr::Integer(n) = count.as_ref() {
                                     *n as usize
                                 } else {
-                                    0  // This should have been caught by type checker
+                                    0 // This should have been caught by type checker
                                 };
                                 (elem_type, true, Some(size))
                             }
@@ -610,19 +687,22 @@ impl CodeGenerator {
                                 // Use our unified type inference
                                 (inferred_type, false, None)
                             }
-                            _ => ("long long".to_string(), false, None),  // Default to int for now
+                            _ => ("long long".to_string(), false, None), // Default to int for now
                         }
                     }
                 };
-                
+
                 // Track variable type for future inference
                 if is_array {
                     // For arrays, store the full array type including brackets
-                    self.variables.insert(name.clone(), format!("{}[{}]", c_type, array_size.unwrap_or(0)));
+                    self.variables.insert(
+                        name.clone(),
+                        format!("{}[{}]", c_type, array_size.unwrap_or(0)),
+                    );
                 } else {
                     self.variables.insert(name.clone(), c_type.clone());
                 }
-                
+
                 if is_array {
                     // Array declaration
                     self.output.push_str(&format!("{} {}", c_type, name));
@@ -669,7 +749,7 @@ impl CodeGenerator {
                             }
                             _ => false,
                         };
-                        
+
                         if use_arrow {
                             // For mutable params, we need special handling
                             if let Expr::Ident(name) = object.as_ref() {
@@ -687,18 +767,23 @@ impl CodeGenerator {
                 self.generate_expression(value)?;
                 self.output.push_str(";\n");
             }
-            Stmt::If { condition, then_branch, else_branch, .. } => {
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 self.output.push_str("    if (");
                 self.generate_expression(condition)?;
                 self.output.push_str(") {\n");
-                
+
                 // Generate then branch
                 for stmt in then_branch {
                     self.generate_statement(stmt)?;
                 }
-                
+
                 self.output.push_str("    }");
-                
+
                 // Generate else branch if present
                 if let Some(else_stmts) = else_branch {
                     self.output.push_str(" else {\n");
@@ -707,63 +792,70 @@ impl CodeGenerator {
                     }
                     self.output.push_str("    }");
                 }
-                
+
                 self.output.push('\n');
             }
-            Stmt::While { condition, body, .. } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 self.output.push_str("    while (");
                 self.generate_expression(condition)?;
                 self.output.push_str(") {\n");
-                
+
                 // Generate body
                 for stmt in body {
                     self.generate_statement(stmt)?;
                 }
-                
+
                 self.output.push_str("    }\n");
             }
-            Stmt::For { var, iter, body, .. } => {
-                self.output.push_str("    {\n");  // Create a new scope
-                
+            Stmt::For {
+                var, iter, body, ..
+            } => {
+                self.output.push_str("    {\n"); // Create a new scope
+
                 // Check if iterating over a range
                 match iter {
                     Expr::Range { start, end, .. } => {
                         // Generate C-style for loop for range
                         self.output.push_str("        // For loop with range\n");
-                        self.output.push_str(&format!("        for (long long {} = ", var));
+                        self.output
+                            .push_str(&format!("        for (long long {} = ", var));
                         self.generate_expression(start)?;
                         self.output.push_str(&format!("; {} < ", var));
                         self.generate_expression(end)?;
                         self.output.push_str(&format!("; {}++) {{\n", var));
-                        
+
                         // Generate body
                         for stmt in body {
-                            self.output.push_str("        ");  // Extra indentation
+                            self.output.push_str("        "); // Extra indentation
                             self.generate_statement(stmt)?;
                         }
-                        
+
                         self.output.push_str("        }\n");
                     }
                     _ => {
                         // For arrays and other iterables
                         self.output.push_str("        // For-in loop\n");
-                        self.output.push_str("        for (long long _i = 0; _i < sizeof(");
+                        self.output
+                            .push_str("        for (long long _i = 0; _i < sizeof(");
                         self.generate_expression(iter)?;
                         self.output.push_str(")/sizeof(");
                         self.generate_expression(iter)?;
                         self.output.push_str("[0]); _i++) {\n");
-                        
+
                         // Declare loop variable and assign current element
-                        self.output.push_str(&format!("            long long {} = ", var));
+                        self.output
+                            .push_str(&format!("            long long {} = ", var));
                         self.generate_expression(iter)?;
                         self.output.push_str("[_i];\n");
-                        
+
                         // Generate body
                         for stmt in body {
-                            self.output.push_str("        ");  // Extra indentation
+                            self.output.push_str("        "); // Extra indentation
                             self.generate_statement(stmt)?;
                         }
-                        
+
                         self.output.push_str("        }\n");
                     }
                 }
@@ -779,13 +871,14 @@ impl CodeGenerator {
                 // Generate a series of if-else statements for pattern matching
                 self.output.push_str("    // Match statement\n");
                 self.output.push_str("    {\n");
-                
+
                 // Store the match expression in a temporary variable
-                self.output.push_str("        // Temporary for match expression\n");
+                self.output
+                    .push_str("        // Temporary for match expression\n");
                 self.output.push_str("        long long _match_expr = ");
                 self.generate_expression(expr)?;
                 self.output.push_str(";\n");
-                
+
                 // Generate if-else chain for each arm
                 for (i, arm) in arms.iter().enumerate() {
                     if i == 0 {
@@ -793,7 +886,7 @@ impl CodeGenerator {
                     } else {
                         self.output.push_str(" else if (");
                     }
-                    
+
                     // Generate pattern matching condition
                     match &arm.pattern {
                         Pattern::Wildcard => {
@@ -803,7 +896,10 @@ impl CodeGenerator {
                         Pattern::Ident(name) => {
                             // Identifier pattern always matches and binds
                             self.output.push_str("1) {\n");
-                            self.output.push_str(&format!("            long long {} = _match_expr;\n", name));
+                            self.output.push_str(&format!(
+                                "            long long {} = _match_expr;\n",
+                                name
+                            ));
                             // Continue with body generation below
                             for stmt in &arm.body {
                                 self.output.push_str("        ");
@@ -812,39 +908,45 @@ impl CodeGenerator {
                             self.output.push_str("        }");
                             continue;
                         }
-                        Pattern::EnumPattern { enum_name, variant, data: _ } => {
+                        Pattern::EnumPattern {
+                            enum_name,
+                            variant,
+                            data: _,
+                        } => {
                             // For now, simple enum matching based on variant index
                             // TODO: Implement proper enum variant matching
-                            self.output.push_str(&format!("/* match {}::{} */ 1", enum_name, variant));
+                            self.output
+                                .push_str(&format!("/* match {}::{} */ 1", enum_name, variant));
                         }
                     }
-                    
+
                     self.output.push_str(") {\n");
-                    
+
                     // Generate arm body
                     for stmt in &arm.body {
                         self.output.push_str("        ");
                         self.generate_statement(stmt)?;
                     }
-                    
+
                     self.output.push_str("        }");
                 }
-                
+
                 // If no wildcard pattern, we might need a default case
                 // TODO: Add exhaustiveness checking
-                
+
                 self.output.push_str("\n    }\n");
             }
         }
         Ok(())
     }
-    
+
     /// Generate code for an expression
     fn generate_expression(&mut self, expr: &Expr) -> Result<()> {
         match expr {
             Expr::String(s) => {
                 // Escape the string properly
-                let escaped = s.replace("\\", "\\\\")
+                let escaped = s
+                    .replace("\\", "\\\\")
                     .replace("\"", "\\\"")
                     .replace("\n", "\\n")
                     .replace("\t", "\\t")
@@ -864,16 +966,19 @@ impl CodeGenerator {
                     if is_mutable {
                         // For arrays, don't dereference as they're already pointers
                         // We need to check the parameter type
-                        let is_array = self.functions.values()
-                            .find_map(|(params, _)| {
-                                params.iter().find(|p| &p.name == name)
-                                    .and_then(|p| match &p.ty {
-                                        Type::Array(_, _) => Some(true),
-                                        _ => None,
+                        let is_array =
+                            self.functions
+                                .values()
+                                .find_map(|(params, _)| {
+                                    params.iter().find(|p| &p.name == name).and_then(|p| {
+                                        match &p.ty {
+                                            Type::Array(_, _) => Some(true),
+                                            _ => None,
+                                        }
                                     })
-                            })
-                            .unwrap_or(false);
-                        
+                                })
+                                .unwrap_or(false);
+
                         if is_array {
                             // Arrays are already pointers, don't dereference
                             self.output.push_str(name);
@@ -914,32 +1019,39 @@ impl CodeGenerator {
                             "file_write" => self.output.push_str("__pd_file_write"),
                             "file_close" => self.output.push_str("__pd_file_close"),
                             "file_exists" => self.output.push_str("__pd_file_exists"),
-                            _ => self.output.push_str(name),
+                            _ => {
+                                // Check if this is a generic function that needs name mangling
+                                if let Some(mangled_name) =
+                                    self.get_mangled_name_for_call(name, args)
+                                {
+                                    self.output.push_str(&mangled_name);
+                                } else {
+                                    self.output.push_str(name);
+                                }
+                            }
                         }
                     }
                     _ => {
                         return Err(CompileError::Generic(
-                            "Indirect calls not yet supported".to_string()
+                            "Indirect calls not yet supported".to_string(),
                         ));
                     }
                 }
-                
+
                 // Generate arguments
                 self.output.push('(');
-                
+
                 // Get function signature to check parameter mutability
                 let func_params = match func.as_ref() {
-                    Expr::Ident(name) => {
-                        self.functions.get(name).map(|(params, _)| params.clone())
-                    }
+                    Expr::Ident(name) => self.functions.get(name).map(|(params, _)| params.clone()),
                     _ => None,
                 };
-                
+
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
                     }
-                    
+
                     // Check if this parameter is mutable
                     let needs_address = if let Some(params) = &func_params {
                         if i < params.len() && params[i].mutable {
@@ -951,7 +1063,7 @@ impl CodeGenerator {
                     } else {
                         false
                     };
-                    
+
                     if needs_address {
                         // Check if argument is already a pointer (mutable param) or array
                         if let Expr::Ident(name) = arg {
@@ -981,12 +1093,17 @@ impl CodeGenerator {
                 }
                 self.output.push(')');
             }
-            Expr::Binary { left, op, right, .. } => {
+            Expr::Binary {
+                left, op, right, ..
+            } => {
                 // Check if this is string concatenation
                 let left_type = self.infer_expr_type(left);
                 let right_type = self.infer_expr_type(right);
-                
-                if matches!(op, BinOp::Add) && left_type == "const char*" && right_type == "const char*" {
+
+                if matches!(op, BinOp::Add)
+                    && left_type == "const char*"
+                    && right_type == "const char*"
+                {
                     // String concatenation - use helper function
                     self.output.push_str("__pd_string_concat(");
                     self.generate_expression(left)?;
@@ -996,10 +1113,10 @@ impl CodeGenerator {
                 } else {
                     // Regular binary operation
                     self.output.push('(');
-                    
+
                     // Generate left operand
                     self.generate_expression(left)?;
-                    
+
                     // Generate operator
                     let op_str = match op {
                         BinOp::Add => " + ",
@@ -1017,10 +1134,10 @@ impl CodeGenerator {
                         BinOp::Or => " || ",
                     };
                     self.output.push_str(op_str);
-                    
+
                     // Generate right operand
                     self.generate_expression(right)?;
-                    
+
                     self.output.push(')');
                 }
             }
@@ -1072,12 +1189,10 @@ impl CodeGenerator {
             Expr::FieldAccess { object, field, .. } => {
                 // Check if object is a mutable parameter (pointer)
                 let use_arrow = match object.as_ref() {
-                    Expr::Ident(name) => {
-                        self.mutable_params.get(name).copied().unwrap_or(false)
-                    }
+                    Expr::Ident(name) => self.mutable_params.get(name).copied().unwrap_or(false),
                     _ => false,
                 };
-                
+
                 // Generate field access: obj.field or obj->field
                 // Note: Don't generate expression for object if it's a mutable param
                 // because we already handle the dereference in Expr::Ident
@@ -1094,10 +1209,16 @@ impl CodeGenerator {
                     self.output.push_str(&format!(".{}", field));
                 }
             }
-            Expr::EnumConstructor { enum_name, variant, data, .. } => {
+            Expr::EnumConstructor {
+                enum_name,
+                variant,
+                data,
+                ..
+            } => {
                 // TODO: Properly generate enum constructors for C
                 // For now, just generate a placeholder
-                self.output.push_str(&format!("/* enum {}::{}", enum_name, variant));
+                self.output
+                    .push_str(&format!("/* enum {}::{}", enum_name, variant));
                 if data.is_some() {
                     self.output.push_str(" with data");
                 }
@@ -1107,7 +1228,7 @@ impl CodeGenerator {
                 // Range expressions are not directly translatable to C
                 // They should only appear in for loops which handle them specially
                 return Err(CompileError::Generic(
-                    "Range expressions can only be used in for loops".to_string()
+                    "Range expressions can only be used in for loops".to_string(),
                 ));
             }
             Expr::Unary { op, operand, .. } => {
@@ -1128,12 +1249,17 @@ impl CodeGenerator {
         }
         Ok(())
     }
-    
+
     /// Create a monomorphized version of a generic function
-    fn monomorphize_function(&self, func_name: &str, type_args: &[String], generic_func: &crate::typeck::GenericFunction) -> Result<Function> {
+    fn monomorphize_function(
+        &self,
+        func_name: &str,
+        type_args: &[String],
+        generic_func: &crate::typeck::GenericFunction,
+    ) -> Result<Function> {
         // Generate a mangled name for the concrete function
         let mangled_name = format!("{}__{}", func_name, type_args.join("_"));
-        
+
         // Create a mapping from type parameters to concrete types
         let mut type_map = std::collections::HashMap::new();
         for (i, type_param) in generic_func.type_params.iter().enumerate() {
@@ -1141,24 +1267,30 @@ impl CodeGenerator {
                 type_map.insert(type_param.clone(), type_args[i].clone());
             }
         }
-        
+
         // Substitute types in parameters
-        let concrete_params = generic_func.params.iter().map(|(name, ty)| {
-            let concrete_type = self.substitute_type(ty, &type_map);
-            Param {
-                name: name.clone(),
-                ty: concrete_type,
-                mutable: false, // TODO: Preserve mutability from original
-            }
-        }).collect();
-        
+        let concrete_params = generic_func
+            .params
+            .iter()
+            .map(|(name, ty)| {
+                let concrete_type = self.substitute_type(ty, &type_map);
+                Param {
+                    name: name.clone(),
+                    ty: concrete_type,
+                    mutable: false, // TODO: Preserve mutability from original
+                }
+            })
+            .collect();
+
         // Substitute type in return type
-        let concrete_return_type = generic_func.return_type.as_ref()
+        let concrete_return_type = generic_func
+            .return_type
+            .as_ref()
             .map(|ty| self.substitute_type(ty, &type_map));
-        
+
         // Substitute types in the function body
         let concrete_body = self.substitute_types_in_body(&generic_func.body, &type_map);
-        
+
         // Create the concrete function
         Ok(Function {
             name: mangled_name,
@@ -1166,14 +1298,95 @@ impl CodeGenerator {
             return_type: concrete_return_type,
             body: concrete_body,
             visibility: crate::ast::Visibility::Private, // Monomorphized functions are internal
-            type_params: vec![], // No longer generic
-            span: Span { start: 0, end: 0, line: 0, column: 0 }, // Synthetic span for generated function
+            type_params: vec![],                         // No longer generic
+            span: Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                column: 0,
+            }, // Synthetic span for generated function
         })
     }
-    
+
+    /// Create a mangled name for a generic function
+    fn mangle_generic_name(&self, func_name: &str, type_args: &[String]) -> String {
+        format!("{}__{}", func_name, type_args.join("_"))
+    }
+
+    /// Get the mangled name for a generic function call
+    fn get_mangled_name_for_call(&self, func_name: &str, args: &[Expr]) -> Option<String> {
+        // Check if this function has generic instantiations
+        let mut instantiations_for_func = Vec::new();
+        for (name, type_args, _) in &self.generic_instantiations {
+            if name == func_name {
+                instantiations_for_func.push(type_args.clone());
+            }
+        }
+
+        if instantiations_for_func.is_empty() {
+            return None;
+        }
+
+        // If there's only one instantiation, use it
+        if instantiations_for_func.len() == 1 {
+            return Some(self.mangle_generic_name(func_name, &instantiations_for_func[0]));
+        }
+
+        // Try to infer which instantiation based on the first argument type
+        if let Some(first_arg) = args.first() {
+            let arg_type_str = match first_arg {
+                Expr::ArrayLiteral { elements, .. } => {
+                    if !elements.is_empty() {
+                        // Infer from first element
+                        self.infer_expr_type(&elements[0])
+                    } else {
+                        return None;
+                    }
+                }
+                Expr::Ident(name) => {
+                    // Look up variable type
+                    self.variables
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| self.infer_expr_type(first_arg))
+                }
+                _ => self.infer_expr_type(first_arg),
+            };
+
+            // Find best matching instantiation
+            for type_args in &instantiations_for_func {
+                // Check if any type arg matches our inferred type
+                for type_arg in type_args {
+                    if type_arg == "i64" && arg_type_str.contains("long long") {
+                        return Some(self.mangle_generic_name(func_name, type_args));
+                    }
+                    if type_arg == "bool"
+                        && arg_type_str.contains("int")
+                        && !arg_type_str.contains("long")
+                    {
+                        return Some(self.mangle_generic_name(func_name, type_args));
+                    }
+                    if type_arg == "String" && arg_type_str.contains("char*") {
+                        return Some(self.mangle_generic_name(func_name, type_args));
+                    }
+                    if type_arg == &arg_type_str {
+                        return Some(self.mangle_generic_name(func_name, type_args));
+                    }
+                }
+            }
+        }
+
+        // Default to first instantiation if we can't determine
+        Some(self.mangle_generic_name(func_name, &instantiations_for_func[0]))
+    }
+
     /// Substitute type parameters with concrete types in a type
     #[allow(clippy::only_used_in_recursion)]
-    fn substitute_type(&self, ty: &Type, type_map: &std::collections::HashMap<String, String>) -> Type {
+    fn substitute_type(
+        &self,
+        ty: &Type,
+        type_map: &std::collections::HashMap<String, String>,
+    ) -> Type {
         match ty {
             Type::TypeParam(name) => {
                 // Replace type parameter with concrete type
@@ -1193,14 +1406,12 @@ impl CodeGenerator {
                 }
             }
             Type::Array(elem_type, size) => {
-                Type::Array(
-                    Box::new(self.substitute_type(elem_type, type_map)),
-                    *size
-                )
+                Type::Array(Box::new(self.substitute_type(elem_type, type_map)), *size)
             }
             Type::Generic { name, args } => {
                 // Substitute in generic type arguments
-                let substituted_args = args.iter()
+                let substituted_args = args
+                    .iter()
                     .map(|arg| self.substitute_type(arg, type_map))
                     .collect();
                 Type::Generic {
@@ -1211,15 +1422,19 @@ impl CodeGenerator {
             _ => ty.clone(),
         }
     }
-    
+
     /// Substitute types in a statement body
-    fn substitute_types_in_body(&self, stmts: &[Stmt], _type_map: &std::collections::HashMap<String, String>) -> Vec<Stmt> {
+    fn substitute_types_in_body(
+        &self,
+        stmts: &[Stmt],
+        _type_map: &std::collections::HashMap<String, String>,
+    ) -> Vec<Stmt> {
         // For now, we'll just clone the body
         // In a full implementation, we'd need to walk the AST and substitute types
         // This is a simplified version that works for basic cases
         stmts.to_vec()
     }
-    
+
     /// Write the generated code to a file
     pub fn write_output(&self) -> Result<PathBuf> {
         // Create build_output directory if it doesn't exist
@@ -1227,19 +1442,19 @@ impl CodeGenerator {
         if !build_dir.exists() {
             fs::create_dir_all(&build_dir)?;
         }
-        
+
         // Clean module name (remove .pd extension if present)
         let base_name = Path::new(&self.module_name)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or(&self.module_name);
-            
+
         let output_path = build_dir.join(format!("{}.c", base_name));
         let mut file = File::create(&output_path)?;
         file.write_all(self.output.as_bytes())?;
-        
+
         println!("   Generated C code: {}", output_path.display());
-        
+
         Ok(output_path)
     }
 }
@@ -1249,7 +1464,7 @@ mod tests {
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
-    
+
     #[test]
     fn test_codegen_hello_world() {
         let source = r#"
@@ -1257,20 +1472,20 @@ mod tests {
             print("Hello, World!");
         }
         "#;
-        
+
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         let mut codegen = CodeGenerator::new("test").unwrap();
         assert!(codegen.compile(&ast).is_ok());
-        
+
         // Check generated code contains expected elements
         assert!(codegen.output.contains("int main()"));
         assert!(codegen.output.contains("__pd_print(\"Hello, World!\")"));
     }
-    
+
     #[test]
     fn test_codegen_let_binding() {
         let source = r#"
@@ -1280,21 +1495,21 @@ mod tests {
             print_int(x);
         }
         "#;
-        
+
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         let mut codegen = CodeGenerator::new("test").unwrap();
         assert!(codegen.compile(&ast).is_ok());
-        
+
         // Check generated code contains expected elements
         assert!(codegen.output.contains("int x = 42;"));
         assert!(codegen.output.contains("long long y = 100;"));
         assert!(codegen.output.contains("__pd_print_int(x)"));
     }
-    
+
     #[test]
     fn test_codegen_binary_operations() {
         let source = r#"
@@ -1307,22 +1522,22 @@ mod tests {
             print_int(product);
         }
         "#;
-        
+
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         let mut codegen = CodeGenerator::new("test").unwrap();
         assert!(codegen.compile(&ast).is_ok());
-        
+
         // Check generated code contains expected elements
         assert!(codegen.output.contains("long long sum = (x + y);"));
         assert!(codegen.output.contains("long long product = (x * y);"));
         assert!(codegen.output.contains("__pd_print_int(sum)"));
         assert!(codegen.output.contains("__pd_print_int(product)"));
     }
-    
+
     #[test]
     fn test_codegen_comparison_operations() {
         let source = r#"
@@ -1333,21 +1548,21 @@ mod tests {
             return result;
         }
         "#;
-        
+
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         let mut codegen = CodeGenerator::new("test").unwrap();
         assert!(codegen.compile(&ast).is_ok());
-        
+
         // Check generated code contains expected elements
         assert!(codegen.output.contains("int main()"));
         assert!(codegen.output.contains("long long result = (a < b);"));
         assert!(codegen.output.contains("return result;"));
     }
-    
+
     #[test]
     fn test_codegen_for_loop() {
         let source = r#"
@@ -1358,21 +1573,21 @@ mod tests {
             }
         }
         "#;
-        
+
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         let mut codegen = CodeGenerator::new("test").unwrap();
         assert!(codegen.compile(&ast).is_ok());
-        
+
         // Check generated code contains for loop
         assert!(codegen.output.contains("for (long long _i = 0;"));
         assert!(codegen.output.contains("long long i = arr[_i];"));
         assert!(codegen.output.contains("__pd_print_int(i)"));
     }
-    
+
     #[test]
     fn test_codegen_break_continue() {
         let source = r#"
@@ -1387,15 +1602,15 @@ mod tests {
             }
         }
         "#;
-        
+
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         let mut codegen = CodeGenerator::new("test").unwrap();
         assert!(codegen.compile(&ast).is_ok());
-        
+
         // Check generated code contains break and continue
         assert!(codegen.output.contains("break;"));
         assert!(codegen.output.contains("continue;"));

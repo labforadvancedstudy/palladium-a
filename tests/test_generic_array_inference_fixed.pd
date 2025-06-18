@@ -1,0 +1,56 @@
+// Test that generic array type inference now works correctly
+
+// Generic function that takes an array parameter
+fn first<T>(arr: [T; 5]) -> T {
+    return arr[0];
+}
+
+// Generic function that takes array and returns element
+fn get_element<T>(arr: [T; 10], index: i64) -> T {
+    return arr[index];
+}
+
+// Generic function that processes array elements
+fn print_first_three<T>(arr: [T; 5]) {
+    // For now, we can't have generic print, so this is a placeholder
+    // In real code, we'd need type-specific print functions
+}
+
+// Generic function to check array
+fn array_has_five_elements<T>(arr: [T; 5]) -> bool {
+    return true;  // Arrays are compile-time sized, so always true
+}
+
+fn main() {
+    // Test 1: Inferring T from array literal
+    let numbers = [1, 2, 3, 4, 5];
+    let first_num = first(numbers);  // Should infer T = i64
+    print("First number: " + int_to_string(first_num));
+    
+    // Test 2: Inferring T with different array
+    let int_array2 = [10, 20, 30, 40, 50];
+    if array_has_five_elements(int_array2) {
+        print("Array has five elements (as expected)");
+    }
+    
+    // Test 4: Array passed by identifier
+    let my_array = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+    let elem = get_element(my_array, 5);  // Should infer T = i64
+    print("Element at index 5: " + int_to_string(elem));
+    
+    // Test 5: Boolean array
+    let bool_array = [true, false, true, false, true];
+    let first_bool = first(bool_array);  // Should infer T = bool
+    if first_bool {
+        print("First boolean is true");
+    } else {
+        print("First boolean is false");
+    }
+    
+    // Test 6: String array
+    let string_array = ["one", "two", "three", "four", "five"];
+    let first_string = first(string_array);  // Should infer T = String
+    print("First string: " + first_string);
+    
+    print("All generic array inference tests passed!");
+}
