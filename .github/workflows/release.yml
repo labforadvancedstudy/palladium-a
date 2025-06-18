@@ -56,7 +56,7 @@ jobs:
         sha256sum ${{ matrix.artifact_name }}.zip > ${{ matrix.artifact_name }}.zip.sha256
     
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: binaries-${{ matrix.target }}
         path: |
@@ -81,7 +81,7 @@ jobs:
         tar czf palladium-bootstrap.tar.gz palladium-bootstrap
         shasum -a 256 palladium-bootstrap.tar.gz > palladium-bootstrap.tar.gz.sha256
     - name: Upload bootstrap package
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: bootstrap-package
         path: |
