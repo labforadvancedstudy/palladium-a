@@ -1,0 +1,34 @@
+// Test qualified imports feature
+
+// Import specific functions from a module
+import std::math::pd_abs;
+import std::string::{trim, starts_with, ends_with};
+
+// Import all from io
+import std::io::*;
+
+fn main() {
+    // Test single qualified import
+    let n = -42;
+    let abs_n = pd_abs(n);
+    print("Absolute value of " + int_to_string(n) + " is " + int_to_string(abs_n));
+    
+    // Test multiple qualified imports
+    let s = "  hello world  ";
+    let trimmed = trim(s);
+    
+    if starts_with(trimmed, "hello") {
+        print("String starts with 'hello'");
+    }
+    
+    if ends_with(trimmed, "world") {
+        print("String ends with 'world'");
+    }
+    
+    // Test wildcard import (all io functions should be available)
+    if file_exists("test.txt") {
+        print("File exists!");
+    }
+    
+    print("Qualified imports test complete!");
+}

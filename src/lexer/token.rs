@@ -22,157 +22,160 @@ pub enum Token {
         Some(unescaped)
     })]
     String(String),
-    
+
     #[regex(r"-?[0-9]+", |lex| lex.slice().parse().ok())]
     Integer(i64),
-    
+
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| Some(lex.slice().to_owned()))]
     Identifier(String),
-    
+
     // Keywords
     #[token("fn")]
     Fn,
-    
+
     #[token("let")]
     Let,
-    
+
     #[token("mut")]
     Mut,
-    
+
     #[token("if")]
     If,
-    
+
     #[token("else")]
     Else,
-    
+
     #[token("while")]
     While,
-    
+
     #[token("return")]
     Return,
-    
+
     #[token("true")]
     True,
-    
+
     #[token("false")]
     False,
-    
+
     #[token("for")]
     For,
-    
+
     #[token("in")]
     In,
-    
+
     #[token("break")]
     Break,
-    
+
     #[token("continue")]
     Continue,
-    
+
     #[token("struct")]
     Struct,
-    
+
     #[token("enum")]
     Enum,
-    
+
     #[token("match")]
     Match,
-    
+
     #[token("import")]
     Import,
-    
+
     #[token("pub")]
     Pub,
-    
+
+    #[token("as")]
+    As,
+
     // Operators
     #[token("+")]
     Plus,
-    
+
     #[token("-")]
     Minus,
-    
+
     #[token("*")]
     Star,
-    
+
     #[token("/")]
     Slash,
-    
+
     #[token("%")]
     Percent,
-    
+
     #[token("=")]
     Eq,
-    
+
     #[token("==")]
     EqEq,
-    
+
     #[token("!=")]
     Ne,
-    
+
     #[token("!")]
     Not,
-    
+
     #[token("<")]
     Lt,
-    
+
     #[token(">")]
     Gt,
-    
+
     #[token("<=")]
     Le,
-    
+
     #[token(">=")]
     Ge,
-    
+
     #[token("&&")]
     AndAnd,
-    
+
     #[token("||")]
     OrOr,
-    
+
     // Delimiters
     #[token("(")]
     LeftParen,
-    
+
     #[token(")")]
     RightParen,
-    
+
     #[token("{")]
     LeftBrace,
-    
+
     #[token("}")]
     RightBrace,
-    
+
     #[token("[")]
     LeftBracket,
-    
+
     #[token("]")]
     RightBracket,
-    
+
     #[token(";")]
     Semicolon,
-    
+
     #[token(",")]
     Comma,
-    
+
     #[token(":")]
     Colon,
-    
+
     #[token(".")]
     Dot,
-    
+
     #[token("..")]
     DotDot,
-    
+
     #[token("->")]
     Arrow,
-    
+
     #[token("::")]
     DoubleColon,
-    
+
     #[token("_", priority = 10)]
     Underscore,
-    
+
     #[token("=>")]
     FatArrow,
 }
@@ -192,12 +195,19 @@ impl Token {
                 | Token::Not
         )
     }
-    
+
     /// Returns true if this token can start a statement
     pub fn can_start_stmt(&self) -> bool {
         matches!(
             self,
-            Token::Let | Token::Return | Token::If | Token::While | Token::For | Token::Break | Token::Continue | Token::Match
+            Token::Let
+                | Token::Return
+                | Token::If
+                | Token::While
+                | Token::For
+                | Token::Break
+                | Token::Continue
+                | Token::Match
         ) || self.can_start_expr()
     }
 }
@@ -226,6 +236,7 @@ impl std::fmt::Display for Token {
             Token::Match => write!(f, "'match'"),
             Token::Import => write!(f, "'import'"),
             Token::Pub => write!(f, "'pub'"),
+            Token::As => write!(f, "'as'"),
             Token::Plus => write!(f, "'+'"),
             Token::Minus => write!(f, "'-'"),
             Token::Star => write!(f, "'*'"),
@@ -263,26 +274,32 @@ impl std::fmt::Display for Token {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_string_lexing() {
         let mut lex = Token::lexer(r#""Hello, World!""#);
-        assert_eq!(lex.next(), Some(Ok(Token::String("Hello, World!".to_string()))));
+        assert_eq!(
+            lex.next(),
+            Some(Ok(Token::String("Hello, World!".to_string())))
+        );
     }
-    
+
     #[test]
     fn test_escaped_string() {
         let mut lex = Token::lexer(r#""Hello\nWorld\t!""#);
-        assert_eq!(lex.next(), Some(Ok(Token::String("Hello\nWorld\t!".to_string()))));
+        assert_eq!(
+            lex.next(),
+            Some(Ok(Token::String("Hello\nWorld\t!".to_string())))
+        );
     }
-    
+
     #[test]
     fn test_integer() {
         let mut lex = Token::lexer("42 -17");
         assert_eq!(lex.next(), Some(Ok(Token::Integer(42))));
         assert_eq!(lex.next(), Some(Ok(Token::Integer(-17))));
     }
-    
+
     #[test]
     fn test_identifiers_and_keywords() {
         let mut lex = Token::lexer("fn main print");
@@ -290,7 +307,7 @@ mod tests {
         assert_eq!(lex.next(), Some(Ok(Token::Identifier("main".to_string()))));
         assert_eq!(lex.next(), Some(Ok(Token::Identifier("print".to_string()))));
     }
-    
+
     #[test]
     fn test_loop_keywords() {
         let mut lex = Token::lexer("for in while break continue");
@@ -300,7 +317,7 @@ mod tests {
         assert_eq!(lex.next(), Some(Ok(Token::Break)));
         assert_eq!(lex.next(), Some(Ok(Token::Continue)));
     }
-    
+
     #[test]
     fn test_struct_and_dot() {
         let mut lex = Token::lexer("struct Point { x: i32 } p.x");
@@ -315,7 +332,7 @@ mod tests {
         assert_eq!(lex.next(), Some(Ok(Token::Dot)));
         assert_eq!(lex.next(), Some(Ok(Token::Identifier("x".to_string()))));
     }
-    
+
     #[test]
     fn test_enum_keywords() {
         let mut lex = Token::lexer("enum match Color::Red");

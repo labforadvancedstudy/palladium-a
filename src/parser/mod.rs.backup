@@ -1,7 +1,7 @@
 // Parser for Palladium
 // "Constructing legends from tokens"
 
-use crate::ast::{AssignTarget, Param, UnaryOp, *};
+use crate::ast::{*, AssignTarget, Param, UnaryOp};
 use crate::errors::{CompileError, Result, Span};
 use crate::lexer::Token;
 
@@ -14,84 +14,54 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<(Token, Span)>) -> Self {
-        Self {
-            tokens,
+        Self { 
+            tokens, 
             current: 0,
             type_params_in_scope: Vec::new(),
         }
     }
-
+    
     /// Get the current span for error reporting
     fn current_span(&self) -> Option<crate::errors::Span> {
         if self.current < self.tokens.len() {
             let span = &self.tokens[self.current].1;
-            Some(crate::errors::Span::new(
-                span.start,
-                span.end,
-                span.line,
-                span.column,
-            ))
+            Some(crate::errors::Span::new(span.start, span.end, span.line, span.column))
         } else if self.current > 0 && self.current - 1 < self.tokens.len() {
             // Use previous token's span if at end
             let span = &self.tokens[self.current - 1].1;
-            Some(crate::errors::Span::new(
-                span.start,
-                span.end,
-                span.line,
-                span.column,
-            ))
+            Some(crate::errors::Span::new(span.start, span.end, span.line, span.column))
         } else {
             None
         }
     }
-
-    /// Get span from an expression
-    fn expr_span(expr: &Expr) -> Span {
-        match expr {
-            // Expressions without span field return dummy span for now
-            Expr::Integer(_) => Span::dummy(),
-            Expr::String(_) => Span::dummy(),
-            Expr::Bool(_) => Span::dummy(),
-            Expr::Ident(_) => Span::dummy(),
-            // Expressions with span field
-            Expr::Binary { span, .. } => *span,
-            Expr::Unary { span, .. } => *span,
-            Expr::Call { span, .. } => *span,
-            Expr::Index { span, .. } => *span,
-            Expr::ArrayLiteral { span, .. } => *span,
-            Expr::ArrayRepeat { span, .. } => *span,
-            Expr::StructLiteral { span, .. } => *span,
-            Expr::FieldAccess { span, .. } => *span,
-            Expr::EnumConstructor { span, .. } => *span,
-            Expr::Range { span, .. } => *span,
-        }
-    }
-
+    
     /// Parse a complete program
     pub fn parse(&mut self) -> Result<Program> {
         let mut imports = Vec::new();
         let mut items = Vec::new();
-
+        
         // Parse imports first
         while self.check(&Token::Import) {
             imports.push(self.parse_import()?);
         }
-
+        
         // Then parse items
         while !self.is_at_end() {
             items.push(self.parse_item()?);
         }
-
-        Ok(Program { imports, items })
+        
+        Ok(Program { 
+            imports,
+            items 
+        })
     }
-
+    
     /// Parse an import statement
     fn parse_import(&mut self) -> Result<crate::ast::Import> {
         let start_span = self.consume(Token::Import, "Expected 'import'")?;
-
+        
         let mut path = Vec::new();
-        let mut items = None;
-
+        
         // Parse first part of path
         let first = match self.advance()? {
             (Token::Identifier(name), _) => name,
@@ -99,147 +69,36 @@ impl Parser {
                 return Err(CompileError::UnexpectedToken {
                     expected: "module name".to_string(),
                     found: token.to_string(),
-                    span: self.current_span(),
                 });
             }
         };
         path.push(first);
-
+        
         // Parse remaining path segments
         while self.check(&Token::DoubleColon) {
             self.advance()?; // consume '::'
-
-            // Check if this might be a specific item import
-            if matches!(self.peek(), Ok(Token::Identifier(_))) {
-                // Look ahead to see if this is the last segment (followed by ; or ,)
-                let next_is_terminator = self
-                    .tokens
-                    .get(self.current + 1)
-                    .map(|(t, _)| matches!(t, Token::Semicolon | Token::Comma | Token::LeftBrace))
-                    .unwrap_or(false);
-
-                if next_is_terminator {
-                    // This is a specific item import
-                    items = Some(self.parse_import_items()?);
-                    break;
-                } else {
-                    // This is another module in the path
-                    let segment = match self.advance()? {
-                        (Token::Identifier(name), _) => name,
-                        (token, _) => {
-                            return Err(CompileError::UnexpectedToken {
-                                expected: "module name".to_string(),
-                                found: token.to_string(),
-                                span: self.current_span(),
-                            });
-                        }
-                    };
-                    path.push(segment);
-                }
-            } else if self.check(&Token::Star) {
-                // Wildcard import
-                self.advance()?; // consume '*'
-                items = None; // Explicitly None for wildcard
-                break;
-            } else if self.check(&Token::LeftBrace) {
-                // Multiple item import: import std::math::{pd_abs, pd_sin}
-                items = Some(self.parse_import_items()?);
-                break;
-            } else {
-                return Err(CompileError::UnexpectedToken {
-                    expected: "module name, item name, or '*'".to_string(),
-                    found: self.peek()?.to_string(),
-                    span: self.current_span(),
-                });
-            }
-        }
-
-        // Parse optional alias
-        let mut alias = None;
-        if self.check(&Token::As) {
-            self.advance()?; // consume 'as'
-            match self.advance()? {
-                (Token::Identifier(name), _) => {
-                    alias = Some(name);
-                }
+            
+            let segment = match self.advance()? {
+                (Token::Identifier(name), _) => name,
+                (Token::Star, _) => "*".to_string(), // wildcard import
                 (token, _) => {
                     return Err(CompileError::UnexpectedToken {
-                        expected: "alias name".to_string(),
+                        expected: "module name or '*'".to_string(),
                         found: token.to_string(),
-                        span: self.current_span(),
                     });
                 }
-            }
+            };
+            path.push(segment);
         }
-
+        
         let end_span = self.consume(Token::Semicolon, "Expected ';' after import")?;
-
+        
         Ok(crate::ast::Import {
             path,
-            items,
-            alias,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
-    /// Parse import items - either single item or multiple items in braces
-    fn parse_import_items(&mut self) -> Result<Vec<String>> {
-        let mut items = Vec::new();
-
-        if self.check(&Token::LeftBrace) {
-            // Multiple items: {pd_abs, pd_sin, pd_cos}
-            self.advance()?; // consume '{'
-
-            loop {
-                match self.advance()? {
-                    (Token::Identifier(name), _) => {
-                        items.push(name);
-
-                        if self.check(&Token::RightBrace) {
-                            self.advance()?; // consume '}'
-                            break;
-                        } else {
-                            self.consume(Token::Comma, "Expected ',' or '}' after import item")?;
-                            // Allow trailing comma
-                            if self.check(&Token::RightBrace) {
-                                self.advance()?; // consume '}'
-                                break;
-                            }
-                        }
-                    }
-                    (token, _) => {
-                        return Err(CompileError::UnexpectedToken {
-                            expected: "item name".to_string(),
-                            found: token.to_string(),
-                            span: self.current_span(),
-                        });
-                    }
-                }
-            }
-        } else {
-            // Single item
-            match self.advance()? {
-                (Token::Identifier(name), _) => {
-                    items.push(name);
-                }
-                (token, _) => {
-                    return Err(CompileError::UnexpectedToken {
-                        expected: "item name".to_string(),
-                        found: token.to_string(),
-                        span: self.current_span(),
-                    });
-                }
-            }
-        }
-
-        Ok(items)
-    }
-
+    
     /// Parse a top-level item
     fn parse_item(&mut self) -> Result<Item> {
         // Check for visibility modifier
@@ -249,46 +108,44 @@ impl Parser {
         } else {
             crate::ast::Visibility::Private
         };
-
+        
         match self.peek()? {
             Token::Fn => {
                 let mut func = self.parse_function()?;
                 func.visibility = visibility;
                 Ok(Item::Function(func))
-            }
+            },
             Token::Struct => {
                 let mut struct_def = self.parse_struct()?;
                 struct_def.visibility = visibility;
                 Ok(Item::Struct(struct_def))
-            }
+            },
             Token::Enum => Ok(Item::Enum(self.parse_enum()?)),
             _ => Err(CompileError::SyntaxError {
                 message: "Expected function, struct, or enum declaration".to_string(),
-                span: self.current_span(),
             }),
         }
     }
-
+    
     /// Parse a function declaration
     fn parse_function(&mut self) -> Result<Function> {
         let start_span = self.consume(Token::Fn, "Expected 'fn'")?;
-
+        
         let name = match self.advance()? {
             (Token::Identifier(name), _) => name,
             (token, _) => {
                 return Err(CompileError::UnexpectedToken {
                     expected: "function name".to_string(),
                     found: token.to_string(),
-                    span: self.current_span(),
                 });
             }
         };
-
+        
         // Parse generic type parameters if present
         let mut type_params = Vec::new();
         if self.check(&Token::Lt) {
             self.advance()?; // consume '<'
-
+            
             loop {
                 let param_name = match self.advance()? {
                     (Token::Identifier(name), _) => name,
@@ -296,29 +153,28 @@ impl Parser {
                         return Err(CompileError::UnexpectedToken {
                             expected: "type parameter name".to_string(),
                             found: token.to_string(),
-                            span: self.current_span(),
                         });
                     }
                 };
                 type_params.push(param_name.clone());
-
+                
                 if !self.check(&Token::Comma) {
                     break;
                 }
                 self.advance()?; // consume ','
             }
-
+            
             self.consume(Token::Gt, "Expected '>' after type parameters")?;
         }
-
+        
         // Set type parameters in scope for parsing function signature and body
         self.type_params_in_scope = type_params.clone();
-
+        
         self.consume(Token::LeftParen, "Expected '('")?;
-
+        
         // Parse function parameters
         let mut params = Vec::new();
-
+        
         if !self.check(&Token::RightParen) {
             loop {
                 // Check for optional 'mut' keyword
@@ -328,7 +184,7 @@ impl Parser {
                 } else {
                     false
                 };
-
+                
                 // Parse parameter name
                 let param_name = match self.advance()? {
                     (Token::Identifier(name), _) => name,
@@ -336,30 +192,29 @@ impl Parser {
                         return Err(CompileError::UnexpectedToken {
                             expected: "parameter name".to_string(),
                             found: token.to_string(),
-                            span: self.current_span(),
                         });
                     }
                 };
-
+                
                 // Parse parameter type
                 self.consume(Token::Colon, "Expected ':' after parameter name")?;
                 let param_type = self.parse_type()?;
-
+                
                 params.push(Param {
                     name: param_name,
                     ty: param_type,
                     mutable,
                 });
-
+                
                 if !self.check(&Token::Comma) {
                     break;
                 }
                 self.advance()?; // consume ','
             }
         }
-
+        
         self.consume(Token::RightParen, "Expected ')'")?;
-
+        
         // Parse return type if present
         let return_type = if self.check(&Token::Arrow) {
             self.advance()?; // consume '->'
@@ -367,19 +222,19 @@ impl Parser {
         } else {
             None
         };
-
+        
         self.consume(Token::LeftBrace, "Expected '{'")?;
-
+        
         let mut body = Vec::new();
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
             body.push(self.parse_statement()?);
         }
-
+        
         let end_span = self.consume(Token::RightBrace, "Expected '}'")?;
-
+        
         // Clear type parameters from scope
         self.type_params_in_scope.clear();
-
+        
         Ok(Function {
             visibility: crate::ast::Visibility::Private, // TODO: parse pub keyword
             name,
@@ -387,34 +242,28 @@ impl Parser {
             params,
             return_type,
             body,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
+    
     /// Parse a struct definition
     fn parse_struct(&mut self) -> Result<StructDef> {
         let start_span = self.consume(Token::Struct, "Expected 'struct'")?;
-
+        
         let name = match self.advance()? {
             (Token::Identifier(name), _) => name,
             (token, _) => {
                 return Err(CompileError::UnexpectedToken {
                     expected: "struct name".to_string(),
                     found: token.to_string(),
-                    span: self.current_span(),
                 });
             }
         };
-
+        
         self.consume(Token::LeftBrace, "Expected '{' after struct name")?;
-
+        
         let mut fields = Vec::new();
-
+        
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
             // Parse field name
             let field_name = match self.advance()? {
@@ -423,56 +272,49 @@ impl Parser {
                     return Err(CompileError::UnexpectedToken {
                         expected: "field name".to_string(),
                         found: token.to_string(),
-                        span: self.current_span(),
                     });
                 }
             };
-
+            
             self.consume(Token::Colon, "Expected ':' after field name")?;
             let field_type = self.parse_type()?;
-
+            
             fields.push((field_name, field_type));
-
+            
             // Fields are separated by commas
             if !self.check(&Token::RightBrace) {
                 self.consume(Token::Comma, "Expected ',' after field")?;
             }
         }
-
+        
         let end_span = self.consume(Token::RightBrace, "Expected '}' after struct fields")?;
-
+        
         Ok(StructDef {
             visibility: crate::ast::Visibility::Private, // TODO: parse pub keyword
             name,
             fields,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
+    
     /// Parse an enum definition
     fn parse_enum(&mut self) -> Result<EnumDef> {
         let start_span = self.consume(Token::Enum, "Expected 'enum'")?;
-
+        
         let name = match self.advance()? {
             (Token::Identifier(name), _) => name,
             (token, _) => {
                 return Err(CompileError::UnexpectedToken {
                     expected: "enum name".to_string(),
                     found: token.to_string(),
-                    span: self.current_span(),
                 });
             }
         };
-
+        
         self.consume(Token::LeftBrace, "Expected '{' after enum name")?;
-
+        
         let mut variants = Vec::new();
-
+        
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
             // Parse variant name
             let variant_name = match self.advance()? {
@@ -481,17 +323,16 @@ impl Parser {
                     return Err(CompileError::UnexpectedToken {
                         expected: "variant name".to_string(),
                         found: token.to_string(),
-                        span: self.current_span(),
                     });
                 }
             };
-
+            
             // Parse variant data
             let data = if self.check(&Token::LeftParen) {
                 // Tuple variant
                 self.advance()?; // consume '('
                 let mut types = Vec::new();
-
+                
                 if !self.check(&Token::RightParen) {
                     loop {
                         types.push(self.parse_type()?);
@@ -501,14 +342,15 @@ impl Parser {
                         self.advance()?; // consume ','
                     }
                 }
-
+                
                 self.consume(Token::RightParen, "Expected ')' after tuple variant types")?;
                 EnumVariantData::Tuple(types)
+                
             } else if self.check(&Token::LeftBrace) {
                 // Struct variant
                 self.advance()?; // consume '{'
                 let mut fields = Vec::new();
-
+                
                 while !self.check(&Token::RightBrace) && !self.is_at_end() {
                     let field_name = match self.advance()? {
                         (Token::Identifier(name), _) => name,
@@ -516,56 +358,48 @@ impl Parser {
                             return Err(CompileError::UnexpectedToken {
                                 expected: "field name".to_string(),
                                 found: token.to_string(),
-                                span: self.current_span(),
                             });
                         }
                     };
-
+                    
                     self.consume(Token::Colon, "Expected ':' after field name")?;
                     let field_type = self.parse_type()?;
-
+                    
                     fields.push((field_name, field_type));
-
+                    
                     if !self.check(&Token::RightBrace) {
                         self.consume(Token::Comma, "Expected ',' after field")?;
                     }
                 }
-
-                self.consume(
-                    Token::RightBrace,
-                    "Expected '}' after struct variant fields",
-                )?;
+                
+                self.consume(Token::RightBrace, "Expected '}' after struct variant fields")?;
                 EnumVariantData::Struct(fields)
+                
             } else {
                 // Unit variant
                 EnumVariantData::Unit
             };
-
+            
             variants.push(EnumVariant {
                 name: variant_name,
                 data,
             });
-
+            
             // Variants are separated by commas
             if !self.check(&Token::RightBrace) {
                 self.consume(Token::Comma, "Expected ',' after variant")?;
             }
         }
-
+        
         let end_span = self.consume(Token::RightBrace, "Expected '}' after enum variants")?;
-
+        
         Ok(EnumDef {
             name,
             variants,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
+    
     /// Parse a statement
     fn parse_statement(&mut self) -> Result<Stmt> {
         match self.peek()? {
@@ -581,44 +415,35 @@ impl Parser {
                 // Could be assignment or expression statement
                 // Parse the left-hand side as an expression first
                 let checkpoint = self.current;
-                let expr = self.parse_postfix()?; // Parse identifier and any indexing
-
+                let expr = self.parse_postfix()?;  // Parse identifier and any indexing
+                
                 // Check if this is an assignment
                 if self.check(&Token::Eq) && !self.check_at(1, &Token::Eq) {
                     // This is an assignment
                     let start_span = expr.span();
                     self.advance()?; // consume '='
                     let value = self.parse_expression()?;
-                    let end_span =
-                        self.consume(Token::Semicolon, "Expected ';' after assignment")?;
-
+                    let end_span = self.consume(Token::Semicolon, "Expected ';' after assignment")?;
+                    
                     // Convert expression to assignment target
                     let target = match expr {
                         Expr::Ident(name) => AssignTarget::Ident(name),
                         Expr::Index { array, index, .. } => AssignTarget::Index { array, index },
-                        Expr::FieldAccess { object, field, .. } => {
-                            AssignTarget::FieldAccess { object, field }
-                        }
+                        Expr::FieldAccess { object, field, .. } => AssignTarget::FieldAccess { object, field },
                         _ => {
                             return Err(CompileError::SyntaxError {
                                 message: "Invalid assignment target".to_string(),
-                                span: self.current_span(),
                             });
                         }
                     };
-
+                    
                     return Ok(Stmt::Assign {
                         target,
                         value,
-                        span: Span::new(
-                            start_span.start,
-                            end_span.end,
-                            start_span.line,
-                            start_span.column,
-                        ),
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                     });
                 }
-
+                
                 // Not an assignment, continue parsing as expression
                 self.current = checkpoint;
                 let expr = self.parse_expression()?;
@@ -633,11 +458,11 @@ impl Parser {
             }
         }
     }
-
+    
     /// Parse a return statement
     fn parse_return(&mut self) -> Result<Stmt> {
         self.consume(Token::Return, "Expected 'return'")?;
-
+        
         if self.check(&Token::Semicolon) {
             self.advance()?;
             Ok(Stmt::Return(None))
@@ -647,11 +472,11 @@ impl Parser {
             Ok(Stmt::Return(Some(expr)))
         }
     }
-
+    
     /// Parse a let statement
     fn parse_let(&mut self) -> Result<Stmt> {
         let start_span = self.consume(Token::Let, "Expected 'let'")?;
-
+        
         // Check for optional 'mut' keyword
         let mutable = if self.check(&Token::Mut) {
             self.advance()?; // consume 'mut'
@@ -659,18 +484,17 @@ impl Parser {
         } else {
             false
         };
-
+        
         let name = match self.advance()? {
             (Token::Identifier(name), _) => name,
             (token, _) => {
                 return Err(CompileError::UnexpectedToken {
                     expected: "variable name".to_string(),
                     found: token.to_string(),
-                    span: self.current_span(),
                 });
             }
         };
-
+        
         // Optional type annotation
         let ty = if self.check(&Token::Colon) {
             self.advance()?; // consume ':'
@@ -678,101 +502,86 @@ impl Parser {
         } else {
             None
         };
-
+        
         self.consume(Token::Eq, "Expected '=' after variable name")?;
         let value = self.parse_expression()?;
         let end_span = self.consume(Token::Semicolon, "Expected ';' after let statement")?;
-
-        Ok(Stmt::Let {
-            name,
+        
+        Ok(Stmt::Let { 
+            name, 
             ty,
             value,
             mutable,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column) 
         })
     }
-
+    
     /// Parse an if statement
     fn parse_if(&mut self) -> Result<Stmt> {
         let start_span = self.consume(Token::If, "Expected 'if'")?;
-
+        
         let condition = self.parse_expression()?;
-
+        
         self.consume(Token::LeftBrace, "Expected '{' after if condition")?;
-
+        
         let mut then_branch = Vec::new();
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
             then_branch.push(self.parse_statement()?);
         }
-
+        
         self.consume(Token::RightBrace, "Expected '}' after if body")?;
-
+        
         let else_branch = if self.check(&Token::Else) {
             self.advance()?; // consume 'else'
             self.consume(Token::LeftBrace, "Expected '{' after else")?;
-
+            
             let mut else_stmts = Vec::new();
             while !self.check(&Token::RightBrace) && !self.is_at_end() {
                 else_stmts.push(self.parse_statement()?);
             }
-
+            
             let _end_span = self.consume(Token::RightBrace, "Expected '}' after else body")?;
             Some(else_stmts)
         } else {
             None
         };
-
+        
         let end_span = self.tokens[self.current - 1].1;
-
+        
         Ok(Stmt::If {
             condition,
             then_branch,
             else_branch,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
+    
     /// Parse a while statement
     fn parse_while(&mut self) -> Result<Stmt> {
         let start_span = self.consume(Token::While, "Expected 'while'")?;
-
+        
         let condition = self.parse_expression()?;
-
+        
         self.consume(Token::LeftBrace, "Expected '{' after while condition")?;
-
+        
         let mut body = Vec::new();
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
             body.push(self.parse_statement()?);
         }
-
+        
         let end_span = self.consume(Token::RightBrace, "Expected '}' after while body")?;
-
+        
         Ok(Stmt::While {
             condition,
             body,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
+    
     /// Parse a for statement
     fn parse_for(&mut self) -> Result<Stmt> {
         let start_span = self.consume(Token::For, "Expected 'for'")?;
-
+        
         // Parse the loop variable
         let var = match self.advance()? {
             (Token::Identifier(name), _) => name,
@@ -780,84 +589,68 @@ impl Parser {
                 return Err(CompileError::UnexpectedToken {
                     expected: "variable name".to_string(),
                     found: token.to_string(),
-                    span: self.current_span(),
                 });
             }
         };
-
+        
         self.consume(Token::In, "Expected 'in' after for variable")?;
-
+        
         // Parse the iterator expression (array or range)
         let iter = self.parse_expression()?;
-
+        
         self.consume(Token::LeftBrace, "Expected '{' after for header")?;
-
+        
         let mut body = Vec::new();
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
             body.push(self.parse_statement()?);
         }
-
+        
         let end_span = self.consume(Token::RightBrace, "Expected '}' after for body")?;
-
+        
         Ok(Stmt::For {
             var,
             iter,
             body,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
+    
     /// Parse a break statement
     fn parse_break(&mut self) -> Result<Stmt> {
         let start_span = self.consume(Token::Break, "Expected 'break'")?;
         let end_span = self.consume(Token::Semicolon, "Expected ';' after break")?;
-
+        
         Ok(Stmt::Break {
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
+    
     /// Parse a continue statement
     fn parse_continue(&mut self) -> Result<Stmt> {
         let start_span = self.consume(Token::Continue, "Expected 'continue'")?;
         let end_span = self.consume(Token::Semicolon, "Expected ';' after continue")?;
-
+        
         Ok(Stmt::Continue {
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
+    
     /// Parse a match statement
     fn parse_match(&mut self) -> Result<Stmt> {
         let start_span = self.consume(Token::Match, "Expected 'match'")?;
-
+        
         let expr = self.parse_expression()?;
-
+        
         self.consume(Token::LeftBrace, "Expected '{' after match expression")?;
-
+        
         let mut arms = Vec::new();
-
+        
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
             // Parse pattern
             let pattern = self.parse_pattern()?;
-
+            
             self.consume(Token::FatArrow, "Expected '=>' after pattern")?;
-
+            
             // Parse arm body
             let body = if self.check(&Token::LeftBrace) {
                 // Block body
@@ -874,29 +667,24 @@ impl Parser {
                 self.consume(Token::Comma, "Expected ',' after match arm expression")?;
                 vec![Stmt::Expr(expr)]
             };
-
+            
             arms.push(MatchArm { pattern, body });
         }
-
+        
         let end_span = self.consume(Token::RightBrace, "Expected '}' after match arms")?;
-
+        
         Ok(Stmt::Match {
             expr,
             arms,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
+            span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
         })
     }
-
+    
     /// Parse a pattern
     fn parse_pattern(&mut self) -> Result<Pattern> {
         // First, peek and clone the token to avoid borrowing issues
         let token = self.peek()?.clone();
-
+        
         match token {
             Token::Underscore => {
                 self.advance()?;
@@ -904,28 +692,27 @@ impl Parser {
             }
             Token::Identifier(name) => {
                 self.advance()?;
-
+                
                 // Check if this is an enum pattern
                 if self.check(&Token::DoubleColon) {
                     self.advance()?; // consume '::'
-
+                    
                     let variant = match self.advance()? {
                         (Token::Identifier(v), _) => v,
                         (token, _) => {
                             return Err(CompileError::UnexpectedToken {
                                 expected: "variant name".to_string(),
                                 found: token.to_string(),
-                                span: self.current_span(),
                             });
                         }
                     };
-
+                    
                     // Check for pattern data
                     let data = if self.check(&Token::LeftParen) {
                         // Tuple pattern
                         self.advance()?; // consume '('
                         let mut patterns = Vec::new();
-
+                        
                         if !self.check(&Token::RightParen) {
                             loop {
                                 patterns.push(self.parse_pattern()?);
@@ -935,14 +722,15 @@ impl Parser {
                                 self.advance()?; // consume ','
                             }
                         }
-
+                        
                         self.consume(Token::RightParen, "Expected ')' after tuple pattern")?;
                         Some(PatternData::Tuple(patterns))
+                        
                     } else if self.check(&Token::LeftBrace) {
                         // Struct pattern
                         self.advance()?; // consume '{'
                         let mut fields = Vec::new();
-
+                        
                         while !self.check(&Token::RightBrace) && !self.is_at_end() {
                             let field_name = match self.advance()? {
                                 (Token::Identifier(fname), _) => fname,
@@ -950,27 +738,26 @@ impl Parser {
                                     return Err(CompileError::UnexpectedToken {
                                         expected: "field name".to_string(),
                                         found: token.to_string(),
-                                        span: self.current_span(),
                                     });
                                 }
                             };
-
+                            
                             self.consume(Token::Colon, "Expected ':' after field name in pattern")?;
                             let field_pattern = self.parse_pattern()?;
-
+                            
                             fields.push((field_name, field_pattern));
-
+                            
                             if !self.check(&Token::RightBrace) {
                                 self.consume(Token::Comma, "Expected ',' after field pattern")?;
                             }
                         }
-
+                        
                         self.consume(Token::RightBrace, "Expected '}' after struct pattern")?;
                         Some(PatternData::Struct(fields))
                     } else {
                         None
                     };
-
+                    
                     Ok(Pattern::EnumPattern {
                         enum_name: name,
                         variant,
@@ -984,62 +771,48 @@ impl Parser {
             _ => Err(CompileError::UnexpectedToken {
                 expected: "pattern".to_string(),
                 found: token.to_string(),
-                span: self.current_span(),
             }),
         }
     }
-
+    
     /// Parse an expression
     fn parse_expression(&mut self) -> Result<Expr> {
         self.parse_range()
     }
-
+    
     /// Parse range operators (..)
     fn parse_range(&mut self) -> Result<Expr> {
         let mut left = self.parse_logical_or()?;
-
+        
         while let Ok(token) = self.peek() {
             match token {
                 Token::DotDot => {
-                    let left_span = Self::expr_span(&left);
-                    self.advance()?; // consume '..'
+                    let start_span = self.advance()?.1; // consume '..'
                     let right = self.parse_logical_or()?;
-                    let right_span = Self::expr_span(&right);
+                    let end_span = Span::dummy(); // TODO: proper span tracking
                     left = Expr::Range {
                         start: Box::new(left),
                         end: Box::new(right),
-                        span: Span::new(
-                            left_span.start,
-                            right_span.end,
-                            left_span.line,
-                            left_span.column,
-                        ),
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                     };
                 }
                 _ => break,
             }
         }
-
+        
         Ok(left)
     }
-
+    
     /// Parse logical OR (||)
     fn parse_logical_or(&mut self) -> Result<Expr> {
         let mut left = self.parse_logical_and()?;
-
+        
         while let Ok(token) = self.peek() {
             match token {
                 Token::OrOr => {
-                    let left_span = Self::expr_span(&left);
                     let _ = self.advance()?; // consume '||'
                     let right = self.parse_logical_and()?;
-                    let right_span = Self::expr_span(&right);
-                    let span = Span::new(
-                        left_span.start,
-                        right_span.end,
-                        left_span.line,
-                        left_span.column,
-                    );
+                    let span = Span::dummy(); // TODO: proper span tracking
                     left = Expr::Binary {
                         left: Box::new(left),
                         op: BinOp::Or,
@@ -1050,27 +823,20 @@ impl Parser {
                 _ => break,
             }
         }
-
+        
         Ok(left)
     }
-
+    
     /// Parse logical AND (&&)
     fn parse_logical_and(&mut self) -> Result<Expr> {
         let mut left = self.parse_equality()?;
-
+        
         while let Ok(token) = self.peek() {
             match token {
                 Token::AndAnd => {
-                    let left_span = Self::expr_span(&left);
                     let _ = self.advance()?; // consume '&&'
                     let right = self.parse_equality()?;
-                    let right_span = Self::expr_span(&right);
-                    let span = Span::new(
-                        left_span.start,
-                        right_span.end,
-                        left_span.line,
-                        left_span.column,
-                    );
+                    let span = Span::dummy(); // TODO: proper span tracking
                     left = Expr::Binary {
                         left: Box::new(left),
                         op: BinOp::And,
@@ -1081,31 +847,24 @@ impl Parser {
                 _ => break,
             }
         }
-
+        
         Ok(left)
     }
-
+    
     /// Parse equality operators (==, !=)
     fn parse_equality(&mut self) -> Result<Expr> {
         let mut left = self.parse_comparison()?;
-
+        
         while let Ok(token) = self.peek() {
             match token {
                 Token::EqEq | Token::Ne => {
-                    let left_span = Self::expr_span(&left);
                     let op = match self.advance()?.0 {
                         Token::EqEq => BinOp::Eq,
                         Token::Ne => BinOp::Ne,
                         _ => unreachable!(),
                     };
                     let right = self.parse_comparison()?;
-                    let right_span = Self::expr_span(&right);
-                    let span = Span::new(
-                        left_span.start,
-                        right_span.end,
-                        left_span.line,
-                        left_span.column,
-                    );
+                    let span = Span::dummy(); // TODO: proper span tracking
                     left = Expr::Binary {
                         left: Box::new(left),
                         op,
@@ -1116,18 +875,17 @@ impl Parser {
                 _ => break,
             }
         }
-
+        
         Ok(left)
     }
-
+    
     /// Parse comparison operators (<, >, <=, >=)
     fn parse_comparison(&mut self) -> Result<Expr> {
         let mut left = self.parse_addition()?;
-
+        
         while let Ok(token) = self.peek() {
             match token {
                 Token::Lt | Token::Gt | Token::Le | Token::Ge => {
-                    let left_span = Self::expr_span(&left);
                     let op = match self.advance()?.0 {
                         Token::Lt => BinOp::Lt,
                         Token::Gt => BinOp::Gt,
@@ -1136,13 +894,7 @@ impl Parser {
                         _ => unreachable!(),
                     };
                     let right = self.parse_addition()?;
-                    let right_span = Self::expr_span(&right);
-                    let span = Span::new(
-                        left_span.start,
-                        right_span.end,
-                        left_span.line,
-                        left_span.column,
-                    );
+                    let span = Span::dummy(); // TODO: proper span tracking
                     left = Expr::Binary {
                         left: Box::new(left),
                         op,
@@ -1153,31 +905,24 @@ impl Parser {
                 _ => break,
             }
         }
-
+        
         Ok(left)
     }
-
+    
     /// Parse addition and subtraction
     fn parse_addition(&mut self) -> Result<Expr> {
         let mut left = self.parse_multiplication()?;
-
+        
         while let Ok(token) = self.peek() {
             match token {
                 Token::Plus | Token::Minus => {
-                    let left_span = Self::expr_span(&left);
                     let op = match self.advance()?.0 {
                         Token::Plus => BinOp::Add,
                         Token::Minus => BinOp::Sub,
                         _ => unreachable!(),
                     };
                     let right = self.parse_multiplication()?;
-                    let right_span = Self::expr_span(&right);
-                    let span = Span::new(
-                        left_span.start,
-                        right_span.end,
-                        left_span.line,
-                        left_span.column,
-                    );
+                    let span = Span::dummy(); // TODO: proper span tracking
                     left = Expr::Binary {
                         left: Box::new(left),
                         op,
@@ -1188,18 +933,17 @@ impl Parser {
                 _ => break,
             }
         }
-
+        
         Ok(left)
     }
-
+    
     /// Parse multiplication and division
     fn parse_multiplication(&mut self) -> Result<Expr> {
         let mut left = self.parse_unary()?;
-
+        
         while let Ok(token) = self.peek() {
             match token {
                 Token::Star | Token::Slash | Token::Percent => {
-                    let left_span = Self::expr_span(&left);
                     let op = match self.advance()?.0 {
                         Token::Star => BinOp::Mul,
                         Token::Slash => BinOp::Div,
@@ -1207,13 +951,7 @@ impl Parser {
                         _ => unreachable!(),
                     };
                     let right = self.parse_postfix()?;
-                    let right_span = Self::expr_span(&right);
-                    let span = Span::new(
-                        left_span.start,
-                        right_span.end,
-                        left_span.line,
-                        left_span.column,
-                    );
+                    let span = Span::dummy(); // TODO: proper span tracking
                     left = Expr::Binary {
                         left: Box::new(left),
                         op,
@@ -1224,10 +962,10 @@ impl Parser {
                 _ => break,
             }
         }
-
+        
         Ok(left)
     }
-
+    
     /// Parse a type
     fn parse_type(&mut self) -> Result<Type> {
         match self.advance()? {
@@ -1236,7 +974,7 @@ impl Parser {
                 if self.type_params_in_scope.contains(&name) {
                     return Ok(Type::TypeParam(name));
                 }
-
+                
                 match name.as_str() {
                     "i32" => Ok(Type::I32),
                     "i64" => Ok(Type::I64),
@@ -1255,14 +993,12 @@ impl Parser {
                 // Parse array type: [T; N]
                 let elem_type = self.parse_type()?;
                 self.consume(Token::Semicolon, "Expected ';' in array type")?;
-
+                
                 // Parse the size
                 let size = match self.advance()? {
                     (Token::Integer(n), _) => {
                         if n < 0 {
-                            return Err(CompileError::Generic(
-                                "Array size must be non-negative".to_string(),
-                            ));
+                            return Err(CompileError::Generic("Array size must be non-negative".to_string()));
                         }
                         n as usize
                     }
@@ -1270,22 +1006,20 @@ impl Parser {
                         return Err(CompileError::UnexpectedToken {
                             expected: "array size".to_string(),
                             found: token.to_string(),
-                            span: self.current_span(),
                         });
                     }
                 };
-
+                
                 self.consume(Token::RightBracket, "Expected ']' after array type")?;
                 Ok(Type::Array(Box::new(elem_type), size))
             }
             (token, _) => Err(CompileError::UnexpectedToken {
                 expected: "type".to_string(),
                 found: token.to_string(),
-                span: self.current_span(),
             }),
         }
     }
-
+    
     /// Parse a primary expression
     fn parse_primary(&mut self) -> Result<Expr> {
         match self.advance()? {
@@ -1300,9 +1034,9 @@ impl Parser {
                 if self.check(&Token::LeftBrace) && self.check_struct_literal_pattern() {
                     let start_span = span;
                     self.advance()?; // consume '{'
-
+                    
                     let mut fields = Vec::new();
-
+                    
                     while !self.check(&Token::RightBrace) && !self.is_at_end() {
                         // Parse field name
                         let field_name = match self.advance()? {
@@ -1311,33 +1045,26 @@ impl Parser {
                                 return Err(CompileError::UnexpectedToken {
                                     expected: "field name".to_string(),
                                     found: token.to_string(),
-                                    span: self.current_span(),
                                 });
                             }
                         };
-
+                        
                         self.consume(Token::Colon, "Expected ':' after field name")?;
                         let field_expr = self.parse_expression()?;
-
+                        
                         fields.push((field_name, field_expr));
-
+                        
                         if !self.check(&Token::RightBrace) {
                             self.consume(Token::Comma, "Expected ',' after field")?;
                         }
                     }
-
-                    let end_span =
-                        self.consume(Token::RightBrace, "Expected '}' after struct fields")?;
-
+                    
+                    let end_span = self.consume(Token::RightBrace, "Expected '}' after struct fields")?;
+                    
                     Ok(Expr::StructLiteral {
                         name,
                         fields,
-                        span: Span::new(
-                            start_span.start,
-                            end_span.end,
-                            start_span.line,
-                            start_span.column,
-                        ),
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                     })
                 } else {
                     Ok(Expr::Ident(name))
@@ -1359,17 +1086,16 @@ impl Parser {
                         span: Span::new(span.start, end_span.end, span.line, span.column),
                     });
                 }
-
+                
                 // Parse first element
                 let first_elem = self.parse_expression()?;
-
+                
                 // Check if this is array repeat syntax
                 if self.check(&Token::Semicolon) {
                     self.advance()?; // consume ';'
                     let count = self.parse_expression()?;
-                    let end_span =
-                        self.consume(Token::RightBracket, "Expected ']' after array repeat count")?;
-
+                    let end_span = self.consume(Token::RightBracket, "Expected ']' after array repeat count")?;
+                    
                     Ok(Expr::ArrayRepeat {
                         value: Box::new(first_elem),
                         count: Box::new(count),
@@ -1378,7 +1104,7 @@ impl Parser {
                 } else {
                     // Regular array literal
                     let mut elements = vec![first_elem];
-
+                    
                     while self.check(&Token::Comma) {
                         self.advance()?; // consume ','
                         if self.check(&Token::RightBracket) {
@@ -1387,10 +1113,9 @@ impl Parser {
                         }
                         elements.push(self.parse_expression()?);
                     }
-
-                    let end_span =
-                        self.consume(Token::RightBracket, "Expected ']' after array elements")?;
-
+                    
+                    let end_span = self.consume(Token::RightBracket, "Expected ']' after array elements")?;
+                    
                     Ok(Expr::ArrayLiteral {
                         elements,
                         span: Span::new(span.start, end_span.end, span.line, span.column),
@@ -1400,11 +1125,10 @@ impl Parser {
             (token, _) => Err(CompileError::UnexpectedToken {
                 expected: "expression".to_string(),
                 found: token.to_string(),
-                span: self.current_span(),
             }),
         }
     }
-
+    
     /// Parse unary expressions (-, !)
     fn parse_unary(&mut self) -> Result<Expr> {
         match self.peek() {
@@ -1415,12 +1139,7 @@ impl Parser {
                 Ok(Expr::Unary {
                     op: UnaryOp::Neg,
                     operand: Box::new(operand),
-                    span: Span::new(
-                        start_span.start,
-                        end_span.end,
-                        start_span.line,
-                        start_span.column,
-                    ),
+                    span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                 })
             }
             Ok(Token::Not) => {
@@ -1430,87 +1149,70 @@ impl Parser {
                 Ok(Expr::Unary {
                     op: UnaryOp::Not,
                     operand: Box::new(operand),
-                    span: Span::new(
-                        start_span.start,
-                        end_span.end,
-                        start_span.line,
-                        start_span.column,
-                    ),
+                    span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                 })
             }
             _ => self.parse_postfix(),
         }
     }
-
+    
     /// Parse postfix expressions (array indexing, function calls)
     fn parse_postfix(&mut self) -> Result<Expr> {
         let mut expr = self.parse_primary()?;
-
+        
         loop {
             match self.peek() {
                 Ok(Token::LeftBracket) => {
                     let start_span = self.advance()?.1; // consume '['
                     let index = self.parse_expression()?;
-                    let end_span =
-                        self.consume(Token::RightBracket, "Expected ']' after array index")?;
-
+                    let end_span = self.consume(Token::RightBracket, "Expected ']' after array index")?;
+                    
                     expr = Expr::Index {
                         array: Box::new(expr),
                         index: Box::new(index),
-                        span: Span::new(
-                            start_span.start,
-                            end_span.end,
-                            start_span.line,
-                            start_span.column,
-                        ),
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                     };
                 }
                 Ok(Token::LeftParen) => {
                     let start_span = self.advance()?.1; // consume '('
-
+                    
                     let mut args = Vec::new();
-
+                    
                     if !self.check(&Token::RightParen) {
                         loop {
                             args.push(self.parse_expression()?);
-
+                            
                             if !self.check(&Token::Comma) {
                                 break;
                             }
                             self.advance()?; // consume ','
                         }
                     }
-
+                    
                     let end_span = self.consume(Token::RightParen, "Expected ')'")?;
-
+                    
                     expr = Expr::Call {
                         func: Box::new(expr),
                         args,
-                        span: Span::new(
-                            start_span.start,
-                            end_span.end,
-                            start_span.line,
-                            start_span.column,
-                        ),
+                        span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                     };
                 }
                 Ok(Token::Dot) => {
-                    let start_span = Self::expr_span(&expr);
-
+                    let start_span = if let Expr::FieldAccess { span, .. } = &expr {
+                        *span
+                    } else {
+                        Span::dummy()
+                    };
+                    
                     self.advance()?; // consume '.'
-
+                    
                     match self.advance()? {
                         (Token::Identifier(name), span) => {
                             let end_span = span;
                             expr = Expr::FieldAccess {
                                 object: Box::new(expr),
                                 field: name,
-                                span: Span::new(
-                                    start_span.start,
-                                    end_span.end,
-                                    start_span.line,
-                                    start_span.column,
-                                ),
+                                span: Span::new(start_span.start, end_span.end, start_span.line, start_span.column),
                             };
                             continue;
                         }
@@ -1518,7 +1220,6 @@ impl Parser {
                             return Err(CompileError::UnexpectedToken {
                                 expected: "field name".to_string(),
                                 found: token.to_string(),
-                                span: self.current_span(),
                             });
                         }
                     };
@@ -1526,26 +1227,25 @@ impl Parser {
                 Ok(Token::DoubleColon) => {
                     // Handle enum constructor: EnumName::Variant
                     if let Expr::Ident(enum_name) = expr {
-                        let start_span = self.tokens[self.current - 2].1; // Get span from before :: token
+                        let start_span = Span::dummy(); // TODO: proper span tracking
                         self.advance()?; // consume '::'
-
+                        
                         let variant = match self.advance()? {
                             (Token::Identifier(name), _) => name,
                             (token, _) => {
                                 return Err(CompileError::UnexpectedToken {
                                     expected: "variant name".to_string(),
                                     found: token.to_string(),
-                                    span: self.current_span(),
                                 });
                             }
                         };
-
+                        
                         // Check for constructor data
                         let data = if self.check(&Token::LeftParen) {
                             // Tuple constructor
                             self.advance()?; // consume '('
                             let mut args = Vec::new();
-
+                            
                             if !self.check(&Token::RightParen) {
                                 loop {
                                     args.push(self.parse_expression()?);
@@ -1555,14 +1255,15 @@ impl Parser {
                                     self.advance()?; // consume ','
                                 }
                             }
-
+                            
                             let _end_span = self.consume(Token::RightParen, "Expected ')'")?;
                             Some(EnumConstructorData::Tuple(args))
+                            
                         } else if self.check(&Token::LeftBrace) {
                             // Struct constructor
                             self.advance()?; // consume '{'
                             let mut fields = Vec::new();
-
+                            
                             while !self.check(&Token::RightBrace) && !self.is_at_end() {
                                 let field_name = match self.advance()? {
                                     (Token::Identifier(fname), _) => fname,
@@ -1570,63 +1271,54 @@ impl Parser {
                                         return Err(CompileError::UnexpectedToken {
                                             expected: "field name".to_string(),
                                             found: token.to_string(),
-                                            span: self.current_span(),
                                         });
                                     }
                                 };
-
+                                
                                 self.consume(Token::Colon, "Expected ':' after field name")?;
                                 let field_expr = self.parse_expression()?;
-
+                                
                                 fields.push((field_name, field_expr));
-
+                                
                                 if !self.check(&Token::RightBrace) {
                                     self.consume(Token::Comma, "Expected ',' after field")?;
                                 }
                             }
-
+                            
                             let _end_span = self.consume(Token::RightBrace, "Expected '}'")?;
                             Some(EnumConstructorData::Struct(fields))
                         } else {
                             None
                         };
-
-                        let end_span = self.tokens[self.current - 1].1; // Get last consumed token span
+                        
                         expr = Expr::EnumConstructor {
                             enum_name,
                             variant,
                             data,
-                            span: Span::new(
-                                start_span.start,
-                                end_span.end,
-                                start_span.line,
-                                start_span.column,
-                            ),
+                            span: start_span,
                         };
                     } else {
                         return Err(CompileError::SyntaxError {
-                            message: "Double colon can only be used after an identifier"
-                                .to_string(),
-                            span: self.current_span(),
+                            message: "Double colon can only be used after an identifier".to_string(),
                         });
                     }
                 }
                 _ => break,
             }
         }
-
+        
         Ok(expr)
     }
-
+    
     // Helper methods
-
+    
     /// Check if the pattern ahead looks like a struct literal
     /// We look for: { identifier : ... or { }
     fn check_struct_literal_pattern(&self) -> bool {
         if self.current + 1 >= self.tokens.len() {
             return false;
         }
-
+        
         // Check if next token after { is an identifier or }
         match &self.tokens[self.current + 1].0 {
             Token::Identifier(_) => {
@@ -1641,24 +1333,23 @@ impl Parser {
             _ => false,
         }
     }
-
+    
     /// Check if we're at the end of tokens
     fn is_at_end(&self) -> bool {
         self.current >= self.tokens.len()
     }
-
+    
     /// Peek at the current token without consuming it
     fn peek(&self) -> Result<&Token> {
         if self.is_at_end() {
             Err(CompileError::SyntaxError {
                 message: "Unexpected end of file".to_string(),
-                span: self.current_span(),
             })
         } else {
             Ok(&self.tokens[self.current].0)
         }
     }
-
+    
     /// Check if the current token matches the given token
     fn check(&self, token: &Token) -> bool {
         if self.is_at_end() {
@@ -1667,7 +1358,7 @@ impl Parser {
             std::mem::discriminant(&self.tokens[self.current].0) == std::mem::discriminant(token)
         }
     }
-
+    
     /// Check if a token at offset matches the given token
     fn check_at(&self, offset: usize, token: &Token) -> bool {
         let index = self.current + offset;
@@ -1677,13 +1368,12 @@ impl Parser {
             std::mem::discriminant(&self.tokens[index].0) == std::mem::discriminant(token)
         }
     }
-
+    
     /// Advance to the next token
     fn advance(&mut self) -> Result<(Token, Span)> {
         if self.is_at_end() {
             Err(CompileError::SyntaxError {
                 message: "Unexpected end of file".to_string(),
-                span: self.current_span(),
             })
         } else {
             let token = self.tokens[self.current].clone();
@@ -1691,18 +1381,17 @@ impl Parser {
             Ok(token)
         }
     }
-
+    
     /// Consume a specific token or error
     fn consume(&mut self, expected: Token, message: &str) -> Result<Span> {
         let (token, span) = self.advance()?;
-
+        
         if std::mem::discriminant(&token) == std::mem::discriminant(&expected) {
             Ok(span)
         } else {
             Err(CompileError::UnexpectedToken {
                 expected: format!("{} ({})", expected, message),
                 found: token.to_string(),
-                span: self.current_span(),
             })
         }
     }
@@ -1712,7 +1401,7 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::lexer::Lexer;
-
+    
     #[test]
     fn test_parse_hello_world() {
         let source = r#"
@@ -1720,20 +1409,20 @@ mod tests {
             print("Hello, World!");
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 1);
-
+        
         if let Item::Function(func) = &ast.items[0] {
             assert_eq!(func.name, "main");
             assert_eq!(func.params.len(), 0);
             assert_eq!(func.return_type, None);
             assert_eq!(func.body.len(), 1);
-
+            
             if let Stmt::Expr(Expr::Call { func: _, args, .. }) = &func.body[0] {
                 assert_eq!(args.len(), 1);
                 if let Expr::String(s) = &args[0] {
@@ -1742,7 +1431,7 @@ mod tests {
             }
         }
     }
-
+    
     #[test]
     fn test_parse_function_with_return_type() {
         let source = r#"
@@ -1750,20 +1439,20 @@ mod tests {
             return 0;
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 1);
-
+        
         if let Item::Function(func) = &ast.items[0] {
             assert_eq!(func.name, "main");
             assert_eq!(func.params.len(), 0);
             assert_eq!(func.return_type, Some(Type::I32));
             assert_eq!(func.body.len(), 1);
-
+            
             if let Stmt::Return(Some(Expr::Integer(n))) = &func.body[0] {
                 assert_eq!(*n, 0);
             } else {
@@ -1771,7 +1460,7 @@ mod tests {
             }
         }
     }
-
+    
     #[test]
     fn test_parse_for_loop() {
         let source = r#"
@@ -1781,22 +1470,19 @@ mod tests {
             }
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 1);
-
+        
         if let Item::Function(func) = &ast.items[0] {
             assert_eq!(func.name, "main");
             assert_eq!(func.body.len(), 1);
-
-            if let Stmt::For {
-                var, iter, body, ..
-            } = &func.body[0]
-            {
+            
+            if let Stmt::For { var, iter, body, .. } = &func.body[0] {
                 assert_eq!(var, "i");
                 if let Expr::Ident(name) = iter {
                     assert_eq!(name, "arr");
@@ -1809,7 +1495,7 @@ mod tests {
             panic!("Expected function");
         }
     }
-
+    
     #[test]
     fn test_parse_break_continue() {
         let source = r#"
@@ -1824,25 +1510,25 @@ mod tests {
             }
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 1);
-
+        
         if let Item::Function(func) = &ast.items[0] {
             assert_eq!(func.body.len(), 1);
-
+            
             if let Stmt::While { body, .. } = &func.body[0] {
                 assert_eq!(body.len(), 2);
-
+                
                 if let Stmt::If { then_branch, .. } = &body[0] {
                     assert_eq!(then_branch.len(), 1);
                     assert!(matches!(&then_branch[0], Stmt::Break { .. }));
                 }
-
+                
                 if let Stmt::If { then_branch, .. } = &body[1] {
                     assert_eq!(then_branch.len(), 1);
                     assert!(matches!(&then_branch[0], Stmt::Continue { .. }));
@@ -1854,7 +1540,7 @@ mod tests {
             panic!("Expected function");
         }
     }
-
+    
     #[test]
     fn test_parse_for_loop_with_break_continue() {
         let source = r#"
@@ -1870,33 +1556,33 @@ mod tests {
             }
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 1);
-
+        
         if let Item::Function(func) = &ast.items[0] {
             assert_eq!(func.body.len(), 1);
-
+            
             if let Stmt::For { var, body, .. } = &func.body[0] {
                 assert_eq!(var, "i");
                 assert_eq!(body.len(), 3);
-
+                
                 // First statement: if with continue
                 if let Stmt::If { then_branch, .. } = &body[0] {
                     assert_eq!(then_branch.len(), 1);
                     assert!(matches!(&then_branch[0], Stmt::Continue { .. }));
                 }
-
+                
                 // Second statement: if with break
                 if let Stmt::If { then_branch, .. } = &body[1] {
                     assert_eq!(then_branch.len(), 1);
                     assert!(matches!(&then_branch[0], Stmt::Break { .. }));
                 }
-
+                
                 // Third statement: print_int call
                 assert!(matches!(&body[2], Stmt::Expr(_)));
             } else {
@@ -1906,7 +1592,7 @@ mod tests {
             panic!("Expected function");
         }
     }
-
+    
     #[test]
     fn test_parse_struct() {
         let source = r#"
@@ -1921,14 +1607,14 @@ mod tests {
             p.y = 30;
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 2);
-
+        
         // Check struct definition
         if let Item::Struct(struct_def) = &ast.items[0] {
             assert_eq!(struct_def.name, "Point");
@@ -1940,12 +1626,12 @@ mod tests {
         } else {
             panic!("Expected struct definition");
         }
-
+        
         // Check function with struct usage
         if let Item::Function(func) = &ast.items[1] {
             assert_eq!(func.name, "main");
             assert_eq!(func.body.len(), 3);
-
+            
             // First statement: struct literal
             if let Stmt::Let { name, value, .. } = &func.body[0] {
                 assert_eq!(name, "p");
@@ -1958,7 +1644,7 @@ mod tests {
                     panic!("Expected struct literal");
                 }
             }
-
+            
             // Second statement: field access
             if let Stmt::Expr(Expr::Call { args, .. }) = &func.body[1] {
                 assert_eq!(args.len(), 1);
@@ -1968,7 +1654,7 @@ mod tests {
                     panic!("Expected field access");
                 }
             }
-
+            
             // Third statement: field assignment
             if let Stmt::Assign { target, .. } = &func.body[2] {
                 if let AssignTarget::FieldAccess { field, .. } = target {
@@ -1981,7 +1667,7 @@ mod tests {
             panic!("Expected function");
         }
     }
-
+    
     #[test]
     fn test_parse_range_syntax() {
         let source = r#"
@@ -2001,18 +1687,18 @@ mod tests {
             }
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 1);
-
+        
         if let Item::Function(func) = &ast.items[0] {
             assert_eq!(func.name, "main");
             assert_eq!(func.body.len(), 5); // 3 for loops + 2 let statements
-
+            
             // First for loop: 0..10
             if let Stmt::For { var, iter, .. } = &func.body[0] {
                 assert_eq!(var, "i");
@@ -2025,11 +1711,11 @@ mod tests {
             } else {
                 panic!("Expected for loop");
             }
-
+            
             // Check let statements
             assert!(matches!(&func.body[1], Stmt::Let { name, .. } if name == "start"));
             assert!(matches!(&func.body[2], Stmt::Let { name, .. } if name == "end"));
-
+            
             // Second for loop: start..end (with variables)
             if let Stmt::For { var, iter, .. } = &func.body[3] {
                 assert_eq!(var, "j");
@@ -2042,7 +1728,7 @@ mod tests {
             } else {
                 panic!("Expected for loop");
             }
-
+            
             // Third for loop: 0..n+1
             if let Stmt::For { var, iter, .. } = &func.body[4] {
                 assert_eq!(var, "k");
@@ -2060,7 +1746,7 @@ mod tests {
             panic!("Expected function");
         }
     }
-
+    
     #[test]
     fn test_parse_enum() {
         let source = r#"
@@ -2087,14 +1773,14 @@ mod tests {
             let shape = Shape::Circle { radius: 10 };
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 4);
-
+        
         // Check first enum (simple)
         if let Item::Enum(enum_def) = &ast.items[0] {
             assert_eq!(enum_def.name, "Color");
@@ -2108,7 +1794,7 @@ mod tests {
         } else {
             panic!("Expected enum definition");
         }
-
+        
         // Check second enum (with tuple variant)
         if let Item::Enum(enum_def) = &ast.items[1] {
             assert_eq!(enum_def.name, "Option");
@@ -2125,12 +1811,12 @@ mod tests {
         } else {
             panic!("Expected enum definition");
         }
-
+        
         // Check third enum (with struct variant)
         if let Item::Enum(enum_def) = &ast.items[2] {
             assert_eq!(enum_def.name, "Shape");
             assert_eq!(enum_def.variants.len(), 3);
-
+            
             assert_eq!(enum_def.variants[0].name, "Circle");
             if let EnumVariantData::Struct(fields) = &enum_def.variants[0].data {
                 assert_eq!(fields.len(), 1);
@@ -2139,7 +1825,7 @@ mod tests {
             } else {
                 panic!("Expected struct variant");
             }
-
+            
             assert_eq!(enum_def.variants[1].name, "Rectangle");
             if let EnumVariantData::Struct(fields) = &enum_def.variants[1].data {
                 assert_eq!(fields.len(), 2);
@@ -2150,28 +1836,22 @@ mod tests {
             } else {
                 panic!("Expected struct variant");
             }
-
+            
             assert_eq!(enum_def.variants[2].name, "Point");
             assert!(matches!(enum_def.variants[2].data, EnumVariantData::Unit));
         } else {
             panic!("Expected enum definition");
         }
-
+        
         // Check function with enum usage
         if let Item::Function(func) = &ast.items[3] {
             assert_eq!(func.name, "main");
             assert_eq!(func.body.len(), 3);
-
+            
             // First statement: unit enum constructor
             if let Stmt::Let { name, value, .. } = &func.body[0] {
                 assert_eq!(name, "c");
-                if let Expr::EnumConstructor {
-                    enum_name,
-                    variant,
-                    data,
-                    ..
-                } = value
-                {
+                if let Expr::EnumConstructor { enum_name, variant, data, .. } = value {
                     assert_eq!(enum_name, "Color");
                     assert_eq!(variant, "Red");
                     assert!(data.is_none());
@@ -2179,17 +1859,11 @@ mod tests {
                     panic!("Expected enum constructor");
                 }
             }
-
+            
             // Second statement: tuple enum constructor
             if let Stmt::Let { name, value, .. } = &func.body[1] {
                 assert_eq!(name, "opt");
-                if let Expr::EnumConstructor {
-                    enum_name,
-                    variant,
-                    data,
-                    ..
-                } = value
-                {
+                if let Expr::EnumConstructor { enum_name, variant, data, .. } = value {
                     assert_eq!(enum_name, "Option");
                     assert_eq!(variant, "Some");
                     if let Some(EnumConstructorData::Tuple(args)) = data {
@@ -2206,17 +1880,11 @@ mod tests {
                     panic!("Expected enum constructor");
                 }
             }
-
+            
             // Third statement: struct enum constructor
             if let Stmt::Let { name, value, .. } = &func.body[2] {
                 assert_eq!(name, "shape");
-                if let Expr::EnumConstructor {
-                    enum_name,
-                    variant,
-                    data,
-                    ..
-                } = value
-                {
+                if let Expr::EnumConstructor { enum_name, variant, data, .. } = value {
                     assert_eq!(enum_name, "Shape");
                     assert_eq!(variant, "Circle");
                     if let Some(EnumConstructorData::Struct(fields)) = data {
@@ -2238,7 +1906,7 @@ mod tests {
             panic!("Expected function");
         }
     }
-
+    
     #[test]
     fn test_parse_match_wildcard() {
         let source = r#"
@@ -2249,18 +1917,18 @@ mod tests {
             }
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         if let Item::Function(func) = &ast.items[0] {
             assert_eq!(func.body.len(), 2);
             if let Stmt::Match { arms, .. } = &func.body[1] {
                 assert_eq!(arms.len(), 1);
                 match &arms[0].pattern {
-                    Pattern::Wildcard => {}
+                    Pattern::Wildcard => {},
                     _ => panic!("Expected wildcard pattern"),
                 }
                 assert_eq!(arms[0].body.len(), 1);
@@ -2271,7 +1939,7 @@ mod tests {
             panic!("Expected function");
         }
     }
-
+    
     #[test]
     fn test_parse_match_identifier() {
         let source = r#"
@@ -2281,24 +1949,24 @@ mod tests {
             }
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         if let Item::Function(func) = &ast.items[0] {
             if let Stmt::Match { arms, .. } = &func.body[0] {
                 match &arms[0].pattern {
                     Pattern::Ident(name) => {
                         assert_eq!(name, "value");
-                    }
+                    },
                     _ => panic!("Expected identifier pattern"),
                 }
             }
         }
     }
-
+    
     #[test]
     fn test_parse_match_enum_patterns() {
         let source = r#"
@@ -2314,23 +1982,19 @@ mod tests {
             }
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         if let Item::Function(func) = &ast.items[1] {
             if let Stmt::Match { arms, .. } = &func.body[0] {
                 assert_eq!(arms.len(), 2);
-
+                
                 // First arm: Option::Some(n)
                 match &arms[0].pattern {
-                    Pattern::EnumPattern {
-                        enum_name,
-                        variant,
-                        data,
-                    } => {
+                    Pattern::EnumPattern { enum_name, variant, data } => {
                         assert_eq!(enum_name, "Option");
                         assert_eq!(variant, "Some");
                         if let Some(PatternData::Tuple(patterns)) = data {
@@ -2342,27 +2006,23 @@ mod tests {
                         } else {
                             panic!("Expected tuple pattern data");
                         }
-                    }
+                    },
                     _ => panic!("Expected enum pattern"),
                 }
-
+                
                 // Second arm: Option::None
                 match &arms[1].pattern {
-                    Pattern::EnumPattern {
-                        enum_name,
-                        variant,
-                        data,
-                    } => {
+                    Pattern::EnumPattern { enum_name, variant, data } => {
                         assert_eq!(enum_name, "Option");
                         assert_eq!(variant, "None");
                         assert!(data.is_none());
-                    }
+                    },
                     _ => panic!("Expected enum pattern"),
                 }
             }
         }
     }
-
+    
     #[test]
     fn test_parse_match_block_body() {
         let source = r#"
@@ -2375,19 +2035,19 @@ mod tests {
             }
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         if let Item::Function(func) = &ast.items[0] {
             if let Stmt::Match { arms, .. } = &func.body[0] {
                 assert_eq!(arms[0].body.len(), 2);
             }
         }
     }
-
+    
     #[test]
     fn test_parse_array_repeat() {
         let source = r#"
@@ -2396,18 +2056,18 @@ mod tests {
             let arr2 = [42; 5];
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 1);
-
+        
         if let Item::Function(func) = &ast.items[0] {
             assert_eq!(func.name, "main");
             assert_eq!(func.body.len(), 2);
-
+            
             // First statement: [0; 10]
             if let Stmt::Let { name, value, .. } = &func.body[0] {
                 assert_eq!(name, "arr");
@@ -2426,7 +2086,7 @@ mod tests {
                     panic!("Expected array repeat expression");
                 }
             }
-
+            
             // Second statement: [42; 5]
             if let Stmt::Let { name, value, .. } = &func.body[1] {
                 assert_eq!(name, "arr2");
@@ -2449,7 +2109,7 @@ mod tests {
             panic!("Expected function");
         }
     }
-
+    
     #[test]
     fn test_parse_struct_returns() {
         let source = r#"
@@ -2471,14 +2131,14 @@ mod tests {
             let origin = get_origin();
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 4);
-
+        
         // Check struct definition
         if let Item::Struct(struct_def) = &ast.items[0] {
             assert_eq!(struct_def.name, "Point");
@@ -2486,7 +2146,7 @@ mod tests {
         } else {
             panic!("Expected struct definition");
         }
-
+        
         // Check make_point function
         if let Item::Function(func) = &ast.items[1] {
             assert_eq!(func.name, "make_point");
@@ -2496,7 +2156,7 @@ mod tests {
             assert_eq!(func.params[1].name, "y");
             assert_eq!(func.params[1].ty, Type::I64);
             assert_eq!(func.return_type, Some(Type::Custom("Point".to_string())));
-
+            
             // Check return statement
             assert_eq!(func.body.len(), 1);
             if let Stmt::Return(Some(Expr::StructLiteral { name, fields, .. })) = &func.body[0] {
@@ -2510,13 +2170,13 @@ mod tests {
         } else {
             panic!("Expected function");
         }
-
+        
         // Check get_origin function
         if let Item::Function(func) = &ast.items[2] {
             assert_eq!(func.name, "get_origin");
             assert_eq!(func.params.len(), 0);
             assert_eq!(func.return_type, Some(Type::Custom("Point".to_string())));
-
+            
             // Check return statement
             assert_eq!(func.body.len(), 1);
             if let Stmt::Return(Some(Expr::StructLiteral { name, fields, .. })) = &func.body[0] {
@@ -2534,12 +2194,12 @@ mod tests {
         } else {
             panic!("Expected function");
         }
-
+        
         // Check main function
         if let Item::Function(func) = &ast.items[3] {
             assert_eq!(func.name, "main");
             assert_eq!(func.body.len(), 2);
-
+            
             // First statement: let p = make_point(10, 20)
             if let Stmt::Let { name, value, .. } = &func.body[0] {
                 assert_eq!(name, "p");
@@ -2552,7 +2212,7 @@ mod tests {
                     panic!("Expected function call");
                 }
             }
-
+            
             // Second statement: let origin = get_origin()
             if let Stmt::Let { name, value, .. } = &func.body[1] {
                 assert_eq!(name, "origin");
@@ -2569,7 +2229,7 @@ mod tests {
             panic!("Expected function");
         }
     }
-
+    
     #[test]
     fn test_parse_logical_operators() {
         let source = r#"
@@ -2588,25 +2248,22 @@ mod tests {
             }
         }
         "#;
-
+        
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-
+        
         assert_eq!(ast.items.len(), 1);
-
+        
         if let Item::Function(func) = &ast.items[0] {
             assert_eq!(func.name, "main");
             assert_eq!(func.body.len(), 6);
-
+            
             // Check first statement: let a = true && false
             if let Stmt::Let { name, value, .. } = &func.body[0] {
                 assert_eq!(name, "a");
-                if let Expr::Binary {
-                    op, left, right, ..
-                } = value
-                {
+                if let Expr::Binary { op, left, right, .. } = value {
                     assert_eq!(*op, BinOp::And);
                     assert!(matches!(left.as_ref(), Expr::Bool(true)));
                     assert!(matches!(right.as_ref(), Expr::Bool(false)));
@@ -2614,14 +2271,11 @@ mod tests {
                     panic!("Expected && expression");
                 }
             }
-
+            
             // Check second statement: let b = true || false
             if let Stmt::Let { name, value, .. } = &func.body[1] {
                 assert_eq!(name, "b");
-                if let Expr::Binary {
-                    op, left, right, ..
-                } = value
-                {
+                if let Expr::Binary { op, left, right, .. } = value {
                     assert_eq!(*op, BinOp::Or);
                     assert!(matches!(left.as_ref(), Expr::Bool(true)));
                     assert!(matches!(right.as_ref(), Expr::Bool(false)));
@@ -2629,14 +2283,11 @@ mod tests {
                     panic!("Expected || expression");
                 }
             }
-
+            
             // Check third statement: let c = x < 5 && y > 10
             if let Stmt::Let { name, value, .. } = &func.body[2] {
                 assert_eq!(name, "c");
-                if let Expr::Binary {
-                    op, left, right, ..
-                } = value
-                {
+                if let Expr::Binary { op, left, right, .. } = value {
                     assert_eq!(*op, BinOp::And);
                     // Left should be x < 5
                     if let Expr::Binary { op: left_op, .. } = left.as_ref() {
@@ -2654,7 +2305,7 @@ mod tests {
                     panic!("Expected && expression");
                 }
             }
-
+            
             // Check fourth statement: complex expression with parentheses
             if let Stmt::Let { name, value, .. } = &func.body[3] {
                 assert_eq!(name, "d");
@@ -2664,7 +2315,7 @@ mod tests {
                     panic!("Expected || at top level");
                 }
             }
-
+            
             // Check if statement with logical operators
             if let Stmt::If { condition, .. } = &func.body[4] {
                 if let Expr::Binary { op, .. } = condition {
@@ -2673,7 +2324,7 @@ mod tests {
                     panic!("Expected logical expression in if condition");
                 }
             }
-
+            
             // Check while statement with logical operators
             if let Stmt::While { condition, .. } = &func.body[5] {
                 if let Expr::Binary { op, .. } = condition {

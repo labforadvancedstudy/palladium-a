@@ -13,7 +13,9 @@ pub struct Program {
 /// Import statement
 #[derive(Debug, Clone)]
 pub struct Import {
-    pub path: Vec<String>, // e.g., ["math", "add"] for math::add
+    pub path: Vec<String>,          // e.g., ["std", "math"] for std::math
+    pub items: Option<Vec<String>>, // e.g., Some(["pd_abs", "pd_sin"]) for specific imports, None for wildcard
+    pub alias: Option<String>,      // e.g., Some("m") for std::math as m
     pub span: Span,
 }
 
@@ -154,13 +156,9 @@ pub enum Stmt {
         span: Span,
     },
     /// Break statement
-    Break {
-        span: Span,
-    },
+    Break { span: Span },
     /// Continue statement
-    Continue {
-        span: Span,
-    },
+    Continue { span: Span },
     /// Match statement
     Match {
         expr: Expr,
@@ -212,10 +210,7 @@ pub enum Expr {
     /// Identifier
     Ident(String),
     /// Array literal
-    ArrayLiteral {
-        elements: Vec<Expr>,
-        span: Span,
-    },
+    ArrayLiteral { elements: Vec<Expr>, span: Span },
     /// Array repeat literal [value; count]
     ArrayRepeat {
         value: Box<Expr>,
@@ -289,15 +284,9 @@ pub enum AssignTarget {
     /// Simple variable assignment
     Ident(String),
     /// Array element assignment
-    Index {
-        array: Box<Expr>,
-        index: Box<Expr>,
-    },
+    Index { array: Box<Expr>, index: Box<Expr> },
     /// Field assignment
-    FieldAccess {
-        object: Box<Expr>,
-        field: String,
-    },
+    FieldAccess { object: Box<Expr>, field: String },
 }
 
 /// Binary operators
@@ -422,7 +411,7 @@ impl std::fmt::Display for EnumDef {
             }
             write!(f, "    {}", variant.name)?;
             match &variant.data {
-                EnumVariantData::Unit => {},
+                EnumVariantData::Unit => {}
                 EnumVariantData::Tuple(types) => {
                     write!(f, "(")?;
                     for (j, ty) in types.iter().enumerate() {
@@ -483,7 +472,13 @@ impl std::fmt::Display for Stmt {
             Stmt::Expr(expr) => write!(f, "{};", expr),
             Stmt::Return(None) => write!(f, "return;"),
             Stmt::Return(Some(expr)) => write!(f, "return {};", expr),
-            Stmt::Let { name, ty, value, mutable, .. } => {
+            Stmt::Let {
+                name,
+                ty,
+                value,
+                mutable,
+                ..
+            } => {
                 let mut_str = if *mutable { "mut " } else { "" };
                 if let Some(ty) = ty {
                     write!(f, "let {}{}: {} = {};", mut_str, name, ty, value)
@@ -491,14 +486,21 @@ impl std::fmt::Display for Stmt {
                     write!(f, "let {}{} = {};", mut_str, name, value)
                 }
             }
-            Stmt::Assign { target, value, .. } => {
-                match target {
-                    AssignTarget::Ident(name) => write!(f, "{} = {};", name, value),
-                    AssignTarget::Index { array, index } => write!(f, "{}[{}] = {};", array, index, value),
-                    AssignTarget::FieldAccess { object, field } => write!(f, "{}.{} = {};", object, field, value),
+            Stmt::Assign { target, value, .. } => match target {
+                AssignTarget::Ident(name) => write!(f, "{} = {};", name, value),
+                AssignTarget::Index { array, index } => {
+                    write!(f, "{}[{}] = {};", array, index, value)
                 }
-            }
-            Stmt::If { condition, then_branch, else_branch, .. } => {
+                AssignTarget::FieldAccess { object, field } => {
+                    write!(f, "{}.{} = {};", object, field, value)
+                }
+            },
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 write!(f, "if {} {{", condition)?;
                 for stmt in then_branch {
                     write!(f, " {} ", stmt)?;
@@ -513,14 +515,18 @@ impl std::fmt::Display for Stmt {
                 }
                 Ok(())
             }
-            Stmt::While { condition, body, .. } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 write!(f, "while {} {{", condition)?;
                 for stmt in body {
                     write!(f, " {} ", stmt)?;
                 }
                 write!(f, "}}")
             }
-            Stmt::For { var, iter, body, .. } => {
+            Stmt::For {
+                var, iter, body, ..
+            } => {
                 write!(f, "for {} in {} {{", var, iter)?;
                 for stmt in body {
                     write!(f, " {} ", stmt)?;
@@ -590,7 +596,9 @@ impl std::fmt::Display for Expr {
                 }
                 write!(f, ")")
             }
-            Expr::Binary { left, op, right, .. } => {
+            Expr::Binary {
+                left, op, right, ..
+            } => {
                 write!(f, "({} {} {})", left, op, right)
             }
             Expr::Unary { op, operand, .. } => {
@@ -609,7 +617,12 @@ impl std::fmt::Display for Expr {
             Expr::FieldAccess { object, field, .. } => {
                 write!(f, "{}.{}", object, field)
             }
-            Expr::EnumConstructor { enum_name, variant, data, .. } => {
+            Expr::EnumConstructor {
+                enum_name,
+                variant,
+                data,
+                ..
+            } => {
                 write!(f, "{}::{}", enum_name, variant)?;
                 match data {
                     Some(EnumConstructorData::Tuple(args)) => {
@@ -632,7 +645,7 @@ impl std::fmt::Display for Expr {
                         }
                         write!(f, " }}")
                     }
-                    None => Ok(())
+                    None => Ok(()),
                 }
             }
             Expr::Range { start, end, .. } => {
@@ -647,7 +660,11 @@ impl std::fmt::Display for Pattern {
         match self {
             Pattern::Wildcard => write!(f, "_"),
             Pattern::Ident(name) => write!(f, "{}", name),
-            Pattern::EnumPattern { enum_name, variant, data } => {
+            Pattern::EnumPattern {
+                enum_name,
+                variant,
+                data,
+            } => {
                 write!(f, "{}::{}", enum_name, variant)?;
                 match data {
                     Some(PatternData::Tuple(patterns)) => {
@@ -670,7 +687,7 @@ impl std::fmt::Display for Pattern {
                         }
                         write!(f, " }}")
                     }
-                    None => Ok(())
+                    None => Ok(()),
                 }
             }
         }

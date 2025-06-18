@@ -1,0 +1,19 @@
+// Test module aliasing with specific imports
+
+// Import only specific functions from aliased module
+import std::math::{pd_abs, max} as math_utils;
+
+fn main() {
+    let a = -42;
+    let b = 17;
+    
+    // Use the imported functions
+    let abs_a = pd_abs(a);
+    let larger = max(abs_a, b);
+    
+    print("Absolute value of " + int_to_string(a) + " is " + int_to_string(abs_a));
+    print("Max of " + int_to_string(abs_a) + " and " + int_to_string(b) + " is " + int_to_string(larger));
+    
+    // This would fail because min was not imported:
+    // let smaller = min(abs_a, b);
+}

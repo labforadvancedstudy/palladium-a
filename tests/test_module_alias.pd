@@ -1,0 +1,26 @@
+// Test module aliasing feature
+
+// Import math module with alias - this imports all functions from math module
+import std::math as m;
+
+// Import string module with alias
+import std::string as s;
+
+fn main() {
+    // When we import a module with an alias, the functions are imported directly
+    // So we use pd_abs, not m::pd_abs
+    let n = -42;
+    let abs_n = pd_abs(n);
+    print("Absolute value of " + int_to_string(n) + " is " + int_to_string(abs_n));
+    
+    // Use string functions that were imported through the aliased module
+    let text = "  hello world  ";
+    let trimmed = trim(text);
+    print("Trimmed text: '" + trimmed + "'");
+    
+    if starts_with(trimmed, "hello") {
+        print("Text starts with 'hello'");
+    }
+    
+    print("Module aliasing test complete!");
+}

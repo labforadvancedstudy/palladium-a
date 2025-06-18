@@ -1,9 +1,9 @@
 // Lexical scanner for Palladium
 // "Reading the runes of modern sorcery"
 
-use logos::{Logos, Lexer as LogosLexer};
-use crate::errors::{CompileError, Result, Span};
 use super::token::Token;
+use crate::errors::{CompileError, Result, Span};
+use logos::{Lexer as LogosLexer, Logos};
 
 pub struct Lexer<'a> {
     inner: LogosLexer<'a, Token>,
@@ -19,7 +19,7 @@ impl<'a> Lexer<'a> {
             source,
         }
     }
-    
+
     /// Get the next token
     pub fn next_token(&mut self) -> Result<Option<(Token, Span)>> {
         match self.inner.next() {
@@ -27,10 +27,10 @@ impl<'a> Lexer<'a> {
                 let span = self.inner.span();
                 let start_pos = span.start;
                 let end_pos = span.end;
-                
+
                 // Calculate line and column
                 let (line, col) = self.position_at(start_pos);
-                
+
                 let span = Span::new(start_pos, end_pos, line, col);
                 Ok(Some((token, span)))
             }
@@ -39,17 +39,27 @@ impl<'a> Lexer<'a> {
                 let start_pos = span.start;
                 let (line, col) = self.position_at(start_pos);
                 let ch = self.source.chars().nth(start_pos).unwrap_or('?');
-                Err(CompileError::UnexpectedChar { ch, line, col })
+                Err(CompileError::UnexpectedChar {
+                    ch,
+                    line,
+                    col,
+                    span: Some(crate::errors::Span::new(
+                        start_pos,
+                        start_pos + 1,
+                        line,
+                        col,
+                    )),
+                })
             }
             None => Ok(None),
         }
     }
-    
+
     /// Calculate line and column for a byte position
     fn position_at(&self, pos: usize) -> (usize, usize) {
         let mut line = 1;
         let mut col = 1;
-        
+
         for (i, ch) in self.source.chars().enumerate() {
             if i >= pos {
                 break;
@@ -61,10 +71,10 @@ impl<'a> Lexer<'a> {
                 col += 1;
             }
         }
-        
+
         (line, col)
     }
-    
+
     /// Peek at the next token without consuming it
     pub fn peek(&mut self) -> Result<Option<Token>> {
         let saved = self.inner.clone();
@@ -72,7 +82,7 @@ impl<'a> Lexer<'a> {
         self.inner = saved;
         result
     }
-    
+
     /// Consume all remaining tokens
     pub fn collect_tokens(&mut self) -> Result<Vec<(Token, Span)>> {
         let mut tokens = Vec::new();
@@ -85,7 +95,7 @@ impl<'a> Lexer<'a> {
 
 impl Iterator for Lexer<'_> {
     type Item = Token;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         self.next_token().ok()?.map(|(token, _)| token)
     }
@@ -94,12 +104,12 @@ impl Iterator for Lexer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_basic_tokens() {
         let source = "fn main() { }";
         let mut lexer = Lexer::new(source);
-        
+
         assert_eq!(lexer.next(), Some(Token::Fn));
         assert_eq!(lexer.next(), Some(Token::Identifier("main".to_string())));
         assert_eq!(lexer.next(), Some(Token::LeftParen));
@@ -108,19 +118,22 @@ mod tests {
         assert_eq!(lexer.next(), Some(Token::RightBrace));
         assert_eq!(lexer.next(), None);
     }
-    
+
     #[test]
     fn test_string_literal() {
         let source = r#"print("Hello, World!");"#;
         let mut lexer = Lexer::new(source);
-        
+
         assert_eq!(lexer.next(), Some(Token::Identifier("print".to_string())));
         assert_eq!(lexer.next(), Some(Token::LeftParen));
-        assert_eq!(lexer.next(), Some(Token::String("Hello, World!".to_string())));
+        assert_eq!(
+            lexer.next(),
+            Some(Token::String("Hello, World!".to_string()))
+        );
         assert_eq!(lexer.next(), Some(Token::RightParen));
         assert_eq!(lexer.next(), Some(Token::Semicolon));
     }
-    
+
     #[test]
     fn test_comments() {
         let source = r#"
@@ -132,21 +145,21 @@ mod tests {
         }
         "#;
         let mut lexer = Lexer::new(source);
-        
+
         assert_eq!(lexer.next(), Some(Token::Fn));
         assert_eq!(lexer.next(), Some(Token::Identifier("main".to_string())));
         // Comments should be skipped
     }
-    
+
     #[test]
     fn test_position_tracking() {
         let source = "fn\nmain";
         let mut lexer = Lexer::new(source);
-        
+
         let (token1, span1) = lexer.next_token().unwrap().unwrap();
         assert_eq!(token1, Token::Fn);
         assert_eq!(span1.line, 1);
-        
+
         let (token2, span2) = lexer.next_token().unwrap().unwrap();
         assert_eq!(token2, Token::Identifier("main".to_string()));
         assert_eq!(span2.line, 2);
