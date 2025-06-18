@@ -78,6 +78,9 @@ test_file.txt
 *.dylib
 *.exe
 
+# Test output directory
+test_output/
+
 # OS specific files
 .DS_Store
 Thumbs.db
