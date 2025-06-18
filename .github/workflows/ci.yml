@@ -1,0 +1,206 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Check code formatting
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt
+    - name: Check formatting
+      run: cargo fmt -- --check
+
+  # Lint with Clippy
+  clippy:
+    name: Clippy Lint
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+    - uses: Swatinem/rust-cache@v2
+    - name: Run Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Build and test on multiple platforms
+  test:
+    name: Test Suite
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, beta]
+        exclude:
+          # Skip beta on Windows to save CI time
+          - os: windows-latest
+            rust: beta
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+    - uses: Swatinem/rust-cache@v2
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+    - name: Run doc tests
+      run: cargo test --doc --verbose
+
+  # Test bootstrap compilers
+  bootstrap:
+    name: Bootstrap Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Install GCC
+      run: sudo apt-get update && sudo apt-get install -y gcc
+    - name: Build Rust compiler
+      run: cargo build --release
+    - name: Test tiny compiler self-hosting
+      run: |
+        cd bootstrap/v3_incremental
+        make test-self-host
+    - name: Test full compiler
+      run: |
+        cd bootstrap/v2_full
+        ../../target/release/palladium pdc.pd -o pdc.c
+        gcc pdc.c -o pdc
+        ./pdc --version
+
+  # Build and test examples
+  examples:
+    name: Example Programs
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Build compiler
+      run: cargo build --release
+    - name: Test example programs
+      run: |
+        for example in examples/basic/*.pd; do
+          echo "Testing $example"
+          ./target/release/palladium "$example" -o temp.c
+          gcc temp.c -o temp
+          ./temp || echo "Example $example failed"
+          rm -f temp temp.c
+        done
+
+  # Check that self-hosting works
+  self-host:
+    name: Self-Hosting Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Build initial compiler
+      run: cargo build --release
+    - name: Compile tiny compiler
+      run: |
+        cd bootstrap/v3_incremental
+        ../../target/release/palladium tiny_v16.pd -o tiny_compiler.c
+        gcc tiny_compiler.c -o tiny_compiler
+    - name: Self-compile test
+      run: |
+        cd bootstrap/v3_incremental
+        ./tiny_compiler tiny_self_test.pd tiny_self_test.c
+        gcc tiny_self_test.c -o tiny_self_test
+        ./tiny_self_test
+
+  # Security audit
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: rustsec/audit-check@v1.4.1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Generate and upload documentation
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Generate docs
+      run: cargo doc --no-deps --all-features
+    - name: Upload docs
+      uses: actions/upload-artifact@v3
+      with:
+        name: rustdoc
+        path: target/doc
+
+  # Code coverage
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Install tarpaulin
+      run: cargo install cargo-tarpaulin
+    - name: Generate coverage
+      run: cargo tarpaulin --out Xml --verbose
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./cobertura.xml
+        fail_ci_if_error: false
+
+  # Benchmark performance
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+    - name: Run benchmarks
+      run: |
+        cargo build --release
+        # Benchmark compilation speed
+        time ./target/release/palladium bootstrap/v3_incremental/tiny_v16.pd -o /dev/null
+        # Benchmark bootstrap time
+        time ./target/release/palladium bootstrap/v2_full/pdc.pd -o /dev/null
+
+  # All tests must pass
+  ci-success:
+    name: CI Success
+    if: ${{ success() }}
+    needs:
+      - format
+      - clippy
+      - test
+      - bootstrap
+      - examples
+      - self-host
+      - security
+    runs-on: ubuntu-latest
+    steps:
+      - name: CI succeeded
+        run: echo "All CI checks passed!"
