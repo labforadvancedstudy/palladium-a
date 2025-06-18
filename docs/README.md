@@ -21,7 +21,7 @@ Welcome to the official documentation for the Palladium programming language - w
 
 ### Reference Documentation
 - [📚 Language Reference](./reference/) - Syntax and semantics
-- [🛠️ Standard Library](./reference/stdlib/) - Built-in types and functions
+- [🛠️ Standard Library](./stdlib/) - Complete stdlib documentation
 - [🔧 Tools](./tools/) - Compiler, formatter, LSP
 
 ### Developer Resources
