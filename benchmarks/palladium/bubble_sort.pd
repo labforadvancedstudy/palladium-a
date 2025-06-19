@@ -1,0 +1,41 @@
+// Bubble sort benchmark in Palladium
+// Tests array operations and swapping
+
+fn bubble_sort(arr: &mut [i64; 1000], n: i64) {
+    let mut i = 0;
+    while i < n - 1 {
+        let mut j = 0;
+        while j < n - i - 1 {
+            if arr[j] > arr[j + 1] {
+                // Swap
+                let temp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = temp;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+fn main() {
+    print("Bubble sort benchmark (1000 elements)...");
+    
+    let mut arr: [i64; 1000] = [0; 1000];
+    
+    // Initialize with reverse order (worst case)
+    let mut i = 0;
+    while i < 1000 {
+        arr[i] = 1000 - i;
+        i = i + 1;
+    }
+    
+    bubble_sort(&mut arr, 1000);
+    
+    // Verify first and last elements
+    print("First element:");
+    print_int(arr[0]);
+    print("Last element:");
+    print_int(arr[999]);
+    print("Done!");
+}

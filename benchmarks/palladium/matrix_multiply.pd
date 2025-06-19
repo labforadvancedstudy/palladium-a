@@ -1,0 +1,36 @@
+// Matrix multiplication benchmark in Palladium
+// Tests nested loops and array performance
+
+const SIZE: i64 = 100;
+
+fn matrix_multiply(n: i64) {
+    // Since we don't have 2D arrays yet, simulate with 1D
+    let a: [i64; 10000] = [1; 10000];  // SIZE * SIZE
+    let b: [i64; 10000] = [1; 10000];
+    let mut c: [i64; 10000] = [0; 10000];
+    
+    let mut i = 0;
+    while i < n {
+        let mut j = 0;
+        while j < n {
+            let mut sum = 0;
+            let mut k = 0;
+            while k < n {
+                sum = sum + a[i * n + k] * b[k * n + j];
+                k = k + 1;
+            }
+            c[i * n + j] = sum;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    
+    // Print a sample result to verify correctness
+    print_int(c[0]);
+}
+
+fn main() {
+    print("Matrix multiplication 100x100...");
+    matrix_multiply(SIZE);
+    print("Done!");
+}

@@ -1,0 +1,26 @@
+// String concatenation benchmark in Palladium
+// Tests string operations and memory allocation
+
+fn string_benchmark(iterations: i64) -> String {
+    let mut result = "Start";
+    let mut i = 0;
+    
+    while i < iterations {
+        result = string_concat(result, " ");
+        result = string_concat(result, int_to_string(i));
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+fn main() {
+    print("String concatenation benchmark...");
+    
+    let iterations = 1000;
+    let result = string_benchmark(iterations);
+    
+    print("Final string length:");
+    print_int(string_len(result));
+    print("Done!");
+}
