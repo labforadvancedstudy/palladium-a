@@ -1,0 +1,386 @@
+# Palladium Grammar Specification (EBNF)
+# Version 1.0.0-alpha
+
+# =============================================================================
+# Lexical Grammar
+# =============================================================================
+
+# Whitespace and Comments
+whitespace     = ' ' | '\t' | '\n' | '\r' ;
+line_comment   = "//" { any_char - '\n' } ;
+block_comment  = "/*" { any_char } "*/" ;
+comment        = line_comment | block_comment ;
+
+# Identifiers
+identifier     = ( letter | '_' ) { letter | digit | '_' } ;
+letter         = 'a'..'z' | 'A'..'Z' ;
+digit          = '0'..'9' ;
+
+# Keywords
+keyword        = "async" | "await" | "break" | "const" | "continue"
+               | "effect" | "else" | "enum" | "false" | "fn"
+               | "for" | "if" | "impl" | "let" | "match"
+               | "mod" | "mut" | "pub" | "return" | "self"
+               | "struct" | "trait" | "true" | "type" | "unsafe"
+               | "use" | "while" | "Self" | "as" | "in" ;
+
+# Literals
+literal        = integer_literal
+               | string_literal
+               | boolean_literal ;
+
+integer_literal = decimal_literal
+                | hex_literal
+                | binary_literal ;
+
+decimal_literal = digit { digit } ;
+hex_literal     = "0x" hex_digit { hex_digit } ;
+binary_literal  = "0b" binary_digit { binary_digit } ;
+hex_digit       = digit | 'a'..'f' | 'A'..'F' ;
+binary_digit    = '0' | '1' ;
+
+string_literal  = '"' { string_char | escape_seq } '"' ;
+string_char     = any_unicode - '"' - '\' ;
+escape_seq      = '\' ( 'n' | 'r' | 't' | '\' | '"' | '0' ) ;
+
+boolean_literal = "true" | "false" ;
+
+# Operators
+operator       = arithmetic_op | comparison_op | logical_op
+               | bitwise_op | assignment_op ;
+
+arithmetic_op  = '+' | '-' | '*' | '/' | '%' ;
+comparison_op  = "==" | "!=" | '<' | '>' | "<=" | ">=" ;
+logical_op     = "&&" | "||" | '!' ;
+bitwise_op     = '&' | '|' | '^' | "<<" | ">>" ;
+assignment_op  = '=' | "+=" | "-=" | "*=" | "/=" | "%="
+               | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
+
+# Delimiters
+delimiter      = '(' | ')' | '[' | ']' | '{' | '}'
+               | ',' | ';' | ':' | '.' | "->" | "::"
+               | '?' | ".." | "..." ;
+
+# =============================================================================
+# Syntactic Grammar
+# =============================================================================
+
+# Program Structure
+program        = { import } { item } ;
+
+import         = "use" module_path [ "as" identifier ] ';' ;
+module_path    = identifier { "::" identifier } ;
+
+# Items
+item           = function
+               | struct_def
+               | enum_def
+               | trait_def
+               | impl_block
+               | type_alias
+               | const_def
+               | macro_def ;
+
+visibility     = [ "pub" ] ;
+
+# Function Definition
+function       = visibility [ "async" ] "fn" identifier
+                 [ generic_params ] '(' [ param_list ] ')'
+                 [ "->" type ] [ where_clause ] [ effect_clause ]
+                 block ;
+
+param_list     = param { ',' param } [ ',' ] ;
+param          = [ "mut" ] identifier ':' type ;
+
+generic_params = '<' generic_param { ',' generic_param } '>' ;
+generic_param  = lifetime_param | type_param | const_param ;
+
+lifetime_param = "'" identifier ;
+type_param     = identifier [ ':' type_bounds ] ;
+const_param    = "const" identifier ':' type ;
+
+type_bounds    = type_bound { '+' type_bound } ;
+type_bound     = lifetime | trait_bound ;
+trait_bound    = type_path ;
+
+where_clause   = "where" where_predicate { ',' where_predicate } ;
+where_predicate = type ':' type_bounds ;
+
+effect_clause  = '!' '[' effect_list ']' ;
+effect_list    = identifier { ',' identifier } ;
+
+# Struct Definition
+struct_def     = visibility "struct" identifier
+                 [ generic_params ] [ where_clause ]
+                 ( struct_fields | ';' ) ;
+
+struct_fields  = '{' field_list '}' ;
+field_list     = field { ',' field } [ ',' ] ;
+field          = visibility identifier ':' type ;
+
+# Enum Definition
+enum_def       = visibility "enum" identifier
+                 [ generic_params ] [ where_clause ]
+                 '{' variant_list '}' ;
+
+variant_list   = variant { ',' variant } [ ',' ] ;
+variant        = identifier [ variant_data ] ;
+variant_data   = '(' type_list ')' | struct_fields ;
+
+# Trait Definition
+trait_def      = visibility "trait" identifier
+                 [ generic_params ] [ where_clause ]
+                 '{' { trait_item } '}' ;
+
+trait_item     = trait_method | associated_type ;
+trait_method   = [ visibility ] method_sig [ block ] ;
+method_sig     = "fn" identifier [ generic_params ]
+                 '(' [ self_param ] [ ',' ] [ param_list ] ')'
+                 [ "->" type ] [ where_clause ] ;
+
+self_param     = [ '&' ] [ "mut" ] "self" ;
+associated_type = "type" identifier [ type_bounds ] ';' ;
+
+# Implementation Block
+impl_block     = "impl" [ generic_params ] [ type "for" ] type
+                 [ where_clause ] '{' { impl_item } '}' ;
+
+impl_item      = function | associated_type_def ;
+associated_type_def = "type" identifier '=' type ';' ;
+
+# Type Alias
+type_alias     = visibility "type" identifier
+                 [ generic_params ] '=' type ';' ;
+
+# Constant Definition
+const_def      = visibility "const" identifier ':' type
+                 '=' expression ';' ;
+
+# Macro Definition
+macro_def      = "macro" identifier '(' pattern ')' "=>" block ;
+
+# Types
+type           = primitive_type
+               | array_type
+               | slice_type
+               | tuple_type
+               | reference_type
+               | pointer_type
+               | function_type
+               | generic_type
+               | type_path
+               | impl_trait_type
+               | dyn_trait_type
+               | never_type
+               | infer_type ;
+
+primitive_type = "i32" | "i64" | "u32" | "u64"
+               | "f32" | "f64" | "bool" | "char"
+               | "String" | "()" ;
+
+array_type     = '[' type ';' array_size ']' ;
+array_size     = const_expr ;
+
+slice_type     = '[' type ']' ;
+tuple_type     = '(' [ type { ',' type } [ ',' ] ] ')' ;
+
+reference_type = '&' [ lifetime ] [ "mut" ] type ;
+pointer_type   = '*' ( "const" | "mut" ) type ;
+
+function_type  = "fn" '(' [ type_list ] ')' [ "->" type ] ;
+type_list      = type { ',' type } [ ',' ] ;
+
+generic_type   = type_path '<' generic_args '>' ;
+generic_args   = generic_arg { ',' generic_arg } [ ',' ] ;
+generic_arg    = type | lifetime | const_expr ;
+
+type_path      = [ "::" ] path_segment { "::" path_segment } ;
+path_segment   = identifier [ "::" '<' generic_args '>' ] ;
+
+impl_trait_type = "impl" type_bounds ;
+dyn_trait_type  = "dyn" type_bounds ;
+never_type      = '!' ;
+infer_type      = '_' ;
+
+# Statements
+statement      = let_stmt
+               | expr_stmt
+               | return_stmt
+               | break_stmt
+               | continue_stmt
+               | semi_stmt ;
+
+let_stmt       = "let" pattern [ ':' type ] [ '=' expression ] ';' ;
+expr_stmt      = expression_no_block ';' ;
+return_stmt    = "return" [ expression ] ';' ;
+break_stmt     = "break" [ lifetime ] [ expression ] ';' ;
+continue_stmt  = "continue" [ lifetime ] ';' ;
+semi_stmt      = expression ';' ;
+
+# Expressions
+expression     = expression_with_block
+               | expression_no_block ;
+
+expression_with_block = block_expr
+                      | if_expr
+                      | match_expr
+                      | while_expr
+                      | for_expr
+                      | loop_expr
+                      | unsafe_expr
+                      | async_block ;
+
+expression_no_block = literal_expr
+                    | path_expr
+                    | operator_expr
+                    | grouped_expr
+                    | array_expr
+                    | index_expr
+                    | tuple_expr
+                    | struct_expr
+                    | call_expr
+                    | method_expr
+                    | field_expr
+                    | closure_expr
+                    | range_expr
+                    | cast_expr
+                    | break_expr
+                    | continue_expr
+                    | return_expr
+                    | await_expr
+                    | try_expr ;
+
+# Expression Details
+literal_expr   = literal ;
+path_expr      = type_path ;
+grouped_expr   = '(' expression ')' ;
+
+operator_expr  = prefix_expr | infix_expr | postfix_expr ;
+prefix_expr    = prefix_op expression ;
+infix_expr     = expression infix_op expression ;
+postfix_expr   = expression postfix_op ;
+
+prefix_op      = '-' | '!' | '*' | '&' | "&mut" ;
+infix_op       = arithmetic_op | comparison_op | logical_op
+               | bitwise_op | assignment_op | ".." ;
+postfix_op     = '?' ;
+
+array_expr     = '[' array_elements ']' ;
+array_elements = expression_list | expression ';' const_expr ;
+expression_list = expression { ',' expression } [ ',' ] ;
+
+index_expr     = expression '[' expression ']' ;
+tuple_expr     = '(' [ expression_list ] ')' ;
+
+struct_expr    = type_path '{' [ field_init_list ] '}' ;
+field_init_list = field_init { ',' field_init } [ ',' ] ;
+field_init     = identifier [ ':' expression ] ;
+
+call_expr      = expression '(' [ expression_list ] ')' ;
+method_expr    = expression '.' identifier
+                 [ "::" '<' generic_args '>' ]
+                 '(' [ expression_list ] ')' ;
+field_expr     = expression '.' identifier ;
+
+closure_expr   = [ "move" ] '|' [ param_list ] '|'
+                 [ "->" type ] expression ;
+
+range_expr     = [ expression ] ".." [ expression ]
+               | [ expression ] "..=" expression ;
+
+cast_expr      = expression "as" type ;
+
+break_expr     = "break" [ lifetime ] [ expression ] ;
+continue_expr  = "continue" [ lifetime ] ;
+return_expr    = "return" [ expression ] ;
+
+await_expr     = expression ".await" ;
+try_expr       = expression '?' ;
+
+# Control Flow Expressions
+block_expr     = block ;
+block          = '{' { statement } [ expression ] '}' ;
+
+if_expr        = "if" expression block
+                 [ "else" ( if_expr | block ) ] ;
+
+match_expr     = "match" expression '{' match_arms '}' ;
+match_arms     = match_arm { ',' match_arm } [ ',' ] ;
+match_arm      = pattern [ "if" expression ] "=>" expression ;
+
+while_expr     = [ lifetime ':' ] "while" expression block ;
+for_expr       = [ lifetime ':' ] "for" pattern "in" expression block ;
+loop_expr      = [ lifetime ':' ] "loop" block ;
+
+unsafe_expr    = "unsafe" block ;
+async_block    = "async" [ "move" ] block ;
+
+# Patterns
+pattern        = literal_pattern
+               | identifier_pattern
+               | wildcard_pattern
+               | rest_pattern
+               | reference_pattern
+               | struct_pattern
+               | tuple_struct_pattern
+               | tuple_pattern
+               | slice_pattern
+               | path_pattern
+               | or_pattern ;
+
+literal_pattern = literal ;
+identifier_pattern = [ "ref" ] [ "mut" ] identifier ;
+wildcard_pattern = '_' ;
+rest_pattern   = ".." ;
+reference_pattern = '&' [ "mut" ] pattern ;
+
+struct_pattern = type_path '{' [ field_pattern_list ] '}' ;
+field_pattern_list = field_pattern { ',' field_pattern } [ ',' ] ;
+field_pattern  = identifier [ ':' pattern ] | rest_pattern ;
+
+tuple_struct_pattern = type_path '(' [ pattern_list ] ')' ;
+tuple_pattern  = '(' [ pattern_list ] ')' ;
+pattern_list   = pattern { ',' pattern } [ ',' ] ;
+
+slice_pattern  = '[' [ pattern_list ] ']' ;
+path_pattern   = type_path ;
+or_pattern     = pattern '|' pattern ;
+
+# Constant Expressions
+const_expr     = literal
+               | path_expr
+               | const_block
+               | const_fn_call ;
+
+const_block    = "const" block ;
+const_fn_call  = path_expr '(' [ const_expr_list ] ')' ;
+const_expr_list = const_expr { ',' const_expr } [ ',' ] ;
+
+# =============================================================================
+# Operator Precedence (highest to lowest)
+# =============================================================================
+# 1.  Paths, Identifiers, Literals
+# 2.  Field access, Method calls, Function calls, Array indexing
+# 3.  Unary operators: -, !, *, &, &mut
+# 4.  Type cast: as
+# 5.  Multiplicative: *, /, %
+# 6.  Additive: +, -
+# 7.  Shift: <<, >>
+# 8.  Bitwise AND: &
+# 9.  Bitwise XOR: ^
+# 10. Bitwise OR: |
+# 11. Comparison: ==, !=, <, >, <=, >=
+# 12. Logical AND: &&
+# 13. Logical OR: ||
+# 14. Range: .., ..=
+# 15. Assignment: =, +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
+# 16. Return, Break, Continue
+
+# =============================================================================
+# Notes
+# =============================================================================
+# - Comments and whitespace can appear between any tokens
+# - Semicolons are required after statements except before '}'
+# - Trailing commas are allowed in lists
+# - Operator precedence follows C-like languages
+# - Left-to-right associativity for all binary operators except assignment
