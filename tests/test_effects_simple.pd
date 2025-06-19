@@ -1,7 +1,7 @@
 // Simple effect system test
 
 fn pure_add(a: i32, b: i32) -> i32 {
-    a + b
+    return a + b;
 }
 
 fn io_greet() {
