@@ -1,0 +1,5 @@
+fn main() {
+    print("Testing effects\n");
+    let x = 5 + 3;
+    print_int(x);
+}

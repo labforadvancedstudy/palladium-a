@@ -1,0 +1,46 @@
+// Collections module for Palladium standard library
+// "Legends organize their treasures"
+
+pub mod vec;
+pub mod hashmap;
+
+// Re-export main types
+pub use vec::{Vec, VecIter, VecIterMut};
+pub use hashmap::{HashMap, Entry, Keys, Values, Iter};
+
+// Common collection traits
+pub trait Collection {
+    fn len(self: &Self) -> usize;
+    fn is_empty(self: &Self) -> bool;
+    fn clear(self: &mut Self);
+}
+
+// Implement Collection for Vec
+impl<T> Collection for Vec<T> {
+    fn len(self: &Vec<T>) -> usize {
+        Vec::len(self)
+    }
+    
+    fn is_empty(self: &Vec<T>) -> bool {
+        Vec::is_empty(self)
+    }
+    
+    fn clear(self: &mut Vec<T>) {
+        Vec::clear(self)
+    }
+}
+
+// Implement Collection for HashMap
+impl<K, V> Collection for HashMap<K, V> {
+    fn len(self: &HashMap<K, V>) -> usize {
+        HashMap::len(self)
+    }
+    
+    fn is_empty(self: &HashMap<K, V>) -> bool {
+        HashMap::is_empty(self)
+    }
+    
+    fn clear(self: &mut HashMap<K, V>) {
+        HashMap::clear(self)
+    }
+}

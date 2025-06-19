@@ -1,0 +1,186 @@
+// Comprehensive test of compiler features
+// This tests many language features that the self-hosting compiler must handle
+
+// Test type aliases
+type Int = i64;
+type IntArray = [i64; 10];
+
+// Test constants
+const PI: i64 = 3;  // Simplified PI for integer math
+const MAX_SIZE: i64 = 100;
+
+// Test structs with methods (via free functions)
+struct Vector2 {
+    x: i64,
+    y: i64,
+}
+
+fn vector2_new(x: i64, y: i64) -> Vector2 {
+    return Vector2 { x: x, y: y };
+}
+
+fn vector2_add(a: Vector2, b: Vector2) -> Vector2 {
+    return Vector2 {
+        x: a.x + b.x,
+        y: a.y + b.y,
+    };
+}
+
+fn vector2_magnitude_squared(v: Vector2) -> i64 {
+    return v.x * v.x + v.y * v.y;
+}
+
+// Test enums (simplified - just constants for now)
+const COLOR_RED: i64 = 0;
+const COLOR_GREEN: i64 = 1;
+const COLOR_BLUE: i64 = 2;
+
+fn color_name(color: i64) -> String {
+    if color == COLOR_RED {
+        return "Red";
+    } else if color == COLOR_GREEN {
+        return "Green";
+    } else if color == COLOR_BLUE {
+        return "Blue";
+    } else {
+        return "Unknown";
+    }
+}
+
+// Test nested functions and closures (via nested calls)
+fn apply_operation(x: i64, y: i64, op: i64) -> i64 {
+    if op == 0 {
+        return x + y;
+    } else if op == 1 {
+        return x - y;
+    } else if op == 2 {
+        return x * y;
+    } else {
+        return 0;
+    }
+}
+
+// Test array operations
+fn bubble_sort(arr: [i64; 5]) -> [i64; 5] {
+    let mut result = arr;
+    let mut i = 0;
+    
+    while i < 5 {
+        let mut j = 0;
+        while j < 4 - i {
+            if result[j] > result[j + 1] {
+                let temp = result[j];
+                result[j] = result[j + 1];
+                result[j + 1] = temp;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Test recursion with memoization (simplified)
+fn fibonacci(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+// Test complex control flow
+fn test_complex_control_flow(x: i64) -> String {
+    let mut result = "";
+    
+    if x < 0 {
+        result = "negative";
+    } else if x == 0 {
+        result = "zero";
+    } else if x < 10 {
+        result = "single digit";
+    } else if x < 100 {
+        result = "double digit";
+    } else {
+        result = "large";
+    }
+    
+    // Nested control flow
+    if string_len(result) > 5 {
+        if x < 50 {
+            result = string_concat(result, " (small)");
+        } else {
+            result = string_concat(result, " (big)");
+        }
+    }
+    
+    return result;
+}
+
+// Main test function
+fn main() {
+    print("=== Comprehensive Compiler Feature Test ===");
+    
+    // Test type aliases
+    let my_int: Int = 42;
+    print(string_concat("Type alias test: ", int_to_string(my_int)));
+    
+    // Test constants
+    let circle_area = PI * 10 * 10;
+    print(string_concat("Const test (area with r=10): ", int_to_string(circle_area)));
+    
+    // Test structs
+    let v1 = vector2_new(3, 4);
+    let v2 = vector2_new(1, 2);
+    let v3 = vector2_add(v1, v2);
+    print(string_concat("Vector addition x: ", int_to_string(v3.x)));
+    print(string_concat("Vector addition y: ", int_to_string(v3.y)));
+    
+    let mag_sq = vector2_magnitude_squared(v1);
+    print(string_concat("Vector magnitude squared: ", int_to_string(mag_sq)));
+    
+    // Test enum-like constants
+    let color = COLOR_GREEN;
+    print(string_concat("Color name: ", color_name(color)));
+    
+    // Test function pointers (simulated with op codes)
+    let result1 = apply_operation(10, 5, 0); // add
+    let result2 = apply_operation(10, 5, 1); // subtract
+    let result3 = apply_operation(10, 5, 2); // multiply
+    print(string_concat("10 + 5 = ", int_to_string(result1)));
+    print(string_concat("10 - 5 = ", int_to_string(result2)));
+    print(string_concat("10 * 5 = ", int_to_string(result3)));
+    
+    // Test array sorting
+    let unsorted = [5, 2, 8, 1, 9];
+    let sorted = bubble_sort(unsorted);
+    print("Sorted array:");
+    let mut i = 0;
+    while i < 5 {
+        print_int(sorted[i]);
+        i = i + 1;
+    }
+    
+    // Test recursion
+    print("Fibonacci sequence:");
+    i = 0;
+    while i < 8 {
+        let fib = fibonacci(i);
+        print(string_concat(string_concat("fib(", int_to_string(i)), 
+                          string_concat(") = ", int_to_string(fib))));
+        i = i + 1;
+    }
+    
+    // Test complex control flow
+    let test_values = [-5, 0, 7, 42, 150];
+    i = 0;
+    while i < 5 {
+        let classification = test_complex_control_flow(test_values[i]);
+        print(string_concat(string_concat(int_to_string(test_values[i]), " is "), 
+                          classification));
+        i = i + 1;
+    }
+    
+    print("");
+    print("All compiler features tested successfully!");
+}

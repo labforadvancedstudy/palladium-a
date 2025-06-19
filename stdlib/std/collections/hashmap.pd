@@ -1,0 +1,482 @@
+// HashMap: A hash table implementation
+// "Legends map their way to victory"
+
+use crate::std::option::Option;
+use crate::std::result::Result;
+
+// Default initial capacity
+const DEFAULT_CAPACITY: usize = 16;
+// Maximum load factor before resize
+const MAX_LOAD_FACTOR: f64 = 0.75;
+
+pub struct HashMap<K, V> {
+    buckets: Vec<Option<Vec<(K, V)>>>,
+    size: usize,
+}
+
+impl<K: Hash + Eq, V> HashMap<K, V> {
+    // Create a new empty HashMap
+    pub fn new() -> HashMap<K, V> {
+        HashMap::with_capacity(DEFAULT_CAPACITY)
+    }
+
+    // Create a HashMap with specified capacity
+    pub fn with_capacity(capacity: usize) -> HashMap<K, V> {
+        let capacity = if capacity < DEFAULT_CAPACITY {
+            DEFAULT_CAPACITY
+        } else {
+            // Round up to next power of 2
+            let mut cap = 1;
+            while cap < capacity {
+                cap <<= 1;
+            }
+            cap
+        };
+
+        let mut buckets = Vec::with_capacity(capacity);
+        for _ in 0..capacity {
+            buckets.push(Option::None);
+        }
+
+        HashMap {
+            buckets: buckets,
+            size: 0,
+        }
+    }
+
+    // Get the number of elements
+    pub fn len(self: &HashMap<K, V>) -> usize {
+        self.size
+    }
+
+    // Check if empty
+    pub fn is_empty(self: &HashMap<K, V>) -> bool {
+        self.size == 0
+    }
+
+    // Get current capacity
+    pub fn capacity(self: &HashMap<K, V>) -> usize {
+        self.buckets.len()
+    }
+
+    // Insert a key-value pair
+    pub fn insert(self: &mut HashMap<K, V>, key: K, value: V) -> Option<V> {
+        // Check if we need to resize
+        if self.size as f64 >= self.capacity() as f64 * MAX_LOAD_FACTOR {
+            self.resize();
+        }
+
+        let index = self.bucket_index(&key);
+        let bucket = &mut self.buckets[index];
+
+        match bucket {
+            Option::Some(entries) => {
+                // Search for existing key
+                for i in 0..entries.len() {
+                    if entries[i].0 == key {
+                        let old_value = entries[i].1;
+                        entries[i].1 = value;
+                        return Option::Some(old_value);
+                    }
+                }
+                // Key not found, add new entry
+                entries.push((key, value));
+                self.size += 1;
+                Option::None
+            }
+            Option::None => {
+                // Create new bucket with entry
+                let mut entries = Vec::new();
+                entries.push((key, value));
+                *bucket = Option::Some(entries);
+                self.size += 1;
+                Option::None
+            }
+        }
+    }
+
+    // Get a value by key
+    pub fn get(self: &HashMap<K, V>, key: &K) -> Option<&V> {
+        let index = self.bucket_index(key);
+        
+        match &self.buckets[index] {
+            Option::Some(entries) => {
+                for (k, v) in entries.iter() {
+                    if k == key {
+                        return Option::Some(v);
+                    }
+                }
+                Option::None
+            }
+            Option::None => Option::None,
+        }
+    }
+
+    // Get a mutable value by key
+    pub fn get_mut(self: &mut HashMap<K, V>, key: &K) -> Option<&mut V> {
+        let index = self.bucket_index(key);
+        
+        match &mut self.buckets[index] {
+            Option::Some(entries) => {
+                for (k, v) in entries.iter_mut() {
+                    if k == key {
+                        return Option::Some(v);
+                    }
+                }
+                Option::None
+            }
+            Option::None => Option::None,
+        }
+    }
+
+    // Check if key exists
+    pub fn contains_key(self: &HashMap<K, V>, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
+    // Remove a key-value pair
+    pub fn remove(self: &mut HashMap<K, V>, key: &K) -> Option<V> {
+        let index = self.bucket_index(key);
+        
+        match &mut self.buckets[index] {
+            Option::Some(entries) => {
+                for i in 0..entries.len() {
+                    if entries[i].0 == *key {
+                        let (_, value) = entries.remove(i);
+                        self.size -= 1;
+                        
+                        // Remove bucket if empty
+                        if entries.is_empty() {
+                            self.buckets[index] = Option::None;
+                        }
+                        
+                        return Option::Some(value);
+                    }
+                }
+                Option::None
+            }
+            Option::None => Option::None,
+        }
+    }
+
+    // Clear all entries
+    pub fn clear(self: &mut HashMap<K, V>) {
+        for bucket in self.buckets.iter_mut() {
+            *bucket = Option::None;
+        }
+        self.size = 0;
+    }
+
+    // Get or insert with default
+    pub fn entry(self: &mut HashMap<K, V>, key: K) -> Entry<K, V> {
+        let index = self.bucket_index(&key);
+        
+        match &mut self.buckets[index] {
+            Option::Some(entries) => {
+                for i in 0..entries.len() {
+                    if entries[i].0 == key {
+                        return Entry::Occupied(OccupiedEntry {
+                            map: self,
+                            key: key,
+                            index: index,
+                            entry_index: i,
+                        });
+                    }
+                }
+                Entry::Vacant(VacantEntry {
+                    map: self,
+                    key: key,
+                    index: index,
+                })
+            }
+            Option::None => Entry::Vacant(VacantEntry {
+                map: self,
+                key: key,
+                index: index,
+            }),
+        }
+    }
+
+    // Get keys iterator
+    pub fn keys(self: &HashMap<K, V>) -> Keys<K, V> {
+        Keys {
+            map: self,
+            bucket_index: 0,
+            entry_index: 0,
+        }
+    }
+
+    // Get values iterator
+    pub fn values(self: &HashMap<K, V>) -> Values<K, V> {
+        Values {
+            map: self,
+            bucket_index: 0,
+            entry_index: 0,
+        }
+    }
+
+    // Get entries iterator
+    pub fn iter(self: &HashMap<K, V>) -> Iter<K, V> {
+        Iter {
+            map: self,
+            bucket_index: 0,
+            entry_index: 0,
+        }
+    }
+
+    // Retain only entries that satisfy the predicate
+    pub fn retain(self: &mut HashMap<K, V>, f: fn(&K, &mut V) -> bool) {
+        let mut removed = 0;
+        
+        for bucket in self.buckets.iter_mut() {
+            match bucket {
+                Option::Some(entries) => {
+                    let mut i = 0;
+                    while i < entries.len() {
+                        if !f(&entries[i].0, &mut entries[i].1) {
+                            entries.remove(i);
+                            removed += 1;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    
+                    // Remove bucket if empty
+                    if entries.is_empty() {
+                        *bucket = Option::None;
+                    }
+                }
+                Option::None => {}
+            }
+        }
+        
+        self.size -= removed;
+    }
+
+    // Private helper to calculate bucket index
+    fn bucket_index(self: &HashMap<K, V>, key: &K) -> usize {
+        let hash = key.hash();
+        (hash as usize) & (self.capacity() - 1)
+    }
+
+    // Private helper to resize the HashMap
+    fn resize(self: &mut HashMap<K, V>) {
+        let new_capacity = self.capacity() * 2;
+        let mut new_buckets = Vec::with_capacity(new_capacity);
+        
+        for _ in 0..new_capacity {
+            new_buckets.push(Option::None);
+        }
+
+        // Rehash all entries
+        let old_buckets = mem::replace(&mut self.buckets, new_buckets);
+        self.size = 0;
+
+        for bucket in old_buckets {
+            match bucket {
+                Option::Some(entries) => {
+                    for (key, value) in entries {
+                        self.insert(key, value);
+                    }
+                }
+                Option::None => {}
+            }
+        }
+    }
+}
+
+// Entry API for efficient updates
+pub enum Entry<K, V> {
+    Occupied(OccupiedEntry<K, V>),
+    Vacant(VacantEntry<K, V>),
+}
+
+pub struct OccupiedEntry<K, V> {
+    map: &mut HashMap<K, V>,
+    key: K,
+    index: usize,
+    entry_index: usize,
+}
+
+pub struct VacantEntry<K, V> {
+    map: &mut HashMap<K, V>,
+    key: K,
+    index: usize,
+}
+
+impl<K: Hash + Eq, V> Entry<K, V> {
+    pub fn or_insert(self, default: V) -> &mut V {
+        match self {
+            Entry::Occupied(entry) => entry.get_mut(),
+            Entry::Vacant(entry) => entry.insert(default),
+        }
+    }
+
+    pub fn or_insert_with(self, f: fn() -> V) -> &mut V {
+        match self {
+            Entry::Occupied(entry) => entry.get_mut(),
+            Entry::Vacant(entry) => entry.insert(f()),
+        }
+    }
+}
+
+impl<K: Hash + Eq, V> OccupiedEntry<K, V> {
+    pub fn get(self: &OccupiedEntry<K, V>) -> &V {
+        let bucket = &self.map.buckets[self.index];
+        match bucket {
+            Option::Some(entries) => &entries[self.entry_index].1,
+            Option::None => panic("occupied entry has no bucket"),
+        }
+    }
+
+    pub fn get_mut(self: &mut OccupiedEntry<K, V>) -> &mut V {
+        let bucket = &mut self.map.buckets[self.index];
+        match bucket {
+            Option::Some(entries) => &mut entries[self.entry_index].1,
+            Option::None => panic("occupied entry has no bucket"),
+        }
+    }
+
+    pub fn remove(self: OccupiedEntry<K, V>) -> V {
+        self.map.remove(&self.key).unwrap()
+    }
+}
+
+impl<K: Hash + Eq, V> VacantEntry<K, V> {
+    pub fn insert(self: VacantEntry<K, V>, value: V) -> &mut V {
+        self.map.insert(self.key, value);
+        
+        // Return reference to inserted value
+        let bucket = &mut self.map.buckets[self.index];
+        match bucket {
+            Option::Some(entries) => {
+                &mut entries[entries.len() - 1].1
+            }
+            Option::None => panic("vacant entry insert failed"),
+        }
+    }
+}
+
+// Iterator implementations
+pub struct Keys<K, V> {
+    map: &HashMap<K, V>,
+    bucket_index: usize,
+    entry_index: usize,
+}
+
+impl<K, V> Iterator for Keys<K, V> {
+    type Item = &K;
+
+    fn next(self: &mut Keys<K, V>) -> Option<&K> {
+        while self.bucket_index < self.map.capacity() {
+            match &self.map.buckets[self.bucket_index] {
+                Option::Some(entries) => {
+                    if self.entry_index < entries.len() {
+                        let key = &entries[self.entry_index].0;
+                        self.entry_index += 1;
+                        return Option::Some(key);
+                    }
+                }
+                Option::None => {}
+            }
+            
+            self.bucket_index += 1;
+            self.entry_index = 0;
+        }
+        Option::None
+    }
+}
+
+pub struct Values<K, V> {
+    map: &HashMap<K, V>,
+    bucket_index: usize,
+    entry_index: usize,
+}
+
+impl<K, V> Iterator for Values<K, V> {
+    type Item = &V;
+
+    fn next(self: &mut Values<K, V>) -> Option<&V> {
+        while self.bucket_index < self.map.capacity() {
+            match &self.map.buckets[self.bucket_index] {
+                Option::Some(entries) => {
+                    if self.entry_index < entries.len() {
+                        let value = &entries[self.entry_index].1;
+                        self.entry_index += 1;
+                        return Option::Some(value);
+                    }
+                }
+                Option::None => {}
+            }
+            
+            self.bucket_index += 1;
+            self.entry_index = 0;
+        }
+        Option::None
+    }
+}
+
+pub struct Iter<K, V> {
+    map: &HashMap<K, V>,
+    bucket_index: usize,
+    entry_index: usize,
+}
+
+impl<K, V> Iterator for Iter<K, V> {
+    type Item = (&K, &V);
+
+    fn next(self: &mut Iter<K, V>) -> Option<(&K, &V)> {
+        while self.bucket_index < self.map.capacity() {
+            match &self.map.buckets[self.bucket_index] {
+                Option::Some(entries) => {
+                    if self.entry_index < entries.len() {
+                        let entry = &entries[self.entry_index];
+                        self.entry_index += 1;
+                        return Option::Some((&entry.0, &entry.1));
+                    }
+                }
+                Option::None => {}
+            }
+            
+            self.bucket_index += 1;
+            self.entry_index = 0;
+        }
+        Option::None
+    }
+}
+
+// Default implementation
+impl<K: Hash + Eq, V> Default for HashMap<K, V> {
+    fn default() -> HashMap<K, V> {
+        HashMap::new()
+    }
+}
+
+// Clone implementation
+impl<K: Hash + Eq + Clone, V: Clone> Clone for HashMap<K, V> {
+    fn clone(self: &HashMap<K, V>) -> HashMap<K, V> {
+        let mut new_map = HashMap::with_capacity(self.capacity());
+        
+        for (k, v) in self.iter() {
+            new_map.insert(k.clone(), v.clone());
+        }
+        
+        new_map
+    }
+}
+
+// Convenience function
+pub fn hashmap<K: Hash + Eq, V>() -> HashMap<K, V> {
+    HashMap::new()
+}
+
+// Macro for creating HashMap with initial values
+// Usage: hashmap!{"key1" => value1, "key2" => value2}
+#[macro]
+pub fn hashmap(pairs: (key: expr, value: expr)...) -> HashMap<_, _> {
+    let mut map = HashMap::new();
+    for (key, value) in pairs {
+        map.insert(key, value);
+    }
+    map
+}

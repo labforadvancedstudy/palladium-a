@@ -1,0 +1,449 @@
+// Math functions for Palladium standard library
+// "Legends calculate with precision"
+
+// Mathematical constants
+pub const PI: f64 = 3.14159265358979323846;
+pub const E: f64 = 2.71828182845904523536;
+pub const TAU: f64 = 6.28318530717958647693; // 2π
+pub const SQRT_2: f64 = 1.41421356237309504880;
+pub const LN_2: f64 = 0.693147180559945309417;
+pub const LN_10: f64 = 2.30258509299404568402;
+
+// Integer functions
+pub fn abs(x: i64) -> i64 {
+    if x < 0 { -x } else { x }
+}
+
+pub fn min(a: i64, b: i64) -> i64 {
+    if a < b { a } else { b }
+}
+
+pub fn max(a: i64, b: i64) -> i64 {
+    if a > b { a } else { b }
+}
+
+pub fn clamp(value: i64, min_val: i64, max_val: i64) -> i64 {
+    if value < min_val {
+        min_val
+    } else if value > max_val {
+        max_val
+    } else {
+        value
+    }
+}
+
+// Integer power
+pub fn pow(base: i64, exp: i64) -> i64 {
+    if exp < 0 {
+        panic("negative exponent not supported for integer pow");
+    }
+    
+    let mut result = 1;
+    let mut b = base;
+    let mut e = exp;
+    
+    while e > 0 {
+        if e & 1 == 1 {
+            result *= b;
+        }
+        b *= b;
+        e >>= 1;
+    }
+    
+    result
+}
+
+// Greatest common divisor
+pub fn gcd(mut a: i64, mut b: i64) -> i64 {
+    a = abs(a);
+    b = abs(b);
+    
+    while b != 0 {
+        let temp = b;
+        b = a % b;
+        a = temp;
+    }
+    
+    a
+}
+
+// Least common multiple
+pub fn lcm(a: i64, b: i64) -> i64 {
+    if a == 0 || b == 0 {
+        0
+    } else {
+        abs(a * b) / gcd(a, b)
+    }
+}
+
+// Check if prime
+pub fn is_prime(n: i64) -> bool {
+    if n <= 1 {
+        return false;
+    }
+    if n <= 3 {
+        return true;
+    }
+    if n % 2 == 0 || n % 3 == 0 {
+        return false;
+    }
+    
+    let mut i = 5;
+    while i * i <= n {
+        if n % i == 0 || n % (i + 2) == 0 {
+            return false;
+        }
+        i += 6;
+    }
+    
+    true
+}
+
+// Factorial
+pub fn factorial(n: i64) -> i64 {
+    if n < 0 {
+        panic("factorial of negative number");
+    }
+    
+    let mut result = 1;
+    for i in 2..=n {
+        result *= i;
+    }
+    
+    result
+}
+
+// Fibonacci
+pub fn fibonacci(n: i64) -> i64 {
+    if n <= 0 {
+        0
+    } else if n == 1 {
+        1
+    } else {
+        let mut a = 0;
+        let mut b = 1;
+        
+        for _ in 2..=n {
+            let temp = a + b;
+            a = b;
+            b = temp;
+        }
+        
+        b
+    }
+}
+
+// Integer square root (Newton's method)
+pub fn isqrt(n: i64) -> i64 {
+    if n < 0 {
+        panic("square root of negative number");
+    }
+    if n == 0 {
+        return 0;
+    }
+    
+    let mut x = n;
+    let mut y = (x + 1) / 2;
+    
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    
+    x
+}
+
+// Floating point functions (if supported)
+pub fn fabs(x: f64) -> f64 {
+    if x < 0.0 { -x } else { x }
+}
+
+pub fn fmin(a: f64, b: f64) -> f64 {
+    if a < b { a } else { b }
+}
+
+pub fn fmax(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+pub fn fclamp(value: f64, min_val: f64, max_val: f64) -> f64 {
+    if value < min_val {
+        min_val
+    } else if value > max_val {
+        max_val
+    } else {
+        value
+    }
+}
+
+// Approximate floating point comparison
+pub fn approx_eq(a: f64, b: f64, epsilon: f64) -> bool {
+    fabs(a - b) < epsilon
+}
+
+// Sign function
+pub fn sign(x: i64) -> i64 {
+    if x > 0 {
+        1
+    } else if x < 0 {
+        -1
+    } else {
+        0
+    }
+}
+
+pub fn fsign(x: f64) -> f64 {
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }
+}
+
+// Linear interpolation
+pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
+// Map value from one range to another
+pub fn map_range(value: f64, in_min: f64, in_max: f64, out_min: f64, out_max: f64) -> f64 {
+    let normalized = (value - in_min) / (in_max - in_min);
+    out_min + normalized * (out_max - out_min)
+}
+
+// Modular arithmetic
+pub fn mod_pow(base: i64, exp: i64, modulus: i64) -> i64 {
+    if modulus == 1 {
+        return 0;
+    }
+    
+    let mut result = 1;
+    let mut b = base % modulus;
+    let mut e = exp;
+    
+    while e > 0 {
+        if e & 1 == 1 {
+            result = (result * b) % modulus;
+        }
+        b = (b * b) % modulus;
+        e >>= 1;
+    }
+    
+    result
+}
+
+// Check if power of two
+pub fn is_power_of_two(n: i64) -> bool {
+    n > 0 && (n & (n - 1)) == 0
+}
+
+// Next power of two
+pub fn next_power_of_two(n: i64) -> i64 {
+    if n <= 1 {
+        return 1;
+    }
+    
+    let mut x = n - 1;
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    x |= x >> 32;
+    
+    x + 1
+}
+
+// Count trailing zeros
+pub fn trailing_zeros(n: i64) -> i64 {
+    if n == 0 {
+        return 64; // Assuming 64-bit integers
+    }
+    
+    let mut count = 0;
+    let mut x = n;
+    
+    while (x & 1) == 0 {
+        count += 1;
+        x >>= 1;
+    }
+    
+    count
+}
+
+// Count leading zeros
+pub fn leading_zeros(n: i64) -> i64 {
+    if n == 0 {
+        return 64; // Assuming 64-bit integers
+    }
+    
+    let mut count = 0;
+    let mut x = n;
+    
+    while x > 0 {
+        x >>= 1;
+        count += 1;
+    }
+    
+    64 - count
+}
+
+// Population count (number of set bits)
+pub fn popcount(mut n: i64) -> i64 {
+    let mut count = 0;
+    
+    while n != 0 {
+        count += n & 1;
+        n >>= 1;
+    }
+    
+    count
+}
+
+// Rotate left
+pub fn rotate_left(n: i64, bits: i64) -> i64 {
+    let b = bits % 64;
+    (n << b) | (n >> (64 - b))
+}
+
+// Rotate right
+pub fn rotate_right(n: i64, bits: i64) -> i64 {
+    let b = bits % 64;
+    (n >> b) | (n << (64 - b))
+}
+
+// Average without overflow
+pub fn average(a: i64, b: i64) -> i64 {
+    (a & b) + ((a ^ b) >> 1)
+}
+
+// Ceiling division
+pub fn div_ceil(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        panic("division by zero");
+    }
+    
+    if (a > 0 && b > 0) || (a < 0 && b < 0) {
+        (a + b - 1) / b
+    } else {
+        a / b
+    }
+}
+
+// Euclidean modulo (always non-negative)
+pub fn mod_euclidean(a: i64, b: i64) -> i64 {
+    let r = a % b;
+    if r < 0 {
+        if b < 0 {
+            r - b
+        } else {
+            r + b
+        }
+    } else {
+        r
+    }
+}
+
+// Sum of arithmetic sequence
+pub fn arithmetic_sum(first: i64, last: i64, count: i64) -> i64 {
+    count * (first + last) / 2
+}
+
+// Sum of geometric sequence
+pub fn geometric_sum(first: i64, ratio: i64, count: i64) -> i64 {
+    if ratio == 1 {
+        first * count
+    } else {
+        first * (pow(ratio, count) - 1) / (ratio - 1)
+    }
+}
+
+// Binomial coefficient (n choose k)
+pub fn binomial(n: i64, k: i64) -> i64 {
+    if k < 0 || k > n {
+        return 0;
+    }
+    
+    if k == 0 || k == n {
+        return 1;
+    }
+    
+    let k = min(k, n - k); // Take advantage of symmetry
+    
+    let mut result = 1;
+    for i in 0..k {
+        result = result * (n - i) / (i + 1);
+    }
+    
+    result
+}
+
+// Integer logarithm base 2
+pub fn ilog2(n: i64) -> i64 {
+    if n <= 0 {
+        panic("logarithm of non-positive number");
+    }
+    
+    63 - leading_zeros(n)
+}
+
+// Integer logarithm base 10
+pub fn ilog10(mut n: i64) -> i64 {
+    if n <= 0 {
+        panic("logarithm of non-positive number");
+    }
+    
+    let mut log = 0;
+    while n >= 10 {
+        n /= 10;
+        log += 1;
+    }
+    
+    log
+}
+
+// Check if perfect square
+pub fn is_perfect_square(n: i64) -> bool {
+    if n < 0 {
+        return false;
+    }
+    
+    let root = isqrt(n);
+    root * root == n
+}
+
+// Random number generation (linear congruential generator)
+pub struct Random {
+    seed: i64,
+}
+
+impl Random {
+    pub fn new(seed: i64) -> Random {
+        Random { seed: seed }
+    }
+    
+    pub fn next(self: &mut Random) -> i64 {
+        // Parameters from Numerical Recipes
+        self.seed = (self.seed * 1664525 + 1013904223) & 0x7FFFFFFF;
+        self.seed
+    }
+    
+    pub fn next_in_range(self: &mut Random, min: i64, max: i64) -> i64 {
+        if min >= max {
+            return min;
+        }
+        
+        let range = max - min;
+        min + (self.next() % range)
+    }
+    
+    pub fn next_bool(self: &mut Random) -> bool {
+        self.next() & 1 == 1
+    }
+    
+    pub fn next_float(self: &mut Random) -> f64 {
+        (self.next() as f64) / (0x7FFFFFFF as f64)
+    }
+}

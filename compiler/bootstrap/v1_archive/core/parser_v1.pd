@@ -1,0 +1,99 @@
+// Parser v1 - Simple parser that generates C code
+
+fn is_digit(ch: i64) -> bool {
+    return ch >= 48 && ch <= 57;
+}
+
+fn is_alpha(ch: i64) -> bool {
+    return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122);
+}
+
+fn parse_program(input: String, out: i64) {
+    print("Parsing Palladium program...\n");
+    
+    // Check for 'fn main'
+    let mut found_fn = false;
+    let mut found_main = false;
+    let mut i = 0;
+    
+    while i < string_len(input) {
+        let ch = string_char_at(input, i);
+        
+        // Look for 'f'
+        if ch == 102 && !found_fn {
+            if i + 1 < string_len(input) && string_char_at(input, i + 1) == 110 {
+                print("Found: fn\n");
+                found_fn = true;
+                i = i + 2;
+                continue;
+            }
+        }
+        
+        // Look for 'm' after fn
+        if found_fn && ch == 109 && !found_main {
+            if i + 3 < string_len(input) {
+                if string_char_at(input, i + 1) == 97 &&  // 'a'
+                   string_char_at(input, i + 2) == 105 && // 'i'
+                   string_char_at(input, i + 3) == 110 {  // 'n'
+                    print("Found: main\n");
+                    found_main = true;
+                    
+                    // Generate C main function
+                    file_write(out, "#include <stdio.h>\n\n");
+                    file_write(out, "int main() {\n");
+                }
+            }
+        }
+        
+        // Look for print after main
+        if found_main && ch == 112 { // 'p'
+            if i + 4 < string_len(input) &&
+               string_char_at(input, i + 1) == 114 && // 'r'
+               string_char_at(input, i + 2) == 105 && // 'i'
+               string_char_at(input, i + 3) == 110 && // 'n'
+               string_char_at(input, i + 4) == 116 {  // 't'
+                print("Found: print statement\n");
+                file_write(out, "    printf(\"Hello from parsed program!\\n\");\n");
+                i = i + 5;
+                continue;
+            }
+        }
+        
+        i = i + 1;
+    }
+    
+    if found_main {
+        file_write(out, "    return 0;\n");
+        file_write(out, "}\n");
+        print("Successfully generated C code\n");
+    } else {
+        print("Error: No main function found\n");
+    }
+}
+
+fn main() {
+    print("Palladium Parser v1\n");
+    print("===================\n\n");
+    
+    // Create test program
+    let test_out = file_open("input.pd");
+    file_write(test_out, "fn main() { print(42); }");
+    file_close(test_out);
+    
+    // Read it back
+    let test_in = file_open("input.pd");
+    let program = file_read_line(test_in);
+    file_close(test_in);
+    
+    print("Input: ");
+    print(program);
+    print("\n\n");
+    
+    // Parse and generate
+    let output = file_open("parsed.c");
+    parse_program(program, output);
+    file_close(output);
+    
+    print("\nOutput: parsed.c\n");
+    print("Compile: gcc parsed.c -o parsed\n");
+}

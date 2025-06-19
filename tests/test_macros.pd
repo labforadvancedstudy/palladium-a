@@ -1,0 +1,55 @@
+// Test macro system
+
+// Define a custom macro
+macro! repeat($x:expr, $n:expr) {
+    // This would expand to repeating $x $n times
+    // For now, just test basic functionality
+    $x
+}
+
+// Test built-in macros
+fn test_println() {
+    println!("Hello, Macros!");
+}
+
+// Test assert macro
+fn test_assert() {
+    let x = 5;
+    assert!(x > 0);
+    assert!(x == 5);
+}
+
+// Test vec macro
+fn test_vec() {
+    let v = vec![1];
+    print("Vec created\n");
+}
+
+// Test dbg macro
+fn test_dbg() {
+    let x = 42;
+    let y = dbg!(x + 1);
+    print("Debug value: ");
+    print_int(y);
+    print("\n");
+}
+
+// Test custom macro
+fn test_custom() {
+    let result = repeat!(10, 3);
+    print("Custom macro result: ");
+    print_int(result);
+    print("\n");
+}
+
+fn main() {
+    print("Testing macros...\n");
+    
+    test_println();
+    test_assert();
+    test_vec();
+    test_dbg();
+    test_custom();
+    
+    print("All macro tests completed!\n");
+}

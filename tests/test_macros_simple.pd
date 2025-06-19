@@ -1,0 +1,12 @@
+// Simple test for built-in macros
+
+fn main() {
+    // Test println! macro
+    println!("Hello from macros!");
+    
+    // Test vec! macro
+    let v = vec!(42);
+    print("Created vec with value\n");
+    
+    print("Macro test complete!\n");
+}

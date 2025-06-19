@@ -1,0 +1,61 @@
+// This file should compile successfully with exhaustive matches
+
+enum Shape {
+    Circle(i32),
+    Rectangle(i32, i32),
+    Triangle(i32, i32, i32),
+}
+
+fn describe_shape(shape: Shape) {
+    // Exhaustive match - all variants covered
+    match shape {
+        Shape::Circle(radius) => {
+            print("Circle with radius: ");
+            print_int(radius);
+        }
+        Shape::Rectangle(width, height) => {
+            print("Rectangle ");
+            print_int(width);
+            print(" x ");
+            print_int(height);
+        }
+        Shape::Triangle(a, b, c) => {
+            print("Triangle with sides ");
+            print_int(a);
+            print(", ");
+            print_int(b);
+            print(", ");
+            print_int(c);
+        }
+    }
+}
+
+enum Option {
+    Some(String),
+    None,
+}
+
+fn process_option(opt: Option) {
+    // Exhaustive match with wildcard
+    match opt {
+        Option::Some(value) => {
+            print("Got value: ");
+            print(value);
+        }
+        _ => print("Got nothing"),
+    }
+}
+
+fn main() {
+    let circle = Shape::Circle(10);
+    describe_shape(circle);
+    
+    let rect = Shape::Rectangle(20, 30);
+    describe_shape(rect);
+    
+    let opt = Option::Some("Hello");
+    process_option(opt);
+    
+    let none = Option::None;
+    process_option(none);
+}

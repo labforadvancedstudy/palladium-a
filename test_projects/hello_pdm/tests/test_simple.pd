@@ -1,0 +1,31 @@
+// Simple standalone test
+
+fn main() -> i64 {
+    print("Running simple test...\n");
+    
+    // Test basic arithmetic
+    let a = 2 + 3;
+    if a != 5 {
+        print("❌ Addition test failed\n");
+        return 1;
+    }
+    print("✓ Addition test passed\n");
+    
+    // Test factorial
+    let n = 5;
+    let mut fact = 1;
+    let mut i = 1;
+    while i <= n {
+        fact = fact * i;
+        i = i + 1;
+    }
+    
+    if fact != 120 {
+        print("❌ Factorial test failed\n");
+        return 1;
+    }
+    print("✓ Factorial test passed\n");
+    
+    print("All tests passed!\n");
+    return 0;
+}

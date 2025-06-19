@@ -1,0 +1,58 @@
+// Test effect system
+
+// Pure function - no side effects
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+// IO effect - prints to console
+fn greet(name: String) {
+    print("Hello, ");
+    print(name);
+    print("!\n");
+}
+
+// Async effect
+async fn fetch_data() -> i32 {
+    print("Fetching data...\n");
+    42
+}
+
+// Multiple effects - IO and file operations
+fn read_and_print(filename: String) {
+    if file_exists(filename) {
+        let handle = file_open(filename);
+        let content = file_read_all(handle);
+        print("File content: ");
+        print(content);
+        print("\n");
+        file_close(handle);
+    } else {
+        print("File not found\n");
+    }
+}
+
+// Pure function that calls other pure functions
+fn calculate(x: i32) -> i32 {
+    let doubled = add(x, x);
+    let tripled = add(doubled, x);
+    tripled
+}
+
+fn main() {
+    // Test pure functions
+    let result = calculate(10);
+    print("Calculation result: ");
+    print_int(result);
+    
+    // Test IO effects
+    greet("World");
+    
+    // Test file IO effects
+    read_and_print("test.txt");
+    
+    // Test async effects
+    let future = fetch_data();
+    
+    print("Effect analysis test complete\n");
+}

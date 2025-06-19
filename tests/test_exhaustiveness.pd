@@ -1,0 +1,101 @@
+// Test exhaustiveness checking for pattern matching
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+enum Option {
+    Some(i32),
+    None,
+}
+
+fn test_exhaustive_match() {
+    let color = Color::Red;
+    
+    // This should be exhaustive
+    match color {
+        Color::Red => print("Red"),
+        Color::Green => print("Green"),
+        Color::Blue => print("Blue"),
+    }
+}
+
+fn test_exhaustive_with_wildcard() {
+    let color = Color::Red;
+    
+    // This should be exhaustive due to wildcard
+    match color {
+        Color::Red => print("Red"),
+        _ => print("Other color"),
+    }
+}
+
+fn test_non_exhaustive() {
+    let color = Color::Red;
+    
+    // This should error - missing Blue
+    match color {
+        Color::Red => print("Red"),
+        Color::Green => print("Green"),
+    }
+}
+
+fn test_unreachable_pattern() {
+    let color = Color::Red;
+    
+    // This should error - unreachable pattern after wildcard
+    match color {
+        Color::Red => print("Red"),
+        _ => print("Any color"),
+        Color::Blue => print("Blue"), // Unreachable!
+    }
+}
+
+fn test_duplicate_pattern() {
+    let color = Color::Red;
+    
+    // This should error - duplicate Red pattern
+    match color {
+        Color::Red => print("First red"),
+        Color::Green => print("Green"),
+        Color::Red => print("Second red"), // Duplicate!
+        Color::Blue => print("Blue"),
+    }
+}
+
+fn test_option_exhaustive() {
+    let opt: Option = Option::Some(42);
+    
+    // This should be exhaustive
+    match opt {
+        Option::Some(x) => {
+            print("Value: ");
+            print_int(x);
+        }
+        Option::None => print("No value"),
+    }
+}
+
+fn test_option_non_exhaustive() {
+    let opt: Option = Option::Some(42);
+    
+    // This should error - missing None case
+    match opt {
+        Option::Some(x) => {
+            print("Value: ");
+            print_int(x);
+        }
+    }
+}
+
+fn main() {
+    test_exhaustive_match();
+    test_exhaustive_with_wildcard();
+    // The following would cause compile errors:
+    // test_non_exhaustive();
+    // test_unreachable_pattern();
+    // test_duplicate_pattern();
+    // test_option_non_exhaustive();
+}

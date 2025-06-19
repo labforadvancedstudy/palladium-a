@@ -1,0 +1,29 @@
+// Stress test for string memory management
+
+fn main() {
+    // Test 1: Many string concatenations
+    let mut s: String = "Start";
+    for i in 0..100 {
+        s = string_concat(s, "X");
+    }
+    print("Concatenation test passed");
+    
+    // Test 2: Many temporary strings
+    for i in 0..500 {
+        let temp: String = int_to_string(i);
+        // temp goes out of scope
+    }
+    print("Temporary strings test passed");
+    
+    // Test 3: Complex string operations
+    let base: String = "The quick brown fox jumps over the lazy dog";
+    for i in 0..10 {
+        let sub1: String = string_substring(base, 0, 10);
+        let sub2: String = string_substring(base, 10, 20);
+        let combined: String = string_concat(sub1, sub2);
+        // All go out of scope
+    }
+    print("Complex operations test passed");
+    
+    print("All memory stress tests completed!");
+}

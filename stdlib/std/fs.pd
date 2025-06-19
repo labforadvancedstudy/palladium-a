@@ -1,0 +1,436 @@
+// Filesystem operations
+// "Every file tells a story"
+
+use std::io::{IoError, Path, File, FileMode};
+use std::result::{Result, Error};
+use std::option::{Option, some, none};
+use std::collections::Vec;
+use std::string::String;
+use std::time::Duration;
+
+// File metadata
+pub struct Metadata {
+    file_type: FileType,
+    size: u64,
+    permissions: Permissions,
+    modified: Option<SystemTime>,
+    accessed: Option<SystemTime>,
+    created: Option<SystemTime>,
+}
+
+impl Metadata {
+    // Get the file type
+    pub fn file_type(&self) -> FileType {
+        self.file_type
+    }
+    
+    // Check if this is a file
+    pub fn is_file(&self) -> bool {
+        match self.file_type {
+            FileType::RegularFile => true,
+            _ => false,
+        }
+    }
+    
+    // Check if this is a directory
+    pub fn is_dir(&self) -> bool {
+        match self.file_type {
+            FileType::Directory => true,
+            _ => false,
+        }
+    }
+    
+    // Check if this is a symbolic link
+    pub fn is_symlink(&self) -> bool {
+        match self.file_type {
+            FileType::Symlink => true,
+            _ => false,
+        }
+    }
+    
+    // Get file size in bytes
+    pub fn len(&self) -> u64 {
+        self.size
+    }
+    
+    // Get permissions
+    pub fn permissions(&self) -> Permissions {
+        self.permissions
+    }
+    
+    // Get modification time
+    pub fn modified(&self) -> Option<SystemTime> {
+        self.modified
+    }
+    
+    // Get access time
+    pub fn accessed(&self) -> Option<SystemTime> {
+        self.accessed
+    }
+    
+    // Get creation time
+    pub fn created(&self) -> Option<SystemTime> {
+        self.created
+    }
+}
+
+// File types
+pub enum FileType {
+    RegularFile,
+    Directory,
+    Symlink,
+    BlockDevice,
+    CharDevice,
+    Fifo,
+    Socket,
+    Unknown,
+}
+
+// System time representation
+pub struct SystemTime {
+    seconds: i64,
+    nanos: i32,
+}
+
+impl SystemTime {
+    // Get current system time
+    pub fn now() -> SystemTime {
+        // Runtime support needed
+        SystemTime { seconds: 0, nanos: 0 }
+    }
+    
+    // Duration since another time
+    pub fn duration_since(&self, earlier: &SystemTime) -> Result<Duration, Error> {
+        let seconds = self.seconds - earlier.seconds;
+        let nanos = self.nanos - earlier.nanos;
+        
+        if seconds < 0 || (seconds == 0 && nanos < 0) {
+            err(Error::new("time went backwards"))
+        } else {
+            ok(Duration::from_secs(seconds))
+        }
+    }
+    
+    // Add duration
+    pub fn add(&self, dur: Duration) -> SystemTime {
+        SystemTime {
+            seconds: self.seconds + dur.as_secs(),
+            nanos: self.nanos + dur.subsec_nanos(),
+        }
+    }
+    
+    // Subtract duration
+    pub fn sub(&self, dur: Duration) -> SystemTime {
+        SystemTime {
+            seconds: self.seconds - dur.as_secs(),
+            nanos: self.nanos - dur.subsec_nanos(),
+        }
+    }
+}
+
+// Unix-style permissions
+pub struct Permissions {
+    mode: u32,
+}
+
+impl Permissions {
+    // Check if readable
+    pub fn readonly(&self) -> bool {
+        (self.mode & 0o200) == 0  // No write bit for owner
+    }
+    
+    // Set readonly status
+    pub fn set_readonly(&mut self, readonly: bool) {
+        if readonly {
+            self.mode = self.mode & !0o200;  // Remove write bit
+        } else {
+            self.mode = self.mode | 0o200;   // Add write bit
+        }
+    }
+    
+    // Get raw mode bits
+    pub fn mode(&self) -> u32 {
+        self.mode
+    }
+    
+    // Set raw mode bits
+    pub fn set_mode(&mut self, mode: u32) {
+        self.mode = mode;
+    }
+    
+    // Check if executable
+    pub fn is_executable(&self) -> bool {
+        (self.mode & 0o100) != 0  // Check execute bit for owner
+    }
+}
+
+// Get metadata for a path
+pub fn metadata(path: &Path) -> Result<Metadata, IoError> {
+    // Runtime support needed
+    err(IoError::Other(String::from("metadata not implemented")))
+}
+
+// Get metadata for a symlink (don't follow)
+pub fn symlink_metadata(path: &Path) -> Result<Metadata, IoError> {
+    // Runtime support needed
+    err(IoError::Other(String::from("symlink metadata not implemented")))
+}
+
+// Set permissions
+pub fn set_permissions(path: &Path, perms: Permissions) -> Result<(), IoError> {
+    // Runtime support needed
+    err(IoError::Other(String::from("set permissions not implemented")))
+}
+
+// Create a hard link
+pub fn hard_link(src: &Path, dst: &Path) -> Result<(), IoError> {
+    // Runtime support needed
+    err(IoError::Other(String::from("hard link not implemented")))
+}
+
+// Create a symbolic link
+pub fn symlink(src: &Path, dst: &Path) -> Result<(), IoError> {
+    // Runtime support needed
+    err(IoError::Other(String::from("symlink not implemented")))
+}
+
+// Read a symbolic link
+pub fn read_link(path: &Path) -> Result<Path, IoError> {
+    // Runtime support needed
+    err(IoError::Other(String::from("read link not implemented")))
+}
+
+// Canonicalize a path (resolve all symlinks and ..)
+pub fn canonicalize(path: &Path) -> Result<Path, IoError> {
+    // Runtime support needed
+    err(IoError::Other(String::from("canonicalize not implemented")))
+}
+
+// Directory builder with options
+pub struct DirBuilder {
+    recursive: bool,
+    mode: Option<u32>,
+}
+
+impl DirBuilder {
+    // Create a new directory builder
+    pub fn new() -> DirBuilder {
+        DirBuilder {
+            recursive: false,
+            mode: none(),
+        }
+    }
+    
+    // Set recursive creation
+    pub fn recursive(mut self, recursive: bool) -> DirBuilder {
+        self.recursive = recursive;
+        self
+    }
+    
+    // Set Unix mode
+    pub fn mode(mut self, mode: u32) -> DirBuilder {
+        self.mode = some(mode);
+        self
+    }
+    
+    // Create the directory
+    pub fn create(&self, path: &Path) -> Result<(), IoError> {
+        if self.recursive {
+            create_dir_all_with_mode(path, self.mode)
+        } else {
+            create_dir_with_mode(path, self.mode)
+        }
+    }
+}
+
+// Internal helpers
+fn create_dir_with_mode(path: &Path, mode: Option<u32>) -> Result<(), IoError> {
+    // Runtime support needed
+    err(IoError::Other(String::from("create dir not implemented")))
+}
+
+fn create_dir_all_with_mode(path: &Path, mode: Option<u32>) -> Result<(), IoError> {
+    // Runtime support needed
+    err(IoError::Other(String::from("create dir all not implemented")))
+}
+
+// OpenOptions for fine-grained file opening control
+pub struct OpenOptions {
+    read: bool,
+    write: bool,
+    append: bool,
+    truncate: bool,
+    create: bool,
+    create_new: bool,
+    mode: Option<u32>,
+}
+
+impl OpenOptions {
+    // Create new default options
+    pub fn new() -> OpenOptions {
+        OpenOptions {
+            read: false,
+            write: false,
+            append: false,
+            truncate: false,
+            create: false,
+            create_new: false,
+            mode: none(),
+        }
+    }
+    
+    // Open for reading
+    pub fn read(mut self, read: bool) -> OpenOptions {
+        self.read = read;
+        self
+    }
+    
+    // Open for writing
+    pub fn write(mut self, write: bool) -> OpenOptions {
+        self.write = write;
+        self
+    }
+    
+    // Open for appending
+    pub fn append(mut self, append: bool) -> OpenOptions {
+        self.append = append;
+        self
+    }
+    
+    // Truncate file to zero length
+    pub fn truncate(mut self, truncate: bool) -> OpenOptions {
+        self.truncate = truncate;
+        self
+    }
+    
+    // Create file if it doesn't exist
+    pub fn create(mut self, create: bool) -> OpenOptions {
+        self.create = create;
+        self
+    }
+    
+    // Create file, fail if it exists
+    pub fn create_new(mut self, create_new: bool) -> OpenOptions {
+        self.create_new = create_new;
+        self
+    }
+    
+    // Set Unix mode for new files
+    pub fn mode(mut self, mode: u32) -> OpenOptions {
+        self.mode = some(mode);
+        self
+    }
+    
+    // Open the file
+    pub fn open(&self, path: &Path) -> Result<File, IoError> {
+        // Determine the file mode
+        let mode = if self.append {
+            FileMode::Append
+        } else if self.write && self.read {
+            FileMode::ReadWrite
+        } else if self.write {
+            FileMode::Write
+        } else {
+            FileMode::Read
+        };
+        
+        // Runtime support needed for actual implementation
+        File::open_with_mode(&path.to_string(), mode)
+    }
+}
+
+// Temporary directory
+pub struct TempDir {
+    path: Path,
+}
+
+impl TempDir {
+    // Create a new temporary directory
+    pub fn new() -> Result<TempDir, IoError> {
+        // Runtime support needed
+        err(IoError::Other(String::from("temp dir not implemented")))
+    }
+    
+    // Create with a prefix
+    pub fn with_prefix(prefix: &str) -> Result<TempDir, IoError> {
+        // Runtime support needed
+        err(IoError::Other(String::from("temp dir not implemented")))
+    }
+    
+    // Get the path
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    
+    // Persist the directory (don't delete on drop)
+    pub fn persist(self) -> Path {
+        self.path
+    }
+}
+
+// Walk a directory tree
+pub struct WalkDir {
+    root: Path,
+    max_depth: Option<u32>,
+    follow_links: bool,
+}
+
+impl WalkDir {
+    // Create a new directory walker
+    pub fn new(root: &Path) -> WalkDir {
+        WalkDir {
+            root: root.clone(),
+            max_depth: none(),
+            follow_links: false,
+        }
+    }
+    
+    // Set maximum depth
+    pub fn max_depth(mut self, depth: u32) -> WalkDir {
+        self.max_depth = some(depth);
+        self
+    }
+    
+    // Follow symbolic links
+    pub fn follow_links(mut self, follow: bool) -> WalkDir {
+        self.follow_links = follow;
+        self
+    }
+    
+    // Iterate over entries
+    pub fn iter(&self) -> WalkDirIter {
+        WalkDirIter {
+            walker: self,
+            pending: Vec::new(),
+            depth: 0,
+        }
+    }
+}
+
+// Iterator for WalkDir
+pub struct WalkDirIter<'a> {
+    walker: &'a WalkDir,
+    pending: Vec<(Path, u32)>,
+    depth: u32,
+}
+
+// Entry in directory walk
+pub struct DirEntry {
+    path: Path,
+    depth: u32,
+    file_type: FileType,
+}
+
+impl DirEntry {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    
+    pub fn depth(&self) -> u32 {
+        self.depth
+    }
+    
+    pub fn file_type(&self) -> FileType {
+        self.file_type
+    }
+}

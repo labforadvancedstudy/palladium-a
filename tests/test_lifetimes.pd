@@ -1,0 +1,28 @@
+// Test lifetime annotations
+
+// Function with lifetime parameters
+fn borrow_checker<'a>(x: &'a i32) -> &'a i32 {
+    x
+}
+
+// Multiple lifetime parameters
+fn longest<'a, 'b>(x: &'a String, y: &'b String) -> &'a String {
+    x
+}
+
+// Struct with lifetime parameter
+struct RefHolder<'a> {
+    value: &'a i32,
+}
+
+// Enum with lifetime parameter
+enum Option<'a, T> {
+    Some(&'a T),
+    None,
+}
+
+fn main() {
+    let x: i32 = 42;
+    let ref_x: &i32 = borrow_checker(&x);
+    print_int(*ref_x);
+}

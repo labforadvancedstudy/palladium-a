@@ -1,0 +1,208 @@
+// Simple Palladium Compiler v1
+// A minimal compiler that can handle basic print statements
+// This version avoids complex features to work with current Palladium
+
+// ============ Helper Functions ============
+
+fn is_digit(ch: i32) -> bool {
+    return ch >= 48 && ch <= 57; // '0' to '9'
+}
+
+fn is_alpha(ch: i32) -> bool {
+    return (ch >= 97 && ch <= 122) || // 'a' to 'z'
+           (ch >= 65 && ch <= 90);     // 'A' to 'Z'
+}
+
+// ============ Code Generation ============
+
+fn generate_c_header() -> String {
+    let mut output = "#include <stdio.h>\n";
+    output = output + "#include <stdlib.h>\n";
+    output = output + "#include <string.h>\n\n";
+    
+    // Runtime functions
+    output = output + "// Runtime functions\n";
+    output = output + "void __pd_print(const char* s) { printf(\"%s\\n\", s); }\n";
+    output = output + "long long __pd_string_len(const char* s) { return strlen(s); }\n";
+    output = output + "long long __pd_string_char_at(const char* s, long long i) {\n";
+    output = output + "    if (i < 0 || i >= strlen(s)) return -1;\n";
+    output = output + "    return (unsigned char)s[i];\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_string_from_char(long long c) {\n";
+    output = output + "    char* buf = malloc(2);\n";
+    output = output + "    buf[0] = (char)c; buf[1] = '\\0';\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_string_concat(const char* a, const char* b) {\n";
+    output = output + "    char* result = malloc(strlen(a) + strlen(b) + 1);\n";
+    output = output + "    strcpy(result, a);\n";
+    output = output + "    strcat(result, b);\n";
+    output = output + "    return result;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_int_to_string(long long n) {\n";
+    output = output + "    char* buf = malloc(32);\n";
+    output = output + "    sprintf(buf, \"%lld\", n);\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n\n";
+    
+    // Function renames
+    output = output + "#define string_len __pd_string_len\n";
+    output = output + "#define string_char_at __pd_string_char_at\n";
+    output = output + "#define string_from_char __pd_string_from_char\n";
+    output = output + "#define string_concat __pd_string_concat\n";
+    output = output + "#define int_to_string __pd_int_to_string\n";
+    output = output + "#define print __pd_print\n\n";
+    
+    return output;
+}
+
+// Extract string content from a print statement
+fn extract_print_string(line: String) -> String {
+    let mut result = "";
+    let mut i = 7; // Skip 'print("'
+    let len = string_len(line);
+    
+    while i < len {
+        let ch = string_char_at(line, i);
+        if ch == 34 { // '"'
+            break;
+        }
+        
+        // Handle escape sequences
+        if ch == 92 { // backslash
+            i = i + 1;
+            if i < len {
+                let next = string_char_at(line, i);
+                if next == 110 { // 'n'
+                    result = result + "\\n";
+                }
+                if next == 116 { // 't'
+                    result = result + "\\t";
+                }
+                if next == 34 { // '"'
+                    result = result + "\\\"";
+                }
+                if next == 92 { // '\'
+                    result = result + "\\\\";
+                }
+                if next != 110 && next != 116 && next != 34 && next != 92 {
+                    result = result + string_from_char(next);
+                }
+            }
+        } else {
+            result = result + string_from_char(ch);
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Check if a line is a print statement
+fn is_print_statement(line: String) -> bool {
+    let len = string_len(line);
+    if len < 8 { // Need at least: print("")
+        return false;
+    }
+    
+    // Check for "print("
+    if string_char_at(line, 0) == 112 && // 'p'
+       string_char_at(line, 1) == 114 && // 'r'
+       string_char_at(line, 2) == 105 && // 'i'
+       string_char_at(line, 3) == 110 && // 'n'
+       string_char_at(line, 4) == 116 && // 't'
+       string_char_at(line, 5) == 40 &&  // '('
+       string_char_at(line, 6) == 34 {   // '"'
+        return true;
+    }
+    
+    return false;
+}
+
+// Compile a single line
+fn compile_line(line: String) -> String {
+    // Skip empty lines
+    if string_len(line) == 0 {
+        return "";
+    }
+    
+    // Skip whitespace at start
+    let mut start = 0;
+    while start < string_len(line) {
+        let ch = string_char_at(line, start);
+        if ch != 32 && ch != 9 { // space or tab
+            break;
+        }
+        start = start + 1;
+    }
+    
+    // Get trimmed line
+    let mut trimmed = "";
+    let mut i = start;
+    while i < string_len(line) {
+        trimmed = trimmed + string_from_char(string_char_at(line, i));
+        i = i + 1;
+    }
+    
+    // Check for print statement
+    if is_print_statement(trimmed) {
+        let content = extract_print_string(trimmed);
+        return "    print(\"" + content + "\");\n";
+    }
+    
+    // Skip other lines for now
+    return "";
+}
+
+// Main compilation function
+fn compile_program(source: String) -> String {
+    let mut output = generate_c_header();
+    output = output + "int main() {\n";
+    
+    // Process line by line
+    let len = string_len(source);
+    let mut i = 0;
+    let mut current_line = "";
+    
+    while i < len {
+        let ch = string_char_at(source, i);
+        if ch == 10 { // newline
+            let compiled = compile_line(current_line);
+            output = output + compiled;
+            current_line = "";
+        }
+        if ch != 10 && ch != 13 { // not newline or carriage return
+            current_line = current_line + string_from_char(ch);
+        }
+        i = i + 1;
+    }
+    
+    // Handle last line if no trailing newline
+    if string_len(current_line) > 0 {
+        let compiled = compile_line(current_line);
+        output = output + compiled;
+    }
+    
+    output = output + "    return 0;\n";
+    output = output + "}\n";
+    
+    return output;
+}
+
+// ============ Main ============
+
+fn main() {
+    // Test program with multiple print statements
+    let source = "print(\"Hello from Simple Palladium Compiler!\");\nprint(\"This compiler can handle print statements.\");\nprint(\"It supports escape sequences: \\n\\t\\\"\");\n";
+    
+    let output = compile_program(source);
+    
+    print("Generated C code:");
+    print("==================");
+    print(output);
+    print("==================");
+    
+    // Write to file for testing
+    print("");
+    print("Writing output to: bootstrap/v3_incremental/build_output/simple_compiler_output.c");
+}

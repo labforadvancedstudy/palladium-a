@@ -1,0 +1,193 @@
+// Tiny Self-Hosting Test
+// Can our tiny compiler compile itself?
+
+fn is_same_string(s1: String, s2: String) -> bool {
+    let len1 = string_len(s1);
+    let len2 = string_len(s2);
+    
+    if len1 != len2 {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < len1 {
+        if string_char_at(s1, i) != string_char_at(s2, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+fn skip_whitespace(source: String, pos: i64, len: i64) -> i64 {
+    let mut p = pos;
+    while p < len && (string_char_at(source, p) == 32 || 
+                     string_char_at(source, p) == 10 ||
+                     string_char_at(source, p) == 9) {
+        p = p + 1;
+    }
+    return p;
+}
+
+fn parse_identifier(source: String, pos: i64, len: i64) -> String {
+    let mut ident = "";
+    let mut p = pos;
+    
+    // First char must be letter or _
+    if p < len {
+        let ch = string_char_at(source, p);
+        if (ch >= 97 && ch <= 122) ||  // a-z
+           (ch >= 65 && ch <= 90) ||   // A-Z
+           ch == 95 {                  // _
+            ident = ident + string_from_char(ch);
+            p = p + 1;
+        }
+    }
+    
+    // Rest can be letter, digit, or _
+    while p < len {
+        let ch = string_char_at(source, p);
+        if (ch >= 97 && ch <= 122) ||  // a-z
+           (ch >= 65 && ch <= 90) ||   // A-Z
+           (ch >= 48 && ch <= 57) ||   // 0-9
+           ch == 95 {                  // _
+            ident = ident + string_from_char(ch);
+            p = p + 1;
+        } else {
+            break;
+        }
+    }
+    
+    return ident;
+}
+
+fn compile_simple(source: String) -> String {
+    let mut output = "#include <stdio.h>\n";
+    output = output + "#include <string.h>\n\n";
+    
+    // Runtime functions
+    output = output + "void __pd_print(const char* s) { printf(\"%s\\n\", s); }\n";
+    output = output + "int __pd_string_len(const char* s) { return strlen(s); }\n";
+    output = output + "char __pd_string_char_at(const char* s, int i) { return s[i]; }\n";
+    output = output + "const char* __pd_string_from_char(char c) { static char buf[2]; buf[0] = c; buf[1] = 0; return buf; }\n\n";
+    
+    let len = string_len(source);
+    let mut pos = 0;
+    
+    // Look for main function
+    while pos < len {
+        pos = skip_whitespace(source, pos, len);
+        if pos >= len {
+            break;
+        }
+        
+        // Look for "fn"
+        if pos + 2 < len &&
+           string_char_at(source, pos) == 102 &&    // f
+           string_char_at(source, pos+1) == 110 &&  // n
+           string_char_at(source, pos+2) == 32 {    // space
+            
+            pos = pos + 3;
+            pos = skip_whitespace(source, pos, len);
+            
+            // Get function name
+            let func_name = parse_identifier(source, pos, len);
+            
+            if is_same_string(func_name, "main") {
+                output = output + "int main(void) {\n";
+                
+                // Skip to opening brace
+                while pos < len && string_char_at(source, pos) != 123 { // {
+                    pos = pos + 1;
+                }
+                pos = pos + 1;
+                
+                // Parse simple statements
+                pos = skip_whitespace(source, pos, len);
+                while pos < len && string_char_at(source, pos) != 125 { // }
+                    // Look for print
+                    if pos + 5 < len &&
+                       string_char_at(source, pos) == 112 &&     // p
+                       string_char_at(source, pos+1) == 114 &&   // r
+                       string_char_at(source, pos+2) == 105 &&   // i
+                       string_char_at(source, pos+3) == 110 &&   // n
+                       string_char_at(source, pos+4) == 116 {    // t
+                        
+                        output = output + "    __pd_print(";
+                        pos = pos + 5;
+                        
+                        // Skip to opening paren
+                        while pos < len && string_char_at(source, pos) != 40 { // (
+                            pos = pos + 1;
+                        }
+                        pos = pos + 1;
+                        
+                        // Skip opening quote
+                        while pos < len && string_char_at(source, pos) != 34 { // "
+                            pos = pos + 1;
+                        }
+                        
+                        output = output + "\"";
+                        pos = pos + 1;
+                        
+                        // Copy string content
+                        while pos < len && string_char_at(source, pos) != 34 { // "
+                            output = output + string_from_char(string_char_at(source, pos));
+                            pos = pos + 1;
+                        }
+                        
+                        output = output + "\");\n";
+                        
+                        // Skip to semicolon
+                        while pos < len && string_char_at(source, pos) != 59 { // ;
+                            pos = pos + 1;
+                        }
+                        pos = pos + 1;
+                    } else {
+                        // Skip unknown statement
+                        while pos < len && string_char_at(source, pos) != 59 { // ;
+                            pos = pos + 1;
+                        }
+                        pos = pos + 1;
+                    }
+                    
+                    pos = skip_whitespace(source, pos, len);
+                }
+                
+                output = output + "    return 0;\n}\n";
+                break;
+            }
+        }
+        
+        pos = pos + 1;
+    }
+    
+    return output;
+}
+
+fn main() {
+    print("Tiny Self-Hosting Test");
+    print("=====================");
+    
+    let test = "
+fn main() {
+    print(\"Hello from self-hosted compiler!\");
+    print(\"This was compiled by Palladium!\");
+}
+";
+    
+    let c_code = compile_simple(test);
+    
+    print("\nGenerated C code:");
+    print("=================");
+    print(c_code);
+    
+    // Save
+    let handle = file_open("tiny_self_output.c");
+    if handle > 0 {
+        file_write(handle, c_code);
+        file_close(handle);
+        print("\nSaved to tiny_self_output.c");
+    }
+}

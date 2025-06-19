@@ -1,0 +1,14 @@
+async fn first() -> i32 {
+    print("First\n");
+    1
+}
+
+// This is a comment
+async fn second() -> i32 {
+    print("Second\n");  
+    2
+}
+
+fn main() {
+    print("Testing async with comments\n");
+}

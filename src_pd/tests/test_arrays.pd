@@ -1,0 +1,50 @@
+// Array test for self-hosting compiler
+// Tests array declarations, indexing, and operations
+
+fn sum_array(arr: [i64; 5]) -> i64 {
+    let mut sum = 0;
+    let mut i = 0;
+    while i < 5 {
+        sum = sum + arr[i];
+        i = i + 1;
+    }
+    return sum;
+}
+
+fn find_max(arr: [i64; 5]) -> i64 {
+    let mut max = arr[0];
+    let mut i = 1;
+    while i < 5 {
+        if arr[i] > max {
+            max = arr[i];
+        }
+        i = i + 1;
+    }
+    return max;
+}
+
+fn main() {
+    print("=== Array Test ===");
+    
+    // Test array declaration and initialization
+    let numbers = [10, 25, 3, 47, 15];
+    
+    // Test array indexing
+    print("First element:");
+    print_int(numbers[0]);
+    print("Last element:");
+    print_int(numbers[4]);
+    
+    // Test passing arrays to functions
+    let total = sum_array(numbers);
+    print(string_concat("Sum of array: ", int_to_string(total)));
+    
+    let max = find_max(numbers);
+    print(string_concat("Max element: ", int_to_string(max)));
+    
+    // Test array modification
+    let mut mutable_array = [1, 2, 3, 4, 5];
+    mutable_array[2] = 10;
+    print("After modification:");
+    print_int(mutable_array[2]);
+}

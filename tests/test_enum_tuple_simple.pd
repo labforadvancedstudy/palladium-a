@@ -1,0 +1,22 @@
+// Test enum with tuple variant with multiple fields
+
+enum Pair {
+    Two(i32, i32),
+    None,
+}
+
+fn main() {
+    let p: Pair = Pair::Two(10, 20);
+    
+    match p {
+        Pair::Two(a, b) => {
+            print("First:");
+            print_int(a);
+            print("Second:");
+            print_int(b);
+        }
+        Pair::None => {
+            print("No values");
+        }
+    }
+}

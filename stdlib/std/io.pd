@@ -1,0 +1,466 @@
+// I/O operations for Palladium standard library
+// "Legends communicate with the world"
+
+use crate::std::option::Option;
+use crate::std::result::{Result, Error};
+use crate::std::collections::vec::Vec;
+use crate::std::string::String;
+
+// Standard streams
+pub struct Stdin {}
+pub struct Stdout {}
+pub struct Stderr {}
+
+// Global instances
+pub static stdin: Stdin = Stdin {};
+pub static stdout: Stdout = Stdout {};
+pub static stderr: Stderr = Stderr {};
+
+// File handle
+pub struct File {
+    handle: *mut void,
+    path: String,
+    mode: FileMode,
+}
+
+// File modes
+pub enum FileMode {
+    Read,
+    Write,
+    Append,
+    ReadWrite,
+}
+
+// Seek position
+pub enum SeekFrom {
+    Start(u64),
+    End(i64),
+    Current(i64),
+}
+
+// I/O Error types
+pub enum IoError {
+    NotFound,
+    PermissionDenied,
+    AlreadyExists,
+    InvalidInput,
+    UnexpectedEof,
+    Other(String),
+}
+
+impl IoError {
+    pub fn to_string(self: &IoError) -> String {
+        match self {
+            IoError::NotFound => "file not found",
+            IoError::PermissionDenied => "permission denied",
+            IoError::AlreadyExists => "already exists",
+            IoError::InvalidInput => "invalid input",
+            IoError::UnexpectedEof => "unexpected end of file",
+            IoError::Other(msg) => msg,
+        }
+    }
+}
+
+// Convert IoError to Error
+impl From<IoError> for Error {
+    fn from(err: IoError) -> Error {
+        Error::new(err.to_string())
+    }
+}
+
+// Stdout implementation
+impl Stdout {
+    pub fn write(self: &Stdout, data: &String) -> Result<usize, IoError> {
+        print(*data);
+        Result::Ok(data.len())
+    }
+
+    pub fn write_line(self: &Stdout, data: &String) -> Result<usize, IoError> {
+        print(*data);
+        print("\n");
+        Result::Ok(data.len() + 1)
+    }
+
+    pub fn flush(self: &Stdout) -> Result<(), IoError> {
+        // In our simple implementation, stdout is unbuffered
+        Result::Ok(())
+    }
+}
+
+// Stderr implementation
+impl Stderr {
+    pub fn write(self: &Stderr, data: &String) -> Result<usize, IoError> {
+        // In simple implementation, stderr writes to stdout
+        print(*data);
+        Result::Ok(data.len())
+    }
+
+    pub fn write_line(self: &Stderr, data: &String) -> Result<usize, IoError> {
+        print(*data);
+        print("\n");
+        Result::Ok(data.len() + 1)
+    }
+
+    pub fn flush(self: &Stderr) -> Result<(), IoError> {
+        Result::Ok(())
+    }
+}
+
+// Stdin implementation
+impl Stdin {
+    pub fn read_line(self: &Stdin) -> Result<String, IoError> {
+        // This would need runtime support for actual input
+        // For now, return a placeholder
+        Result::Err(IoError::Other("stdin not implemented"))
+    }
+
+    pub fn read_char(self: &Stdin) -> Result<char, IoError> {
+        // This would need runtime support
+        Result::Err(IoError::Other("stdin not implemented"))
+    }
+}
+
+// File operations
+impl File {
+    // Open a file
+    pub fn open(path: &String) -> Result<File, IoError> {
+        File::open_with_mode(path, FileMode::Read)
+    }
+
+    // Create a new file (truncate if exists)
+    pub fn create(path: &String) -> Result<File, IoError> {
+        File::open_with_mode(path, FileMode::Write)
+    }
+
+    // Open with specific mode
+    pub fn open_with_mode(path: &String, mode: FileMode) -> Result<File, IoError> {
+        // This would need runtime support
+        // For now, return a placeholder
+        Result::Ok(File {
+            handle: null_mut(),
+            path: path.clone(),
+            mode: mode,
+        })
+    }
+
+    // Read entire file to string
+    pub fn read_to_string(self: &mut File) -> Result<String, IoError> {
+        // This would need runtime support
+        Result::Err(IoError::Other("file reading not implemented"))
+    }
+
+    // Read entire file to bytes
+    pub fn read_to_bytes(self: &mut File) -> Result<Vec<u8>, IoError> {
+        // This would need runtime support
+        Result::Err(IoError::Other("file reading not implemented"))
+    }
+
+    // Write string to file
+    pub fn write_string(self: &mut File, data: &String) -> Result<usize, IoError> {
+        // This would need runtime support
+        Result::Err(IoError::Other("file writing not implemented"))
+    }
+
+    // Write bytes to file
+    pub fn write_bytes(self: &mut File, data: &Vec<u8>) -> Result<usize, IoError> {
+        // This would need runtime support
+        Result::Err(IoError::Other("file writing not implemented"))
+    }
+
+    // Seek to position
+    pub fn seek(self: &mut File, pos: SeekFrom) -> Result<u64, IoError> {
+        // This would need runtime support
+        Result::Err(IoError::Other("file seeking not implemented"))
+    }
+
+    // Get current position
+    pub fn position(self: &File) -> Result<u64, IoError> {
+        // This would need runtime support
+        Result::Err(IoError::Other("file position not implemented"))
+    }
+
+    // Flush buffers
+    pub fn flush(self: &mut File) -> Result<(), IoError> {
+        // This would need runtime support
+        Result::Ok(())
+    }
+
+    // Close file (happens automatically on drop)
+    pub fn close(self: File) -> Result<(), IoError> {
+        // This would need runtime support
+        Result::Ok(())
+    }
+}
+
+// Path utilities
+pub struct Path {
+    inner: String,
+}
+
+impl Path {
+    pub fn new(path: &String) -> Path {
+        Path { inner: path.clone() }
+    }
+
+    pub fn from_str(path: &str) -> Path {
+        Path { inner: String::from(path) }
+    }
+
+    pub fn to_string(self: &Path) -> String {
+        self.inner.clone()
+    }
+
+    pub fn exists(self: &Path) -> bool {
+        // This would need runtime support
+        false
+    }
+
+    pub fn is_file(self: &Path) -> bool {
+        // This would need runtime support
+        false
+    }
+
+    pub fn is_dir(self: &Path) -> bool {
+        // This would need runtime support
+        false
+    }
+
+    pub fn parent(self: &Path) -> Option<Path> {
+        let path = &self.inner;
+        match path.rfind(&"/") {
+            Option::Some(index) => {
+                if index == 0 {
+                    Option::Some(Path::new(&"/"))
+                } else {
+                    Option::Some(Path::new(&path.substring(0, index)))
+                }
+            }
+            Option::None => Option::None,
+        }
+    }
+
+    pub fn file_name(self: &Path) -> Option<String> {
+        let path = &self.inner;
+        match path.rfind(&"/") {
+            Option::Some(index) => {
+                let name = path.substring(index + 1, path.len());
+                if name.is_empty() {
+                    Option::None
+                } else {
+                    Option::Some(name)
+                }
+            }
+            Option::None => Option::Some(path.clone()),
+        }
+    }
+
+    pub fn extension(self: &Path) -> Option<String> {
+        match self.file_name() {
+            Option::Some(name) => {
+                match name.rfind(&".") {
+                    Option::Some(index) => {
+                        if index == 0 || index == name.len() - 1 {
+                            Option::None
+                        } else {
+                            Option::Some(name.substring(index + 1, name.len()))
+                        }
+                    }
+                    Option::None => Option::None,
+                }
+            }
+            Option::None => Option::None,
+        }
+    }
+
+    pub fn join(self: &Path, other: &Path) -> Path {
+        let mut result = self.inner.clone();
+        if !result.ends_with(&"/") && !other.inner.starts_with(&"/") {
+            result = string_concat(result, "/");
+        }
+        result = string_concat(result, other.inner);
+        Path::new(&result)
+    }
+
+    pub fn with_extension(self: &Path, ext: &String) -> Path {
+        let mut base = self.inner.clone();
+        
+        // Remove existing extension
+        match self.extension() {
+            Option::Some(old_ext) => {
+                let ext_start = base.len() - old_ext.len() - 1;
+                base = base.substring(0, ext_start);
+            }
+            Option::None => {}
+        }
+        
+        // Add new extension
+        if !ext.starts_with(&".") {
+            base = string_concat(base, ".");
+        }
+        base = string_concat(base, *ext);
+        
+        Path::new(&base)
+    }
+}
+
+// Directory operations
+pub fn create_dir(path: &Path) -> Result<(), IoError> {
+    // This would need runtime support
+    Result::Err(IoError::Other("directory creation not implemented"))
+}
+
+pub fn create_dir_all(path: &Path) -> Result<(), IoError> {
+    // This would need runtime support
+    Result::Err(IoError::Other("directory creation not implemented"))
+}
+
+pub fn remove_dir(path: &Path) -> Result<(), IoError> {
+    // This would need runtime support
+    Result::Err(IoError::Other("directory removal not implemented"))
+}
+
+pub fn remove_dir_all(path: &Path) -> Result<(), IoError> {
+    // This would need runtime support
+    Result::Err(IoError::Other("directory removal not implemented"))
+}
+
+pub fn read_dir(path: &Path) -> Result<Vec<DirEntry>, IoError> {
+    // This would need runtime support
+    Result::Err(IoError::Other("directory reading not implemented"))
+}
+
+pub struct DirEntry {
+    path: Path,
+    name: String,
+}
+
+impl DirEntry {
+    pub fn path(self: &DirEntry) -> &Path {
+        &self.path
+    }
+
+    pub fn file_name(self: &DirEntry) -> &String {
+        &self.name
+    }
+
+    pub fn is_file(self: &DirEntry) -> Result<bool, IoError> {
+        Result::Ok(self.path.is_file())
+    }
+
+    pub fn is_dir(self: &DirEntry) -> Result<bool, IoError> {
+        Result::Ok(self.path.is_dir())
+    }
+}
+
+// File operations
+pub fn copy(from: &Path, to: &Path) -> Result<u64, IoError> {
+    // This would need runtime support
+    Result::Err(IoError::Other("file copying not implemented"))
+}
+
+pub fn rename(from: &Path, to: &Path) -> Result<(), IoError> {
+    // This would need runtime support
+    Result::Err(IoError::Other("file renaming not implemented"))
+}
+
+pub fn remove_file(path: &Path) -> Result<(), IoError> {
+    // This would need runtime support
+    Result::Err(IoError::Other("file removal not implemented"))
+}
+
+// Convenience functions
+pub fn read_to_string(path: &Path) -> Result<String, IoError> {
+    let mut file = File::open(&path.to_string())?;
+    file.read_to_string()
+}
+
+pub fn write_string(path: &Path, data: &String) -> Result<(), IoError> {
+    let mut file = File::create(&path.to_string())?;
+    file.write_string(data)?;
+    Result::Ok(())
+}
+
+// Print functions with formatting
+pub fn println(s: &String) {
+    print(*s);
+    print("\n");
+}
+
+pub fn eprintln(s: &String) {
+    stderr.write_line(s).unwrap();
+}
+
+pub fn print_fmt(fmt: &String, args: Vec<String>) {
+    let formatted = String::format(fmt, args);
+    print(formatted);
+}
+
+pub fn println_fmt(fmt: &String, args: Vec<String>) {
+    let formatted = String::format(fmt, args);
+    println(&formatted);
+}
+
+// Buffered I/O
+pub struct BufReader<R> {
+    inner: R,
+    buffer: Vec<u8>,
+    pos: usize,
+    cap: usize,
+}
+
+impl<R> BufReader<R> {
+    pub fn new(inner: R) -> BufReader<R> {
+        BufReader::with_capacity(8192, inner)
+    }
+
+    pub fn with_capacity(capacity: usize, inner: R) -> BufReader<R> {
+        BufReader {
+            inner: inner,
+            buffer: Vec::with_capacity(capacity),
+            pos: 0,
+            cap: 0,
+        }
+    }
+
+    pub fn get_ref(self: &BufReader<R>) -> &R {
+        &self.inner
+    }
+
+    pub fn get_mut(self: &mut BufReader<R>) -> &mut R {
+        &mut self.inner
+    }
+
+    pub fn into_inner(self: BufReader<R>) -> R {
+        self.inner
+    }
+}
+
+pub struct BufWriter<W> {
+    inner: W,
+    buffer: Vec<u8>,
+}
+
+impl<W> BufWriter<W> {
+    pub fn new(inner: W) -> BufWriter<W> {
+        BufWriter::with_capacity(8192, inner)
+    }
+
+    pub fn with_capacity(capacity: usize, inner: W) -> BufWriter<W> {
+        BufWriter {
+            inner: inner,
+            buffer: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub fn get_ref(self: &BufWriter<W>) -> &W {
+        &self.inner
+    }
+
+    pub fn get_mut(self: &mut BufWriter<W>) -> &mut W {
+        &mut self.inner
+    }
+
+    pub fn into_inner(self: BufWriter<W>) -> W {
+        self.inner
+    }
+}

@@ -1,0 +1,13 @@
+// Test that unsafe operations outside unsafe blocks are caught
+
+fn unsafe_deref_ptr(x: i32) -> i32 {
+    return x;
+}
+
+fn main() {
+    let x = 42;
+    
+    // This should fail - unsafe function call outside unsafe block
+    let y = unsafe_deref_ptr(x);
+    print_int(y);
+}

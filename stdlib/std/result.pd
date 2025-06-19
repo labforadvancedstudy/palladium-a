@@ -1,0 +1,116 @@
+// Result type for error handling
+// "Legends handle errors gracefully"
+
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+impl<T, E> Result<T, E> {
+    // Check if the result is Ok
+    pub fn is_ok(self: &Result<T, E>) -> bool {
+        match self {
+            Result::Ok(_) => true,
+            Result::Err(_) => false,
+        }
+    }
+
+    // Check if the result is Err
+    pub fn is_err(self: &Result<T, E>) -> bool {
+        match self {
+            Result::Ok(_) => false,
+            Result::Err(_) => true,
+        }
+    }
+
+    // Convert Result<T, E> to Option<T>
+    pub fn ok(self: Result<T, E>) -> Option<T> {
+        match self {
+            Result::Ok(value) => Some(value),
+            Result::Err(_) => None,
+        }
+    }
+
+    // Convert Result<T, E> to Option<E>
+    pub fn err(self: Result<T, E>) -> Option<E> {
+        match self {
+            Result::Ok(_) => None,
+            Result::Err(e) => Some(e),
+        }
+    }
+
+    // Unwrap the Ok value or panic
+    pub fn unwrap(self: Result<T, E>) -> T {
+        match self {
+            Result::Ok(value) => value,
+            Result::Err(_) => {
+                // TODO: Better panic message with error details
+                panic("called `Result::unwrap()` on an `Err` value");
+            }
+        }
+    }
+
+    // Unwrap the Ok value or return a default
+    pub fn unwrap_or(self: Result<T, E>, default: T) -> T {
+        match self {
+            Result::Ok(value) => value,
+            Result::Err(_) => default,
+        }
+    }
+
+    // Map the Ok value
+    pub fn map<U>(self: Result<T, E>, f: fn(T) -> U) -> Result<U, E> {
+        match self {
+            Result::Ok(value) => Result::Ok(f(value)),
+            Result::Err(e) => Result::Err(e),
+        }
+    }
+
+    // Map the Err value
+    pub fn map_err<F>(self: Result<T, E>, f: fn(E) -> F) -> Result<T, F> {
+        match self {
+            Result::Ok(value) => Result::Ok(value),
+            Result::Err(e) => Result::Err(f(e)),
+        }
+    }
+
+    // Chain Result-returning operations
+    pub fn and_then<U>(self: Result<T, E>, f: fn(T) -> Result<U, E>) -> Result<U, E> {
+        match self {
+            Result::Ok(value) => f(value),
+            Result::Err(e) => Result::Err(e),
+        }
+    }
+
+    // Return the Ok value or compute it from a closure
+    pub fn unwrap_or_else<F>(self: Result<T, E>, f: fn(E) -> T) -> T {
+        match self {
+            Result::Ok(value) => value,
+            Result::Err(e) => f(e),
+        }
+    }
+}
+
+// Common error types
+pub struct Error {
+    message: String,
+}
+
+impl Error {
+    pub fn new(msg: String) -> Error {
+        Error { message: msg }
+    }
+
+    pub fn message(self: &Error) -> &String {
+        &self.message
+    }
+}
+
+// Helper functions for creating Results
+pub fn ok<T, E>(value: T) -> Result<T, E> {
+    Result::Ok(value)
+}
+
+pub fn err<T, E>(error: E) -> Result<T, E> {
+    Result::Err(error)
+}

@@ -1,0 +1,471 @@
+// Memory and allocation utilities for Palladium standard library
+// "Legends manage their resources wisely"
+
+use crate::std::option::Option;
+
+// Memory allocation functions (runtime provided)
+extern fn allocate(size: usize) -> *mut u8;
+extern fn deallocate(ptr: *mut u8, size: usize);
+extern fn reallocate(ptr: *mut u8, old_size: usize, new_size: usize) -> *mut u8;
+
+// Size and alignment
+pub fn size_of<T>() -> usize {
+    // This would be a compiler intrinsic
+    // Placeholder implementation
+    8 // Assume 8 bytes for now
+}
+
+pub fn align_of<T>() -> usize {
+    // This would be a compiler intrinsic
+    // Placeholder implementation
+    8 // Assume 8 byte alignment
+}
+
+// Memory operations
+pub fn copy<T>(src: *const T, dst: *mut T, count: usize) {
+    // Copy memory with potential overlap
+    if count == 0 {
+        return;
+    }
+    
+    let size = size_of::<T>();
+    let src_bytes = src as *const u8;
+    let dst_bytes = dst as *mut u8;
+    
+    if src_bytes < dst_bytes && src_bytes + (count * size) > dst_bytes {
+        // Overlapping, copy backwards
+        for i in (0..count).rev() {
+            unsafe {
+                *dst.offset(i as isize) = *src.offset(i as isize);
+            }
+        }
+    } else {
+        // No overlap or src after dst, copy forwards
+        for i in 0..count {
+            unsafe {
+                *dst.offset(i as isize) = *src.offset(i as isize);
+            }
+        }
+    }
+}
+
+pub fn copy_nonoverlapping<T>(src: *const T, dst: *mut T, count: usize) {
+    // Copy memory assuming no overlap (faster)
+    for i in 0..count {
+        unsafe {
+            *dst.offset(i as isize) = *src.offset(i as isize);
+        }
+    }
+}
+
+pub fn write<T>(dst: *mut T, value: T) {
+    unsafe {
+        *dst = value;
+    }
+}
+
+pub fn read<T>(src: *const T) -> T {
+    unsafe {
+        *src
+    }
+}
+
+pub fn swap<T>(a: *mut T, b: *mut T) {
+    unsafe {
+        let temp = read(a);
+        write(a, read(b));
+        write(b, temp);
+    }
+}
+
+pub fn replace<T>(dst: *mut T, value: T) -> T {
+    unsafe {
+        let old = read(dst);
+        write(dst, value);
+        old
+    }
+}
+
+pub fn take<T: Default>(dst: *mut T) -> T {
+    replace(dst, T::default())
+}
+
+pub fn drop<T>(value: T) {
+    // Explicitly drop a value
+    // The value goes out of scope here and is dropped
+}
+
+pub fn drop_in_place<T>(ptr: *mut T) {
+    unsafe {
+        // Call the destructor without deallocating
+        read(ptr); // Read the value, which will be dropped
+    }
+}
+
+pub fn forget<T>(value: T) {
+    // Prevent a value from being dropped
+    // This would be a compiler intrinsic
+}
+
+// Zero memory
+pub fn zeroed<T>() -> T {
+    // Create a zero-initialized value
+    // This would be unsafe in real implementation
+    unsafe {
+        let ptr = allocate(size_of::<T>()) as *mut T;
+        zero_memory(ptr as *mut u8, size_of::<T>());
+        let value = read(ptr);
+        deallocate(ptr as *mut u8, size_of::<T>());
+        value
+    }
+}
+
+pub fn zero_memory(ptr: *mut u8, size: usize) {
+    for i in 0..size {
+        unsafe {
+            *ptr.offset(i as isize) = 0;
+        }
+    }
+}
+
+// Uninitialized memory
+pub struct MaybeUninit<T> {
+    value: T,
+    initialized: bool,
+}
+
+impl<T> MaybeUninit<T> {
+    pub fn uninit() -> MaybeUninit<T> {
+        MaybeUninit {
+            value: unsafe { zeroed() },
+            initialized: false,
+        }
+    }
+
+    pub fn new(value: T) -> MaybeUninit<T> {
+        MaybeUninit {
+            value: value,
+            initialized: true,
+        }
+    }
+
+    pub fn write(self: &mut MaybeUninit<T>, value: T) {
+        self.value = value;
+        self.initialized = true;
+    }
+
+    pub unsafe fn assume_init(self: MaybeUninit<T>) -> T {
+        if !self.initialized {
+            panic("MaybeUninit::assume_init called on uninitialized value");
+        }
+        self.value
+    }
+
+    pub unsafe fn assume_init_ref(self: &MaybeUninit<T>) -> &T {
+        if !self.initialized {
+            panic("MaybeUninit::assume_init_ref called on uninitialized value");
+        }
+        &self.value
+    }
+
+    pub fn as_ptr(self: &MaybeUninit<T>) -> *const T {
+        &self.value as *const T
+    }
+
+    pub fn as_mut_ptr(self: &mut MaybeUninit<T>) -> *mut T {
+        &mut self.value as *mut T
+    }
+}
+
+// Memory layout
+pub struct Layout {
+    size: usize,
+    align: usize,
+}
+
+impl Layout {
+    pub fn new<T>() -> Layout {
+        Layout {
+            size: size_of::<T>(),
+            align: align_of::<T>(),
+        }
+    }
+
+    pub fn from_size_align(size: usize, align: usize) -> Option<Layout> {
+        // Check that align is power of 2
+        if align == 0 || (align & (align - 1)) != 0 {
+            return Option::None;
+        }
+        
+        // Check for overflow
+        if size > usize::MAX - (align - 1) {
+            return Option::None;
+        }
+        
+        Option::Some(Layout { size: size, align: align })
+    }
+
+    pub fn size(self: &Layout) -> usize {
+        self.size
+    }
+
+    pub fn align(self: &Layout) -> usize {
+        self.align
+    }
+
+    pub fn padding_needed_for(self: &Layout, addr: usize) -> usize {
+        let misalignment = addr % self.align;
+        if misalignment == 0 {
+            0
+        } else {
+            self.align - misalignment
+        }
+    }
+
+    pub fn repeat(self: &Layout, n: usize) -> Option<Layout> {
+        let size = self.size.checked_mul(n)?;
+        Layout::from_size_align(size, self.align)
+    }
+
+    pub fn extend(self: &Layout, next: &Layout) -> Option<(Layout, usize)> {
+        let padding = self.padding_needed_for(self.size);
+        let offset = self.size + padding;
+        let size = offset.checked_add(next.size)?;
+        
+        let align = if self.align > next.align {
+            self.align
+        } else {
+            next.align
+        };
+        
+        Layout::from_size_align(size, align).map(|layout| (layout, offset))
+    }
+}
+
+// Smart pointers
+pub struct Box<T> {
+    ptr: *mut T,
+}
+
+impl<T> Box<T> {
+    pub fn new(value: T) -> Box<T> {
+        let layout = Layout::new::<T>();
+        let ptr = allocate(layout.size()) as *mut T;
+        unsafe {
+            write(ptr, value);
+        }
+        Box { ptr: ptr }
+    }
+
+    pub fn as_ref(self: &Box<T>) -> &T {
+        unsafe { &*self.ptr }
+    }
+
+    pub fn as_mut(self: &mut Box<T>) -> &mut T {
+        unsafe { &mut *self.ptr }
+    }
+
+    pub fn into_raw(self: Box<T>) -> *mut T {
+        let ptr = self.ptr;
+        forget(self);
+        ptr
+    }
+
+    pub unsafe fn from_raw(ptr: *mut T) -> Box<T> {
+        Box { ptr: ptr }
+    }
+}
+
+impl<T> Drop for Box<T> {
+    fn drop(self: &mut Box<T>) {
+        unsafe {
+            drop_in_place(self.ptr);
+            deallocate(self.ptr as *mut u8, size_of::<T>());
+        }
+    }
+}
+
+impl<T> Deref for Box<T> {
+    type Target = T;
+
+    fn deref(self: &Box<T>) -> &T {
+        self.as_ref()
+    }
+}
+
+impl<T> DerefMut for Box<T> {
+    fn deref_mut(self: &mut Box<T>) -> &mut T {
+        self.as_mut()
+    }
+}
+
+// Reference counting
+pub struct Rc<T> {
+    ptr: *mut RcInner<T>,
+}
+
+struct RcInner<T> {
+    value: T,
+    strong_count: usize,
+}
+
+impl<T> Rc<T> {
+    pub fn new(value: T) -> Rc<T> {
+        let layout = Layout::new::<RcInner<T>>();
+        let ptr = allocate(layout.size()) as *mut RcInner<T>;
+        unsafe {
+            write(ptr, RcInner {
+                value: value,
+                strong_count: 1,
+            });
+        }
+        Rc { ptr: ptr }
+    }
+
+    pub fn as_ref(self: &Rc<T>) -> &T {
+        unsafe { &(*self.ptr).value }
+    }
+
+    pub fn strong_count(self: &Rc<T>) -> usize {
+        unsafe { (*self.ptr).strong_count }
+    }
+
+    pub fn get_mut(self: &mut Rc<T>) -> Option<&mut T> {
+        if self.strong_count() == 1 {
+            unsafe { Option::Some(&mut (*self.ptr).value) }
+        } else {
+            Option::None
+        }
+    }
+
+    pub fn try_unwrap(self: Rc<T>) -> Result<T, Rc<T>> {
+        if self.strong_count() == 1 {
+            unsafe {
+                let value = read(&(*self.ptr).value);
+                deallocate(self.ptr as *mut u8, size_of::<RcInner<T>>());
+                forget(self);
+                Result::Ok(value)
+            }
+        } else {
+            Result::Err(self)
+        }
+    }
+}
+
+impl<T> Clone for Rc<T> {
+    fn clone(self: &Rc<T>) -> Rc<T> {
+        unsafe {
+            (*self.ptr).strong_count += 1;
+        }
+        Rc { ptr: self.ptr }
+    }
+}
+
+impl<T> Drop for Rc<T> {
+    fn drop(self: &mut Rc<T>) {
+        unsafe {
+            (*self.ptr).strong_count -= 1;
+            if (*self.ptr).strong_count == 0 {
+                drop_in_place(&mut (*self.ptr).value);
+                deallocate(self.ptr as *mut u8, size_of::<RcInner<T>>());
+            }
+        }
+    }
+}
+
+// Alignment utilities
+pub fn align_up(value: usize, align: usize) -> usize {
+    (value + align - 1) & !(align - 1)
+}
+
+pub fn align_down(value: usize, align: usize) -> usize {
+    value & !(align - 1)
+}
+
+pub fn is_aligned(value: usize, align: usize) -> bool {
+    value % align == 0
+}
+
+// Memory comparison
+pub fn eq<T: Eq>(a: *const T, b: *const T, count: usize) -> bool {
+    for i in 0..count {
+        unsafe {
+            if *a.offset(i as isize) != *b.offset(i as isize) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+pub fn cmp_bytes(a: *const u8, b: *const u8, count: usize) -> i32 {
+    for i in 0..count {
+        unsafe {
+            let av = *a.offset(i as isize);
+            let bv = *b.offset(i as isize);
+            if av < bv {
+                return -1;
+            } else if av > bv {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+// Transmutation (unsafe type conversion)
+pub unsafe fn transmute<From, To>(value: From) -> To {
+    // This would be a compiler intrinsic
+    // Very unsafe - only works if sizes match
+    let ptr = &value as *const From as *const To;
+    let result = read(ptr);
+    forget(value);
+    result
+}
+
+// Discriminant for enums
+pub fn discriminant<T>(value: &T) -> Discriminant<T> {
+    // This would be a compiler intrinsic
+    Discriminant {
+        value: 0, // Placeholder
+        _phantom: PhantomData,
+    }
+}
+
+pub struct Discriminant<T> {
+    value: usize,
+    _phantom: PhantomData<T>,
+}
+
+// Phantom data for unused type parameters
+pub struct PhantomData<T>;
+
+// Memory allocation error
+pub struct AllocError;
+
+// Global allocator interface
+pub trait GlobalAlloc {
+    unsafe fn alloc(self: &Self, layout: Layout) -> *mut u8;
+    unsafe fn dealloc(self: &Self, ptr: *mut u8, layout: Layout);
+    
+    unsafe fn alloc_zeroed(self: &Self, layout: Layout) -> *mut u8 {
+        let ptr = self.alloc(layout);
+        if !ptr.is_null() {
+            zero_memory(ptr, layout.size());
+        }
+        ptr
+    }
+    
+    unsafe fn realloc(self: &Self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let new_layout = Layout::from_size_align(new_size, layout.align()).unwrap();
+        let new_ptr = self.alloc(new_layout);
+        
+        if !new_ptr.is_null() {
+            let copy_size = if new_size < layout.size() { new_size } else { layout.size() };
+            copy_nonoverlapping(ptr, new_ptr, copy_size);
+            self.dealloc(ptr, layout);
+        }
+        
+        new_ptr
+    }
+}

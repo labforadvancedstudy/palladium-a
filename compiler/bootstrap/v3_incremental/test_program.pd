@@ -1,0 +1,9 @@
+fn add(x: i64, y: i64) -> i64 {
+    return x + y;
+}
+
+fn main() {
+    print("Bootstrap test!");
+    let result: i64 = add(10, 20);
+    print("10 + 20 = " + int_to_string(result));
+}

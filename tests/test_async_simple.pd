@@ -1,0 +1,11 @@
+// Simple async test
+
+async fn hello() {
+    print("Hello from async\n");
+}
+
+fn main() {
+    print("Testing async functions\n");
+    let future = hello();
+    print("Done\n");
+}

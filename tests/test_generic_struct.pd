@@ -1,0 +1,24 @@
+// Test generic struct support
+
+struct Box<T> {
+    value: T,
+}
+
+struct Pair<T, U> {
+    first: T,
+    second: U,
+}
+
+fn main() {
+    // Test single type parameter
+    let int_box = Box { value: 42 };
+    print("Box value:");
+    print_int(int_box.value);
+    
+    // Test multiple type parameters
+    let pair = Pair { first: 100, second: "hello" };
+    print("Pair first:");
+    print_int(pair.first);
+    print("Pair second:");
+    print(pair.second);
+}

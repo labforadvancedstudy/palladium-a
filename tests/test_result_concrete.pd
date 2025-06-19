@@ -1,0 +1,40 @@
+// Test Result with concrete types
+
+enum IntResult {
+    Ok(i32),
+    Err(String),
+}
+
+fn divide(a: i32, b: i32) -> IntResult {
+    if b == 0 {
+        return IntResult::Err("Division by zero");
+    }
+    return IntResult::Ok(a / b);
+}
+
+fn main() {
+    let result: IntResult = divide(10, 2);
+    
+    match result {
+        IntResult::Ok(value) => {
+            print("Result is: ");
+            print_int(value);
+        }
+        IntResult::Err(msg) => {
+            print("Error: ");
+            print(msg);
+        }
+    }
+    
+    let error_result: IntResult = divide(10, 0);
+    match error_result {
+        IntResult::Ok(value) => {
+            print("Should not reach here");
+            print_int(value);
+        }
+        IntResult::Err(msg) => {
+            print("Error caught: ");
+            print(msg);
+        }
+    }
+}

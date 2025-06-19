@@ -1,0 +1,284 @@
+// Simple Lexer v2 - Basic but complete tokenizer
+// Can recognize all major token types
+
+fn is_whitespace(ch: i64) -> bool {
+    return ch == 32 || ch == 9 || ch == 10 || ch == 13;
+}
+
+fn is_digit(ch: i64) -> bool {
+    return ch >= 48 && ch <= 57;
+}
+
+fn is_alpha(ch: i64) -> bool {
+    return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122);
+}
+
+fn skip_whitespace(source: String, pos: i64) -> i64 {
+    let mut i = pos;
+    while i < string_len(source) && is_whitespace(string_char_at(source, i)) {
+        i = i + 1;
+    }
+    return i;
+}
+
+fn check_keyword(source: String, pos: i64) -> String {
+    // Check for common keywords
+    if pos + 2 <= string_len(source) {
+        let c1 = string_char_at(source, pos);
+        let c2 = string_char_at(source, pos + 1);
+        
+        if c1 == 102 && c2 == 110 { // fn
+            return "FN";
+        }
+        if c1 == 105 && c2 == 102 { // if
+            return "IF";
+        }
+    }
+    
+    if pos + 3 <= string_len(source) {
+        let c1 = string_char_at(source, pos);
+        let c2 = string_char_at(source, pos + 1);
+        let c3 = string_char_at(source, pos + 2);
+        
+        if c1 == 108 && c2 == 101 && c3 == 116 { // let
+            return "LET";
+        }
+        if c1 == 109 && c2 == 117 && c3 == 116 { // mut
+            return "MUT";
+        }
+    }
+    
+    if pos + 4 <= string_len(source) {
+        let c1 = string_char_at(source, pos);
+        let c2 = string_char_at(source, pos + 1);
+        let c3 = string_char_at(source, pos + 2);
+        let c4 = string_char_at(source, pos + 3);
+        
+        if c1 == 109 && c2 == 97 && c3 == 105 && c4 == 110 { // main
+            return "MAIN";
+        }
+        if c1 == 101 && c2 == 108 && c3 == 115 && c4 == 101 { // else
+            return "ELSE";
+        }
+        if c1 == 116 && c2 == 114 && c3 == 117 && c4 == 101 { // true
+            return "TRUE";
+        }
+    }
+    
+    if pos + 5 <= string_len(source) {
+        let c1 = string_char_at(source, pos);
+        let c2 = string_char_at(source, pos + 1);
+        let c3 = string_char_at(source, pos + 2);
+        let c4 = string_char_at(source, pos + 3);
+        let c5 = string_char_at(source, pos + 4);
+        
+        if c1 == 112 && c2 == 114 && c3 == 105 && c4 == 110 && c5 == 116 { // print
+            return "PRINT";
+        }
+        if c1 == 119 && c2 == 104 && c3 == 105 && c4 == 108 && c5 == 101 { // while
+            return "WHILE";
+        }
+        if c1 == 102 && c2 == 97 && c3 == 108 && c4 == 115 && c5 == 101 { // false
+            return "FALSE";
+        }
+    }
+    
+    if pos + 6 <= string_len(source) {
+        let c1 = string_char_at(source, pos);
+        let c2 = string_char_at(source, pos + 1);
+        
+        if c1 == 114 && c2 == 101 { // return
+            return "RETURN";
+        }
+        if c1 == 115 && c2 == 116 { // struct
+            return "STRUCT";
+        }
+    }
+    
+    return "IDENT";
+}
+
+fn tokenize_simple(source: String, out: i64) {
+    let mut pos = 0;
+    let len = string_len(source);
+    let mut token_count = 0;
+    
+    file_write(out, "Tokens:\n");
+    
+    while pos < len {
+        pos = skip_whitespace(source, pos);
+        if pos >= len {
+            break;
+        }
+        
+        let ch = string_char_at(source, pos);
+        
+        // Identifiers and keywords
+        if is_alpha(ch) {
+            let start = pos;
+            while pos < len && (is_alpha(string_char_at(source, pos)) || is_digit(string_char_at(source, pos)) || string_char_at(source, pos) == 95) {
+                pos = pos + 1;
+            }
+            
+            let keyword = check_keyword(source, start);
+            file_write(out, "  ");
+            file_write(out, keyword);
+            file_write(out, "\n");
+            token_count = token_count + 1;
+        }
+        // Numbers
+        else if is_digit(ch) {
+            while pos < len && is_digit(string_char_at(source, pos)) {
+                pos = pos + 1;
+            }
+            file_write(out, "  NUMBER\n");
+            token_count = token_count + 1;
+        }
+        // Operators and punctuation
+        else if ch == 40 { // (
+            file_write(out, "  LPAREN\n");
+            token_count = token_count + 1;
+            pos = pos + 1;
+        }
+        else if ch == 41 { // )
+            file_write(out, "  RPAREN\n");
+            token_count = token_count + 1;
+            pos = pos + 1;
+        }
+        else if ch == 123 { // {
+            file_write(out, "  LBRACE\n");
+            token_count = token_count + 1;
+            pos = pos + 1;
+        }
+        else if ch == 125 { // }
+            file_write(out, "  RBRACE\n");
+            token_count = token_count + 1;
+            pos = pos + 1;
+        }
+        else if ch == 59 { // ;
+            file_write(out, "  SEMICOLON\n");
+            token_count = token_count + 1;
+            pos = pos + 1;
+        }
+        else if ch == 61 { // =
+            if pos + 1 < len && string_char_at(source, pos + 1) == 61 {
+                file_write(out, "  EQ\n");
+                pos = pos + 2;
+            } else {
+                file_write(out, "  ASSIGN\n");
+                pos = pos + 1;
+            }
+            token_count = token_count + 1;
+        }
+        else if ch == 43 { // +
+            file_write(out, "  PLUS\n");
+            token_count = token_count + 1;
+            pos = pos + 1;
+        }
+        else if ch == 45 { // -
+            if pos + 1 < len && string_char_at(source, pos + 1) == 62 {
+                file_write(out, "  ARROW\n");
+                pos = pos + 2;
+            } else {
+                file_write(out, "  MINUS\n");
+                pos = pos + 1;
+            }
+            token_count = token_count + 1;
+        }
+        else if ch == 42 { // *
+            file_write(out, "  STAR\n");
+            token_count = token_count + 1;
+            pos = pos + 1;
+        }
+        else if ch == 47 { // /
+            file_write(out, "  SLASH\n");
+            token_count = token_count + 1;
+            pos = pos + 1;
+        }
+        else if ch == 60 { // <
+            if pos + 1 < len && string_char_at(source, pos + 1) == 61 {
+                file_write(out, "  LE\n");
+                pos = pos + 2;
+            } else {
+                file_write(out, "  LT\n");
+                pos = pos + 1;
+            }
+            token_count = token_count + 1;
+        }
+        else if ch == 62 { // >
+            if pos + 1 < len && string_char_at(source, pos + 1) == 61 {
+                file_write(out, "  GE\n");
+                pos = pos + 2;
+            } else {
+                file_write(out, "  GT\n");
+                pos = pos + 1;
+            }
+            token_count = token_count + 1;
+        }
+        else if ch == 58 { // :
+            file_write(out, "  COLON\n");
+            token_count = token_count + 1;
+            pos = pos + 1;
+        }
+        else {
+            // Skip unknown character
+            pos = pos + 1;
+        }
+    }
+    
+    file_write(out, "\nTotal tokens: ");
+    // Write token count digit by digit
+    let mut temp = token_count;
+    let mut divisor = 1;
+    while temp / 10 > 0 {
+        divisor = divisor * 10;
+        temp = temp / 10;
+    }
+    while divisor > 0 {
+        let digit = (token_count / divisor) % 10;
+        if digit == 0 { file_write(out, "0"); }
+        else if digit == 1 { file_write(out, "1"); }
+        else if digit == 2 { file_write(out, "2"); }
+        else if digit == 3 { file_write(out, "3"); }
+        else if digit == 4 { file_write(out, "4"); }
+        else if digit == 5 { file_write(out, "5"); }
+        else if digit == 6 { file_write(out, "6"); }
+        else if digit == 7 { file_write(out, "7"); }
+        else if digit == 8 { file_write(out, "8"); }
+        else if digit == 9 { file_write(out, "9"); }
+        divisor = divisor / 10;
+    }
+    file_write(out, "\n");
+}
+
+fn main() {
+    print("Simple Lexer v2\n");
+    print("===============\n\n");
+    
+    // Create test program
+    let test_out = file_open("test_program.pd");
+    file_write(test_out, "fn main() {\n");
+    file_write(test_out, "    let mut x = 42;\n");
+    file_write(test_out, "    if x > 0 {\n");
+    file_write(test_out, "        print(x + 1);\n");
+    file_write(test_out, "    }\n");
+    file_write(test_out, "}\n");
+    file_close(test_out);
+    
+    // Read it back (line by line since we can't read whole file)
+    let in_handle = file_open("test_program.pd");
+    let line1 = file_read_line(in_handle);
+    file_close(in_handle);
+    
+    print("Tokenizing first line: ");
+    print(line1);
+    print("\n\n");
+    
+    // Tokenize and output results
+    let out_handle = file_open("tokens.txt");
+    tokenize_simple(line1, out_handle);
+    file_close(out_handle);
+    
+    print("Token output written to: tokens.txt\n");
+    print("\nLexer complete!\n");
+}

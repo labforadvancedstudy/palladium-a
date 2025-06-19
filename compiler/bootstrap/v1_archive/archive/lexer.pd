@@ -1,0 +1,614 @@
+// Palladium Lexer - Complete Implementation
+// This is the REAL lexer that can tokenize Palladium source code
+
+struct Token {
+    kind: i64,
+    value: String,
+    line: i64,
+    column: i64,
+    start: i64,
+    end: i64,
+}
+
+struct Lexer {
+    input: String,
+    position: i64,
+    line: i64,
+    column: i64,
+    tokens: [Token; 10000],
+    token_count: i64,
+}
+
+// Token types
+fn TK_EOF() -> i64 { return 0; }
+fn TK_IDENT() -> i64 { return 1; }
+fn TK_INTEGER() -> i64 { return 2; }
+fn TK_STRING() -> i64 { return 3; }
+fn TK_CHAR() -> i64 { return 4; }
+
+// Keywords
+fn TK_LET() -> i64 { return 10; }
+fn TK_MUT() -> i64 { return 11; }
+fn TK_FN() -> i64 { return 12; }
+fn TK_RETURN() -> i64 { return 13; }
+fn TK_IF() -> i64 { return 14; }
+fn TK_ELSE() -> i64 { return 15; }
+fn TK_WHILE() -> i64 { return 16; }
+fn TK_FOR() -> i64 { return 17; }
+fn TK_IN() -> i64 { return 18; }
+fn TK_BREAK() -> i64 { return 19; }
+fn TK_CONTINUE() -> i64 { return 20; }
+fn TK_STRUCT() -> i64 { return 21; }
+fn TK_ENUM() -> i64 { return 22; }
+fn TK_MATCH() -> i64 { return 23; }
+fn TK_TRUE() -> i64 { return 24; }
+fn TK_FALSE() -> i64 { return 25; }
+
+// Types
+fn TK_I32() -> i64 { return 30; }
+fn TK_I64() -> i64 { return 31; }
+fn TK_U32() -> i64 { return 32; }
+fn TK_U64() -> i64 { return 33; }
+fn TK_BOOL() -> i64 { return 34; }
+fn TK_STRING_TYPE() -> i64 { return 35; }
+
+// Operators
+fn TK_PLUS() -> i64 { return 40; }
+fn TK_MINUS() -> i64 { return 41; }
+fn TK_STAR() -> i64 { return 42; }
+fn TK_SLASH() -> i64 { return 43; }
+fn TK_PERCENT() -> i64 { return 44; }
+fn TK_EQ() -> i64 { return 45; }
+fn TK_EQ_EQ() -> i64 { return 46; }
+fn TK_NE() -> i64 { return 47; }
+fn TK_LT() -> i64 { return 48; }
+fn TK_GT() -> i64 { return 49; }
+fn TK_LE() -> i64 { return 50; }
+fn TK_GE() -> i64 { return 51; }
+fn TK_AND_AND() -> i64 { return 52; }
+fn TK_OR_OR() -> i64 { return 53; }
+fn TK_NOT() -> i64 { return 54; }
+fn TK_DOT() -> i64 { return 55; }
+fn TK_DOT_DOT() -> i64 { return 56; }
+fn TK_ARROW() -> i64 { return 57; }
+
+// Delimiters
+fn TK_LPAREN() -> i64 { return 60; }
+fn TK_RPAREN() -> i64 { return 61; }
+fn TK_LBRACE() -> i64 { return 62; }
+fn TK_RBRACE() -> i64 { return 63; }
+fn TK_LBRACKET() -> i64 { return 64; }
+fn TK_RBRACKET() -> i64 { return 65; }
+fn TK_COMMA() -> i64 { return 66; }
+fn TK_SEMICOLON() -> i64 { return 67; }
+fn TK_COLON() -> i64 { return 68; }
+fn TK_COLON_COLON() -> i64 { return 69; }
+fn TK_UNDERSCORE() -> i64 { return 70; }
+fn TK_FAT_ARROW() -> i64 { return 71; }
+
+// Create a new lexer
+fn lexer_new(input: String) -> Lexer {
+    let empty_token = Token {
+        kind: TK_EOF(),
+        value: "",
+        line: 0,
+        column: 0,
+        start: 0,
+        end: 0,
+    };
+    
+    return Lexer {
+        input: input,
+        position: 0,
+        line: 1,
+        column: 1,
+        tokens: [empty_token; 10000],
+        token_count: 0,
+    };
+}
+
+// Get current character
+fn current_char(lexer: Lexer) -> i64 {
+    if lexer.position >= string_len(lexer.input) {
+        return 0; // EOF
+    }
+    return string_char_at(lexer.input, lexer.position);
+}
+
+// Peek next character
+fn peek_char(lexer: Lexer) -> i64 {
+    let next_pos = lexer.position + 1;
+    if next_pos >= string_len(lexer.input) {
+        return 0;
+    }
+    return string_char_at(lexer.input, next_pos);
+}
+
+// Advance position
+fn advance(mut lexer: Lexer) {
+    if lexer.position < string_len(lexer.input) {
+        let ch = current_char(lexer);
+        lexer.position = lexer.position + 1;
+        if ch == 10 { // newline
+            lexer.line = lexer.line + 1;
+            lexer.column = 1;
+        } else {
+            lexer.column = lexer.column + 1;
+        }
+    }
+}
+
+// Skip whitespace
+fn skip_whitespace(mut lexer: Lexer) {
+    while true {
+        let ch = current_char(lexer);
+        if ch == 32 || ch == 9 || ch == 10 || ch == 13 { // space, tab, newline, return
+            advance(lexer);
+        } else {
+            break;
+        }
+    }
+}
+
+// Skip line comment
+fn skip_line_comment(mut lexer: Lexer) {
+    while current_char(lexer) != 10 && current_char(lexer) != 0 {
+        advance(lexer);
+    }
+}
+
+// Skip block comment
+fn skip_block_comment(mut lexer: Lexer) {
+    advance(lexer); // skip *
+    while true {
+        if current_char(lexer) == 0 {
+            break;
+        }
+        if current_char(lexer) == 42 && peek_char(lexer) == 47 { // */
+            advance(lexer);
+            advance(lexer);
+            break;
+        }
+        advance(lexer);
+    }
+}
+
+// Check if character is digit
+fn is_digit(ch: i64) -> bool {
+    return ch >= 48 && ch <= 57; // '0' to '9'
+}
+
+// Check if character is letter
+fn is_letter(ch: i64) -> bool {
+    return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95; // A-Z, a-z, _
+}
+
+// Read number
+fn read_number(mut lexer: Lexer) -> Token {
+    let start = lexer.position;
+    let start_line = lexer.line;
+    let start_col = lexer.column;
+    
+    while is_digit(current_char(lexer)) {
+        advance(lexer);
+    }
+    
+    let value = string_substring(lexer.input, start, lexer.position);
+    
+    return Token {
+        kind: TK_INTEGER(),
+        value: value,
+        line: start_line,
+        column: start_col,
+        start: start,
+        end: lexer.position,
+    };
+}
+
+// Check if string matches at current position
+fn matches_at(lexer: Lexer, s: String) -> bool {
+    let len = string_len(s);
+    if lexer.position + len > string_len(lexer.input) {
+        return false;
+    }
+    
+    for i in 0..len {
+        let ch1 = string_char_at(lexer.input, lexer.position + i);
+        let ch2 = string_char_at(s, i);
+        if ch1 != ch2 {
+            return false;
+        }
+    }
+    
+    // Check that it's not part of a larger identifier
+    if len > 0 {
+        let next_pos = lexer.position + len;
+        if next_pos < string_len(lexer.input) {
+            let next_ch = string_char_at(lexer.input, next_pos);
+            if is_letter(next_ch) || is_digit(next_ch) {
+                return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
+// Read identifier or keyword
+fn read_identifier(mut lexer: Lexer) -> Token {
+    let start = lexer.position;
+    let start_line = lexer.line;
+    let start_col = lexer.column;
+    
+    while is_letter(current_char(lexer)) || is_digit(current_char(lexer)) {
+        advance(lexer);
+    }
+    
+    let value = string_substring(lexer.input, start, lexer.position);
+    
+    // Check for keywords
+    let kind = TK_IDENT();
+    if string_eq(value, "let") { kind = TK_LET(); }
+    else if string_eq(value, "mut") { kind = TK_MUT(); }
+    else if string_eq(value, "fn") { kind = TK_FN(); }
+    else if string_eq(value, "return") { kind = TK_RETURN(); }
+    else if string_eq(value, "if") { kind = TK_IF(); }
+    else if string_eq(value, "else") { kind = TK_ELSE(); }
+    else if string_eq(value, "while") { kind = TK_WHILE(); }
+    else if string_eq(value, "for") { kind = TK_FOR(); }
+    else if string_eq(value, "in") { kind = TK_IN(); }
+    else if string_eq(value, "break") { kind = TK_BREAK(); }
+    else if string_eq(value, "continue") { kind = TK_CONTINUE(); }
+    else if string_eq(value, "struct") { kind = TK_STRUCT(); }
+    else if string_eq(value, "enum") { kind = TK_ENUM(); }
+    else if string_eq(value, "match") { kind = TK_MATCH(); }
+    else if string_eq(value, "true") { kind = TK_TRUE(); }
+    else if string_eq(value, "false") { kind = TK_FALSE(); }
+    else if string_eq(value, "i32") { kind = TK_I32(); }
+    else if string_eq(value, "i64") { kind = TK_I64(); }
+    else if string_eq(value, "u32") { kind = TK_U32(); }
+    else if string_eq(value, "u64") { kind = TK_U64(); }
+    else if string_eq(value, "bool") { kind = TK_BOOL(); }
+    else if string_eq(value, "String") { kind = TK_STRING_TYPE(); }
+    
+    return Token {
+        kind: kind,
+        value: value,
+        line: start_line,
+        column: start_col,
+        start: start,
+        end: lexer.position,
+    };
+}
+
+// Read string literal
+fn read_string(mut lexer: Lexer) -> Token {
+    let start = lexer.position;
+    let start_line = lexer.line;
+    let start_col = lexer.column;
+    
+    advance(lexer); // skip opening quote
+    
+    let content_start = lexer.position;
+    
+    while current_char(lexer) != 34 && current_char(lexer) != 0 { // "
+        if current_char(lexer) == 92 { // backslash
+            advance(lexer); // skip backslash
+            if current_char(lexer) != 0 {
+                advance(lexer); // skip escaped char
+            }
+        } else {
+            advance(lexer);
+        }
+    }
+    
+    let value = string_substring(lexer.input, content_start, lexer.position);
+    
+    if current_char(lexer) == 34 {
+        advance(lexer); // skip closing quote
+    }
+    
+    return Token {
+        kind: TK_STRING(),
+        value: value,
+        line: start_line,
+        column: start_col,
+        start: start,
+        end: lexer.position,
+    };
+}
+
+// Read character literal
+fn read_char(mut lexer: Lexer) -> Token {
+    let start = lexer.position;
+    let start_line = lexer.line;
+    let start_col = lexer.column;
+    
+    advance(lexer); // skip opening quote
+    
+    let ch = current_char(lexer);
+    advance(lexer);
+    
+    if current_char(lexer) == 39 { // '
+        advance(lexer);
+    }
+    
+    return Token {
+        kind: TK_CHAR(),
+        value: string_from_char(ch),
+        line: start_line,
+        column: start_col,
+        start: start,
+        end: lexer.position,
+    };
+}
+
+// Get next token
+fn next_token(mut lexer: Lexer) -> Token {
+    skip_whitespace(lexer);
+    
+    let start_line = lexer.line;
+    let start_col = lexer.column;
+    let start_pos = lexer.position;
+    
+    let ch = current_char(lexer);
+    
+    if ch == 0 {
+        return Token {
+            kind: TK_EOF(),
+            value: "",
+            line: start_line,
+            column: start_col,
+            start: start_pos,
+            end: start_pos,
+        };
+    }
+    
+    // Comments
+    if ch == 47 { // /
+        let next = peek_char(lexer);
+        if next == 47 { // //
+            skip_line_comment(lexer);
+            return next_token(lexer);
+        } else if next == 42 { // /*
+            advance(lexer);
+            skip_block_comment(lexer);
+            return next_token(lexer);
+        }
+    }
+    
+    // Numbers
+    if is_digit(ch) {
+        return read_number(lexer);
+    }
+    
+    // Identifiers and keywords
+    if is_letter(ch) {
+        return read_identifier(lexer);
+    }
+    
+    // String literals
+    if ch == 34 { // "
+        return read_string(lexer);
+    }
+    
+    // Character literals
+    if ch == 39 { // '
+        return read_char(lexer);
+    }
+    
+    // Two-character operators
+    if ch == 61 { // =
+        advance(lexer);
+        if current_char(lexer) == 61 { // ==
+            advance(lexer);
+            return Token { kind: TK_EQ_EQ(), value: "==", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        } else if current_char(lexer) == 62 { // =>
+            advance(lexer);
+            return Token { kind: TK_FAT_ARROW(), value: "=>", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        }
+        return Token { kind: TK_EQ(), value: "=", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 33 { // !
+        advance(lexer);
+        if current_char(lexer) == 61 { // !=
+            advance(lexer);
+            return Token { kind: TK_NE(), value: "!=", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        }
+        return Token { kind: TK_NOT(), value: "!", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 60 { // <
+        advance(lexer);
+        if current_char(lexer) == 61 { // <=
+            advance(lexer);
+            return Token { kind: TK_LE(), value: "<=", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        }
+        return Token { kind: TK_LT(), value: "<", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 62 { // >
+        advance(lexer);
+        if current_char(lexer) == 61 { // >=
+            advance(lexer);
+            return Token { kind: TK_GE(), value: ">=", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        }
+        return Token { kind: TK_GT(), value: ">", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 38 { // &
+        advance(lexer);
+        if current_char(lexer) == 38 { // &&
+            advance(lexer);
+            return Token { kind: TK_AND_AND(), value: "&&", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        }
+    }
+    
+    if ch == 124 { // |
+        advance(lexer);
+        if current_char(lexer) == 124 { // ||
+            advance(lexer);
+            return Token { kind: TK_OR_OR(), value: "||", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        }
+    }
+    
+    if ch == 45 { // -
+        advance(lexer);
+        if current_char(lexer) == 62 { // ->
+            advance(lexer);
+            return Token { kind: TK_ARROW(), value: "->", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        }
+        return Token { kind: TK_MINUS(), value: "-", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 46 { // .
+        advance(lexer);
+        if current_char(lexer) == 46 { // ..
+            advance(lexer);
+            return Token { kind: TK_DOT_DOT(), value: "..", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        }
+        return Token { kind: TK_DOT(), value: ".", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 58 { // :
+        advance(lexer);
+        if current_char(lexer) == 58 { // ::
+            advance(lexer);
+            return Token { kind: TK_COLON_COLON(), value: "::", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+        }
+        return Token { kind: TK_COLON(), value: ":", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    // Single-character tokens
+    if ch == 43 { // +
+        advance(lexer);
+        return Token { kind: TK_PLUS(), value: "+", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 42 { // *
+        advance(lexer);
+        return Token { kind: TK_STAR(), value: "*", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 47 { // /
+        advance(lexer);
+        return Token { kind: TK_SLASH(), value: "/", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 37 { // %
+        advance(lexer);
+        return Token { kind: TK_PERCENT(), value: "%", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 40 { // (
+        advance(lexer);
+        return Token { kind: TK_LPAREN(), value: "(", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 41 { // )
+        advance(lexer);
+        return Token { kind: TK_RPAREN(), value: ")", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 123 { // {
+        advance(lexer);
+        return Token { kind: TK_LBRACE(), value: "{", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 125 { // }
+        advance(lexer);
+        return Token { kind: TK_RBRACE(), value: "}", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 91 { // [
+        advance(lexer);
+        return Token { kind: TK_LBRACKET(), value: "[", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 93 { // ]
+        advance(lexer);
+        return Token { kind: TK_RBRACKET(), value: "]", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 44 { // ,
+        advance(lexer);
+        return Token { kind: TK_COMMA(), value: ",", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 59 { // ;
+        advance(lexer);
+        return Token { kind: TK_SEMICOLON(), value: ";", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    if ch == 95 { // _
+        advance(lexer);
+        return Token { kind: TK_UNDERSCORE(), value: "_", line: start_line, column: start_col, start: start_pos, end: lexer.position };
+    }
+    
+    // Unknown character
+    advance(lexer);
+    return Token { 
+        kind: TK_EOF(), 
+        value: string_from_char(ch), 
+        line: start_line, 
+        column: start_col, 
+        start: start_pos, 
+        end: lexer.position 
+    };
+}
+
+// Tokenize entire input
+fn tokenize(input: String) -> Lexer {
+    let mut lexer = lexer_new(input);
+    
+    while lexer.token_count < 10000 {
+        let token = next_token(lexer);
+        lexer.tokens[lexer.token_count] = token;
+        lexer.token_count = lexer.token_count + 1;
+        
+        if token.kind == TK_EOF() {
+            break;
+        }
+    }
+    
+    return lexer;
+}
+
+// Test the lexer
+fn test_lexer() {
+    let input = "fn main() {
+    let x = 42;
+    if x > 0 {
+        print(\"Hello, World!\");
+    }
+}";
+    
+    print("Testing lexer with input:\n");
+    print(input);
+    print("\n\nTokens:\n");
+    
+    let mut lexer = tokenize(input);
+    
+    for i in 0..lexer.token_count {
+        let token = lexer.tokens[i];
+        print("Token: kind=");
+        print_int(token.kind);
+        print(", value='");
+        print(token.value);
+        print("', line=");
+        print_int(token.line);
+        print(", col=");
+        print_int(token.column);
+        print("\n");
+        
+        if token.kind == TK_EOF() {
+            break;
+        }
+    }
+}
+
+// Export tokenize function for use by parser
+fn lexer_tokenize(input: String) -> Lexer {
+    return tokenize(input);
+}

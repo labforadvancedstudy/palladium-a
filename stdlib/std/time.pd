@@ -1,0 +1,142 @@
+// Time and duration utilities
+// "Time is the fire in which we burn"
+
+// Duration represents a span of time
+pub struct Duration {
+    seconds: i64,
+    nanos: i32,
+}
+
+impl Duration {
+    // Create a new duration from seconds
+    pub fn from_secs(secs: i64) -> Duration {
+        Duration {
+            seconds: secs,
+            nanos: 0,
+        }
+    }
+    
+    // Create a new duration from milliseconds
+    pub fn from_millis(millis: i64) -> Duration {
+        Duration {
+            seconds: millis / 1000,
+            nanos: ((millis % 1000) * 1_000_000) as i32,
+        }
+    }
+    
+    // Create a new duration from microseconds
+    pub fn from_micros(micros: i64) -> Duration {
+        Duration {
+            seconds: micros / 1_000_000,
+            nanos: ((micros % 1_000_000) * 1000) as i32,
+        }
+    }
+    
+    // Create a new duration from nanoseconds
+    pub fn from_nanos(nanos: i64) -> Duration {
+        Duration {
+            seconds: nanos / 1_000_000_000,
+            nanos: (nanos % 1_000_000_000) as i32,
+        }
+    }
+    
+    // Get total seconds
+    pub fn as_secs(&self) -> i64 {
+        self.seconds
+    }
+    
+    // Get total milliseconds
+    pub fn as_millis(&self) -> i64 {
+        self.seconds * 1000 + (self.nanos / 1_000_000) as i64
+    }
+    
+    // Get subsecond nanoseconds
+    pub fn subsec_nanos(&self) -> i32 {
+        self.nanos
+    }
+    
+    // Add two durations
+    pub fn add(&self, other: &Duration) -> Duration {
+        let mut seconds = self.seconds + other.seconds;
+        let mut nanos = self.nanos + other.nanos;
+        
+        if nanos >= 1_000_000_000 {
+            seconds = seconds + 1;
+            nanos = nanos - 1_000_000_000;
+        }
+        
+        Duration { seconds, nanos }
+    }
+    
+    // Subtract another duration
+    pub fn sub(&self, other: &Duration) -> Duration {
+        let mut seconds = self.seconds - other.seconds;
+        let mut nanos = self.nanos - other.nanos;
+        
+        if nanos < 0 {
+            seconds = seconds - 1;
+            nanos = nanos + 1_000_000_000;
+        }
+        
+        Duration { seconds, nanos }
+    }
+    
+    // Check if this duration is zero
+    pub fn is_zero(&self) -> bool {
+        self.seconds == 0 && self.nanos == 0
+    }
+}
+
+// Instant represents a point in time
+pub struct Instant {
+    // Platform-specific representation
+    // For now, we'll use seconds since epoch
+    seconds: i64,
+    nanos: i32,
+}
+
+impl Instant {
+    // Get the current instant
+    // Note: This would need runtime support
+    pub fn now() -> Instant {
+        // Placeholder implementation
+        // In real implementation, this would call system time functions
+        Instant { seconds: 0, nanos: 0 }
+    }
+    
+    // Calculate duration since another instant
+    pub fn duration_since(&self, earlier: &Instant) -> Duration {
+        let seconds = self.seconds - earlier.seconds;
+        let mut nanos = self.nanos - earlier.nanos;
+        let mut adj_seconds = seconds;
+        
+        if nanos < 0 {
+            adj_seconds = adj_seconds - 1;
+            nanos = nanos + 1_000_000_000;
+        }
+        
+        Duration {
+            seconds: adj_seconds,
+            nanos,
+        }
+    }
+    
+    // Calculate time elapsed since this instant
+    pub fn elapsed(&self) -> Duration {
+        let now = Instant::now();
+        now.duration_since(self)
+    }
+}
+
+// Sleep for a duration
+// Note: This would need runtime support
+pub fn sleep(duration: Duration) {
+    // Placeholder implementation
+    // In real implementation, this would call system sleep functions
+}
+
+// Common duration constants
+pub const SECOND: Duration = Duration { seconds: 1, nanos: 0 };
+pub const MILLISECOND: Duration = Duration { seconds: 0, nanos: 1_000_000 };
+pub const MICROSECOND: Duration = Duration { seconds: 0, nanos: 1_000 };
+pub const NANOSECOND: Duration = Duration { seconds: 0, nanos: 1 };

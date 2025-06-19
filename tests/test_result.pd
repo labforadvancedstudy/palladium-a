@@ -1,0 +1,103 @@
+// Test Result<T, E> type
+
+import std::result::{Result, Error, ok, err};
+
+fn divide(a: i32, b: i32) -> Result<i32, String> {
+    if b == 0 {
+        return Result::Err("Division by zero");
+    }
+    Result::Ok(a / b)
+}
+
+fn test_basic_result() {
+    let good_result: Result<i32, String> = divide(10, 2);
+    let bad_result: Result<i32, String> = divide(10, 0);
+    
+    // Test is_ok and is_err
+    if good_result.is_ok() {
+        print("Good result is Ok: true");
+    }
+    
+    if bad_result.is_err() {
+        print("Bad result is Err: true");
+    }
+    
+    // Test unwrap_or
+    let value: i32 = good_result.unwrap_or(-1);
+    print("Good result value: ");
+    print_int(value);
+    
+    let value2: i32 = bad_result.unwrap_or(-1);
+    print("Bad result value (default): ");
+    print_int(value2);
+}
+
+fn test_result_map() {
+    let result: Result<i32, String> = Result::Ok(5);
+    
+    // Map the Ok value
+    let doubled: Result<i32, String> = result.map(fn(x: i32) -> i32 {
+        return x * 2;
+    });
+    
+    match doubled {
+        Result::Ok(val) => {
+            print("Doubled value: ");
+            print_int(val);
+        }
+        Result::Err(_) => {
+            print("Unexpected error");
+        }
+    }
+}
+
+fn test_result_chain() {
+    // Test and_then for chaining operations
+    let result: Result<i32, String> = divide(20, 2)
+        .and_then(fn(x: i32) -> Result<i32, String> {
+            return divide(x, 2);
+        });
+    
+    match result {
+        Result::Ok(val) => {
+            print("Chained division result: ");
+            print_int(val);
+        }
+        Result::Err(msg) => {
+            print("Error: ");
+            print(msg);
+        }
+    }
+}
+
+fn test_helper_functions() {
+    let good: Result<i32, String> = ok(42);
+    let bad: Result<i32, String> = err("Something went wrong");
+    
+    print("Helper ok value: ");
+    print_int(good.unwrap_or(0));
+    
+    print("Helper err has error: ");
+    if bad.is_err() {
+        print("true");
+    }
+}
+
+fn main() {
+    print("Testing Result<T, E> type...");
+    print("");
+    
+    test_basic_result();
+    print("");
+    
+    test_result_map();
+    print("");
+    
+    test_result_chain();
+    print("");
+    
+    test_helper_functions();
+    print("");
+    
+    print("All Result tests completed!");
+}

@@ -1,0 +1,79 @@
+// Comprehensive test for enum pattern matching with variable binding
+
+enum Result {
+    Ok(i32),
+    Err(String),
+}
+
+enum Shape {
+    Circle(i32),           // radius
+    Rectangle(i32, i32),   // width, height
+    Point,                 // unit variant
+}
+
+fn process_result(r: Result) {
+    match r {
+        Result::Ok(value) => {
+            print("Success with value:");
+            print_int(value);
+        }
+        Result::Err(msg) => {
+            print("Error:");
+            print(msg);
+        }
+    }
+}
+
+fn calculate_area(s: Shape) -> i32 {
+    match s {
+        Shape::Circle(radius) => {
+            // Approximate area = π * r^2 ≈ 3 * r^2
+            return radius * radius * 3;
+        }
+        Shape::Rectangle(width, height) => {
+            return width * height;
+        }
+        Shape::Point => {
+            return 0;
+        }
+    }
+}
+
+fn main() {
+    // Test Result enum
+    let ok_result: Result = Result::Ok(100);
+    let err_result: Result = Result::Err("Something went wrong");
+    
+    process_result(ok_result);
+    process_result(err_result);
+    
+    // Test Shape enum
+    let circle: Shape = Shape::Circle(5);
+    let rect: Shape = Shape::Rectangle(4, 6);
+    let point: Shape = Shape::Point;
+    
+    print("Circle area:");
+    print_int(calculate_area(circle));
+    
+    print("Rectangle area:");
+    print_int(calculate_area(rect));
+    
+    print("Point area:");
+    print_int(calculate_area(point));
+    
+    // Test nested matching
+    let nested_result: Result = Result::Ok(42);
+    match nested_result {
+        Result::Ok(n) => {
+            if n > 40 {
+                print("Large value:");
+                print_int(n);
+            } else {
+                print("Small value");
+            }
+        }
+        Result::Err(_) => {
+            print("Error occurred");
+        }
+    }
+}

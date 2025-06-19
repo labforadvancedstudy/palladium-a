@@ -1,0 +1,459 @@
+// Vec: A growable array type
+// "Legends build collections that scale"
+
+pub struct Vec<T> {
+    data: *mut T,      // Pointer to heap-allocated data
+    len: usize,        // Current number of elements
+    capacity: usize,   // Current allocated capacity
+}
+
+impl<T> Vec<T> {
+    // Create a new empty Vec
+    pub fn new() -> Vec<T> {
+        Vec {
+            data: null_mut(),
+            len: 0,
+            capacity: 0,
+        }
+    }
+
+    // Create a Vec with specified capacity
+    pub fn with_capacity(capacity: usize) -> Vec<T> {
+        if capacity == 0 {
+            return Vec::new();
+        }
+
+        Vec {
+            data: allocate(capacity * size_of::<T>()),
+            len: 0,
+            capacity: capacity,
+        }
+    }
+
+    // Get the number of elements
+    pub fn len(self: &Vec<T>) -> usize {
+        self.len
+    }
+
+    // Check if empty
+    pub fn is_empty(self: &Vec<T>) -> bool {
+        self.len == 0
+    }
+
+    // Get the capacity
+    pub fn capacity(self: &Vec<T>) -> usize {
+        self.capacity
+    }
+
+    // Reserve capacity for at least additional more elements
+    pub fn reserve(self: &mut Vec<T>, additional: usize) {
+        let required = self.len + additional;
+        if required > self.capacity {
+            self.grow(required);
+        }
+    }
+
+    // Shrink capacity to match length
+    pub fn shrink_to_fit(self: &mut Vec<T>) {
+        if self.capacity > self.len {
+            self.resize(self.len);
+        }
+    }
+
+    // Push an element to the end
+    pub fn push(self: &mut Vec<T>, value: T) {
+        if self.len == self.capacity {
+            self.grow(if self.capacity == 0 { 1 } else { self.capacity * 2 });
+        }
+
+        unsafe {
+            ptr::write(self.data.offset(self.len as isize), value);
+        }
+        self.len += 1;
+    }
+
+    // Pop an element from the end
+    pub fn pop(self: &mut Vec<T>) -> Option<T> {
+        if self.len == 0 {
+            Option::None
+        } else {
+            self.len -= 1;
+            unsafe {
+                Option::Some(ptr::read(self.data.offset(self.len as isize)))
+            }
+        }
+    }
+
+    // Get element at index
+    pub fn get(self: &Vec<T>, index: usize) -> Option<&T> {
+        if index < self.len {
+            unsafe {
+                Option::Some(&*self.data.offset(index as isize))
+            }
+        } else {
+            Option::None
+        }
+    }
+
+    // Get mutable element at index
+    pub fn get_mut(self: &mut Vec<T>, index: usize) -> Option<&mut T> {
+        if index < self.len {
+            unsafe {
+                Option::Some(&mut *self.data.offset(index as isize))
+            }
+        } else {
+            Option::None
+        }
+    }
+
+    // Insert element at index
+    pub fn insert(self: &mut Vec<T>, index: usize, value: T) {
+        assert(index <= self.len, "index out of bounds");
+
+        if self.len == self.capacity {
+            self.grow(if self.capacity == 0 { 1 } else { self.capacity * 2 });
+        }
+
+        unsafe {
+            if index < self.len {
+                // Shift elements to the right
+                ptr::copy(
+                    self.data.offset(index as isize),
+                    self.data.offset((index + 1) as isize),
+                    self.len - index,
+                );
+            }
+            ptr::write(self.data.offset(index as isize), value);
+        }
+        self.len += 1;
+    }
+
+    // Remove element at index
+    pub fn remove(self: &mut Vec<T>, index: usize) -> T {
+        assert(index < self.len, "index out of bounds");
+
+        unsafe {
+            let value = ptr::read(self.data.offset(index as isize));
+            if index < self.len - 1 {
+                // Shift elements to the left
+                ptr::copy(
+                    self.data.offset((index + 1) as isize),
+                    self.data.offset(index as isize),
+                    self.len - index - 1,
+                );
+            }
+            self.len -= 1;
+            value
+        }
+    }
+
+    // Clear all elements
+    pub fn clear(self: &mut Vec<T>) {
+        // Drop all elements
+        for i in 0..self.len {
+            unsafe {
+                ptr::drop_in_place(self.data.offset(i as isize));
+            }
+        }
+        self.len = 0;
+    }
+
+    // Append all elements from another Vec
+    pub fn append(self: &mut Vec<T>, other: &mut Vec<T>) {
+        self.reserve(other.len());
+        
+        unsafe {
+            ptr::copy_nonoverlapping(
+                other.data,
+                self.data.offset(self.len as isize),
+                other.len,
+            );
+        }
+        
+        self.len += other.len;
+        other.len = 0;
+    }
+
+    // Retain only elements that satisfy the predicate
+    pub fn retain(self: &mut Vec<T>, f: fn(&T) -> bool) {
+        let mut i = 0;
+        let mut j = 0;
+
+        while i < self.len {
+            unsafe {
+                let item = &*self.data.offset(i as isize);
+                if f(item) {
+                    if i != j {
+                        ptr::copy_nonoverlapping(
+                            self.data.offset(i as isize),
+                            self.data.offset(j as isize),
+                            1,
+                        );
+                    }
+                    j += 1;
+                } else {
+                    ptr::drop_in_place(self.data.offset(i as isize));
+                }
+            }
+            i += 1;
+        }
+        self.len = j;
+    }
+
+    // Find the first element satisfying the predicate
+    pub fn find(self: &Vec<T>, predicate: fn(&T) -> bool) -> Option<&T> {
+        for i in 0..self.len {
+            unsafe {
+                let item = &*self.data.offset(i as isize);
+                if predicate(item) {
+                    return Option::Some(item);
+                }
+            }
+        }
+        Option::None
+    }
+
+    // Check if any element satisfies the predicate
+    pub fn any(self: &Vec<T>, predicate: fn(&T) -> bool) -> bool {
+        self.find(predicate).is_some()
+    }
+
+    // Check if all elements satisfy the predicate
+    pub fn all(self: &Vec<T>, predicate: fn(&T) -> bool) -> bool {
+        for i in 0..self.len {
+            unsafe {
+                if !predicate(&*self.data.offset(i as isize)) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    // Sort the vector (requires T: Ord)
+    pub fn sort(self: &mut Vec<T>) where T: Ord {
+        // Simple quicksort implementation
+        if self.len > 1 {
+            self.quicksort(0, self.len - 1);
+        }
+    }
+
+    // Private helper for quicksort
+    fn quicksort(self: &mut Vec<T>, low: usize, high: usize) where T: Ord {
+        if low < high {
+            let pivot = self.partition(low, high);
+            if pivot > 0 {
+                self.quicksort(low, pivot - 1);
+            }
+            self.quicksort(pivot + 1, high);
+        }
+    }
+
+    // Private helper for partition
+    fn partition(self: &mut Vec<T>, low: usize, high: usize) -> usize where T: Ord {
+        unsafe {
+            let pivot = self.data.offset(high as isize);
+            let mut i = low;
+
+            for j in low..high {
+                if (*self.data.offset(j as isize)).cmp(&*pivot) != Ordering::Greater {
+                    if i != j {
+                        ptr::swap(
+                            self.data.offset(i as isize),
+                            self.data.offset(j as isize),
+                        );
+                    }
+                    i += 1;
+                }
+            }
+
+            if i != high {
+                ptr::swap(
+                    self.data.offset(i as isize),
+                    self.data.offset(high as isize),
+                );
+            }
+            i
+        }
+    }
+
+    // Reverse the vector in place
+    pub fn reverse(self: &mut Vec<T>) {
+        let mut i = 0;
+        let mut j = self.len - 1;
+
+        while i < j {
+            unsafe {
+                ptr::swap(
+                    self.data.offset(i as isize),
+                    self.data.offset(j as isize),
+                );
+            }
+            i += 1;
+            j -= 1;
+        }
+    }
+
+    // Private helper to grow the vector
+    fn grow(self: &mut Vec<T>, new_capacity: usize) {
+        assert(new_capacity > self.capacity, "new capacity must be larger");
+
+        let new_data = allocate(new_capacity * size_of::<T>());
+        
+        if self.capacity > 0 {
+            unsafe {
+                ptr::copy_nonoverlapping(self.data, new_data, self.len);
+            }
+            deallocate(self.data, self.capacity * size_of::<T>());
+        }
+
+        self.data = new_data;
+        self.capacity = new_capacity;
+    }
+
+    // Private helper to resize
+    fn resize(self: &mut Vec<T>, new_capacity: usize) {
+        if new_capacity == self.capacity {
+            return;
+        }
+
+        let new_data = if new_capacity > 0 {
+            allocate(new_capacity * size_of::<T>())
+        } else {
+            null_mut()
+        };
+
+        if self.len > 0 {
+            let copy_len = if new_capacity < self.len { new_capacity } else { self.len };
+            unsafe {
+                ptr::copy_nonoverlapping(self.data, new_data, copy_len);
+            }
+        }
+
+        if self.capacity > 0 {
+            deallocate(self.data, self.capacity * size_of::<T>());
+        }
+
+        self.data = new_data;
+        self.capacity = new_capacity;
+        if self.len > new_capacity {
+            self.len = new_capacity;
+        }
+    }
+}
+
+// Index access implementation
+impl<T> Index<usize> for Vec<T> {
+    type Output = T;
+
+    fn index(self: &Vec<T>, index: usize) -> &T {
+        assert(index < self.len, "index out of bounds");
+        unsafe {
+            &*self.data.offset(index as isize)
+        }
+    }
+}
+
+impl<T> IndexMut<usize> for Vec<T> {
+    fn index_mut(self: &mut Vec<T>, index: usize) -> &mut T {
+        assert(index < self.len, "index out of bounds");
+        unsafe {
+            &mut *self.data.offset(index as isize)
+        }
+    }
+}
+
+// Drop implementation to free memory
+impl<T> Drop for Vec<T> {
+    fn drop(self: &mut Vec<T>) {
+        self.clear();
+        if self.capacity > 0 {
+            deallocate(self.data, self.capacity * size_of::<T>());
+        }
+    }
+}
+
+// Clone implementation
+impl<T: Clone> Clone for Vec<T> {
+    fn clone(self: &Vec<T>) -> Vec<T> {
+        let mut new_vec = Vec::with_capacity(self.len);
+        for i in 0..self.len {
+            new_vec.push(self[i].clone());
+        }
+        new_vec
+    }
+}
+
+// Iterator implementation
+pub struct VecIter<T> {
+    vec: &Vec<T>,
+    index: usize,
+}
+
+impl<T> Iterator for VecIter<T> {
+    type Item = &T;
+
+    fn next(self: &mut VecIter<T>) -> Option<&T> {
+        if self.index < self.vec.len {
+            let item = self.vec.get(self.index);
+            self.index += 1;
+            item
+        } else {
+            Option::None
+        }
+    }
+}
+
+impl<T> Vec<T> {
+    pub fn iter(self: &Vec<T>) -> VecIter<T> {
+        VecIter {
+            vec: self,
+            index: 0,
+        }
+    }
+}
+
+// Mutable iterator
+pub struct VecIterMut<T> {
+    vec: &mut Vec<T>,
+    index: usize,
+}
+
+impl<T> Iterator for VecIterMut<T> {
+    type Item = &mut T;
+
+    fn next(self: &mut VecIterMut<T>) -> Option<&mut T> {
+        if self.index < self.vec.len {
+            let item = self.vec.get_mut(self.index);
+            self.index += 1;
+            item
+        } else {
+            Option::None
+        }
+    }
+}
+
+impl<T> Vec<T> {
+    pub fn iter_mut(self: &mut Vec<T>) -> VecIterMut<T> {
+        VecIterMut {
+            vec: self,
+            index: 0,
+        }
+    }
+}
+
+// Convenience functions
+pub fn vec<T>() -> Vec<T> {
+    Vec::new()
+}
+
+// Macro for creating Vec with initial values
+// Usage: vec![1, 2, 3, 4, 5]
+#[macro]
+pub fn vec(items: expr...) -> Vec<_> {
+    let mut v = Vec::new();
+    for item in items {
+        v.push(item);
+    }
+    v
+}

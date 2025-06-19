@@ -1,0 +1,5 @@
+// Entry point for the package
+
+fn main() {
+    print("Hello from hello_pdm!\n");
+}

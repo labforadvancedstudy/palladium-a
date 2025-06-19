@@ -1,0 +1,204 @@
+// Minimal lexer demo for Palladium bootstrapping
+// Shows basic tokenization without complex features
+
+// Token type names
+fn tok_name(t: i64) -> String {
+    if t == 0 { return "EOF"; }
+    if t == 1 { return "IDENT"; }
+    if t == 2 { return "NUMBER"; }
+    if t == 3 { return "STRING"; }
+    if t == 4 { return "LET"; }
+    if t == 5 { return "FN"; }
+    if t == 6 { return "RETURN"; }
+    if t == 7 { return "IF"; }
+    if t == 8 { return "LPAREN"; }
+    if t == 9 { return "RPAREN"; }
+    if t == 10 { return "LBRACE"; }
+    if t == 11 { return "RBRACE"; }
+    if t == 12 { return "SEMI"; }
+    if t == 13 { return "EQ"; }
+    if t == 14 { return "PLUS"; }
+    if t == 15 { return "MINUS"; }
+    if t == 16 { return "STAR"; }
+    return "UNKNOWN";
+}
+
+// Skip whitespace
+fn skip_ws(s: String, i: i64) -> i64 {
+    let len = string_len(s);
+    let mut pos = i;
+    
+    while pos < len {
+        let c = string_char_at(s, pos);
+        if c != 32 { // not space
+            if c != 9 { // not tab
+                if c != 10 { // not newline
+                    break;
+                }
+            }
+        }
+        pos = pos + 1;
+    }
+    
+    return pos;
+}
+
+// Simple identifier check
+fn is_alpha(c: i64) -> bool {
+    if c >= 65 { // A
+        if c <= 90 { // Z
+            return true;
+        }
+    }
+    if c >= 97 { // a
+        if c <= 122 { // z
+            return true;
+        }
+    }
+    if c == 95 { // underscore
+        return true;
+    }
+    return false;
+}
+
+// Read identifier length
+fn ident_len(s: String, start: i64) -> i64 {
+    let len = string_len(s);
+    let mut i = start;
+    
+    if i >= len {
+        return 0;
+    }
+    
+    if is_alpha(string_char_at(s, i)) == false {
+        return 0;
+    }
+    
+    i = i + 1;
+    
+    while i < len {
+        let c = string_char_at(s, i);
+        if is_alpha(c) == false {
+            if char_is_digit(c) == false {
+                break;
+            }
+        }
+        i = i + 1;
+    }
+    
+    return i - start;
+}
+
+// Get keyword type
+fn keyword_type(s: String) -> i64 {
+    if string_eq(s, "let") { return 4; }
+    if string_eq(s, "fn") { return 5; }
+    if string_eq(s, "return") { return 6; }
+    if string_eq(s, "if") { return 7; }
+    return 1; // IDENT
+}
+
+// Simple lexer - returns token type and new position
+fn lex_next_type(input: String, pos: i64) -> i64 {
+    // Returns just the token type
+    
+    let start = skip_ws(input, pos);
+    let len = string_len(input);
+    
+    if start >= len {
+        return (0, start, ""); // EOF
+    }
+    
+    let c = string_char_at(input, start);
+    
+    // Single char tokens
+    if c == 40 { return (8, start + 1, "("); }   // LPAREN
+    if c == 41 { return (9, start + 1, ")"); }   // RPAREN  
+    if c == 123 { return (10, start + 1, "{"); } // LBRACE
+    if c == 125 { return (11, start + 1, "}"); } // RBRACE
+    if c == 59 { return (12, start + 1, ";"); }  // SEMI
+    if c == 61 { return (13, start + 1, "="); }  // EQ
+    if c == 43 { return (14, start + 1, "+"); }  // PLUS
+    if c == 45 { return (15, start + 1, "-"); }  // MINUS
+    if c == 42 { return (16, start + 1, "*"); }  // STAR
+    
+    // Numbers
+    if char_is_digit(c) {
+        let mut end = start + 1;
+        while end < len {
+            if char_is_digit(string_char_at(input, end)) == false {
+                break;
+            }
+            end = end + 1;
+        }
+        let num = string_substring(input, start, end);
+        return (2, end, num); // NUMBER
+    }
+    
+    // Identifiers
+    if is_alpha(c) {
+        let id_len = ident_len(input, start);
+        if id_len > 0 {
+            let id = string_substring(input, start, start + id_len);
+            let tok_type = keyword_type(id);
+            return (tok_type, start + id_len, id);
+        }
+    }
+    
+    // String literals (simple - no escapes)
+    if c == 34 { // quote
+        let mut end = start + 1;
+        while end < len {
+            if string_char_at(input, end) == 34 {
+                end = end + 1;
+                let str_lit = string_substring(input, start, end);
+                return (3, end, str_lit); // STRING
+            }
+            end = end + 1;
+        }
+    }
+    
+    // Unknown
+    return (99, start + 1, "?");
+}
+
+// Tokenize a string
+fn tokenize(input: String) {
+    print("Tokenizing:");
+    print(input);
+    print("");
+    
+    let mut pos = 0;
+    let mut count = 0;
+    
+    while count < 50 { // safety limit
+        let (tok_type, next_pos, tok_text) = lex_next(input, pos);
+        
+        if tok_type == 0 { // EOF
+            break;
+        }
+        
+        let type_name = tok_name(tok_type);
+        print(string_concat(type_name, string_concat(" : ", tok_text)));
+        
+        pos = next_pos;
+        count = count + 1;
+    }
+    
+    print("");
+}
+
+fn main() {
+    print("=== Palladium Lexer Demo ===\n");
+    
+    // Test 1
+    tokenize("let x = 42;");
+    
+    // Test 2  
+    tokenize("fn add(a, b) { return a + b; }");
+    
+    // Test 3
+    tokenize("if (x > 0) { print(123); }");
+    
+    print("=== Demo complete ===");
+}

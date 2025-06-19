@@ -1,0 +1,27 @@
+// Basic trait test
+
+trait Display {
+    fn display(s: &Self);
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Display for Point {
+    fn display(s: &Self) {
+        print("Point { x: ");
+        print_int(s.x);
+        print(", y: ");
+        print_int(s.y);
+        print(" }");
+    }
+}
+
+fn main() {
+    let p: Point = Point { x: 10, y: 20 };
+    // For now, call the method directly
+    // TODO: Add method resolution for trait methods
+    Point::display(&p);
+}

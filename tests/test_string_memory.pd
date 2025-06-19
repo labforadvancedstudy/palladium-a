@@ -1,0 +1,20 @@
+// Test string memory management
+
+fn main() {
+    // Test string concatenation
+    let s1: String = "Hello, ";
+    let s2: String = "World!";
+    let s3: String = string_concat(s1, s2);
+    print(s3);
+    
+    // Test int to string conversion
+    let num: i64 = 42;
+    let s4: String = int_to_string(num);
+    print(s4);
+    
+    // Test substring
+    let s5: String = string_substring(s3, 0, 5);
+    print(s5);
+    
+    print("Memory test completed!");
+}

@@ -1,0 +1,8 @@
+// Minimal enum test
+enum E {
+    A(i32),
+}
+
+fn main() {
+    let x: E = E::A(1);
+}

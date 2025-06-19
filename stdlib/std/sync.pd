@@ -1,0 +1,274 @@
+// Synchronization primitives
+// "Order from chaos, harmony from discord"
+
+use std::result::{Result, Error};
+use std::option::{Option, some, none};
+use std::time::Duration;
+
+// Mutex - mutual exclusion primitive
+pub struct Mutex<T> {
+    // Platform-specific mutex handle
+    handle: i64,
+    data: T,
+}
+
+impl<T> Mutex<T> {
+    // Create a new mutex
+    pub fn new(data: T) -> Mutex<T> {
+        Mutex {
+            handle: 0, // Runtime support needed
+            data,
+        }
+    }
+    
+    // Lock the mutex and get access to the data
+    pub fn lock(&mut self) -> Result<MutexGuard<T>, Error> {
+        // Runtime support needed
+        // This would call pthread_mutex_lock or similar
+        ok(MutexGuard {
+            mutex: self,
+        })
+    }
+    
+    // Try to lock without blocking
+    pub fn try_lock(&mut self) -> Result<MutexGuard<T>, Error> {
+        // Runtime support needed
+        ok(MutexGuard {
+            mutex: self,
+        })
+    }
+    
+    // Get a mutable reference to the inner data
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.data
+    }
+    
+    // Consume the mutex and return the inner data
+    pub fn into_inner(self) -> T {
+        self.data
+    }
+}
+
+// RAII guard for mutex
+pub struct MutexGuard<'a, T> {
+    mutex: &'a mut Mutex<T>,
+}
+
+impl<'a, T> MutexGuard<'a, T> {
+    // Dereference to access the protected data
+    pub fn deref(&self) -> &T {
+        &self.mutex.data
+    }
+    
+    pub fn deref_mut(&mut self) -> &mut T {
+        &mut self.mutex.data
+    }
+}
+
+// RwLock - readers-writer lock
+pub struct RwLock<T> {
+    // Platform-specific rwlock handle
+    handle: i64,
+    data: T,
+}
+
+impl<T> RwLock<T> {
+    // Create a new RwLock
+    pub fn new(data: T) -> RwLock<T> {
+        RwLock {
+            handle: 0, // Runtime support needed
+            data,
+        }
+    }
+    
+    // Acquire a read lock
+    pub fn read(&self) -> Result<RwLockReadGuard<T>, Error> {
+        // Runtime support needed
+        ok(RwLockReadGuard {
+            lock: self,
+        })
+    }
+    
+    // Try to acquire a read lock without blocking
+    pub fn try_read(&self) -> Result<RwLockReadGuard<T>, Error> {
+        // Runtime support needed
+        ok(RwLockReadGuard {
+            lock: self,
+        })
+    }
+    
+    // Acquire a write lock
+    pub fn write(&mut self) -> Result<RwLockWriteGuard<T>, Error> {
+        // Runtime support needed
+        ok(RwLockWriteGuard {
+            lock: self,
+        })
+    }
+    
+    // Try to acquire a write lock without blocking
+    pub fn try_write(&mut self) -> Result<RwLockWriteGuard<T>, Error> {
+        // Runtime support needed
+        ok(RwLockWriteGuard {
+            lock: self,
+        })
+    }
+    
+    // Get a mutable reference when no locks exist
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.data
+    }
+    
+    // Consume and return inner data
+    pub fn into_inner(self) -> T {
+        self.data
+    }
+}
+
+// Read guard for RwLock
+pub struct RwLockReadGuard<'a, T> {
+    lock: &'a RwLock<T>,
+}
+
+impl<'a, T> RwLockReadGuard<'a, T> {
+    pub fn deref(&self) -> &T {
+        &self.lock.data
+    }
+}
+
+// Write guard for RwLock
+pub struct RwLockWriteGuard<'a, T> {
+    lock: &'a mut RwLock<T>,
+}
+
+impl<'a, T> RwLockWriteGuard<'a, T> {
+    pub fn deref(&self) -> &T {
+        &self.lock.data
+    }
+    
+    pub fn deref_mut(&mut self) -> &mut T {
+        &mut self.lock.data
+    }
+}
+
+// Condvar - condition variable
+pub struct Condvar {
+    handle: i64, // Platform-specific handle
+}
+
+impl Condvar {
+    // Create a new condition variable
+    pub fn new() -> Condvar {
+        Condvar {
+            handle: 0, // Runtime support needed
+        }
+    }
+    
+    // Wait on this condition variable
+    pub fn wait<T>(&self, guard: MutexGuard<T>) -> Result<MutexGuard<T>, Error> {
+        // Runtime support needed
+        // Would call pthread_cond_wait or similar
+        ok(guard)
+    }
+    
+    // Wait with a timeout
+    pub fn wait_timeout<T>(&self, guard: MutexGuard<T>, dur: Duration) 
+        -> Result<(MutexGuard<T>, bool), Error> {
+        // Runtime support needed
+        // Returns (guard, timed_out)
+        ok((guard, false))
+    }
+    
+    // Wake one waiting thread
+    pub fn notify_one(&self) {
+        // Runtime support needed
+    }
+    
+    // Wake all waiting threads
+    pub fn notify_all(&self) {
+        // Runtime support needed
+    }
+}
+
+// Once - execute initialization exactly once
+pub struct Once {
+    state: i32, // 0 = not started, 1 = running, 2 = complete
+}
+
+impl Once {
+    // Create a new Once
+    pub const fn new() -> Once {
+        Once { state: 0 }
+    }
+    
+    // Call the closure exactly once
+    pub fn call_once<F>(&mut self, f: F) 
+    where F: Fn() {
+        if self.state == 2 {
+            return;
+        }
+        
+        // Runtime support needed for atomic operations
+        // This is a simplified version
+        if self.state == 0 {
+            self.state = 1;
+            f();
+            self.state = 2;
+        }
+    }
+    
+    // Check if already initialized
+    pub fn is_completed(&self) -> bool {
+        self.state == 2
+    }
+}
+
+// Barrier - synchronization point for multiple threads
+pub struct Barrier {
+    num_threads: u32,
+    count: u32,
+    generation: u32,
+}
+
+impl Barrier {
+    // Create a new barrier
+    pub fn new(n: u32) -> Barrier {
+        Barrier {
+            num_threads: n,
+            count: 0,
+            generation: 0,
+        }
+    }
+    
+    // Block until all threads reach this point
+    pub fn wait(&mut self) -> BarrierWaitResult {
+        // Runtime support needed
+        // Simplified version
+        self.count = self.count + 1;
+        
+        if self.count == self.num_threads {
+            self.count = 0;
+            self.generation = self.generation + 1;
+            BarrierWaitResult { is_leader: true }
+        } else {
+            BarrierWaitResult { is_leader: false }
+        }
+    }
+}
+
+// Result from barrier wait
+pub struct BarrierWaitResult {
+    is_leader: bool,
+}
+
+impl BarrierWaitResult {
+    // Did this thread trigger the barrier release?
+    pub fn is_leader(&self) -> bool {
+        self.is_leader
+    }
+}
+
+// Atomic types would go here but need compiler intrinsics
+// pub struct AtomicBool { ... }
+// pub struct AtomicI32 { ... }
+// pub struct AtomicU32 { ... }
+// pub struct AtomicPtr<T> { ... }

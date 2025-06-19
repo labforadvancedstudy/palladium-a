@@ -1,0 +1,160 @@
+// Option type for representing nullable values
+// "Legends prepare for every possibility"
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+impl<T> Option<T> {
+    // Check if the option is Some
+    pub fn is_some(self: &Option<T>) -> bool {
+        match self {
+            Option::Some(_) => true,
+            Option::None => false,
+        }
+    }
+
+    // Check if the option is None
+    pub fn is_none(self: &Option<T>) -> bool {
+        match self {
+            Option::Some(_) => false,
+            Option::None => true,
+        }
+    }
+
+    // Unwrap the Some value or panic
+    pub fn unwrap(self: Option<T>) -> T {
+        match self {
+            Option::Some(value) => value,
+            Option::None => {
+                panic("called `Option::unwrap()` on a `None` value");
+            }
+        }
+    }
+
+    // Unwrap the Some value or return a default
+    pub fn unwrap_or(self: Option<T>, default: T) -> T {
+        match self {
+            Option::Some(value) => value,
+            Option::None => default,
+        }
+    }
+
+    // Unwrap the Some value or compute it from a closure
+    pub fn unwrap_or_else(self: Option<T>, f: fn() -> T) -> T {
+        match self {
+            Option::Some(value) => value,
+            Option::None => f(),
+        }
+    }
+
+    // Map the Some value
+    pub fn map<U>(self: Option<T>, f: fn(T) -> U) -> Option<U> {
+        match self {
+            Option::Some(value) => Option::Some(f(value)),
+            Option::None => Option::None,
+        }
+    }
+
+    // Map the Some value, flatten one level of Option
+    pub fn and_then<U>(self: Option<T>, f: fn(T) -> Option<U>) -> Option<U> {
+        match self {
+            Option::Some(value) => f(value),
+            Option::None => Option::None,
+        }
+    }
+
+    // Returns None if the option is None, otherwise returns optb
+    pub fn and<U>(self: Option<T>, optb: Option<U>) -> Option<U> {
+        match self {
+            Option::Some(_) => optb,
+            Option::None => Option::None,
+        }
+    }
+
+    // Returns the option if it contains a value, otherwise returns optb
+    pub fn or(self: Option<T>, optb: Option<T>) -> Option<T> {
+        match self {
+            Option::Some(_) => self,
+            Option::None => optb,
+        }
+    }
+
+    // Returns the option if it contains a value, otherwise calls f
+    pub fn or_else(self: Option<T>, f: fn() -> Option<T>) -> Option<T> {
+        match self {
+            Option::Some(_) => self,
+            Option::None => f(),
+        }
+    }
+
+    // Apply a function to the contained value (if Some)
+    pub fn map_or<U>(self: Option<T>, default: U, f: fn(T) -> U) -> U {
+        match self {
+            Option::Some(value) => f(value),
+            Option::None => default,
+        }
+    }
+
+    // Apply a function to the contained value (if Some), or compute a default
+    pub fn map_or_else<U>(self: Option<T>, default: fn() -> U, f: fn(T) -> U) -> U {
+        match self {
+            Option::Some(value) => f(value),
+            Option::None => default(),
+        }
+    }
+
+    // Filter the option based on a predicate
+    pub fn filter(self: Option<T>, predicate: fn(&T) -> bool) -> Option<T> {
+        match self {
+            Option::Some(value) => {
+                if predicate(&value) {
+                    Option::Some(value)
+                } else {
+                    Option::None
+                }
+            }
+            Option::None => Option::None,
+        }
+    }
+
+    // Convert Option<T> to Result<T, E>
+    pub fn ok_or<E>(self: Option<T>, err: E) -> Result<T, E> {
+        match self {
+            Option::Some(value) => Result::Ok(value),
+            Option::None => Result::Err(err),
+        }
+    }
+
+    // Convert Option<T> to Result<T, E> with lazy error
+    pub fn ok_or_else<E>(self: Option<T>, err: fn() -> E) -> Result<T, E> {
+        match self {
+            Option::Some(value) => Result::Ok(value),
+            Option::None => Result::Err(err()),
+        }
+    }
+
+    // Take the value out of the option, leaving None in its place
+    pub fn take(self: &mut Option<T>) -> Option<T> {
+        let old = *self;
+        *self = Option::None;
+        old
+    }
+
+    // Replace the value in the option, returning the old value
+    pub fn replace(self: &mut Option<T>, value: T) -> Option<T> {
+        let old = *self;
+        *self = Option::Some(value);
+        old
+    }
+}
+
+// Helper functions for creating Options
+pub fn some<T>(value: T) -> Option<T> {
+    Option::Some(value)
+}
+
+pub fn none<T>() -> Option<T> {
+    Option::None
+}

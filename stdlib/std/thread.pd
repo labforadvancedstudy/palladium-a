@@ -1,0 +1,278 @@
+// Thread management
+// "Many threads weave the fabric of computation"
+
+use std::result::{Result, Error};
+use std::option::{Option, some, none};
+use std::string::String;
+use std::time::Duration;
+use std::sync::{Mutex, Condvar};
+use std::io::IoError;
+
+// Thread handle
+pub struct Thread {
+    handle: i64, // Platform-specific thread handle
+    name: Option<String>,
+}
+
+impl Thread {
+    // Get current thread
+    pub fn current() -> Thread {
+        Thread {
+            handle: 0, // Runtime support needed
+            name: none(),
+        }
+    }
+    
+    // Get thread name
+    pub fn name(&self) -> Option<&String> {
+        match &self.name {
+            some(name) => some(name),
+            none() => none(),
+        }
+    }
+    
+    // Get thread ID
+    pub fn id(&self) -> ThreadId {
+        ThreadId { id: self.handle }
+    }
+    
+    // Unpark this thread
+    pub fn unpark(&self) {
+        // Runtime support needed
+        // Would call platform thread unpark
+    }
+}
+
+// Thread ID
+pub struct ThreadId {
+    id: i64,
+}
+
+impl ThreadId {
+    // Compare thread IDs
+    pub fn eq(&self, other: &ThreadId) -> bool {
+        self.id == other.id
+    }
+}
+
+// Join handle for a spawned thread
+pub struct JoinHandle<T> {
+    thread: Thread,
+    result: Option<T>,
+}
+
+impl<T> JoinHandle<T> {
+    // Wait for thread to finish
+    pub fn join(self) -> Result<T, Error> {
+        // Runtime support needed
+        match self.result {
+            some(val) => ok(val),
+            none() => err(Error::new("Thread panicked")),
+        }
+    }
+    
+    // Get the thread
+    pub fn thread(&self) -> &Thread {
+        &self.thread
+    }
+}
+
+// Thread builder
+pub struct Builder {
+    name: Option<String>,
+    stack_size: Option<usize>,
+}
+
+impl Builder {
+    // Create new builder
+    pub fn new() -> Builder {
+        Builder {
+            name: none(),
+            stack_size: none(),
+        }
+    }
+    
+    // Set thread name
+    pub fn name(mut self, name: String) -> Builder {
+        self.name = some(name);
+        self
+    }
+    
+    // Set stack size
+    pub fn stack_size(mut self, size: usize) -> Builder {
+        self.stack_size = some(size);
+        self
+    }
+    
+    // Spawn the thread
+    pub fn spawn<F, T>(self, f: F) -> Result<JoinHandle<T>, IoError>
+    where F: Fn() -> T {
+        // Runtime support needed
+        // Would create OS thread
+        err(IoError::Other(String::from("Thread spawn not implemented")))
+    }
+}
+
+// Spawn a thread
+pub fn spawn<F, T>(f: F) -> JoinHandle<T>
+where F: Fn() -> T {
+    Builder::new().spawn(f).unwrap()
+}
+
+// Sleep current thread
+pub fn sleep(dur: Duration) {
+    // Runtime support needed
+    // Would call platform sleep
+}
+
+// Sleep for milliseconds
+pub fn sleep_ms(ms: u32) {
+    sleep(Duration::from_millis(ms as i64))
+}
+
+// Yield to scheduler
+pub fn yield_now() {
+    // Runtime support needed
+    // Would call platform yield
+}
+
+// Park current thread
+pub fn park() {
+    // Runtime support needed
+    // Would call platform park
+}
+
+// Park with timeout
+pub fn park_timeout(dur: Duration) {
+    // Runtime support needed
+    // Would call platform park with timeout
+}
+
+// Thread local storage
+pub struct LocalKey<T> {
+    // Simplified - real implementation needs platform TLS
+    init: fn() -> T,
+}
+
+impl<T> LocalKey<T> {
+    // Access the value
+    pub fn with<F, R>(&self, f: F) -> R
+    where F: Fn(&T) -> R {
+        // Runtime support needed
+        // Would access thread local storage
+        let val = (self.init)();
+        f(&val)
+    }
+    
+    // Try to access without initializing
+    pub fn try_with<F, R>(&self, f: F) -> Result<R, Error>
+    where F: Fn(&T) -> R {
+        // Runtime support needed
+        self.with(|val| ok(f(val)))
+    }
+}
+
+// Scoped threads (ensure threads don't outlive scope)
+pub struct Scope<'a> {
+    // Runtime support needed
+    _marker: &'a (),
+}
+
+impl<'a> Scope<'a> {
+    // Spawn a scoped thread
+    pub fn spawn<F, T>(&self, f: F) -> ScopedJoinHandle<'a, T>
+    where F: Fn() -> T {
+        // Runtime support needed
+        ScopedJoinHandle {
+            _scope: self,
+            handle: 0,
+        }
+    }
+}
+
+// Scoped join handle
+pub struct ScopedJoinHandle<'a, T> {
+    _scope: &'a Scope<'a>,
+    handle: i64,
+}
+
+impl<'a, T> ScopedJoinHandle<'a, T> {
+    // Join the thread
+    pub fn join(self) -> Result<T, Error> {
+        // Runtime support needed
+        err(Error::new("Scoped join not implemented"))
+    }
+}
+
+// Create a scope for threads
+pub fn scope<F, R>(f: F) -> R
+where F: Fn(&Scope) -> R {
+    let scope = Scope { _marker: &() };
+    let result = f(&scope);
+    // Runtime would wait for all scoped threads
+    result
+}
+
+// Thread panic handling
+pub fn catch_unwind<F, R>(f: F) -> Result<R, Error>
+where F: Fn() -> R {
+    // Runtime support needed
+    // Would set up panic handler
+    ok(f())
+}
+
+// Resume unwinding
+pub fn resume_unwind(payload: Error) -> ! {
+    // Runtime support needed
+    // Would continue panic
+    loop {}
+}
+
+// Check if panicking
+pub fn panicking() -> bool {
+    // Runtime support needed
+    false
+}
+
+// Available parallelism hint
+pub fn available_parallelism() -> Result<usize, Error> {
+    // Runtime support needed
+    // Would query CPU count
+    ok(1)
+}
+
+// Thread priority (platform-specific)
+pub enum Priority {
+    Min,
+    Low,
+    Normal,
+    High,
+    Max,
+}
+
+// Extension trait for Thread
+impl Thread {
+    // Set thread priority (platform-specific)
+    pub fn set_priority(&self, priority: Priority) -> Result<(), Error> {
+        // Runtime support needed
+        ok(())
+    }
+    
+    // Get thread priority
+    pub fn priority(&self) -> Result<Priority, Error> {
+        // Runtime support needed
+        ok(Priority::Normal)
+    }
+    
+    // Set thread affinity (CPU mask)
+    pub fn set_affinity(&self, cpus: &[usize]) -> Result<(), Error> {
+        // Runtime support needed
+        ok(())
+    }
+    
+    // Get thread affinity
+    pub fn affinity(&self) -> Result<Vec<usize>, Error> {
+        // Runtime support needed
+        ok(Vec::new())
+    }
+}

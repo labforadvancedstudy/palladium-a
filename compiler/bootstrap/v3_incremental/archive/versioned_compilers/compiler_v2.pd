@@ -1,0 +1,1043 @@
+// Minimal Palladium Compiler v2 - No global state
+// All state is passed in structures
+
+// ============= CONSTANTS =============
+const MAX_TOKENS: i64 = 10000;
+const MAX_INPUT: i64 = 100000;
+const MAX_STRING_TABLE: i64 = 100000;
+const MAX_AST_NODES: i64 = 5000;
+const MAX_CHILDREN: i64 = 20;
+const MAX_OUTPUT: i64 = 200000;
+
+// Token types
+const TOK_EOF: i64 = 0;
+const TOK_IDENT: i64 = 1;
+const TOK_NUMBER: i64 = 2;
+const TOK_STRING: i64 = 3;
+const TOK_FN: i64 = 4;
+const TOK_LET: i64 = 5;
+const TOK_MUT: i64 = 6;
+const TOK_IF: i64 = 7;
+const TOK_ELSE: i64 = 8;
+const TOK_WHILE: i64 = 9;
+const TOK_RETURN: i64 = 10;
+const TOK_TRUE: i64 = 11;
+const TOK_FALSE: i64 = 12;
+const TOK_I64: i64 = 17;
+const TOK_BOOL: i64 = 19;
+const TOK_STRING_TYPE: i64 = 20;
+const TOK_LPAREN: i64 = 21;
+const TOK_RPAREN: i64 = 22;
+const TOK_LBRACE: i64 = 23;
+const TOK_RBRACE: i64 = 24;
+const TOK_SEMICOLON: i64 = 27;
+const TOK_COMMA: i64 = 28;
+const TOK_COLON: i64 = 30;
+const TOK_ARROW: i64 = 31;
+const TOK_EQ: i64 = 32;
+const TOK_PLUS: i64 = 33;
+const TOK_MINUS: i64 = 34;
+const TOK_STAR: i64 = 35;
+const TOK_SLASH: i64 = 36;
+const TOK_LT: i64 = 38;
+const TOK_GT: i64 = 39;
+const TOK_EQEQ: i64 = 42;
+const TOK_NE: i64 = 43;
+
+// AST Node types
+const AST_PROGRAM: i64 = 0;
+const AST_FUNCTION: i64 = 1;
+const AST_PARAM: i64 = 2;
+const AST_STMT_LET: i64 = 3;
+const AST_STMT_RETURN: i64 = 5;
+const AST_STMT_EXPR: i64 = 6;
+const AST_STMT_IF: i64 = 7;
+const AST_STMT_WHILE: i64 = 8;
+const AST_EXPR_IDENT: i64 = 10;
+const AST_EXPR_NUMBER: i64 = 11;
+const AST_EXPR_STRING: i64 = 12;
+const AST_EXPR_BOOL: i64 = 13;
+const AST_EXPR_BINARY: i64 = 14;
+const AST_EXPR_CALL: i64 = 16;
+const AST_TYPE_I64: i64 = 21;
+const AST_TYPE_BOOL: i64 = 23;
+const AST_TYPE_STRING: i64 = 24;
+
+// ============= STRUCTURES =============
+
+struct Token {
+    type: i64,
+    value: i64,
+    line: i64,
+}
+
+struct Lexer {
+    input: [i64; MAX_INPUT],
+    input_len: i64,
+    pos: i64,
+    line: i64,
+    tokens: [Token; MAX_TOKENS],
+    token_count: i64,
+    string_table: [i64; MAX_STRING_TABLE],
+    string_pos: i64,
+}
+
+struct ASTNode {
+    type: i64,
+    value: i64,
+    children: [i64; MAX_CHILDREN],
+    child_count: i64,
+}
+
+struct Parser {
+    tokens: [Token; MAX_TOKENS],
+    token_count: i64,
+    current: i64,
+    nodes: [ASTNode; MAX_AST_NODES],
+    node_count: i64,
+    string_table: [i64; MAX_STRING_TABLE],
+}
+
+struct CodeGen {
+    output: [i64; MAX_OUTPUT],
+    output_pos: i64,
+    indent: i64,
+    nodes: [ASTNode; MAX_AST_NODES],
+    node_count: i64,
+    string_table: [i64; MAX_STRING_TABLE],
+}
+
+// ============= LEXER =============
+
+fn create_lexer(input: String) -> Lexer {
+    let mut lex = Lexer {
+        input: [0; MAX_INPUT],
+        input_len: string_len(input),
+        pos: 0,
+        line: 1,
+        tokens: [Token { type: TOK_EOF, value: 0, line: 0 }; MAX_TOKENS],
+        token_count: 0,
+        string_table: [0; MAX_STRING_TABLE],
+        string_pos: 0,
+    };
+    
+    // Copy input to array
+    let mut i = 0;
+    while i < lex.input_len {
+        lex.input[i] = string_char_at(input, i);
+        i = i + 1;
+    }
+    
+    return lex;
+}
+
+fn is_whitespace(ch: i64) -> bool {
+    return ch == 32 || ch == 9 || ch == 10 || ch == 13;
+}
+
+fn is_digit(ch: i64) -> bool {
+    return ch >= 48 && ch <= 57;
+}
+
+fn is_alpha(ch: i64) -> bool {
+    return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || ch == 95;
+}
+
+fn skip_whitespace(lex: &mut Lexer) {
+    while lex.pos < lex.input_len && is_whitespace(lex.input[lex.pos]) {
+        if lex.input[lex.pos] == 10 {
+            lex.line = lex.line + 1;
+        }
+        lex.pos = lex.pos + 1;
+    }
+    
+    // Skip comments
+    if lex.pos + 1 < lex.input_len && lex.input[lex.pos] == 47 && lex.input[lex.pos + 1] == 47 {
+        lex.pos = lex.pos + 2;
+        while lex.pos < lex.input_len && lex.input[lex.pos] != 10 {
+            lex.pos = lex.pos + 1;
+        }
+        skip_whitespace(lex);
+    }
+}
+
+fn add_string_to_table(lex: &mut Lexer, start: i64, len: i64) -> i64 {
+    let offset = lex.string_pos;
+    let mut i = 0;
+    while i < len {
+        lex.string_table[lex.string_pos] = lex.input[start + i];
+        lex.string_pos = lex.string_pos + 1;
+        i = i + 1;
+    }
+    lex.string_table[lex.string_pos] = 0;
+    lex.string_pos = lex.string_pos + 1;
+    return offset;
+}
+
+fn match_keyword(lex: &Lexer, start: i64, len: i64, keyword: String) -> bool {
+    if len != string_len(keyword) {
+        return false;
+    }
+    let mut i = 0;
+    while i < len {
+        if lex.input[start + i] != string_char_at(keyword, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn lex_tokens(lex: &mut Lexer) {
+    while lex.pos < lex.input_len {
+        skip_whitespace(lex);
+        if lex.pos >= lex.input_len {
+            break;
+        }
+        
+        let ch = lex.input[lex.pos];
+        let line = lex.line;
+        
+        if is_digit(ch) {
+            // Number
+            let start = lex.pos;
+            let mut value = 0;
+            while lex.pos < lex.input_len && is_digit(lex.input[lex.pos]) {
+                value = value * 10 + (lex.input[lex.pos] - 48);
+                lex.pos = lex.pos + 1;
+            }
+            lex.tokens[lex.token_count] = Token { type: TOK_NUMBER, value: value, line: line };
+            lex.token_count = lex.token_count + 1;
+        } else if is_alpha(ch) {
+            // Identifier or keyword
+            let start = lex.pos;
+            while lex.pos < lex.input_len && (is_alpha(lex.input[lex.pos]) || is_digit(lex.input[lex.pos])) {
+                lex.pos = lex.pos + 1;
+            }
+            let len = lex.pos - start;
+            
+            let token_type: i64;
+            let value: i64;
+            
+            if match_keyword(lex, start, len, "fn") {
+                token_type = TOK_FN;
+                value = 0;
+            } else if match_keyword(lex, start, len, "let") {
+                token_type = TOK_LET;
+                value = 0;
+            } else if match_keyword(lex, start, len, "mut") {
+                token_type = TOK_MUT;
+                value = 0;
+            } else if match_keyword(lex, start, len, "if") {
+                token_type = TOK_IF;
+                value = 0;
+            } else if match_keyword(lex, start, len, "else") {
+                token_type = TOK_ELSE;
+                value = 0;
+            } else if match_keyword(lex, start, len, "while") {
+                token_type = TOK_WHILE;
+                value = 0;
+            } else if match_keyword(lex, start, len, "return") {
+                token_type = TOK_RETURN;
+                value = 0;
+            } else if match_keyword(lex, start, len, "true") {
+                token_type = TOK_TRUE;
+                value = 0;
+            } else if match_keyword(lex, start, len, "false") {
+                token_type = TOK_FALSE;
+                value = 0;
+            } else if match_keyword(lex, start, len, "i64") {
+                token_type = TOK_I64;
+                value = 0;
+            } else if match_keyword(lex, start, len, "bool") {
+                token_type = TOK_BOOL;
+                value = 0;
+            } else if match_keyword(lex, start, len, "String") {
+                token_type = TOK_STRING_TYPE;
+                value = 0;
+            } else {
+                token_type = TOK_IDENT;
+                value = add_string_to_table(lex, start, len);
+            }
+            
+            lex.tokens[lex.token_count] = Token { type: token_type, value: value, line: line };
+            lex.token_count = lex.token_count + 1;
+        } else if ch == 34 { // '"'
+            // String literal
+            lex.pos = lex.pos + 1;
+            let start = lex.pos;
+            while lex.pos < lex.input_len && lex.input[lex.pos] != 34 {
+                if lex.input[lex.pos] == 92 { // '\'
+                    lex.pos = lex.pos + 1;
+                }
+                lex.pos = lex.pos + 1;
+            }
+            let len = lex.pos - start;
+            let value = add_string_to_table(lex, start, len);
+            if lex.pos < lex.input_len {
+                lex.pos = lex.pos + 1; // Skip closing quote
+            }
+            lex.tokens[lex.token_count] = Token { type: TOK_STRING, value: value, line: line };
+            lex.token_count = lex.token_count + 1;
+        } else {
+            // Single character tokens
+            let token_type: i64;
+            if ch == 40 { token_type = TOK_LPAREN; }
+            else if ch == 41 { token_type = TOK_RPAREN; }
+            else if ch == 123 { token_type = TOK_LBRACE; }
+            else if ch == 125 { token_type = TOK_RBRACE; }
+            else if ch == 59 { token_type = TOK_SEMICOLON; }
+            else if ch == 44 { token_type = TOK_COMMA; }
+            else if ch == 58 { token_type = TOK_COLON; }
+            else if ch == 43 { token_type = TOK_PLUS; }
+            else if ch == 42 { token_type = TOK_STAR; }
+            else if ch == 47 { token_type = TOK_SLASH; }
+            else if ch == 60 { token_type = TOK_LT; }
+            else if ch == 62 { token_type = TOK_GT; }
+            else {
+                // Two character tokens
+                if ch == 45 && lex.pos + 1 < lex.input_len && lex.input[lex.pos + 1] == 62 {
+                    token_type = TOK_ARROW;
+                    lex.pos = lex.pos + 1;
+                } else if ch == 45 {
+                    token_type = TOK_MINUS;
+                } else if ch == 61 && lex.pos + 1 < lex.input_len && lex.input[lex.pos + 1] == 61 {
+                    token_type = TOK_EQEQ;
+                    lex.pos = lex.pos + 1;
+                } else if ch == 61 {
+                    token_type = TOK_EQ;
+                } else if ch == 33 && lex.pos + 1 < lex.input_len && lex.input[lex.pos + 1] == 61 {
+                    token_type = TOK_NE;
+                    lex.pos = lex.pos + 1;
+                } else {
+                    lex.pos = lex.pos + 1;
+                    continue;
+                }
+            }
+            
+            lex.tokens[lex.token_count] = Token { type: token_type, value: 0, line: line };
+            lex.token_count = lex.token_count + 1;
+            lex.pos = lex.pos + 1;
+        }
+    }
+    
+    // Add EOF token
+    lex.tokens[lex.token_count] = Token { type: TOK_EOF, value: 0, line: lex.line };
+    lex.token_count = lex.token_count + 1;
+}
+
+// ============= PARSER =============
+
+fn create_parser(lex: Lexer) -> Parser {
+    let mut parser = Parser {
+        tokens: lex.tokens,
+        token_count: lex.token_count,
+        current: 0,
+        nodes: [ASTNode { type: AST_PROGRAM, value: 0, children: [0; MAX_CHILDREN], child_count: 0 }; MAX_AST_NODES],
+        node_count: 0,
+        string_table: lex.string_table,
+    };
+    
+    return parser;
+}
+
+fn new_node(parser: &mut Parser, type: i64, value: i64) -> i64 {
+    let id = parser.node_count;
+    parser.nodes[id] = ASTNode {
+        type: type,
+        value: value,
+        children: [0; MAX_CHILDREN],
+        child_count: 0,
+    };
+    parser.node_count = parser.node_count + 1;
+    return id;
+}
+
+fn add_child(parser: &mut Parser, parent: i64, child: i64) {
+    let mut node = parser.nodes[parent];
+    node.children[node.child_count] = child;
+    node.child_count = node.child_count + 1;
+    parser.nodes[parent] = node;
+}
+
+fn current_token(parser: &Parser) -> Token {
+    if parser.current < parser.token_count {
+        return parser.tokens[parser.current];
+    }
+    return Token { type: TOK_EOF, value: 0, line: 0 };
+}
+
+fn advance(parser: &mut Parser) {
+    if parser.current < parser.token_count {
+        parser.current = parser.current + 1;
+    }
+}
+
+fn expect(parser: &mut Parser, type: i64) -> bool {
+    if current_token(parser).type == type {
+        advance(parser);
+        return true;
+    }
+    return false;
+}
+
+// Forward declarations
+fn parse_expression(parser: &mut Parser) -> i64;
+fn parse_statement(parser: &mut Parser) -> i64;
+
+fn parse_primary(parser: &mut Parser) -> i64 {
+    let tok = current_token(parser);
+    
+    if tok.type == TOK_NUMBER {
+        advance(parser);
+        return new_node(parser, AST_EXPR_NUMBER, tok.value);
+    } else if tok.type == TOK_STRING {
+        advance(parser);
+        return new_node(parser, AST_EXPR_STRING, tok.value);
+    } else if tok.type == TOK_TRUE {
+        advance(parser);
+        return new_node(parser, AST_EXPR_BOOL, 1);
+    } else if tok.type == TOK_FALSE {
+        advance(parser);
+        return new_node(parser, AST_EXPR_BOOL, 0);
+    } else if tok.type == TOK_IDENT {
+        let id = new_node(parser, AST_EXPR_IDENT, tok.value);
+        advance(parser);
+        
+        // Check for function call
+        if current_token(parser).type == TOK_LPAREN {
+            advance(parser);
+            let call = new_node(parser, AST_EXPR_CALL, 0);
+            add_child(parser, call, id);
+            
+            // Arguments
+            while current_token(parser).type != TOK_RPAREN && current_token(parser).type != TOK_EOF {
+                add_child(parser, call, parse_expression(parser));
+                if current_token(parser).type == TOK_COMMA {
+                    advance(parser);
+                }
+            }
+            
+            expect(parser, TOK_RPAREN);
+            return call;
+        }
+        
+        return id;
+    } else if tok.type == TOK_LPAREN {
+        advance(parser);
+        let expr = parse_expression(parser);
+        expect(parser, TOK_RPAREN);
+        return expr;
+    }
+    
+    return -1;
+}
+
+fn parse_expression(parser: &mut Parser) -> i64 {
+    let mut left = parse_primary(parser);
+    
+    while true {
+        let tok = current_token(parser);
+        if tok.type == TOK_PLUS || tok.type == TOK_MINUS || tok.type == TOK_STAR || 
+           tok.type == TOK_SLASH || tok.type == TOK_EQEQ || tok.type == TOK_NE ||
+           tok.type == TOK_LT || tok.type == TOK_GT {
+            advance(parser);
+            let op = new_node(parser, AST_EXPR_BINARY, tok.type);
+            add_child(parser, op, left);
+            add_child(parser, op, parse_primary(parser));
+            left = op;
+        } else {
+            break;
+        }
+    }
+    
+    return left;
+}
+
+fn parse_type(parser: &mut Parser) -> i64 {
+    let tok = current_token(parser);
+    
+    if tok.type == TOK_I64 {
+        advance(parser);
+        return new_node(parser, AST_TYPE_I64, 0);
+    } else if tok.type == TOK_BOOL {
+        advance(parser);
+        return new_node(parser, AST_TYPE_BOOL, 0);
+    } else if tok.type == TOK_STRING_TYPE {
+        advance(parser);
+        return new_node(parser, AST_TYPE_STRING, 0);
+    }
+    
+    return -1;
+}
+
+fn parse_statement(parser: &mut Parser) -> i64 {
+    let tok = current_token(parser);
+    
+    if tok.type == TOK_LET {
+        advance(parser);
+        
+        if current_token(parser).type == TOK_MUT {
+            advance(parser);
+        }
+        
+        let name_tok = current_token(parser);
+        expect(parser, TOK_IDENT);
+        
+        let let_stmt = new_node(parser, AST_STMT_LET, name_tok.value);
+        
+        if expect(parser, TOK_COLON) {
+            add_child(parser, let_stmt, parse_type(parser));
+        }
+        
+        if expect(parser, TOK_EQ) {
+            add_child(parser, let_stmt, parse_expression(parser));
+        }
+        
+        expect(parser, TOK_SEMICOLON);
+        return let_stmt;
+    } else if tok.type == TOK_IF {
+        advance(parser);
+        
+        let if_stmt = new_node(parser, AST_STMT_IF, 0);
+        add_child(parser, if_stmt, parse_expression(parser));
+        
+        expect(parser, TOK_LBRACE);
+        while current_token(parser).type != TOK_RBRACE && current_token(parser).type != TOK_EOF {
+            add_child(parser, if_stmt, parse_statement(parser));
+        }
+        expect(parser, TOK_RBRACE);
+        
+        if current_token(parser).type == TOK_ELSE {
+            advance(parser);
+            expect(parser, TOK_LBRACE);
+            while current_token(parser).type != TOK_RBRACE && current_token(parser).type != TOK_EOF {
+                add_child(parser, if_stmt, parse_statement(parser));
+            }
+            expect(parser, TOK_RBRACE);
+        }
+        
+        return if_stmt;
+    } else if tok.type == TOK_WHILE {
+        advance(parser);
+        
+        let while_stmt = new_node(parser, AST_STMT_WHILE, 0);
+        add_child(parser, while_stmt, parse_expression(parser));
+        
+        expect(parser, TOK_LBRACE);
+        while current_token(parser).type != TOK_RBRACE && current_token(parser).type != TOK_EOF {
+            add_child(parser, while_stmt, parse_statement(parser));
+        }
+        expect(parser, TOK_RBRACE);
+        
+        return while_stmt;
+    } else if tok.type == TOK_RETURN {
+        advance(parser);
+        
+        let ret_stmt = new_node(parser, AST_STMT_RETURN, 0);
+        if current_token(parser).type != TOK_SEMICOLON {
+            add_child(parser, ret_stmt, parse_expression(parser));
+        }
+        expect(parser, TOK_SEMICOLON);
+        
+        return ret_stmt;
+    } else {
+        // Expression statement
+        let expr = parse_expression(parser);
+        expect(parser, TOK_SEMICOLON);
+        let stmt = new_node(parser, AST_STMT_EXPR, 0);
+        add_child(parser, stmt, expr);
+        return stmt;
+    }
+}
+
+fn parse_function(parser: &mut Parser) -> i64 {
+    expect(parser, TOK_FN);
+    
+    let name_tok = current_token(parser);
+    expect(parser, TOK_IDENT);
+    
+    let func = new_node(parser, AST_FUNCTION, name_tok.value);
+    
+    expect(parser, TOK_LPAREN);
+    
+    // Parameters
+    while current_token(parser).type != TOK_RPAREN && current_token(parser).type != TOK_EOF {
+        let param_name = current_token(parser);
+        expect(parser, TOK_IDENT);
+        
+        let param = new_node(parser, AST_PARAM, param_name.value);
+        
+        if expect(parser, TOK_COLON) {
+            add_child(parser, param, parse_type(parser));
+        }
+        
+        add_child(parser, func, param);
+        
+        if current_token(parser).type == TOK_COMMA {
+            advance(parser);
+        }
+    }
+    
+    expect(parser, TOK_RPAREN);
+    
+    // Return type
+    if current_token(parser).type == TOK_ARROW {
+        advance(parser);
+        add_child(parser, func, parse_type(parser));
+    }
+    
+    // Body
+    expect(parser, TOK_LBRACE);
+    while current_token(parser).type != TOK_RBRACE && current_token(parser).type != TOK_EOF {
+        add_child(parser, func, parse_statement(parser));
+    }
+    expect(parser, TOK_RBRACE);
+    
+    return func;
+}
+
+fn parse_program(parser: &mut Parser) -> i64 {
+    let program = new_node(parser, AST_PROGRAM, 0);
+    
+    while current_token(parser).type != TOK_EOF {
+        if current_token(parser).type == TOK_FN {
+            add_child(parser, program, parse_function(parser));
+        } else {
+            advance(parser);
+        }
+    }
+    
+    return program;
+}
+
+// ============= CODE GENERATOR =============
+
+fn create_codegen(parser: Parser) -> CodeGen {
+    return CodeGen {
+        output: [0; MAX_OUTPUT],
+        output_pos: 0,
+        indent: 0,
+        nodes: parser.nodes,
+        node_count: parser.node_count,
+        string_table: parser.string_table,
+    };
+}
+
+fn emit_char(gen: &mut CodeGen, ch: i64) {
+    if gen.output_pos < MAX_OUTPUT {
+        gen.output[gen.output_pos] = ch;
+        gen.output_pos = gen.output_pos + 1;
+    }
+}
+
+fn emit(gen: &mut CodeGen, s: String) {
+    let len = string_len(s);
+    let mut i = 0;
+    while i < len {
+        emit_char(gen, string_char_at(s, i));
+        i = i + 1;
+    }
+}
+
+fn emit_indent(gen: &mut CodeGen) {
+    let mut i = 0;
+    while i < gen.indent {
+        emit(gen, "    ");
+        i = i + 1;
+    }
+}
+
+fn get_string_from_gen(gen: &CodeGen, offset: i64) -> String {
+    let mut result = "";
+    let mut i = offset;
+    while gen.string_table[i] != 0 {
+        result = string_concat(result, string_from_char(gen.string_table[i]));
+        i = i + 1;
+    }
+    return result;
+}
+
+fn gen_expression(gen: &mut CodeGen, node_id: i64);
+fn gen_statement(gen: &mut CodeGen, node_id: i64);
+
+fn gen_expression(gen: &mut CodeGen, node_id: i64) {
+    let node = gen.nodes[node_id];
+    
+    if node.type == AST_EXPR_NUMBER {
+        emit(gen, int_to_string(node.value));
+    } else if node.type == AST_EXPR_STRING {
+        emit(gen, "\"");
+        emit(gen, get_string_from_gen(gen, node.value));
+        emit(gen, "\"");
+    } else if node.type == AST_EXPR_BOOL {
+        if node.value == 0 {
+            emit(gen, "0");
+        } else {
+            emit(gen, "1");
+        }
+    } else if node.type == AST_EXPR_IDENT {
+        emit(gen, get_string_from_gen(gen, node.value));
+    } else if node.type == AST_EXPR_BINARY {
+        emit(gen, "(");
+        gen_expression(gen, node.children[0]);
+        
+        if node.value == TOK_PLUS { emit(gen, " + "); }
+        else if node.value == TOK_MINUS { emit(gen, " - "); }
+        else if node.value == TOK_STAR { emit(gen, " * "); }
+        else if node.value == TOK_SLASH { emit(gen, " / "); }
+        else if node.value == TOK_EQEQ { emit(gen, " == "); }
+        else if node.value == TOK_NE { emit(gen, " != "); }
+        else if node.value == TOK_LT { emit(gen, " < "); }
+        else if node.value == TOK_GT { emit(gen, " > "); }
+        
+        gen_expression(gen, node.children[1]);
+        emit(gen, ")");
+    } else if node.type == AST_EXPR_CALL {
+        let func_node = gen.nodes[node.children[0]];
+        let func_name = get_string_from_gen(gen, func_node.value);
+        
+        // Map built-in functions
+        if func_name == "print" {
+            emit(gen, "__pd_print");
+        } else if func_name == "print_int" {
+            emit(gen, "__pd_print_int");
+        } else if func_name == "string_concat" {
+            emit(gen, "__pd_string_concat");
+        } else if func_name == "string_len" {
+            emit(gen, "__pd_string_len");
+        } else if func_name == "int_to_string" {
+            emit(gen, "__pd_int_to_string");
+        } else if func_name == "file_open" {
+            emit(gen, "__pd_file_open");
+        } else if func_name == "file_read_all" {
+            emit(gen, "__pd_file_read_all");
+        } else if func_name == "file_write" {
+            emit(gen, "__pd_file_write");
+        } else if func_name == "file_close" {
+            emit(gen, "__pd_file_close");
+        } else {
+            emit(gen, func_name);
+        }
+        
+        emit(gen, "(");
+        let mut i = 1;
+        while i < node.child_count {
+            if i > 1 {
+                emit(gen, ", ");
+            }
+            gen_expression(gen, node.children[i]);
+            i = i + 1;
+        }
+        emit(gen, ")");
+    }
+}
+
+fn gen_type(gen: &mut CodeGen, node_id: i64) {
+    let node = gen.nodes[node_id];
+    
+    if node.type == AST_TYPE_I64 {
+        emit(gen, "long long");
+    } else if node.type == AST_TYPE_BOOL {
+        emit(gen, "int");
+    } else if node.type == AST_TYPE_STRING {
+        emit(gen, "const char*");
+    } else {
+        emit(gen, "void");
+    }
+}
+
+fn gen_statement(gen: &mut CodeGen, node_id: i64) {
+    let node = gen.nodes[node_id];
+    
+    if node.type == AST_STMT_LET {
+        emit_indent(gen);
+        
+        // Type
+        if node.child_count > 0 && gen.nodes[node.children[0]].type >= AST_TYPE_I64 {
+            gen_type(gen, node.children[0]);
+        } else {
+            emit(gen, "long long");
+        }
+        emit(gen, " ");
+        
+        // Name
+        emit(gen, get_string_from_gen(gen, node.value));
+        
+        // Initialization
+        if node.child_count > 1 {
+            emit(gen, " = ");
+            gen_expression(gen, node.children[1]);
+        } else if node.child_count > 0 && gen.nodes[node.children[0]].type < AST_TYPE_I64 {
+            emit(gen, " = ");
+            gen_expression(gen, node.children[0]);
+        }
+        
+        emit(gen, ";\n");
+    } else if node.type == AST_STMT_RETURN {
+        emit_indent(gen);
+        emit(gen, "return");
+        if node.child_count > 0 {
+            emit(gen, " ");
+            gen_expression(gen, node.children[0]);
+        }
+        emit(gen, ";\n");
+    } else if node.type == AST_STMT_EXPR {
+        emit_indent(gen);
+        if node.child_count > 0 {
+            gen_expression(gen, node.children[0]);
+        }
+        emit(gen, ";\n");
+    } else if node.type == AST_STMT_IF {
+        emit_indent(gen);
+        emit(gen, "if (");
+        gen_expression(gen, node.children[0]);
+        emit(gen, ") {\n");
+        
+        gen.indent = gen.indent + 1;
+        let mut i = 1;
+        while i < node.child_count {
+            gen_statement(gen, node.children[i]);
+            i = i + 1;
+        }
+        gen.indent = gen.indent - 1;
+        
+        emit_indent(gen);
+        emit(gen, "}\n");
+    } else if node.type == AST_STMT_WHILE {
+        emit_indent(gen);
+        emit(gen, "while (");
+        gen_expression(gen, node.children[0]);
+        emit(gen, ") {\n");
+        
+        gen.indent = gen.indent + 1;
+        let mut i = 1;
+        while i < node.child_count {
+            gen_statement(gen, node.children[i]);
+            i = i + 1;
+        }
+        gen.indent = gen.indent - 1;
+        
+        emit_indent(gen);
+        emit(gen, "}\n");
+    }
+}
+
+fn gen_function(gen: &mut CodeGen, node_id: i64) {
+    let node = gen.nodes[node_id];
+    
+    // Find return type
+    let mut return_type_pos = -1;
+    let mut i = 0;
+    while i < node.child_count {
+        if gen.nodes[node.children[i]].type >= AST_TYPE_I64 {
+            return_type_pos = i;
+            break;
+        }
+        i = i + 1;
+    }
+    
+    // Return type
+    if return_type_pos >= 0 {
+        gen_type(gen, node.children[return_type_pos]);
+    } else {
+        emit(gen, "void");
+    }
+    emit(gen, " ");
+    
+    // Name
+    let func_name = get_string_from_gen(gen, node.value);
+    if func_name == "main" {
+        emit(gen, "main");
+    } else {
+        emit(gen, func_name);
+    }
+    
+    emit(gen, "(");
+    
+    // Parameters
+    let mut param_count = 0;
+    i = 0;
+    while i < node.child_count && (return_type_pos < 0 || i < return_type_pos) {
+        let child = gen.nodes[node.children[i]];
+        if child.type == AST_PARAM {
+            if param_count > 0 {
+                emit(gen, ", ");
+            }
+            
+            // Param type
+            if child.child_count > 0 {
+                gen_type(gen, child.children[0]);
+            } else {
+                emit(gen, "long long");
+            }
+            emit(gen, " ");
+            
+            // Param name
+            emit(gen, get_string_from_gen(gen, child.value));
+            
+            param_count = param_count + 1;
+        }
+        i = i + 1;
+    }
+    
+    if param_count == 0 && func_name == "main" {
+        emit(gen, "void");
+    }
+    
+    emit(gen, ") {\n");
+    
+    gen.indent = gen.indent + 1;
+    
+    // Body
+    let body_start = 0;
+    if return_type_pos >= 0 {
+        body_start = return_type_pos + 1;
+    }
+    
+    i = body_start;
+    while i < node.child_count {
+        let child = gen.nodes[node.children[i]];
+        if child.type != AST_PARAM && child.type < AST_TYPE_I64 {
+            gen_statement(gen, node.children[i]);
+        }
+        i = i + 1;
+    }
+    
+    if func_name == "main" {
+        emit_indent(gen);
+        emit(gen, "return 0;\n");
+    }
+    
+    gen.indent = gen.indent - 1;
+    emit(gen, "}\n\n");
+}
+
+fn gen_headers(gen: &mut CodeGen) {
+    emit(gen, "#include <stdio.h>\n");
+    emit(gen, "#include <stdlib.h>\n");
+    emit(gen, "#include <string.h>\n\n");
+    
+    emit(gen, "// Runtime functions\n");
+    emit(gen, "void __pd_print(const char* s) { printf(\"%s\\n\", s); }\n");
+    emit(gen, "void __pd_print_int(long long n) { printf(\"%lld\\n\", n); }\n");
+    emit(gen, "long long __pd_string_len(const char* s) { return strlen(s); }\n");
+    emit(gen, "const char* __pd_string_concat(const char* a, const char* b) {\n");
+    emit(gen, "    char* r = malloc(strlen(a) + strlen(b) + 1);\n");
+    emit(gen, "    strcpy(r, a); strcat(r, b); return r;\n");
+    emit(gen, "}\n");
+    emit(gen, "const char* __pd_int_to_string(long long n) {\n");
+    emit(gen, "    char* buf = malloc(32);\n");
+    emit(gen, "    snprintf(buf, 32, \"%lld\", n);\n");
+    emit(gen, "    return buf;\n");
+    emit(gen, "}\n");
+    
+    emit(gen, "\n// File I/O\n");
+    emit(gen, "#define MAX_FILES 256\n");
+    emit(gen, "static FILE* __pd_files[MAX_FILES] = {0};\n");
+    emit(gen, "static int __pd_next_file = 1;\n");
+    emit(gen, "long long __pd_file_open(const char* path) {\n");
+    emit(gen, "    if (__pd_next_file >= MAX_FILES) return -1;\n");
+    emit(gen, "    FILE* f = fopen(path, \"r+\");\n");
+    emit(gen, "    if (!f) f = fopen(path, \"w+\");\n");
+    emit(gen, "    if (!f) return -1;\n");
+    emit(gen, "    int h = __pd_next_file++;\n");
+    emit(gen, "    __pd_files[h] = f;\n");
+    emit(gen, "    return h;\n");
+    emit(gen, "}\n");
+    emit(gen, "const char* __pd_file_read_all(long long h) {\n");
+    emit(gen, "    if (h < 1 || h >= MAX_FILES || !__pd_files[h]) return \"\";\n");
+    emit(gen, "    FILE* f = __pd_files[h];\n");
+    emit(gen, "    fseek(f, 0, SEEK_END);\n");
+    emit(gen, "    long size = ftell(f);\n");
+    emit(gen, "    fseek(f, 0, SEEK_SET);\n");
+    emit(gen, "    char* buf = malloc(size + 1);\n");
+    emit(gen, "    fread(buf, 1, size, f);\n");
+    emit(gen, "    buf[size] = 0;\n");
+    emit(gen, "    return buf;\n");
+    emit(gen, "}\n");
+    emit(gen, "int __pd_file_write(long long h, const char* s) {\n");
+    emit(gen, "    if (h < 1 || h >= MAX_FILES || !__pd_files[h]) return 0;\n");
+    emit(gen, "    return fputs(s, __pd_files[h]) >= 0;\n");
+    emit(gen, "}\n");
+    emit(gen, "int __pd_file_close(long long h) {\n");
+    emit(gen, "    if (h < 1 || h >= MAX_FILES || !__pd_files[h]) return 0;\n");
+    emit(gen, "    FILE* f = __pd_files[h];\n");
+    emit(gen, "    __pd_files[h] = NULL;\n");
+    emit(gen, "    return fclose(f) == 0;\n");
+    emit(gen, "}\n\n");
+}
+
+fn generate_c_code(gen: &mut CodeGen, root_id: i64) -> String {
+    gen_headers(gen);
+    
+    let root = gen.nodes[root_id];
+    let mut i = 0;
+    while i < root.child_count {
+        let child = gen.nodes[root.children[i]];
+        if child.type == AST_FUNCTION {
+            gen_function(gen, root.children[i]);
+        }
+        i = i + 1;
+    }
+    
+    // Convert output to string
+    let mut result = "";
+    let mut j = 0;
+    while j < gen.output_pos {
+        result = string_concat(result, string_from_char(gen.output[j]));
+        j = j + 1;
+    }
+    
+    return result;
+}
+
+// ============= MAIN COMPILER =============
+
+fn compile_source(source: String) -> String {
+    print("📖 Lexing...");
+    let mut lexer = create_lexer(source);
+    lex_tokens(&mut lexer);
+    print("   Found " + int_to_string(lexer.token_count) + " tokens");
+    
+    print("🌳 Parsing...");
+    let mut parser = create_parser(lexer);
+    let root = parse_program(&mut parser);
+    print("   Created " + int_to_string(parser.node_count) + " AST nodes");
+    
+    print("⚡ Generating code...");
+    let mut codegen = create_codegen(parser);
+    let c_code = generate_c_code(&mut codegen, root);
+    print("   Generated " + int_to_string(string_len(c_code)) + " characters");
+    
+    return c_code;
+}
+
+fn main() {
+    print("Minimal Palladium Compiler v2");
+    print("==============================");
+    
+    let test_code = "
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn main() {
+    print(\"Hello from minimal compiler!\");
+    let x: i64 = 10;
+    let y: i64 = 20;
+    let sum: i64 = add(x, y);
+    print(\"Sum: \" + int_to_string(sum));
+}
+";
+    
+    let c_code = compile_source(test_code);
+    
+    // Write to file
+    let output = file_open("output.c");
+    if output > 0 {
+        file_write(output, c_code);
+        file_close(output);
+        print("✅ Output written to output.c");
+    }
+}

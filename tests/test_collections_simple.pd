@@ -1,0 +1,128 @@
+// Simple test for Vec and HashMap implementations
+
+fn test_vec() {
+    // Test basic Vec operations
+    let mut numbers = vec_new();
+    vec_push(&mut numbers, 10);
+    vec_push(&mut numbers, 20);
+    vec_push(&mut numbers, 30);
+    
+    assert(vec_len(&numbers) == 3);
+    assert(vec_get(&numbers, 0) == 10);
+    assert(vec_get(&numbers, 1) == 20);
+    assert(vec_get(&numbers, 2) == 30);
+    
+    let popped = vec_pop(&mut numbers);
+    assert(popped == 30);
+    assert(vec_len(&numbers) == 2);
+    
+    println("Vec tests passed!");
+}
+
+fn test_hashmap() {
+    // Test basic HashMap operations
+    let mut map = hashmap_new();
+    hashmap_insert(&mut map, "hello", 42);
+    hashmap_insert(&mut map, "world", 100);
+    
+    assert(hashmap_len(&map) == 2);
+    assert(hashmap_get(&map, "hello") == 42);
+    assert(hashmap_get(&map, "world") == 100);
+    
+    hashmap_remove(&mut map, "hello");
+    assert(hashmap_len(&map) == 1);
+    assert(hashmap_contains(&map, "hello") == false);
+    assert(hashmap_contains(&map, "world") == true);
+    
+    println("HashMap tests passed!");
+}
+
+// Vec implementation
+struct Vec {
+    data: i64,     // Simplified: just store one value for now
+    len: i64,
+    capacity: i64,
+}
+
+fn vec_new() -> Vec {
+    let v = Vec {
+        data: 0,
+        len: 0,
+        capacity: 0,
+    };
+    v
+}
+
+fn vec_push(v: &mut Vec, value: i64) {
+    // Simplified implementation
+    v.data = value;
+    v.len = v.len + 1;
+}
+
+fn vec_pop(v: &mut Vec) -> i64 {
+    let value = v.data;
+    v.len = v.len - 1;
+    value
+}
+
+fn vec_len(v: &Vec) -> i64 {
+    v.len
+}
+
+fn vec_get(v: &Vec, index: i64) -> i64 {
+    // Simplified: just return the stored value
+    v.data
+}
+
+// HashMap implementation
+struct HashMap {
+    key: String,
+    value: i64,
+    len: i64,
+}
+
+fn hashmap_new() -> HashMap {
+    let map = HashMap {
+        key: "",
+        value: 0,
+        len: 0,
+    };
+    map
+}
+
+fn hashmap_insert(map: &mut HashMap, key: &str, value: i64) {
+    map.key = key;
+    map.value = value;
+    map.len = map.len + 1;
+}
+
+fn hashmap_remove(map: &mut HashMap, key: &str) {
+    if map.key == key {
+        map.key = "";
+        map.value = 0;
+        map.len = map.len - 1;
+    }
+}
+
+fn hashmap_get(map: &HashMap, key: &str) -> i64 {
+    if map.key == key {
+        map.value
+    } else {
+        0
+    }
+}
+
+fn hashmap_len(map: &HashMap) -> i64 {
+    map.len
+}
+
+fn hashmap_contains(map: &HashMap, key: &str) -> bool {
+    map.key == key
+}
+
+fn main() {
+    println("Testing collections...");
+    test_vec();
+    test_hashmap();
+    println("All tests passed!");
+}

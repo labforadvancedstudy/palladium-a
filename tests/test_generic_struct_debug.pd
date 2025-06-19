@@ -1,0 +1,10 @@
+// Test to debug generic struct handling
+
+struct Box<T> {
+    value: T,
+}
+
+fn main() {
+    // This should fail with our error message
+    let b = Box { value: 42 };
+}

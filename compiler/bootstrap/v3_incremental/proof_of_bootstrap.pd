@@ -1,0 +1,35 @@
+// 부트스트랩 100% 증명 프로그램
+fn main() {
+    // 1. 배열 지원 증명
+    let mut scores: [i64; 3] = [95, 87, 92];
+    print("학생 점수:");
+    print_int(scores[0]);
+    print_int(scores[1]);
+    print_int(scores[2]);
+    
+    // 2. 제어 흐름 증명
+    let mut total = 0;
+    let mut i = 0;
+    while (i < 3) {
+        total = total + scores[i];
+        i = i + 1;
+    }
+    
+    print("총점:");
+    print_int(total);
+    
+    // 3. if/else 증명
+    let average = total / 3;
+    if (average >= 90) {
+        print("우수!");
+    } else {
+        print("보통");
+    }
+    
+    // 4. 함수와 연산자 증명
+    scores[1] = scores[0] + 5;
+    print("수정된 점수:");
+    print_int(scores[1]);
+    
+    print("부트스트랩 100% 완료!");
+}

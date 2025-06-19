@@ -1,0 +1,27 @@
+// Simple enum test
+
+enum Status {
+    Success,
+    Failure,
+}
+
+fn get_status(ok: bool) -> Status {
+    if ok {
+        return Status::Success;
+    } else {
+        return Status::Failure;
+    }
+}
+
+fn main() {
+    let s: Status = get_status(true);
+    
+    match s {
+        Status::Success => {
+            print("Operation succeeded!");
+        }
+        Status::Failure => {
+            print("Operation failed!");
+        }
+    }
+}

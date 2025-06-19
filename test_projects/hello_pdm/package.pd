@@ -1,0 +1,5 @@
+name = "hello_pdm"
+version = "0.1.0"
+description = "A new Palladium package"
+authors = ["GShock <icedac@gmail.com>"]
+license = "MIT"

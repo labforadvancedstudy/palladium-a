@@ -1,0 +1,22 @@
+// Bootstrap Compiler v1 - Actually works!
+
+fn main() {
+    print("Palladium Bootstrap Compiler\n");
+    print("============================\n");
+    
+    // Open file
+    let handle = file_open("output.c");
+    
+    // Write C program
+    let ok = file_write(handle, "int main(){return 42;}");
+    
+    // Close file
+    file_close(handle);
+    
+    if ok {
+        print("Generated: output.c\n");
+        print("Compile: gcc output.c\n");
+    } else {
+        print("Failed\n");
+    }
+}

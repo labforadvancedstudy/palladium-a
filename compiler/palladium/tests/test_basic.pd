@@ -1,0 +1,24 @@
+// Basic test for self-hosting compiler
+// Tests basic functions, variables, and arithmetic
+
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn main() {
+    // Test variable declarations
+    let x = 10;
+    let y = 20;
+    
+    // Test function calls
+    let sum = add(x, y);
+    
+    // Test built-in functions
+    print("Basic arithmetic test:");
+    print_int(sum);
+    
+    // Test string operations
+    let msg = "The sum is: ";
+    let result = string_concat(msg, int_to_string(sum));
+    print(result);
+}

@@ -1,0 +1,278 @@
+// Tiny Palladium Compiler v3 - No references, functional style
+// Handles variables, expressions, and basic statements
+
+fn compile_program(source: String) -> String {
+    let mut output = "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n";
+    
+    // Runtime functions
+    output = output + "void __pd_print(const char* s) { printf(\"%s\\n\", s); }\n";
+    output = output + "void __pd_print_int(long long n) { printf(\"%lld\\n\", n); }\n";
+    output = output + "long long __pd_string_len(const char* s) { return strlen(s); }\n";
+    output = output + "const char* __pd_string_concat(const char* a, const char* b) {\n";
+    output = output + "    char* r = malloc(strlen(a) + strlen(b) + 1);\n";
+    output = output + "    strcpy(r, a); strcat(r, b); return r;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_int_to_string(long long n) {\n";
+    output = output + "    char* buf = malloc(32);\n";
+    output = output + "    snprintf(buf, 32, \"%lld\", n);\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n\n";
+    
+    // Simple state tracking
+    let len = string_len(source);
+    let mut pos = 0;
+    let mut in_main = false;
+    
+    // Main parsing loop
+    while pos < len {
+        // Skip whitespace
+        while pos < len && (string_char_at(source, pos) == 32 || 
+                           string_char_at(source, pos) == 10 ||
+                           string_char_at(source, pos) == 9) {
+            pos = pos + 1;
+        }
+        
+        if pos >= len {
+            break;
+        }
+        
+        // Look for "fn main"
+        if pos + 7 < len &&
+           string_char_at(source, pos) == 102 &&      // f
+           string_char_at(source, pos+1) == 110 &&    // n
+           string_char_at(source, pos+2) == 32 &&     // space
+           string_char_at(source, pos+3) == 109 &&    // m
+           string_char_at(source, pos+4) == 97 &&     // a
+           string_char_at(source, pos+5) == 105 &&    // i
+           string_char_at(source, pos+6) == 110 {     // n
+            
+            output = output + "int main(void) {\n";
+            in_main = true;
+            
+            // Skip to opening brace
+            while pos < len && string_char_at(source, pos) != 123 { // {
+                pos = pos + 1;
+            }
+            pos = pos + 1; // Skip {
+            
+        }
+        
+        if in_main {
+            // Parse statements in main
+            
+            // Skip whitespace
+            while pos < len && (string_char_at(source, pos) == 32 || 
+                               string_char_at(source, pos) == 10 ||
+                               string_char_at(source, pos) == 9) {
+                pos = pos + 1;
+            }
+            
+            // Check for closing brace
+            if pos < len && string_char_at(source, pos) == 125 { // }
+                output = output + "    return 0;\n}\n";
+                in_main = false;
+                pos = pos + 1;
+                continue;
+            }
+            
+            // Look for "let"
+            if pos + 3 < len &&
+               string_char_at(source, pos) == 108 &&     // l
+               string_char_at(source, pos+1) == 101 &&   // e
+               string_char_at(source, pos+2) == 116 &&   // t
+               string_char_at(source, pos+3) == 32 {     // space
+                
+                pos = pos + 4;
+                output = output + "    ";
+                
+                // Skip "mut" if present
+                if pos + 4 < len &&
+                   string_char_at(source, pos) == 109 &&     // m
+                   string_char_at(source, pos+1) == 117 &&   // u
+                   string_char_at(source, pos+2) == 116 &&   // t
+                   string_char_at(source, pos+3) == 32 {     // space
+                    pos = pos + 4;
+                }
+                
+                // Get variable name
+                let mut var_name = "";
+                while pos < len && string_char_at(source, pos) != 58 && // :
+                                  string_char_at(source, pos) != 32 &&  // space
+                                  string_char_at(source, pos) != 61 {   // =
+                    var_name = var_name + string_from_char(string_char_at(source, pos));
+                    pos = pos + 1;
+                }
+                
+                // Skip whitespace
+                while pos < len && string_char_at(source, pos) == 32 {
+                    pos = pos + 1;
+                }
+                
+                // Parse type if present
+                let mut type_str = "long long"; // default
+                if pos < len && string_char_at(source, pos) == 58 { // :
+                    pos = pos + 1;
+                    // Skip whitespace
+                    while pos < len && string_char_at(source, pos) == 32 {
+                        pos = pos + 1;
+                    }
+                    
+                    // Read type
+                    let mut type_name = "";
+                    while pos < len && string_char_at(source, pos) != 32 &&
+                                      string_char_at(source, pos) != 61 {
+                        type_name = type_name + string_from_char(string_char_at(source, pos));
+                        pos = pos + 1;
+                    }
+                    
+                    if type_name == "String" {
+                        type_str = "const char*";
+                    }
+                    if type_name == "bool" {
+                        type_str = "int";
+                    }
+                }
+                
+                output = output + type_str + " " + var_name;
+                
+                // Skip whitespace
+                while pos < len && string_char_at(source, pos) == 32 {
+                    pos = pos + 1;
+                }
+                
+                // Parse initialization
+                if pos < len && string_char_at(source, pos) == 61 { // =
+                    pos = pos + 1;
+                    output = output + " = ";
+                    
+                    // Skip whitespace
+                    while pos < len && string_char_at(source, pos) == 32 {
+                        pos = pos + 1;
+                    }
+                    
+                    // Parse value
+                    if string_char_at(source, pos) == 34 { // "
+                        output = output + "\"";
+                        pos = pos + 1;
+                        while pos < len && string_char_at(source, pos) != 34 {
+                            output = output + string_from_char(string_char_at(source, pos));
+                            pos = pos + 1;
+                        }
+                        output = output + "\"";
+                        pos = pos + 1;
+                    } else {
+                        // Number or identifier
+                        while pos < len && string_char_at(source, pos) != 59 && // ;
+                                          string_char_at(source, pos) != 10 {
+                            output = output + string_from_char(string_char_at(source, pos));
+                            pos = pos + 1;
+                        }
+                    }
+                }
+                
+                output = output + ";\n";
+                
+            }
+            
+            // Look for "print"
+            if pos + 5 < len &&
+                      string_char_at(source, pos) == 112 &&     // p
+                      string_char_at(source, pos+1) == 114 &&   // r
+                      string_char_at(source, pos+2) == 105 &&   // i
+                      string_char_at(source, pos+3) == 110 &&   // n
+                      string_char_at(source, pos+4) == 116 {    // t
+                
+                // Check if print or print_int
+                if pos + 9 < len &&
+                   string_char_at(source, pos+5) == 95 &&      // _
+                   string_char_at(source, pos+6) == 105 &&     // i
+                   string_char_at(source, pos+7) == 110 &&     // n
+                   string_char_at(source, pos+8) == 116 {      // t
+                    
+                    output = output + "    __pd_print_int(";
+                    pos = pos + 9;
+                } else {
+                    output = output + "    __pd_print(";
+                    pos = pos + 5;
+                }
+                
+                // Skip to opening paren
+                while pos < len && string_char_at(source, pos) != 40 { // (
+                    pos = pos + 1;
+                }
+                pos = pos + 1;
+                
+                // Copy argument
+                let mut paren_count = 1;
+                while pos < len && paren_count > 0 {
+                    let ch = string_char_at(source, pos);
+                    if ch == 40 { // (
+                        paren_count = paren_count + 1;
+                    }
+                    if ch == 41 { // )
+                        paren_count = paren_count - 1;
+                        if paren_count == 0 {
+                            break;
+                        }
+                    }
+                    output = output + string_from_char(ch);
+                    pos = pos + 1;
+                }
+                
+                output = output + ");\n";
+                pos = pos + 1; // Skip )
+            }
+            
+            // Skip to end of statement
+            while pos < len && string_char_at(source, pos) != 59 && // ;
+                              string_char_at(source, pos) != 125 { // }
+                pos = pos + 1;
+            }
+            if pos < len && string_char_at(source, pos) == 59 {
+                pos = pos + 1;
+            }
+        } else {
+            // Skip character
+            pos = pos + 1;
+        }
+    }
+    
+    return output;
+}
+
+fn main() {
+    print("Tiny Palladium Compiler v3");
+    print("===========================");
+    
+    let test = "
+fn main() {
+    let msg: String = \"Hello from v3!\";
+    print(msg);
+    
+    let x: i64 = 42;
+    let y: i64 = 13;
+    let sum: i64 = 55;
+    
+    print(\"Values:\");
+    print_int(x);
+    print_int(y);
+    print_int(sum);
+    
+    print(\"Done!\");
+}
+";
+    
+    let c_code = compile_program(test);
+    
+    print("\nGenerated C code:");
+    print("=================");
+    print(c_code);
+    
+    // Save and compile
+    let handle = file_open("tiny_v3_output.c");
+    if handle > 0 {
+        file_write(handle, c_code);
+        file_close(handle);
+        print("\nSaved to tiny_v3_output.c");
+    }
+}

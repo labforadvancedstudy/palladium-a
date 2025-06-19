@@ -1,0 +1,189 @@
+// Working Lexer - A lexer that actually compiles and runs
+// This demonstrates that we can build compiler components in Palladium
+
+// Simple token types (using constants instead of enum)
+fn TK_EOF() -> i64 { return 0; }
+fn TK_IDENT() -> i64 { return 1; }
+fn TK_NUMBER() -> i64 { return 2; }
+fn TK_PLUS() -> i64 { return 3; }
+fn TK_MINUS() -> i64 { return 4; }
+fn TK_STAR() -> i64 { return 5; }
+fn TK_LPAREN() -> i64 { return 6; }
+fn TK_RPAREN() -> i64 { return 7; }
+fn TK_SEMICOLON() -> i64 { return 8; }
+fn TK_UNKNOWN() -> i64 { return 99; }
+
+// Get token type name
+fn token_name(kind: i64) -> String {
+    if kind == TK_EOF() { return "EOF"; }
+    if kind == TK_IDENT() { return "IDENT"; }
+    if kind == TK_NUMBER() { return "NUMBER"; }
+    if kind == TK_PLUS() { return "PLUS"; }
+    if kind == TK_MINUS() { return "MINUS"; }
+    if kind == TK_STAR() { return "STAR"; }
+    if kind == TK_LPAREN() { return "LPAREN"; }
+    if kind == TK_RPAREN() { return "RPAREN"; }
+    if kind == TK_SEMICOLON() { return "SEMICOLON"; }
+    return "UNKNOWN";
+}
+
+// Character classification
+fn is_whitespace(ch: i64) -> bool {
+    return ch == 32 || ch == 9 || ch == 10 || ch == 13;
+}
+
+fn is_digit(ch: i64) -> bool {
+    return ch >= 48 && ch <= 57;
+}
+
+fn is_letter(ch: i64) -> bool {
+    return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122);
+}
+
+// Simple lexer state
+struct Lexer {
+    input: String,
+    pos: i64,
+    current_token_kind: i64,
+    current_token_start: i64,
+    current_token_end: i64,
+}
+
+// Create new lexer
+fn lexer_new(input: String) -> Lexer {
+    return Lexer {
+        input: input,
+        pos: 0,
+        current_token_kind: TK_UNKNOWN(),
+        current_token_start: 0,
+        current_token_end: 0,
+    };
+}
+
+// Get current character
+fn current_char(lexer: Lexer) -> i64 {
+    if lexer.pos >= string_len(lexer.input) {
+        return 0;  // EOF
+    }
+    return string_char_at(lexer.input, lexer.pos);
+}
+
+// Skip whitespace
+fn skip_whitespace(mut lexer: Lexer) {
+    while lexer.pos < string_len(lexer.input) && is_whitespace(current_char(lexer)) {
+        lexer.pos = lexer.pos + 1;
+    }
+}
+
+// Read next token
+fn next_token(mut lexer: Lexer) -> i64 {
+    skip_whitespace(lexer);
+    
+    lexer.current_token_start = lexer.pos;
+    
+    let ch = current_char(lexer);
+    
+    if ch == 0 {
+        lexer.current_token_kind = TK_EOF();
+        return TK_EOF();
+    }
+    
+    // Numbers
+    if is_digit(ch) {
+        while is_digit(current_char(lexer)) {
+            lexer.pos = lexer.pos + 1;
+        }
+        lexer.current_token_end = lexer.pos;
+        lexer.current_token_kind = TK_NUMBER();
+        return TK_NUMBER();
+    }
+    
+    // Identifiers
+    if is_letter(ch) {
+        while is_letter(current_char(lexer)) || is_digit(current_char(lexer)) {
+            lexer.pos = lexer.pos + 1;
+        }
+        lexer.current_token_end = lexer.pos;
+        lexer.current_token_kind = TK_IDENT();
+        return TK_IDENT();
+    }
+    
+    // Single character tokens
+    lexer.pos = lexer.pos + 1;
+    lexer.current_token_end = lexer.pos;
+    
+    if ch == 43 {  // '+'
+        lexer.current_token_kind = TK_PLUS();
+        return TK_PLUS();
+    }
+    if ch == 45 {  // '-'
+        lexer.current_token_kind = TK_MINUS();
+        return TK_MINUS();
+    }
+    if ch == 42 {  // '*'
+        lexer.current_token_kind = TK_STAR();
+        return TK_STAR();
+    }
+    if ch == 40 {  // '('
+        lexer.current_token_kind = TK_LPAREN();
+        return TK_LPAREN();
+    }
+    if ch == 41 {  // ')'
+        lexer.current_token_kind = TK_RPAREN();
+        return TK_RPAREN();
+    }
+    if ch == 59 {  // ';'
+        lexer.current_token_kind = TK_SEMICOLON();
+        return TK_SEMICOLON();
+    }
+    
+    lexer.current_token_kind = TK_UNKNOWN();
+    return TK_UNKNOWN();
+}
+
+// Get current token value
+fn token_value(lexer: Lexer) -> String {
+    return string_substring(lexer.input, lexer.current_token_start, lexer.current_token_end);
+}
+
+// Test the lexer
+fn main() {
+    print("🔤 Working Palladium Lexer\n");
+    print("=========================\n\n");
+    
+    let input = "x + 123 * (y - 456);";
+    print("Input: ");
+    print(input);
+    print("\n\nTokens:\n");
+    
+    let mut lexer = lexer_new(input);
+    
+    let mut token_count = 0;
+    while true {
+        let token_kind = next_token(lexer);
+        
+        if token_kind == TK_EOF() {
+            print("  EOF\n");
+            break;
+        }
+        
+        print("  ");
+        print(token_name(token_kind));
+        
+        if token_kind == TK_IDENT() || token_kind == TK_NUMBER() {
+            print(" (");
+            print(token_value(lexer));
+            print(")");
+        }
+        
+        print("\n");
+        
+        token_count = token_count + 1;
+        if token_count > 20 {  // Safety limit
+            break;
+        }
+    }
+    
+    print("\n✅ Lexer successfully tokenized the input!\n");
+    print("🎯 This lexer is written in Palladium!\n");
+}

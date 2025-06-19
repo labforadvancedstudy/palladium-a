@@ -1,0 +1,252 @@
+// Palladium Standard Library Prelude
+// "Legends begin with the essentials"
+//
+// The prelude is a collection of items that are automatically imported
+// into every Palladium program. This includes the most commonly used
+// types, traits, and functions.
+
+// Re-export core types
+pub use crate::std::option::{Option, Option::Some, Option::None, some, none};
+pub use crate::std::result::{Result, Result::Ok, Result::Err, Error, ok, err};
+
+// Re-export collections
+pub use crate::std::collections::vec::{Vec, vec};
+pub use crate::std::collections::hashmap::{HashMap, hashmap};
+
+// Re-export common traits
+pub use crate::std::traits::{
+    // Comparison
+    PartialEq, Eq, PartialOrd, Ord, Ordering,
+    
+    // Clone and Copy
+    Clone, Copy,
+    
+    // Default
+    Default,
+    
+    // Hash
+    Hash,
+    
+    // Display and Debug
+    Display, Debug,
+    
+    // Iterator
+    Iterator, IntoIterator, FromIterator,
+    
+    // Conversion
+    From, Into, TryFrom, TryInto,
+    AsRef, AsMut,
+    
+    // Smart pointer traits
+    Deref, DerefMut,
+    
+    // Indexing
+    Index, IndexMut,
+    
+    // Drop
+    Drop,
+    
+    // Arithmetic
+    Add, Sub, Mul, Div, Rem, Neg,
+    AddAssign, SubAssign, MulAssign, DivAssign, RemAssign,
+    
+    // Bitwise
+    BitAnd, BitOr, BitXor, Not, Shl, Shr,
+    
+    // Function traits
+    Fn, FnMut, FnOnce,
+    
+    // Error
+    Error,
+};
+
+// Re-export string utilities
+pub use crate::std::string::{
+    StringBuilder,
+    is_alphabetic, is_numeric, is_alphanumeric, is_whitespace,
+    is_uppercase, is_lowercase,
+    to_uppercase, to_lowercase,
+    format1, format2, format3,
+};
+
+// Re-export I/O utilities
+pub use crate::std::io::{
+    stdin, stdout, stderr,
+    print, println, eprintln,
+    print_fmt, println_fmt,
+    File, Path,
+};
+
+// Re-export math functions
+pub use crate::std::math::{
+    // Constants
+    PI, E, TAU, SQRT_2, LN_2, LN_10,
+    
+    // Integer functions
+    abs, min, max, clamp, pow, gcd, lcm,
+    is_prime, factorial, fibonacci, isqrt,
+    
+    // Floating point functions
+    fabs, fmin, fmax, fclamp, approx_eq,
+    
+    // Utility functions
+    sign, fsign, lerp, map_range,
+    is_power_of_two, next_power_of_two,
+    average, div_ceil, mod_euclidean,
+};
+
+// Re-export memory utilities
+pub use crate::std::mem::{
+    size_of, align_of,
+    copy, copy_nonoverlapping, write, read, swap, replace, take,
+    drop, drop_in_place, forget,
+    zeroed, zero_memory,
+    Box, Rc,
+    MaybeUninit, Layout,
+};
+
+// Built-in functions that should be available everywhere
+// These are typically provided by the compiler/runtime
+
+// Print functions (these would be compiler built-ins)
+pub extern fn print(s: String);
+pub extern fn print_int(n: i64);
+pub extern fn print_char(c: i64);
+
+// String manipulation (compiler built-ins)
+pub extern fn string_len(s: String) -> i64;
+pub extern fn string_char_at(s: String, index: i64) -> i64;
+pub extern fn string_substring(s: String, start: i64, end: i64) -> String;
+pub extern fn string_concat(a: String, b: String) -> String;
+pub extern fn string_eq(a: String, b: String) -> bool;
+pub extern fn string_from_char(c: i64) -> String;
+pub extern fn string_to_int(s: String) -> i64;
+pub extern fn int_to_string(n: i64) -> String;
+
+// Character utilities (compiler built-ins)
+pub extern fn char_is_digit(c: i64) -> bool;
+pub extern fn char_is_alpha(c: i64) -> bool;
+pub extern fn char_to_digit(c: i64) -> i64;
+
+// Panic function
+pub extern fn panic(msg: String) -> !;
+
+// Assertion
+pub fn assert(condition: bool, msg: String) {
+    if !condition {
+        panic(msg);
+    }
+}
+
+pub fn assert_eq<T: Eq + Debug>(left: T, right: T) {
+    if left != right {
+        panic(format2(
+            "assertion failed: {} != {}",
+            left.fmt_debug(),
+            right.fmt_debug()
+        ));
+    }
+}
+
+pub fn assert_ne<T: Eq + Debug>(left: T, right: T) {
+    if left == right {
+        panic(format2(
+            "assertion failed: {} == {}",
+            left.fmt_debug(),
+            right.fmt_debug()
+        ));
+    }
+}
+
+// Debug assertions (could be disabled in release builds)
+pub fn debug_assert(condition: bool, msg: String) {
+    #[cfg(debug_assertions)]
+    assert(condition, msg);
+}
+
+pub fn debug_assert_eq<T: Eq + Debug>(left: T, right: T) {
+    #[cfg(debug_assertions)]
+    assert_eq(left, right);
+}
+
+pub fn debug_assert_ne<T: Eq + Debug>(left: T, right: T) {
+    #[cfg(debug_assertions)]
+    assert_ne(left, right);
+}
+
+// Utility functions
+pub fn todo() -> ! {
+    panic("not yet implemented");
+}
+
+pub fn unreachable() -> ! {
+    panic("entered unreachable code");
+}
+
+pub fn unimplemented() -> ! {
+    panic("not implemented");
+}
+
+// Type aliases for common types
+pub type Str = String;
+pub type Int = i64;
+pub type UInt = u64;
+pub type Float = f64;
+pub type Bool = bool;
+pub type Char = char;
+
+// Common type conversions
+impl From<bool> for i64 {
+    fn from(b: bool) -> i64 {
+        if b { 1 } else { 0 }
+    }
+}
+
+impl From<char> for i64 {
+    fn from(c: char) -> i64 {
+        c as i64
+    }
+}
+
+impl From<i64> for f64 {
+    fn from(i: i64) -> f64 {
+        i as f64
+    }
+}
+
+impl From<&str> for String {
+    fn from(s: &str) -> String {
+        String::from(s)
+    }
+}
+
+// Utility macros (would be compiler built-ins)
+// Example: dbg!(expr) - prints the expression and its value
+// Example: vec![1, 2, 3] - creates a vector
+// Example: hashmap!{"key" => value} - creates a hashmap
+
+// Module initialization
+// This would be called by the runtime before main
+pub fn __init_stdlib() {
+    // Initialize any global state needed by the standard library
+    // Currently empty, but could be used for:
+    // - Setting up memory allocators
+    // - Initializing I/O subsystems
+    // - Setting up panic handlers
+}
+
+// Re-export everything under std:: namespace as well
+pub mod std {
+    pub mod collections {
+        pub use crate::std::collections::vec;
+        pub use crate::std::collections::hashmap;
+    }
+    
+    pub use crate::std::option;
+    pub use crate::std::result;
+    pub use crate::std::string;
+    pub use crate::std::io;
+    pub use crate::std::math;
+    pub use crate::std::mem;
+    pub use crate::std::traits;
+}

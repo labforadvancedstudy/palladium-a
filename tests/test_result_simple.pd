@@ -1,0 +1,28 @@
+// Simple test for Result type
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn divide(a: i32, b: i32) -> Result<i32, String> {
+    if b == 0 {
+        return Result::Err("Division by zero");
+    }
+    return Result::Ok(a / b);
+}
+
+fn main() {
+    let result: Result<i32, String> = divide(10, 2);
+    
+    match result {
+        Result::Ok(value) => {
+            print("Result is: ");
+            print_int(value);
+        }
+        Result::Err(msg) => {
+            print("Error: ");
+            print(msg);
+        }
+    }
+}

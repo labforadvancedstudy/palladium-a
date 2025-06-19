@@ -1,0 +1,2326 @@
+// Palladium Self-Hosting Compiler - Parser Module
+// Recursive descent parser for the Palladium language
+
+// ============ Parser State ============
+
+struct Parser {
+    tokens: [Token; 10000],
+    token_count: i64,
+    current: i64,
+    errors: [String; 100],
+    error_count: i64,
+}
+
+// ============ Parser Creation ============
+
+fn create_parser(tokens: [Token; 10000], count: i64) -> Parser {
+    return Parser {
+        tokens: tokens,
+        token_count: count,
+        current: 0,
+        errors: [""; 100],
+        error_count: 0,
+    };
+}
+
+// ============ Token Navigation ============
+
+fn is_at_end(parser: &Parser) -> bool {
+    return peek(parser).type_id == TOK_EOF;
+}
+
+fn peek(parser: &Parser) -> Token {
+    if parser.current < parser.token_count {
+        return parser.tokens[parser.current];
+    }
+    return Token { type_id: TOK_EOF, text: "", line: 0, column: 0, int_value: 0, string_value: "" };
+}
+
+fn peek_ahead(parser: &Parser, offset: i64) -> Token {
+    let pos = parser.current + offset;
+    if pos < parser.token_count {
+        return parser.tokens[pos];
+    }
+    return Token { type_id: TOK_EOF, text: "", line: 0, column: 0, int_value: 0, string_value: "" };
+}
+
+fn previous(parser: &Parser) -> Token {
+    if parser.current > 0 {
+        return parser.tokens[parser.current - 1];
+    }
+    return Token { type_id: TOK_EOF, text: "", line: 0, column: 0, int_value: 0, string_value: "" };
+}
+
+fn advance(parser: &mut Parser) -> Token {
+    if !is_at_end(parser) {
+        parser.current = parser.current + 1;
+    }
+    return previous(parser);
+}
+
+fn check(parser: &Parser, type_id: i64) -> bool {
+    if is_at_end(parser) {
+        return false;
+    }
+    return peek(parser).type_id == type_id;
+}
+
+fn match_token(parser: &mut Parser, type_id: i64) -> bool {
+    if check(parser, type_id) {
+        advance(parser);
+        return true;
+    }
+    return false;
+}
+
+fn match_any(parser: &mut Parser, types: [i64; 10], count: i64) -> bool {
+    let mut i = 0;
+    while i < count {
+        if check(parser, types[i]) {
+            advance(parser);
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn consume(parser: &mut Parser, type_id: i64, message: String) -> bool {
+    if check(parser, type_id) {
+        advance(parser);
+        return true;
+    }
+    
+    add_error(parser, message);
+    return false;
+}
+
+// ============ Error Handling ============
+
+fn add_error(parser: &mut Parser, message: String) {
+    if parser.error_count < 100 {
+        let token = peek(parser);
+        let error_msg = string_concat(
+            string_concat(
+                string_concat(
+                    string_concat("Error at line ", int_to_string(token.line)),
+                    ", column "
+                ),
+                int_to_string(token.column)
+            ),
+            string_concat(": ", message)
+        );
+        parser.errors[parser.error_count] = error_msg;
+        parser.error_count = parser.error_count + 1;
+    }
+}
+
+fn synchronize(parser: &mut Parser) {
+    advance(parser);
+    
+    while !is_at_end(parser) {
+        if previous(parser).type_id == TOK_SEMI {
+            return;
+        }
+        
+        let tok_type = peek(parser).type_id;
+        if tok_type == TOK_FN || tok_type == TOK_LET || tok_type == TOK_STRUCT ||
+           tok_type == TOK_ENUM || tok_type == TOK_IMPL || tok_type == TOK_TRAIT ||
+           tok_type == TOK_CONST || tok_type == TOK_STATIC || tok_type == TOK_MOD {
+            return;
+        }
+        
+        advance(parser);
+    }
+}
+
+// ============ Program Parsing ============
+
+fn parse_program(parser: &mut Parser) -> Program {
+    let mut program = Program {
+        items: [Item{}; 100],
+        item_count: 0,
+    };
+    
+    while !is_at_end(parser) {
+        let item = parse_item(parser);
+        if parser.error_count == 0 {
+            program.items[program.item_count] = item;
+            program.item_count = program.item_count + 1;
+        } else {
+            synchronize(parser);
+        }
+    }
+    
+    return program;
+}
+
+// ============ Item Parsing ============
+
+fn parse_item(parser: &mut Parser) -> Item {
+    let vis = parse_visibility(parser);
+    
+    if match_token(parser, TOK_FN) {
+        return parse_function(parser, vis);
+    } else if match_token(parser, TOK_STRUCT) {
+        return parse_struct(parser, vis);
+    } else if match_token(parser, TOK_ENUM) {
+        return parse_enum(parser, vis);
+    } else if match_token(parser, TOK_IMPL) {
+        return parse_impl(parser, vis);
+    } else if match_token(parser, TOK_TRAIT) {
+        return parse_trait(parser, vis);
+    } else if match_token(parser, TOK_TYPE) {
+        return parse_type_alias(parser, vis);
+    } else if match_token(parser, TOK_CONST) {
+        return parse_const(parser, vis);
+    } else if match_token(parser, TOK_STATIC) {
+        return parse_static(parser, vis);
+    } else if match_token(parser, TOK_MOD) {
+        return parse_mod(parser, vis);
+    } else if match_token(parser, TOK_USE) {
+        return parse_use(parser, vis);
+    }
+    
+    add_error(parser, "Expected item");
+    return Item{};
+}
+
+fn parse_visibility(parser: &mut Parser) -> i64 {
+    if match_token(parser, TOK_PUB) {
+        return VIS_PUB;
+    }
+    return VIS_PRIVATE;
+}
+
+// ============ Function Parsing ============
+
+fn parse_function(parser: &mut Parser, vis: i64) -> Item {
+    let is_async = match_token(parser, TOK_ASYNC);
+    let is_unsafe = match_token(parser, TOK_UNSAFE);
+    let is_const = match_token(parser, TOK_CONST);
+    
+    let name_token = advance(parser);
+    if name_token.type_id != TOK_IDENT {
+        add_error(parser, "Expected function name");
+        return Item{};
+    }
+    
+    consume(parser, TOK_LPAREN, "Expected '(' after function name");
+    
+    let mut params = [FnParam{}; 10];
+    let mut param_count = 0;
+    
+    while !check(parser, TOK_RPAREN) && !is_at_end(parser) {
+        if param_count >= 10 {
+            add_error(parser, "Too many parameters");
+            break;
+        }
+        
+        let param = parse_fn_param(parser);
+        params[param_count] = param;
+        param_count = param_count + 1;
+        
+        if !check(parser, TOK_RPAREN) {
+            consume(parser, TOK_COMMA, "Expected ',' between parameters");
+        }
+    }
+    
+    consume(parser, TOK_RPAREN, "Expected ')' after parameters");
+    
+    let mut return_type = create_primitive_type(PRIM_UNIT);
+    if match_token(parser, TOK_ARROW) {
+        return_type = parse_type(parser);
+    }
+    
+    let body = parse_block_expr(parser);
+    
+    let mut item = Item {
+        kind: ITEM_FUNCTION,
+        name: name_token.string_value,
+        visibility: vis,
+        line: name_token.line,
+        column: name_token.column,
+        fn_params: params,
+        fn_param_count: param_count,
+        fn_return_type: return_type,
+        fn_body: body,
+        is_async: is_async,
+        is_const: is_const,
+        is_unsafe: is_unsafe,
+        struct_fields: [StructField{}; 20],
+        struct_field_count: 0,
+        enum_variants: [EnumVariant{}; 20],
+        enum_variant_count: 0,
+        trait_items: [TraitItem{}; 30],
+        trait_item_count: 0,
+        impl_type: Type{},
+        impl_trait: "",
+        impl_items: [ImplItem{}; 30],
+        impl_item_count: 0,
+        alias_type: Type{},
+        const_type: Type{},
+        const_value: Expr{},
+        is_mutable: false,
+        mod_items: [Item{}; 50],
+        mod_item_count: 0,
+        use_path: "",
+    };
+    
+    return item;
+}
+
+fn parse_fn_param(parser: &mut Parser) -> FnParam {
+    let pattern = parse_pattern(parser);
+    consume(parser, TOK_COLON, "Expected ':' after parameter pattern");
+    let param_type = parse_type(parser);
+    
+    return FnParam {
+        pattern: pattern,
+        param_type: param_type,
+    };
+}
+
+// ============ Type Parsing ============
+
+fn parse_type(parser: &mut Parser) -> Type {
+    // Reference types
+    if match_token(parser, TOK_AMPERSAND) {
+        let is_mut = match_token(parser, TOK_MUT);
+        let inner = parse_type(parser);
+        return Type {
+            kind: TYPE_KIND_REFERENCE,
+            primitive: 0,
+            element_type: inner,
+            array_size: 0,
+            pointee_type: inner,
+            is_mutable: is_mut,
+            param_types: [Type{}; 10],
+            param_count: 0,
+            return_type: Type{},
+            name: "",
+            type_param_index: 0,
+        };
+    }
+    
+    // Array types
+    if match_token(parser, TOK_LBRACKET) {
+        let elem_type = parse_type(parser);
+        consume(parser, TOK_SEMI, "Expected ';' in array type");
+        let size_token = advance(parser);
+        if size_token.type_id != TOK_NUMBER {
+            add_error(parser, "Expected array size");
+            return Type{};
+        }
+        consume(parser, TOK_RBRACKET, "Expected ']' after array type");
+        return create_array_type(elem_type, size_token.int_value);
+    }
+    
+    // Named types (primitives and user-defined)
+    let name_token = advance(parser);
+    if name_token.type_id == TOK_IDENT {
+        return parse_named_type(name_token.string_value);
+    }
+    
+    // Type keywords
+    if name_token.type_id == TOK_I8 { return create_primitive_type(PRIM_I8); }
+    if name_token.type_id == TOK_I16 { return create_primitive_type(PRIM_I16); }
+    if name_token.type_id == TOK_I32 { return create_primitive_type(PRIM_I32); }
+    if name_token.type_id == TOK_I64 { return create_primitive_type(PRIM_I64); }
+    if name_token.type_id == TOK_U8 { return create_primitive_type(PRIM_U8); }
+    if name_token.type_id == TOK_U16 { return create_primitive_type(PRIM_U16); }
+    if name_token.type_id == TOK_U32 { return create_primitive_type(PRIM_U32); }
+    if name_token.type_id == TOK_U64 { return create_primitive_type(PRIM_U64); }
+    if name_token.type_id == TOK_F32 { return create_primitive_type(PRIM_F32); }
+    if name_token.type_id == TOK_F64 { return create_primitive_type(PRIM_F64); }
+    if name_token.type_id == TOK_BOOL { return create_primitive_type(PRIM_BOOL); }
+    if name_token.type_id == TOK_CHAR { return create_primitive_type(PRIM_CHAR); }
+    
+    if string_eq(name_token.string_value, "String") {
+        return create_primitive_type(PRIM_STRING);
+    }
+    
+    add_error(parser, "Expected type");
+    return Type{};
+}
+
+fn parse_named_type(name: String) -> Type {
+    return Type {
+        kind: TYPE_KIND_STRUCT,  // Assume user-defined type
+        primitive: 0,
+        element_type: Type{},
+        array_size: 0,
+        pointee_type: Type{},
+        is_mutable: false,
+        param_types: [Type{}; 10],
+        param_count: 0,
+        return_type: Type{},
+        name: name,
+        type_param_index: 0,
+    };
+}
+
+// ============ Pattern Parsing ============
+
+fn parse_pattern(parser: &mut Parser) -> Pattern {
+    // Wildcard pattern
+    if check(parser, TOK_IDENT) && string_eq(peek(parser).string_value, "_") {
+        advance(parser);
+        return Pattern {
+            kind: PAT_WILDCARD,
+            pattern_type: Type{},
+            name: "",
+            is_mut: false,
+            literal: Expr{},
+            tuple_patterns: [Pattern{}; 10],
+            tuple_count: 0,
+            struct_name: "",
+            field_patterns: [FieldPattern{}; 20],
+            field_pattern_count: 0,
+            enum_name: "",
+            variant_name: "",
+            variant_patterns: [Pattern{}; 10],
+            variant_pattern_count: 0,
+            ref_pattern: Pattern{},
+            is_mut_ref: false,
+        };
+    }
+    
+    // Identifier pattern (could be simple ident or enum pattern)
+    if check(parser, TOK_IDENT) {
+        // Check for mut keyword first
+        let is_mut = match_token(parser, TOK_MUT);
+        let name = advance(parser).string_value;
+        
+        // Check if this is an enum pattern (has :: or starts with uppercase)
+        if check(parser, TOK_COLONCOLON) || (string_len(name) > 0 && is_uppercase_char(string_char_at(name, 0))) {
+            // This might be an enum pattern
+            let mut enum_name = name;
+            let mut variant_name = "";
+            
+            if match_token(parser, TOK_COLONCOLON) {
+                // Explicit enum::variant syntax
+                variant_name = advance(parser).string_value;
+            } else if check(parser, TOK_LPAREN) || check(parser, TOK_LBRACE) {
+                // Might be EnumVariant(...) or EnumVariant{...}
+                // Assume name is the variant and enum will be inferred
+                variant_name = enum_name;
+                enum_name = "";
+            } else {
+                // Just a regular identifier
+                return create_ident_pattern(name, is_mut);
+            }
+            
+            // Parse variant data if present
+            let mut variant_patterns = [Pattern{}; 10];
+            let mut variant_pattern_count = 0;
+            
+            if match_token(parser, TOK_LPAREN) {
+                // Tuple variant pattern
+                while !check(parser, TOK_RPAREN) && !is_at_end(parser) {
+                    if variant_pattern_count >= 10 {
+                        add_error(parser, "Too many patterns in tuple variant");
+                        break;
+                    }
+                    
+                    variant_patterns[variant_pattern_count] = parse_pattern(parser);
+                    variant_pattern_count = variant_pattern_count + 1;
+                    
+                    if !check(parser, TOK_RPAREN) {
+                        consume(parser, TOK_COMMA, "Expected ',' between patterns");
+                    }
+                }
+                consume(parser, TOK_RPAREN, "Expected ')' after tuple variant pattern");
+            } else if match_token(parser, TOK_LBRACE) {
+                // Struct variant pattern - simplified for now
+                add_error(parser, "Struct variant patterns not yet implemented");
+                consume(parser, TOK_RBRACE, "Expected '}' after struct variant pattern");
+            }
+            
+            return Pattern {
+                kind: PAT_ENUM,
+                pattern_type: Type{},
+                name: "",
+                is_mut: false,
+                literal: Expr{},
+                tuple_patterns: [Pattern{}; 10],
+                tuple_count: 0,
+                struct_name: "",
+                field_patterns: [FieldPattern{}; 20],
+                field_pattern_count: 0,
+                enum_name: enum_name,
+                variant_name: variant_name,
+                variant_patterns: variant_patterns,
+                variant_pattern_count: variant_pattern_count,
+                ref_pattern: Pattern{},
+                is_mut_ref: false,
+            };
+        }
+        
+        return create_ident_pattern(name, is_mut);
+    }
+    
+    // Literal pattern
+    if check(parser, TOK_NUMBER) || check(parser, TOK_STRING) || 
+       check(parser, TOK_CHAR) || check(parser, TOK_TRUE) || check(parser, TOK_FALSE) {
+        let lit_expr = parse_literal(parser);
+        return Pattern {
+            kind: PAT_LITERAL,
+            pattern_type: Type{},
+            name: "",
+            is_mut: false,
+            literal: lit_expr,
+            tuple_patterns: [Pattern{}; 10],
+            tuple_count: 0,
+            struct_name: "",
+            field_patterns: [FieldPattern{}; 20],
+            field_pattern_count: 0,
+            enum_name: "",
+            variant_name: "",
+            variant_patterns: [Pattern{}; 10],
+            variant_pattern_count: 0,
+            ref_pattern: Pattern{},
+            is_mut_ref: false,
+        };
+    }
+    
+    add_error(parser, "Expected pattern");
+    return Pattern{};
+}
+
+// ============ Expression Parsing ============
+
+fn parse_expr(parser: &mut Parser) -> Expr {
+    return parse_assignment(parser);
+}
+
+fn parse_assignment(parser: &mut Parser) -> Expr {
+    let expr = parse_or(parser);
+    
+    if match_token(parser, TOK_EQ) {
+        let value = parse_assignment(parser);
+        return create_assign_expr(expr, value);
+    }
+    
+    return expr;
+}
+
+fn parse_or(parser: &mut Parser) -> Expr {
+    let mut expr = parse_and(parser);
+    
+    while match_token(parser, TOK_OROR) {
+        let op = BINOP_LOGICAL_OR;
+        let right = parse_and(parser);
+        expr = create_binary_expr(op, expr, right);
+    }
+    
+    return expr;
+}
+
+fn parse_and(parser: &mut Parser) -> Expr {
+    let mut expr = parse_equality(parser);
+    
+    while match_token(parser, TOK_ANDAND) {
+        let op = BINOP_LOGICAL_AND;
+        let right = parse_equality(parser);
+        expr = create_binary_expr(op, expr, right);
+    }
+    
+    return expr;
+}
+
+fn parse_equality(parser: &mut Parser) -> Expr {
+    let mut expr = parse_comparison(parser);
+    
+    while true {
+        if match_token(parser, TOK_EQEQ) {
+            let right = parse_comparison(parser);
+            expr = create_binary_expr(BINOP_EQ, expr, right);
+        } else if match_token(parser, TOK_NE) {
+            let right = parse_comparison(parser);
+            expr = create_binary_expr(BINOP_NE, expr, right);
+        } else {
+            break;
+        }
+    }
+    
+    return expr;
+}
+
+fn parse_comparison(parser: &mut Parser) -> Expr {
+    let mut expr = parse_term(parser);
+    
+    while true {
+        if match_token(parser, TOK_LT) {
+            let right = parse_term(parser);
+            expr = create_binary_expr(BINOP_LT, expr, right);
+        } else if match_token(parser, TOK_GT) {
+            let right = parse_term(parser);
+            expr = create_binary_expr(BINOP_GT, expr, right);
+        } else if match_token(parser, TOK_LE) {
+            let right = parse_term(parser);
+            expr = create_binary_expr(BINOP_LE, expr, right);
+        } else if match_token(parser, TOK_GE) {
+            let right = parse_term(parser);
+            expr = create_binary_expr(BINOP_GE, expr, right);
+        } else {
+            break;
+        }
+    }
+    
+    return expr;
+}
+
+fn parse_term(parser: &mut Parser) -> Expr {
+    let mut expr = parse_factor(parser);
+    
+    while true {
+        if match_token(parser, TOK_PLUS) {
+            let right = parse_factor(parser);
+            expr = create_binary_expr(BINOP_ADD, expr, right);
+        } else if match_token(parser, TOK_MINUS) {
+            let right = parse_factor(parser);
+            expr = create_binary_expr(BINOP_SUB, expr, right);
+        } else {
+            break;
+        }
+    }
+    
+    return expr;
+}
+
+fn parse_factor(parser: &mut Parser) -> Expr {
+    let mut expr = parse_unary(parser);
+    
+    while true {
+        if match_token(parser, TOK_STAR) {
+            let right = parse_unary(parser);
+            expr = create_binary_expr(BINOP_MUL, expr, right);
+        } else if match_token(parser, TOK_SLASH) {
+            let right = parse_unary(parser);
+            expr = create_binary_expr(BINOP_DIV, expr, right);
+        } else if match_token(parser, TOK_PERCENT) {
+            let right = parse_unary(parser);
+            expr = create_binary_expr(BINOP_REM, expr, right);
+        } else {
+            break;
+        }
+    }
+    
+    return expr;
+}
+
+fn parse_unary(parser: &mut Parser) -> Expr {
+    if match_token(parser, TOK_BANG) {
+        let expr = parse_unary(parser);
+        return create_unary_expr(UNOP_NOT, expr);
+    }
+    
+    if match_token(parser, TOK_MINUS) {
+        let expr = parse_unary(parser);
+        return create_unary_expr(UNOP_NEG, expr);
+    }
+    
+    if match_token(parser, TOK_STAR) {
+        let expr = parse_unary(parser);
+        return create_unary_expr(UNOP_DEREF, expr);
+    }
+    
+    if match_token(parser, TOK_AMPERSAND) {
+        let is_mut = match_token(parser, TOK_MUT);
+        let expr = parse_unary(parser);
+        return create_ref_expr(expr, is_mut);
+    }
+    
+    return parse_postfix(parser);
+}
+
+fn parse_postfix(parser: &mut Parser) -> Expr {
+    let mut expr = parse_primary(parser);
+    
+    while true {
+        if match_token(parser, TOK_LPAREN) {
+            // Function call
+            expr = parse_call(parser, expr);
+        } else if match_token(parser, TOK_LBRACKET) {
+            // Array indexing
+            let index = parse_expr(parser);
+            consume(parser, TOK_RBRACKET, "Expected ']' after index");
+            expr = create_index_expr(expr, index);
+        } else if match_token(parser, TOK_DOT) {
+            // Field access
+            let field_name = advance(parser);
+            if field_name.type_id != TOK_IDENT {
+                add_error(parser, "Expected field name after '.'");
+                break;
+            }
+            expr = create_field_expr(expr, field_name.string_value);
+        } else if match_token(parser, TOK_QUESTION) {
+            // Question mark operator
+            expr = create_question_expr(expr);
+        } else {
+            break;
+        }
+    }
+    
+    return expr;
+}
+
+fn parse_call(parser: &mut Parser, callee: Expr) -> Expr {
+    let mut args = [Expr{}; 10];
+    let mut arg_count = 0;
+    
+    while !check(parser, TOK_RPAREN) && !is_at_end(parser) {
+        if arg_count >= 10 {
+            add_error(parser, "Too many arguments");
+            break;
+        }
+        
+        args[arg_count] = parse_expr(parser);
+        arg_count = arg_count + 1;
+        
+        if !check(parser, TOK_RPAREN) {
+            consume(parser, TOK_COMMA, "Expected ',' between arguments");
+        }
+    }
+    
+    consume(parser, TOK_RPAREN, "Expected ')' after arguments");
+    
+    return create_call_expr(callee, args, arg_count);
+}
+
+fn parse_primary(parser: &mut Parser) -> Expr {
+    // Literals
+    if check(parser, TOK_NUMBER) || check(parser, TOK_STRING) || 
+       check(parser, TOK_CHAR) || check(parser, TOK_TRUE) || check(parser, TOK_FALSE) {
+        return parse_literal(parser);
+    }
+    
+    // Identifier
+    if check(parser, TOK_IDENT) {
+        let name = advance(parser).string_value;
+        return create_ident_expr(name, previous(parser).line, previous(parser).column);
+    }
+    
+    // Parenthesized expression
+    if match_token(parser, TOK_LPAREN) {
+        let expr = parse_expr(parser);
+        consume(parser, TOK_RPAREN, "Expected ')' after expression");
+        return expr;
+    }
+    
+    // Array literal
+    if match_token(parser, TOK_LBRACKET) {
+        return parse_array_literal(parser);
+    }
+    
+    // Block expression
+    if check(parser, TOK_LBRACE) {
+        return parse_block_expr(parser);
+    }
+    
+    // Control flow expressions
+    if match_token(parser, TOK_IF) {
+        return parse_if_expr(parser);
+    }
+    
+    if match_token(parser, TOK_WHILE) {
+        return parse_while_expr(parser);
+    }
+    
+    if match_token(parser, TOK_FOR) {
+        return parse_for_expr(parser);
+    }
+    
+    if match_token(parser, TOK_MATCH) {
+        return parse_match_expr(parser);
+    }
+    
+    if match_token(parser, TOK_RETURN) {
+        return parse_return_expr(parser);
+    }
+    
+    if match_token(parser, TOK_BREAK) {
+        return parse_break_expr(parser);
+    }
+    
+    if match_token(parser, TOK_CONTINUE) {
+        return create_continue_expr();
+    }
+    
+    add_error(parser, "Expected expression");
+    return Expr{};
+}
+
+fn parse_literal(parser: &mut Parser) -> Expr {
+    let token = advance(parser);
+    
+    if token.type_id == TOK_NUMBER {
+        return create_int_literal(token.int_value, token.line, token.column);
+    }
+    
+    if token.type_id == TOK_STRING {
+        return create_string_literal(token.string_value, token.line, token.column);
+    }
+    
+    if token.type_id == TOK_CHAR {
+        return create_char_literal(token.int_value, token.line, token.column);
+    }
+    
+    if token.type_id == TOK_TRUE {
+        return create_bool_literal(true, token.line, token.column);
+    }
+    
+    if token.type_id == TOK_FALSE {
+        return create_bool_literal(false, token.line, token.column);
+    }
+    
+    add_error(parser, "Invalid literal");
+    return Expr{};
+}
+
+// ============ Control Flow Parsing ============
+
+fn parse_if_expr(parser: &mut Parser) -> Expr {
+    let condition = parse_expr(parser);
+    let then_block = parse_block_expr(parser);
+    
+    let mut else_block = Expr{};
+    if match_token(parser, TOK_ELSE) {
+        if check(parser, TOK_IF) {
+            else_block = parse_if_expr(parser);
+        } else {
+            else_block = parse_block_expr(parser);
+        }
+    }
+    
+    return create_if_expr(condition, then_block, else_block);
+}
+
+fn parse_while_expr(parser: &mut Parser) -> Expr {
+    let condition = parse_expr(parser);
+    let body = parse_block_expr(parser);
+    return create_while_expr(condition, body);
+}
+
+fn parse_for_expr(parser: &mut Parser) -> Expr {
+    let pattern = parse_pattern(parser);
+    consume(parser, TOK_IN, "Expected 'in' in for loop");
+    let iterator = parse_expr(parser);
+    let body = parse_block_expr(parser);
+    return create_for_expr(pattern, iterator, body);
+}
+
+fn parse_match_expr(parser: &mut Parser) -> Expr {
+    let scrutinee = parse_expr(parser);
+    consume(parser, TOK_LBRACE, "Expected '{' after match expression");
+    
+    let mut arms = [MatchArm{}; 20];
+    let mut arm_count = 0;
+    
+    while !check(parser, TOK_RBRACE) && !is_at_end(parser) {
+        if arm_count >= 20 {
+            add_error(parser, "Too many match arms");
+            break;
+        }
+        
+        let pattern = parse_pattern(parser);
+        consume(parser, TOK_FATARROW, "Expected '=>' after match pattern");
+        let body = parse_expr(parser);
+        
+        arms[arm_count] = MatchArm {
+            pattern: pattern,
+            guard: Expr{},
+            body: body,
+        };
+        arm_count = arm_count + 1;
+        
+        if !check(parser, TOK_RBRACE) {
+            consume(parser, TOK_COMMA, "Expected ',' between match arms");
+        }
+    }
+    
+    consume(parser, TOK_RBRACE, "Expected '}' after match arms");
+    
+    return create_match_expr(scrutinee, arms, arm_count);
+}
+
+fn parse_block_expr(parser: &mut Parser) -> Expr {
+    consume(parser, TOK_LBRACE, "Expected '{'");
+    
+    let mut stmts = [Stmt{}; 50];
+    let mut stmt_count = 0;
+    let mut final_expr = Expr{};
+    
+    while !check(parser, TOK_RBRACE) && !is_at_end(parser) {
+        if stmt_count >= 50 {
+            add_error(parser, "Too many statements in block");
+            break;
+        }
+        
+        // Check if this might be the final expression
+        if is_expr_start(parser) {
+            let expr = parse_expr(parser);
+            if check(parser, TOK_RBRACE) {
+                // This is the final expression
+                final_expr = expr;
+                break;
+            } else if match_token(parser, TOK_SEMI) {
+                // This is a statement
+                stmts[stmt_count] = create_expr_stmt(expr);
+                stmt_count = stmt_count + 1;
+            } else {
+                add_error(parser, "Expected ';' or '}' after expression");
+            }
+        } else {
+            // Parse statement
+            stmts[stmt_count] = parse_stmt(parser);
+            stmt_count = stmt_count + 1;
+        }
+    }
+    
+    consume(parser, TOK_RBRACE, "Expected '}'");
+    
+    return create_block_expr(stmts, stmt_count, final_expr);
+}
+
+// ============ Statement Parsing ============
+
+fn parse_stmt(parser: &mut Parser) -> Stmt {
+    if match_token(parser, TOK_LET) {
+        return parse_let_stmt(parser);
+    }
+    
+    // Expression statement
+    let expr = parse_expr(parser);
+    if match_token(parser, TOK_SEMI) {
+        return create_expr_stmt(expr);
+    }
+    
+    add_error(parser, "Expected ';' after expression");
+    return Stmt{};
+}
+
+fn parse_let_stmt(parser: &mut Parser) -> Stmt {
+    let pattern = parse_pattern(parser);
+    
+    let mut type_annotation = Type{};
+    if match_token(parser, TOK_COLON) {
+        type_annotation = parse_type(parser);
+    }
+    
+    let mut init_expr = Expr{};
+    if match_token(parser, TOK_EQ) {
+        init_expr = parse_expr(parser);
+    }
+    
+    consume(parser, TOK_SEMI, "Expected ';' after let statement");
+    
+    return create_let_stmt(pattern, type_annotation, init_expr);
+}
+
+// ============ Other Item Parsing ============
+
+fn parse_struct(parser: &mut Parser, vis: i64) -> Item {
+    let name_token = advance(parser);
+    if name_token.type_id != TOK_IDENT {
+        add_error(parser, "Expected struct name");
+        return Item{};
+    }
+    
+    consume(parser, TOK_LBRACE, "Expected '{' after struct name");
+    
+    let mut fields = [StructField{}; 20];
+    let mut field_count = 0;
+    
+    while !check(parser, TOK_RBRACE) && !is_at_end(parser) {
+        if field_count >= 20 {
+            add_error(parser, "Too many struct fields");
+            break;
+        }
+        
+        let field_vis = parse_visibility(parser);
+        let field_name = advance(parser);
+        if field_name.type_id != TOK_IDENT {
+            add_error(parser, "Expected field name");
+            break;
+        }
+        
+        consume(parser, TOK_COLON, "Expected ':' after field name");
+        let field_type = parse_type(parser);
+        
+        fields[field_count] = StructField {
+            name: field_name.string_value,
+            field_type: field_type,
+            visibility: field_vis,
+        };
+        field_count = field_count + 1;
+        
+        if !check(parser, TOK_RBRACE) {
+            consume(parser, TOK_COMMA, "Expected ',' between fields");
+        }
+    }
+    
+    consume(parser, TOK_RBRACE, "Expected '}' after struct fields");
+    
+    let mut item = Item {
+        kind: ITEM_STRUCT,
+        name: name_token.string_value,
+        visibility: vis,
+        line: name_token.line,
+        column: name_token.column,
+        struct_fields: fields,
+        struct_field_count: field_count,
+        // Initialize other fields to defaults
+        fn_params: [FnParam{}; 10],
+        fn_param_count: 0,
+        fn_return_type: Type{},
+        fn_body: Expr{},
+        is_async: false,
+        is_const: false,
+        is_unsafe: false,
+        enum_variants: [EnumVariant{}; 20],
+        enum_variant_count: 0,
+        trait_items: [TraitItem{}; 30],
+        trait_item_count: 0,
+        impl_type: Type{},
+        impl_trait: "",
+        impl_items: [ImplItem{}; 30],
+        impl_item_count: 0,
+        alias_type: Type{},
+        const_type: Type{},
+        const_value: Expr{},
+        is_mutable: false,
+        mod_items: [Item{}; 50],
+        mod_item_count: 0,
+        use_path: "",
+    };
+    
+    return item;
+}
+
+// ============ Enum Parsing ============
+
+fn parse_enum(parser: &mut Parser, vis: i64) -> Item {
+    let name_token = advance(parser);
+    if name_token.type_id != TOK_IDENT {
+        add_error(parser, "Expected enum name");
+        return Item{};
+    }
+    
+    consume(parser, TOK_LBRACE, "Expected '{' after enum name");
+    
+    let mut variants = [EnumVariant{}; 20];
+    let mut variant_count = 0;
+    
+    while !check(parser, TOK_RBRACE) && !is_at_end(parser) {
+        if variant_count >= 20 {
+            add_error(parser, "Too many enum variants");
+            break;
+        }
+        
+        let variant_name = advance(parser);
+        if variant_name.type_id != TOK_IDENT {
+            add_error(parser, "Expected variant name");
+            break;
+        }
+        
+        let mut variant_data = VariantData {
+            kind: VARIANT_UNIT,
+            tuple_types: [Type{}; 10],
+            tuple_count: 0,
+            struct_fields: [StructField{}; 20],
+            struct_field_count: 0,
+        };
+        
+        // Check for tuple or struct variant
+        if check(parser, TOK_LPAREN) {
+            // Tuple variant
+            variant_data.kind = VARIANT_TUPLE;
+            advance(parser); // consume '('
+            
+            while !check(parser, TOK_RPAREN) && !is_at_end(parser) {
+                if variant_data.tuple_count >= 10 {
+                    add_error(parser, "Too many tuple fields");
+                    break;
+                }
+                
+                variant_data.tuple_types[variant_data.tuple_count] = parse_type(parser);
+                variant_data.tuple_count = variant_data.tuple_count + 1;
+                
+                if !check(parser, TOK_RPAREN) {
+                    consume(parser, TOK_COMMA, "Expected ',' between types");
+                }
+            }
+            
+            consume(parser, TOK_RPAREN, "Expected ')' after tuple variant");
+        } else if check(parser, TOK_LBRACE) {
+            // Struct variant
+            variant_data.kind = VARIANT_STRUCT;
+            advance(parser); // consume '{'
+            
+            while !check(parser, TOK_RBRACE) && !is_at_end(parser) {
+                if variant_data.struct_field_count >= 20 {
+                    add_error(parser, "Too many struct fields");
+                    break;
+                }
+                
+                let field_name = advance(parser);
+                if field_name.type_id != TOK_IDENT {
+                    add_error(parser, "Expected field name");
+                    break;
+                }
+                
+                consume(parser, TOK_COLON, "Expected ':' after field name");
+                let field_type = parse_type(parser);
+                
+                variant_data.struct_fields[variant_data.struct_field_count] = StructField {
+                    name: field_name.string_value,
+                    field_type: field_type,
+                    visibility: VIS_PRIVATE,
+                };
+                variant_data.struct_field_count = variant_data.struct_field_count + 1;
+                
+                if !check(parser, TOK_RBRACE) {
+                    consume(parser, TOK_COMMA, "Expected ',' between fields");
+                }
+            }
+            
+            consume(parser, TOK_RBRACE, "Expected '}' after struct variant");
+        }
+        
+        variants[variant_count] = EnumVariant {
+            name: variant_name.string_value,
+            variant_data: variant_data,
+        };
+        variant_count = variant_count + 1;
+        
+        if !check(parser, TOK_RBRACE) {
+            consume(parser, TOK_COMMA, "Expected ',' between variants");
+        }
+    }
+    
+    consume(parser, TOK_RBRACE, "Expected '}' after enum variants");
+    
+    let mut item = Item {
+        kind: ITEM_ENUM,
+        name: name_token.string_value,
+        visibility: vis,
+        line: name_token.line,
+        column: name_token.column,
+        enum_variants: variants,
+        enum_variant_count: variant_count,
+        // Initialize other fields to defaults
+        fn_params: [FnParam{}; 10],
+        fn_param_count: 0,
+        fn_return_type: Type{},
+        fn_body: Expr{},
+        is_async: false,
+        is_const: false,
+        is_unsafe: false,
+        struct_fields: [StructField{}; 20],
+        struct_field_count: 0,
+        trait_items: [TraitItem{}; 30],
+        trait_item_count: 0,
+        impl_type: Type{},
+        impl_trait: "",
+        impl_items: [ImplItem{}; 30],
+        impl_item_count: 0,
+        alias_type: Type{},
+        const_type: Type{},
+        const_value: Expr{},
+        is_mutable: false,
+        mod_items: [Item{}; 50],
+        mod_item_count: 0,
+        use_path: "",
+    };
+    
+    return item;
+}
+
+fn parse_impl(parser: &mut Parser, vis: i64) -> Item {
+    add_error(parser, "Impl parsing not implemented");
+    return Item{};
+}
+
+fn parse_trait(parser: &mut Parser, vis: i64) -> Item {
+    add_error(parser, "Trait parsing not implemented");
+    return Item{};
+}
+
+fn parse_type_alias(parser: &mut Parser, vis: i64) -> Item {
+    add_error(parser, "Type alias parsing not implemented");
+    return Item{};
+}
+
+fn parse_const(parser: &mut Parser, vis: i64) -> Item {
+    add_error(parser, "Const parsing not implemented");
+    return Item{};
+}
+
+fn parse_static(parser: &mut Parser, vis: i64) -> Item {
+    add_error(parser, "Static parsing not implemented");
+    return Item{};
+}
+
+fn parse_mod(parser: &mut Parser, vis: i64) -> Item {
+    add_error(parser, "Module parsing not implemented");
+    return Item{};
+}
+
+fn parse_use(parser: &mut Parser, vis: i64) -> Item {
+    add_error(parser, "Use parsing not implemented");
+    return Item{};
+}
+
+// ============ Helper Functions ============
+
+fn is_uppercase_char(ch: i64) -> bool {
+    return ch >= 65 && ch <= 90; // 'A' to 'Z'
+}
+
+fn is_expr_start(parser: &Parser) -> bool {
+    let tok = peek(parser);
+    let type_id = tok.type_id;
+    
+    // Literals
+    if type_id == TOK_NUMBER || type_id == TOK_STRING || type_id == TOK_CHAR ||
+       type_id == TOK_TRUE || type_id == TOK_FALSE {
+        return true;
+    }
+    
+    // Identifiers
+    if type_id == TOK_IDENT {
+        return true;
+    }
+    
+    // Grouping/collections
+    if type_id == TOK_LPAREN || type_id == TOK_LBRACKET || type_id == TOK_LBRACE {
+        return true;
+    }
+    
+    // Unary operators
+    if type_id == TOK_BANG || type_id == TOK_MINUS || type_id == TOK_STAR || type_id == TOK_AMPERSAND {
+        return true;
+    }
+    
+    // Control flow
+    if type_id == TOK_IF || type_id == TOK_MATCH || type_id == TOK_WHILE || 
+       type_id == TOK_FOR || type_id == TOK_RETURN || type_id == TOK_BREAK || 
+       type_id == TOK_CONTINUE {
+        return true;
+    }
+    
+    return false;
+}
+
+fn parse_array_literal(parser: &mut Parser) -> Expr {
+    let mut elements = [Expr{}; 20];
+    let mut element_count = 0;
+    
+    while !check(parser, TOK_RBRACKET) && !is_at_end(parser) {
+        if element_count >= 20 {
+            add_error(parser, "Too many array elements");
+            break;
+        }
+        
+        elements[element_count] = parse_expr(parser);
+        element_count = element_count + 1;
+        
+        if !check(parser, TOK_RBRACKET) {
+            consume(parser, TOK_COMMA, "Expected ',' between array elements");
+        }
+    }
+    
+    consume(parser, TOK_RBRACKET, "Expected ']' after array elements");
+    
+    return create_array_expr(elements, element_count);
+}
+
+fn parse_return_expr(parser: &mut Parser) -> Expr {
+    let mut value = Expr{};
+    if is_expr_start(parser) {
+        value = parse_expr(parser);
+    }
+    return create_return_expr(value);
+}
+
+fn parse_break_expr(parser: &mut Parser) -> Expr {
+    let mut value = Expr{};
+    if is_expr_start(parser) {
+        value = parse_expr(parser);
+    }
+    return create_break_expr(value);
+}
+
+// ============ Expression Creation Helpers ============
+
+fn create_binary_expr(op: i64, left: Expr, right: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_BINARY,
+        expr_type: Type{}, // Type will be resolved later
+        line: left.line,
+        column: left.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: op,
+        left: left,
+        right: right,
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_unary_expr(op: i64, operand: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_UNARY,
+        expr_type: Type{},
+        line: operand.line,
+        column: operand.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: op,
+        operand: operand,
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_call_expr(callee: Expr, args: [Expr; 10], arg_count: i64) -> Expr {
+    return Expr {
+        kind: EXPR_CALL,
+        expr_type: Type{},
+        line: callee.line,
+        column: callee.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: callee,
+        args: args,
+        arg_count: arg_count,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_assign_expr(left: Expr, right: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_ASSIGN,
+        expr_type: Type{},
+        line: left.line,
+        column: left.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: left,
+        right: right,
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+// More helper functions...
+
+fn create_char_literal(value: i64, line: i64, column: i64) -> Expr {
+    return Expr {
+        kind: EXPR_LITERAL,
+        expr_type: create_primitive_type(PRIM_CHAR),
+        line: line,
+        column: column,
+        literal_kind: LIT_CHAR,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: value,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_bool_literal(value: bool, line: i64, column: i64) -> Expr {
+    return Expr {
+        kind: EXPR_LITERAL,
+        expr_type: create_primitive_type(PRIM_BOOL),
+        line: line,
+        column: column,
+        literal_kind: LIT_BOOL,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: value,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+// Control flow expression creators
+fn create_if_expr(condition: Expr, then_expr: Expr, else_expr: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_IF,
+        expr_type: Type{},
+        line: condition.line,
+        column: condition.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: condition,
+        then_expr: then_expr,
+        else_expr: else_expr,
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+// More expression creation helpers
+
+fn create_while_expr(condition: Expr, body: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_WHILE,
+        expr_type: Type{},
+        line: condition.line,
+        column: condition.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: condition,
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: body,
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_for_expr(pattern: Pattern, iterator: Expr, body: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_FOR,
+        expr_type: Type{},
+        line: iterator.line,
+        column: iterator.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: body,
+        pattern: pattern,
+        iterator: iterator,
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_match_expr(scrutinee: Expr, arms: [MatchArm; 20], arm_count: i64) -> Expr {
+    return Expr {
+        kind: EXPR_MATCH,
+        expr_type: Type{},
+        line: scrutinee.line,
+        column: scrutinee.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: scrutinee,
+        arms: arms,
+        arm_count: arm_count,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_block_expr(stmts: [Stmt; 50], stmt_count: i64, final_expr: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_BLOCK,
+        expr_type: Type{},
+        line: 0,
+        column: 0,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: stmts,
+        stmt_count: stmt_count,
+        final_expr: final_expr,
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_return_expr(value: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_RETURN,
+        expr_type: Type{},
+        line: value.line,
+        column: value.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: value,
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_break_expr(value: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_BREAK,
+        expr_type: Type{},
+        line: value.line,
+        column: value.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: value,
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_continue_expr() -> Expr {
+    return Expr {
+        kind: EXPR_CONTINUE,
+        expr_type: Type{},
+        line: 0,
+        column: 0,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_array_expr(elements: [Expr; 20], element_count: i64) -> Expr {
+    return Expr {
+        kind: EXPR_ARRAY,
+        expr_type: Type{},
+        line: 0,
+        column: 0,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: elements,
+        element_count: element_count,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_index_expr(array: Expr, index: Expr) -> Expr {
+    return Expr {
+        kind: EXPR_INDEX,
+        expr_type: Type{},
+        line: array.line,
+        column: array.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: array,
+        index: index,
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_field_expr(object: Expr, field_name: String) -> Expr {
+    return Expr {
+        kind: EXPR_FIELD,
+        expr_type: Type{},
+        line: object.line,
+        column: object.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: object,
+        field_name: field_name,
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_ref_expr(expr: Expr, is_mut: bool) -> Expr {
+    return Expr {
+        kind: EXPR_REFERENCE,
+        expr_type: Type{},
+        line: expr.line,
+        column: expr.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: expr,
+        is_mut_ref: is_mut,
+    };
+}
+
+fn create_question_expr(expr: Expr) -> Expr {
+    // Question mark operator - for error propagation
+    return Expr {
+        kind: EXPR_QUESTION,
+        expr_type: Type{},
+        line: expr.line,
+        column: expr.column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: expr,
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_expr_stmt(expr: Expr) -> Stmt {
+    return Stmt {
+        kind: STMT_EXPR,
+        line: expr.line,
+        column: expr.column,
+        pattern: Pattern{},
+        let_type: Type{},
+        init_expr: Expr{},
+        expr: expr,
+    };
+}
+
+fn create_let_stmt(pattern: Pattern, ty: Type, init: Expr) -> Stmt {
+    return Stmt {
+        kind: STMT_LET,
+        line: 0,
+        column: 0,
+        pattern: pattern,
+        let_type: ty,
+        init_expr: init,
+        expr: Expr{},
+    };
+}
+
+// Test the parser
+fn test_parser() {
+    let input = "fn main() {
+    let x: i64 = 42;
+    let msg = \"Hello, Parser!\";
+    
+    if x > 0 {
+        print(msg);
+    }
+}";
+
+    // First tokenize
+    let mut lexer = create_lexer(input);
+    let tokens = next_token(&mut lexer);
+    
+    // Then parse
+    let mut parser = create_parser(lexer.tokens, lexer.token_count);
+    let program = parse_program(&mut parser);
+    
+    print("=== Parser Test ===");
+    if parser.error_count > 0 {
+        print("Parser errors:");
+        let mut i = 0;
+        while i < parser.error_count {
+            print(parser.errors[i]);
+            i = i + 1;
+        }
+    } else {
+        print("Parse successful!");
+        print(string_concat("Items parsed: ", int_to_string(program.item_count)));
+    }
+}

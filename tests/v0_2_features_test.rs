@@ -12,7 +12,7 @@ fn compile_and_check(name: &str, pd_code: &str, expected_output: &str) {
 
     // Use the 'run' command which compiles and executes
     let run_output = Command::new("cargo")
-        .args(["run", "--", "run", &pd_file])
+        .args(["run", "--bin", "pdc", "--", "run", &pd_file])
         .output()
         .expect("Failed to run palladiumc");
 

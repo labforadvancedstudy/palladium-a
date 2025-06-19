@@ -1,0 +1,33 @@
+// Test nested generic enums
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn main() {
+    // For now, test simpler cases until full type inference is implemented
+    let inner_result = Result::Ok(42);
+    let x = Option::Some(inner_result);
+    
+    match x {
+        Option::Some(result) => {
+            match result {
+                Result::Ok(val) => {
+                    print_int(val);
+                }
+                Result::Err(e) => {
+                    print("Error in result");
+                }
+            }
+        }
+        Option::None => {
+            print("No result");
+        }
+    }
+}

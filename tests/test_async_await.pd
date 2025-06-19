@@ -1,0 +1,41 @@
+// Test async/await functionality
+
+async fn delay(ms: i32) -> i32 {
+    print("Delaying for ");
+    print(ms);
+    print(" ms\n");
+    ms  // Return value - no semicolon
+}
+
+async fn process_data(value: i32) -> i32 {
+    print("Processing data: ");
+    print(value);
+    print("\n");
+    
+    // Await a delay
+    let delay_result = delay(100).await;
+    print("Delay completed: ");
+    print(delay_result);
+    print("\n");
+    
+    value * 2
+}
+
+async fn print_async(msg: String) {
+    print("Async: ");
+    print(msg);
+    print("\n");
+}
+
+fn main() {
+    print("Starting async test\n");
+    
+    // Call async functions (they return futures)
+    let future1 = process_data(42);
+    let future2 = print_async("Hello from async!");
+    
+    // In a real implementation, we'd have a runtime to poll these
+    // For now, they execute immediately in our simplified model
+    
+    print("Main function complete\n");
+}

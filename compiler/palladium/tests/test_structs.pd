@@ -1,0 +1,53 @@
+// Struct test for self-hosting compiler
+// Tests struct declarations, field access, and methods
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Rectangle {
+    top_left: Point,
+    width: i64,
+    height: i64,
+}
+
+fn create_point(x: i64, y: i64) -> Point {
+    return Point { x: x, y: y };
+}
+
+fn point_distance_squared(p1: Point, p2: Point) -> i64 {
+    let dx = p1.x - p2.x;
+    let dy = p1.y - p2.y;
+    return dx * dx + dy * dy;
+}
+
+fn rectangle_area(rect: Rectangle) -> i64 {
+    return rect.width * rect.height;
+}
+
+fn main() {
+    print("=== Struct Test ===");
+    
+    // Test struct creation
+    let p1 = create_point(10, 20);
+    let p2 = Point { x: 30, y: 40 };
+    
+    // Test field access
+    print(string_concat("Point 1 x: ", int_to_string(p1.x)));
+    print(string_concat("Point 1 y: ", int_to_string(p1.y)));
+    
+    // Test struct as function parameter
+    let dist_sq = point_distance_squared(p1, p2);
+    print(string_concat("Distance squared: ", int_to_string(dist_sq)));
+    
+    // Test nested structs
+    let rect = Rectangle {
+        top_left: create_point(0, 0),
+        width: 100,
+        height: 50,
+    };
+    
+    let area = rectangle_area(rect);
+    print(string_concat("Rectangle area: ", int_to_string(area)));
+}

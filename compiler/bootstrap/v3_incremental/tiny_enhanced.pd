@@ -1,0 +1,1157 @@
+// Enhanced Tiny Palladium Compiler
+// Adds: for loops, match expressions, enums, and better error handling
+
+fn is_same_string(s1: String, s2: String) -> bool {
+    let len1 = string_len(s1);
+    let len2 = string_len(s2);
+    
+    if len1 != len2 {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < len1 {
+        if string_char_at(s1, i) != string_char_at(s2, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+// Error reporting
+fn report_error(msg: String, line: i64) -> String {
+    print("Error on line " + int_to_string(line) + ": " + msg);
+    return "";
+}
+
+// Track line numbers for better error messages
+fn count_lines(source: String, pos: i64) -> i64 {
+    let mut lines = 1;
+    let mut i = 0;
+    while i < pos {
+        if string_char_at(source, i) == 10 { // newline
+            lines = lines + 1;
+        }
+        i = i + 1;
+    }
+    return lines;
+}
+
+// Skip whitespace and comments
+fn skip_whitespace_and_comments(source: String, pos: i64, len: i64) -> i64 {
+    let mut p = pos;
+    
+    while p < len {
+        let ch = string_char_at(source, p);
+        
+        // Skip whitespace
+        if ch == 32 || ch == 9 || ch == 10 || ch == 13 {
+            p = p + 1;
+            continue;
+        }
+        
+        // Skip single-line comments
+        if p + 1 < len && ch == 47 && string_char_at(source, p + 1) == 47 { // //
+            while p < len && string_char_at(source, p) != 10 { // newline
+                p = p + 1;
+            }
+            continue;
+        }
+        
+        break;
+    }
+    
+    return p;
+}
+
+// Parse an identifier
+fn parse_identifier(source: String, pos: i64, len: i64) -> String {
+    let mut ident = "";
+    let mut p = pos;
+    
+    while p < len {
+        let ch = string_char_at(source, p);
+        if (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || 
+           (ch >= 48 && ch <= 57) || ch == 95 { // a-z, A-Z, 0-9, _
+            ident = ident + string_from_char(ch);
+            p = p + 1;
+        } else {
+            break;
+        }
+    }
+    
+    return ident;
+}
+
+// Parse an expression with operators, array indexing, struct fields
+fn parse_expr(expr: String) -> String {
+    let mut result = "";
+    let mut i = 0;
+    let len = string_len(expr);
+    
+    while i < len {
+        let ch = string_char_at(expr, i);
+        
+        // Skip leading whitespace
+        if (ch == 32 || ch == 9 || ch == 10) && string_len(result) == 0 {
+            i = i + 1;
+            continue;
+        }
+        
+        // Check if this is the start of an identifier or function call
+        if (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || ch == 95 { // a-z, A-Z, _
+            let mut identifier = "";
+            let start_i = i;
+            
+            // Collect the identifier
+            while i < len {
+                let id_ch = string_char_at(expr, i);
+                if (id_ch >= 97 && id_ch <= 122) || (id_ch >= 65 && id_ch <= 90) || 
+                   (id_ch >= 48 && id_ch <= 57) || id_ch == 95 { // a-z, A-Z, 0-9, _
+                    identifier = identifier + string_from_char(id_ch);
+                    i = i + 1;
+                } else {
+                    break;
+                }
+            }
+            
+            // Skip whitespace after identifier
+            let mut j = i;
+            while j < len && (string_char_at(expr, j) == 32 || string_char_at(expr, j) == 9) {
+                j = j + 1;
+            }
+            
+            // Check if it's a function call
+            if j < len && string_char_at(expr, j) == 40 { // (
+                // Translate built-in function names
+                if is_same_string(identifier, "string_len") {
+                    result = result + "__pd_string_len";
+                } else if is_same_string(identifier, "string_char_at") {
+                    result = result + "__pd_string_char_at";
+                } else if is_same_string(identifier, "string_from_char") {
+                    result = result + "__pd_string_from_char";
+                } else if is_same_string(identifier, "int_to_string") {
+                    result = result + "__pd_int_to_string";
+                } else if is_same_string(identifier, "print") {
+                    result = result + "__pd_print";
+                } else {
+                    // Regular function call - keep as is
+                    result = result + identifier;
+                }
+                
+                // Copy whitespace
+                while i < j {
+                    result = result + string_from_char(string_char_at(expr, i));
+                    i = i + 1;
+                }
+                
+                // Copy the opening parenthesis
+                result = result + "(";
+                i = j + 1;
+                
+                // Parse the arguments recursively
+                let mut paren_depth = 1;
+                let mut arg_expr = "";
+                while i < len && paren_depth > 0 {
+                    let arg_ch = string_char_at(expr, i);
+                    if arg_ch == 40 { // (
+                        paren_depth = paren_depth + 1;
+                        arg_expr = arg_expr + "(";
+                    } else if arg_ch == 41 { // )
+                        paren_depth = paren_depth - 1;
+                        if paren_depth > 0 {
+                            arg_expr = arg_expr + ")";
+                        }
+                    } else if arg_ch == 44 && paren_depth == 1 { // ,
+                        // End of argument - parse it
+                        result = result + parse_expr(arg_expr) + ", ";
+                        arg_expr = "";
+                    } else {
+                        arg_expr = arg_expr + string_from_char(arg_ch);
+                    }
+                    i = i + 1;
+                }
+                
+                // Handle the last argument
+                if string_len(arg_expr) > 0 {
+                    result = result + parse_expr(arg_expr);
+                }
+                
+                result = result + ")";
+            } else {
+                // Handle variable translations
+                if is_same_string(identifier, "true") {
+                    result = result + "1";
+                } else if is_same_string(identifier, "false") {
+                    result = result + "0";
+                } else {
+                    result = result + identifier;
+                }
+                
+                // Restore position if we didn't consume a function call
+                i = j;
+            }
+        } else if ch == 34 { // "
+            // String literal - copy as is
+            result = result + "\"";
+            i = i + 1;
+            while i < len {
+                let str_ch = string_char_at(expr, i);
+                if str_ch == 92 { // \
+                    result = result + "\\";
+                    i = i + 1;
+                    if i < len {
+                        result = result + string_from_char(string_char_at(expr, i));
+                        i = i + 1;
+                    }
+                } else if str_ch == 34 { // "
+                    result = result + "\"";
+                    i = i + 1;
+                    break;
+                } else {
+                    result = result + string_from_char(str_ch);
+                    i = i + 1;
+                }
+            }
+        } else {
+            // Everything else - copy as is
+            result = result + string_from_char(ch);
+            i = i + 1;
+        }
+    }
+    
+    return result;
+}
+
+// Parse a type name
+fn parse_type(type_str: String) -> String {
+    if is_same_string(type_str, "String") {
+        return "const char*";
+    } else if is_same_string(type_str, "bool") {
+        return "int";
+    } else if is_same_string(type_str, "i64") {
+        return "long long";
+    } else {
+        return type_str;
+    }
+}
+
+// Parse for loop (NEW!)
+fn parse_for_loop(source: String, pos: i64, len: i64, indent: String) -> String {
+    let mut p = pos + 3; // Skip "for"
+    let mut output = "";
+    
+    p = skip_whitespace_and_comments(source, p, len);
+    
+    // Get loop variable
+    let var_name = parse_identifier(source, p, len);
+    p = p + string_len(var_name);
+    
+    p = skip_whitespace_and_comments(source, p, len);
+    
+    // Expect "in"
+    if p + 2 >= len || string_char_at(source, p) != 105 || string_char_at(source, p + 1) != 110 { // "in"
+        return report_error("Expected 'in' after for loop variable", count_lines(source, p));
+    }
+    p = p + 2;
+    
+    p = skip_whitespace_and_comments(source, p, len);
+    
+    // For now, only support range syntax: start..end
+    let mut range_start = "";
+    while p < len && string_char_at(source, p) != 46 { // .
+        range_start = range_start + string_from_char(string_char_at(source, p));
+        p = p + 1;
+    }
+    
+    if p + 1 >= len || string_char_at(source, p) != 46 || string_char_at(source, p + 1) != 46 { // ..
+        return report_error("For loops currently only support range syntax (start..end)", count_lines(source, p));
+    }
+    p = p + 2;
+    
+    let mut range_end = "";
+    while p < len && string_char_at(source, p) != 123 { // {
+        let ch = string_char_at(source, p);
+        if ch != 32 && ch != 9 && ch != 10 { // whitespace
+            range_end = range_end + string_from_char(ch);
+        }
+        p = p + 1;
+    }
+    
+    // Generate C for loop
+    output = output + indent + "for (long long " + var_name + " = " + parse_expr(range_start) + "; ";
+    output = output + var_name + " < " + parse_expr(range_end) + "; ";
+    output = output + var_name + "++) {\n";
+    
+    return output;
+}
+
+// Parse match expression (NEW! - simplified version)
+fn parse_match(source: String, pos: i64, len: i64, indent: String) -> String {
+    let mut p = pos + 5; // Skip "match"
+    let mut output = "";
+    
+    p = skip_whitespace_and_comments(source, p, len);
+    
+    // Get the expression to match
+    let mut match_expr = "";
+    let mut paren_depth = 0;
+    while p < len && (string_char_at(source, p) != 123 || paren_depth > 0) { // {
+        let ch = string_char_at(source, p);
+        if ch == 40 { // (
+            paren_depth = paren_depth + 1;
+        } else if ch == 41 { // )
+            paren_depth = paren_depth - 1;
+        }
+        match_expr = match_expr + string_from_char(ch);
+        p = p + 1;
+    }
+    
+    let match_var = parse_expr(match_expr);
+    
+    // For now, convert match to if-else chain
+    output = output + indent + "// match expression\n";
+    output = output + indent + "{\n";
+    output = output + indent + "    int __match_found = 0;\n";
+    
+    p = p + 1; // Skip {
+    let mut first_arm = true;
+    
+    while p < len && string_char_at(source, p) != 125 { // }
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        if p >= len {
+            break;
+        }
+        
+        // Parse pattern (for now, just literals)
+        let mut pattern = "";
+        while p < len && string_char_at(source, p) != 61 { // = (part of =>)
+            let ch = string_char_at(source, p);
+            if ch != 32 && ch != 9 { // whitespace
+                pattern = pattern + string_from_char(ch);
+            }
+            p = p + 1;
+        }
+        
+        if p + 1 >= len || string_char_at(source, p) != 61 || string_char_at(source, p + 1) != 62 { // =>
+            return report_error("Expected '=>' after match pattern", count_lines(source, p));
+        }
+        p = p + 2;
+        
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Generate if/else if
+        if first_arm {
+            output = output + indent + "    if (" + match_var + " == " + parse_expr(pattern) + ") {\n";
+            first_arm = false;
+        } else if is_same_string(pattern, "_") {
+            output = output + indent + "    } else {\n"; // Default case
+        } else {
+            output = output + indent + "    } else if (" + match_var + " == " + parse_expr(pattern) + ") {\n";
+        }
+        
+        output = output + indent + "        __match_found = 1;\n";
+        
+        // Parse the arm body (for now, just single expressions)
+        let mut arm_body = "";
+        let mut brace_depth = 0;
+        while p < len && (string_char_at(source, p) != 44 || brace_depth > 0) && 
+                        (string_char_at(source, p) != 125 || brace_depth > 0) { // , or }
+            let ch = string_char_at(source, p);
+            if ch == 123 { // {
+                brace_depth = brace_depth + 1;
+            } else if ch == 125 { // }
+                brace_depth = brace_depth - 1;
+            }
+            arm_body = arm_body + string_from_char(ch);
+            p = p + 1;
+        }
+        
+        if string_char_at(source, p) == 44 { // ,
+            p = p + 1; // Skip comma
+        }
+        
+        output = output + indent + "        " + parse_expr(arm_body) + ";\n";
+    }
+    
+    output = output + indent + "    }\n";
+    output = output + indent + "}\n";
+    
+    return output;
+}
+
+// Parse enum declaration (NEW! - simplified)
+fn parse_enum(source: String, pos: i64, len: i64) -> String {
+    let mut p = pos + 4; // Skip "enum"
+    let mut output = "";
+    
+    p = skip_whitespace_and_comments(source, p, len);
+    
+    // Get enum name
+    let enum_name = parse_identifier(source, p, len);
+    p = p + string_len(enum_name);
+    
+    p = skip_whitespace_and_comments(source, p, len);
+    
+    if string_char_at(source, p) != 123 { // {
+        return report_error("Expected '{' after enum name", count_lines(source, p));
+    }
+    p = p + 1;
+    
+    // Generate C enum
+    output = output + "typedef enum {\n";
+    
+    let mut variant_num = 0;
+    while p < len && string_char_at(source, p) != 125 { // }
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        if p >= len {
+            break;
+        }
+        
+        // Get variant name
+        let variant_name = parse_identifier(source, p, len);
+        if string_len(variant_name) > 0 {
+            output = output + "    " + enum_name + "_" + variant_name + " = " + int_to_string(variant_num);
+            variant_num = variant_num + 1;
+            
+            p = p + string_len(variant_name);
+            p = skip_whitespace_and_comments(source, p, len);
+            
+            if string_char_at(source, p) == 44 { // ,
+                output = output + ",\n";
+                p = p + 1;
+            } else if string_char_at(source, p) == 125 { // }
+                output = output + "\n";
+                break;
+            } else {
+                output = output + "\n";
+            }
+        }
+    }
+    
+    output = output + "} " + enum_name + ";\n\n";
+    
+    return output;
+}
+
+// Parse a single statement - enhanced version
+fn parse_statement(source: String, pos: i64, len: i64, indent: String) -> String {
+    let mut p = pos;
+    let mut output = "";
+    
+    p = skip_whitespace_and_comments(source, p, len);
+    
+    if p >= len {
+        return output;
+    }
+    
+    // Look for "for" (NEW!)
+    if p + 3 < len &&
+       string_char_at(source, p) == 102 &&     // f
+       string_char_at(source, p+1) == 111 &&   // o
+       string_char_at(source, p+2) == 114 &&   // r
+       (string_char_at(source, p+3) == 32 ||   // space
+        string_char_at(source, p+3) == 40) {   // (
+        
+        return parse_for_loop(source, p, len, indent);
+    }
+    
+    // Look for "match" (NEW!)
+    if p + 5 < len &&
+       string_char_at(source, p) == 109 &&     // m
+       string_char_at(source, p+1) == 97 &&    // a
+       string_char_at(source, p+2) == 116 &&   // t
+       string_char_at(source, p+3) == 99 &&    // c
+       string_char_at(source, p+4) == 104 &&   // h
+       (string_char_at(source, p+5) == 32 ||   // space
+        string_char_at(source, p+5) == 40) {   // (
+        
+        return parse_match(source, p, len, indent);
+    }
+    
+    // Look for "while"
+    if p + 5 < len &&
+       string_char_at(source, p) == 119 &&     // w
+       string_char_at(source, p+1) == 104 &&   // h
+       string_char_at(source, p+2) == 105 &&   // i
+       string_char_at(source, p+3) == 108 &&   // l
+       string_char_at(source, p+4) == 101 &&   // e
+       (string_char_at(source, p+5) == 32 ||   // space
+        string_char_at(source, p+5) == 40) {   // (
+        
+        output = output + indent + "while (";
+        
+        // Skip "while" and whitespace
+        p = p + 5;
+        while p < len && (string_char_at(source, p) == 32 || string_char_at(source, p) == 40) {
+            p = p + 1;
+        }
+        
+        // Get condition
+        let mut cond = "";
+        let mut paren_depth = 0;
+        while p < len {
+            let ch = string_char_at(source, p);
+            if ch == 40 { // (
+                paren_depth = paren_depth + 1;
+            } else if ch == 41 { // )
+                if paren_depth > 0 {
+                    paren_depth = paren_depth - 1;
+                } else {
+                    p = p + 1;
+                    break;
+                }
+            } else if ch == 123 && paren_depth == 0 { // {
+                break;
+            }
+            cond = cond + string_from_char(ch);
+            p = p + 1;
+        }
+        
+        output = output + parse_expr(cond) + ") {\n";
+        return output;
+    }
+    
+    // Look for "if"
+    if p + 2 < len &&
+       string_char_at(source, p) == 105 &&     // i
+       string_char_at(source, p+1) == 102 &&   // f
+       (string_char_at(source, p+2) == 32 ||   // space
+        string_char_at(source, p+2) == 40) {   // (
+        
+        output = output + indent + "if (";
+        
+        // Skip "if" and whitespace
+        p = p + 2;
+        while p < len && (string_char_at(source, p) == 32 || string_char_at(source, p) == 40) {
+            p = p + 1;
+        }
+        
+        // Get condition
+        let mut cond = "";
+        let mut paren_depth = 0;
+        while p < len {
+            let ch = string_char_at(source, p);
+            if ch == 40 { // (
+                paren_depth = paren_depth + 1;
+            } else if ch == 41 { // )
+                if paren_depth > 0 {
+                    paren_depth = paren_depth - 1;
+                } else {
+                    p = p + 1;
+                    break;
+                }
+            } else if ch == 123 && paren_depth == 0 { // {
+                break;
+            }
+            cond = cond + string_from_char(ch);
+            p = p + 1;
+        }
+        
+        output = output + parse_expr(cond) + ") {\n";
+        
+        // Check for else
+        let mut check_pos = p;
+        while check_pos < len && string_char_at(source, check_pos) != 125 { // }
+            check_pos = check_pos + 1;
+        }
+        check_pos = check_pos + 1; // Skip }
+        check_pos = skip_whitespace_and_comments(source, check_pos, len);
+        
+        if check_pos + 4 < len &&
+           string_char_at(source, check_pos) == 101 &&     // e
+           string_char_at(source, check_pos+1) == 108 &&   // l
+           string_char_at(source, check_pos+2) == 115 &&   // s
+           string_char_at(source, check_pos+3) == 101 {    // e
+            // Has else clause - will be handled later
+        }
+        
+        return output;
+    }
+    
+    // Look for "return"
+    if p + 6 < len &&
+       string_char_at(source, p) == 114 &&     // r
+       string_char_at(source, p+1) == 101 &&   // e
+       string_char_at(source, p+2) == 116 &&   // t
+       string_char_at(source, p+3) == 117 &&   // u
+       string_char_at(source, p+4) == 114 &&   // r
+       string_char_at(source, p+5) == 110 &&   // n
+       (string_char_at(source, p+6) == 32 ||   // space
+        string_char_at(source, p+6) == 59) {   // ;
+        
+        output = output + indent + "return";
+        p = p + 6;
+        
+        // Skip whitespace
+        while p < len && string_char_at(source, p) == 32 {
+            p = p + 1;
+        }
+        
+        if string_char_at(source, p) != 59 { // ;
+            // Has return value
+            let mut ret_expr = "";
+            while p < len && string_char_at(source, p) != 59 { // ;
+                ret_expr = ret_expr + string_from_char(string_char_at(source, p));
+                p = p + 1;
+            }
+            output = output + " " + parse_expr(ret_expr);
+        }
+        
+        output = output + ";\n";
+        return output;
+    }
+    
+    // Look for "let"
+    if p + 3 < len &&
+       string_char_at(source, p) == 108 &&     // l
+       string_char_at(source, p+1) == 101 &&   // e
+       string_char_at(source, p+2) == 116 &&   // t
+       (string_char_at(source, p+3) == 32) {   // space
+        
+        p = p + 3; // Skip "let"
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Check for "mut"
+        let mut is_mut = false;
+        if p + 3 < len &&
+           string_char_at(source, p) == 109 &&     // m
+           string_char_at(source, p+1) == 117 &&   // u
+           string_char_at(source, p+2) == 116 &&   // t
+           (string_char_at(source, p+3) == 32) {   // space
+            is_mut = true;
+            p = p + 3;
+            p = skip_whitespace_and_comments(source, p, len);
+        }
+        
+        // Get variable name
+        let var_name = parse_identifier(source, p, len);
+        p = p + string_len(var_name);
+        
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Check for type annotation
+        let mut var_type = "";
+        if string_char_at(source, p) == 58 { // :
+            p = p + 1;
+            p = skip_whitespace_and_comments(source, p, len);
+            
+            // Check for array type [type; size]
+            if string_char_at(source, p) == 91 { // [
+                p = p + 1;
+                let mut elem_type = "";
+                while p < len && string_char_at(source, p) != 59 { // ;
+                    elem_type = elem_type + string_from_char(string_char_at(source, p));
+                    p = p + 1;
+                }
+                p = p + 1; // Skip ;
+                
+                let mut size = "";
+                while p < len && string_char_at(source, p) != 93 { // ]
+                    size = size + string_from_char(string_char_at(source, p));
+                    p = p + 1;
+                }
+                p = p + 1; // Skip ]
+                
+                var_type = parse_type(elem_type) + "[" + size + "]";
+            } else {
+                // Regular type
+                let type_name = parse_identifier(source, p, len);
+                var_type = parse_type(type_name);
+                p = p + string_len(type_name);
+            }
+        }
+        
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Look for = assignment
+        if string_char_at(source, p) == 61 { // =
+            p = p + 1;
+            p = skip_whitespace_and_comments(source, p, len);
+            
+            // Check for array literal [val1, val2, ...]
+            if string_char_at(source, p) == 91 { // [
+                let mut array_init = "{";
+                p = p + 1;
+                
+                while p < len && string_char_at(source, p) != 93 { // ]
+                    let mut elem = "";
+                    while p < len && string_char_at(source, p) != 44 && // ,
+                                     string_char_at(source, p) != 93 { // ]
+                        elem = elem + string_from_char(string_char_at(source, p));
+                        p = p + 1;
+                    }
+                    
+                    array_init = array_init + parse_expr(elem);
+                    
+                    if string_char_at(source, p) == 44 { // ,
+                        array_init = array_init + ", ";
+                        p = p + 1;
+                        p = skip_whitespace_and_comments(source, p, len);
+                    }
+                }
+                
+                array_init = array_init + "}";
+                
+                if string_len(var_type) == 0 {
+                    // Infer array type from size
+                    output = output + indent + "long long " + var_name + "[] = " + array_init + ";\n";
+                } else {
+                    output = output + indent + var_type + " " + var_name + " = " + array_init + ";\n";
+                }
+            } else {
+                // Regular initialization
+                let mut init_expr = "";
+                while p < len && string_char_at(source, p) != 59 { // ;
+                    init_expr = init_expr + string_from_char(string_char_at(source, p));
+                    p = p + 1;
+                }
+                
+                if string_len(var_type) == 0 {
+                    // Infer type from value
+                    if string_char_at(init_expr, 0) == 34 { // "
+                        var_type = "const char*";
+                    } else {
+                        var_type = "long long";
+                    }
+                }
+                
+                if !is_mut && is_same_string(var_type, "const char*") {
+                    output = output + indent + "const char* " + var_name + " = " + parse_expr(init_expr) + ";\n";
+                } else {
+                    output = output + indent + var_type + " " + var_name + " = " + parse_expr(init_expr) + ";\n";
+                }
+            }
+        } else {
+            // Declaration without initialization
+            if string_len(var_type) == 0 {
+                return report_error("Variable declaration requires type annotation or initialization", count_lines(source, p));
+            }
+            output = output + indent + var_type + " " + var_name + ";\n";
+        }
+        
+        return output;
+    }
+    
+    // Check for print
+    if p + 5 < len &&
+       string_char_at(source, p) == 112 &&     // p
+       string_char_at(source, p+1) == 114 &&   // r
+       string_char_at(source, p+2) == 105 &&   // i
+       string_char_at(source, p+3) == 110 &&   // n
+       string_char_at(source, p+4) == 116 &&   // t
+       string_char_at(source, p+5) == 40 {     // (
+        
+        output = output + indent + "__pd_print(";
+        p = p + 6; // Skip "print("
+        
+        // Get the argument
+        let mut arg = "";
+        let mut paren_depth = 1;
+        while p < len && paren_depth > 0 {
+            let ch = string_char_at(source, p);
+            if ch == 40 { // (
+                paren_depth = paren_depth + 1;
+                arg = arg + "(";
+            } else if ch == 41 { // )
+                paren_depth = paren_depth - 1;
+                if paren_depth > 0 {
+                    arg = arg + ")";
+                }
+            } else {
+                arg = arg + string_from_char(ch);
+            }
+            p = p + 1;
+        }
+        
+        output = output + parse_expr(arg) + ");\n";
+        return output;
+    }
+    
+    // Otherwise, it's an expression or assignment
+    let mut stmt_text = "";
+    while p < len && string_char_at(source, p) != 59 && // ;
+                     string_char_at(source, p) != 10 {  // newline
+        stmt_text = stmt_text + string_from_char(string_char_at(source, p));
+        p = p + 1;
+    }
+    
+    // Check if it's an assignment
+    let mut has_assignment = false;
+    let mut assign_pos = 0;
+    let mut i = 0;
+    while i < string_len(stmt_text) {
+        if string_char_at(stmt_text, i) == 61 && // =
+           (i == 0 || string_char_at(stmt_text, i-1) != 61) && // not ==
+           (i + 1 >= string_len(stmt_text) || string_char_at(stmt_text, i+1) != 61) { // not ==
+            has_assignment = true;
+            assign_pos = i;
+            break;
+        }
+        i = i + 1;
+    }
+    
+    if has_assignment {
+        // Split into lhs and rhs
+        let mut lhs = "";
+        let mut j = 0;
+        while j < assign_pos {
+            lhs = lhs + string_from_char(string_char_at(stmt_text, j));
+            j = j + 1;
+        }
+        
+        let mut rhs = "";
+        j = assign_pos + 1;
+        while j < string_len(stmt_text) {
+            rhs = rhs + string_from_char(string_char_at(stmt_text, j));
+            j = j + 1;
+        }
+        
+        output = output + indent + parse_expr(lhs) + " = " + parse_expr(rhs) + ";\n";
+    } else if string_len(stmt_text) > 0 {
+        // Expression statement
+        output = output + indent + parse_expr(stmt_text) + ";\n";
+    }
+    
+    return output;
+}
+
+// Parse a function
+fn compile_function(source: String, start_pos: i64, len: i64) -> String {
+    let mut pos = start_pos + 2; // Skip "fn"
+    let mut output = "";
+    
+    pos = skip_whitespace_and_comments(source, pos, len);
+    
+    // Get function name
+    let func_name = parse_identifier(source, pos, len);
+    pos = pos + string_len(func_name);
+    
+    pos = skip_whitespace_and_comments(source, pos, len);
+    
+    // Parse parameters
+    let mut params = "";
+    if pos < len && string_char_at(source, pos) == 40 { // (
+        pos = pos + 1; // Skip (
+        
+        let mut first_param = true;
+        while pos < len && string_char_at(source, pos) != 41 { // )
+            pos = skip_whitespace_and_comments(source, pos, len);
+            
+            // Get parameter name
+            let param_name = parse_identifier(source, pos, len);
+            if string_len(param_name) == 0 {
+                break;
+            }
+            pos = pos + string_len(param_name);
+            
+            pos = skip_whitespace_and_comments(source, pos, len);
+            
+            // Expect :
+            if string_char_at(source, pos) != 58 { // :
+                return report_error("Expected ':' after parameter name", count_lines(source, pos));
+            }
+            pos = pos + 1;
+            
+            pos = skip_whitespace_and_comments(source, pos, len);
+            
+            // Get parameter type
+            let param_type = parse_identifier(source, pos, len);
+            pos = pos + string_len(param_type);
+            
+            if !first_param {
+                params = params + ", ";
+            }
+            params = params + parse_type(param_type) + " " + param_name;
+            first_param = false;
+            
+            pos = skip_whitespace_and_comments(source, pos, len);
+            
+            if string_char_at(source, pos) == 44 { // ,
+                pos = pos + 1;
+            }
+        }
+        
+        if pos < len && string_char_at(source, pos) == 41 { // )
+            pos = pos + 1; // Skip )
+        }
+    }
+    
+    // Parse return type
+    let mut return_type = "void";
+    pos = skip_whitespace_and_comments(source, pos, len);
+    if pos + 1 < len && string_char_at(source, pos) == 45 && // -
+                        string_char_at(source, pos + 1) == 62 { // >
+        pos = pos + 2; // Skip ->
+        pos = skip_whitespace_and_comments(source, pos, len);
+        
+        // Get return type
+        let ret_type = parse_identifier(source, pos, len);
+        return_type = parse_type(ret_type);
+        pos = pos + string_len(ret_type);
+    }
+    
+    // Skip to opening brace
+    while pos < len && string_char_at(source, pos) != 123 { // {
+        pos = pos + 1;
+    }
+    
+    if is_same_string(func_name, "main") {
+        output = output + "int main(int argc, char** argv) {\n";
+    } else {
+        if string_len(params) == 0 {
+            output = output + return_type + " " + func_name + "(void) {\n";
+        } else {
+            output = output + return_type + " " + func_name + "(" + params + ") {\n";
+        }
+    }
+    
+    pos = pos + 1; // Skip {
+    
+    // Parse function body
+    pos = skip_whitespace_and_comments(source, pos, len);
+    while pos < len && string_char_at(source, pos) != 125 { // }
+        let stmt = parse_statement(source, pos, len, "    ");
+        output = output + stmt;
+        
+        // Skip the entire statement
+        let mut brace_depth = 0;
+        let mut in_string = false;
+        
+        while pos < len {
+            let ch = string_char_at(source, pos);
+            
+            // Handle string literals
+            if ch == 34 && !in_string { // "
+                in_string = true;
+            } else if ch == 34 && in_string { // "
+                // Check if escaped
+                if pos > 0 && string_char_at(source, pos - 1) != 92 { // \
+                    in_string = false;
+                }
+            }
+            
+            if !in_string {
+                // Track nested structures
+                if ch == 123 { // {
+                    brace_depth = brace_depth + 1;
+                }
+                if ch == 125 { // }
+                    if brace_depth > 0 {
+                        brace_depth = brace_depth - 1;
+                    } else {
+                        // End of function
+                        break;
+                    }
+                }
+                
+                // Statement ends at ; or newline (outside of braces)
+                if brace_depth == 0 && (ch == 59 || ch == 10) { // ; or newline
+                    pos = pos + 1;
+                    break;
+                }
+            }
+            
+            pos = pos + 1;
+        }
+        
+        pos = skip_whitespace_and_comments(source, pos, len);
+    }
+    
+    output = output + "}\n\n";
+    
+    return output;
+}
+
+// Parse a struct
+fn compile_struct(source: String, start_pos: i64, len: i64) -> String {
+    let mut pos = start_pos + 6; // Skip "struct"
+    let mut output = "";
+    
+    pos = skip_whitespace_and_comments(source, pos, len);
+    
+    // Get struct name
+    let struct_name = parse_identifier(source, pos, len);
+    pos = pos + string_len(struct_name);
+    
+    pos = skip_whitespace_and_comments(source, pos, len);
+    
+    if string_char_at(source, pos) != 123 { // {
+        return report_error("Expected '{' after struct name", count_lines(source, pos));
+    }
+    pos = pos + 1;
+    
+    // Generate C struct
+    output = output + "typedef struct {\n";
+    
+    // Parse fields
+    pos = skip_whitespace_and_comments(source, pos, len);
+    while pos < len && string_char_at(source, pos) != 125 { // }
+        // Get field name
+        let field_name = parse_identifier(source, pos, len);
+        if string_len(field_name) == 0 {
+            break;
+        }
+        pos = pos + string_len(field_name);
+        
+        pos = skip_whitespace_and_comments(source, pos, len);
+        
+        // Expect :
+        if string_char_at(source, pos) != 58 { // :
+            return report_error("Expected ':' after field name", count_lines(source, pos));
+        }
+        pos = pos + 1;
+        
+        pos = skip_whitespace_and_comments(source, pos, len);
+        
+        // Get field type
+        let field_type = parse_identifier(source, pos, len);
+        pos = pos + string_len(field_type);
+        
+        output = output + "    " + parse_type(field_type) + " " + field_name + ";\n";
+        
+        pos = skip_whitespace_and_comments(source, pos, len);
+        
+        if string_char_at(source, pos) == 44 { // ,
+            pos = pos + 1;
+        }
+        
+        pos = skip_whitespace_and_comments(source, pos, len);
+    }
+    
+    output = output + "} " + struct_name + ";\n\n";
+    
+    return output;
+}
+
+// Main compilation function
+fn compile_program(source: String) -> String {
+    let mut output = "";
+    let mut pos = 0;
+    let len = string_len(source);
+    
+    // Add standard headers
+    output = output + "#include <stdio.h>\n";
+    output = output + "#include <string.h>\n";
+    output = output + "#include <stdlib.h>\n\n";
+    
+    // Add runtime functions
+    output = output + "// Runtime functions\n";
+    output = output + "void __pd_print(const char* str) { printf(\"%s\\n\", str); }\n";
+    output = output + "long long __pd_string_len(const char* str) { return strlen(str); }\n";
+    output = output + "long long __pd_string_char_at(const char* str, long long idx) { return (long long)str[idx]; }\n";
+    output = output + "const char* __pd_string_from_char(long long ch) {\n";
+    output = output + "    char* result = malloc(2);\n";
+    output = output + "    result[0] = (char)ch;\n";
+    output = output + "    result[1] = '\\0';\n";
+    output = output + "    return result;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_int_to_string(long long n) {\n";
+    output = output + "    char* buf = malloc(32);\n";
+    output = output + "    sprintf(buf, \"%lld\", n);\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n\n";
+    
+    // Parse the program
+    while pos < len {
+        pos = skip_whitespace_and_comments(source, pos, len);
+        
+        if pos >= len {
+            break;
+        }
+        
+        // Look for "struct"
+        if pos + 6 < len &&
+           string_char_at(source, pos) == 115 &&     // s
+           string_char_at(source, pos+1) == 116 &&   // t
+           string_char_at(source, pos+2) == 114 &&   // r
+           string_char_at(source, pos+3) == 117 &&   // u
+           string_char_at(source, pos+4) == 99 &&    // c
+           string_char_at(source, pos+5) == 116 &&   // t
+           (string_char_at(source, pos+6) == 32 ||   // space
+            string_char_at(source, pos+6) == 123) {  // {
+            
+            output = output + compile_struct(source, pos, len);
+            
+            // Skip to end of struct
+            while pos < len && string_char_at(source, pos) != 125 { // }
+                pos = pos + 1;
+            }
+            pos = pos + 1; // Skip }
+            
+        } else if pos + 4 < len &&
+                  string_char_at(source, pos) == 101 &&     // e
+                  string_char_at(source, pos+1) == 110 &&   // n
+                  string_char_at(source, pos+2) == 117 &&   // u
+                  string_char_at(source, pos+3) == 109 &&   // m
+                  (string_char_at(source, pos+4) == 32 ||   // space
+                   string_char_at(source, pos+4) == 123) {  // {
+            
+            output = output + parse_enum(source, pos, len);
+            
+            // Skip to end of enum
+            while pos < len && string_char_at(source, pos) != 125 { // }
+                pos = pos + 1;
+            }
+            pos = pos + 1; // Skip }
+            
+        } else if pos + 2 < len &&
+                  string_char_at(source, pos) == 102 &&     // f
+                  string_char_at(source, pos+1) == 110 &&   // n
+                  (string_char_at(source, pos+2) == 32 ||   // space
+                   string_char_at(source, pos+2) == 40) {   // (
+            
+            // Look for "fn"
+            output = output + compile_function(source, pos, len);
+            
+            // Skip to end of function
+            let mut brace_depth = 0;
+            while pos < len {
+                if string_char_at(source, pos) == 123 { // {
+                    brace_depth = brace_depth + 1;
+                } else if string_char_at(source, pos) == 125 { // }
+                    brace_depth = brace_depth - 1;
+                    if brace_depth == 0 {
+                        pos = pos + 1;
+                        break;
+                    }
+                }
+                pos = pos + 1;
+            }
+        } else {
+            // Skip unknown construct
+            pos = pos + 1;
+        }
+    }
+    
+    return output;
+}
+
+fn main() {
+    print("Enhanced Tiny Palladium Compiler");
+    print("Supports: functions, structs, arrays, for loops, match, enums");
+    
+    // Read input file
+    let input_file = "test.pd";
+    if !file_exists(input_file) {
+        print("Error: Input file 'test.pd' not found");
+        return;
+    }
+    
+    print("Reading " + input_file + "...");
+    let source = file_read_all(input_file);
+    
+    print("Compiling...");
+    let c_code = compile_program(source);
+    
+    // Write output
+    let output_file = "output.c";
+    print("Writing " + output_file + "...");
+    file_write(output_file, c_code);
+    
+    print("Done! Compile with: gcc -o output output.c");
+}

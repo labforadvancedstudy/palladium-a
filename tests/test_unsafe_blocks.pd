@@ -1,0 +1,72 @@
+// Test unsafe blocks and operations
+
+// Unsafe function (starts with unsafe_)
+fn unsafe_raw_ptr_deref(ptr: int) -> int {
+    // This would dereference a raw pointer in a real implementation
+    return ptr;
+}
+
+// Safe wrapper function
+fn safe_deref(ptr: int) -> int {
+    unsafe {
+        // Unsafe function call is allowed in unsafe block
+        return unsafe_raw_ptr_deref(ptr);
+    }
+}
+
+// Function with multiple unsafe blocks
+fn multiple_unsafe_blocks() {
+    let x = 42;
+    
+    unsafe {
+        print("First unsafe block\n");
+        let y = unsafe_raw_ptr_deref(x);
+        print_int(y);
+        print("\n");
+    }
+    
+    // Safe code between unsafe blocks
+    print("Safe code here\n");
+    
+    unsafe {
+        print("Second unsafe block\n");
+        let z = unsafe_raw_ptr_deref(x + 1);
+        print_int(z);
+        print("\n");
+    }
+}
+
+// Nested unsafe blocks
+fn nested_unsafe() {
+    unsafe {
+        print("Outer unsafe block\n");
+        
+        unsafe {
+            print("Inner unsafe block\n");
+            let ptr = 100;
+            let val = unsafe_raw_ptr_deref(ptr);
+            print_int(val);
+            print("\n");
+        }
+        
+        print("Back to outer unsafe\n");
+    }
+}
+
+fn main() {
+    print("Testing unsafe blocks...\n");
+    
+    // Test safe wrapper
+    let result = safe_deref(123);
+    print("Safe deref result: ");
+    print_int(result);
+    print("\n");
+    
+    // Test multiple unsafe blocks
+    multiple_unsafe_blocks();
+    
+    // Test nested unsafe blocks
+    nested_unsafe();
+    
+    print("All unsafe tests passed!\n");
+}

@@ -1,0 +1,27 @@
+// Tests for math utilities
+
+fn test_add() {
+    let result = add(2, 3);
+    if result != 5 {
+        panic("test_add failed: expected 5, got " + int_to_string(result));
+    }
+}
+
+fn test_factorial() {
+    let result = factorial(5);
+    if result != 120 {
+        panic("test_factorial failed: expected 120, got " + int_to_string(result));
+    }
+}
+
+fn main() {
+    print("Running tests...\n");
+    
+    test_add();
+    print("✓ test_add passed\n");
+    
+    test_factorial();
+    print("✓ test_factorial passed\n");
+    
+    print("All tests passed!\n");
+}

@@ -1,0 +1,198 @@
+// Process management utilities
+// "Every program is a world unto itself"
+
+use std::result::{Result, Error};
+use std::option::{Option, some, none};
+use std::string::String;
+use std::collections::Vec;
+
+// Exit codes
+pub const EXIT_SUCCESS: i32 = 0;
+pub const EXIT_FAILURE: i32 = 1;
+
+// Exit the current process with a status code
+pub fn exit(code: i32) -> ! {
+    // Runtime support needed
+    // This would call the system exit function
+    loop {} // Never returns
+}
+
+// Abort the process immediately
+pub fn abort() -> ! {
+    // Runtime support needed
+    // This would call system abort
+    loop {} // Never returns
+}
+
+// Command represents an external command to execute
+pub struct Command {
+    program: String,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+    working_dir: Option<String>,
+}
+
+impl Command {
+    // Create a new command
+    pub fn new(program: &str) -> Command {
+        Command {
+            program: String::from(program),
+            args: Vec::new(),
+            env: Vec::new(),
+            working_dir: none(),
+        }
+    }
+    
+    // Add an argument
+    pub fn arg(mut self, arg: &str) -> Command {
+        self.args.push(String::from(arg));
+        self
+    }
+    
+    // Add multiple arguments
+    pub fn args(mut self, args: &[&str]) -> Command {
+        for arg in args {
+            self.args.push(String::from(*arg));
+        }
+        self
+    }
+    
+    // Set an environment variable
+    pub fn env(mut self, key: &str, val: &str) -> Command {
+        self.env.push((String::from(key), String::from(val)));
+        self
+    }
+    
+    // Set the working directory
+    pub fn current_dir(mut self, dir: &str) -> Command {
+        self.working_dir = some(String::from(dir));
+        self
+    }
+    
+    // Execute the command and wait for it to finish
+    pub fn output(&self) -> Result<Output, Error> {
+        // Runtime support needed
+        // This would fork/exec or CreateProcess
+        err(Error::new("Process execution not yet implemented"))
+    }
+    
+    // Execute the command and get exit status
+    pub fn status(&self) -> Result<ExitStatus, Error> {
+        // Runtime support needed
+        err(Error::new("Process execution not yet implemented"))
+    }
+    
+    // Spawn the command without waiting
+    pub fn spawn(&self) -> Result<Child, Error> {
+        // Runtime support needed
+        err(Error::new("Process spawning not yet implemented"))
+    }
+}
+
+// Output from a finished process
+pub struct Output {
+    pub status: ExitStatus,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+impl Output {
+    // Check if the process was successful
+    pub fn success(&self) -> bool {
+        self.status.success()
+    }
+}
+
+// Exit status of a process
+pub struct ExitStatus {
+    code: Option<i32>,
+}
+
+impl ExitStatus {
+    // Was termination successful?
+    pub fn success(&self) -> bool {
+        match self.code {
+            some(code) => code == 0,
+            none() => false,
+        }
+    }
+    
+    // Get the exit code if available
+    pub fn code(&self) -> Option<i32> {
+        self.code
+    }
+}
+
+// A running child process
+pub struct Child {
+    pid: u32,
+    // stdin: Option<ChildStdin>,
+    // stdout: Option<ChildStdout>,
+    // stderr: Option<ChildStderr>,
+}
+
+impl Child {
+    // Get the process ID
+    pub fn id(&self) -> u32 {
+        self.pid
+    }
+    
+    // Wait for the child to exit
+    pub fn wait(&mut self) -> Result<ExitStatus, Error> {
+        // Runtime support needed
+        err(Error::new("Process waiting not yet implemented"))
+    }
+    
+    // Kill the child process
+    pub fn kill(&mut self) -> Result<(), Error> {
+        // Runtime support needed
+        err(Error::new("Process killing not yet implemented"))
+    }
+}
+
+// Get the current process ID
+pub fn id() -> u32 {
+    // Runtime support needed
+    0 // Placeholder
+}
+
+// Get command line arguments
+pub fn args() -> Vec<String> {
+    // Runtime support needed
+    // This would access argc/argv
+    Vec::new()
+}
+
+// Get environment variables
+pub fn env() -> Vec<(String, String)> {
+    // Runtime support needed
+    Vec::new()
+}
+
+// Get a specific environment variable
+pub fn env_var(key: &str) -> Result<String, Error> {
+    // Runtime support needed
+    err(Error::new("Environment variables not yet implemented"))
+}
+
+// Set an environment variable
+pub fn set_env_var(key: &str, value: &str) {
+    // Runtime support needed
+}
+
+// Remove an environment variable
+pub fn remove_env_var(key: &str) {
+    // Runtime support needed
+}
+
+// Get the current working directory
+pub fn current_dir() -> Result<String, Error> {
+    // Runtime support needed
+    err(Error::new("Current directory not yet implemented"))
+}
+
+// Change the current working directory
+pub fn set_current_dir(path: &str) -> Result<(), Error> {
+    // Runtime support needed
+    err(Error::new("Directory change not yet implemented"))
+}

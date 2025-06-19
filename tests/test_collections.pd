@@ -1,0 +1,238 @@
+// Test Vec and HashMap implementations
+
+use std::collections::{Vec, HashMap, vec, hashmap};
+
+fn test_vec_basic() {
+    let mut v = Vec::new();
+    assert(v.len() == 0);
+    assert(v.is_empty());
+    
+    v.push(10);
+    v.push(20);
+    v.push(30);
+    
+    assert(v.len() == 3);
+    assert(!v.is_empty());
+    
+    assert(v[0] == 10);
+    assert(v[1] == 20);
+    assert(v[2] == 30);
+    
+    let popped = v.pop();
+    assert(popped.is_some());
+    assert(popped.unwrap() == 30);
+    assert(v.len() == 2);
+    
+    println("Vec basic tests passed!");
+}
+
+fn test_vec_insert_remove() {
+    let mut v = vec![1, 2, 3, 4, 5];
+    
+    v.insert(2, 10);
+    assert(v.len() == 6);
+    assert(v[2] == 10);
+    assert(v[3] == 3);
+    
+    let removed = v.remove(2);
+    assert(removed == 10);
+    assert(v.len() == 5);
+    assert(v[2] == 3);
+    
+    v.clear();
+    assert(v.len() == 0);
+    assert(v.is_empty());
+    
+    println("Vec insert/remove tests passed!");
+}
+
+fn test_vec_iterator() {
+    let v = vec![10, 20, 30, 40, 50];
+    let mut sum = 0;
+    
+    for val in v.iter() {
+        sum += *val;
+    }
+    
+    assert(sum == 150);
+    
+    let mut count = 0;
+    for val in v.iter() {
+        count += 1;
+    }
+    assert(count == 5);
+    
+    println("Vec iterator tests passed!");
+}
+
+fn test_vec_sort() {
+    let mut v = vec![5, 2, 8, 1, 9, 3];
+    v.sort();
+    
+    assert(v[0] == 1);
+    assert(v[1] == 2);
+    assert(v[2] == 3);
+    assert(v[3] == 5);
+    assert(v[4] == 8);
+    assert(v[5] == 9);
+    
+    let mut v2 = vec![3, 1, 4, 1, 5, 9, 2, 6];
+    v2.sort();
+    for i in 1..v2.len() {
+        assert(v2[i-1] <= v2[i]);
+    }
+    
+    println("Vec sort tests passed!");
+}
+
+fn test_hashmap_basic() {
+    let mut map = HashMap::new();
+    assert(map.len() == 0);
+    assert(map.is_empty());
+    
+    map.insert("hello", 42);
+    map.insert("world", 100);
+    
+    assert(map.len() == 2);
+    assert(!map.is_empty());
+    
+    assert(map.contains_key(&"hello"));
+    assert(map.contains_key(&"world"));
+    assert(!map.contains_key(&"foo"));
+    
+    let val = map.get(&"hello");
+    assert(val.is_some());
+    assert(*val.unwrap() == 42);
+    
+    println("HashMap basic tests passed!");
+}
+
+fn test_hashmap_remove() {
+    let mut map = hashmap!{
+        "one" => 1,
+        "two" => 2,
+        "three" => 3,
+        "four" => 4
+    };
+    
+    assert(map.len() == 4);
+    
+    let removed = map.remove(&"two");
+    assert(removed.is_some());
+    assert(removed.unwrap() == 2);
+    assert(map.len() == 3);
+    assert(!map.contains_key(&"two"));
+    
+    map.clear();
+    assert(map.len() == 0);
+    assert(map.is_empty());
+    
+    println("HashMap remove tests passed!");
+}
+
+fn test_hashmap_entry() {
+    let mut map = HashMap::new();
+    
+    // Test vacant entry
+    let val = map.entry("test").or_insert(10);
+    assert(*val == 10);
+    assert(map.len() == 1);
+    
+    // Test occupied entry
+    let val = map.entry("test").or_insert(20);
+    assert(*val == 10); // Should still be 10
+    assert(map.len() == 1);
+    
+    // Modify through entry
+    *map.entry("test").or_insert(0) += 5;
+    assert(*map.get(&"test").unwrap() == 15);
+    
+    println("HashMap entry API tests passed!");
+}
+
+fn test_hashmap_iterator() {
+    let map = hashmap!{
+        "a" => 1,
+        "b" => 2,
+        "c" => 3,
+        "d" => 4
+    };
+    
+    let mut key_count = 0;
+    for key in map.keys() {
+        key_count += 1;
+        assert(map.contains_key(key));
+    }
+    assert(key_count == 4);
+    
+    let mut value_sum = 0;
+    for val in map.values() {
+        value_sum += *val;
+    }
+    assert(value_sum == 10);
+    
+    let mut pair_count = 0;
+    for (k, v) in map.iter() {
+        pair_count += 1;
+        assert(*map.get(k).unwrap() == *v);
+    }
+    assert(pair_count == 4);
+    
+    println("HashMap iterator tests passed!");
+}
+
+fn test_vec_with_structs() {
+    struct Point {
+        x: i64,
+        y: i64,
+    }
+    
+    let mut points = Vec::new();
+    points.push(Point { x: 10, y: 20 });
+    points.push(Point { x: 30, y: 40 });
+    points.push(Point { x: 50, y: 60 });
+    
+    assert(points.len() == 3);
+    assert(points[0].x == 10);
+    assert(points[1].y == 40);
+    assert(points[2].x == 50);
+    
+    println("Vec with structs tests passed!");
+}
+
+fn test_hashmap_with_strings() {
+    let mut capitals = HashMap::new();
+    capitals.insert("USA", "Washington DC");
+    capitals.insert("UK", "London");
+    capitals.insert("France", "Paris");
+    capitals.insert("Germany", "Berlin");
+    capitals.insert("Japan", "Tokyo");
+    
+    assert(capitals.len() == 5);
+    assert(capitals.contains_key(&"France"));
+    assert(*capitals.get(&"France").unwrap() == "Paris");
+    
+    capitals.remove(&"UK");
+    assert(capitals.len() == 4);
+    assert(!capitals.contains_key(&"UK"));
+    
+    println("HashMap with string keys tests passed!");
+}
+
+fn main() {
+    println("Testing Vec implementation...");
+    test_vec_basic();
+    test_vec_insert_remove();
+    test_vec_iterator();
+    test_vec_sort();
+    test_vec_with_structs();
+    
+    println("\nTesting HashMap implementation...");
+    test_hashmap_basic();
+    test_hashmap_remove();
+    test_hashmap_entry();
+    test_hashmap_iterator();
+    test_hashmap_with_strings();
+    
+    println("\nAll collection tests passed! 🎉");
+}

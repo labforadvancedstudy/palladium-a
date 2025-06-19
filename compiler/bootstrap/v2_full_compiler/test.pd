@@ -1,0 +1,24 @@
+// Test program for bootstrap compiler
+fn main() {
+    print("Hello from Palladium!");
+    
+    let x = 42;
+    let y = 13;
+    let sum = x + y;
+    
+    print_int(sum);
+    
+    if sum > 50 {
+        print("Sum is greater than 50");
+    } else {
+        print("Sum is not greater than 50");
+    }
+    
+    let mut counter = 0;
+    while counter < 5 {
+        print_int(counter);
+        counter = counter + 1;
+    }
+    
+    print("Bootstrap compiler works!");
+}

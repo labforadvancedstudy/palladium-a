@@ -6,9 +6,10 @@
 
 # Variables
 CARGO := cargo
-PDC := ./target/release/pdc
-BOOTSTRAP_DIR := bootstrap/v3_incremental
+PDC := ./compiler/rust/target/release/pdc
+BOOTSTRAP_DIR := compiler/bootstrap/v3_incremental
 TINY_COMPILER := $(BOOTSTRAP_DIR)/tiny_compiler
+PALLADIUM_COMPILER := compiler/palladium/pdc
 
 # Colors for output
 GREEN := \033[0;32m
@@ -27,7 +28,7 @@ help: ## Show this help message
 .PHONY: build
 build: ## Build the Rust compiler in release mode
 	@echo "$(YELLOW)Building Palladium compiler...$(NC)"
-	$(CARGO) build --release
+	cd compiler/rust && $(CARGO) build --release
 	@echo "$(GREEN)✓ Build complete$(NC)"
 
 .PHONY: build-debug
@@ -63,6 +64,21 @@ test-bootstrap: build ## Test bootstrap compilers
 .PHONY: test-verbose
 test-verbose: build ## Run tests with verbose output
 	./scripts/run_tests.sh -v
+
+.PHONY: bench
+bench: build ## Run all benchmarks
+	@echo "$(YELLOW)Running benchmarks...$(NC)"
+	cd benchmarks && ./run_benchmarks.sh
+
+.PHONY: bench-quick
+bench-quick: build ## Run quick benchmarks only
+	@echo "$(YELLOW)Running quick benchmarks...$(NC)"
+	cd benchmarks && ./run_benchmarks.sh fibonacci bubble_sort
+
+.PHONY: bench-analyze
+bench-analyze: ## Analyze benchmark results
+	@echo "$(YELLOW)Analyzing benchmark results...$(NC)"
+	cd benchmarks && python3 analyze_results.py
 
 .PHONY: lint
 lint: ## Run clippy linter

@@ -1,0 +1,515 @@
+// Comprehensive Test Suite for Simple Compiler v14
+// Tests all features: lexer, parser, types, functions, loops, arrays, structs, enums
+
+// Test 1: Basic expressions and arithmetic
+fn test_arithmetic() {
+    print("=== Test 1: Arithmetic ===");
+    
+    let a = 10;
+    let b = 20;
+    let c = a + b;
+    print_int(c); // 30
+    
+    let d = b - a;
+    print_int(d); // 10
+    
+    let e = a * 5;
+    print_int(e); // 50
+    
+    let f = b / 2;
+    print_int(f); // 10
+    
+    let g = 17 % 5;
+    print_int(g); // 2
+    
+    // Complex expression
+    let h = (a + b) * 2 - 10;
+    print_int(h); // 50
+}
+
+// Test 2: Boolean operations and comparisons
+fn test_booleans() {
+    print("=== Test 2: Booleans ===");
+    
+    let x = 5;
+    let y = 10;
+    
+    if x < y {
+        print("5 < 10: true");
+    }
+    
+    if x <= 5 {
+        print("5 <= 5: true");
+    }
+    
+    if y > x {
+        print("10 > 5: true");
+    }
+    
+    if y >= 10 {
+        print("10 >= 10: true");
+    }
+    
+    if x == 5 {
+        print("5 == 5: true");
+    }
+    
+    if x != y {
+        print("5 != 10: true");
+    }
+    
+    // Logical operations
+    if x < y && y > 0 {
+        print("AND operation works");
+    }
+    
+    if x > 10 || y > 5 {
+        print("OR operation works");
+    }
+    
+    if !(x > 10) {
+        print("NOT operation works");
+    }
+}
+
+// Test 3: Control flow
+fn test_control_flow() {
+    print("=== Test 3: Control Flow ===");
+    
+    // If-else chain
+    let score = 85;
+    if score >= 90 {
+        print("Grade: A");
+    } else if score >= 80 {
+        print("Grade: B");
+    } else if score >= 70 {
+        print("Grade: C");
+    } else {
+        print("Grade: F");
+    }
+    
+    // Nested if
+    let x = 10;
+    let y = 20;
+    if x > 5 {
+        if y > 15 {
+            print("Both conditions true");
+        }
+    }
+}
+
+// Test 4: Loops
+fn test_loops() {
+    print("=== Test 4: Loops ===");
+    
+    // While loop
+    print("While loop (0-4):");
+    let mut i = 0;
+    while i < 5 {
+        print_int(i);
+        i = i + 1;
+    }
+    
+    // For loop
+    print("For loop (0-4):");
+    for j in 0..5 {
+        print_int(j);
+    }
+    
+    // Nested loops
+    print("Nested loops:");
+    for x in 0..3 {
+        for y in 0..3 {
+            let prod = x * y;
+            print_int(prod);
+        }
+    }
+    
+    // Break and continue
+    print("Break test:");
+    let mut k = 0;
+    while k < 10 {
+        if k == 5 {
+            break;
+        }
+        print_int(k);
+        k = k + 1;
+    }
+    
+    print("Continue test:");
+    for m in 0..5 {
+        if m == 2 {
+            continue;
+        }
+        print_int(m);
+    }
+}
+
+// Test 5: Functions with parameters and returns
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn multiply(x: i64, y: i64) -> i64 {
+    return x * y;
+}
+
+fn is_even(n: i64) -> bool {
+    return n % 2 == 0;
+}
+
+fn greet(name: String) {
+    print(string_concat("Hello, ", name));
+}
+
+fn test_functions() {
+    print("=== Test 5: Functions ===");
+    
+    let sum = add(10, 20);
+    print_int(sum); // 30
+    
+    let prod = multiply(6, 7);
+    print_int(prod); // 42
+    
+    if is_even(10) {
+        print("10 is even");
+    }
+    
+    if !is_even(11) {
+        print("11 is odd");
+    }
+    
+    greet("Palladium");
+}
+
+// Test 6: Recursion
+fn factorial(n: i64) -> i64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn fibonacci(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+fn test_recursion() {
+    print("=== Test 6: Recursion ===");
+    
+    print("Factorials:");
+    for i in 0..8 {
+        print_int(factorial(i));
+    }
+    
+    print("Fibonacci:");
+    for i in 0..10 {
+        print_int(fibonacci(i));
+    }
+}
+
+// Test 7: Arrays
+fn test_arrays() {
+    print("=== Test 7: Arrays ===");
+    
+    // Array declaration and initialization
+    let nums: [i64; 5] = [10, 20, 30, 40, 50];
+    
+    print("Array elements:");
+    for i in 0..5 {
+        print_int(nums[i]);
+    }
+    
+    // Array modification
+    let mut squares: [i64; 5];
+    for i in 0..5 {
+        squares[i] = i * i;
+    }
+    
+    print("Squares:");
+    for i in 0..5 {
+        print_int(squares[i]);
+    }
+    
+    // Sum array
+    let mut sum = 0;
+    for i in 0..5 {
+        sum = sum + nums[i];
+    }
+    print("Sum of nums:");
+    print_int(sum); // 150
+    
+    // String array
+    let names: [String; 3] = ["Alice", "Bob", "Charlie"];
+    print("Names:");
+    for i in 0..3 {
+        print(names[i]);
+    }
+}
+
+// Test 8: Structs
+struct Point {
+    x: i64,
+    y: i64
+}
+
+struct Rectangle {
+    top_left: Point,
+    width: i64,
+    height: i64
+}
+
+struct Person {
+    name: String,
+    age: i64
+}
+
+fn distance_squared(p1: Point, p2: Point) -> i64 {
+    let dx = p2.x - p1.x;
+    let dy = p2.y - p1.y;
+    return dx * dx + dy * dy;
+}
+
+fn area(rect: Rectangle) -> i64 {
+    return rect.width * rect.height;
+}
+
+fn test_structs() {
+    print("=== Test 8: Structs ===");
+    
+    // Create points
+    let p1: Point = Point { x: 0, y: 0 };
+    let p2: Point = Point { x: 3, y: 4 };
+    
+    print("Point 1:");
+    print_int(p1.x);
+    print_int(p1.y);
+    
+    print("Point 2:");
+    print_int(p2.x);
+    print_int(p2.y);
+    
+    // Calculate distance
+    let dist_sq = distance_squared(p1, p2);
+    print("Distance squared:");
+    print_int(dist_sq); // 25
+    
+    // Create rectangle
+    let rect: Rectangle = Rectangle {
+        top_left: Point { x: 10, y: 20 },
+        width: 100,
+        height: 50
+    };
+    
+    print("Rectangle:");
+    print_int(rect.top_left.x);
+    print_int(rect.top_left.y);
+    print_int(rect.width);
+    print_int(rect.height);
+    
+    let rect_area = area(rect);
+    print("Rectangle area:");
+    print_int(rect_area); // 5000
+    
+    // Modify struct fields
+    let mut person: Person = Person {
+        name: "John",
+        age: 30
+    };
+    
+    print(person.name);
+    print_int(person.age);
+    
+    person.age = 31;
+    print("After birthday:");
+    print_int(person.age);
+}
+
+// Test 9: Enums
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+enum Status {
+    Success,
+    Error,
+    Pending
+}
+
+fn color_to_string(color: Color) -> String {
+    // Since we don't have pattern matching yet, use if-else
+    let color_val = color; // Convert to i64
+    if color_val == 0 {
+        return "Red";
+    } else if color_val == 1 {
+        return "Green";
+    } else if color_val == 2 {
+        return "Blue";
+    }
+    return "Unknown";
+}
+
+fn test_enums() {
+    print("=== Test 9: Enums ===");
+    
+    let red: Color = Color_Red;
+    let green: Color = Color_Green;
+    let blue: Color = Color_Blue;
+    
+    print("Colors:");
+    print(color_to_string(red));
+    print(color_to_string(green));
+    print(color_to_string(blue));
+    
+    let status: Status = Status_Success;
+    if status == Status_Success {
+        print("Operation successful!");
+    }
+}
+
+// Test 10: Complex program - Bubble sort
+fn bubble_sort(arr: [i64; 10], n: i64) {
+    for i in 0..n {
+        for j in 0..(n - i - 1) {
+            if arr[j] > arr[j + 1] {
+                // Swap
+                let temp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = temp;
+            }
+        }
+    }
+}
+
+fn test_sorting() {
+    print("=== Test 10: Sorting ===");
+    
+    let mut data: [i64; 10] = [64, 34, 25, 12, 22, 11, 90, 88, 76, 1];
+    
+    print("Before sorting:");
+    for i in 0..10 {
+        print_int(data[i]);
+    }
+    
+    bubble_sort(data, 10);
+    
+    print("After sorting:");
+    for i in 0..10 {
+        print_int(data[i]);
+    }
+}
+
+// Test 11: String operations
+fn test_strings() {
+    print("=== Test 11: Strings ===");
+    
+    let s1 = "Hello";
+    let s2 = "World";
+    let s3 = string_concat(s1, " ");
+    let s4 = string_concat(s3, s2);
+    print(s4); // "Hello World"
+    
+    let len = string_len(s4);
+    print("Length:");
+    print_int(len); // 11
+    
+    print("Characters:");
+    for i in 0..len {
+        let ch = string_char_at(s4, i);
+        print_int(ch);
+    }
+    
+    // String building
+    let mut result = "";
+    for i in 0..5 {
+        result = string_concat(result, int_to_string(i));
+        result = string_concat(result, " ");
+    }
+    print("Built string:");
+    print(result); // "0 1 2 3 4 "
+}
+
+// Test 12: Edge cases and stress tests
+fn test_edge_cases() {
+    print("=== Test 12: Edge Cases ===");
+    
+    // Empty loops
+    for i in 0..0 {
+        print("This should not print");
+    }
+    
+    // Single iteration
+    for i in 0..1 {
+        print_int(i); // 0
+    }
+    
+    // Large numbers
+    let big = 1000000;
+    let bigger = big * 2;
+    print_int(bigger); // 2000000
+    
+    // Deep nesting
+    let mut count = 0;
+    for i in 0..3 {
+        for j in 0..3 {
+            for k in 0..3 {
+                count = count + 1;
+            }
+        }
+    }
+    print("Triple nested count:");
+    print_int(count); // 27
+    
+    // Complex expressions
+    let result = ((10 + 20) * 3 - 15) / 5 + 7;
+    print_int(result); // 22
+}
+
+// Main test runner
+fn main() {
+    print("=== Palladium Compiler v14 Test Suite ===");
+    print("");
+    
+    test_arithmetic();
+    print("");
+    
+    test_booleans();
+    print("");
+    
+    test_control_flow();
+    print("");
+    
+    test_loops();
+    print("");
+    
+    test_functions();
+    print("");
+    
+    test_recursion();
+    print("");
+    
+    test_arrays();
+    print("");
+    
+    test_structs();
+    print("");
+    
+    test_enums();
+    print("");
+    
+    test_sorting();
+    print("");
+    
+    test_strings();
+    print("");
+    
+    test_edge_cases();
+    print("");
+    
+    print("=== All tests completed! ===");
+}

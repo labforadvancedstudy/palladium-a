@@ -1,0 +1,652 @@
+// Palladium Self-Hosting Compiler - AST Module
+// Abstract Syntax Tree definitions for the Palladium compiler
+
+// ============ Type Definitions ============
+
+// Type kinds
+const TYPE_KIND_PRIMITIVE: i64 = 1;
+const TYPE_KIND_ARRAY: i64 = 2;
+const TYPE_KIND_SLICE: i64 = 3;
+const TYPE_KIND_POINTER: i64 = 4;
+const TYPE_KIND_REFERENCE: i64 = 5;
+const TYPE_KIND_TUPLE: i64 = 6;
+const TYPE_KIND_FUNCTION: i64 = 7;
+const TYPE_KIND_STRUCT: i64 = 8;
+const TYPE_KIND_ENUM: i64 = 9;
+const TYPE_KIND_TRAIT: i64 = 10;
+const TYPE_KIND_TYPE_PARAM: i64 = 11;
+
+// Primitive types
+const PRIM_I8: i64 = 1;
+const PRIM_I16: i64 = 2;
+const PRIM_I32: i64 = 3;
+const PRIM_I64: i64 = 4;
+const PRIM_I128: i64 = 5;
+const PRIM_U8: i64 = 6;
+const PRIM_U16: i64 = 7;
+const PRIM_U32: i64 = 8;
+const PRIM_U64: i64 = 9;
+const PRIM_U128: i64 = 10;
+const PRIM_F32: i64 = 11;
+const PRIM_F64: i64 = 12;
+const PRIM_BOOL: i64 = 13;
+const PRIM_CHAR: i64 = 14;
+const PRIM_STR: i64 = 15;
+const PRIM_STRING: i64 = 16;
+const PRIM_UNIT: i64 = 17;
+
+// Type structure
+struct Type {
+    kind: i64,
+    // For primitives
+    primitive: i64,
+    // For arrays
+    element_type: Type,
+    array_size: i64,
+    // For pointers/references
+    pointee_type: Type,
+    is_mutable: bool,
+    // For functions
+    param_types: [Type; 10],
+    param_count: i64,
+    return_type: Type,
+    // For named types
+    name: String,
+    // For type parameters
+    type_param_index: i64,
+}
+
+// ============ Expression Definitions ============
+
+// Expression kinds
+const EXPR_LITERAL: i64 = 1;
+const EXPR_IDENT: i64 = 2;
+const EXPR_BINARY: i64 = 3;
+const EXPR_UNARY: i64 = 4;
+const EXPR_CALL: i64 = 5;
+const EXPR_METHOD_CALL: i64 = 6;
+const EXPR_FIELD: i64 = 7;
+const EXPR_INDEX: i64 = 8;
+const EXPR_ARRAY: i64 = 9;
+const EXPR_TUPLE: i64 = 10;
+const EXPR_STRUCT: i64 = 11;
+const EXPR_IF: i64 = 12;
+const EXPR_MATCH: i64 = 13;
+const EXPR_BLOCK: i64 = 14;
+const EXPR_ASSIGN: i64 = 15;
+const EXPR_RETURN: i64 = 16;
+const EXPR_BREAK: i64 = 17;
+const EXPR_CONTINUE: i64 = 18;
+const EXPR_LOOP: i64 = 19;
+const EXPR_WHILE: i64 = 20;
+const EXPR_FOR: i64 = 21;
+const EXPR_CLOSURE: i64 = 22;
+const EXPR_CAST: i64 = 23;
+const EXPR_REFERENCE: i64 = 24;
+const EXPR_DEREF: i64 = 25;
+
+// Binary operators
+const BINOP_ADD: i64 = 1;
+const BINOP_SUB: i64 = 2;
+const BINOP_MUL: i64 = 3;
+const BINOP_DIV: i64 = 4;
+const BINOP_REM: i64 = 5;
+const BINOP_AND: i64 = 6;
+const BINOP_OR: i64 = 7;
+const BINOP_XOR: i64 = 8;
+const BINOP_SHL: i64 = 9;
+const BINOP_SHR: i64 = 10;
+const BINOP_EQ: i64 = 11;
+const BINOP_NE: i64 = 12;
+const BINOP_LT: i64 = 13;
+const BINOP_GT: i64 = 14;
+const BINOP_LE: i64 = 15;
+const BINOP_GE: i64 = 16;
+const BINOP_LOGICAL_AND: i64 = 17;
+const BINOP_LOGICAL_OR: i64 = 18;
+
+// Unary operators
+const UNOP_NEG: i64 = 1;
+const UNOP_NOT: i64 = 2;
+const UNOP_BITNOT: i64 = 3;
+
+// Literal kinds
+const LIT_INT: i64 = 1;
+const LIT_FLOAT: i64 = 2;
+const LIT_BOOL: i64 = 3;
+const LIT_CHAR: i64 = 4;
+const LIT_STRING: i64 = 5;
+
+// Expression structure
+struct Expr {
+    kind: i64,
+    expr_type: Type,
+    line: i64,
+    column: i64,
+    
+    // For literals
+    literal_kind: i64,
+    int_value: i64,
+    float_value: f64,
+    bool_value: bool,
+    char_value: i64,
+    string_value: String,
+    
+    // For identifiers
+    name: String,
+    
+    // For binary operations
+    binop: i64,
+    left: Expr,
+    right: Expr,
+    
+    // For unary operations
+    unop: i64,
+    operand: Expr,
+    
+    // For calls
+    callee: Expr,
+    args: [Expr; 10],
+    arg_count: i64,
+    
+    // For field access
+    object: Expr,
+    field_name: String,
+    
+    // For array/index
+    array: Expr,
+    index: Expr,
+    elements: [Expr; 20],
+    element_count: i64,
+    
+    // For struct literals
+    struct_name: String,
+    field_names: [String; 20],
+    field_values: [Expr; 20],
+    field_count: i64,
+    
+    // For if expressions
+    condition: Expr,
+    then_expr: Expr,
+    else_expr: Expr,
+    
+    // For blocks
+    stmts: [Stmt; 50],
+    stmt_count: i64,
+    final_expr: Expr,
+    
+    // For loops
+    body: Expr,
+    
+    // For for loops
+    pattern: Pattern,
+    iterator: Expr,
+    
+    // For match
+    scrutinee: Expr,
+    arms: [MatchArm; 20],
+    arm_count: i64,
+    
+    // For closures
+    params: [Pattern; 10],
+    param_count: i64,
+    closure_body: Expr,
+    
+    // For cast
+    cast_expr: Expr,
+    cast_type: Type,
+    
+    // For references
+    ref_expr: Expr,
+    is_mut_ref: bool,
+}
+
+// ============ Pattern Definitions ============
+
+// Pattern kinds
+const PAT_WILDCARD: i64 = 1;
+const PAT_IDENT: i64 = 2;
+const PAT_LITERAL: i64 = 3;
+const PAT_TUPLE: i64 = 4;
+const PAT_STRUCT: i64 = 5;
+const PAT_ENUM: i64 = 6;
+const PAT_SLICE: i64 = 7;
+const PAT_REF: i64 = 8;
+
+struct Pattern {
+    kind: i64,
+    pattern_type: Type,
+    
+    // For identifiers
+    name: String,
+    is_mut: bool,
+    
+    // For literals
+    literal: Expr,
+    
+    // For tuples
+    tuple_patterns: [Pattern; 10],
+    tuple_count: i64,
+    
+    // For structs
+    struct_name: String,
+    field_patterns: [FieldPattern; 20],
+    field_pattern_count: i64,
+    
+    // For enums
+    enum_name: String,
+    variant_name: String,
+    variant_patterns: [Pattern; 10],
+    variant_pattern_count: i64,
+    
+    // For references
+    ref_pattern: Pattern,
+    is_mut_ref: bool,
+}
+
+struct FieldPattern {
+    field_name: String,
+    pattern: Pattern,
+}
+
+struct MatchArm {
+    pattern: Pattern,
+    guard: Expr,
+    body: Expr,
+}
+
+// ============ Statement Definitions ============
+
+// Statement kinds
+const STMT_LET: i64 = 1;
+const STMT_EXPR: i64 = 2;
+const STMT_SEMI: i64 = 3;
+
+struct Stmt {
+    kind: i64,
+    line: i64,
+    column: i64,
+    
+    // For let statements
+    pattern: Pattern,
+    let_type: Type,
+    init_expr: Expr,
+    
+    // For expression statements
+    expr: Expr,
+}
+
+// ============ Item Definitions ============
+
+// Item kinds
+const ITEM_FUNCTION: i64 = 1;
+const ITEM_STRUCT: i64 = 2;
+const ITEM_ENUM: i64 = 3;
+const ITEM_TRAIT: i64 = 4;
+const ITEM_IMPL: i64 = 5;
+const ITEM_TYPE_ALIAS: i64 = 6;
+const ITEM_CONST: i64 = 7;
+const ITEM_STATIC: i64 = 8;
+const ITEM_MOD: i64 = 9;
+const ITEM_USE: i64 = 10;
+
+// Visibility
+const VIS_PRIVATE: i64 = 1;
+const VIS_PUB: i64 = 2;
+const VIS_PUB_CRATE: i64 = 3;
+const VIS_PUB_SUPER: i64 = 4;
+const VIS_PUB_IN: i64 = 5;
+
+struct Item {
+    kind: i64,
+    name: String,
+    visibility: i64,
+    line: i64,
+    column: i64,
+    
+    // For functions
+    fn_params: [FnParam; 10],
+    fn_param_count: i64,
+    fn_return_type: Type,
+    fn_body: Expr,
+    is_async: bool,
+    is_const: bool,
+    is_unsafe: bool,
+    
+    // For structs
+    struct_fields: [StructField; 20],
+    struct_field_count: i64,
+    
+    // For enums
+    enum_variants: [EnumVariant; 20],
+    enum_variant_count: i64,
+    
+    // For traits
+    trait_items: [TraitItem; 30],
+    trait_item_count: i64,
+    
+    // For impls
+    impl_type: Type,
+    impl_trait: String,
+    impl_items: [ImplItem; 30],
+    impl_item_count: i64,
+    
+    // For type aliases
+    alias_type: Type,
+    
+    // For const/static
+    const_type: Type,
+    const_value: Expr,
+    is_mutable: bool,
+    
+    // For modules
+    mod_items: [Item; 50],
+    mod_item_count: i64,
+    
+    // For use
+    use_path: String,
+}
+
+struct FnParam {
+    pattern: Pattern,
+    param_type: Type,
+}
+
+struct StructField {
+    name: String,
+    field_type: Type,
+    visibility: i64,
+}
+
+struct EnumVariant {
+    name: String,
+    variant_data: VariantData,
+}
+
+// Variant data kinds
+const VARIANT_UNIT: i64 = 1;
+const VARIANT_TUPLE: i64 = 2;
+const VARIANT_STRUCT: i64 = 3;
+
+struct VariantData {
+    kind: i64,
+    // For tuple variants
+    tuple_types: [Type; 10],
+    tuple_count: i64,
+    // For struct variants
+    struct_fields: [StructField; 20],
+    struct_field_count: i64,
+}
+
+struct TraitItem {
+    name: String,
+    // TODO: Add trait item details
+}
+
+struct ImplItem {
+    name: String,
+    // TODO: Add impl item details
+}
+
+// ============ Program Structure ============
+
+struct Program {
+    items: [Item; 100],
+    item_count: i64,
+}
+
+// ============ AST Construction Helpers ============
+
+fn create_primitive_type(prim: i64) -> Type {
+    return Type {
+        kind: TYPE_KIND_PRIMITIVE,
+        primitive: prim,
+        element_type: Type { kind: 0, primitive: 0, element_type: Type{}, array_size: 0, pointee_type: Type{}, is_mutable: false, param_types: [Type{}; 10], param_count: 0, return_type: Type{}, name: "", type_param_index: 0 },
+        array_size: 0,
+        pointee_type: Type { kind: 0, primitive: 0, element_type: Type{}, array_size: 0, pointee_type: Type{}, is_mutable: false, param_types: [Type{}; 10], param_count: 0, return_type: Type{}, name: "", type_param_index: 0 },
+        is_mutable: false,
+        param_types: [Type { kind: 0, primitive: 0, element_type: Type{}, array_size: 0, pointee_type: Type{}, is_mutable: false, param_types: [Type{}; 10], param_count: 0, return_type: Type{}, name: "", type_param_index: 0 }; 10],
+        param_count: 0,
+        return_type: Type { kind: 0, primitive: 0, element_type: Type{}, array_size: 0, pointee_type: Type{}, is_mutable: false, param_types: [Type{}; 10], param_count: 0, return_type: Type{}, name: "", type_param_index: 0 },
+        name: "",
+        type_param_index: 0,
+    };
+}
+
+fn create_array_type(elem_type: Type, size: i64) -> Type {
+    return Type {
+        kind: TYPE_KIND_ARRAY,
+        primitive: 0,
+        element_type: elem_type,
+        array_size: size,
+        pointee_type: Type { kind: 0, primitive: 0, element_type: Type{}, array_size: 0, pointee_type: Type{}, is_mutable: false, param_types: [Type{}; 10], param_count: 0, return_type: Type{}, name: "", type_param_index: 0 },
+        is_mutable: false,
+        param_types: [Type { kind: 0, primitive: 0, element_type: Type{}, array_size: 0, pointee_type: Type{}, is_mutable: false, param_types: [Type{}; 10], param_count: 0, return_type: Type{}, name: "", type_param_index: 0 }; 10],
+        param_count: 0,
+        return_type: Type { kind: 0, primitive: 0, element_type: Type{}, array_size: 0, pointee_type: Type{}, is_mutable: false, param_types: [Type{}; 10], param_count: 0, return_type: Type{}, name: "", type_param_index: 0 },
+        name: "",
+        type_param_index: 0,
+    };
+}
+
+fn create_int_literal(value: i64, line: i64, column: i64) -> Expr {
+    return Expr {
+        kind: EXPR_LITERAL,
+        expr_type: create_primitive_type(PRIM_I64),
+        line: line,
+        column: column,
+        literal_kind: LIT_INT,
+        int_value: value,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_string_literal(value: String, line: i64, column: i64) -> Expr {
+    return Expr {
+        kind: EXPR_LITERAL,
+        expr_type: create_primitive_type(PRIM_STRING),
+        line: line,
+        column: column,
+        literal_kind: LIT_STRING,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: value,
+        name: "",
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+fn create_ident_expr(name: String, line: i64, column: i64) -> Expr {
+    return Expr {
+        kind: EXPR_IDENT,
+        expr_type: Type{}, // Type will be resolved later
+        line: line,
+        column: column,
+        literal_kind: 0,
+        int_value: 0,
+        float_value: 0.0,
+        bool_value: false,
+        char_value: 0,
+        string_value: "",
+        name: name,
+        binop: 0,
+        left: Expr{},
+        right: Expr{},
+        unop: 0,
+        operand: Expr{},
+        callee: Expr{},
+        args: [Expr{}; 10],
+        arg_count: 0,
+        object: Expr{},
+        field_name: "",
+        array: Expr{},
+        index: Expr{},
+        elements: [Expr{}; 20],
+        element_count: 0,
+        struct_name: "",
+        field_names: [""; 20],
+        field_values: [Expr{}; 20],
+        field_count: 0,
+        condition: Expr{},
+        then_expr: Expr{},
+        else_expr: Expr{},
+        stmts: [Stmt{}; 50],
+        stmt_count: 0,
+        final_expr: Expr{},
+        body: Expr{},
+        pattern: Pattern{},
+        iterator: Expr{},
+        scrutinee: Expr{},
+        arms: [MatchArm{}; 20],
+        arm_count: 0,
+        params: [Pattern{}; 10],
+        param_count: 0,
+        closure_body: Expr{},
+        cast_expr: Expr{},
+        cast_type: Type{},
+        ref_expr: Expr{},
+        is_mut_ref: false,
+    };
+}
+
+// Type name helpers
+fn type_to_string(t: Type) -> String {
+    if t.kind == TYPE_KIND_PRIMITIVE {
+        if t.primitive == PRIM_I8 { return "i8"; }
+        if t.primitive == PRIM_I16 { return "i16"; }
+        if t.primitive == PRIM_I32 { return "i32"; }
+        if t.primitive == PRIM_I64 { return "i64"; }
+        if t.primitive == PRIM_U8 { return "u8"; }
+        if t.primitive == PRIM_U16 { return "u16"; }
+        if t.primitive == PRIM_U32 { return "u32"; }
+        if t.primitive == PRIM_U64 { return "u64"; }
+        if t.primitive == PRIM_F32 { return "f32"; }
+        if t.primitive == PRIM_F64 { return "f64"; }
+        if t.primitive == PRIM_BOOL { return "bool"; }
+        if t.primitive == PRIM_CHAR { return "char"; }
+        if t.primitive == PRIM_STR { return "str"; }
+        if t.primitive == PRIM_STRING { return "String"; }
+        if t.primitive == PRIM_UNIT { return "()"; }
+        return "unknown_primitive";
+    }
+    
+    if t.kind == TYPE_KIND_ARRAY {
+        return string_concat(string_concat(string_concat("[", type_to_string(t.element_type)), "; "), 
+                           string_concat(int_to_string(t.array_size), "]"));
+    }
+    
+    if t.kind == TYPE_KIND_REFERENCE {
+        let prefix = "&";
+        if t.is_mutable {
+            prefix = "&mut ";
+        }
+        return string_concat(prefix, type_to_string(t.pointee_type));
+    }
+    
+    if t.kind == TYPE_KIND_STRUCT || t.kind == TYPE_KIND_ENUM || t.kind == TYPE_KIND_TRAIT {
+        return t.name;
+    }
+    
+    return "unknown_type";
+}
+
+// Pattern helpers
+fn create_ident_pattern(name: String, is_mut: bool) -> Pattern {
+    return Pattern {
+        kind: PAT_IDENT,
+        pattern_type: Type{},
+        name: name,
+        is_mut: is_mut,
+        literal: Expr{},
+        tuple_patterns: [Pattern{}; 10],
+        tuple_count: 0,
+        struct_name: "",
+        field_patterns: [FieldPattern{}; 20],
+        field_pattern_count: 0,
+        enum_name: "",
+        variant_name: "",
+        variant_patterns: [Pattern{}; 10],
+        variant_pattern_count: 0,
+        ref_pattern: Pattern{},
+        is_mut_ref: false,
+    };
+}

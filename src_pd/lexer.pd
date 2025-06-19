@@ -1,0 +1,878 @@
+// Palladium Self-Hosting Compiler - Lexer Module
+// This is the tokenizer for the Palladium compiler written in Palladium
+
+// Token types
+const TOK_EOF: i64 = 0;
+const TOK_ERROR: i64 = 1;
+
+// Literals
+const TOK_IDENT: i64 = 10;
+const TOK_NUMBER: i64 = 11;
+const TOK_STRING: i64 = 12;
+const TOK_CHAR: i64 = 13;
+
+// Keywords
+const TOK_FN: i64 = 20;
+const TOK_LET: i64 = 21;
+const TOK_MUT: i64 = 22;
+const TOK_IF: i64 = 23;
+const TOK_ELSE: i64 = 24;
+const TOK_WHILE: i64 = 25;
+const TOK_FOR: i64 = 26;
+const TOK_IN: i64 = 27;
+const TOK_RETURN: i64 = 28;
+const TOK_BREAK: i64 = 29;
+const TOK_CONTINUE: i64 = 30;
+const TOK_STRUCT: i64 = 31;
+const TOK_ENUM: i64 = 32;
+const TOK_IMPL: i64 = 33;
+const TOK_TRAIT: i64 = 34;
+const TOK_TYPE: i64 = 35;
+const TOK_CONST: i64 = 36;
+const TOK_STATIC: i64 = 37;
+const TOK_PUB: i64 = 38;
+const TOK_USE: i64 = 39;
+const TOK_MOD: i64 = 40;
+const TOK_MATCH: i64 = 41;
+const TOK_AS: i64 = 42;
+const TOK_TRUE: i64 = 43;
+const TOK_FALSE: i64 = 44;
+const TOK_SELF: i64 = 45;
+const TOK_SUPER: i64 = 46;
+const TOK_CRATE: i64 = 47;
+const TOK_ASYNC: i64 = 48;
+const TOK_AWAIT: i64 = 49;
+const TOK_UNSAFE: i64 = 50;
+
+// Operators and Punctuation
+const TOK_PLUS: i64 = 60;
+const TOK_MINUS: i64 = 61;
+const TOK_STAR: i64 = 62;
+const TOK_SLASH: i64 = 63;
+const TOK_PERCENT: i64 = 64;
+const TOK_AMPERSAND: i64 = 65;
+const TOK_PIPE: i64 = 66;
+const TOK_CARET: i64 = 67;
+const TOK_TILDE: i64 = 68;
+const TOK_BANG: i64 = 69;
+const TOK_QUESTION: i64 = 70;
+
+const TOK_PLUSEQ: i64 = 71;
+const TOK_MINUSEQ: i64 = 72;
+const TOK_STAREQ: i64 = 73;
+const TOK_SLASHEQ: i64 = 74;
+const TOK_PERCENTEQ: i64 = 75;
+
+const TOK_EQ: i64 = 80;
+const TOK_EQEQ: i64 = 81;
+const TOK_NE: i64 = 82;
+const TOK_LT: i64 = 83;
+const TOK_GT: i64 = 84;
+const TOK_LE: i64 = 85;
+const TOK_GE: i64 = 86;
+
+const TOK_ANDAND: i64 = 87;
+const TOK_OROR: i64 = 88;
+const TOK_SHL: i64 = 89;
+const TOK_SHR: i64 = 90;
+
+const TOK_ARROW: i64 = 91;      // ->
+const TOK_FATARROW: i64 = 92;   // =>
+const TOK_DOT: i64 = 93;
+const TOK_DOTDOT: i64 = 94;     // ..
+const TOK_DOTDOTEQ: i64 = 95;   // ..=
+const TOK_DOTDOTDOT: i64 = 96;  // ...
+const TOK_COMMA: i64 = 97;
+const TOK_SEMI: i64 = 98;
+const TOK_COLON: i64 = 99;
+const TOK_COLONCOLON: i64 = 100; // ::
+
+const TOK_LPAREN: i64 = 101;
+const TOK_RPAREN: i64 = 102;
+const TOK_LBRACKET: i64 = 103;
+const TOK_RBRACKET: i64 = 104;
+const TOK_LBRACE: i64 = 105;
+const TOK_RBRACE: i64 = 106;
+
+// Token structure
+struct Token {
+    type_id: i64,
+    text: String,
+    line: i64,
+    column: i64,
+    int_value: i64,    // For numeric literals
+    string_value: String, // For string/char literals
+}
+
+// Lexer state
+struct Lexer {
+    input: String,
+    pos: i64,
+    line: i64,
+    column: i64,
+    peek_token: Token,
+    has_peek: bool,
+}
+
+// Character classification
+fn is_whitespace(ch: i64) -> bool {
+    return ch == 32 || ch == 9 || ch == 10 || ch == 13;
+}
+
+fn is_digit(ch: i64) -> bool {
+    return ch >= 48 && ch <= 57; // '0' to '9'
+}
+
+fn is_alpha(ch: i64) -> bool {
+    return (ch >= 65 && ch <= 90) ||  // 'A' to 'Z'
+           (ch >= 97 && ch <= 122) || // 'a' to 'z'
+           ch == 95;                   // '_'
+}
+
+fn is_alphanumeric(ch: i64) -> bool {
+    return is_alpha(ch) || is_digit(ch);
+}
+
+fn is_hex_digit(ch: i64) -> bool {
+    return is_digit(ch) ||
+           (ch >= 65 && ch <= 70) ||  // 'A' to 'F'
+           (ch >= 97 && ch <= 102);   // 'a' to 'f'
+}
+
+// Lexer creation
+fn create_lexer(input: String) -> Lexer {
+    return Lexer {
+        input: input,
+        pos: 0,
+        line: 1,
+        column: 1,
+        peek_token: Token { type_id: TOK_EOF, text: "", line: 0, column: 0, int_value: 0, string_value: "" },
+        has_peek: false,
+    };
+}
+
+// Character access
+fn current_char(lexer: &Lexer) -> i64 {
+    if lexer.pos >= string_len(lexer.input) {
+        return -1; // EOF
+    }
+    return string_char_at(lexer.input, lexer.pos);
+}
+
+fn peek_char(lexer: &Lexer) -> i64 {
+    if lexer.pos + 1 >= string_len(lexer.input) {
+        return -1; // EOF
+    }
+    return string_char_at(lexer.input, lexer.pos + 1);
+}
+
+fn advance_char(lexer: &mut Lexer) {
+    if lexer.pos >= string_len(lexer.input) {
+        return;
+    }
+    
+    let ch = string_char_at(lexer.input, lexer.pos);
+    lexer.pos = lexer.pos + 1;
+    
+    if ch == 10 { // newline
+        lexer.line = lexer.line + 1;
+        lexer.column = 1;
+    } else {
+        lexer.column = lexer.column + 1;
+    }
+}
+
+// Skip whitespace and comments
+fn skip_whitespace(lexer: &mut Lexer) {
+    while true {
+        let ch = current_char(lexer);
+        
+        if is_whitespace(ch) {
+            advance_char(lexer);
+            continue;
+        }
+        
+        // Single-line comment
+        if ch == 47 && peek_char(lexer) == 47 { // "//"
+            advance_char(lexer);
+            advance_char(lexer);
+            while current_char(lexer) != 10 && current_char(lexer) != -1 {
+                advance_char(lexer);
+            }
+            continue;
+        }
+        
+        // Multi-line comment
+        if ch == 47 && peek_char(lexer) == 42 { // "/*"
+            advance_char(lexer);
+            advance_char(lexer);
+            while true {
+                if current_char(lexer) == -1 {
+                    break;
+                }
+                if current_char(lexer) == 42 && peek_char(lexer) == 47 { // "*/"
+                    advance_char(lexer);
+                    advance_char(lexer);
+                    break;
+                }
+                advance_char(lexer);
+            }
+            continue;
+        }
+        
+        break;
+    }
+}
+
+// Read identifier or keyword
+fn read_identifier(lexer: &mut Lexer) -> String {
+    let start_pos = lexer.pos;
+    
+    while is_alphanumeric(current_char(lexer)) {
+        advance_char(lexer);
+    }
+    
+    return substring(lexer.input, start_pos, lexer.pos - 1);
+}
+
+// Read numeric literal
+fn read_number(lexer: &mut Lexer) -> Token {
+    let start_line = lexer.line;
+    let start_column = lexer.column;
+    let start_pos = lexer.pos;
+    
+    // Check for hex literal
+    if current_char(lexer) == 48 && peek_char(lexer) == 120 { // "0x"
+        advance_char(lexer);
+        advance_char(lexer);
+        
+        while is_hex_digit(current_char(lexer)) {
+            advance_char(lexer);
+        }
+        
+        let text = substring(lexer.input, start_pos, lexer.pos - 1);
+        // TODO: Parse hex value
+        return Token {
+            type_id: TOK_NUMBER,
+            text: text,
+            line: start_line,
+            column: start_column,
+            int_value: 0, // TODO: implement hex parsing
+            string_value: "",
+        };
+    }
+    
+    // Read decimal number
+    while is_digit(current_char(lexer)) {
+        advance_char(lexer);
+    }
+    
+    let text = substring(lexer.input, start_pos, lexer.pos - 1);
+    let value = string_to_int(text);
+    
+    return Token {
+        type_id: TOK_NUMBER,
+        text: text,
+        line: start_line,
+        column: start_column,
+        int_value: value,
+        string_value: "",
+    };
+}
+
+// Read string literal
+fn read_string(lexer: &mut Lexer) -> Token {
+    let start_line = lexer.line;
+    let start_column = lexer.column;
+    let start_pos = lexer.pos;
+    
+    advance_char(lexer); // Skip opening quote
+    
+    let mut value = "";
+    
+    while current_char(lexer) != 34 && current_char(lexer) != -1 { // '"'
+        if current_char(lexer) == 92 { // backslash
+            advance_char(lexer);
+            let ch = current_char(lexer);
+            if ch == 110 { // 'n'
+                value = string_concat(value, "\n");
+            } else if ch == 116 { // 't'
+                value = string_concat(value, "\t");
+            } else if ch == 114 { // 'r'
+                value = string_concat(value, "\r");
+            } else if ch == 92 { // '\'
+                value = string_concat(value, "\\");
+            } else if ch == 34 { // '"'
+                value = string_concat(value, "\"");
+            } else if ch == 48 { // '0'
+                value = string_concat(value, "\0");
+            } else {
+                // Unknown escape, just add the character
+                value = string_concat(value, string_from_char(ch));
+            }
+            advance_char(lexer);
+        } else {
+            value = string_concat(value, string_from_char(current_char(lexer)));
+            advance_char(lexer);
+        }
+    }
+    
+    if current_char(lexer) == 34 {
+        advance_char(lexer); // Skip closing quote
+    }
+    
+    let text = substring(lexer.input, start_pos, lexer.pos - 1);
+    
+    return Token {
+        type_id: TOK_STRING,
+        text: text,
+        line: start_line,
+        column: start_column,
+        int_value: 0,
+        string_value: value,
+    };
+}
+
+// Read character literal
+fn read_char(lexer: &mut Lexer) -> Token {
+    let start_line = lexer.line;
+    let start_column = lexer.column;
+    let start_pos = lexer.pos;
+    
+    advance_char(lexer); // Skip opening quote
+    
+    let mut value = 0;
+    
+    if current_char(lexer) == 92 { // backslash
+        advance_char(lexer);
+        let ch = current_char(lexer);
+        if ch == 110 { // 'n'
+            value = 10;
+        } else if ch == 116 { // 't'
+            value = 9;
+        } else if ch == 114 { // 'r'
+            value = 13;
+        } else if ch == 92 { // '\'
+            value = 92;
+        } else if ch == 39 { // '''
+            value = 39;
+        } else if ch == 48 { // '0'
+            value = 0;
+        } else {
+            value = ch;
+        }
+        advance_char(lexer);
+    } else {
+        value = current_char(lexer);
+        advance_char(lexer);
+    }
+    
+    if current_char(lexer) == 39 {
+        advance_char(lexer); // Skip closing quote
+    }
+    
+    let text = substring(lexer.input, start_pos, lexer.pos - 1);
+    
+    return Token {
+        type_id: TOK_CHAR,
+        text: text,
+        line: start_line,
+        column: start_column,
+        int_value: value,
+        string_value: "",
+    };
+}
+
+// Get keyword token type
+fn get_keyword_type(text: String) -> i64 {
+    if string_eq(text, "fn") { return TOK_FN; }
+    if string_eq(text, "let") { return TOK_LET; }
+    if string_eq(text, "mut") { return TOK_MUT; }
+    if string_eq(text, "if") { return TOK_IF; }
+    if string_eq(text, "else") { return TOK_ELSE; }
+    if string_eq(text, "while") { return TOK_WHILE; }
+    if string_eq(text, "for") { return TOK_FOR; }
+    if string_eq(text, "in") { return TOK_IN; }
+    if string_eq(text, "return") { return TOK_RETURN; }
+    if string_eq(text, "break") { return TOK_BREAK; }
+    if string_eq(text, "continue") { return TOK_CONTINUE; }
+    if string_eq(text, "struct") { return TOK_STRUCT; }
+    if string_eq(text, "enum") { return TOK_ENUM; }
+    if string_eq(text, "impl") { return TOK_IMPL; }
+    if string_eq(text, "trait") { return TOK_TRAIT; }
+    if string_eq(text, "type") { return TOK_TYPE; }
+    if string_eq(text, "const") { return TOK_CONST; }
+    if string_eq(text, "static") { return TOK_STATIC; }
+    if string_eq(text, "pub") { return TOK_PUB; }
+    if string_eq(text, "use") { return TOK_USE; }
+    if string_eq(text, "mod") { return TOK_MOD; }
+    if string_eq(text, "match") { return TOK_MATCH; }
+    if string_eq(text, "as") { return TOK_AS; }
+    if string_eq(text, "true") { return TOK_TRUE; }
+    if string_eq(text, "false") { return TOK_FALSE; }
+    if string_eq(text, "self") { return TOK_SELF; }
+    if string_eq(text, "super") { return TOK_SUPER; }
+    if string_eq(text, "crate") { return TOK_CRATE; }
+    if string_eq(text, "async") { return TOK_ASYNC; }
+    if string_eq(text, "await") { return TOK_AWAIT; }
+    if string_eq(text, "unsafe") { return TOK_UNSAFE; }
+    return TOK_IDENT;
+}
+
+// Main tokenization function
+fn next_token_internal(lexer: &mut Lexer) -> Token {
+    skip_whitespace(lexer);
+    
+    let line = lexer.line;
+    let column = lexer.column;
+    let ch = current_char(lexer);
+    
+    if ch == -1 {
+        return Token {
+            type_id: TOK_EOF,
+            text: "",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    // Identifiers and keywords
+    if is_alpha(ch) {
+        let text = read_identifier(lexer);
+        let type_id = get_keyword_type(text);
+        return Token {
+            type_id: type_id,
+            text: text,
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: text,
+        };
+    }
+    
+    // Numbers
+    if is_digit(ch) {
+        return read_number(lexer);
+    }
+    
+    // String literals
+    if ch == 34 { // '"'
+        return read_string(lexer);
+    }
+    
+    // Character literals
+    if ch == 39 { // '''
+        return read_char(lexer);
+    }
+    
+    // Single-character tokens
+    let start_pos = lexer.pos;
+    advance_char(lexer);
+    
+    // Two-character tokens
+    let next_ch = current_char(lexer);
+    
+    if ch == 45 && next_ch == 62 { // "->"
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_ARROW,
+            text: "->",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 61 && next_ch == 62 { // "=>"
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_FATARROW,
+            text: "=>",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 61 && next_ch == 61 { // "=="
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_EQEQ,
+            text: "==",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 33 && next_ch == 61 { // "!="
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_NE,
+            text: "!=",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 60 && next_ch == 61 { // "<="
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_LE,
+            text: "<=",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 62 && next_ch == 61 { // ">="
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_GE,
+            text: ">=",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 60 && next_ch == 60 { // "<<"
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_SHL,
+            text: "<<",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 62 && next_ch == 62 { // ">>"
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_SHR,
+            text: ">>",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 38 && next_ch == 38 { // "&&"
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_ANDAND,
+            text: "&&",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 124 && next_ch == 124 { // "||"
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_OROR,
+            text: "||",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 58 && next_ch == 58 { // "::"
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_COLONCOLON,
+            text: "::",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 46 && next_ch == 46 { // ".."
+        advance_char(lexer);
+        if current_char(lexer) == 46 { // "..."
+            advance_char(lexer);
+            return Token {
+                type_id: TOK_DOTDOTDOT,
+                text: "...",
+                line: line,
+                column: column,
+                int_value: 0,
+                string_value: "",
+            };
+        }
+        if current_char(lexer) == 61 { // "..="
+            advance_char(lexer);
+            return Token {
+                type_id: TOK_DOTDOTEQ,
+                text: "..=",
+                line: line,
+                column: column,
+                int_value: 0,
+                string_value: "",
+            };
+        }
+        return Token {
+            type_id: TOK_DOTDOT,
+            text: "..",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    // Compound assignment operators
+    if ch == 43 && next_ch == 61 { // "+="
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_PLUSEQ,
+            text: "+=",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 45 && next_ch == 61 { // "-="
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_MINUSEQ,
+            text: "-=",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 42 && next_ch == 61 { // "*="
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_STAREQ,
+            text: "*=",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 47 && next_ch == 61 { // "/="
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_SLASHEQ,
+            text: "/=",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    if ch == 37 && next_ch == 61 { // "%="
+        advance_char(lexer);
+        return Token {
+            type_id: TOK_PERCENTEQ,
+            text: "%=",
+            line: line,
+            column: column,
+            int_value: 0,
+            string_value: "",
+        };
+    }
+    
+    // Single-character tokens
+    let type_id = match ch {
+        43 => TOK_PLUS,       // '+'
+        45 => TOK_MINUS,      // '-'
+        42 => TOK_STAR,       // '*'
+        47 => TOK_SLASH,      // '/'
+        37 => TOK_PERCENT,    // '%'
+        38 => TOK_AMPERSAND,  // '&'
+        124 => TOK_PIPE,      // '|'
+        94 => TOK_CARET,      // '^'
+        126 => TOK_TILDE,     // '~'
+        33 => TOK_BANG,       // '!'
+        63 => TOK_QUESTION,   // '?'
+        61 => TOK_EQ,         // '='
+        60 => TOK_LT,         // '<'
+        62 => TOK_GT,         // '>'
+        46 => TOK_DOT,        // '.'
+        44 => TOK_COMMA,      // ','
+        59 => TOK_SEMI,       // ';'
+        58 => TOK_COLON,      // ':'
+        40 => TOK_LPAREN,     // '('
+        41 => TOK_RPAREN,     // ')'
+        91 => TOK_LBRACKET,   // '['
+        93 => TOK_RBRACKET,   // ']'
+        123 => TOK_LBRACE,    // '{'
+        125 => TOK_RBRACE,    // '}'
+        _ => TOK_ERROR,
+    };
+    
+    let text = string_from_char(ch);
+    
+    return Token {
+        type_id: type_id,
+        text: text,
+        line: line,
+        column: column,
+        int_value: 0,
+        string_value: "",
+    };
+}
+
+// Public interface with peek support
+fn peek_token(lexer: &mut Lexer) -> Token {
+    if !lexer.has_peek {
+        lexer.peek_token = next_token_internal(lexer);
+        lexer.has_peek = true;
+    }
+    return lexer.peek_token;
+}
+
+fn next_token(lexer: &mut Lexer) -> Token {
+    if lexer.has_peek {
+        lexer.has_peek = false;
+        return lexer.peek_token;
+    }
+    return next_token_internal(lexer);
+}
+
+// Token type name for debugging
+fn token_type_name(type_id: i64) -> String {
+    if type_id == TOK_EOF { return "EOF"; }
+    if type_id == TOK_ERROR { return "ERROR"; }
+    if type_id == TOK_IDENT { return "IDENT"; }
+    if type_id == TOK_NUMBER { return "NUMBER"; }
+    if type_id == TOK_STRING { return "STRING"; }
+    if type_id == TOK_CHAR { return "CHAR"; }
+    if type_id == TOK_FN { return "fn"; }
+    if type_id == TOK_LET { return "let"; }
+    if type_id == TOK_MUT { return "mut"; }
+    if type_id == TOK_IF { return "if"; }
+    if type_id == TOK_ELSE { return "else"; }
+    if type_id == TOK_WHILE { return "while"; }
+    if type_id == TOK_FOR { return "for"; }
+    if type_id == TOK_IN { return "in"; }
+    if type_id == TOK_RETURN { return "return"; }
+    if type_id == TOK_BREAK { return "break"; }
+    if type_id == TOK_CONTINUE { return "continue"; }
+    if type_id == TOK_STRUCT { return "struct"; }
+    if type_id == TOK_ENUM { return "enum"; }
+    if type_id == TOK_IMPL { return "impl"; }
+    if type_id == TOK_TRAIT { return "trait"; }
+    if type_id == TOK_TYPE { return "type"; }
+    if type_id == TOK_CONST { return "const"; }
+    if type_id == TOK_STATIC { return "static"; }
+    if type_id == TOK_PUB { return "pub"; }
+    if type_id == TOK_USE { return "use"; }
+    if type_id == TOK_MOD { return "mod"; }
+    if type_id == TOK_MATCH { return "match"; }
+    if type_id == TOK_AS { return "as"; }
+    if type_id == TOK_TRUE { return "true"; }
+    if type_id == TOK_FALSE { return "false"; }
+    if type_id == TOK_SELF { return "self"; }
+    if type_id == TOK_SUPER { return "super"; }
+    if type_id == TOK_CRATE { return "crate"; }
+    if type_id == TOK_ASYNC { return "async"; }
+    if type_id == TOK_AWAIT { return "await"; }
+    if type_id == TOK_UNSAFE { return "unsafe"; }
+    // Add more as needed
+    return "UNKNOWN";
+}
+
+// Helper functions
+fn substring(s: String, start: i64, end: i64) -> String {
+    let mut result = "";
+    let mut i = start;
+    while i <= end && i < string_len(s) {
+        result = string_concat(result, string_from_char(string_char_at(s, i)));
+        i = i + 1;
+    }
+    return result;
+}
+
+fn string_eq(a: String, b: String) -> bool {
+    if string_len(a) != string_len(b) {
+        return false;
+    }
+    let mut i = 0;
+    while i < string_len(a) {
+        if string_char_at(a, i) != string_char_at(b, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn string_to_int(s: String) -> i64 {
+    let mut result = 0;
+    let mut i = 0;
+    let mut negative = false;
+    
+    if string_len(s) > 0 && string_char_at(s, 0) == 45 { // '-'
+        negative = true;
+        i = 1;
+    }
+    
+    while i < string_len(s) {
+        let ch = string_char_at(s, i);
+        if ch >= 48 && ch <= 57 {
+            result = result * 10 + (ch - 48);
+        }
+        i = i + 1;
+    }
+    
+    if negative {
+        return -result;
+    }
+    return result;
+}
+
+// Test function
+fn test_lexer() {
+    let input = "fn main() {
+    let x = 42;
+    let name = \"hello\";
+    if x > 0 {
+        print(name);
+    }
+}";
+
+    let mut lexer = create_lexer(input);
+    
+    print("=== Lexer Test ===");
+    
+    while true {
+        let tok = next_token(&mut lexer);
+        if tok.type_id == TOK_EOF {
+            break;
+        }
+        
+        print(string_concat(string_concat(string_concat(string_concat(
+            "[", token_type_name(tok.type_id)), "] "), tok.text), 
+            string_concat(" at line ", int_to_string(tok.line))));
+    }
+}

@@ -1,0 +1,18 @@
+// Demo program for the tiny compiler
+
+fn main() {
+    print("Palladium Bootstrap Demo");
+    print("=======================");
+    
+    let x: i64 = 42;
+    let y: i64 = 13;
+    
+    print("Values:");
+    print_int(x);
+    print_int(y);
+    
+    let message: String = "Bootstrap compiler working!";
+    print(message);
+    
+    print("Done!");
+}

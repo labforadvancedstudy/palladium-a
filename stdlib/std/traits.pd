@@ -1,0 +1,630 @@
+// Core traits for Palladium standard library
+// "Legends define the contracts of greatness"
+
+// Comparison traits
+pub trait PartialEq<Rhs = Self> {
+    fn eq(self: &Self, other: &Rhs) -> bool;
+    
+    fn ne(self: &Self, other: &Rhs) -> bool {
+        !self.eq(other)
+    }
+}
+
+pub trait Eq: PartialEq<Self> {}
+
+pub enum Ordering {
+    Less,
+    Equal,
+    Greater,
+}
+
+pub trait PartialOrd<Rhs = Self>: PartialEq<Rhs> {
+    fn partial_cmp(self: &Self, other: &Rhs) -> Option<Ordering>;
+    
+    fn lt(self: &Self, other: &Rhs) -> bool {
+        match self.partial_cmp(other) {
+            Option::Some(Ordering::Less) => true,
+            _ => false,
+        }
+    }
+    
+    fn le(self: &Self, other: &Rhs) -> bool {
+        match self.partial_cmp(other) {
+            Option::Some(Ordering::Less) | Option::Some(Ordering::Equal) => true,
+            _ => false,
+        }
+    }
+    
+    fn gt(self: &Self, other: &Rhs) -> bool {
+        match self.partial_cmp(other) {
+            Option::Some(Ordering::Greater) => true,
+            _ => false,
+        }
+    }
+    
+    fn ge(self: &Self, other: &Rhs) -> bool {
+        match self.partial_cmp(other) {
+            Option::Some(Ordering::Greater) | Option::Some(Ordering::Equal) => true,
+            _ => false,
+        }
+    }
+}
+
+pub trait Ord: Eq + PartialOrd<Self> {
+    fn cmp(self: &Self, other: &Self) -> Ordering;
+    
+    fn max(self: Self, other: Self) -> Self {
+        if self.cmp(&other) == Ordering::Greater {
+            self
+        } else {
+            other
+        }
+    }
+    
+    fn min(self: Self, other: Self) -> Self {
+        if self.cmp(&other) == Ordering::Less {
+            self
+        } else {
+            other
+        }
+    }
+    
+    fn clamp(self: Self, min: Self, max: Self) -> Self {
+        if self.cmp(&min) == Ordering::Less {
+            min
+        } else if self.cmp(&max) == Ordering::Greater {
+            max
+        } else {
+            self
+        }
+    }
+}
+
+// Clone and Copy
+pub trait Clone {
+    fn clone(self: &Self) -> Self;
+    
+    fn clone_from(self: &mut Self, source: &Self) {
+        *self = source.clone();
+    }
+}
+
+pub trait Copy: Clone {}
+
+// Default
+pub trait Default {
+    fn default() -> Self;
+}
+
+// Hash
+pub trait Hash {
+    fn hash(self: &Self) -> u64;
+}
+
+// Display and Debug
+pub trait Display {
+    fn fmt(self: &Self) -> String;
+}
+
+pub trait Debug {
+    fn fmt_debug(self: &Self) -> String;
+}
+
+// Iterator
+pub trait Iterator {
+    type Item;
+    
+    fn next(self: &mut Self) -> Option<Self::Item>;
+    
+    fn size_hint(self: &Self) -> (usize, Option<usize>) {
+        (0, Option::None)
+    }
+    
+    fn count(self: Self) -> usize {
+        let mut count = 0;
+        while self.next().is_some() {
+            count += 1;
+        }
+        count
+    }
+    
+    fn last(self: Self) -> Option<Self::Item> {
+        let mut last = Option::None;
+        loop {
+            match self.next() {
+                Option::Some(item) => last = Option::Some(item),
+                Option::None => break,
+            }
+        }
+        last
+    }
+    
+    fn nth(self: &mut Self, n: usize) -> Option<Self::Item> {
+        for _ in 0..n {
+            self.next()?;
+        }
+        self.next()
+    }
+    
+    fn collect<C: FromIterator<Self::Item>>(self: Self) -> C {
+        C::from_iter(self)
+    }
+    
+    fn find<P>(self: &mut Self, predicate: P) -> Option<Self::Item>
+    where P: Fn(&Self::Item) -> bool {
+        loop {
+            match self.next() {
+                Option::Some(item) => {
+                    if predicate(&item) {
+                        return Option::Some(item);
+                    }
+                }
+                Option::None => return Option::None,
+            }
+        }
+    }
+    
+    fn position<P>(self: &mut Self, predicate: P) -> Option<usize>
+    where P: Fn(Self::Item) -> bool {
+        let mut i = 0;
+        loop {
+            match self.next() {
+                Option::Some(item) => {
+                    if predicate(item) {
+                        return Option::Some(i);
+                    }
+                    i += 1;
+                }
+                Option::None => return Option::None,
+            }
+        }
+    }
+    
+    fn all<P>(self: &mut Self, predicate: P) -> bool
+    where P: Fn(Self::Item) -> bool {
+        loop {
+            match self.next() {
+                Option::Some(item) => {
+                    if !predicate(item) {
+                        return false;
+                    }
+                }
+                Option::None => return true,
+            }
+        }
+    }
+    
+    fn any<P>(self: &mut Self, predicate: P) -> bool
+    where P: Fn(Self::Item) -> bool {
+        loop {
+            match self.next() {
+                Option::Some(item) => {
+                    if predicate(item) {
+                        return true;
+                    }
+                }
+                Option::None => return false,
+            }
+        }
+    }
+    
+    fn fold<B, F>(self: Self, init: B, f: F) -> B
+    where F: Fn(B, Self::Item) -> B {
+        let mut acc = init;
+        loop {
+            match self.next() {
+                Option::Some(item) => acc = f(acc, item),
+                Option::None => break,
+            }
+        }
+        acc
+    }
+}
+
+pub trait FromIterator<A> {
+    fn from_iter<T: Iterator<Item = A>>(iter: T) -> Self;
+}
+
+pub trait IntoIterator {
+    type Item;
+    type IntoIter: Iterator<Item = Self::Item>;
+    
+    fn into_iter(self) -> Self::IntoIter;
+}
+
+// Conversion traits
+pub trait From<T> {
+    fn from(value: T) -> Self;
+}
+
+pub trait Into<T> {
+    fn into(self) -> T;
+}
+
+// Automatic implementation of Into for From
+impl<T, U> Into<U> for T where U: From<T> {
+    fn into(self) -> U {
+        U::from(self)
+    }
+}
+
+pub trait TryFrom<T> {
+    type Error;
+    
+    fn try_from(value: T) -> Result<Self, Self::Error>;
+}
+
+pub trait TryInto<T> {
+    type Error;
+    
+    fn try_into(self) -> Result<T, Self::Error>;
+}
+
+// Automatic implementation of TryInto for TryFrom
+impl<T, U> TryInto<U> for T where U: TryFrom<T> {
+    type Error = U::Error;
+    
+    fn try_into(self) -> Result<U, Self::Error> {
+        U::try_from(self)
+    }
+}
+
+// AsRef and AsMut
+pub trait AsRef<T: ?Sized> {
+    fn as_ref(self: &Self) -> &T;
+}
+
+pub trait AsMut<T: ?Sized> {
+    fn as_mut(self: &mut Self) -> &mut T;
+}
+
+// Deref and DerefMut
+pub trait Deref {
+    type Target: ?Sized;
+    
+    fn deref(self: &Self) -> &Self::Target;
+}
+
+pub trait DerefMut: Deref {
+    fn deref_mut(self: &mut Self) -> &mut Self::Target;
+}
+
+// Index and IndexMut
+pub trait Index<Idx: ?Sized> {
+    type Output: ?Sized;
+    
+    fn index(self: &Self, index: Idx) -> &Self::Output;
+}
+
+pub trait IndexMut<Idx: ?Sized>: Index<Idx> {
+    fn index_mut(self: &mut Self, index: Idx) -> &mut Self::Output;
+}
+
+// Drop
+pub trait Drop {
+    fn drop(self: &mut Self);
+}
+
+// Sized
+pub trait Sized {}
+
+// Send and Sync (for concurrency)
+pub trait Send {}
+pub trait Sync {}
+
+// Fn traits
+pub trait Fn<Args>: FnMut<Args> {
+    fn call(self: &Self, args: Args) -> Self::Output;
+}
+
+pub trait FnMut<Args>: FnOnce<Args> {
+    fn call_mut(self: &mut Self, args: Args) -> Self::Output;
+}
+
+pub trait FnOnce<Args> {
+    type Output;
+    
+    fn call_once(self, args: Args) -> Self::Output;
+}
+
+// Add, Sub, Mul, Div, Rem
+pub trait Add<Rhs = Self> {
+    type Output;
+    
+    fn add(self, rhs: Rhs) -> Self::Output;
+}
+
+pub trait Sub<Rhs = Self> {
+    type Output;
+    
+    fn sub(self, rhs: Rhs) -> Self::Output;
+}
+
+pub trait Mul<Rhs = Self> {
+    type Output;
+    
+    fn mul(self, rhs: Rhs) -> Self::Output;
+}
+
+pub trait Div<Rhs = Self> {
+    type Output;
+    
+    fn div(self, rhs: Rhs) -> Self::Output;
+}
+
+pub trait Rem<Rhs = Self> {
+    type Output;
+    
+    fn rem(self, rhs: Rhs) -> Self::Output;
+}
+
+// Neg
+pub trait Neg {
+    type Output;
+    
+    fn neg(self) -> Self::Output;
+}
+
+// AddAssign, SubAssign, etc.
+pub trait AddAssign<Rhs = Self> {
+    fn add_assign(self: &mut Self, rhs: Rhs);
+}
+
+pub trait SubAssign<Rhs = Self> {
+    fn sub_assign(self: &mut Self, rhs: Rhs);
+}
+
+pub trait MulAssign<Rhs = Self> {
+    fn mul_assign(self: &mut Self, rhs: Rhs);
+}
+
+pub trait DivAssign<Rhs = Self> {
+    fn div_assign(self: &mut Self, rhs: Rhs);
+}
+
+pub trait RemAssign<Rhs = Self> {
+    fn rem_assign(self: &mut Self, rhs: Rhs);
+}
+
+// Bitwise operations
+pub trait BitAnd<Rhs = Self> {
+    type Output;
+    
+    fn bitand(self, rhs: Rhs) -> Self::Output;
+}
+
+pub trait BitOr<Rhs = Self> {
+    type Output;
+    
+    fn bitor(self, rhs: Rhs) -> Self::Output;
+}
+
+pub trait BitXor<Rhs = Self> {
+    type Output;
+    
+    fn bitxor(self, rhs: Rhs) -> Self::Output;
+}
+
+pub trait Not {
+    type Output;
+    
+    fn not(self) -> Self::Output;
+}
+
+pub trait Shl<Rhs = Self> {
+    type Output;
+    
+    fn shl(self, rhs: Rhs) -> Self::Output;
+}
+
+pub trait Shr<Rhs = Self> {
+    type Output;
+    
+    fn shr(self, rhs: Rhs) -> Self::Output;
+}
+
+// Range traits
+pub trait RangeBounds<T: ?Sized> {
+    fn start_bound(self: &Self) -> Bound<&T>;
+    fn end_bound(self: &Self) -> Bound<&T>;
+    
+    fn contains<U>(self: &Self, item: &U) -> bool
+    where T: PartialOrd<U>, U: ?Sized + PartialOrd<T> {
+        match self.start_bound() {
+            Bound::Included(start) => {
+                if item < start {
+                    return false;
+                }
+            }
+            Bound::Excluded(start) => {
+                if item <= start {
+                    return false;
+                }
+            }
+            Bound::Unbounded => {}
+        }
+        
+        match self.end_bound() {
+            Bound::Included(end) => {
+                if item > end {
+                    return false;
+                }
+            }
+            Bound::Excluded(end) => {
+                if item >= end {
+                    return false;
+                }
+            }
+            Bound::Unbounded => {}
+        }
+        
+        true
+    }
+}
+
+pub enum Bound<T> {
+    Included(T),
+    Excluded(T),
+    Unbounded,
+}
+
+// Error trait
+pub trait Error: Debug + Display {
+    fn source(self: &Self) -> Option<&dyn Error> {
+        Option::None
+    }
+}
+
+// Any trait for dynamic typing
+pub trait Any {
+    fn type_id(self: &Self) -> TypeId;
+}
+
+pub struct TypeId {
+    value: u64,
+}
+
+// Implementations for primitive types
+impl PartialEq for i64 {
+    fn eq(self: &i64, other: &i64) -> bool {
+        *self == *other
+    }
+}
+
+impl Eq for i64 {}
+
+impl PartialOrd for i64 {
+    fn partial_cmp(self: &i64, other: &i64) -> Option<Ordering> {
+        Option::Some(self.cmp(other))
+    }
+}
+
+impl Ord for i64 {
+    fn cmp(self: &i64, other: &i64) -> Ordering {
+        if *self < *other {
+            Ordering::Less
+        } else if *self > *other {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
+impl Clone for i64 {
+    fn clone(self: &i64) -> i64 {
+        *self
+    }
+}
+
+impl Copy for i64 {}
+
+impl Default for i64 {
+    fn default() -> i64 {
+        0
+    }
+}
+
+impl Hash for i64 {
+    fn hash(self: &i64) -> u64 {
+        *self as u64
+    }
+}
+
+impl Display for i64 {
+    fn fmt(self: &i64) -> String {
+        int_to_string(*self)
+    }
+}
+
+impl Debug for i64 {
+    fn fmt_debug(self: &i64) -> String {
+        int_to_string(*self)
+    }
+}
+
+// Similar implementations for other primitive types (bool, char, f64, etc.)
+impl PartialEq for bool {
+    fn eq(self: &bool, other: &bool) -> bool {
+        *self == *other
+    }
+}
+
+impl Eq for bool {}
+
+impl Clone for bool {
+    fn clone(self: &bool) -> bool {
+        *self
+    }
+}
+
+impl Copy for bool {}
+
+impl Default for bool {
+    fn default() -> bool {
+        false
+    }
+}
+
+impl Hash for bool {
+    fn hash(self: &bool) -> u64 {
+        if *self { 1 } else { 0 }
+    }
+}
+
+impl Display for bool {
+    fn fmt(self: &bool) -> String {
+        if *self { "true" } else { "false" }
+    }
+}
+
+impl Debug for bool {
+    fn fmt_debug(self: &bool) -> String {
+        if *self { "true" } else { "false" }
+    }
+}
+
+// String implementations
+impl PartialEq for String {
+    fn eq(self: &String, other: &String) -> bool {
+        string_eq(*self, *other)
+    }
+}
+
+impl Eq for String {}
+
+impl Clone for String {
+    fn clone(self: &String) -> String {
+        *self
+    }
+}
+
+impl Hash for String {
+    fn hash(self: &String) -> u64 {
+        let mut h: u64 = 0;
+        let len = string_len(*self);
+        for i in 0..len {
+            let ch = string_char_at(*self, i) as u64;
+            h = h * 31 + ch;
+        }
+        h
+    }
+}
+
+impl Display for String {
+    fn fmt(self: &String) -> String {
+        *self
+    }
+}
+
+impl Debug for String {
+    fn fmt_debug(self: &String) -> String {
+        string_concat("\"", string_concat(*self, "\""))
+    }
+}
+
+impl Default for String {
+    fn default() -> String {
+        ""
+    }
+}

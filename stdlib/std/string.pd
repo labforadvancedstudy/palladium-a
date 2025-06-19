@@ -1,0 +1,578 @@
+// String utilities for Palladium standard library
+// "Legends craft their words with precision"
+
+use crate::std::option::Option;
+use crate::std::result::Result;
+use crate::std::collections::vec::Vec;
+
+// String type (already built-in, but we add methods)
+impl String {
+    // Get string length
+    pub fn len(self: &String) -> usize {
+        string_len(*self) as usize
+    }
+
+    // Check if empty
+    pub fn is_empty(self: &String) -> bool {
+        self.len() == 0
+    }
+
+    // Get character at index
+    pub fn char_at(self: &String, index: usize) -> Option<char> {
+        if index < self.len() {
+            Option::Some(string_char_at(*self, index as i64) as char)
+        } else {
+            Option::None
+        }
+    }
+
+    // Get substring
+    pub fn substring(self: &String, start: usize, end: usize) -> String {
+        if start > end || end > self.len() {
+            ""
+        } else {
+            string_substring(*self, start as i64, end as i64)
+        }
+    }
+
+    // Check if starts with prefix
+    pub fn starts_with(self: &String, prefix: &String) -> bool {
+        if prefix.len() > self.len() {
+            return false;
+        }
+        
+        let substr = self.substring(0, prefix.len());
+        string_eq(substr, *prefix)
+    }
+
+    // Check if ends with suffix
+    pub fn ends_with(self: &String, suffix: &String) -> bool {
+        let self_len = self.len();
+        let suffix_len = suffix.len();
+        
+        if suffix_len > self_len {
+            return false;
+        }
+        
+        let substr = self.substring(self_len - suffix_len, self_len);
+        string_eq(substr, *suffix)
+    }
+
+    // Find first occurrence of substring
+    pub fn find(self: &String, needle: &String) -> Option<usize> {
+        let self_len = self.len();
+        let needle_len = needle.len();
+        
+        if needle_len == 0 {
+            return Option::Some(0);
+        }
+        
+        if needle_len > self_len {
+            return Option::None;
+        }
+        
+        for i in 0..=(self_len - needle_len) {
+            let substr = self.substring(i, i + needle_len);
+            if string_eq(substr, *needle) {
+                return Option::Some(i);
+            }
+        }
+        
+        Option::None
+    }
+
+    // Find last occurrence of substring
+    pub fn rfind(self: &String, needle: &String) -> Option<usize> {
+        let self_len = self.len();
+        let needle_len = needle.len();
+        
+        if needle_len == 0 {
+            return Option::Some(self_len);
+        }
+        
+        if needle_len > self_len {
+            return Option::None;
+        }
+        
+        let mut i = self_len - needle_len;
+        loop {
+            let substr = self.substring(i, i + needle_len);
+            if string_eq(substr, *needle) {
+                return Option::Some(i);
+            }
+            
+            if i == 0 {
+                break;
+            }
+            i -= 1;
+        }
+        
+        Option::None
+    }
+
+    // Check if contains substring
+    pub fn contains(self: &String, needle: &String) -> bool {
+        self.find(needle).is_some()
+    }
+
+    // Replace first occurrence
+    pub fn replace_first(self: &String, from: &String, to: &String) -> String {
+        match self.find(from) {
+            Option::Some(index) => {
+                let before = self.substring(0, index);
+                let after = self.substring(index + from.len(), self.len());
+                string_concat(string_concat(before, *to), after)
+            }
+            Option::None => *self,
+        }
+    }
+
+    // Replace all occurrences
+    pub fn replace(self: &String, from: &String, to: &String) -> String {
+        if from.is_empty() {
+            return *self;
+        }
+        
+        let mut result = "";
+        let mut start = 0;
+        
+        loop {
+            let remaining = self.substring(start, self.len());
+            match String::find(&remaining, from) {
+                Option::Some(index) => {
+                    let before = self.substring(start, start + index);
+                    result = string_concat(result, before);
+                    result = string_concat(result, *to);
+                    start = start + index + from.len();
+                }
+                Option::None => {
+                    result = string_concat(result, remaining);
+                    break;
+                }
+            }
+        }
+        
+        result
+    }
+
+    // Split by delimiter (returns Vec of strings)
+    pub fn split(self: &String, delimiter: &String) -> Vec<String> {
+        let mut parts = Vec::new();
+        
+        if delimiter.is_empty() {
+            // Split into individual characters
+            for i in 0..self.len() {
+                let ch = self.substring(i, i + 1);
+                parts.push(ch);
+            }
+            return parts;
+        }
+        
+        let mut start = 0;
+        
+        loop {
+            let remaining = self.substring(start, self.len());
+            match String::find(&remaining, delimiter) {
+                Option::Some(index) => {
+                    let part = self.substring(start, start + index);
+                    parts.push(part);
+                    start = start + index + delimiter.len();
+                }
+                Option::None => {
+                    parts.push(remaining);
+                    break;
+                }
+            }
+        }
+        
+        parts
+    }
+
+    // Trim whitespace from start
+    pub fn trim_start(self: &String) -> String {
+        let len = self.len();
+        let mut i = 0;
+        
+        while i < len {
+            match self.char_at(i) {
+                Option::Some(ch) => {
+                    // Check for whitespace characters
+                    if ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' {
+                        break;
+                    }
+                }
+                Option::None => break,
+            }
+            i += 1;
+        }
+        
+        self.substring(i, len)
+    }
+
+    // Trim whitespace from end
+    pub fn trim_end(self: &String) -> String {
+        let len = self.len();
+        if len == 0 {
+            return *self;
+        }
+        
+        let mut i = len - 1;
+        
+        loop {
+            match self.char_at(i) {
+                Option::Some(ch) => {
+                    // Check for whitespace characters
+                    if ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' {
+                        break;
+                    }
+                }
+                Option::None => break,
+            }
+            
+            if i == 0 {
+                return "";
+            }
+            i -= 1;
+        }
+        
+        self.substring(0, i + 1)
+    }
+
+    // Trim whitespace from both ends
+    pub fn trim(self: &String) -> String {
+        self.trim_start().trim_end()
+    }
+
+    // Convert to uppercase
+    pub fn to_uppercase(self: &String) -> String {
+        let mut result = "";
+        
+        for i in 0..self.len() {
+            match self.char_at(i) {
+                Option::Some(ch) => {
+                    let upper_ch = if ch >= 'a' && ch <= 'z' {
+                        ((ch as i64) - 32) as char
+                    } else {
+                        ch
+                    };
+                    result = string_concat(result, string_from_char(upper_ch as i64));
+                }
+                Option::None => break,
+            }
+        }
+        
+        result
+    }
+
+    // Convert to lowercase
+    pub fn to_lowercase(self: &String) -> String {
+        let mut result = "";
+        
+        for i in 0..self.len() {
+            match self.char_at(i) {
+                Option::Some(ch) => {
+                    let lower_ch = if ch >= 'A' && ch <= 'Z' {
+                        ((ch as i64) + 32) as char
+                    } else {
+                        ch
+                    };
+                    result = string_concat(result, string_from_char(lower_ch as i64));
+                }
+                Option::None => break,
+            }
+        }
+        
+        result
+    }
+
+    // Repeat string n times
+    pub fn repeat(self: &String, count: usize) -> String {
+        let mut result = "";
+        for _ in 0..count {
+            result = string_concat(result, *self);
+        }
+        result
+    }
+
+    // Pad to the left
+    pub fn pad_left(self: &String, width: usize, pad_char: char) -> String {
+        let len = self.len();
+        if len >= width {
+            return *self;
+        }
+        
+        let padding = String::from_char(pad_char).repeat(width - len);
+        string_concat(padding, *self)
+    }
+
+    // Pad to the right
+    pub fn pad_right(self: &String, width: usize, pad_char: char) -> String {
+        let len = self.len();
+        if len >= width {
+            return *self;
+        }
+        
+        let padding = String::from_char(pad_char).repeat(width - len);
+        string_concat(*self, padding)
+    }
+
+    // Count occurrences of substring
+    pub fn count(self: &String, needle: &String) -> usize {
+        if needle.is_empty() {
+            return self.len() + 1;
+        }
+        
+        let mut count = 0;
+        let mut start = 0;
+        
+        loop {
+            let remaining = self.substring(start, self.len());
+            match String::find(&remaining, needle) {
+                Option::Some(index) => {
+                    count += 1;
+                    start = start + index + needle.len();
+                }
+                Option::None => break,
+            }
+        }
+        
+        count
+    }
+
+    // Parse to integer
+    pub fn parse_int(self: &String) -> Result<i64, String> {
+        let trimmed = self.trim();
+        if trimmed.is_empty() {
+            return Result::Err("empty string");
+        }
+        
+        let mut result: i64 = 0;
+        let mut negative = false;
+        let mut i = 0;
+        
+        // Check for sign
+        match trimmed.char_at(0) {
+            Option::Some('-') => {
+                negative = true;
+                i = 1;
+            }
+            Option::Some('+') => {
+                i = 1;
+            }
+            _ => {}
+        }
+        
+        // Must have at least one digit
+        if i >= trimmed.len() {
+            return Result::Err("no digits found");
+        }
+        
+        // Parse digits
+        while i < trimmed.len() {
+            match trimmed.char_at(i) {
+                Option::Some(ch) => {
+                    if ch >= '0' && ch <= '9' {
+                        let digit = (ch as i64) - ('0' as i64);
+                        
+                        // Check for overflow
+                        if result > (i64::MAX - digit) / 10 {
+                            return Result::Err("integer overflow");
+                        }
+                        
+                        result = result * 10 + digit;
+                    } else {
+                        return Result::Err("invalid character");
+                    }
+                }
+                Option::None => break,
+            }
+            i += 1;
+        }
+        
+        if negative {
+            result = -result;
+        }
+        
+        Result::Ok(result)
+    }
+
+    // Format with arguments (simple version)
+    pub fn format(template: &String, args: Vec<String>) -> String {
+        let mut result = "";
+        let mut arg_index = 0;
+        let mut i = 0;
+        
+        while i < template.len() {
+            match template.char_at(i) {
+                Option::Some('{') => {
+                    if i + 1 < template.len() {
+                        match template.char_at(i + 1) {
+                            Option::Some('}') => {
+                                // Found {}
+                                if arg_index < args.len() {
+                                    result = string_concat(result, args[arg_index].clone());
+                                    arg_index += 1;
+                                } else {
+                                    result = string_concat(result, "{}");
+                                }
+                                i += 2;
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    result = string_concat(result, "{");
+                    i += 1;
+                }
+                Option::Some(ch) => {
+                    result = string_concat(result, string_from_char(ch as i64));
+                    i += 1;
+                }
+                Option::None => break,
+            }
+        }
+        
+        result
+    }
+}
+
+// Static String methods
+impl String {
+    // Create from a single character
+    pub fn from_char(ch: char) -> String {
+        string_from_char(ch as i64)
+    }
+
+    // Join strings with separator
+    pub fn join(strings: &Vec<String>, separator: &String) -> String {
+        if strings.is_empty() {
+            return "";
+        }
+        
+        let mut result = strings[0].clone();
+        
+        for i in 1..strings.len() {
+            result = string_concat(result, *separator);
+            result = string_concat(result, strings[i].clone());
+        }
+        
+        result
+    }
+}
+
+// StringBuilder for efficient string concatenation
+pub struct StringBuilder {
+    parts: Vec<String>,
+}
+
+impl StringBuilder {
+    // Create new StringBuilder
+    pub fn new() -> StringBuilder {
+        StringBuilder {
+            parts: Vec::new(),
+        }
+    }
+
+    // Append a string
+    pub fn append(self: &mut StringBuilder, s: String) {
+        self.parts.push(s);
+    }
+
+    // Append a character
+    pub fn append_char(self: &mut StringBuilder, ch: char) {
+        self.parts.push(String::from_char(ch));
+    }
+
+    // Append a line (adds newline)
+    pub fn append_line(self: &mut StringBuilder, s: String) {
+        self.parts.push(s);
+        self.parts.push("\n");
+    }
+
+    // Build the final string
+    pub fn build(self: StringBuilder) -> String {
+        String::join(&self.parts, &"")
+    }
+
+    // Get current length
+    pub fn len(self: &StringBuilder) -> usize {
+        let mut total = 0;
+        for part in self.parts.iter() {
+            total += part.len();
+        }
+        total
+    }
+
+    // Check if empty
+    pub fn is_empty(self: &StringBuilder) -> bool {
+        self.parts.is_empty()
+    }
+
+    // Clear the builder
+    pub fn clear(self: &mut StringBuilder) {
+        self.parts.clear();
+    }
+}
+
+// Character utilities
+pub fn is_alphabetic(ch: char) -> bool {
+    (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+}
+
+pub fn is_numeric(ch: char) -> bool {
+    ch >= '0' && ch <= '9'
+}
+
+pub fn is_alphanumeric(ch: char) -> bool {
+    is_alphabetic(ch) || is_numeric(ch)
+}
+
+pub fn is_whitespace(ch: char) -> bool {
+    ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+}
+
+pub fn is_uppercase(ch: char) -> bool {
+    ch >= 'A' && ch <= 'Z'
+}
+
+pub fn is_lowercase(ch: char) -> bool {
+    ch >= 'a' && ch <= 'z'
+}
+
+pub fn to_uppercase(ch: char) -> char {
+    if is_lowercase(ch) {
+        ((ch as i64) - 32) as char
+    } else {
+        ch
+    }
+}
+
+pub fn to_lowercase(ch: char) -> char {
+    if is_uppercase(ch) {
+        ((ch as i64) + 32) as char
+    } else {
+        ch
+    }
+}
+
+// String formatting utilities
+pub fn format1(template: &String, arg1: String) -> String {
+    let mut args = Vec::new();
+    args.push(arg1);
+    String::format(template, args)
+}
+
+pub fn format2(template: &String, arg1: String, arg2: String) -> String {
+    let mut args = Vec::new();
+    args.push(arg1);
+    args.push(arg2);
+    String::format(template, args)
+}
+
+pub fn format3(template: &String, arg1: String, arg2: String, arg3: String) -> String {
+    let mut args = Vec::new();
+    args.push(arg1);
+    args.push(arg2);
+    args.push(arg3);
+    String::format(template, args)
+}

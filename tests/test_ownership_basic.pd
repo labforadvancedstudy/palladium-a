@@ -1,0 +1,25 @@
+// Test basic ownership rules
+
+fn test_move() {
+    // String is not Copy, so it moves
+    let s1 = "hello";
+    let s2 = s1;  // s1 moves to s2
+    
+    // This should fail - s1 was moved
+    print(s1);
+}
+
+fn test_copy() {
+    // i64 is Copy, so it doesn't move
+    let x = 42;
+    let y = x;  // x is copied to y
+    
+    // This should succeed - x is still valid
+    print_int(x);
+    print_int(y);
+}
+
+fn main() {
+    test_copy();
+    test_move();
+}

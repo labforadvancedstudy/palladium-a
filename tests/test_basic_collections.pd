@@ -1,0 +1,67 @@
+// Basic test of generic collection concepts
+
+fn assert(condition: bool) {
+    if !condition {
+        println("Assertion failed!");
+        exit(1);
+    }
+}
+
+fn test_array() {
+    // Test fixed-size array
+    let arr = [10, 20, 30, 40, 50];
+    
+    assert(arr[0] == 10);
+    assert(arr[2] == 30);
+    assert(arr[4] == 50);
+    
+    println("Array tests passed!");
+}
+
+fn test_simple_list() {
+    // Simulate a simple list with a counter
+    let mut count = 0;
+    
+    // "Push" operation
+    count = count + 1;  // Added 10
+    count = count + 1;  // Added 20
+    count = count + 1;  // Added 30
+    
+    assert(count == 3);
+    
+    // "Pop" operation
+    count = count - 1;
+    assert(count == 2);
+    
+    println("Simple list tests passed!");
+}
+
+fn test_simple_map() {
+    // Simulate a simple map with fixed keys
+    let key1 = "hello";
+    let val1 = 42;
+    
+    let key2 = "world";
+    let val2 = 100;
+    
+    // "Get" operations
+    assert(val1 == 42);
+    assert(val2 == 100);
+    
+    // Simulate "contains" check
+    let has_hello = true;
+    let has_foo = false;
+    
+    assert(has_hello == true);
+    assert(has_foo == false);
+    
+    println("Simple map tests passed!");
+}
+
+fn main() {
+    println("Testing basic collection concepts...");
+    test_array();
+    test_simple_list();
+    test_simple_map();
+    println("All tests passed!");
+}

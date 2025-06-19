@@ -1,0 +1,1438 @@
+// Tiny Palladium Compiler - Arrays + Structs!
+// Working toward self-hosting
+
+fn is_same_string(s1: String, s2: String) -> bool {
+    let len1 = string_len(s1);
+    let len2 = string_len(s2);
+    
+    if len1 != len2 {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < len1 {
+        if string_char_at(s1, i) != string_char_at(s2, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+// Parse an expression with operators, array indexing, and struct support
+fn parse_expr(expr: String) -> String {
+    let mut result = "";
+    let mut i = 0;
+    let len = string_len(expr);
+    
+    while i < len {
+        let ch = string_char_at(expr, i);
+        
+        // Skip leading whitespace
+        if (ch == 32 || ch == 9 || ch == 10) && string_len(result) == 0 {
+            i = i + 1;
+            continue;
+        }
+        
+        // Check if this is the start of an identifier or function call
+        if (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || ch == 95 { // a-z, A-Z, _
+            let mut identifier = "";
+            let start_i = i;
+            
+            // Collect the identifier
+            while i < len {
+                let id_ch = string_char_at(expr, i);
+                if (id_ch >= 97 && id_ch <= 122) || (id_ch >= 65 && id_ch <= 90) || 
+                   (id_ch >= 48 && id_ch <= 57) || id_ch == 95 { // a-z, A-Z, 0-9, _
+                    identifier = identifier + string_from_char(id_ch);
+                    i = i + 1;
+                } else {
+                    break;
+                }
+            }
+            
+            // Skip whitespace after identifier
+            let mut j = i;
+            while j < len && (string_char_at(expr, j) == 32 || string_char_at(expr, j) == 9) {
+                j = j + 1;
+            }
+            
+            // Check if it's a function call
+            if j < len && string_char_at(expr, j) == 40 { // (
+                // It's a function call - translate the function name
+                if is_same_string(identifier, "string_len") {
+                    result = result + "__pd_string_len";
+                } else if is_same_string(identifier, "string_char_at") {
+                    result = result + "__pd_string_char_at";
+                } else if is_same_string(identifier, "string_from_char") {
+                    result = result + "__pd_string_from_char";
+                } else if is_same_string(identifier, "int_to_string") {
+                    result = result + "__pd_int_to_string";
+                } else if is_same_string(identifier, "file_open") {
+                    result = result + "__pd_file_open";
+                } else if is_same_string(identifier, "file_read_all") {
+                    result = result + "__pd_file_read_all";
+                } else if is_same_string(identifier, "file_write") {
+                    result = result + "__pd_file_write";
+                } else if is_same_string(identifier, "file_close") {
+                    result = result + "__pd_file_close";
+                } else if is_same_string(identifier, "file_exists") {
+                    result = result + "__pd_file_exists";
+                } else {
+                    // Regular function call - keep as is
+                    result = result + identifier;
+                }
+                
+                // Copy whitespace
+                while i < j {
+                    result = result + string_from_char(string_char_at(expr, i));
+                    i = i + 1;
+                }
+                
+                // Copy the opening parenthesis
+                result = result + "(";
+                i = j + 1;
+                
+                // Parse the arguments recursively
+                let mut paren_depth = 1;
+                let mut arg_expr = "";
+                while i < len && paren_depth > 0 {
+                    let arg_ch = string_char_at(expr, i);
+                    if arg_ch == 40 { // (
+                        paren_depth = paren_depth + 1;
+                        arg_expr = arg_expr + string_from_char(arg_ch);
+                    } else if arg_ch == 41 { // )
+                        paren_depth = paren_depth - 1;
+                        if paren_depth == 0 {
+                            // End of arguments
+                            if string_len(arg_expr) > 0 {
+                                result = result + parse_expr(arg_expr);
+                            }
+                            result = result + ")";
+                        } else {
+                            arg_expr = arg_expr + string_from_char(arg_ch);
+                        }
+                    } else if arg_ch == 44 && paren_depth == 1 { // , at top level
+                        // Process current argument
+                        if string_len(arg_expr) > 0 {
+                            result = result + parse_expr(arg_expr);
+                        }
+                        result = result + ", ";
+                        arg_expr = "";
+                    } else {
+                        arg_expr = arg_expr + string_from_char(arg_ch);
+                    }
+                    i = i + 1;
+                }
+            } else {
+                // Not a function call, just an identifier
+                result = result + identifier;
+                i = j;
+            }
+            continue;
+        }
+        
+        // Look for == operator
+        if i + 1 < len && ch == 61 && string_char_at(expr, i + 1) == 61 { // ==
+            result = result + "==";
+            i = i + 2;
+            continue;
+        }
+        
+        // Look for != operator  
+        if i + 1 < len && ch == 33 && string_char_at(expr, i + 1) == 61 { // !=
+            result = result + "!=";
+            i = i + 2;
+            continue;
+        }
+        
+        // Look for <= operator
+        if i + 1 < len && ch == 60 && string_char_at(expr, i + 1) == 61 { // <=
+            result = result + "<=";
+            i = i + 2;
+            continue;
+        }
+        
+        // Look for >= operator
+        if i + 1 < len && ch == 62 && string_char_at(expr, i + 1) == 61 { // >=
+            result = result + ">=";
+            i = i + 2;
+            continue;
+        }
+        
+        // Handle + operator for string concatenation
+        if ch == 43 { // +
+            // Look ahead and behind to see if this is string concatenation
+            // For now, convert all + to string_concat calls
+            // Skip the + for now, we'll handle it when building the full expression
+            result = result + " + ";
+            i = i + 1;
+            continue;
+        }
+        
+        // Handle strings with quotes
+        if ch == 34 { // "
+            result = result + string_from_char(ch);
+            i = i + 1;
+            // Copy string content
+            while i < len && string_char_at(expr, i) != 34 {
+                let sc = string_char_at(expr, i);
+                if sc == 92 && i + 1 < len { // \ escape
+                    result = result + string_from_char(sc);
+                    i = i + 1;
+                    if i < len {
+                        result = result + string_from_char(string_char_at(expr, i));
+                        i = i + 1;
+                    }
+                } else {
+                    result = result + string_from_char(sc);
+                    i = i + 1;
+                }
+            }
+            if i < len {
+                result = result + string_from_char(34); // closing "
+                i = i + 1;
+            }
+            continue;
+        }
+        
+        // Copy character as-is
+        result = result + string_from_char(ch);
+        i = i + 1;
+    }
+    
+    // Post-process to convert string concatenation
+    result = convert_string_concat(result);
+    
+    return result;
+}
+
+// Convert a + b to __pd_string_concat(a, b) for string operations
+fn convert_string_concat(expr: String) -> String {
+    let len = string_len(expr);
+    let mut i = 0;
+    let mut result = "";
+    let mut in_string = false;
+    
+    while i < len {
+        let ch = string_char_at(expr, i);
+        
+        // Track if we're inside a string literal
+        if ch == 34 && (i == 0 || string_char_at(expr, i-1) != 92) { // " not preceded by \
+            in_string = !in_string;
+            result = result + string_from_char(ch);
+            i = i + 1;
+            continue;
+        }
+        
+        // Look for + operator outside of strings
+        if !in_string && ch == 43 && i > 0 && i < len - 1 { // +
+            // Check if there's whitespace around it
+            let has_space_before = false;
+            let has_space_after = false;
+            
+            if i > 0 && (string_char_at(expr, i-1) == 32 || string_char_at(expr, i-1) == 9) {
+                has_space_before = true;
+            }
+            if i < len - 1 && (string_char_at(expr, i+1) == 32 || string_char_at(expr, i+1) == 9) {
+                has_space_after = true;
+            }
+            
+            if has_space_before && has_space_after {
+                // This looks like binary + operator
+                // Find the left operand
+                let mut left_end = i - 1;
+                while left_end > 0 && (string_char_at(expr, left_end) == 32 || string_char_at(expr, left_end) == 9) {
+                    left_end = left_end - 1;
+                }
+                
+                // Check if left operand might be a string
+                let mut left_start = left_end;
+                let mut paren_depth = 0;
+                let mut is_string_expr = false;
+                
+                while left_start >= 0 {
+                    let lch = string_char_at(expr, left_start);
+                    if lch == 41 { // )
+                        paren_depth = paren_depth + 1;
+                    } else if lch == 40 { // (
+                        paren_depth = paren_depth - 1;
+                        if paren_depth < 0 {
+                            left_start = left_start + 1;
+                            break;
+                        }
+                    } else if paren_depth == 0 && 
+                             (lch == 44 || lch == 59 || lch == 61 || lch == 40) { // , ; = (
+                        left_start = left_start + 1;
+                        break;
+                    } else if lch == 34 { // "
+                        is_string_expr = true;
+                    }
+                    
+                    if left_start == 0 {
+                        break;
+                    }
+                    left_start = left_start - 1;
+                }
+                
+                // Skip the + and spaces
+                let mut right_start = i + 1;
+                while right_start < len && (string_char_at(expr, right_start) == 32 || string_char_at(expr, right_start) == 9) {
+                    right_start = right_start + 1;
+                }
+                
+                // Find the right operand
+                let mut right_end = right_start;
+                paren_depth = 0;
+                let mut in_str = false;
+                
+                while right_end < len {
+                    let rch = string_char_at(expr, right_end);
+                    
+                    if rch == 34 && (right_end == 0 || string_char_at(expr, right_end-1) != 92) { // "
+                        in_str = !in_str;
+                        is_string_expr = true;
+                    } else if !in_str {
+                        if rch == 40 { // (
+                            paren_depth = paren_depth + 1;
+                        } else if rch == 41 { // )
+                            paren_depth = paren_depth - 1;
+                            if paren_depth < 0 {
+                                break;
+                            }
+                        } else if paren_depth == 0 && 
+                                 ((rch == 43 && right_end < len - 1 && 
+                                   (string_char_at(expr, right_end+1) == 32 || string_char_at(expr, right_end+1) == 9)) ||
+                                  rch == 44 || rch == 59 || rch == 41) { // + , ; )
+                            break;
+                        }
+                    }
+                    right_end = right_end + 1;
+                }
+                
+                // If we detected string expressions, convert to string_concat
+                if is_string_expr {
+                    // Extract operands
+                    let mut left_operand = "";
+                    let mut j = left_start;
+                    while j <= left_end {
+                        left_operand = left_operand + string_from_char(string_char_at(expr, j));
+                        j = j + 1;
+                    }
+                    
+                    let mut right_operand = "";
+                    j = right_start;
+                    while j < right_end {
+                        right_operand = right_operand + string_from_char(string_char_at(expr, j));
+                        j = j + 1;
+                    }
+                    
+                    // Build the result up to the left operand
+                    let mut new_result = "";
+                    j = 0;
+                    while j < left_start {
+                        new_result = new_result + string_from_char(string_char_at(result, j));
+                        j = j + 1;
+                    }
+                    
+                    // Add the string_concat call
+                    new_result = new_result + "__pd_string_concat(" + left_operand + ", " + right_operand + ")";
+                    result = new_result;
+                    
+                    // Continue from right_end
+                    i = right_end;
+                    continue;
+                }
+            }
+        }
+        
+        result = result + string_from_char(ch);
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Skip whitespace and comments
+fn skip_whitespace_and_comments(source: String, pos: i64, len: i64) -> i64 {
+    let mut p = pos;
+    
+    while p < len {
+        // Skip whitespace
+        if string_char_at(source, p) == 32 ||  // space
+           string_char_at(source, p) == 10 ||  // newline
+           string_char_at(source, p) == 9 {    // tab
+            p = p + 1;
+            continue;
+        }
+        
+        // Skip // comments
+        if p + 1 < len && 
+           string_char_at(source, p) == 47 &&     // /
+           string_char_at(source, p + 1) == 47 {  // /
+            // Skip to end of line
+            while p < len && string_char_at(source, p) != 10 { // newline
+                p = p + 1;
+            }
+            if p < len {
+                p = p + 1; // Skip newline
+            }
+            continue;
+        }
+        
+        // No more whitespace or comments
+        break;
+    }
+    
+    return p;
+}
+
+// Parse a single statement - with working arrays!
+fn parse_statement(source: String, pos: i64, len: i64, indent: String) -> String {
+    let mut p = pos;
+    let mut output = "";
+    
+    p = skip_whitespace_and_comments(source, p, len);
+    
+    if p >= len {
+        return output;
+    }
+    
+    // Look for "while"
+    if p + 5 < len &&
+       string_char_at(source, p) == 119 &&     // w
+       string_char_at(source, p+1) == 104 &&   // h
+       string_char_at(source, p+2) == 105 &&   // i
+       string_char_at(source, p+3) == 108 &&   // l
+       string_char_at(source, p+4) == 101 &&   // e
+       (string_char_at(source, p+5) == 32 ||   // space
+        string_char_at(source, p+5) == 40) {   // (
+        
+        output = output + indent + "while (";
+        p = p + 5;
+        
+        // Skip to opening paren
+        while p < len && string_char_at(source, p) != 40 { // (
+            p = p + 1;
+        }
+        p = p + 1; // Skip (
+        
+        // Parse condition
+        let mut condition = "";
+        let mut paren_count = 1;
+        while p < len && paren_count > 0 {
+            let ch = string_char_at(source, p);
+            if ch == 40 { // (
+                paren_count = paren_count + 1;
+            }
+            if ch == 41 { // )
+                paren_count = paren_count - 1;
+                if paren_count == 0 {
+                    break;
+                }
+            }
+            condition = condition + string_from_char(ch);
+            p = p + 1;
+        }
+        
+        output = output + parse_expr(condition) + ") {\n";
+        p = p + 1; // Skip )
+        
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Parse body
+        if p < len && string_char_at(source, p) == 123 { // {
+            p = p + 1;
+            p = skip_whitespace_and_comments(source, p, len);
+            
+            // Parse statements until closing brace
+            while p < len && string_char_at(source, p) != 125 { // }
+                let stmt = parse_statement(source, p, len, indent + "    ");
+                output = output + stmt;
+                
+                // Skip to next statement
+                while p < len && string_char_at(source, p) != 59 && // ;
+                                string_char_at(source, p) != 125 { // }
+                    p = p + 1;
+                }
+                if p < len && string_char_at(source, p) == 59 {
+                    p = p + 1; // Skip ;
+                }
+                p = skip_whitespace_and_comments(source, p, len);
+            }
+        }
+        
+        output = output + indent + "}\n";
+        
+        return output;
+    }
+    
+    // Look for "if"
+    if p + 2 < len &&
+       string_char_at(source, p) == 105 &&    // i
+       string_char_at(source, p+1) == 102 &&  // f
+       (string_char_at(source, p+2) == 32 ||  // space
+        string_char_at(source, p+2) == 40) {  // (
+        
+        output = output + indent + "if (";
+        p = p + 2;
+        
+        // Skip to opening paren
+        while p < len && string_char_at(source, p) != 40 { // (
+            p = p + 1;
+        }
+        p = p + 1; // Skip (
+        
+        // Parse condition
+        let mut condition = "";
+        let mut paren_count = 1;
+        while p < len && paren_count > 0 {
+            let ch = string_char_at(source, p);
+            if ch == 40 { // (
+                paren_count = paren_count + 1;
+            }
+            if ch == 41 { // )
+                paren_count = paren_count - 1;
+                if paren_count == 0 {
+                    break;
+                }
+            }
+            condition = condition + string_from_char(ch);
+            p = p + 1;
+        }
+        
+        output = output + parse_expr(condition) + ") {\n";
+        p = p + 1; // Skip )
+        
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Parse if body
+        if p < len && string_char_at(source, p) == 123 { // {
+            p = p + 1;
+            p = skip_whitespace_and_comments(source, p, len);
+            
+            // Parse statements until closing brace
+            while p < len && string_char_at(source, p) != 125 { // }
+                let stmt = parse_statement(source, p, len, indent + "    ");
+                output = output + stmt;
+                
+                // Skip to next statement
+                while p < len && string_char_at(source, p) != 59 && // ;
+                                string_char_at(source, p) != 125 { // }
+                    p = p + 1;
+                }
+                if p < len && string_char_at(source, p) == 59 {
+                    p = p + 1; // Skip ;
+                }
+                p = skip_whitespace_and_comments(source, p, len);
+            }
+            
+            if p < len {
+                p = p + 1; // Skip }
+            }
+        }
+        
+        output = output + indent + "}";
+        
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Check for else
+        if p + 4 < len &&
+           string_char_at(source, p) == 101 &&     // e
+           string_char_at(source, p+1) == 108 &&   // l
+           string_char_at(source, p+2) == 115 &&   // s
+           string_char_at(source, p+3) == 101 &&   // e
+           (string_char_at(source, p+4) == 32 ||   // space
+            string_char_at(source, p+4) == 123) {  // {
+            
+            output = output + " else {\n";
+            p = p + 4;
+            p = skip_whitespace_and_comments(source, p, len);
+            
+            // Parse else body
+            if p < len && string_char_at(source, p) == 123 { // {
+                p = p + 1;
+                p = skip_whitespace_and_comments(source, p, len);
+                
+                // Parse statements until closing brace
+                while p < len && string_char_at(source, p) != 125 { // }
+                    let stmt = parse_statement(source, p, len, indent + "    ");
+                    output = output + stmt;
+                    
+                    // Skip to next statement
+                    while p < len && string_char_at(source, p) != 59 && // ;
+                                    string_char_at(source, p) != 125 { // }
+                        p = p + 1;
+                    }
+                    if p < len && string_char_at(source, p) == 59 {
+                        p = p + 1; // Skip ;
+                    }
+                    p = skip_whitespace_and_comments(source, p, len);
+                }
+            }
+            
+            output = output + indent + "}\n";
+        } else {
+            output = output + "\n";
+        }
+        
+        return output;
+    }
+    
+    // Look for "return"
+    if p + 6 < len &&
+       string_char_at(source, p) == 114 &&    // r
+       string_char_at(source, p+1) == 101 &&  // e
+       string_char_at(source, p+2) == 116 &&  // t
+       string_char_at(source, p+3) == 117 &&  // u
+       string_char_at(source, p+4) == 114 &&  // r
+       string_char_at(source, p+5) == 110 {   // n
+        
+        output = output + indent + "return";
+        p = p + 6;
+        
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Copy return value
+        if p < len && string_char_at(source, p) != 59 { // ;
+            output = output + " ";
+            let mut expr = "";
+            while p < len && string_char_at(source, p) != 59 {
+                expr = expr + string_from_char(string_char_at(source, p));
+                p = p + 1;
+            }
+            output = output + parse_expr(expr);
+        }
+        
+        output = output + ";\n";
+        return output;
+    }
+    
+    // Look for "let" - with array support!
+    if p + 3 < len &&
+       string_char_at(source, p) == 108 &&     // l
+       string_char_at(source, p+1) == 101 &&   // e
+       string_char_at(source, p+2) == 116 &&   // t
+       (string_char_at(source, p+3) == 32 ||   // space
+        string_char_at(source, p+3) == 9) {    // tab
+        
+        output = output + indent;
+        p = p + 3;
+        
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Skip "mut" if present
+        if p + 3 < len &&
+           string_char_at(source, p) == 109 &&     // m
+           string_char_at(source, p+1) == 117 &&   // u
+           string_char_at(source, p+2) == 116 {    // t
+            p = p + 3;
+            p = skip_whitespace_and_comments(source, p, len);
+        }
+        
+        // Get variable name
+        let mut var_name = "";
+        while p < len && string_char_at(source, p) != 58 && // :
+                        string_char_at(source, p) != 32 &&  // space
+                        string_char_at(source, p) != 61 &&  // =
+                        string_char_at(source, p) != 9 {    // tab
+            var_name = var_name + string_from_char(string_char_at(source, p));
+            p = p + 1;
+        }
+        
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Parse type if present
+        let mut c_type = "";
+        let mut array_size = "";
+        let mut is_array = false;
+        
+        if p < len && string_char_at(source, p) == 58 { // :
+            p = p + 1;
+            p = skip_whitespace_and_comments(source, p, len);
+            
+            // Check for array type [type; size]
+            if p < len && string_char_at(source, p) == 91 { // [
+                is_array = true;
+                p = p + 1; // Skip [
+                p = skip_whitespace_and_comments(source, p, len);
+                
+                // Get element type
+                let mut type_name = "";
+                while p < len && string_char_at(source, p) != 59 && // ;
+                                string_char_at(source, p) != 32 &&  // space
+                                string_char_at(source, p) != 9 {    // tab
+                    type_name = type_name + string_from_char(string_char_at(source, p));
+                    p = p + 1;
+                }
+                
+                if is_same_string(type_name, "String") {
+                    c_type = "const char*";
+                } else {
+                    if is_same_string(type_name, "bool") {
+                        c_type = "int";
+                    } else {
+                        if is_same_string(type_name, "i64") {
+                            c_type = "long long";
+                        } else {
+                            c_type = type_name; // Keep original name for structs
+                        }
+                    }
+                }
+                
+                // Skip to array size
+                while p < len && string_char_at(source, p) != 59 { // ;
+                    p = p + 1;
+                }
+                if p < len {
+                    p = p + 1; // Skip ;
+                    p = skip_whitespace_and_comments(source, p, len);
+                    
+                    // Get array size
+                    while p < len && string_char_at(source, p) >= 48 && string_char_at(source, p) <= 57 { // digits
+                        array_size = array_size + string_from_char(string_char_at(source, p));
+                        p = p + 1;
+                    }
+                    
+                    // Skip to ]
+                    while p < len && string_char_at(source, p) != 93 { // ]
+                        p = p + 1;
+                    }
+                    if p < len {
+                        p = p + 1; // Skip ]
+                    }
+                }
+            } else {
+                // Regular type
+                let mut type_name = "";
+                while p < len && string_char_at(source, p) != 32 &&  // space
+                                string_char_at(source, p) != 61 &&  // =
+                                string_char_at(source, p) != 9 &&   // tab
+                                string_char_at(source, p) != 59 {   // ;
+                    type_name = type_name + string_from_char(string_char_at(source, p));
+                    p = p + 1;
+                }
+                
+                if is_same_string(type_name, "String") {
+                    c_type = "const char*";
+                } else {
+                    if is_same_string(type_name, "bool") {
+                        c_type = "int";
+                    } else {
+                        if is_same_string(type_name, "i64") {
+                            c_type = "long long";
+                        } else {
+                            c_type = type_name; // Keep original name for structs
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Store initial position to check initialization
+        let init_pos = p;
+        p = skip_whitespace_and_comments(source, p, len);
+        
+        // Set default type if not specified
+        if string_len(c_type) == 0 {
+            // Check if there's an initialization to infer type from
+            if p < len && string_char_at(source, p) == 61 { // =
+                let mut tmp_p = p + 1;
+                tmp_p = skip_whitespace_and_comments(source, tmp_p, len);
+                
+                // Check if it's a string literal
+                if tmp_p < len && string_char_at(source, tmp_p) == 34 { // "
+                    c_type = "const char*";
+                } else {
+                    c_type = "long long";
+                }
+            } else {
+                c_type = "long long";
+            }
+        }
+        
+        // Output declaration
+        if is_array {
+            output = output + c_type + " " + var_name + "[" + array_size + "]";
+        } else {
+            output = output + c_type + " " + var_name;
+        }
+        
+        // Parse initialization
+        if p < len && string_char_at(source, p) == 61 { // =
+            p = p + 1;
+            output = output + " = ";
+            p = skip_whitespace_and_comments(source, p, len);
+            
+            // Check for array literal [val1, val2, ...]
+            if p < len && string_char_at(source, p) == 91 { // [
+                output = output + "{";
+                p = p + 1;
+                
+                // Parse array elements
+                let mut first = true;
+                while p < len && string_char_at(source, p) != 93 { // ]
+                    p = skip_whitespace_and_comments(source, p, len);
+                    
+                    if p >= len || string_char_at(source, p) == 93 {
+                        break;
+                    }
+                    
+                    if !first {
+                        output = output + ", ";
+                    }
+                    first = false;
+                    
+                    // Parse element
+                    let mut elem = "";
+                    while p < len && string_char_at(source, p) != 44 && // ,
+                                    string_char_at(source, p) != 93 { // ]
+                        elem = elem + string_from_char(string_char_at(source, p));
+                        p = p + 1;
+                    }
+                    output = output + parse_expr(elem);
+                    
+                    if p < len && string_char_at(source, p) == 44 { // ,
+                        p = p + 1;
+                    }
+                }
+                
+                output = output + "}";
+                if p < len && string_char_at(source, p) == 93 {
+                    p = p + 1; // Skip ]
+                }
+            } else {
+                // Regular expression
+                let mut expr = "";
+                let mut paren_depth = 0;
+                while p < len && (string_char_at(source, p) != 59 || paren_depth > 0) {
+                    let ch = string_char_at(source, p);
+                    if ch == 40 { // (
+                        paren_depth = paren_depth + 1;
+                    }
+                    if ch == 41 { // )
+                        paren_depth = paren_depth - 1;
+                    }
+                    expr = expr + string_from_char(ch);
+                    p = p + 1;
+                }
+                output = output + parse_expr(expr);
+            }
+        }
+        
+        output = output + ";\n";
+        return output;
+    }
+    
+    // Assignment or function call
+    output = output + indent;
+    let mut stmt = "";
+    let mut paren_depth = 0;
+    
+    // Parse the statement
+    while p < len && (string_char_at(source, p) != 59 || paren_depth > 0) {
+        let ch = string_char_at(source, p);
+        if ch == 40 { // (
+            paren_depth = paren_depth + 1;
+        }
+        if ch == 41 { // )
+            paren_depth = paren_depth - 1;
+        }
+        stmt = stmt + string_from_char(ch);
+        p = p + 1;
+    }
+    
+    // Check for print
+    if string_len(stmt) >= 5 {
+        let mut prefix = "";
+        let mut i = 0;
+        while i < 5 {
+            prefix = prefix + string_from_char(string_char_at(stmt, i));
+            i = i + 1;
+        }
+        
+        if is_same_string(prefix, "print") {
+            if string_len(stmt) >= 9 {
+                let mut print_prefix = "";
+                let mut j = 0;
+                while j < 9 {
+                    print_prefix = print_prefix + string_from_char(string_char_at(stmt, j));
+                    j = j + 1;
+                }
+                
+                if is_same_string(print_prefix, "print_int") {
+                    output = output + "__pd_print_int(";
+                    let mut k = 10; // Skip "print_int("
+                    let mut args = "";
+                    let mut paren_count = 1;
+                    while k < string_len(stmt) && paren_count > 0 {
+                        let ch = string_char_at(stmt, k);
+                        if ch == 40 { // (
+                            paren_count = paren_count + 1;
+                        }
+                        if ch == 41 { // )
+                            paren_count = paren_count - 1;
+                            if paren_count == 0 {
+                                break;
+                            }
+                        }
+                        args = args + string_from_char(ch);
+                        k = k + 1;
+                    }
+                    output = output + parse_expr(args) + ")";
+                } else {
+                    output = output + "__pd_print(";
+                    let mut k = 6; // Skip "print("
+                    let mut args = "";
+                    let mut paren_count = 1;
+                    while k < string_len(stmt) && paren_count > 0 {
+                        let ch = string_char_at(stmt, k);
+                        if ch == 40 { // (
+                            paren_count = paren_count + 1;
+                        }
+                        if ch == 41 { // )
+                            paren_count = paren_count - 1;
+                            if paren_count == 0 {
+                                break;
+                            }
+                        }
+                        args = args + string_from_char(ch);
+                        k = k + 1;
+                    }
+                    output = output + parse_expr(args) + ")";
+                }
+            } else {
+                output = output + "__pd_print";
+                let mut k = 5;
+                while k < string_len(stmt) {
+                    output = output + string_from_char(string_char_at(stmt, k));
+                    k = k + 1;
+                }
+            }
+        } else {
+            output = output + parse_expr(stmt);
+        }
+    } else {
+        output = output + parse_expr(stmt);
+    }
+    
+    output = output + ";\n";
+    return output;
+}
+
+// Compile a struct declaration
+fn compile_struct(source: String, start_pos: i64, len: i64) -> String {
+    let mut pos = start_pos;
+    let mut output = "";
+    
+    // Skip "struct"
+    pos = pos + 6;
+    pos = skip_whitespace_and_comments(source, pos, len);
+    
+    // Get struct name
+    let mut struct_name = "";
+    while pos < len && string_char_at(source, pos) != 123 && // {
+                      string_char_at(source, pos) != 32 &&  // space
+                      string_char_at(source, pos) != 9 {    // tab
+        struct_name = struct_name + string_from_char(string_char_at(source, pos));
+        pos = pos + 1;
+    }
+    
+    output = output + "typedef struct {\n";
+    
+    // Skip to opening brace
+    while pos < len && string_char_at(source, pos) != 123 { // {
+        pos = pos + 1;
+    }
+    pos = pos + 1; // Skip {
+    
+    // Parse fields
+    pos = skip_whitespace_and_comments(source, pos, len);
+    while pos < len && string_char_at(source, pos) != 125 { // }
+        // Get field name
+        let mut field_name = "";
+        while pos < len && string_char_at(source, pos) != 58 && // :
+                          string_char_at(source, pos) != 32 &&  // space
+                          string_char_at(source, pos) != 9 {    // tab
+            field_name = field_name + string_from_char(string_char_at(source, pos));
+            pos = pos + 1;
+        }
+        
+        // Skip to type
+        while pos < len && string_char_at(source, pos) != 58 { // :
+            pos = pos + 1;
+        }
+        pos = pos + 1; // Skip :
+        pos = skip_whitespace_and_comments(source, pos, len);
+        
+        // Get type
+        let mut type_name = "";
+        while pos < len && string_char_at(source, pos) != 44 && // ,
+                          string_char_at(source, pos) != 125 && // }
+                          string_char_at(source, pos) != 10 &&  // newline
+                          string_char_at(source, pos) != 32 &&  // space
+                          string_char_at(source, pos) != 9 {    // tab
+            type_name = type_name + string_from_char(string_char_at(source, pos));
+            pos = pos + 1;
+        }
+        
+        // Convert type
+        let mut c_type = "";
+        if is_same_string(type_name, "String") {
+            c_type = "const char*";
+        } else {
+            if is_same_string(type_name, "bool") {
+                c_type = "int";
+            } else {
+                if is_same_string(type_name, "i64") {
+                    c_type = "long long";
+                } else {
+                    c_type = type_name; // Keep original name for structs
+                }
+            }
+        }
+        
+        output = output + "    " + c_type + " " + field_name + ";\n";
+        
+        // Skip comma or whitespace
+        pos = skip_whitespace_and_comments(source, pos, len);
+        if pos < len && string_char_at(source, pos) == 44 { // ,
+            pos = pos + 1;
+        }
+        pos = skip_whitespace_and_comments(source, pos, len);
+    }
+    
+    output = output + "} " + struct_name + ";\n\n";
+    
+    return output;
+}
+
+// Compile a simple function
+fn compile_function(source: String, start_pos: i64, len: i64) -> String {
+    let mut pos = start_pos;
+    let mut output = "";
+    
+    // Skip "fn"
+    pos = pos + 2;
+    pos = skip_whitespace_and_comments(source, pos, len);
+    
+    // Get function name
+    let mut func_name = "";
+    while pos < len && string_char_at(source, pos) != 40 && // (
+                      string_char_at(source, pos) != 32 &&  // space
+                      string_char_at(source, pos) != 9 {    // tab
+        func_name = func_name + string_from_char(string_char_at(source, pos));
+        pos = pos + 1;
+    }
+    
+    // Skip to opening paren
+    while pos < len && string_char_at(source, pos) != 40 { // (
+        pos = pos + 1;
+    }
+    
+    // Parse parameters
+    let mut params = "";
+    if pos < len && string_char_at(source, pos) == 40 { // (
+        pos = pos + 1; // Skip (
+        pos = skip_whitespace_and_comments(source, pos, len);
+        
+        let mut first_param = true;
+        while pos < len && string_char_at(source, pos) != 41 { // )
+            if !first_param {
+                params = params + ", ";
+            }
+            first_param = false;
+            
+            // Get parameter name
+            let mut param_name = "";
+            while pos < len && string_char_at(source, pos) != 58 && // :
+                              string_char_at(source, pos) != 32 &&  // space
+                              string_char_at(source, pos) != 44 &&  // ,
+                              string_char_at(source, pos) != 41 {   // )
+                param_name = param_name + string_from_char(string_char_at(source, pos));
+                pos = pos + 1;
+            }
+            
+            // Skip to type
+            while pos < len && string_char_at(source, pos) != 58 { // :
+                pos = pos + 1;
+            }
+            if pos < len && string_char_at(source, pos) == 58 { // :
+                pos = pos + 1; // Skip :
+                pos = skip_whitespace_and_comments(source, pos, len);
+                
+                // Get parameter type
+                let mut param_type = "";
+                while pos < len && string_char_at(source, pos) != 44 && // ,
+                                  string_char_at(source, pos) != 41 && // )
+                                  string_char_at(source, pos) != 32 && // space
+                                  string_char_at(source, pos) != 9 {   // tab
+                    param_type = param_type + string_from_char(string_char_at(source, pos));
+                    pos = pos + 1;
+                }
+                
+                // Convert type
+                let mut c_type = "";
+                if is_same_string(param_type, "String") {
+                    c_type = "const char*";
+                } else {
+                    if is_same_string(param_type, "bool") {
+                        c_type = "int";
+                    } else {
+                        if is_same_string(param_type, "i64") {
+                            c_type = "long long";
+                        } else {
+                            c_type = param_type; // Keep original name for structs
+                        }
+                    }
+                }
+                
+                params = params + c_type + " " + param_name;
+            }
+            
+            // Skip whitespace and comma
+            pos = skip_whitespace_and_comments(source, pos, len);
+            if pos < len && string_char_at(source, pos) == 44 { // ,
+                pos = pos + 1;
+                pos = skip_whitespace_and_comments(source, pos, len);
+            }
+        }
+        
+        if pos < len && string_char_at(source, pos) == 41 { // )
+            pos = pos + 1; // Skip )
+        }
+    }
+    
+    // Parse return type
+    let mut return_type = "void";
+    pos = skip_whitespace_and_comments(source, pos, len);
+    if pos + 1 < len && string_char_at(source, pos) == 45 && // -
+                        string_char_at(source, pos + 1) == 62 { // >
+        pos = pos + 2; // Skip ->
+        pos = skip_whitespace_and_comments(source, pos, len);
+        
+        // Get return type
+        let mut ret_type = "";
+        while pos < len && string_char_at(source, pos) != 123 && // {
+                          string_char_at(source, pos) != 32 &&  // space
+                          string_char_at(source, pos) != 9 {    // tab
+            ret_type = ret_type + string_from_char(string_char_at(source, pos));
+            pos = pos + 1;
+        }
+        
+        if is_same_string(ret_type, "String") {
+            return_type = "const char*";
+        } else {
+            if is_same_string(ret_type, "bool") {
+                return_type = "int";
+            } else {
+                if is_same_string(ret_type, "i64") {
+                    return_type = "long long";
+                } else {
+                    return_type = ret_type;
+                }
+            }
+        }
+    }
+    
+    // Skip to opening brace
+    while pos < len && string_char_at(source, pos) != 123 { // {
+        pos = pos + 1;
+    }
+    
+    if is_same_string(func_name, "main") {
+        output = output + "int main(int argc, char** argv) {\n";
+    } else {
+        if string_len(params) == 0 {
+            output = output + return_type + " " + func_name + "(void) {\n";
+        } else {
+            output = output + return_type + " " + func_name + "(" + params + ") {\n";
+        }
+    }
+    
+    pos = pos + 1; // Skip {
+    
+    // Parse function body
+    pos = skip_whitespace_and_comments(source, pos, len);
+    while pos < len && string_char_at(source, pos) != 125 { // }
+        let stmt = parse_statement(source, pos, len, "    ");
+        output = output + stmt;
+        
+        // Skip the entire statement by finding its end
+        let mut brace_depth = 0;
+        let mut bracket_depth = 0;
+        let mut paren_depth = 0;
+        let mut in_string = false;
+        
+        while pos < len {
+            let ch = string_char_at(source, pos);
+            
+            // Handle string literals
+            if ch == 34 && !in_string { // "
+                in_string = true;
+            } else {
+                if ch == 34 && in_string { // "
+                    // Check if escaped
+                    if pos > 0 && string_char_at(source, pos - 1) != 92 { // \
+                        in_string = false;
+                    }
+                }
+            }
+            
+            if !in_string {
+                // Track nested structures
+                if ch == 123 { // {
+                    brace_depth = brace_depth + 1;
+                }
+                if ch == 125 { // }
+                    if brace_depth > 0 {
+                        brace_depth = brace_depth - 1;
+                    } else {
+                        // End of function
+                        break;
+                    }
+                }
+                if ch == 91 { // [
+                    bracket_depth = bracket_depth + 1;
+                }
+                if ch == 93 { // ]
+                    bracket_depth = bracket_depth - 1;
+                }
+                if ch == 40 { // (
+                    paren_depth = paren_depth + 1;
+                }
+                if ch == 41 { // )
+                    paren_depth = paren_depth - 1;
+                }
+                
+                // Found end of statement
+                if ch == 59 && brace_depth == 0 && bracket_depth == 0 && paren_depth == 0 { // ;
+                    pos = pos + 1; // Skip the semicolon
+                    break;
+                }
+            }
+            
+            pos = pos + 1;
+        }
+        
+        pos = skip_whitespace_and_comments(source, pos, len);
+    }
+    
+    if is_same_string(func_name, "main") {
+        output = output + "    return 0;\n";
+    }
+    output = output + "}\n\n";
+    
+    return output;
+}
+
+// Main compiler function
+fn compile_program(source: String) -> String {
+    let mut output = "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n";
+    
+    // Runtime functions
+    output = output + "void __pd_print(const char* s) { printf(\"%s";
+    output = output + string_from_char(92) + "n\", s); }\n";
+    output = output + "void __pd_print_int(long long n) { printf(\"%lld";
+    output = output + string_from_char(92) + "n\", n); }\n";
+    output = output + "long long __pd_string_len(const char* s) { return strlen(s); }\n";
+    output = output + "const char* __pd_string_concat(const char* a, const char* b) {\n";
+    output = output + "    char* r = malloc(strlen(a) + strlen(b) + 1);\n";
+    output = output + "    strcpy(r, a); strcat(r, b); return r;\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_int_to_string(long long n) {\n";
+    output = output + "    char* buf = malloc(32);\n";
+    output = output + "    snprintf(buf, 32, \"%lld\", n);\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n";
+    output = output + "long long __pd_string_char_at(const char* s, long long i) {\n";
+    output = output + "    if (i < 0 || i >= (long long)strlen(s)) return -1;\n";
+    output = output + "    return (long long)(unsigned char)s[i];\n";
+    output = output + "}\n";
+    output = output + "const char* __pd_string_from_char(long long c) {\n";
+    output = output + "    char* buf = malloc(2);\n";
+    output = output + "    buf[0] = (char)c; buf[1] = '\\0';\n";
+    output = output + "    return buf;\n";
+    output = output + "}\n";
+    
+    // File I/O runtime functions
+    output = output + "#define MAX_FILES 256\n";
+    output = output + "static FILE* __pd_file_handles[MAX_FILES] = {0};\n";
+    output = output + "static int __pd_next_handle = 1;\n\n";
+    
+    output = output + "long long __pd_file_open(const char* path) {\n";
+    output = output + "    if (__pd_next_handle >= MAX_FILES) return -1;\n";
+    output = output + "    FILE* f = fopen(path, \"r\");\n";
+    output = output + "    if (!f) f = fopen(path, \"w+\");\n";
+    output = output + "    if (!f) return -1;\n";
+    output = output + "    int handle = __pd_next_handle++;\n";
+    output = output + "    __pd_file_handles[handle] = f;\n";
+    output = output + "    return handle;\n";
+    output = output + "}\n";
+    
+    output = output + "const char* __pd_file_read_all(long long handle) {\n";
+    output = output + "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return \"\";\n";
+    output = output + "    FILE* f = __pd_file_handles[handle];\n";
+    output = output + "    fseek(f, 0, SEEK_END);\n";
+    output = output + "    long size = ftell(f);\n";
+    output = output + "    fseek(f, 0, SEEK_SET);\n";
+    output = output + "    char* buffer = (char*)malloc(size + 1);\n";
+    output = output + "    fread(buffer, 1, size, f);\n";
+    output = output + "    buffer[size] = '\\0';\n";
+    output = output + "    return buffer;\n";
+    output = output + "}\n";
+    
+    output = output + "int __pd_file_write(long long handle, const char* content) {\n";
+    output = output + "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n";
+    output = output + "    FILE* f = __pd_file_handles[handle];\n";
+    output = output + "    return fputs(content, f) >= 0;\n";
+    output = output + "}\n";
+    
+    output = output + "int __pd_file_close(long long handle) {\n";
+    output = output + "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n";
+    output = output + "    FILE* f = __pd_file_handles[handle];\n";
+    output = output + "    __pd_file_handles[handle] = NULL;\n";
+    output = output + "    return fclose(f) == 0;\n";
+    output = output + "}\n";
+    
+    output = output + "int __pd_file_exists(const char* path) {\n";
+    output = output + "    FILE* f = fopen(path, \"r\");\n";
+    output = output + "    if (f) { fclose(f); return 1; }\n";
+    output = output + "    return 0;\n";
+    output = output + "}\n\n";
+    
+    let len = string_len(source);
+    let mut pos = 0;
+    
+    // Parse all functions
+    while pos < len {
+        pos = skip_whitespace_and_comments(source, pos, len);
+        
+        if pos >= len {
+            break;
+        }
+        
+        // Look for "struct"
+        if pos + 6 < len &&
+           string_char_at(source, pos) == 115 &&    // s
+           string_char_at(source, pos+1) == 116 &&  // t
+           string_char_at(source, pos+2) == 114 &&  // r
+           string_char_at(source, pos+3) == 117 &&  // u
+           string_char_at(source, pos+4) == 99 &&   // c
+           string_char_at(source, pos+5) == 116 &&  // t
+           (string_char_at(source, pos+6) == 32 ||  // space
+            string_char_at(source, pos+6) == 9) {   // tab
+            
+            output = output + compile_struct(source, pos, len);
+            
+            // Skip to end of struct
+            let mut brace_count = 0;
+            let mut found_brace = false;
+            while pos < len {
+                if string_char_at(source, pos) == 123 { // {
+                    brace_count = brace_count + 1;
+                    found_brace = true;
+                }
+                if string_char_at(source, pos) == 125 { // }
+                    brace_count = brace_count - 1;
+                    if brace_count == 0 && found_brace {
+                        pos = pos + 1;
+                        break;
+                    }
+                }
+                pos = pos + 1;
+            }
+        } else {
+            // Look for "fn"
+            if pos + 2 < len &&
+               string_char_at(source, pos) == 102 &&    // f
+               string_char_at(source, pos+1) == 110 &&  // n
+               (string_char_at(source, pos+2) == 32 ||  // space
+                string_char_at(source, pos+2) == 9) {   // tab
+            
+            output = output + compile_function(source, pos, len);
+            
+            // Skip to end of function
+            let mut brace_count = 0;
+            let mut found_brace = false;
+            while pos < len {
+                if string_char_at(source, pos) == 123 { // {
+                    brace_count = brace_count + 1;
+                    found_brace = true;
+                }
+                if string_char_at(source, pos) == 125 { // }
+                    brace_count = brace_count - 1;
+                    if brace_count == 0 && found_brace {
+                        pos = pos + 1;
+                        break;
+                    }
+                }
+                pos = pos + 1;
+            }
+            } else {
+                pos = pos + 1;
+            }
+        }
+    }
+    
+    return output;
+}
+
+fn main() {
+    print("Tiny Palladium Compiler");
+    print("========================");
+    print("Self-hosting ready!");
+    print("");
+    
+    // Read source file
+    let source_file = "test.pd";
+    
+    if file_exists(source_file) {
+        print("Reading source file: ");
+        print(source_file);
+        print("");
+        
+        let handle = file_open(source_file);
+        let source_code = file_read_all(handle);
+        file_close(handle);
+        let c_code = compile_program(source_code);
+        
+        // Write output to file
+        let output_file = file_open("output.c");
+        if output_file > 0 {
+            file_write(output_file, c_code);
+            file_close(output_file);
+            print("Generated: output.c");
+        }
+    } else {
+        // Fallback to test program if no file
+        print("No test.pd found, using built-in test");
+        print("");
+        
+        let test_program = "struct Point {
+    x: i64,
+    y: i64
+}
+
+fn main() {
+    let p: Point;
+    p.x = 10;
+    p.y = 20;
+    
+    print(\"Point coordinates:\");
+    print_int(p.x);
+    print_int(p.y);
+}
+";
+        
+        let c_code = compile_program(test_program);
+        
+        print("Generated C code:");
+        print("=================");
+        print(c_code);
+    }
+    
+    print("");
+    print("🎉 Compiler can read from files! 🎉");
+}

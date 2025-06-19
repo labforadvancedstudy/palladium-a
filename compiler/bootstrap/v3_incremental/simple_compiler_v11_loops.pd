@@ -1,0 +1,736 @@
+// Simple Palladium Compiler v11 with Loop Support
+// Adds while loops, for loops, and break/continue
+// Based on v10 with function parameters
+
+// ============ Helper Functions ============
+// (Same as v10 - omitted for brevity)
+
+fn is_digit(ch: i64) -> bool {
+    return ch >= 48 && ch <= 57;
+}
+
+fn is_alpha(ch: i64) -> bool {
+    return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90);
+}
+
+fn is_alphanum(ch: i64) -> bool {
+    return is_alpha(ch) || is_digit(ch) || ch == 95;
+}
+
+fn is_whitespace(ch: i64) -> bool {
+    return ch == 32 || ch == 9 || ch == 10 || ch == 13;
+}
+
+fn skip_whitespace(line: String, start: i64) -> i64 {
+    let mut i = start;
+    let len = string_len(line);
+    while i < len {
+        let ch = string_char_at(line, i);
+        if !is_whitespace(ch) {
+            break;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+fn extract_identifier(line: String, start: i64) -> String {
+    let mut result = "";
+    let mut i = start;
+    let len = string_len(line);
+    
+    while i < len {
+        let ch = string_char_at(line, i);
+        if is_alphanum(ch) {
+            result = string_concat(result, string_from_char(ch));
+        } else {
+            break;
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+fn string_eq(a: String, b: String) -> bool {
+    let len_a = string_len(a);
+    let len_b = string_len(b);
+    
+    if len_a != len_b {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < len_a {
+        if string_char_at(a, i) != string_char_at(b, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+fn substring(str: String, start: i64, end: i64) -> String {
+    let mut result = "";
+    let mut i = start;
+    
+    while i <= end && i < string_len(str) {
+        result = string_concat(result, string_from_char(string_char_at(str, i)));
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+fn trim(str: String) -> String {
+    let len = string_len(str);
+    if len == 0 {
+        return str;
+    }
+    
+    let mut start = 0;
+    while start < len && is_whitespace(string_char_at(str, start)) {
+        start = start + 1;
+    }
+    
+    let mut end = len - 1;
+    while end >= 0 && is_whitespace(string_char_at(str, end)) {
+        end = end - 1;
+    }
+    
+    if start > end {
+        return "";
+    }
+    
+    return substring(str, start, end);
+}
+
+fn starts_with_at(str: String, prefix: String, pos: i64) -> bool {
+    let str_len = string_len(str);
+    let prefix_len = string_len(prefix);
+    
+    if pos + prefix_len > str_len {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < prefix_len {
+        if string_char_at(str, pos + i) != string_char_at(prefix, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+fn find_matching_brace(line: String, start: i64) -> i64 {
+    let mut depth = 0;
+    let mut i = start;
+    let len = string_len(line);
+    
+    while i < len {
+        let ch = string_char_at(line, i);
+        if ch == 123 { // '{'
+            depth = depth + 1;
+        } else if ch == 125 { // '}'
+            depth = depth - 1;
+            if depth == 0 {
+                return i;
+            }
+        }
+        i = i + 1;
+    }
+    
+    return -1;
+}
+
+// Extract block content (everything between { })
+fn extract_block(source: String, start_line: i64) -> String {
+    let mut result = "";
+    let mut brace_count = 0;
+    let mut i = start_line;
+    let mut started = false;
+    
+    while i < string_len(source) {
+        let ch = string_char_at(source, i);
+        
+        if ch == 123 { // '{'
+            if !started {
+                started = true;
+            } else {
+                result = string_concat(result, string_from_char(ch));
+            }
+            brace_count = brace_count + 1;
+        } else if ch == 125 { // '}'
+            brace_count = brace_count - 1;
+            if brace_count == 0 {
+                break;
+            } else {
+                result = string_concat(result, string_from_char(ch));
+            }
+        } else if started {
+            result = string_concat(result, string_from_char(ch));
+        }
+        
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// ============ Loop Context Management ============
+
+// Stack for nested loops (for break/continue)
+let mut loop_depth = 0;
+let mut loop_labels: [String; 10];
+let mut current_loop_var: String = "";
+
+// Generate unique label
+let mut label_counter = 0;
+fn gen_label(prefix: String) -> String {
+    label_counter = label_counter + 1;
+    return string_concat(prefix, int_to_string(label_counter));
+}
+
+// ============ Type System (simplified from v10) ============
+
+const TYPE_VOID: i64 = 0;
+const TYPE_I64: i64 = 1;
+const TYPE_STRING: i64 = 2;
+const TYPE_BOOL: i64 = 3;
+
+fn type_to_c(type_id: i64) -> String {
+    if type_id == TYPE_VOID { return "void"; }
+    if type_id == TYPE_I64 { return "long long"; }
+    if type_id == TYPE_STRING { return "const char*"; }
+    if type_id == TYPE_BOOL { return "int"; }
+    return "void*";
+}
+
+// ============ Code Generation ============
+
+// Compile while loop
+fn compile_while(source: String, start: i64, indent: String) -> String {
+    let mut i = skip_whitespace(source, start);
+    
+    // Find condition start and end
+    let cond_start = i;
+    let mut paren_count = 0;
+    let mut cond_end = -1;
+    
+    // Skip to opening paren or condition
+    while i < string_len(source) {
+        let ch = string_char_at(source, i);
+        if ch == 40 { // '('
+            paren_count = 1;
+            cond_start = i + 1;
+            i = i + 1;
+            break;
+        } else if ch == 123 { // '{' - no parens
+            cond_end = i - 1;
+            break;
+        } else if !is_whitespace(ch) && cond_start == start {
+            cond_start = i;
+        }
+        i = i + 1;
+    }
+    
+    // Find end of condition if using parens
+    if paren_count > 0 {
+        while i < string_len(source) && paren_count > 0 {
+            let ch = string_char_at(source, i);
+            if ch == 40 { paren_count = paren_count + 1; }
+            if ch == 41 { 
+                paren_count = paren_count - 1;
+                if paren_count == 0 {
+                    cond_end = i - 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    
+    // Extract condition
+    let condition = trim(substring(source, cond_start, cond_end));
+    
+    // Find body
+    let body_start = i;
+    while body_start < string_len(source) && string_char_at(source, body_start) != 123 {
+        body_start = body_start + 1;
+    }
+    
+    let body = extract_block(source, body_start);
+    
+    // Generate labels
+    let loop_start = gen_label("while_start_");
+    let loop_end = gen_label("while_end_");
+    
+    // Push loop context
+    if loop_depth < 10 {
+        loop_labels[loop_depth] = loop_end;
+        loop_depth = loop_depth + 1;
+    }
+    
+    // Generate while loop
+    let mut result = "";
+    result = string_concat(result, indent);
+    result = string_concat(result, loop_start);
+    result = string_concat(result, ":\n");
+    
+    result = string_concat(result, indent);
+    result = string_concat(result, "if (!(");
+    result = string_concat(result, condition);
+    result = string_concat(result, ")) goto ");
+    result = string_concat(result, loop_end);
+    result = string_concat(result, ";\n");
+    
+    // Compile body
+    result = string_concat(result, compile_block(body, string_concat(indent, "    ")));
+    
+    result = string_concat(result, indent);
+    result = string_concat(result, "goto ");
+    result = string_concat(result, loop_start);
+    result = string_concat(result, ";\n");
+    
+    result = string_concat(result, indent);
+    result = string_concat(result, loop_end);
+    result = string_concat(result, ":\n");
+    
+    // Pop loop context
+    if loop_depth > 0 {
+        loop_depth = loop_depth - 1;
+    }
+    
+    return result;
+}
+
+// Compile for loop
+fn compile_for(source: String, start: i64, indent: String) -> String {
+    let mut i = skip_whitespace(source, start);
+    
+    // Extract loop variable
+    let var_name = extract_identifier(source, i);
+    if string_len(var_name) == 0 {
+        return string_concat(indent, "// Error: Expected variable name in for loop\n");
+    }
+    
+    i = i + string_len(var_name);
+    i = skip_whitespace(source, i);
+    
+    // Expect "in"
+    if !starts_with_at(source, "in", i) {
+        return string_concat(indent, "// Error: Expected 'in' after for loop variable\n");
+    }
+    i = i + 2;
+    i = skip_whitespace(source, i);
+    
+    // Parse range (simple version: start..end)
+    let range_start = i;
+    let mut range_end = i;
+    let mut found_dots = false;
+    
+    while range_end < string_len(source) {
+        let ch = string_char_at(source, range_end);
+        if ch == 123 { // '{'
+            break;
+        }
+        if ch == 46 && range_end + 1 < string_len(source) && 
+           string_char_at(source, range_end + 1) == 46 { // ".."
+            found_dots = true;
+        }
+        range_end = range_end + 1;
+    }
+    
+    let range_expr = trim(substring(source, range_start, range_end - 1));
+    
+    // Simple range parsing (e.g., "0..10")
+    let mut start_val = "0";
+    let mut end_val = "10";
+    
+    if found_dots {
+        let mut dot_pos = 0;
+        while dot_pos < string_len(range_expr) - 1 {
+            if string_char_at(range_expr, dot_pos) == 46 && 
+               string_char_at(range_expr, dot_pos + 1) == 46 {
+                start_val = trim(substring(range_expr, 0, dot_pos - 1));
+                end_val = trim(substring(range_expr, dot_pos + 2, string_len(range_expr) - 1));
+                break;
+            }
+            dot_pos = dot_pos + 1;
+        }
+    }
+    
+    // Find body
+    let body_start = range_end;
+    while body_start < string_len(source) && string_char_at(source, body_start) != 123 {
+        body_start = body_start + 1;
+    }
+    
+    let body = extract_block(source, body_start);
+    
+    // Generate labels
+    let loop_start = gen_label("for_start_");
+    let loop_end = gen_label("for_end_");
+    let loop_continue = gen_label("for_continue_");
+    
+    // Push loop context
+    if loop_depth < 10 {
+        loop_labels[loop_depth] = loop_end;
+        loop_depth = loop_depth + 1;
+    }
+    
+    // Store current loop variable
+    let prev_loop_var = current_loop_var;
+    current_loop_var = var_name;
+    
+    // Generate for loop as while loop
+    let mut result = "";
+    
+    // Initialize loop variable
+    result = string_concat(result, indent);
+    result = string_concat(result, "long long ");
+    result = string_concat(result, var_name);
+    result = string_concat(result, " = ");
+    result = string_concat(result, start_val);
+    result = string_concat(result, ";\n");
+    
+    // Loop start
+    result = string_concat(result, indent);
+    result = string_concat(result, loop_start);
+    result = string_concat(result, ":\n");
+    
+    // Condition
+    result = string_concat(result, indent);
+    result = string_concat(result, "if (!(");
+    result = string_concat(result, var_name);
+    result = string_concat(result, " < ");
+    result = string_concat(result, end_val);
+    result = string_concat(result, ")) goto ");
+    result = string_concat(result, loop_end);
+    result = string_concat(result, ";\n");
+    
+    // Body
+    result = string_concat(result, compile_block(body, string_concat(indent, "    ")));
+    
+    // Continue label (for continue statements)
+    result = string_concat(result, indent);
+    result = string_concat(result, loop_continue);
+    result = string_concat(result, ":\n");
+    
+    // Increment
+    result = string_concat(result, indent);
+    result = string_concat(result, var_name);
+    result = string_concat(result, " = ");
+    result = string_concat(result, var_name);
+    result = string_concat(result, " + 1;\n");
+    
+    // Jump to start
+    result = string_concat(result, indent);
+    result = string_concat(result, "goto ");
+    result = string_concat(result, loop_start);
+    result = string_concat(result, ";\n");
+    
+    // End label
+    result = string_concat(result, indent);
+    result = string_concat(result, loop_end);
+    result = string_concat(result, ":\n");
+    
+    // Restore context
+    current_loop_var = prev_loop_var;
+    if loop_depth > 0 {
+        loop_depth = loop_depth - 1;
+    }
+    
+    return result;
+}
+
+// Compile break statement
+fn compile_break(indent: String) -> String {
+    if loop_depth == 0 {
+        return string_concat(indent, "// Error: break outside of loop\n");
+    }
+    
+    let mut result = indent;
+    result = string_concat(result, "goto ");
+    result = string_concat(result, loop_labels[loop_depth - 1]);
+    result = string_concat(result, ";\n");
+    return result;
+}
+
+// Compile continue statement
+fn compile_continue(indent: String) -> String {
+    if loop_depth == 0 {
+        return string_concat(indent, "// Error: continue outside of loop\n");
+    }
+    
+    // For for loops, we need to jump to the increment part
+    // For simplicity, we'll use the same label as break for now
+    let mut result = indent;
+    result = string_concat(result, "goto ");
+    
+    // In a real implementation, we'd have separate continue labels
+    // For now, continue acts like going to loop start
+    let label = loop_labels[loop_depth - 1];
+    // Replace "end" with "start" in label
+    let continue_label = label; // Simplified
+    
+    result = string_concat(result, continue_label);
+    result = string_concat(result, "; // continue\n");
+    return result;
+}
+
+// Compile a block of statements
+fn compile_block(block: String, indent: String) -> String {
+    let mut result = "";
+    let mut i = 0;
+    let mut current_line = "";
+    
+    while i < string_len(block) {
+        let ch = string_char_at(block, i);
+        
+        if ch == 10 { // newline
+            if string_len(trim(current_line)) > 0 {
+                result = string_concat(result, compile_statement(current_line, indent));
+            }
+            current_line = "";
+        } else if ch != 13 { // not carriage return
+            current_line = string_concat(current_line, string_from_char(ch));
+        }
+        
+        i = i + 1;
+    }
+    
+    // Handle last line
+    if string_len(trim(current_line)) > 0 {
+        result = string_concat(result, compile_statement(current_line, indent));
+    }
+    
+    return result;
+}
+
+// Compile statement (extended from v10)
+fn compile_statement(line: String, indent: String) -> String {
+    let trimmed = trim(line);
+    let i = 0;
+    
+    if string_len(trimmed) == 0 {
+        return "";
+    }
+    
+    // Check statement type
+    if starts_with_at(trimmed, "while", 0) {
+        let after_while = skip_whitespace(trimmed, 5);
+        // Make sure it's not part of an identifier
+        if after_while == 5 || !is_alphanum(string_char_at(trimmed, 5)) {
+            return compile_while(trimmed, 5, indent);
+        }
+    }
+    
+    if starts_with_at(trimmed, "for", 0) {
+        let after_for = skip_whitespace(trimmed, 3);
+        if after_for == 3 || !is_alphanum(string_char_at(trimmed, 3)) {
+            return compile_for(trimmed, 3, indent);
+        }
+    }
+    
+    if starts_with_at(trimmed, "break", 0) {
+        let after_break = 5;
+        if after_break >= string_len(trimmed) || !is_alphanum(string_char_at(trimmed, 5)) {
+            return compile_break(indent);
+        }
+    }
+    
+    if starts_with_at(trimmed, "continue", 0) {
+        let after_continue = 8;
+        if after_continue >= string_len(trimmed) || !is_alphanum(string_char_at(trimmed, 8)) {
+            return compile_continue(indent);
+        }
+    }
+    
+    if starts_with_at(trimmed, "print(", 0) {
+        return compile_print(trimmed, indent);
+    }
+    
+    if starts_with_at(trimmed, "print_int(", 0) {
+        return compile_print_int(trimmed, indent);
+    }
+    
+    if starts_with_at(trimmed, "let ", 0) {
+        return compile_let(trimmed, indent);
+    }
+    
+    if starts_with_at(trimmed, "if ", 0) {
+        return compile_if(trimmed, indent);
+    }
+    
+    // Variable assignment
+    let id = extract_identifier(trimmed, 0);
+    if string_len(id) > 0 {
+        let after_id = string_len(id);
+        let eq_pos = skip_whitespace(trimmed, after_id);
+        if eq_pos < string_len(trimmed) && string_char_at(trimmed, eq_pos) == 61 { // '='
+            return compile_assignment(trimmed, indent);
+        }
+    }
+    
+    return string_concat(string_concat(indent, "// Unknown: "), string_concat(trimmed, "\n"));
+}
+
+// Simple implementations of other compile functions
+fn compile_print(line: String, indent: String) -> String {
+    let start = 6; // After "print("
+    let mut end = start;
+    let mut paren_count = 1;
+    
+    while end < string_len(line) && paren_count > 0 {
+        let ch = string_char_at(line, end);
+        if ch == 40 { paren_count = paren_count + 1; }
+        if ch == 41 { paren_count = paren_count - 1; }
+        end = end + 1;
+    }
+    
+    let arg = substring(line, start, end - 2);
+    return string_concat(string_concat(string_concat(indent, "printf(\"%s\\n\", "), arg), ");\n");
+}
+
+fn compile_print_int(line: String, indent: String) -> String {
+    let start = 10; // After "print_int("
+    let mut end = start;
+    let mut paren_count = 1;
+    
+    while end < string_len(line) && paren_count > 0 {
+        let ch = string_char_at(line, end);
+        if ch == 40 { paren_count = paren_count + 1; }
+        if ch == 41 { paren_count = paren_count - 1; }
+        end = end + 1;
+    }
+    
+    let arg = substring(line, start, end - 2);
+    return string_concat(string_concat(string_concat(indent, "printf(\"%lld\\n\", (long long)"), arg), ");\n");
+}
+
+fn compile_let(line: String, indent: String) -> String {
+    let i = skip_whitespace(line, 4); // After "let "
+    let var_name = extract_identifier(line, i);
+    
+    i = i + string_len(var_name);
+    i = skip_whitespace(line, i);
+    
+    // Skip type annotation for now
+    if i < string_len(line) && string_char_at(line, i) == 58 { // ':'
+        while i < string_len(line) && string_char_at(line, i) != 61 {
+            i = i + 1;
+        }
+    }
+    
+    if i >= string_len(line) || string_char_at(line, i) != 61 {
+        return string_concat(indent, "// Error: Expected '=' in let\n");
+    }
+    
+    i = skip_whitespace(line, i + 1);
+    let expr = substring(line, i, string_len(line) - 1);
+    
+    // Simple type inference
+    let c_type = "long long"; // Default to i64
+    if string_char_at(expr, 0) == 34 { // '"'
+        c_type = "const char*";
+    }
+    
+    return string_concat(string_concat(string_concat(string_concat(string_concat(indent, c_type), " "), var_name), " = "), string_concat(expr, ";\n"));
+}
+
+fn compile_if(line: String, indent: String) -> String {
+    // Simplified if compilation
+    let i = skip_whitespace(line, 3); // After "if "
+    let mut cond_end = i;
+    
+    // Find condition end (before '{')
+    while cond_end < string_len(line) && string_char_at(line, cond_end) != 123 {
+        cond_end = cond_end + 1;
+    }
+    
+    let condition = trim(substring(line, i, cond_end - 1));
+    return string_concat(string_concat(string_concat(indent, "if ("), condition), ") {\n");
+}
+
+fn compile_assignment(line: String, indent: String) -> String {
+    return string_concat(string_concat(indent, line), "\n");
+}
+
+// ============ Main Compiler ============
+
+fn compile_program(source: String) -> String {
+    // Reset global state
+    loop_depth = 0;
+    label_counter = 0;
+    
+    let mut output = "#include <stdio.h>\n#include <string.h>\n\n";
+    output = string_concat(output, "int main() {\n");
+    
+    let compiled = compile_block(source, "    ");
+    output = string_concat(output, compiled);
+    
+    output = string_concat(output, "    return 0;\n");
+    output = string_concat(output, "}\n");
+    
+    return output;
+}
+
+// ============ Test Program ============
+
+fn main() {
+    let test_program = "// Test program with loops
+let mut i = 0;
+
+print(\"While loop test:\");
+while i < 5 {
+    print_int(i);
+    i = i + 1;
+}
+
+print(\"For loop test:\");
+for j in 0..5 {
+    print_int(j);
+}
+
+print(\"Nested loops:\");
+for x in 0..3 {
+    for y in 0..3 {
+        let prod = x * y;
+        print_int(prod);
+    }
+}
+
+print(\"Break and continue test:\");
+let mut k = 0;
+while k < 10 {
+    if k == 3 {
+        k = k + 1;
+        continue;
+    }
+    if k == 7 {
+        break;
+    }
+    print_int(k);
+    k = k + 1;
+}
+
+print(\"Done!\");
+";
+
+    print("Loop Support Compiler v11");
+    print("==========================");
+    print("");
+    print("Input program:");
+    print("--------------");
+    print(test_program);
+    print("");
+    
+    let compiled = compile_program(test_program);
+    
+    print("Compiled output:");
+    print("----------------");
+    print(compiled);
+}

@@ -1,0 +1,739 @@
+// Simple Palladium Compiler v7 with Enhanced Type Checking
+// Improved type inference, better error messages, and support for more types
+// Can handle: print, let, variables, if/else, functions, arrays, and advanced type checking
+
+// ============ Helper Functions ============
+
+fn is_digit(ch: i64) -> bool {
+    return ch >= 48 && ch <= 57; // '0' to '9'
+}
+
+fn is_alpha(ch: i64) -> bool {
+    return (ch >= 97 && ch <= 122) || // 'a' to 'z'
+           (ch >= 65 && ch <= 90);     // 'A' to 'Z'
+}
+
+fn is_alphanum(ch: i64) -> bool {
+    return is_alpha(ch) || is_digit(ch) || ch == 95; // underscore
+}
+
+// Skip whitespace and return new position
+fn skip_whitespace(line: String, start: i64) -> i64 {
+    let mut i = start;
+    let len = string_len(line);
+    while i < len {
+        let ch = string_char_at(line, i);
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 { // space, tab, newline, carriage return
+            break;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+// Extract identifier starting at position
+fn extract_identifier(line: String, start: i64) -> String {
+    let mut result = "";
+    let mut i = start;
+    let len = string_len(line);
+    
+    while i < len {
+        let ch = string_char_at(line, i);
+        if is_alphanum(ch) {
+            result = result + string_from_char(ch);
+        } else {
+            break;
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Extract number (integer) starting at position
+fn extract_number(line: String, start: i64) -> String {
+    let mut result = "";
+    let mut i = start;
+    let len = string_len(line);
+    
+    while i < len {
+        let ch = string_char_at(line, i);
+        if is_digit(ch) {
+            result = result + string_from_char(ch);
+        } else {
+            break;
+        }
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// Simple string equality check
+fn string_eq(a: String, b: String) -> bool {
+    let len_a = string_len(a);
+    let len_b = string_len(b);
+    
+    if len_a != len_b {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < len_a {
+        if string_char_at(a, i) != string_char_at(b, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+// Check if string starts with prefix at position
+fn starts_with_at(str: String, prefix: String, pos: i64) -> bool {
+    let str_len = string_len(str);
+    let prefix_len = string_len(prefix);
+    
+    if pos + prefix_len > str_len {
+        return false;
+    }
+    
+    let mut i = 0;
+    while i < prefix_len {
+        if string_char_at(str, pos + i) != string_char_at(prefix, i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    
+    return true;
+}
+
+// ============ Type System ============
+
+// Type IDs:
+// 0 = void
+// 1 = i64
+// 2 = String
+// 3 = bool
+// 4 = f64
+// 5+ = array types (base_type * 10 + 5)
+
+// Convert type ID to string representation
+fn type_to_string(type_id: i64) -> String {
+    if type_id == 0 {
+        return "void";
+    } else if type_id == 1 {
+        return "i64";
+    } else if type_id == 2 {
+        return "String";
+    } else if type_id == 3 {
+        return "bool";
+    } else if type_id == 4 {
+        return "f64";
+    } else if type_id > 10 {
+        // Array type
+        let base_type = (type_id - 5) / 10;
+        return "[" + type_to_string(base_type) + "]";
+    }
+    return "unknown";
+}
+
+// Global type tracking
+let mut var_names: [String; 100];
+let mut var_types: [i64; 100];
+let mut var_count = 0;
+
+let mut func_names: [String; 100];
+let mut func_return_types: [i64; 100];
+let mut func_param_count: [i64; 100];
+let mut func_param_types: [[i64; 10]; 100]; // max 10 params per function
+let mut func_count = 0;
+
+// Current function context
+let mut current_func_return_type = 0;
+let mut in_function = false;
+
+// Initialize type system with built-ins
+fn init_type_system() {
+    var_count = 0;
+    func_count = 0;
+    
+    // Built-in functions
+    func_names[0] = "print";
+    func_return_types[0] = 0; // void
+    func_param_count[0] = 1;
+    func_param_types[0][0] = 2; // String
+    
+    func_names[1] = "print_int";
+    func_return_types[1] = 0; // void
+    func_param_count[1] = 1;
+    func_param_types[1][0] = 1; // i64
+    
+    func_names[2] = "string_len";
+    func_return_types[2] = 1; // i64
+    func_param_count[2] = 1;
+    func_param_types[2][0] = 2; // String
+    
+    func_names[3] = "string_char_at";
+    func_return_types[3] = 1; // i64
+    func_param_count[3] = 2;
+    func_param_types[3][0] = 2; // String
+    func_param_types[3][1] = 1; // i64
+    
+    func_names[4] = "string_from_char";
+    func_return_types[4] = 2; // String
+    func_param_count[4] = 1;
+    func_param_types[4][0] = 1; // i64
+    
+    func_names[5] = "int_to_string";
+    func_return_types[5] = 2; // String
+    func_param_count[5] = 1;
+    func_param_types[5][0] = 1; // i64
+    
+    func_count = 6;
+}
+
+// Add a variable with its type
+fn add_variable(name: String, type_id: i64) {
+    // Check if variable already exists
+    let mut i = 0;
+    while i < var_count {
+        if string_eq(var_names[i], name) {
+            // Update existing variable
+            var_types[i] = type_id;
+            return;
+        }
+        i = i + 1;
+    }
+    
+    // Add new variable
+    if var_count < 100 {
+        var_names[var_count] = name;
+        var_types[var_count] = type_id;
+        var_count = var_count + 1;
+    }
+}
+
+// Look up variable type
+fn get_variable_type(name: String) -> i64 {
+    let mut i = 0;
+    while i < var_count {
+        if string_eq(var_names[i], name) {
+            return var_types[i];
+        }
+        i = i + 1;
+    }
+    return -1; // Not found
+}
+
+// Add a function with its signature
+fn add_function(name: String, return_type: i64, param_count: i64) {
+    if func_count < 100 {
+        func_names[func_count] = name;
+        func_return_types[func_count] = return_type;
+        func_param_count[func_count] = param_count;
+        func_count = func_count + 1;
+    }
+}
+
+// Get function return type
+fn get_function_return_type(name: String) -> i64 {
+    let mut i = 0;
+    while i < func_count {
+        if string_eq(func_names[i], name) {
+            return func_return_types[i];
+        }
+        i = i + 1;
+    }
+    return -1; // Not found
+}
+
+// Type inference from literal values
+fn infer_type_from_literal(expr: String, start: i64) -> i64 {
+    let i = skip_whitespace(expr, start);
+    if i >= string_len(expr) {
+        return -1;
+    }
+    
+    let ch = string_char_at(expr, i);
+    
+    // String literal
+    if ch == 34 { // '"'
+        return 2; // String
+    }
+    
+    // Boolean literals
+    if starts_with_at(expr, "true", i) || starts_with_at(expr, "false", i) {
+        return 3; // bool
+    }
+    
+    // Number literal
+    if is_digit(ch) || (ch == 45 && i + 1 < string_len(expr) && is_digit(string_char_at(expr, i + 1))) { // negative number
+        // Check for decimal point
+        let mut j = i;
+        if ch == 45 { j = j + 1; } // skip minus sign
+        
+        while j < string_len(expr) && is_digit(string_char_at(expr, j)) {
+            j = j + 1;
+        }
+        
+        if j < string_len(expr) && string_char_at(expr, j) == 46 { // '.'
+            return 4; // f64
+        }
+        return 1; // i64
+    }
+    
+    // Array literal
+    if ch == 91 { // '['
+        // Simple array type inference - assume i64 array for now
+        return 15; // [i64]
+    }
+    
+    return -1; // Unknown
+}
+
+// Infer type from expression (enhanced)
+fn infer_expression_type(expr: String) -> i64 {
+    let expr_trimmed = expr; // TODO: implement trim
+    let i = skip_whitespace(expr_trimmed, 0);
+    
+    // Try literal inference first
+    let literal_type = infer_type_from_literal(expr_trimmed, i);
+    if literal_type >= 0 {
+        return literal_type;
+    }
+    
+    // Check for variable reference
+    let ch = string_char_at(expr_trimmed, i);
+    if is_alpha(ch) {
+        let var_name = extract_identifier(expr_trimmed, i);
+        
+        // Check if it's a function call
+        let after_id = i + string_len(var_name);
+        let after_id_ws = skip_whitespace(expr_trimmed, after_id);
+        if after_id_ws < string_len(expr_trimmed) && string_char_at(expr_trimmed, after_id_ws) == 40 { // '('
+            return get_function_return_type(var_name);
+        }
+        
+        // It's a variable
+        return get_variable_type(var_name);
+    }
+    
+    // String concatenation
+    if expr_trimmed.find(" + ") >= 0 { // pseudo-code for finding substring
+        // For now, assume string concatenation if + is present
+        return 2; // String
+    }
+    
+    return -1; // Unknown
+}
+
+// Type check a function call
+fn type_check_function_call(func_name: String, arg_expr: String) -> String {
+    let mut i = 0;
+    let mut func_index = -1;
+    
+    // Find function
+    while i < func_count {
+        if string_eq(func_names[i], func_name) {
+            func_index = i;
+            break;
+        }
+        i = i + 1;
+    }
+    
+    if func_index < 0 {
+        return "Error: Unknown function '" + func_name + "'";
+    }
+    
+    // For now, check single argument functions
+    if func_param_count[func_index] == 1 {
+        let expected_type = func_param_types[func_index][0];
+        let actual_type = infer_expression_type(arg_expr);
+        
+        if actual_type < 0 {
+            return "Error: Cannot infer type of argument to '" + func_name + "'";
+        }
+        
+        if actual_type != expected_type {
+            return "Error: Type mismatch in call to '" + func_name + 
+                   "'. Expected " + type_to_string(expected_type) + 
+                   " but got " + type_to_string(actual_type);
+        }
+    }
+    
+    return ""; // No error
+}
+
+// ============ Code Generation ============
+
+// Compile a statement with type checking
+fn compile_statement(line: String, indent: String) -> String {
+    let i = skip_whitespace(line, 0);
+    
+    // Empty line
+    if i >= string_len(line) {
+        return "";
+    }
+    
+    // Handle different statement types
+    if starts_with_at(line, "print(", i) {
+        return compile_print(line, i, indent);
+    } else if starts_with_at(line, "print_int(", i) {
+        return compile_print_int(line, i, indent);
+    } else if starts_with_at(line, "let ", i) {
+        return compile_let(line, i + 4, indent);
+    } else if starts_with_at(line, "if ", i) {
+        return compile_if(line, i + 3, indent);
+    } else if starts_with_at(line, "return", i) {
+        return compile_return(line, i + 6, indent);
+    } else {
+        // Check for function calls or assignments
+        let id = extract_identifier(line, i);
+        if string_len(id) > 0 {
+            let after_id = i + string_len(id);
+            let next_pos = skip_whitespace(line, after_id);
+            
+            if next_pos < string_len(line) {
+                let next_ch = string_char_at(line, next_pos);
+                if next_ch == 40 { // '(' - function call
+                    return compile_function_call(line, i, indent);
+                } else if next_ch == 61 { // '=' - assignment
+                    return compile_assignment(line, i, indent);
+                }
+            }
+        }
+    }
+    
+    return indent + "// Unknown statement: " + line + "\n";
+}
+
+// Compile print statement with type checking
+fn compile_print(line: String, start: i64, indent: String) -> String {
+    let open_paren = start + 5; // length of "print"
+    let close_paren = find_closing_paren(line, open_paren);
+    
+    if close_paren < 0 {
+        return indent + "// Error: Missing closing parenthesis\n";
+    }
+    
+    let arg = substring(line, open_paren + 1, close_paren - 1);
+    
+    // Type check
+    let type_error = type_check_function_call("print", arg);
+    if string_len(type_error) > 0 {
+        return indent + "// " + type_error + "\n";
+    }
+    
+    return indent + "printf(\"%s\\n\", " + arg + ");\n";
+}
+
+// Compile print_int statement with type checking
+fn compile_print_int(line: String, start: i64, indent: String) -> String {
+    let open_paren = start + 9; // length of "print_int"
+    let close_paren = find_closing_paren(line, open_paren);
+    
+    if close_paren < 0 {
+        return indent + "// Error: Missing closing parenthesis\n";
+    }
+    
+    let arg = substring(line, open_paren + 1, close_paren - 1);
+    
+    // Type check
+    let type_error = type_check_function_call("print_int", arg);
+    if string_len(type_error) > 0 {
+        return indent + "// " + type_error + "\n";
+    }
+    
+    return indent + "printf(\"%lld\\n\", (long long)" + arg + ");\n";
+}
+
+// Compile let statement with type inference
+fn compile_let(line: String, start: i64, indent: String) -> String {
+    let i = skip_whitespace(line, start);
+    
+    // Check for 'mut' keyword
+    let is_mut = starts_with_at(line, "mut ", i);
+    if is_mut {
+        i = skip_whitespace(line, i + 4);
+    }
+    
+    // Extract variable name
+    let var_name = extract_identifier(line, i);
+    if string_len(var_name) == 0 {
+        return indent + "// Error: Expected variable name after 'let'\n";
+    }
+    
+    i = i + string_len(var_name);
+    i = skip_whitespace(line, i);
+    
+    // Check for type annotation
+    let mut explicit_type = -1;
+    if i < string_len(line) && string_char_at(line, i) == 58 { // ':'
+        i = skip_whitespace(line, i + 1);
+        let type_name = extract_identifier(line, i);
+        
+        if string_eq(type_name, "i64") {
+            explicit_type = 1;
+        } else if string_eq(type_name, "String") {
+            explicit_type = 2;
+        } else if string_eq(type_name, "bool") {
+            explicit_type = 3;
+        } else if string_eq(type_name, "f64") {
+            explicit_type = 4;
+        }
+        
+        i = i + string_len(type_name);
+        i = skip_whitespace(line, i);
+    }
+    
+    // Expect '='
+    if i >= string_len(line) || string_char_at(line, i) != 61 { // '='
+        return indent + "// Error: Expected '=' in let statement\n";
+    }
+    
+    i = skip_whitespace(line, i + 1);
+    
+    // Get the initialization expression
+    let init_expr = substring(line, i, string_len(line) - 1);
+    if string_char_at(init_expr, string_len(init_expr) - 1) == 59 { // ';'
+        init_expr = substring(init_expr, 0, string_len(init_expr) - 2);
+    }
+    
+    // Infer type if not explicitly given
+    let var_type = explicit_type;
+    if var_type < 0 {
+        var_type = infer_expression_type(init_expr);
+        if var_type < 0 {
+            return indent + "// Error: Cannot infer type for variable '" + var_name + "'\n";
+        }
+    }
+    
+    // Add variable to type system
+    add_variable(var_name, var_type);
+    
+    // Generate C code
+    let c_type = "";
+    if var_type == 1 {
+        c_type = "long long";
+    } else if var_type == 2 {
+        c_type = "const char*";
+    } else if var_type == 3 {
+        c_type = "int";
+    } else if var_type == 4 {
+        c_type = "double";
+    } else if var_type == 15 {
+        c_type = "long long*"; // Simple array representation
+    }
+    
+    return indent + c_type + " " + var_name + " = " + init_expr + ";\n";
+}
+
+// Compile assignment with type checking
+fn compile_assignment(line: String, start: i64, indent: String) -> String {
+    let var_name = extract_identifier(line, start);
+    let var_type = get_variable_type(var_name);
+    
+    if var_type < 0 {
+        return indent + "// Error: Unknown variable '" + var_name + "'\n";
+    }
+    
+    let i = start + string_len(var_name);
+    i = skip_whitespace(line, i);
+    
+    if string_char_at(line, i) != 61 { // '='
+        return indent + "// Error: Expected '=' in assignment\n";
+    }
+    
+    i = skip_whitespace(line, i + 1);
+    
+    let expr = substring(line, i, string_len(line) - 1);
+    if string_char_at(expr, string_len(expr) - 1) == 59 { // ';'
+        expr = substring(expr, 0, string_len(expr) - 2);
+    }
+    
+    // Type check the expression
+    let expr_type = infer_expression_type(expr);
+    if expr_type >= 0 && expr_type != var_type {
+        return indent + "// Error: Type mismatch in assignment to '" + var_name + 
+               "'. Expected " + type_to_string(var_type) + 
+               " but got " + type_to_string(expr_type) + "\n";
+    }
+    
+    return indent + var_name + " = " + expr + ";\n";
+}
+
+// Compile function call
+fn compile_function_call(line: String, start: i64, indent: String) -> String {
+    let func_name = extract_identifier(line, start);
+    let i = start + string_len(func_name);
+    
+    // For now, just pass through
+    return indent + line + "\n";
+}
+
+// Compile if statement (simplified)
+fn compile_if(line: String, start: i64, indent: String) -> String {
+    // For now, basic if compilation without type checking conditions
+    return indent + "if " + substring(line, start, string_len(line) - 1) + " {\n";
+}
+
+// Compile return statement
+fn compile_return(line: String, start: i64, indent: String) -> String {
+    let i = skip_whitespace(line, start);
+    
+    if i >= string_len(line) || string_char_at(line, i) == 59 { // ';'
+        // Empty return
+        if in_function && current_func_return_type != 0 {
+            return indent + "// Error: Function expects return value of type " + 
+                   type_to_string(current_func_return_type) + "\n";
+        }
+        return indent + "return;\n";
+    }
+    
+    let expr = substring(line, i, string_len(line) - 1);
+    if string_char_at(expr, string_len(expr) - 1) == 59 { // ';'
+        expr = substring(expr, 0, string_len(expr) - 2);
+    }
+    
+    if in_function {
+        let expr_type = infer_expression_type(expr);
+        if expr_type >= 0 && expr_type != current_func_return_type {
+            return indent + "// Error: Return type mismatch. Expected " + 
+                   type_to_string(current_func_return_type) + 
+                   " but got " + type_to_string(expr_type) + "\n";
+        }
+    }
+    
+    return indent + "return " + expr + ";\n";
+}
+
+// Helper: Find closing parenthesis
+fn find_closing_paren(line: String, start: i64) -> i64 {
+    let mut depth = 0;
+    let mut i = start;
+    let len = string_len(line);
+    
+    while i < len {
+        let ch = string_char_at(line, i);
+        if ch == 40 { // '('
+            depth = depth + 1;
+        } else if ch == 41 { // ')'
+            depth = depth - 1;
+            if depth == 0 {
+                return i;
+            }
+        }
+        i = i + 1;
+    }
+    
+    return -1;
+}
+
+// Helper: Extract substring
+fn substring(str: String, start: i64, end: i64) -> String {
+    let mut result = "";
+    let mut i = start;
+    
+    while i <= end && i < string_len(str) {
+        result = result + string_from_char(string_char_at(str, i));
+        i = i + 1;
+    }
+    
+    return result;
+}
+
+// ============ Main Compiler ============
+
+fn compile_program(source: String) -> String {
+    init_type_system();
+    
+    let mut output = "#include <stdio.h>\n#include <string.h>\n\n";
+    output = output + "int main() {\n";
+    
+    let mut i = 0;
+    let mut current_line = "";
+    let source_len = string_len(source);
+    
+    while i < source_len {
+        let ch = string_char_at(source, i);
+        
+        if ch == 10 { // newline
+            if string_len(current_line) > 0 {
+                let compiled = compile_statement(current_line, "    ");
+                output = output + compiled;
+            }
+            current_line = "";
+        } else {
+            if ch != 13 { // not carriage return
+                current_line = current_line + string_from_char(ch);
+            }
+        }
+        
+        i = i + 1;
+    }
+    
+    // Handle last line
+    if string_len(current_line) > 0 {
+        let compiled = compile_statement(current_line, "    ");
+        output = output + compiled;
+    }
+    
+    output = output + "    return 0;\n";
+    output = output + "}\n";
+    
+    return output;
+}
+
+// ============ Test Program ============
+
+fn main() {
+    let test_program = "// Type checking test program
+let msg = \"Hello, type checking!\";
+print(msg);
+
+let count = 42;
+print_int(count);
+
+// Type annotations
+let x: i64 = 100;
+let name: String = \"Alice\";
+
+print_int(x);
+print(name);
+
+// Type inference
+let y = x + 50;  // inferred as i64
+print_int(y);
+
+let greeting = \"Hello, \" + name;  // inferred as String
+print(greeting);
+
+// This would cause type errors (commented out):
+// print(count);        // Error: print expects String, got i64
+// print_int(msg);      // Error: print_int expects i64, got String
+// let z: bool = 42;    // Error: Type mismatch
+
+// Variable reassignment with type checking
+count = 100;
+msg = \"Updated message\";
+
+print_int(count);
+print(msg);
+";
+
+    print("Enhanced Type Checking Compiler v7");
+    print("==================================");
+    print("");
+    print("Input program:");
+    print("--------------");
+    print(test_program);
+    print("");
+    
+    let compiled = compile_program(test_program);
+    
+    print("Compiled output:");
+    print("----------------");
+    print(compiled);
+}

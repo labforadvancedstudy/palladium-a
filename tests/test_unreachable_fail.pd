@@ -1,0 +1,17 @@
+// This file should fail compilation due to unreachable pattern
+
+enum Result {
+    Ok(String),
+    Err(String),
+}
+
+fn main() {
+    let result = Result::Ok("success");
+    
+    // This match has an unreachable pattern
+    match result {
+        Result::Ok(msg) => print(msg),
+        _ => print("Any result"),
+        Result::Err(msg) => print(msg), // Unreachable!
+    }
+}
