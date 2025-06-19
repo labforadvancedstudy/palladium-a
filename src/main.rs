@@ -1,10 +1,74 @@
 // Alan von Palladium Compiler - Bootstrap v0.1
 // "Where Legends Begin to Compile"
 
-use std::env;
+use clap::Parser;
+use palladium::{driver::Driver, package::PackageManager};
+use std::path::Path;
 use std::process;
 
+mod cli;
+use cli::{Cli, Commands, BootstrapCommands};
+
 fn main() {
+    print_banner();
+    
+    let cli = Cli::parse();
+    
+    let result = match cli.command {
+        Commands::Compile { file, output, llvm, optimize } => {
+            compile_file(&file, output.as_deref(), llvm, optimize)
+        }
+        Commands::Run { file, llvm, args } => {
+            run_file(&file, llvm, args)
+        }
+        Commands::New { name, path, lib } => {
+            new_package(&name, path.as_deref(), lib)
+        }
+        Commands::Init { name, lib } => {
+            init_package(name.as_deref(), lib)
+        }
+        Commands::Build { release, llvm } => {
+            build_package(release, llvm)
+        }
+        Commands::PackageRun { release, args } => {
+            run_package(release, args)
+        }
+        Commands::Add { name, version, dev, build } => {
+            add_dependency(&name, version.as_deref(), dev, build)
+        }
+        Commands::Update { package } => {
+            update_dependencies(package.as_deref())
+        }
+        Commands::Check { all } => {
+            check_package(all)
+        }
+        Commands::Test { pattern, release, nocapture } => {
+            run_tests(pattern.as_deref(), release, nocapture)
+        }
+        Commands::Fmt { check, all } => {
+            format_code(check, all)
+        }
+        Commands::Lint { fix, all } => {
+            lint_code(fix, all)
+        }
+        Commands::Doc { open, private } => {
+            generate_docs(open, private)
+        }
+        Commands::Clean { target, cache } => {
+            clean_artifacts(target, cache)
+        }
+        Commands::Bootstrap { command } => {
+            handle_bootstrap_command(command)
+        }
+    };
+    
+    if let Err(e) = result {
+        eprintln!("\x1b[1;31merror:\x1b[0m {}", e);
+        process::exit(1);
+    }
+}
+
+fn print_banner() {
     println!(
         r#"
      _    __     ______    ____                      _ _           
@@ -18,140 +82,194 @@ fn main() {
     "Turing's Proofs Meet von Neumann's Performance"
     "#
     );
-
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() < 2 {
-        eprintln!("Usage: {} <command> [options]", args[0]);
-        eprintln!("Commands:");
-        eprintln!("  compile <file>  - Compile a Palladium source file");
-        eprintln!("  run <file>      - Compile and run a Palladium source file");
-        eprintln!("  --version       - Show version information");
-        eprintln!("  --help          - Show this help message");
-        process::exit(1);
-    }
-
-    match args[1].as_str() {
-        "compile" => {
-            if args.len() < 3 {
-                eprintln!("Error: Please specify a file to compile");
-                process::exit(1);
-            }
-
-            // Parse -o option for output name
-            let output_name = if args.len() >= 5 && args[3] == "-o" {
-                Some(args[4].as_str())
-            } else {
-                None
-            };
-
-            println!("Compiling {}...", args[2]);
-            compile_file(&args[2], output_name);
-        }
-        "run" => {
-            if args.len() < 3 {
-                eprintln!("Error: Please specify a file to run");
-                process::exit(1);
-            }
-            println!("Compiling and running {}...", args[2]);
-            compile_and_run(&args[2]);
-        }
-        "--version" | "-v" => {
-            print_version();
-        }
-        "--help" | "-h" => {
-            print_help();
-        }
-        _ => {
-            eprintln!("Unknown command: {}", args[1]);
-            eprintln!("Use --help for usage information");
-            process::exit(1);
-        }
-    }
 }
 
-fn compile_file(filename: &str, output_name: Option<&str>) {
-    use palladium::driver::Driver;
-    use std::path::Path;
-
-    let driver = Driver::new();
-    let path = Path::new(filename);
-
+fn compile_file(path: &Path, output: Option<&str>, llvm: bool, _optimize: bool) -> Result<(), String> {
+    println!("Compiling {}...", path.display());
+    
+    let mut driver = Driver::new();
+    if llvm {
+        driver = driver.with_llvm();
+    }
+    
     match driver.compile_file(path) {
         Ok(c_path) => {
             // If output name specified, also compile to executable
-            if let Some(name) = output_name {
+            if let Some(name) = output {
                 use std::process::Command;
-
+                
                 let build_dir = Path::new("build_output");
                 let output_path = build_dir.join(name);
-
+                
                 println!("🔗 Linking with gcc...");
                 let gcc_output = Command::new("gcc")
                     .arg(&c_path)
                     .arg("-o")
                     .arg(&output_path)
                     .output()
-                    .expect("Failed to run gcc");
-
+                    .map_err(|e| format!("Failed to run gcc: {}", e))?;
+                
                 if !gcc_output.status.success() {
                     let stderr = String::from_utf8_lossy(&gcc_output.stderr);
-                    eprintln!("\x1b[1;31m❌ gcc compilation failed:\x1b[0m\n{}", stderr);
-                    process::exit(1);
+                    return Err(format!("gcc compilation failed:\n{}", stderr));
                 }
-
+                
                 println!("   Created executable: {}", output_path.display());
             }
+            Ok(())
         }
-        Err(_) => {
-            // Error already reported by driver with enhanced formatting
-            process::exit(1);
-        }
+        Err(e) => Err(e.to_string()),
     }
 }
 
-fn compile_and_run(filename: &str) {
-    use palladium::driver::Driver;
-    use std::path::Path;
+fn run_file(path: &Path, llvm: bool, _args: Vec<String>) -> Result<(), String> {
+    println!("Compiling and running {}...", path.display());
+    
+    let mut driver = Driver::new();
+    if llvm {
+        driver = driver.with_llvm();
+    }
+    
+    driver.compile_and_run(path).map_err(|e| e.to_string())
+}
 
-    let driver = Driver::new();
-    let path = Path::new(filename);
+fn new_package(name: &str, path: Option<&Path>, _lib: bool) -> Result<(), String> {
+    let target_path = if let Some(p) = path {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| format!("Failed to get current directory: {}", e))?
+            .join(name)
+    };
+    
+    // Create the directory
+    std::fs::create_dir_all(&target_path)
+        .map_err(|e| format!("Failed to create directory: {}", e))?;
+    
+    PackageManager::init(name, &target_path)
+        .map_err(|e| e.to_string())
+}
 
-    match driver.compile_and_run(path) {
-        Ok(()) => {}
-        Err(_) => {
-            // Error already reported by driver with enhanced formatting
-            process::exit(1);
+fn init_package(name: Option<&str>, _lib: bool) -> Result<(), String> {
+    let current_dir = std::env::current_dir()
+        .map_err(|e| format!("Failed to get current directory: {}", e))?;
+    
+    let package_name = if let Some(n) = name {
+        n.to_string()
+    } else {
+        current_dir.file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("Could not determine package name from directory")?
+            .to_string()
+    };
+    
+    PackageManager::init(&package_name, &current_dir)
+        .map_err(|e| e.to_string())
+}
+
+fn build_package(release: bool, _llvm: bool) -> Result<(), String> {
+    let pm = PackageManager::new().map_err(|e| e.to_string())?;
+    pm.build(release).map_err(|e| e.to_string())
+}
+
+fn run_package(release: bool, args: Vec<String>) -> Result<(), String> {
+    let pm = PackageManager::new().map_err(|e| e.to_string())?;
+    pm.run(args, release).map_err(|e| e.to_string())
+}
+
+fn add_dependency(name: &str, version: Option<&str>, dev: bool, _build: bool) -> Result<(), String> {
+    let mut pm = PackageManager::new().map_err(|e| e.to_string())?;
+    let ver = version.unwrap_or("*");
+    pm.add_dependency(name, ver, dev).map_err(|e| e.to_string())
+}
+
+fn update_dependencies(_package: Option<&str>) -> Result<(), String> {
+    eprintln!("Package update not yet implemented");
+    Ok(())
+}
+
+fn check_package(_all: bool) -> Result<(), String> {
+    eprintln!("Package check not yet implemented");
+    Ok(())
+}
+
+fn run_tests(_pattern: Option<&str>, _release: bool, _nocapture: bool) -> Result<(), String> {
+    eprintln!("Test runner not yet implemented");
+    Ok(())
+}
+
+fn format_code(_check: bool, _all: bool) -> Result<(), String> {
+    eprintln!("Code formatter not yet implemented");
+    Ok(())
+}
+
+fn lint_code(_fix: bool, _all: bool) -> Result<(), String> {
+    eprintln!("Linter not yet implemented");
+    Ok(())
+}
+
+fn generate_docs(_open: bool, _private: bool) -> Result<(), String> {
+    eprintln!("Documentation generator not yet implemented");
+    Ok(())
+}
+
+fn clean_artifacts(target: bool, cache: bool) -> Result<(), String> {
+    if target {
+        if Path::new("target").exists() {
+            std::fs::remove_dir_all("target")
+                .map_err(|e| format!("Failed to remove target directory: {}", e))?;
+            println!("✅ Removed target directory");
         }
     }
+    
+    if cache {
+        let home_dir = dirs::home_dir()
+            .ok_or("Could not find home directory")?;
+        let cache_dir = home_dir.join(".palladium").join("cache");
+        
+        if cache_dir.exists() {
+            std::fs::remove_dir_all(&cache_dir)
+                .map_err(|e| format!("Failed to remove cache directory: {}", e))?;
+            println!("✅ Removed cache directory");
+        }
+    }
+    
+    if !target && !cache {
+        // Default: clean build_output
+        if Path::new("build_output").exists() {
+            std::fs::remove_dir_all("build_output")
+                .map_err(|e| format!("Failed to remove build_output directory: {}", e))?;
+            println!("✅ Removed build_output directory");
+        }
+    }
+    
+    Ok(())
 }
 
-fn print_version() {
-    println!("Alan von Palladium Compiler");
-    println!("Version: 0.1-alpha");
-    println!("Build: 2025-01-01");
-    println!();
-    println!("Features:");
-    println!("  - Basic type system");
-    println!("  - Function definitions");
-    println!("  - LLVM backend (planned)");
-    println!("  - Formal verification (planned)");
-}
-
-fn print_help() {
-    println!("Alan von Palladium Compiler - The Future of Systems Programming");
-    println!();
-    println!("Usage: palladium <command> [options]");
-    println!();
-    println!("Commands:");
-    println!("  compile <file>  - Compile a .pd source file");
-    println!("  run <file>      - Compile and execute a .pd source file");
-    println!("  --version, -v   - Display version information");
-    println!("  --help, -h      - Display this help message");
-    println!();
-    println!("Examples:");
-    println!("  palladium compile hello.pd");
-    println!("  palladium run fibonacci.pd");
-    println!();
-    println!("For more information, visit: https://alan-von-palladium.org");
+fn handle_bootstrap_command(command: BootstrapCommands) -> Result<(), String> {
+    use palladium::bootstrap::{BootstrapCompiler, validate_bootstrap, self_hosting_test};
+    
+    match command {
+        BootstrapCommands::Build => {
+            println!("Building bootstrap compiler...");
+            let _compiler = BootstrapCompiler::new()
+                .map_err(|e| e.to_string())?;
+            println!("✅ Bootstrap compiler ready!");
+            Ok(())
+        }
+        BootstrapCommands::SelfHost => {
+            println!("Testing self-hosting capability...");
+            self_hosting_test().map_err(|e| e.to_string())
+        }
+        BootstrapCommands::Validate { file } => {
+            println!("Validating {} against bootstrap compiler...", file.display());
+            validate_bootstrap(&file).map_err(|e| e.to_string())
+        }
+        BootstrapCommands::Compile { file } => {
+            println!("Compiling {} with bootstrap compiler...", file.display());
+            let compiler = BootstrapCompiler::new()
+                .map_err(|e| e.to_string())?;
+            compiler.compile(&file).map_err(|e| e.to_string())
+        }
+    }
 }

@@ -2,15 +2,26 @@
 // "The foundation where legends are built"
 
 pub mod ast;
+pub mod async_runtime;
+pub mod bootstrap;
 pub mod codegen;
 pub mod driver;
+pub mod effects;
 pub mod errors;
 pub mod lexer;
+pub mod lsp;
+pub mod macros;
 pub mod optimizer;
+pub mod ownership;
+pub mod package;
 pub mod parser;
 pub mod resolver;
 pub mod runtime;
 pub mod typeck;
+pub mod unsafe_ops;
+
+#[cfg(test)]
+mod tests;
 
 // Re-export main components
 pub use driver::Driver;
