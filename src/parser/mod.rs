@@ -21,6 +21,82 @@ impl Parser {
         }
     }
 
+    /// Parse generic parameters (<'a, T, const N: usize>)
+    fn parse_generic_params(&mut self) -> Result<(Vec<String>, Vec<String>, Vec<(String, Type)>)> {
+        let mut lifetime_params = Vec::new();
+        let mut type_params = Vec::new();
+        let mut const_params = Vec::new();
+        
+        if self.check(&Token::Lt) {
+            self.advance()?; // consume '<'
+
+            loop {
+                // Check if it's a lifetime parameter
+                if self.check(&Token::SingleQuote) {
+                    self.advance()?; // consume single quote
+                    let lifetime_name = match self.advance()? {
+                        (Token::Identifier(name), _) => format!("'{}", name),
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "lifetime name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    lifetime_params.push(lifetime_name);
+                } else if self.check(&Token::Const) {
+                    // It's a const parameter
+                    self.advance()?; // consume 'const'
+                    let param_name = match self.advance()? {
+                        (Token::Identifier(name), _) => name,
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "const parameter name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    self.consume(Token::Colon, "Expected ':' after const parameter name")?;
+                    let param_type = self.parse_type()?;
+                    const_params.push((param_name, param_type));
+                } else {
+                    // It's a type parameter
+                    let param_name = match self.advance()? {
+                        (Token::Identifier(name), _) => name,
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "type parameter name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    type_params.push(param_name.clone());
+                }
+
+                if !self.check(&Token::Comma) {
+                    break;
+                }
+                self.advance()?; // consume ','
+            }
+
+            self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+        }
+        
+        Ok((lifetime_params, type_params, const_params))
+    }
+
+    /// Get current token
+    pub fn current_token(&self) -> &Token {
+        if self.current < self.tokens.len() {
+            &self.tokens[self.current].0
+        } else {
+            &Token::Eof
+        }
+    }
+    
     /// Get the current span for error reporting
     fn current_span(&self) -> Option<crate::errors::Span> {
         if self.current < self.tokens.len() {
@@ -64,6 +140,11 @@ impl Parser {
             Expr::FieldAccess { span, .. } => *span,
             Expr::EnumConstructor { span, .. } => *span,
             Expr::Range { span, .. } => *span,
+            Expr::Reference { span, .. } => *span,
+            Expr::Deref { span, .. } => *span,
+            Expr::Question { span, .. } => *span,
+            Expr::MacroInvocation { span, .. } => *span,
+            Expr::Await { span, .. } => *span,
         }
     }
 
@@ -250,22 +331,58 @@ impl Parser {
             crate::ast::Visibility::Private
         };
 
+        // Check for async modifier
+        let is_async = if self.check(&Token::Async) {
+            self.advance()?; // consume 'async'
+            true
+        } else {
+            false
+        };
+
         match self.peek()? {
             Token::Fn => {
                 let mut func = self.parse_function()?;
                 func.visibility = visibility;
+                func.is_async = is_async;
                 Ok(Item::Function(func))
             }
             Token::Struct => {
+                if is_async {
+                    return Err(CompileError::SyntaxError {
+                        message: "async can only be used with functions".to_string(),
+                        span: self.current_span(),
+                    });
+                }
                 let mut struct_def = self.parse_struct()?;
                 struct_def.visibility = visibility;
                 Ok(Item::Struct(struct_def))
             }
             Token::Enum => Ok(Item::Enum(self.parse_enum()?)),
-            _ => Err(CompileError::SyntaxError {
-                message: "Expected function, struct, or enum declaration".to_string(),
-                span: self.current_span(),
-            }),
+            Token::Trait => {
+                let mut trait_def = self.parse_trait()?;
+                trait_def.visibility = visibility;
+                Ok(Item::Trait(trait_def))
+            }
+            Token::Impl => Ok(Item::Impl(self.parse_impl()?)),
+            Token::Type => {
+                let mut type_alias = self.parse_type_alias()?;
+                type_alias.visibility = visibility;
+                Ok(Item::TypeAlias(type_alias))
+            }
+            Token::Macro => Ok(Item::Macro(self.parse_macro()?)),
+            _ => {
+                if is_async {
+                    Err(CompileError::SyntaxError {
+                        message: "async can only be used with function declarations".to_string(),
+                        span: self.current_span(),
+                    })
+                } else {
+                    Err(CompileError::SyntaxError {
+                        message: "Expected function, struct, enum, trait, type, impl, or macro declaration".to_string(),
+                        span: self.current_span(),
+                    })
+                }
+            }
         }
     }
 
@@ -284,32 +401,8 @@ impl Parser {
             }
         };
 
-        // Parse generic type parameters if present
-        let mut type_params = Vec::new();
-        if self.check(&Token::Lt) {
-            self.advance()?; // consume '<'
-
-            loop {
-                let param_name = match self.advance()? {
-                    (Token::Identifier(name), _) => name,
-                    (token, _) => {
-                        return Err(CompileError::UnexpectedToken {
-                            expected: "type parameter name".to_string(),
-                            found: token.to_string(),
-                            span: self.current_span(),
-                        });
-                    }
-                };
-                type_params.push(param_name.clone());
-
-                if !self.check(&Token::Comma) {
-                    break;
-                }
-                self.advance()?; // consume ','
-            }
-
-            self.consume(Token::Gt, "Expected '>' after type parameters")?;
-        }
+        // Parse generic parameters (lifetimes, types, and consts) if present
+        let (lifetime_params, type_params, const_params) = self.parse_generic_params()?;
 
         // Set type parameters in scope for parsing function signature and body
         self.type_params_in_scope = type_params.clone();
@@ -382,8 +475,11 @@ impl Parser {
 
         Ok(Function {
             visibility: crate::ast::Visibility::Private, // TODO: parse pub keyword
+            is_async: false, // Will be set by parse_item
             name,
+            lifetime_params,
             type_params,
+            const_params,
             params,
             return_type,
             body,
@@ -393,6 +489,7 @@ impl Parser {
                 start_span.line,
                 start_span.column,
             ),
+            effects: None, // Effects will be inferred during analysis
         })
     }
 
@@ -410,6 +507,9 @@ impl Parser {
                 });
             }
         };
+
+        // Parse generic parameters (lifetimes, types, and consts) if present
+        let (lifetime_params, type_params, const_params) = self.parse_generic_params()?;
 
         self.consume(Token::LeftBrace, "Expected '{' after struct name")?;
 
@@ -444,6 +544,9 @@ impl Parser {
         Ok(StructDef {
             visibility: crate::ast::Visibility::Private, // TODO: parse pub keyword
             name,
+            lifetime_params,
+            type_params,
+            const_params,
             fields,
             span: Span::new(
                 start_span.start,
@@ -468,6 +571,9 @@ impl Parser {
                 });
             }
         };
+
+        // Parse generic parameters (lifetimes, types, and consts) if present
+        let (lifetime_params, type_params, const_params) = self.parse_generic_params()?;
 
         self.consume(Token::LeftBrace, "Expected '{' after enum name")?;
 
@@ -556,6 +662,9 @@ impl Parser {
 
         Ok(EnumDef {
             name,
+            lifetime_params,
+            type_params,
+            const_params,
             variants,
             span: Span::new(
                 start_span.start,
@@ -566,8 +675,530 @@ impl Parser {
         })
     }
 
+    /// Parse a trait definition
+    fn parse_trait(&mut self) -> Result<TraitDef> {
+        let start_span = self.consume(Token::Trait, "Expected 'trait'")?;
+
+        let name = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "trait name".to_string(),
+                    found: token.to_string(),
+                    span: self.current_span(),
+                });
+            }
+        };
+
+        // Parse generic parameters (lifetimes and types) if present
+        let mut lifetime_params = Vec::new();
+        let mut type_params = Vec::new();
+        
+        if self.check(&Token::Lt) {
+            self.advance()?; // consume '<'
+
+            loop {
+                // Check if it's a lifetime parameter
+                if self.check(&Token::SingleQuote) {
+                    self.advance()?; // consume single quote
+                    let lifetime_name = match self.advance()? {
+                        (Token::Identifier(name), _) => format!("'{}", name),
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "lifetime name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    lifetime_params.push(lifetime_name);
+                } else {
+                    // It's a type parameter
+                    let param_name = match self.advance()? {
+                        (Token::Identifier(name), _) => name,
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "type parameter name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    type_params.push(param_name);
+                }
+
+                if !self.check(&Token::Comma) {
+                    break;
+                }
+                self.advance()?; // consume ','
+            }
+
+            self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+        }
+
+        self.consume(Token::LeftBrace, "Expected '{' after trait name")?;
+
+        let mut methods = Vec::new();
+
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            // Parse method
+            let method_start = self.consume(Token::Fn, "Expected 'fn' for trait method")?;
+
+            let method_name = match self.advance()? {
+                (Token::Identifier(name), _) => name,
+                (token, _) => {
+                    return Err(CompileError::UnexpectedToken {
+                        expected: "method name".to_string(),
+                        found: token.to_string(),
+                        span: self.current_span(),
+                    });
+                }
+            };
+
+            // Parse method generic parameters
+            let mut method_lifetime_params = Vec::new();
+            let mut method_type_params = Vec::new();
+            
+            if self.check(&Token::Lt) {
+                self.advance()?; // consume '<'
+
+                loop {
+                    if self.check(&Token::SingleQuote) {
+                        self.advance()?;
+                        let lifetime_name = match self.advance()? {
+                            (Token::Identifier(name), _) => format!("'{}", name),
+                            (token, _) => {
+                                return Err(CompileError::UnexpectedToken {
+                                    expected: "lifetime name".to_string(),
+                                    found: token.to_string(),
+                                    span: self.current_span(),
+                                });
+                            }
+                        };
+                        method_lifetime_params.push(lifetime_name);
+                    } else {
+                        let param_name = match self.advance()? {
+                            (Token::Identifier(name), _) => name,
+                            (token, _) => {
+                                return Err(CompileError::UnexpectedToken {
+                                    expected: "type parameter name".to_string(),
+                                    found: token.to_string(),
+                                    span: self.current_span(),
+                                });
+                            }
+                        };
+                        method_type_params.push(param_name);
+                    }
+
+                    if !self.check(&Token::Comma) {
+                        break;
+                    }
+                    self.advance()?;
+                }
+
+                self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+            }
+
+            // Parse parameters
+            self.consume(Token::LeftParen, "Expected '(' after method name")?;
+            let mut params = Vec::new();
+
+            if !self.check(&Token::RightParen) {
+                loop {
+                    let mutable = if self.check(&Token::Mut) {
+                        self.advance()?;
+                        true
+                    } else {
+                        false
+                    };
+
+                    let param_name = match self.advance()? {
+                        (Token::Identifier(name), _) => name,
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "parameter name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+
+                    self.consume(Token::Colon, "Expected ':' after parameter name")?;
+                    let param_type = self.parse_type()?;
+
+                    params.push(Param {
+                        name: param_name,
+                        ty: param_type,
+                        mutable,
+                    });
+
+                    if !self.check(&Token::Comma) {
+                        break;
+                    }
+                    self.advance()?;
+                }
+            }
+
+            self.consume(Token::RightParen, "Expected ')'")?;
+
+            // Parse return type
+            let return_type = if self.check(&Token::Arrow) {
+                self.advance()?;
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+
+            // Check if method has body
+            let (has_body, body) = if self.check(&Token::LeftBrace) {
+                self.advance()?; // consume '{'
+                let mut stmts = Vec::new();
+                while !self.check(&Token::RightBrace) && !self.is_at_end() {
+                    stmts.push(self.parse_statement()?);
+                }
+                let _method_end = self.consume(Token::RightBrace, "Expected '}'")?;
+                (true, Some(stmts))
+            } else {
+                self.consume(Token::Semicolon, "Expected ';' after trait method signature")?;
+                (false, None)
+            };
+
+            methods.push(TraitMethod {
+                name: method_name,
+                lifetime_params: method_lifetime_params,
+                type_params: method_type_params,
+                params,
+                return_type,
+                has_body,
+                body,
+                span: Span::new(
+                    method_start.start,
+                    self.current_span().map(|s| s.end).unwrap_or(method_start.end),
+                    method_start.line,
+                    method_start.column,
+                ),
+            });
+        }
+
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after trait methods")?;
+
+        Ok(TraitDef {
+            visibility: crate::ast::Visibility::Private, // Will be set by caller
+            name,
+            lifetime_params,
+            type_params,
+            methods,
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
+        })
+    }
+
+    /// Parse an impl block
+    fn parse_impl(&mut self) -> Result<ImplBlock> {
+        let start_span = self.consume(Token::Impl, "Expected 'impl'")?;
+
+        // Parse generic parameters
+        let mut lifetime_params = Vec::new();
+        let mut type_params = Vec::new();
+        
+        if self.check(&Token::Lt) {
+            self.advance()?; // consume '<'
+
+            loop {
+                if self.check(&Token::SingleQuote) {
+                    self.advance()?;
+                    let lifetime_name = match self.advance()? {
+                        (Token::Identifier(name), _) => format!("'{}", name),
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "lifetime name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    lifetime_params.push(lifetime_name);
+                } else {
+                    let param_name = match self.advance()? {
+                        (Token::Identifier(name), _) => name,
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "type parameter name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    type_params.push(param_name);
+                }
+
+                if !self.check(&Token::Comma) {
+                    break;
+                }
+                self.advance()?;
+            }
+
+            self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+        }
+
+        // First, try to parse a type
+        let first_type = self.parse_type()?;
+        
+        // Check if this is a trait impl (has 'for' keyword)
+        let (trait_type, for_type) = if self.check(&Token::For) {
+            self.advance()?; // consume 'for'
+            let impl_type = self.parse_type()?;
+            (Some(first_type), impl_type)
+        } else {
+            // This is an inherent impl
+            (None, first_type)
+        };
+
+        self.consume(Token::LeftBrace, "Expected '{' after impl type")?;
+
+        let mut methods = Vec::new();
+        
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            // For now, only support fn methods in impl blocks
+            if !self.check(&Token::Fn) {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "'fn' for method".to_string(),
+                    found: self.peek()?.to_string(),
+                    span: self.current_span(),
+                });
+            }
+            let method = self.parse_function()?;
+            methods.push(method);
+        }
+        
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after impl methods")?;
+
+        Ok(ImplBlock {
+            lifetime_params,
+            type_params,
+            trait_type,
+            for_type,
+            methods,
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
+        })
+    }
+
+    /// Parse a type alias definition
+    fn parse_type_alias(&mut self) -> Result<TypeAlias> {
+        let start_span = self.consume(Token::Type, "Expected 'type'")?;
+
+        let name = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "type alias name".to_string(),
+                    found: token.to_string(),
+                    span: self.current_span(),
+                });
+            }
+        };
+
+        // Parse generic parameters (lifetimes and types) if present
+        let mut lifetime_params = Vec::new();
+        let mut type_params = Vec::new();
+        
+        if self.check(&Token::Lt) {
+            self.advance()?; // consume '<'
+
+            loop {
+                // Check if it's a lifetime parameter
+                if self.check(&Token::SingleQuote) {
+                    self.advance()?; // consume single quote
+                    let lifetime_name = match self.advance()? {
+                        (Token::Identifier(name), _) => format!("'{}", name),
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "lifetime name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    lifetime_params.push(lifetime_name);
+                } else {
+                    // It's a type parameter
+                    let param_name = match self.advance()? {
+                        (Token::Identifier(name), _) => name,
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "type parameter name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
+                    type_params.push(param_name);
+                }
+
+                if !self.check(&Token::Comma) {
+                    break;
+                }
+                self.advance()?; // consume ','
+            }
+
+            self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+        }
+
+        self.consume(Token::Eq, "Expected '=' after type alias name")?;
+        
+        let ty = self.parse_type()?;
+        
+        let end_span = self.consume(Token::Semicolon, "Expected ';' after type alias")?;
+
+        Ok(TypeAlias {
+            visibility: Visibility::Private, // Will be set in parse_item
+            name,
+            lifetime_params,
+            type_params,
+            ty,
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
+        })
+    }
+
+    /// Parse a macro definition
+    fn parse_macro(&mut self) -> Result<MacroDef> {
+        let start_span = self.consume(Token::Macro, "Expected 'macro'")?;
+        
+        let name = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "macro name".to_string(),
+                    found: token.to_string(),
+                    span: self.current_span(),
+                });
+            }
+        };
+        
+        // Expect '!' after macro name
+        self.consume(Token::Not, "Expected '!' after macro name")?;
+        
+        // Parse parameter list in parentheses (optional for now)
+        let params = if self.check(&Token::LeftParen) {
+            self.advance()?; // consume '('
+            let mut params = Vec::new();
+            
+            while !self.check(&Token::RightParen) && !self.is_at_end() {
+                match self.advance()? {
+                    (Token::Identifier(param), _) => {
+                        params.push(param);
+                        
+                        if self.check(&Token::Comma) {
+                            self.advance()?; // consume ','
+                        } else if !self.check(&Token::RightParen) {
+                            return Err(CompileError::SyntaxError {
+                                message: "Expected ',' or ')' in macro parameters".to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    }
+                    (token, _) => {
+                        return Err(CompileError::UnexpectedToken {
+                            expected: "parameter name".to_string(),
+                            found: token.to_string(),
+                            span: self.current_span(),
+                        });
+                    }
+                }
+            }
+            
+            self.consume(Token::RightParen, "Expected ')' after macro parameters")?;
+            params
+        } else {
+            Vec::new()
+        };
+        
+        // Parse macro body (for now, just collect tokens between braces)
+        self.consume(Token::LeftBrace, "Expected '{' to start macro body")?;
+        
+        let mut body = Vec::new();
+        let mut brace_depth = 1;
+        
+        while brace_depth > 0 && !self.is_at_end() {
+            let (token, _) = self.advance()?;
+            
+            match &token {
+                Token::LeftBrace => {
+                    brace_depth += 1;
+                    body.push(self.token_to_ast_token(token));
+                }
+                Token::RightBrace => {
+                    brace_depth -= 1;
+                    if brace_depth > 0 {
+                        body.push(self.token_to_ast_token(token));
+                    }
+                }
+                _ => {
+                    body.push(self.token_to_ast_token(token));
+                }
+            }
+        }
+        
+        let end_span = self.current_span().unwrap_or(start_span);
+        
+        Ok(MacroDef {
+            name,
+            params,
+            body,
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
+        })
+    }
+    
+    /// Convert lexer token to AST token for macro body
+    fn token_to_ast_token(&self, token: Token) -> crate::ast::Token {
+        use crate::ast::{Token as AstToken};
+        
+        match token {
+            Token::Identifier(s) => AstToken::Ident(s),
+            Token::String(s) => AstToken::Literal(format!("\"{}\"", s)),
+            Token::Integer(n) => AstToken::Literal(n.to_string()),
+            Token::True => AstToken::Literal("true".to_string()),
+            Token::False => AstToken::Literal("false".to_string()),
+            Token::LeftParen => AstToken::Punct('('),
+            Token::RightParen => AstToken::Punct(')'),
+            Token::LeftBrace => AstToken::Punct('{'),
+            Token::RightBrace => AstToken::Punct('}'),
+            Token::LeftBracket => AstToken::Punct('['),
+            Token::RightBracket => AstToken::Punct(']'),
+            Token::Semicolon => AstToken::Punct(';'),
+            Token::Comma => AstToken::Punct(','),
+            Token::Dot => AstToken::Punct('.'),
+            Token::Plus => AstToken::Punct('+'),
+            Token::Minus => AstToken::Punct('-'),
+            Token::Star => AstToken::Punct('*'),
+            Token::Slash => AstToken::Punct('/'),
+            Token::Not => AstToken::Punct('!'),
+            Token::Eq => AstToken::Punct('='),
+            _ => AstToken::Ident(format!("{:?}", token)), // Fallback for other tokens
+        }
+    }
+
     /// Parse a statement
-    fn parse_statement(&mut self) -> Result<Stmt> {
+    pub fn parse_statement(&mut self) -> Result<Stmt> {
         match self.peek()? {
             Token::Let => self.parse_let(),
             Token::Return => self.parse_return(),
@@ -577,11 +1208,12 @@ impl Parser {
             Token::Break => self.parse_break(),
             Token::Continue => self.parse_continue(),
             Token::Match => self.parse_match(),
-            Token::Identifier(_) => {
+            Token::Unsafe => self.parse_unsafe(),
+            Token::Identifier(_) | Token::Star => {
                 // Could be assignment or expression statement
                 // Parse the left-hand side as an expression first
                 let checkpoint = self.current;
-                let expr = self.parse_postfix()?; // Parse identifier and any indexing
+                let expr = self.parse_expression()?; // Parse full expression including dereference
 
                 // Check if this is an assignment
                 if self.check(&Token::Eq) && !self.check_at(1, &Token::Eq) {
@@ -599,6 +1231,7 @@ impl Parser {
                         Expr::FieldAccess { object, field, .. } => {
                             AssignTarget::FieldAccess { object, field }
                         }
+                        Expr::Deref { expr, .. } => AssignTarget::Deref { expr },
                         _ => {
                             return Err(CompileError::SyntaxError {
                                 message: "Invalid assignment target".to_string(),
@@ -892,6 +1525,30 @@ impl Parser {
         })
     }
 
+    /// Parse an unsafe block
+    fn parse_unsafe(&mut self) -> Result<Stmt> {
+        let start_span = self.consume(Token::Unsafe, "Expected 'unsafe'")?;
+        
+        self.consume(Token::LeftBrace, "Expected '{' after unsafe")?;
+        
+        let mut body = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            body.push(self.parse_statement()?);
+        }
+        
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after unsafe block")?;
+        
+        Ok(Stmt::Unsafe {
+            body,
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
+        })
+    }
+
     /// Parse a pattern
     fn parse_pattern(&mut self) -> Result<Pattern> {
         // First, peek and clone the token to avoid borrowing issues
@@ -990,7 +1647,7 @@ impl Parser {
     }
 
     /// Parse an expression
-    fn parse_expression(&mut self) -> Result<Expr> {
+    pub fn parse_expression(&mut self) -> Result<Expr> {
         self.parse_range()
     }
 
@@ -1231,20 +1888,111 @@ impl Parser {
     /// Parse a type
     fn parse_type(&mut self) -> Result<Type> {
         match self.advance()? {
+            (Token::SelfType, _) => {
+                // Self type in trait or impl contexts
+                Ok(Type::Custom("Self".to_string()))
+            }
+            (Token::Ampersand, _) => {
+                // Parse reference type: &T or &mut T or &'a T or &'a mut T
+                let mut lifetime = None;
+                let mut mutable = false;
+                
+                // Check for lifetime annotation
+                if matches!(self.peek()?, Token::SingleQuote) {
+                    self.advance()?; // consume '
+                    match self.advance()? {
+                        (Token::Identifier(lt), _) => {
+                            lifetime = Some(lt);
+                        }
+                        _ => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "lifetime name".to_string(),
+                                found: self.peek()?.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    }
+                }
+                
+                // Check for mut keyword
+                if matches!(self.peek()?, Token::Mut) {
+                    self.advance()?;
+                    mutable = true;
+                }
+                
+                // Parse the inner type
+                let inner = self.parse_type()?;
+                
+                Ok(Type::Reference {
+                    lifetime,
+                    mutable,
+                    inner: Box::new(inner),
+                })
+            }
             (Token::Identifier(name), _) => {
                 // First check if it's a type parameter in scope
                 if self.type_params_in_scope.contains(&name) {
                     return Ok(Type::TypeParam(name));
                 }
 
-                match name.as_str() {
-                    "i32" => Ok(Type::I32),
-                    "i64" => Ok(Type::I64),
-                    "u32" => Ok(Type::U32),
-                    "u64" => Ok(Type::U64),
-                    "bool" => Ok(Type::Bool),
-                    "String" => Ok(Type::String),
-                    _ => Ok(Type::Custom(name)),
+                let base_type = match name.as_str() {
+                    "i32" => Type::I32,
+                    "i64" | "int" => Type::I64,  // "int" is an alias for i64
+                    "u32" => Type::U32,
+                    "u64" => Type::U64,
+                    "bool" => Type::Bool,
+                    "String" => Type::String,
+                    _ => Type::Custom(name.clone()),
+                };
+
+                // Check for generic arguments
+                if self.check(&Token::Lt) {
+                    // Only parse generics for custom types
+                    match base_type {
+                        Type::Custom(type_name) => {
+                            self.advance()?; // consume '<'
+                            let mut args = Vec::new();
+
+                            loop {
+                                // Try to parse as const value first (for literals)
+                                if let Token::Integer(n) = self.peek()? {
+                                    let n_val = *n;
+                                    self.advance()?; // consume the integer
+                                    args.push(GenericArg::Const(ConstValue::Integer(n_val)));
+                                } else {
+                                    // Otherwise parse as type
+                                    let ty = self.parse_type()?;
+                                    // If it's an identifier, it could be a const param
+                                    match &ty {
+                                        Type::Custom(name) if name.chars().all(|c| c.is_uppercase() || c == '_') => {
+                                            // Assume uppercase identifiers are const params
+                                            args.push(GenericArg::Const(ConstValue::ConstParam(name.clone())));
+                                        }
+                                        _ => {
+                                            args.push(GenericArg::Type(ty));
+                                        }
+                                    }
+                                }
+                                
+                                if !self.check(&Token::Comma) {
+                                    break;
+                                }
+                                self.advance()?; // consume ','
+                            }
+
+                            self.consume(Token::Gt, "Expected '>' after generic arguments")?;
+                            Ok(Type::Generic { name: type_name, args })
+                        }
+                        _ => {
+                            // Primitive types cannot have generic arguments
+                            Err(CompileError::SyntaxError {
+                                message: format!("Type '{}' cannot have generic arguments", name),
+                                span: self.current_span(),
+                            })
+                        }
+                    }
+                } else {
+                    Ok(base_type)
                 }
             }
             (Token::LeftParen, _) => {
@@ -1256,19 +2004,28 @@ impl Parser {
                 let elem_type = self.parse_type()?;
                 self.consume(Token::Semicolon, "Expected ';' in array type")?;
 
-                // Parse the size
-                let size = match self.advance()? {
-                    (Token::Integer(n), _) => {
-                        if n < 0 {
+                // Parse the size (can be a literal or const parameter)
+                let size = match self.peek()? {
+                    Token::Integer(n) => {
+                        let n_val = *n;
+                        self.advance()?; // consume the integer
+                        if n_val < 0 {
                             return Err(CompileError::Generic(
                                 "Array size must be non-negative".to_string(),
                             ));
                         }
-                        n as usize
+                        ArraySize::Literal(n_val as usize)
                     }
-                    (token, _) => {
+                    Token::Identifier(name) => {
+                        let name_val = name.clone();
+                        self.advance()?; // consume the identifier
+                        // Check if it's a const parameter in scope
+                        // For now, we'll assume any identifier could be a const param
+                        ArraySize::ConstParam(name_val)
+                    }
+                    token => {
                         return Err(CompileError::UnexpectedToken {
-                            expected: "array size".to_string(),
+                            expected: "array size (integer or const parameter)".to_string(),
                             found: token.to_string(),
                             span: self.current_span(),
                         });
@@ -1405,7 +2162,7 @@ impl Parser {
         }
     }
 
-    /// Parse unary expressions (-, !)
+    /// Parse unary expressions (-, !, &, &mut, *)
     fn parse_unary(&mut self) -> Result<Expr> {
         match self.peek() {
             Ok(Token::Minus) => {
@@ -1430,6 +2187,41 @@ impl Parser {
                 Ok(Expr::Unary {
                     op: UnaryOp::Not,
                     operand: Box::new(operand),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.end,
+                        start_span.line,
+                        start_span.column,
+                    ),
+                })
+            }
+            Ok(Token::Ampersand) => {
+                let (_, start_span) = self.advance()?; // consume '&'
+                let mutable = if matches!(self.peek()?, Token::Mut) {
+                    self.advance()?; // consume 'mut'
+                    true
+                } else {
+                    false
+                };
+                let expr = self.parse_unary()?;
+                let end_span = expr.span();
+                Ok(Expr::Reference {
+                    mutable,
+                    expr: Box::new(expr),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.end,
+                        start_span.line,
+                        start_span.column,
+                    ),
+                })
+            }
+            Ok(Token::Star) => {
+                let (_, start_span) = self.advance()?; // consume '*'
+                let expr = self.parse_unary()?;
+                let end_span = expr.span();
+                Ok(Expr::Deref {
+                    expr: Box::new(expr),
                     span: Span::new(
                         start_span.start,
                         end_span.end,
@@ -1494,6 +2286,21 @@ impl Parser {
                         ),
                     };
                 }
+                Ok(Token::Dot) if self.check_at(1, &Token::Await) => {
+                    let start_span = Self::expr_span(&expr);
+                    self.advance()?; // consume '.'
+                    let end_span = self.consume(Token::Await, "Expected 'await'")?;
+                    
+                    expr = Expr::Await {
+                        expr: Box::new(expr),
+                        span: Span::new(
+                            start_span.start,
+                            end_span.end,
+                            start_span.line,
+                            start_span.column,
+                        ),
+                    };
+                }
                 Ok(Token::Dot) => {
                     let start_span = Self::expr_span(&expr);
 
@@ -1540,9 +2347,9 @@ impl Parser {
                             }
                         };
 
-                        // Check for constructor data
-                        let data = if self.check(&Token::LeftParen) {
-                            // Tuple constructor
+                        // Check if this is a function call (has parentheses) or constructor
+                        if self.check(&Token::LeftParen) {
+                            // Parse tuple-style enum constructor
                             self.advance()?; // consume '('
                             let mut args = Vec::new();
 
@@ -1556,9 +2363,25 @@ impl Parser {
                                 }
                             }
 
-                            let _end_span = self.consume(Token::RightParen, "Expected ')'")?;
-                            Some(EnumConstructorData::Tuple(args))
-                        } else if self.check(&Token::LeftBrace) {
+                            let end_span = self.consume(Token::RightParen, "Expected ')'")?;
+                            
+                            // Create an enum constructor expression
+                            expr = Expr::EnumConstructor {
+                                enum_name,
+                                variant,
+                                data: Some(EnumConstructorData::Tuple(args)),
+                                span: Span::new(
+                                    start_span.start,
+                                    end_span.end,
+                                    start_span.line,
+                                    start_span.column,
+                                ),
+                            };
+                            continue;
+                        }
+                        
+                        // Check for struct-style constructor
+                        let data = if self.check(&Token::LeftBrace) {
                             // Struct constructor
                             self.advance()?; // consume '{'
                             let mut fields = Vec::new();
@@ -1607,6 +2430,71 @@ impl Parser {
                         return Err(CompileError::SyntaxError {
                             message: "Double colon can only be used after an identifier"
                                 .to_string(),
+                            span: self.current_span(),
+                        });
+                    }
+                }
+                Ok(Token::Question) => {
+                    let start_span = Self::expr_span(&expr);
+                    let (_, end_span) = self.advance()?; // consume '?'
+                    
+                    expr = Expr::Question {
+                        expr: Box::new(expr),
+                        span: Span::new(
+                            start_span.start,
+                            end_span.end,
+                            start_span.line,
+                            start_span.column,
+                        ),
+                    };
+                }
+                Ok(Token::Not) => {
+                    // Macro invocation: name!(args)
+                    if let Expr::Ident(name) = expr {
+                        let start_span = self.tokens[self.current - 1].1; // Get span from identifier
+                        self.advance()?; // consume '!'
+                        
+                        // Parse macro arguments (simplified for now - just collect tokens in parens)
+                        self.consume(Token::LeftParen, "Expected '(' after macro name!")?;
+                        
+                        let mut args = Vec::new();
+                        let mut paren_depth = 1;
+                        
+                        while paren_depth > 0 && !self.is_at_end() {
+                            let (token, _) = self.advance()?;
+                            
+                            match &token {
+                                Token::LeftParen => {
+                                    paren_depth += 1;
+                                    args.push(self.token_to_ast_token(token));
+                                }
+                                Token::RightParen => {
+                                    paren_depth -= 1;
+                                    if paren_depth > 0 {
+                                        args.push(self.token_to_ast_token(token));
+                                    }
+                                }
+                                _ => {
+                                    args.push(self.token_to_ast_token(token));
+                                }
+                            }
+                        }
+                        
+                        let end_span = self.current_span().unwrap_or(start_span);
+                        
+                        expr = Expr::MacroInvocation {
+                            name,
+                            args,
+                            span: Span::new(
+                                start_span.start,
+                                end_span.end,
+                                start_span.line,
+                                start_span.column,
+                            ),
+                        };
+                    } else {
+                        return Err(CompileError::SyntaxError {
+                            message: "Macro invocation '!' can only be used after an identifier".to_string(),
                             span: self.current_span(),
                         });
                     }

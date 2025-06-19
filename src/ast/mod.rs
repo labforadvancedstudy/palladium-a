@@ -25,6 +25,10 @@ pub enum Item {
     Function(Function),
     Struct(StructDef),
     Enum(EnumDef),
+    Trait(TraitDef),
+    Impl(ImplBlock),
+    TypeAlias(TypeAlias),
+    Macro(MacroDef),
 }
 
 /// Visibility modifier
@@ -32,6 +36,66 @@ pub enum Item {
 pub enum Visibility {
     Public,
     Private,
+}
+
+/// Generic parameter (type or const)
+#[derive(Debug, Clone)]
+pub enum GenericParam {
+    /// Type parameter: T
+    Type(String),
+    /// Const parameter: const N: usize
+    Const { name: String, ty: Type },
+}
+
+/// Array size (can be a literal or const generic)
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArraySize {
+    /// Literal size: [T; 5]
+    Literal(usize),
+    /// Const generic parameter: [T; N]
+    ConstParam(String),
+    /// Expression (for future use): [T; N + 1]
+    Expr(Box<Expr>),
+}
+
+impl std::fmt::Display for ArraySize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ArraySize::Literal(n) => write!(f, "{}", n),
+            ArraySize::ConstParam(name) => write!(f, "{}", name),
+            ArraySize::Expr(_) => write!(f, "<expr>"), // Placeholder
+        }
+    }
+}
+
+/// Generic argument (can be a type or const value)
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenericArg {
+    /// Type argument: Vec<T>
+    Type(Type),
+    /// Const argument: Array<T, 5>
+    Const(ConstValue),
+}
+
+impl std::fmt::Display for GenericArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GenericArg::Type(t) => write!(f, "{}", t),
+            GenericArg::Const(c) => match c {
+                ConstValue::Integer(n) => write!(f, "{}", n),
+                ConstValue::ConstParam(name) => write!(f, "{}", name),
+            },
+        }
+    }
+}
+
+/// Const value for const generics
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstValue {
+    /// Integer literal
+    Integer(i64),
+    /// Const parameter reference
+    ConstParam(String),
 }
 
 /// Function parameter
@@ -46,12 +110,16 @@ pub struct Param {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub visibility: Visibility,
+    pub is_async: bool,
     pub name: String,
+    pub lifetime_params: Vec<String>, // Lifetime parameters like ["'a", "'b"]
     pub type_params: Vec<String>, // Generic type parameters like ["T", "U"]
+    pub const_params: Vec<(String, Type)>, // Const parameters like [("N", Type::U64)]
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Vec<Stmt>,
     pub span: Span,
+    pub effects: Option<Vec<String>>, // Effect annotations like ["io", "async"]
 }
 
 /// Struct definition
@@ -59,6 +127,9 @@ pub struct Function {
 pub struct StructDef {
     pub visibility: Visibility,
     pub name: String,
+    pub lifetime_params: Vec<String>, // Lifetime parameters like ["'a", "'b"]
+    pub type_params: Vec<String>, // Generic type parameters like ["T", "U"]
+    pub const_params: Vec<(String, Type)>, // Const parameters like [("N", Type::U64)]
     pub fields: Vec<(String, Type)>,
     pub span: Span,
 }
@@ -67,6 +138,9 @@ pub struct StructDef {
 #[derive(Debug, Clone)]
 pub struct EnumDef {
     pub name: String,
+    pub lifetime_params: Vec<String>, // Lifetime parameters like ["'a", "'b"]
+    pub type_params: Vec<String>, // Generic type parameters like ["T", "U"]
+    pub const_params: Vec<(String, Type)>, // Const parameters like [("N", Type::U64)]
     pub variants: Vec<EnumVariant>,
     pub span: Span,
 }
@@ -89,6 +163,52 @@ pub enum EnumVariantData {
     Struct(Vec<(String, Type)>),
 }
 
+/// Trait definition
+#[derive(Debug, Clone)]
+pub struct TraitDef {
+    pub visibility: Visibility,
+    pub name: String,
+    pub lifetime_params: Vec<String>,
+    pub type_params: Vec<String>,
+    pub methods: Vec<TraitMethod>,
+    pub span: Span,
+}
+
+/// Trait method
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    pub name: String,
+    pub lifetime_params: Vec<String>,
+    pub type_params: Vec<String>,
+    pub params: Vec<Param>,
+    pub return_type: Option<Type>,
+    pub has_body: bool,
+    pub body: Option<Vec<Stmt>>,
+    pub span: Span,
+}
+
+/// Implementation block
+#[derive(Debug, Clone)]
+pub struct ImplBlock {
+    pub lifetime_params: Vec<String>,
+    pub type_params: Vec<String>,
+    pub trait_type: Option<Type>, // None for inherent impl, Some for trait impl
+    pub for_type: Type,
+    pub methods: Vec<Function>,
+    pub span: Span,
+}
+
+/// Type alias definition
+#[derive(Debug, Clone)]
+pub struct TypeAlias {
+    pub visibility: Visibility,
+    pub name: String,
+    pub lifetime_params: Vec<String>, // Lifetime parameters like ["'a", "'b"]
+    pub type_params: Vec<String>, // Generic type parameters like ["T", "U"]
+    pub ty: Type,
+    pub span: Span,
+}
+
 /// Type representation
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -102,15 +222,25 @@ pub enum Type {
     /// Unit type (void)
     Unit,
     /// Array type: element type and size
-    Array(Box<Type>, usize),
+    Array(Box<Type>, ArraySize),
     /// Custom type
     Custom(String),
     /// Generic type parameter (e.g., T, U)
     TypeParam(String),
-    /// Generic type with concrete arguments (e.g., Vec<i32>)
+    /// Generic type with concrete arguments (e.g., Vec<i32>, Array<i32, 5>)
     Generic {
         name: String,
-        args: Vec<Type>,
+        args: Vec<GenericArg>,
+    },
+    /// Reference type (&T or &mut T)
+    Reference {
+        lifetime: Option<String>,
+        mutable: bool,
+        inner: Box<Type>,
+    },
+    /// Future type for async functions
+    Future {
+        output: Box<Type>,
     },
 }
 
@@ -165,6 +295,11 @@ pub enum Stmt {
         arms: Vec<MatchArm>,
         span: Span,
     },
+    /// Unsafe block
+    Unsafe {
+        body: Vec<Stmt>,
+        span: Span,
+    },
 }
 
 /// Match arm
@@ -175,7 +310,7 @@ pub struct MatchArm {
 }
 
 /// Pattern for matching
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     /// Wildcard pattern (_)
     Wildcard,
@@ -190,7 +325,7 @@ pub enum Pattern {
 }
 
 /// Pattern data for enum variants
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PatternData {
     /// Tuple pattern: Some(x)
     Tuple(Vec<Pattern>),
@@ -199,7 +334,7 @@ pub enum PatternData {
 }
 
 /// Expressions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     /// String literal
     String(String),
@@ -267,10 +402,37 @@ pub enum Expr {
         end: Box<Expr>,
         span: Span,
     },
+    /// Reference expression (&expr or &mut expr)
+    Reference {
+        mutable: bool,
+        expr: Box<Expr>,
+        span: Span,
+    },
+    /// Dereference expression (*expr)
+    Deref {
+        expr: Box<Expr>,
+        span: Span,
+    },
+    /// Question mark operator (expr?)
+    Question {
+        expr: Box<Expr>,
+        span: Span,
+    },
+    /// Macro invocation
+    MacroInvocation {
+        name: String,
+        args: Vec<Token>,  // Token stream for arguments
+        span: Span,
+    },
+    /// Await expression
+    Await {
+        expr: Box<Expr>,
+        span: Span,
+    },
 }
 
 /// Enum constructor data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum EnumConstructorData {
     /// Tuple constructor: Color::Red(255)
     Tuple(Vec<Expr>),
@@ -287,6 +449,8 @@ pub enum AssignTarget {
     Index { array: Box<Expr>, index: Box<Expr> },
     /// Field assignment
     FieldAccess { object: Box<Expr>, field: String },
+    /// Dereference assignment (*ptr = value)
+    Deref { expr: Box<Expr> },
 }
 
 /// Binary operators
@@ -333,6 +497,11 @@ impl Expr {
             Expr::FieldAccess { span, .. } => *span,
             Expr::EnumConstructor { span, .. } => *span,
             Expr::Range { span, .. } => *span,
+            Expr::Reference { span, .. } => *span,
+            Expr::Deref { span, .. } => *span,
+            Expr::Question { span, .. } => *span,
+            Expr::MacroInvocation { span, .. } => *span,
+            Expr::Await { span, .. } => *span,
         }
     }
 }
@@ -361,6 +530,10 @@ impl std::fmt::Display for Item {
             Item::Function(func) => write!(f, "{}", func),
             Item::Struct(struct_def) => write!(f, "{}", struct_def),
             Item::Enum(enum_def) => write!(f, "{}", enum_def),
+            Item::Trait(trait_def) => write!(f, "{}", trait_def),
+            Item::Impl(impl_block) => write!(f, "{}", impl_block),
+            Item::TypeAlias(type_alias) => write!(f, "{}", type_alias),
+            Item::Macro(macro_def) => write!(f, "{}", macro_def),
         }
     }
 }
@@ -439,6 +612,38 @@ impl std::fmt::Display for EnumDef {
     }
 }
 
+/// Macro definition
+#[derive(Debug, Clone)]
+pub struct MacroDef {
+    pub name: String,
+    pub params: Vec<String>,  // Macro parameters
+    pub body: Vec<Token>,     // Token stream for the macro body
+    pub span: Span,
+}
+
+/// Token for macro expansion (simplified token representation)
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    Ident(String),
+    Literal(String),
+    Punct(char),
+    Group(Delimiter, Vec<Token>),
+}
+
+/// Delimiter for grouped tokens
+#[derive(Debug, Clone, PartialEq)]
+pub enum Delimiter {
+    Paren,    // ()
+    Brace,    // {}
+    Bracket,  // []
+}
+
+impl std::fmt::Display for MacroDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "macro {}! {{ ... }}", self.name)
+    }
+}
+
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -462,7 +667,171 @@ impl std::fmt::Display for Type {
                 }
                 write!(f, ">")
             }
+            Type::Reference { lifetime, mutable, inner } => {
+                write!(f, "&")?;
+                if let Some(lt) = lifetime {
+                    write!(f, "'{} ", lt)?;
+                }
+                if *mutable {
+                    write!(f, "mut ")?;
+                }
+                write!(f, "{}", inner)
+            }
+            Type::Future { output } => write!(f, "Future<{}>", output),
         }
+    }
+}
+
+impl std::fmt::Display for TraitDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let vis = match self.visibility {
+            Visibility::Public => "pub ",
+            Visibility::Private => "",
+        };
+        write!(f, "{}trait {}", vis, self.name)?;
+        
+        // Generic parameters
+        if !self.lifetime_params.is_empty() || !self.type_params.is_empty() {
+            write!(f, "<")?;
+            let mut first = true;
+            for lt in &self.lifetime_params {
+                if !first {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", lt)?;
+                first = false;
+            }
+            for tp in &self.type_params {
+                if !first {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", tp)?;
+                first = false;
+            }
+            write!(f, ">")?;
+        }
+        
+        writeln!(f, " {{")?;
+        for method in &self.methods {
+            write!(f, "    fn {}", method.name)?;
+            
+            // Method generic parameters
+            if !method.lifetime_params.is_empty() || !method.type_params.is_empty() {
+                write!(f, "<")?;
+                let mut first = true;
+                for lt in &method.lifetime_params {
+                    if !first {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", lt)?;
+                    first = false;
+                }
+                for tp in &method.type_params {
+                    if !first {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", tp)?;
+                    first = false;
+                }
+                write!(f, ">")?;
+            }
+            
+            write!(f, "(")?;
+            for (i, param) in method.params.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                if param.mutable {
+                    write!(f, "mut ")?;
+                }
+                write!(f, "{}: {}", param.name, param.ty)?;
+            }
+            write!(f, ")")?;
+            
+            if let Some(ret) = &method.return_type {
+                write!(f, " -> {}", ret)?;
+            }
+            
+            if method.has_body {
+                writeln!(f, " {{ ... }}")?;
+            } else {
+                writeln!(f, ";")?;
+            }
+        }
+        write!(f, "}}")
+    }
+}
+
+impl std::fmt::Display for ImplBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "impl")?;
+        
+        // Generic parameters
+        if !self.lifetime_params.is_empty() || !self.type_params.is_empty() {
+            write!(f, "<")?;
+            let mut first = true;
+            for lt in &self.lifetime_params {
+                if !first {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", lt)?;
+                first = false;
+            }
+            for tp in &self.type_params {
+                if !first {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", tp)?;
+                first = false;
+            }
+            write!(f, ">")?;
+        }
+        
+        if let Some(trait_type) = &self.trait_type {
+            write!(f, " {} for", trait_type)?;
+        }
+        
+        write!(f, " {} {{", self.for_type)?;
+        
+        for method in &self.methods {
+            writeln!(f)?;
+            write!(f, "    {}", method)?;
+        }
+        
+        write!(f, "\n}}")
+    }
+}
+
+impl std::fmt::Display for TypeAlias {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let vis = match self.visibility {
+            Visibility::Public => "pub ",
+            Visibility::Private => "",
+        };
+        write!(f, "{}type {}", vis, self.name)?;
+        
+        // Generic parameters
+        if !self.lifetime_params.is_empty() || !self.type_params.is_empty() {
+            write!(f, "<")?;
+            let mut first = true;
+            for lt in &self.lifetime_params {
+                if !first {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", lt)?;
+                first = false;
+            }
+            for tp in &self.type_params {
+                if !first {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", tp)?;
+                first = false;
+            }
+            write!(f, ">")?;
+        }
+        
+        write!(f, " = {};", self.ty)
     }
 }
 
@@ -493,6 +862,9 @@ impl std::fmt::Display for Stmt {
                 }
                 AssignTarget::FieldAccess { object, field } => {
                     write!(f, "{}.{} = {};", object, field, value)
+                }
+                AssignTarget::Deref { expr } => {
+                    write!(f, "*{} = {};", expr, value)
                 }
             },
             Stmt::If {
@@ -556,6 +928,13 @@ impl std::fmt::Display for Stmt {
                         }
                         writeln!(f, "    }}")?;
                     }
+                }
+                write!(f, "}}")
+            }
+            Stmt::Unsafe { body, .. } => {
+                writeln!(f, "unsafe {{")?;
+                for stmt in body {
+                    writeln!(f, "    {}", stmt)?;
                 }
                 write!(f, "}}")
             }
@@ -651,6 +1030,30 @@ impl std::fmt::Display for Expr {
             Expr::Range { start, end, .. } => {
                 write!(f, "{}..{}", start, end)
             }
+            Expr::Reference { mutable, expr, .. } => {
+                if *mutable {
+                    write!(f, "&mut {}", expr)
+                } else {
+                    write!(f, "&{}", expr)
+                }
+            }
+            Expr::Deref { expr, .. } => {
+                write!(f, "*{}", expr)
+            }
+            Expr::Question { expr, .. } => {
+                write!(f, "{}?", expr)
+            }
+            Expr::MacroInvocation { name, args, .. } => {
+                write!(f, "{}!(", name)?;
+                for (i, token) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{:?}", token)?;  // TODO: better formatting
+                }
+                write!(f, ")")
+            }
+            Expr::Await { expr, .. } => write!(f, "{}.await", expr)
         }
     }
 }

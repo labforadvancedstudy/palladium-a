@@ -8,6 +8,12 @@ use std::collections::HashMap;
 mod suggestions;
 use suggestions::TypeErrorHelper;
 
+mod exhaustiveness;
+use exhaustiveness::{ExhaustivenessChecker, EnumInfo, VariantInfo};
+
+mod trait_resolution;
+use trait_resolution::{TraitResolver, TraitInfo, ImplInfo, MethodResolution};
+
 /// Type representation for type checker (wraps AST Type)
 #[derive(Debug, Clone, PartialEq)]
 pub enum CheckerType {
@@ -15,11 +21,45 @@ pub enum CheckerType {
     String,
     Int,
     Bool,
-    Array(Box<CheckerType>, usize),
+    Array(Box<CheckerType>, ArraySizeValue),
     Function(Vec<CheckerType>, Box<CheckerType>),
     Struct(String),
     TypeParam(String),
     Enum(String),
+    Generic {
+        name: String,
+        args: Vec<GenericArgValue>,
+    },
+}
+
+/// Array size value for type checking
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArraySizeValue {
+    Literal(usize),
+    ConstParam(String),
+}
+
+impl std::fmt::Display for ArraySizeValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ArraySizeValue::Literal(n) => write!(f, "{}", n),
+            ArraySizeValue::ConstParam(name) => write!(f, "{}", name),
+        }
+    }
+}
+
+/// Generic argument value for type checking
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenericArgValue {
+    Type(CheckerType),
+    Const(ConstValueResolved),
+}
+
+/// Resolved const value
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstValueResolved {
+    Integer(i64),
+    ConstParam(String),
 }
 
 impl From<&crate::ast::Type> for CheckerType {
@@ -31,7 +71,15 @@ impl From<&crate::ast::Type> for CheckerType {
             crate::ast::Type::Bool => CheckerType::Bool,
             crate::ast::Type::U32 | crate::ast::Type::U64 => CheckerType::Int,
             crate::ast::Type::Array(elem_type, size) => {
-                CheckerType::Array(Box::new(CheckerType::from(elem_type.as_ref())), *size)
+                let size_value = match size {
+                    ArraySize::Literal(n) => ArraySizeValue::Literal(*n),
+                    ArraySize::ConstParam(name) => ArraySizeValue::ConstParam(name.clone()),
+                    ArraySize::Expr(_) => {
+                        // For now, we don't support expressions
+                        ArraySizeValue::Literal(0) // Placeholder
+                    }
+                };
+                CheckerType::Array(Box::new(CheckerType::from(elem_type.as_ref())), size_value)
             }
             crate::ast::Type::Custom(name) => CheckerType::Struct(name.clone()),
             crate::ast::Type::TypeParam(name) => {
@@ -39,9 +87,33 @@ impl From<&crate::ast::Type> for CheckerType {
                 // For now, create a placeholder type that can be unified later
                 CheckerType::TypeParam(name.clone())
             }
-            crate::ast::Type::Generic { name, .. } => {
-                // For now, treat generic types as their base type
-                CheckerType::Struct(name.clone())
+            crate::ast::Type::Generic { name, args } => {
+                // Convert generic arguments properly
+                let checker_args: Vec<GenericArgValue> = args.iter().map(|arg| {
+                    match arg {
+                        GenericArg::Type(t) => GenericArgValue::Type(CheckerType::from(t)),
+                        GenericArg::Const(c) => GenericArgValue::Const(match c {
+                            ConstValue::Integer(n) => ConstValueResolved::Integer(*n),
+                            ConstValue::ConstParam(name) => ConstValueResolved::ConstParam(name.clone()),
+                        }),
+                    }
+                }).collect();
+                CheckerType::Generic {
+                    name: name.clone(),
+                    args: checker_args,
+                }
+            }
+            crate::ast::Type::Reference { inner, .. } => {
+                // For now, treat references as the inner type
+                // TODO: Proper reference type handling
+                CheckerType::from(inner.as_ref())
+            }
+            crate::ast::Type::Future { output } => {
+                // Create a Future generic type
+                CheckerType::Generic {
+                    name: "Future".to_string(),
+                    args: vec![GenericArgValue::Type(CheckerType::from(output.as_ref()))],
+                }
             }
         }
     }
@@ -54,7 +126,12 @@ impl std::fmt::Display for CheckerType {
             CheckerType::String => write!(f, "String"),
             CheckerType::Int => write!(f, "Int"),
             CheckerType::Bool => write!(f, "Bool"),
-            CheckerType::Array(elem_type, size) => write!(f, "[{}; {}]", elem_type, size),
+            CheckerType::Array(elem_type, size) => {
+                match size {
+                    ArraySizeValue::Literal(n) => write!(f, "[{}; {}]", elem_type, n),
+                    ArraySizeValue::ConstParam(name) => write!(f, "[{}; {}]", elem_type, name),
+                }
+            }
             CheckerType::Function(params, ret) => {
                 write!(f, "fn(")?;
                 for (i, param) in params.iter().enumerate() {
@@ -68,6 +145,22 @@ impl std::fmt::Display for CheckerType {
             CheckerType::Struct(name) => write!(f, "{}", name),
             CheckerType::TypeParam(name) => write!(f, "{}", name),
             CheckerType::Enum(name) => write!(f, "{}", name),
+            CheckerType::Generic { name, args } => {
+                write!(f, "{}<", name)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    match arg {
+                        GenericArgValue::Type(t) => write!(f, "{}", t)?,
+                        GenericArgValue::Const(c) => match c {
+                            ConstValueResolved::Integer(n) => write!(f, "{}", n)?,
+                            ConstValueResolved::ConstParam(name) => write!(f, "{}", name)?,
+                        },
+                    }
+                }
+                write!(f, ">")
+            }
         }
     }
 }
@@ -134,10 +227,35 @@ impl SymbolTable {
 /// Information about a generic function
 #[derive(Debug, Clone)]
 pub struct GenericFunction {
+    pub lifetime_params: Vec<String>,
     pub type_params: Vec<String>,
     pub params: Vec<(String, crate::ast::Type)>,
     pub return_type: Option<crate::ast::Type>,
     pub body: Vec<crate::ast::Stmt>,
+}
+
+/// Generic enum definition
+#[derive(Debug, Clone)]
+pub struct GenericEnum {
+    pub lifetime_params: Vec<String>,
+    pub type_params: Vec<String>,
+    pub variants: Vec<(String, crate::ast::EnumVariantData)>,
+}
+
+/// Generic struct definition
+#[derive(Debug, Clone)]
+pub struct GenericStruct {
+    pub lifetime_params: Vec<String>,
+    pub type_params: Vec<String>,
+    pub fields: Vec<(String, crate::ast::Type)>,
+}
+
+/// Generic type alias definition
+#[derive(Debug, Clone)]
+pub struct GenericTypeAlias {
+    pub lifetime_params: Vec<String>,
+    pub type_params: Vec<String>,
+    pub ty: crate::ast::Type,
 }
 
 /// Enum variant information
@@ -161,6 +279,13 @@ struct FunctionInstantiation {
     type_args: Vec<String>, // Concrete types like "i64", "String"
 }
 
+/// A concrete instantiation of a generic struct
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StructInstantiation {
+    pub name: String,
+    pub type_args: Vec<String>, // Concrete types like "i64", "String"
+}
+
 pub struct TypeChecker {
     /// Function signatures
     functions: HashMap<String, CheckerType>,
@@ -170,8 +295,20 @@ pub struct TypeChecker {
     instantiations: HashMap<FunctionInstantiation, CheckerType>,
     /// Struct definitions
     structs: HashMap<String, Vec<(String, CheckerType)>>,
+    /// Generic struct definitions
+    generic_structs: HashMap<String, GenericStruct>,
+    /// Trait resolver
+    trait_resolver: TraitResolver,
+    /// Instantiated generic structs
+    struct_instantiations: HashMap<StructInstantiation, CheckerType>,
     /// Enum definitions with their variants
     enums: HashMap<String, Vec<EnumVariant>>,
+    /// Generic enum definitions
+    generic_enums: HashMap<String, GenericEnum>,
+    /// Type alias definitions
+    type_aliases: HashMap<String, crate::ast::Type>,
+    /// Generic type alias definitions
+    generic_type_aliases: HashMap<String, GenericTypeAlias>,
     /// Current function return type (for checking return statements)
     current_function_return: Option<CheckerType>,
     /// Symbol table for variables
@@ -182,6 +319,8 @@ pub struct TypeChecker {
     loop_depth: usize,
     /// Error helper for better suggestions
     error_helper: TypeErrorHelper,
+    /// Unsafe block depth counter (for tracking unsafe context)
+    unsafe_depth: usize,
 }
 
 impl Default for TypeChecker {
@@ -307,12 +446,19 @@ impl TypeChecker {
             generic_functions: HashMap::new(),
             instantiations: HashMap::new(),
             structs: HashMap::new(),
+            generic_structs: HashMap::new(),
+            trait_resolver: TraitResolver::new(),
+            struct_instantiations: HashMap::new(),
             enums: HashMap::new(),
+            generic_enums: HashMap::new(),
+            type_aliases: HashMap::new(),
+            generic_type_aliases: HashMap::new(),
             current_function_return: None,
             symbols: SymbolTable::new(),
             imported_modules: HashMap::new(),
             loop_depth: 0,
             error_helper: TypeErrorHelper::new(),
+            unsafe_depth: 0,
         }
     }
 
@@ -333,6 +479,7 @@ impl TypeChecker {
                             if !func.type_params.is_empty() {
                                 // Generic function
                                 let generic_func = GenericFunction {
+                                    lifetime_params: func.lifetime_params.clone(),
                                     type_params: func.type_params.clone(),
                                     params: func
                                         .params
@@ -430,6 +577,43 @@ impl TypeChecker {
                             }
                         }
                     }
+                    crate::ast::Item::Trait(trait_def) => {
+                        if matches!(trait_def.visibility, crate::ast::Visibility::Public) {
+                            // Store trait information
+                            // TODO: Implement trait tracking
+                        }
+                    }
+                    crate::ast::Item::Impl(_) => {
+                        // Impl blocks are processed separately
+                    }
+                    crate::ast::Item::TypeAlias(type_alias) => {
+                        if matches!(type_alias.visibility, crate::ast::Visibility::Public) {
+                            // Store type alias information
+                            let qualified_name = format!("{}::{}", module_name, type_alias.name);
+                            
+                            if !type_alias.type_params.is_empty() {
+                                // Generic type alias
+                                let generic_alias = GenericTypeAlias {
+                                    lifetime_params: type_alias.lifetime_params.clone(),
+                                    type_params: type_alias.type_params.clone(),
+                                    ty: type_alias.ty.clone(),
+                                };
+                                self.generic_type_aliases
+                                    .insert(type_alias.name.clone(), generic_alias.clone());
+                                self.generic_type_aliases
+                                    .insert(qualified_name, generic_alias);
+                            } else {
+                                // Regular type alias
+                                self.type_aliases
+                                    .insert(type_alias.name.clone(), type_alias.ty.clone());
+                                self.type_aliases
+                                    .insert(qualified_name, type_alias.ty.clone());
+                            }
+                        }
+                    }
+                    crate::ast::Item::Macro(_) => {
+                        // Macros are handled during expansion phase, skip here
+                    }
                 }
             }
         }
@@ -444,6 +628,7 @@ impl TypeChecker {
                     if !func.type_params.is_empty() {
                         // This is a generic function - store it for later instantiation
                         let generic_func = GenericFunction {
+                            lifetime_params: func.lifetime_params.clone(),
                             type_params: func.type_params.clone(),
                             params: func
                                 .params
@@ -460,13 +645,13 @@ impl TypeChecker {
                         let param_types: Vec<CheckerType> = func
                             .params
                             .iter()
-                            .map(|param| CheckerType::from(&param.ty))
+                            .map(|param| self.ast_type_to_checker_type(&param.ty))
                             .collect();
 
                         let return_type = func
                             .return_type
                             .as_ref()
-                            .map(CheckerType::from)
+                            .map(|t| self.ast_type_to_checker_type(t))
                             .unwrap_or(CheckerType::Unit);
 
                         let func_type = CheckerType::Function(param_types, Box::new(return_type));
@@ -474,65 +659,172 @@ impl TypeChecker {
                     }
                 }
                 Item::Struct(struct_def) => {
-                    // Convert field types to CheckerType
-                    let fields: Vec<(String, CheckerType)> = struct_def
-                        .fields
-                        .iter()
-                        .map(|(name, ty)| (name.clone(), CheckerType::from(ty)))
-                        .collect();
+                    // Check if this is a generic struct
+                    if !struct_def.type_params.is_empty() || !struct_def.lifetime_params.is_empty() {
+                        // Store as generic struct
+                        let generic_struct = GenericStruct {
+                            lifetime_params: struct_def.lifetime_params.clone(),
+                            type_params: struct_def.type_params.clone(),
+                            fields: struct_def.fields.clone(),
+                        };
+                        self.generic_structs.insert(struct_def.name.clone(), generic_struct);
+                    } else {
+                        // Convert field types to CheckerType for non-generic structs
+                        let fields: Vec<(String, CheckerType)> = struct_def
+                            .fields
+                            .iter()
+                            .map(|(name, ty)| (name.clone(), CheckerType::from(ty)))
+                            .collect();
 
-                    self.structs.insert(struct_def.name.clone(), fields);
+                        self.structs.insert(struct_def.name.clone(), fields);
+                    }
                 }
                 Item::Enum(enum_def) => {
-                    // Store enum variants for type checking
-                    let mut variants = Vec::new();
-
-                    for variant in &enum_def.variants {
-                        let variant_fields = match &variant.data {
-                            crate::ast::EnumVariantData::Unit => EnumVariantFields::Unit,
-                            crate::ast::EnumVariantData::Tuple(types) => {
-                                let field_types: Vec<CheckerType> =
-                                    types.iter().map(CheckerType::from).collect();
-                                EnumVariantFields::Tuple(field_types)
-                            }
-                            crate::ast::EnumVariantData::Struct(fields) => {
-                                let named_fields: Vec<(String, CheckerType)> = fields
-                                    .iter()
-                                    .map(|(name, ty)| (name.clone(), CheckerType::from(ty)))
-                                    .collect();
-                                EnumVariantFields::Named(named_fields)
-                            }
+                    // Check if this is a generic enum
+                    if !enum_def.type_params.is_empty() || !enum_def.lifetime_params.is_empty() {
+                        // Store as generic enum
+                        let generic_enum = GenericEnum {
+                            lifetime_params: enum_def.lifetime_params.clone(),
+                            type_params: enum_def.type_params.clone(),
+                            variants: enum_def.variants.iter()
+                                .map(|v| (v.name.clone(), v.data.clone()))
+                                .collect(),
                         };
+                        self.generic_enums.insert(enum_def.name.clone(), generic_enum);
+                    } else {
+                        // Store enum variants for type checking
+                        let mut variants = Vec::new();
 
-                        variants.push(EnumVariant {
-                            name: variant.name.clone(),
-                            fields: variant_fields,
-                        });
+                        for variant in &enum_def.variants {
+                            let variant_fields = match &variant.data {
+                                crate::ast::EnumVariantData::Unit => EnumVariantFields::Unit,
+                                crate::ast::EnumVariantData::Tuple(types) => {
+                                    let field_types: Vec<CheckerType> =
+                                        types.iter().map(CheckerType::from).collect();
+                                    EnumVariantFields::Tuple(field_types)
+                                }
+                                crate::ast::EnumVariantData::Struct(fields) => {
+                                    let named_fields: Vec<(String, CheckerType)> = fields
+                                        .iter()
+                                        .map(|(name, ty)| (name.clone(), CheckerType::from(ty)))
+                                        .collect();
+                                    EnumVariantFields::Named(named_fields)
+                                }
+                            };
 
-                        // Also register variant constructors as functions
-                        let enum_type = CheckerType::Enum(enum_def.name.clone());
-                        let variant_name = format!("{}::{}", enum_def.name, variant.name);
+                            variants.push(EnumVariant {
+                                name: variant.name.clone(),
+                                fields: variant_fields,
+                            });
 
-                        let func_type = match &variant.data {
-                            crate::ast::EnumVariantData::Unit => {
-                                CheckerType::Function(vec![], Box::new(enum_type.clone()))
-                            }
-                            crate::ast::EnumVariantData::Tuple(types) => {
-                                let param_types: Vec<CheckerType> =
-                                    types.iter().map(CheckerType::from).collect();
-                                CheckerType::Function(param_types, Box::new(enum_type.clone()))
-                            }
-                            crate::ast::EnumVariantData::Struct(fields) => {
-                                let param_types: Vec<CheckerType> =
-                                    fields.iter().map(|(_, ty)| CheckerType::from(ty)).collect();
-                                CheckerType::Function(param_types, Box::new(enum_type.clone()))
-                            }
-                        };
+                            // Also register variant constructors as functions
+                            let enum_type = CheckerType::Enum(enum_def.name.clone());
+                            let variant_name = format!("{}::{}", enum_def.name, variant.name);
 
-                        self.functions.insert(variant_name, func_type);
+                            let func_type = match &variant.data {
+                                crate::ast::EnumVariantData::Unit => {
+                                    CheckerType::Function(vec![], Box::new(enum_type.clone()))
+                                }
+                                crate::ast::EnumVariantData::Tuple(types) => {
+                                    let param_types: Vec<CheckerType> =
+                                        types.iter().map(CheckerType::from).collect();
+                                    CheckerType::Function(param_types, Box::new(enum_type.clone()))
+                                }
+                                crate::ast::EnumVariantData::Struct(fields) => {
+                                    let param_types: Vec<CheckerType> =
+                                        fields.iter().map(|(_, ty)| CheckerType::from(ty)).collect();
+                                    CheckerType::Function(param_types, Box::new(enum_type.clone()))
+                                }
+                            };
+
+                            self.functions.insert(variant_name, func_type);
+                        }
+
+                        self.enums.insert(enum_def.name.clone(), variants);
                     }
+                }
+                Item::Trait(trait_def) => {
+                    // Register trait with the trait resolver
+                    if let Err(e) = self.trait_resolver.register_trait(trait_def) {
+                        return Err(e);
+                    }
+                }
+                Item::TypeAlias(type_alias) => {
+                    // Check if this is a generic type alias
+                    if !type_alias.type_params.is_empty() || !type_alias.lifetime_params.is_empty() {
+                        // Store as generic type alias
+                        let generic_alias = GenericTypeAlias {
+                            lifetime_params: type_alias.lifetime_params.clone(),
+                            type_params: type_alias.type_params.clone(),
+                            ty: type_alias.ty.clone(),
+                        };
+                        self.generic_type_aliases.insert(type_alias.name.clone(), generic_alias);
+                    } else {
+                        // Store regular type alias
+                        self.type_aliases.insert(type_alias.name.clone(), type_alias.ty.clone());
+                    }
+                }
+                Item::Impl(impl_block) => {
+                    // Register impl block with trait resolver
+                    if let Err(e) = self.trait_resolver.register_impl(impl_block) {
+                        return Err(e);
+                    }
+                    
+                    // If this is a trait impl, verify all required methods are implemented
+                    if let Some(trait_type) = &impl_block.trait_type {
+                        if let Type::Custom(trait_name) = trait_type {
+                            if let Err(e) = self.trait_resolver.check_trait_impl_complete(impl_block, trait_name) {
+                                return Err(e);
+                            }
+                        }
+                    }
+                    
+                    // Register methods from impl blocks
+                    for method in &impl_block.methods {
+                        // Create qualified method name
+                        let method_name = if let Some(_trait_type) = &impl_block.trait_type {
+                            // Trait implementation method
+                            format!("{}::{}", impl_block.for_type, method.name)
+                        } else {
+                            // Inherent method
+                            format!("{}::{}", impl_block.for_type, method.name)
+                        };
+                        
+                        if !method.type_params.is_empty() {
+                            // Generic method - store for later instantiation
+                            let generic_func = GenericFunction {
+                                lifetime_params: method.lifetime_params.clone(),
+                                type_params: method.type_params.clone(),
+                                params: method
+                                    .params
+                                    .iter()
+                                    .map(|p| (p.name.clone(), p.ty.clone()))
+                                    .collect(),
+                                return_type: method.return_type.clone(),
+                                body: method.body.clone(),
+                            };
+                            self.generic_functions.insert(method_name, generic_func);
+                        } else {
+                            // Regular method
+                            let param_types: Vec<CheckerType> = method
+                                .params
+                                .iter()
+                                .map(|param| CheckerType::from(&param.ty))
+                                .collect();
 
-                    self.enums.insert(enum_def.name.clone(), variants);
+                            let return_type = method
+                                .return_type
+                                .as_ref()
+                                .map(CheckerType::from)
+                                .unwrap_or(CheckerType::Unit);
+
+                            let func_type = CheckerType::Function(param_types, Box::new(return_type));
+                            self.functions.insert(method_name, func_type);
+                        }
+                    }
+                }
+                Item::Macro(_) => {
+                    // Macros are handled during expansion phase, skip here
                 }
             }
         }
@@ -554,10 +846,104 @@ impl TypeChecker {
                 Item::Enum(_) => {
                     // Enums are already processed in the first pass
                 }
+                Item::Trait(_) => {
+                    // Traits are already processed in the first pass
+                    // TODO: Type check trait methods with bodies
+                }
+                Item::TypeAlias(_) => {
+                    // Type aliases are already processed in the first pass
+                    // No body to check
+                }
+                Item::Impl(impl_block) => {
+                    // Type check impl block methods
+                    for method in &impl_block.methods {
+                        self.check_function(method)?;
+                    }
+                }
+                Item::Macro(_) => {
+                    // Macros are handled during expansion phase, skip here
+                }
             }
         }
 
         Ok(())
+    }
+
+    /// Convert AST type to CheckerType considering context (struct vs enum)
+    fn ast_type_to_checker_type(&self, ast_type: &crate::ast::Type) -> CheckerType {
+        match ast_type {
+            crate::ast::Type::Custom(name) => {
+                // First check if it's a type alias
+                if let Some(aliased_type) = self.type_aliases.get(name) {
+                    // Recursively resolve the aliased type
+                    return self.ast_type_to_checker_type(aliased_type);
+                }
+                
+                // Check if it's an enum
+                if self.enums.contains_key(name) {
+                    CheckerType::Enum(name.clone())
+                } else {
+                    CheckerType::Struct(name.clone())
+                }
+            }
+            crate::ast::Type::Generic { name, args } => {
+                // First check if it's a generic type alias
+                if let Some(generic_alias) = self.generic_type_aliases.get(name) {
+                    // We have a generic type alias, substitute the type parameters
+                    if args.len() != generic_alias.type_params.len() {
+                        // For now, just return the generic type without substitution
+                        // TODO: Proper error handling for wrong number of type arguments
+                        let checker_args: Vec<GenericArgValue> = args.iter()
+                            .map(|arg| match arg {
+                                GenericArg::Type(t) => GenericArgValue::Type(self.ast_type_to_checker_type(t)),
+                                GenericArg::Const(c) => GenericArgValue::Const(match c {
+                                    ConstValue::Integer(n) => ConstValueResolved::Integer(*n),
+                                    ConstValue::ConstParam(name) => ConstValueResolved::ConstParam(name.clone()),
+                                }),
+                            })
+                            .collect();
+                        return CheckerType::Generic {
+                            name: name.clone(),
+                            args: checker_args,
+                        };
+                    }
+                    
+                    // Create a substitution map for type parameters only
+                    let mut substitutions = std::collections::HashMap::new();
+                    let type_args: Vec<crate::ast::Type> = args.iter()
+                        .filter_map(|arg| match arg {
+                            GenericArg::Type(t) => Some(t.clone()),
+                            GenericArg::Const(_) => None, // TODO: handle const generics in aliases
+                        })
+                        .collect();
+                    
+                    for (param, arg) in generic_alias.type_params.iter().zip(type_args.iter()) {
+                        substitutions.insert(param.clone(), arg.clone());
+                    }
+                    
+                    // Substitute type parameters in the aliased type
+                    let substituted_type = self.substitute_type_params_map(&generic_alias.ty, &substitutions);
+                    return self.ast_type_to_checker_type(&substituted_type);
+                }
+                
+                // Not a type alias, convert generic types normally
+                let checker_args: Vec<GenericArgValue> = args.iter()
+                    .map(|arg| match arg {
+                        GenericArg::Type(t) => GenericArgValue::Type(self.ast_type_to_checker_type(t)),
+                        GenericArg::Const(c) => GenericArgValue::Const(match c {
+                            ConstValue::Integer(n) => ConstValueResolved::Integer(*n),
+                            ConstValue::ConstParam(name) => ConstValueResolved::ConstParam(name.clone()),
+                        }),
+                    })
+                    .collect();
+                    
+                CheckerType::Generic {
+                    name: name.clone(),
+                    args: checker_args,
+                }
+            }
+            _ => CheckerType::from(ast_type)
+        }
     }
 
     /// Type check a function
@@ -572,17 +958,28 @@ impl TypeChecker {
 
         // Add function parameters to symbol table
         for param in &func.params {
-            let checker_type = CheckerType::from(&param.ty);
+            let checker_type = self.ast_type_to_checker_type(&param.ty);
             self.symbols
                 .define(param.name.clone(), checker_type, param.mutable)?;
         }
 
         // Set current function return type
-        let return_type = func
+        let base_return_type = func
             .return_type
             .as_ref()
-            .map(CheckerType::from)
+            .map(|t| self.ast_type_to_checker_type(t))
             .unwrap_or(CheckerType::Unit);
+        
+        // If function is async, wrap return type in Future
+        let return_type = if func.is_async {
+            CheckerType::Generic {
+                name: "Future".to_string(),
+                args: vec![GenericArgValue::Type(base_return_type)],
+            }
+        } else {
+            base_return_type
+        };
+        
         self.current_function_return = Some(return_type);
 
         // Type check each statement in the body
@@ -639,7 +1036,7 @@ impl TypeChecker {
 
                 // If type annotation is provided, check that it matches
                 if let Some(annotated_type) = ty {
-                    let expected_type = CheckerType::from(annotated_type);
+                    let expected_type = self.ast_type_to_checker_type(annotated_type);
                     if value_type != expected_type {
                         return Err(self.error_helper.type_mismatch(
                             &expected_type.to_string(),
@@ -738,9 +1135,62 @@ impl TypeChecker {
                         // Type check the object expression
                         let object_type = self.check_expression(object)?;
 
-                        // Get the struct name and check if it exists
-                        let struct_name = match object_type {
-                            CheckerType::Struct(name) => name,
+                        let field_type = match &object_type {
+                            // Handle non-generic structs
+                            CheckerType::Struct(name) => {
+                                // Look up the struct fields
+                                let fields = self.structs.get(name).ok_or_else(|| {
+                                    CompileError::Generic(format!("Unknown struct type: {}", name))
+                                })?;
+
+                                // Find the field type
+                                fields
+                                    .iter()
+                                    .find(|(fname, _)| fname == field)
+                                    .map(|(_, ftype)| ftype.clone())
+                                    .ok_or_else(|| {
+                                        CompileError::Generic(format!(
+                                            "Struct '{}' has no field '{}'",
+                                            name, field
+                                        ))
+                                    })?
+                            }
+                            // Handle generic struct instances
+                            CheckerType::Generic { name, args } => {
+                                // Look up the generic struct definition
+                                let generic_struct = self.generic_structs.get(name).ok_or_else(|| {
+                                    CompileError::Generic(format!("Unknown generic struct type: {}", name))
+                                })?;
+
+                                // Find the field's declared type
+                                let field_type = generic_struct.fields
+                                    .iter()
+                                    .find(|(fname, _)| fname == field)
+                                    .map(|(_, ftype)| ftype)
+                                    .ok_or_else(|| {
+                                        CompileError::Generic(format!(
+                                            "Struct '{}' has no field '{}'",
+                                            name, field
+                                        ))
+                                    })?;
+
+                                // Extract type arguments only
+                                let type_args: Vec<CheckerType> = args.iter()
+                                    .filter_map(|arg| match arg {
+                                        GenericArgValue::Type(t) => Some(t.clone()),
+                                        GenericArgValue::Const(_) => None, // TODO: handle const generics
+                                    })
+                                    .collect();
+                                
+                                // Substitute type parameters in the field type
+                                let concrete_field_type = self.substitute_type_params(
+                                    field_type, 
+                                    &generic_struct.type_params, 
+                                    &type_args
+                                )?;
+
+                                concrete_field_type
+                            }
                             _ => {
                                 return Err(CompileError::Generic(format!(
                                     "Cannot access field on non-struct type: {}",
@@ -748,23 +1198,6 @@ impl TypeChecker {
                                 )));
                             }
                         };
-
-                        // Look up the struct fields
-                        let fields = self.structs.get(&struct_name).ok_or_else(|| {
-                            CompileError::Generic(format!("Unknown struct type: {}", struct_name))
-                        })?;
-
-                        // Find the field type
-                        let field_type = fields
-                            .iter()
-                            .find(|(fname, _)| fname == field)
-                            .map(|(_, ftype)| ftype.clone())
-                            .ok_or_else(|| {
-                                CompileError::Generic(format!(
-                                    "Struct '{}' has no field '{}'",
-                                    struct_name, field
-                                ))
-                            })?;
 
                         // Type check the value expression
                         let value_type = self.check_expression(value)?;
@@ -778,6 +1211,14 @@ impl TypeChecker {
                             });
                         }
 
+                        Ok(())
+                    }
+                    AssignTarget::Deref { expr } => {
+                        // Type check the expression being dereferenced
+                        let _ptr_type = self.check_expression(expr)?;
+                        // For now, we don't have proper reference types, so just check the value
+                        let _value_type = self.check_expression(value)?;
+                        // TODO: Check that ptr_type is actually a reference to value_type
                         Ok(())
                     }
                 }
@@ -886,7 +1327,7 @@ impl TypeChecker {
                 }
                 Ok(())
             }
-            Stmt::Match { expr, arms, .. } => {
+            Stmt::Match { expr, arms, span, .. } => {
                 // Type check the match expression
                 let expr_type = self.check_expression(expr)?;
 
@@ -910,12 +1351,141 @@ impl TypeChecker {
                 }
 
                 // Pattern exhaustiveness checking
-                // Note: Full exhaustiveness checking would require tracking all patterns
-                // and ensuring they cover all possible values of the matched type.
-                // For now, we rely on the presence of wildcard patterns or complete coverage.
+                if let CheckerType::Enum(enum_name) = &expr_type {
+                    // Build enum info for exhaustiveness checker
+                    let mut enum_infos = HashMap::new();
+                    for (name, variants) in &self.enums {
+                        let variant_infos: Vec<VariantInfo> = variants.iter().map(|v| {
+                            let arity = match &v.fields {
+                                EnumVariantFields::Unit => 0,
+                                EnumVariantFields::Tuple(types) => types.len(),
+                                EnumVariantFields::Named(fields) => fields.len(),
+                            };
+                            VariantInfo {
+                                name: v.name.clone(),
+                                arity,
+                            }
+                        }).collect();
+                        
+                        enum_infos.insert(name.clone(), EnumInfo {
+                            name: name.clone(),
+                            variants: variant_infos,
+                        });
+                    }
+                    
+                    let exhaustiveness_checker = ExhaustivenessChecker::new(enum_infos);
+                    let patterns: Vec<Pattern> = arms.iter().map(|arm| arm.pattern.clone()).collect();
+                    exhaustiveness_checker.check_match(enum_name, &patterns, *span)?;
+                }
 
                 Ok(())
             }
+            Stmt::Unsafe { body, .. } => {
+                // Enter unsafe context
+                self.unsafe_depth += 1;
+                
+                // Type check body in new scope
+                self.symbols.enter_scope();
+                for stmt in body {
+                    self.check_statement(stmt)?;
+                }
+                self.symbols.exit_scope();
+                
+                // Exit unsafe context
+                self.unsafe_depth -= 1;
+                
+                Ok(())
+            }
+        }
+    }
+    
+    /// Substitute type parameters in a type with concrete types
+    fn substitute_type_params(
+        &self,
+        ty: &crate::ast::Type,
+        type_params: &[String],
+        concrete_types: &[CheckerType],
+    ) -> Result<CheckerType> {
+        match ty {
+            crate::ast::Type::TypeParam(name) => {
+                // Find the index of this type parameter
+                if let Some(idx) = type_params.iter().position(|p| p == name) {
+                    if idx < concrete_types.len() {
+                        Ok(concrete_types[idx].clone())
+                    } else {
+                        Err(CompileError::Generic(
+                            format!("Type parameter {} not found in substitution", name)
+                        ))
+                    }
+                } else {
+                    Err(CompileError::Generic(
+                        format!("Unknown type parameter: {}", name)
+                    ))
+                }
+            }
+            crate::ast::Type::Custom(name) => {
+                // Check if this custom type is actually a type parameter
+                if let Some(idx) = type_params.iter().position(|p| p == name) {
+                    if idx < concrete_types.len() {
+                        Ok(concrete_types[idx].clone())
+                    } else {
+                        Err(CompileError::Generic(
+                            format!("Type parameter {} not found in substitution", name)
+                        ))
+                    }
+                } else {
+                    // Not a type parameter, just a regular custom type
+                    Ok(CheckerType::from(ty))
+                }
+            }
+            // For other types, just convert normally
+            _ => Ok(CheckerType::from(ty)),
+        }
+    }
+
+    /// Substitute type parameters in a type using a substitution map
+    fn substitute_type_params_map(
+        &self,
+        ty: &crate::ast::Type,
+        substitutions: &std::collections::HashMap<String, crate::ast::Type>,
+    ) -> crate::ast::Type {
+        match ty {
+            crate::ast::Type::TypeParam(name) | crate::ast::Type::Custom(name) => {
+                // Check if this is a type parameter that should be substituted
+                if let Some(replacement) = substitutions.get(name) {
+                    replacement.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            crate::ast::Type::Generic { name, args } => {
+                // Recursively substitute in generic type arguments
+                let new_args: Vec<GenericArg> = args.iter()
+                    .map(|arg| match arg {
+                        GenericArg::Type(t) => GenericArg::Type(self.substitute_type_params_map(t, substitutions)),
+                        GenericArg::Const(c) => GenericArg::Const(c.clone()), // TODO: substitute const params
+                    })
+                    .collect();
+                crate::ast::Type::Generic {
+                    name: name.clone(),
+                    args: new_args,
+                }
+            }
+            crate::ast::Type::Array(elem_type, size) => {
+                crate::ast::Type::Array(
+                    Box::new(self.substitute_type_params_map(elem_type, substitutions)),
+                    size.clone(),
+                )
+            }
+            crate::ast::Type::Reference { lifetime, inner, mutable } => {
+                crate::ast::Type::Reference {
+                    lifetime: lifetime.clone(),
+                    inner: Box::new(self.substitute_type_params_map(inner, substitutions)),
+                    mutable: *mutable,
+                }
+            }
+            // Other types don't contain type parameters
+            _ => ty.clone(),
         }
     }
 
@@ -1160,7 +1730,7 @@ impl TypeChecker {
                     }
                 }
 
-                Ok(CheckerType::Array(Box::new(elem_type), elements.len()))
+                Ok(CheckerType::Array(Box::new(elem_type), ArraySizeValue::Literal(elements.len())))
             }
             Expr::ArrayRepeat { value, count, .. } => {
                 // Type check the value
@@ -1174,7 +1744,7 @@ impl TypeChecker {
                                 "Array size must be non-negative".to_string(),
                             ));
                         }
-                        Ok(CheckerType::Array(Box::new(elem_type), *n as usize))
+                        Ok(CheckerType::Array(Box::new(elem_type), ArraySizeValue::Literal(*n as usize)))
                     }
                     _ => Err(CompileError::Generic(
                         "Array repeat count must be an integer literal".to_string(),
@@ -1205,7 +1775,156 @@ impl TypeChecker {
                 }
             }
             Expr::StructLiteral { name, fields, .. } => {
-                // Look up the struct definition
+                // First check if this is a generic struct
+                if let Some(generic_struct) = self.generic_structs.get(name).cloned() {
+                    // For generic structs, we need to infer type parameters from field values
+                    let mut type_substitutions: HashMap<String, CheckerType> = HashMap::new();
+                    
+                    // First pass: check that all provided fields are valid
+                    for (field_name, _) in fields {
+                        // Find the field's declared type in the generic struct
+                        generic_struct.fields.iter()
+                            .find(|(fname, _)| fname == field_name)
+                            .ok_or_else(|| {
+                                CompileError::Generic(format!(
+                                    "Unknown field '{}' for struct '{}'",
+                                    field_name, name
+                                ))
+                            })?;
+                    }
+                    
+                    // Second pass: collect type constraints from field values
+                    for (field_name, field_expr) in fields {
+                        // Find the field's declared type in the generic struct
+                        let field_type = generic_struct.fields.iter()
+                            .find(|(fname, _)| fname == field_name)
+                            .map(|(_, ftype)| ftype)
+                            .unwrap(); // Safe because we checked in first pass
+                        
+                        // Type check the field expression
+                        let provided_type = self.check_expression(field_expr)?;
+                        
+                        // If the field type is a type parameter, record the constraint
+                        if let crate::ast::Type::TypeParam(param_name) = field_type {
+                            if generic_struct.type_params.contains(param_name) {
+                                // Check if we already have a constraint for this type parameter
+                                if let Some(existing_type) = type_substitutions.get(param_name) {
+                                    if *existing_type != provided_type {
+                                        return Err(CompileError::Generic(format!(
+                                            "Conflicting type constraints for type parameter '{}': {} vs {}",
+                                            param_name, existing_type, provided_type
+                                        )));
+                                    }
+                                } else {
+                                    type_substitutions.insert(param_name.clone(), provided_type);
+                                }
+                            }
+                        } else if let crate::ast::Type::Custom(type_name) = field_type {
+                            // Check if it's a type parameter referenced as Custom type
+                            if generic_struct.type_params.contains(type_name) {
+                                if let Some(existing_type) = type_substitutions.get(type_name) {
+                                    if *existing_type != provided_type {
+                                        return Err(CompileError::Generic(format!(
+                                            "Conflicting type constraints for type parameter '{}': {} vs {}",
+                                            type_name, existing_type, provided_type
+                                        )));
+                                    }
+                                } else {
+                                    type_substitutions.insert(type_name.clone(), provided_type);
+                                }
+                            }
+                        }
+                        // TODO: Handle nested generic types like Box<T> where T needs to be inferred
+                    }
+                    
+                    // Check that all type parameters have been inferred
+                    let mut inferred_args = Vec::new();
+                    for type_param in &generic_struct.type_params {
+                        match type_substitutions.get(type_param) {
+                            Some(inferred_type) => {
+                                inferred_args.push(inferred_type.clone());
+                            }
+                            None => {
+                                return Err(CompileError::Generic(format!(
+                                    "Could not infer type parameter '{}' for struct '{}'",
+                                    type_param, name
+                                )));
+                            }
+                        }
+                    }
+                    
+                    // Check that all required fields are provided
+                    for (field_name, field_type) in &generic_struct.fields {
+                        let provided_expr = fields
+                            .iter()
+                            .find(|(fname, _)| fname == field_name)
+                            .map(|(_, expr)| expr)
+                            .ok_or_else(|| {
+                                CompileError::Generic(format!(
+                                    "Missing field '{}' in struct literal",
+                                    field_name
+                                ))
+                            })?;
+                        
+                        // Substitute type parameters in the field type
+                        let concrete_checker_type = self.substitute_type_params(field_type, &generic_struct.type_params, &inferred_args)?;
+                        
+                        // Type check the field with the concrete type
+                        let provided_type = self.check_expression(provided_expr)?;
+                        if provided_type != concrete_checker_type {
+                            return Err(CompileError::TypeMismatch {
+                                expected: concrete_checker_type.to_string(),
+                                found: provided_type.to_string(),
+                                span: None,
+                            });
+                        }
+                    }
+                    
+                    // Track this instantiation for code generation
+                    let type_arg_strings: Vec<String> = inferred_args.iter().map(|ct| {
+                        match ct {
+                            CheckerType::Int => "i64".to_string(),
+                            CheckerType::Bool => "bool".to_string(),
+                            CheckerType::String => "String".to_string(),
+                            CheckerType::Struct(name) => name.clone(),
+                            CheckerType::Generic { name, args } => {
+                                // Handle nested generics like Box<Box<Int>>
+                                let arg_strs: Vec<String> = args.iter().map(|a| match a {
+                                    GenericArgValue::Type(t) => match t {
+                                        CheckerType::Int => "i64".to_string(),
+                                        CheckerType::Bool => "bool".to_string(),
+                                        CheckerType::String => "String".to_string(),
+                                        CheckerType::Struct(n) => n.clone(),
+                                        _ => "Unknown".to_string(),
+                                    },
+                                    GenericArgValue::Const(c) => match c {
+                                        ConstValueResolved::Integer(n) => n.to_string(),
+                                        ConstValueResolved::ConstParam(name) => name.clone(),
+                                    },
+                                }).collect();
+                                format!("{}<{}>", name, arg_strs.join(", "))
+                            }
+                            _ => "Unknown".to_string(),
+                        }
+                    }).collect();
+                    
+                    let instantiation = StructInstantiation {
+                        name: name.clone(),
+                        type_args: type_arg_strings,
+                    };
+                    
+                    let instantiated_type = CheckerType::Generic {
+                        name: name.clone(),
+                        args: inferred_args.iter().map(|t| GenericArgValue::Type(t.clone())).collect(),
+                    };
+                    
+                    self.struct_instantiations.insert(instantiation, instantiated_type.clone());
+                    
+                    // Return the generic struct type with inferred type arguments
+                    return Ok(instantiated_type);
+                }
+                
+                // Look up the non-generic struct definition
                 let struct_fields = self
                     .structs
                     .get(name)
@@ -1254,35 +1973,71 @@ impl TypeChecker {
                 // Type check the object expression
                 let object_type = self.check_expression(object)?;
 
-                // Get the struct name and check if it exists
-                let struct_name = match object_type {
-                    CheckerType::Struct(name) => name,
+                match &object_type {
+                    // Handle non-generic structs
+                    CheckerType::Struct(name) => {
+                        // Look up the struct fields
+                        let fields = self.structs.get(name).ok_or_else(|| {
+                            CompileError::Generic(format!("Unknown struct type: {}", name))
+                        })?;
+
+                        // Find the field type
+                        let field_type = fields
+                            .iter()
+                            .find(|(fname, _)| fname == field)
+                            .map(|(_, ftype)| ftype.clone())
+                            .ok_or_else(|| {
+                                CompileError::Generic(format!(
+                                    "Struct '{}' has no field '{}'",
+                                    name, field
+                                ))
+                            })?;
+
+                        Ok(field_type)
+                    }
+                    // Handle generic struct instances
+                    CheckerType::Generic { name, args } => {
+                        // Look up the generic struct definition
+                        let generic_struct = self.generic_structs.get(name).ok_or_else(|| {
+                            CompileError::Generic(format!("Unknown generic struct type: {}", name))
+                        })?;
+
+                        // Find the field's declared type
+                        let field_type = generic_struct.fields
+                            .iter()
+                            .find(|(fname, _)| fname == field)
+                            .map(|(_, ftype)| ftype)
+                            .ok_or_else(|| {
+                                CompileError::Generic(format!(
+                                    "Struct '{}' has no field '{}'",
+                                    name, field
+                                ))
+                            })?;
+
+                        // Extract types from generic args
+                        let concrete_types: Vec<CheckerType> = args.iter()
+                            .filter_map(|arg| match arg {
+                                GenericArgValue::Type(t) => Some(t.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                        
+                        // Substitute type parameters in the field type
+                        let concrete_field_type = self.substitute_type_params(
+                            field_type, 
+                            &generic_struct.type_params, 
+                            &concrete_types
+                        )?;
+
+                        Ok(concrete_field_type)
+                    }
                     _ => {
-                        return Err(CompileError::Generic(format!(
+                        Err(CompileError::Generic(format!(
                             "Cannot access field on non-struct type: {}",
                             object_type
-                        )));
+                        )))
                     }
-                };
-
-                // Look up the struct fields
-                let fields = self.structs.get(&struct_name).ok_or_else(|| {
-                    CompileError::Generic(format!("Unknown struct type: {}", struct_name))
-                })?;
-
-                // Find the field type
-                let field_type = fields
-                    .iter()
-                    .find(|(fname, _)| fname == field)
-                    .map(|(_, ftype)| ftype.clone())
-                    .ok_or_else(|| {
-                        CompileError::Generic(format!(
-                            "Struct '{}' has no field '{}'",
-                            struct_name, field
-                        ))
-                    })?;
-
-                Ok(field_type)
+                }
             }
             Expr::EnumConstructor {
                 enum_name,
@@ -1291,7 +2046,63 @@ impl TypeChecker {
                 ..
             } => {
                 // Type check enum constructors
-                // First check if the enum exists
+                // First check if the enum exists (could be generic or regular)
+                if let Some(generic_enum) = self.generic_enums.get(enum_name).cloned() {
+                    // Handle generic enum - infer type parameters from constructor arguments
+                    let mut inferred_types = Vec::new();
+                    
+                    // Find the variant in the generic enum definition
+                    let variant_data = generic_enum.variants.iter()
+                        .find(|(v_name, _)| v_name == variant)
+                        .map(|(_, data)| data)
+                        .ok_or_else(|| {
+                            CompileError::Generic(format!("Unknown variant {}::{}", enum_name, variant))
+                        })?;
+                    
+                    // Infer type parameters from constructor arguments
+                    match (variant_data, data.as_ref()) {
+                        (crate::ast::EnumVariantData::Tuple(param_types), Some(crate::ast::EnumConstructorData::Tuple(arg_exprs))) => {
+                            // For each type parameter in the variant, infer from arguments
+                            for (param_type, arg_expr) in param_types.iter().zip(arg_exprs) {
+                                let arg_type = self.check_expression(arg_expr)?;
+                                
+                                // If the parameter type is a type parameter, record the inferred type
+                                let is_type_param = match param_type {
+                                    crate::ast::Type::TypeParam(param_name) => Some(param_name),
+                                    crate::ast::Type::Custom(param_name) if generic_enum.type_params.contains(param_name) => Some(param_name),
+                                    _ => None,
+                                };
+                                
+                                if let Some(param_name) = is_type_param {
+                                    // Find the index of this type parameter
+                                    if let Some(idx) = generic_enum.type_params.iter().position(|p| p == param_name) {
+                                        // Ensure we have enough slots
+                                        while inferred_types.len() <= idx {
+                                            inferred_types.push(CheckerType::Unit); // placeholder
+                                        }
+                                        inferred_types[idx] = arg_type;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            // For other cases, we can't infer yet
+                            // Return a basic enum type for now
+                        }
+                    }
+                    
+                    // If we inferred any types, return a generic type
+                    if !inferred_types.is_empty() {
+                        return Ok(CheckerType::Generic {
+                            name: enum_name.clone(),
+                            args: inferred_types.iter().map(|t| GenericArgValue::Type(t.clone())).collect(),
+                        });
+                    } else {
+                        // No type parameters inferred, return basic enum
+                        return Ok(CheckerType::Enum(enum_name.clone()));
+                    }
+                }
+                
                 if !self.enums.contains_key(enum_name) {
                     return Err(CompileError::Generic(format!(
                         "Undefined enum type: {}",
@@ -1418,7 +2229,7 @@ impl TypeChecker {
 
                 // Range expressions have a special internal type
                 // For now, we'll treat them as arrays when used in for loops
-                Ok(CheckerType::Array(Box::new(CheckerType::Int), 0))
+                Ok(CheckerType::Array(Box::new(CheckerType::Int), ArraySizeValue::Literal(0)))
             }
             Expr::Unary { op, operand, .. } => {
                 let operand_type = self.check_expression(operand)?;
@@ -1448,6 +2259,125 @@ impl TypeChecker {
                     }
                 }
             }
+            Expr::Reference { mutable: _, expr, .. } => {
+                // Type check the inner expression
+                let inner_type = self.check_expression(expr)?;
+                
+                // For now, references have the same type as their inner value
+                // TODO: Proper reference type handling
+                Ok(inner_type)
+            }
+            Expr::Deref { expr, .. } => {
+                // Type check the expression being dereferenced
+                let expr_type = self.check_expression(expr)?;
+                
+                // For now, assume dereference returns the same type
+                // TODO: Proper reference type handling - should check that expr_type is a reference
+                Ok(expr_type)
+            }
+            Expr::Question { expr, .. } => {
+                // Type check the expression
+                let expr_type = self.check_expression(expr)?;
+                
+                // The expression must be a Result<T, E> type
+                match &expr_type {
+                    CheckerType::Generic { name, args } if name == "Result" && args.len() == 2 => {
+                        // Extract the Ok type (T) and Error type (E) from Result<T, E>
+                        let ok_type = &args[0];
+                        let err_type = &args[1];
+                        
+                        // Check that the current function returns a Result type
+                        if let Some(return_type) = &self.current_function_return {
+                            match return_type {
+                                CheckerType::Generic { name: ret_name, args: ret_args } 
+                                    if ret_name == "Result" && ret_args.len() == 2 => {
+                                    // Check that error types match
+                                    let ret_err_type = &ret_args[1];
+                                    if err_type != ret_err_type {
+                                        let ret_err_str = match ret_err_type {
+                                            GenericArgValue::Type(t) => self.checker_type_to_string(t),
+                                            GenericArgValue::Const(c) => match c {
+                                                ConstValueResolved::Integer(n) => n.to_string(),
+                                                ConstValueResolved::ConstParam(name) => name.clone(),
+                                            }
+                                        };
+                                        let err_str = match err_type {
+                                            GenericArgValue::Type(t) => self.checker_type_to_string(t),
+                                            GenericArgValue::Const(c) => match c {
+                                                ConstValueResolved::Integer(n) => n.to_string(),
+                                                ConstValueResolved::ConstParam(name) => name.clone(),
+                                            }
+                                        };
+                                        let ok_str = match ok_type {
+                                            GenericArgValue::Type(t) => self.checker_type_to_string(t),
+                                            GenericArgValue::Const(c) => match c {
+                                                ConstValueResolved::Integer(n) => n.to_string(),
+                                                ConstValueResolved::ConstParam(name) => name.clone(),
+                                            }
+                                        };
+                                        return Err(CompileError::TypeMismatch {
+                                            expected: format!("Result<_, {}>", ret_err_str),
+                                            found: format!("Result<{}, {}>", ok_str, err_str),
+                                            span: None,
+                                        });
+                                    }
+                                    
+                                    // Return the Ok type
+                                    match ok_type {
+                                        GenericArgValue::Type(t) => Ok(t.clone()),
+                                        _ => Err(CompileError::Generic("Expected type in Result".to_string()))
+                                    }
+                                }
+                                _ => Err(CompileError::Generic(
+                                    "The ? operator can only be used in functions that return Result".to_string()
+                                ))
+                            }
+                        } else {
+                            Err(CompileError::Generic(
+                                "The ? operator can only be used inside a function".to_string()
+                            ))
+                        }
+                    }
+                    CheckerType::Enum(name) if name == "Result" => {
+                        // Handle non-generic Result (shouldn't happen in practice)
+                        Err(CompileError::Generic(
+                            "Result type must have generic parameters".to_string()
+                        ))
+                    }
+                    _ => Err(CompileError::TypeMismatch {
+                        expected: "Result<T, E>".to_string(),
+                        found: expr_type.to_string(),
+                        span: None,
+                    })
+                }
+            }
+            Expr::MacroInvocation { .. } => {
+                // Macros should have been expanded before type checking
+                Err(CompileError::Generic(
+                    "Unexpected macro invocation in type checking - macros should be expanded before this phase".to_string()
+                ))
+            }
+            Expr::Await { expr, .. } => {
+                // Check that the expression is a Future type
+                let expr_type = self.check_expression(expr)?;
+                match &expr_type {
+                    CheckerType::Generic { name, args } if name == "Future" && args.len() == 1 => {
+                        // Extract the output type from Future<T>
+                        if let GenericArgValue::Type(output_type) = &args[0] {
+                            Ok(output_type.clone())
+                        } else {
+                            Err(CompileError::Generic(
+                                "Invalid Future type".to_string()
+                            ))
+                        }
+                    }
+                    _ => Err(CompileError::TypeMismatch {
+                        expected: "Future<T>".to_string(),
+                        found: self.checker_type_to_string(&expr_type),
+                        span: None,
+                    })
+                }
+            }
         }
     }
 
@@ -1470,6 +2400,7 @@ impl TypeChecker {
                 // Check that the expected type matches the enum
                 match expected_type {
                     CheckerType::Enum(name) if name == enum_name => Ok(()),
+                    CheckerType::Generic { name, .. } if name == enum_name => Ok(()),
                     _ => Err(CompileError::TypeMismatch {
                         expected: format!("enum {}", enum_name),
                         found: expected_type.to_string(),
@@ -1509,73 +2440,131 @@ impl TypeChecker {
                 // Bind variables from nested patterns
                 if let Some(pattern_data) = data {
                     // Get enum variant info to determine field types
-                    if let CheckerType::Enum(expected_enum) = value_type {
-                        if expected_enum != enum_name {
-                            return Err(CompileError::TypeMismatch {
-                                expected: expected_enum.clone(),
-                                found: enum_name.clone(),
-                                span: None,
-                            });
-                        }
+                    
+                    // Handle both regular and generic enums
+                    match value_type {
+                        CheckerType::Enum(expected_enum) if expected_enum == enum_name => {
+                            // Regular enum - check if it's actually a generic enum
+                            if self.generic_enums.contains_key(enum_name) {
+                                // This shouldn't happen - generic enums should have Generic type
+                                return Err(CompileError::Generic(
+                                    format!("Generic enum {} used without type parameters", enum_name)
+                                ));
+                            }
+                            
+                            // Handle regular enum
+                            let variants = self.enums.get(enum_name).ok_or_else(|| {
+                                CompileError::Generic(format!("Undefined enum type: {}", enum_name))
+                            })?.clone();
 
-                        // Find the variant
-                        let variants = self.enums.get(enum_name).ok_or_else(|| {
-                            CompileError::Generic(format!("Undefined enum type: {}", enum_name))
-                        })?;
+                            let variant_info = variants
+                                .iter()
+                                .find(|v| &v.name == variant)
+                                .ok_or_else(|| {
+                                    CompileError::Generic(format!(
+                                        "Unknown variant {}::{}",
+                                        enum_name, variant
+                                    ))
+                                })?.clone();
 
-                        let variant_info = variants
-                            .iter()
-                            .find(|v| &v.name == variant)
-                            .ok_or_else(|| {
-                                CompileError::Generic(format!(
-                                    "Unknown variant {}::{}",
-                                    enum_name, variant
-                                ))
-                            })?;
+                            match (pattern_data, &variant_info.fields) {
+                                (
+                                    PatternData::Tuple(patterns),
+                                    EnumVariantFields::Tuple(field_types),
+                                ) => {
+                                    // Bind each tuple pattern with its corresponding type
+                                    if patterns.len() != field_types.len() {
+                                        return Err(CompileError::Generic(format!(
+                                            "Pattern has wrong number of fields for {}::{}",
+                                            enum_name, variant
+                                        )));
+                                    }
 
-                        match (pattern_data, &variant_info.fields) {
-                            (
-                                PatternData::Tuple(patterns),
-                                EnumVariantFields::Tuple(field_types),
-                            ) => {
-                                // Bind each tuple pattern with its corresponding type
-                                if patterns.len() != field_types.len() {
+                                    for (pattern, field_type) in patterns.iter().zip(field_types) {
+                                        self.bind_pattern_variables(pattern, field_type)?;
+                                    }
+                                }
+                                (
+                                    PatternData::Struct(field_patterns),
+                                    EnumVariantFields::Named(expected_fields),
+                                ) => {
+                                    // Bind each struct field pattern with its type
+                                    for (field_name, pattern) in field_patterns {
+                                        let field_type = expected_fields
+                                            .iter()
+                                            .find(|(name, _)| name == field_name)
+                                            .map(|(_, ty)| ty)
+                                            .ok_or_else(|| {
+                                                CompileError::Generic(format!(
+                                                    "Unknown field {} in {}::{}",
+                                                    field_name, enum_name, variant
+                                                ))
+                                            })?;
+
+                                        self.bind_pattern_variables(pattern, field_type)?;
+                                    }
+                                }
+                                _ => {
                                     return Err(CompileError::Generic(format!(
-                                        "Pattern has wrong number of fields for {}::{}",
+                                        "Pattern structure doesn't match variant {}::{}",
                                         enum_name, variant
                                     )));
                                 }
-
-                                for (pattern, field_type) in patterns.iter().zip(field_types) {
-                                    self.check_pattern(pattern, field_type)?;
+                            }
+                        }
+                        CheckerType::Generic { name, args } if name == enum_name => {
+                            // Generic enum with type arguments
+                            if let Some(generic_enum) = self.generic_enums.get(enum_name).cloned() {
+                                // Find the variant
+                                let variant_data = generic_enum.variants.iter()
+                                    .find(|(v_name, _)| v_name == variant)
+                                    .map(|(_, data)| data)
+                                    .ok_or_else(|| {
+                                        CompileError::Generic(format!("Unknown variant {}::{}", enum_name, variant))
+                                    })?;
+                                
+                                // Bind pattern variables based on variant data
+                                match (pattern_data, variant_data) {
+                                    (PatternData::Tuple(patterns), crate::ast::EnumVariantData::Tuple(param_types)) => {
+                                        if patterns.len() != param_types.len() {
+                                            return Err(CompileError::Generic(format!(
+                                                "Pattern has wrong number of fields for {}::{}",
+                                                enum_name, variant
+                                            )));
+                                        }
+                                        
+                                        // For each pattern, determine its type by substituting type parameters
+                                        let type_params = generic_enum.type_params.clone();
+                                        for (pattern, param_type) in patterns.iter().zip(param_types) {
+                                            // Extract types from generic args
+                                            let concrete_types: Vec<CheckerType> = args.iter()
+                                                .filter_map(|arg| match arg {
+                                                    GenericArgValue::Type(t) => Some(t.clone()),
+                                                    _ => None,
+                                                })
+                                                .collect();
+                                            let concrete_type = self.substitute_type_params(param_type, &type_params, &concrete_types)?;
+                                            self.bind_pattern_variables(pattern, &concrete_type)?;
+                                        }
+                                        return Ok(());
+                                    }
+                                    _ => {
+                                        // TODO: Handle other pattern types
+                                        return Ok(());
+                                    }
                                 }
+                            } else {
+                                return Err(CompileError::Generic(
+                                    format!("Generic enum {} not found in definitions", enum_name)
+                                ));
                             }
-                            (
-                                PatternData::Struct(field_patterns),
-                                EnumVariantFields::Named(expected_fields),
-                            ) => {
-                                // Bind each struct field pattern with its type
-                                for (field_name, pattern) in field_patterns {
-                                    let field_type = expected_fields
-                                        .iter()
-                                        .find(|(name, _)| name == field_name)
-                                        .map(|(_, ty)| ty)
-                                        .ok_or_else(|| {
-                                            CompileError::Generic(format!(
-                                                "Unknown field {} in {}::{}",
-                                                field_name, enum_name, variant
-                                            ))
-                                        })?;
-
-                                    self.check_pattern(pattern, field_type)?;
-                                }
-                            }
-                            _ => {
-                                return Err(CompileError::Generic(format!(
-                                    "Pattern structure doesn't match variant {}::{}",
-                                    enum_name, variant
-                                )));
-                            }
+                        }
+                        _ => {
+                            return Err(CompileError::TypeMismatch {
+                                expected: format!("enum {}", enum_name),
+                                found: value_type.to_string(),
+                                span: None,
+                            });
                         }
                     }
                 }
@@ -1767,6 +2756,19 @@ impl TypeChecker {
                     self.checker_type_to_string(ret)
                 )
             }
+            CheckerType::Generic { name, args } => {
+                let arg_strs: Vec<String> = args
+                    .iter()
+                    .map(|a| match a {
+                        GenericArgValue::Type(t) => self.checker_type_to_string(t),
+                        GenericArgValue::Const(c) => match c {
+                            ConstValueResolved::Integer(n) => n.to_string(),
+                            ConstValueResolved::ConstParam(name) => name.clone(),
+                        }
+                    })
+                    .collect();
+                format!("{}<{}>", name, arg_strs.join(", "))
+            }
         }
     }
 
@@ -1832,7 +2834,15 @@ impl TypeChecker {
             }
             crate::ast::Type::Array(elem_type, size) => {
                 let substituted_elem = self.substitute_type(elem_type, subst_map)?;
-                Ok(crate::ast::Type::Array(Box::new(substituted_elem), *size))
+                Ok(crate::ast::Type::Array(Box::new(substituted_elem), size.clone()))
+            }
+            crate::ast::Type::Reference { lifetime, mutable, inner } => {
+                let substituted_inner = self.substitute_type(inner, subst_map)?;
+                Ok(crate::ast::Type::Reference {
+                    lifetime: lifetime.clone(),
+                    mutable: *mutable,
+                    inner: Box::new(substituted_inner),
+                })
             }
             _ => Ok(ty.clone()),
         }
@@ -1894,6 +2904,23 @@ impl TypeChecker {
 
         result
     }
+    
+    /// Get all generic struct instantiations for code generation
+    pub fn get_struct_instantiations(&self) -> Vec<(String, Vec<String>, GenericStruct)> {
+        let mut result = Vec::new();
+
+        for instantiation in self.struct_instantiations.keys() {
+            if let Some(generic_struct) = self.generic_structs.get(&instantiation.name) {
+                result.push((
+                    instantiation.name.clone(),
+                    instantiation.type_args.clone(),
+                    generic_struct.clone(),
+                ));
+            }
+        }
+
+        result
+    }
 
     /// Get all available variable names for suggestions
     fn get_available_variables(&self) -> Vec<String> {
@@ -1920,6 +2947,11 @@ impl TypeChecker {
         types.extend(self.structs.keys().cloned());
         types.extend(self.enums.keys().cloned());
         types
+    }
+
+    /// Check if we're currently in an unsafe context
+    pub fn in_unsafe_context(&self) -> bool {
+        self.unsafe_depth > 0
     }
 }
 
@@ -2443,5 +3475,134 @@ mod tests {
 
         let mut type_checker = TypeChecker::new();
         assert!(type_checker.check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_exhaustive_enum_match() {
+        let source = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+        
+        fn main() {
+            let c = Color::Red;
+            
+            match c {
+                Color::Red => print("red"),
+                Color::Green => print("green"),
+                Color::Blue => print("blue"),
+            }
+        }
+        "#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_non_exhaustive_enum_match() {
+        let source = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+        
+        fn main() {
+            let c = Color::Red;
+            
+            match c {
+                Color::Red => print("red"),
+                Color::Green => print("green"),
+                // Missing Blue!
+            }
+        }
+        "#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+
+        let mut type_checker = TypeChecker::new();
+        let result = type_checker.check(&ast);
+        assert!(result.is_err());
+        
+        if let Err(CompileError::NonExhaustiveMatch { missing_patterns, .. }) = result {
+            assert!(missing_patterns.contains(&"Color::Blue".to_string()));
+        } else {
+            panic!("Expected NonExhaustiveMatch error");
+        }
+    }
+
+    #[test]
+    fn test_wildcard_makes_match_exhaustive() {
+        let source = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+        
+        fn main() {
+            let c = Color::Red;
+            
+            match c {
+                Color::Red => print("red"),
+                _ => print("other"),
+            }
+        }
+        "#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+
+        let mut type_checker = TypeChecker::new();
+        assert!(type_checker.check(&ast).is_ok());
+    }
+
+    #[test]
+    fn test_unreachable_pattern_after_wildcard() {
+        let source = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+        
+        fn main() {
+            let c = Color::Red;
+            
+            match c {
+                Color::Red => print("red"),
+                _ => print("any"),
+                Color::Blue => print("blue"), // Unreachable!
+            }
+        }
+        "#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+
+        let mut type_checker = TypeChecker::new();
+        let result = type_checker.check(&ast);
+        assert!(result.is_err());
+        
+        if let Err(CompileError::UnreachablePattern { .. }) = result {
+            // Expected
+        } else {
+            panic!("Expected UnreachablePattern error");
+        }
     }
 }
