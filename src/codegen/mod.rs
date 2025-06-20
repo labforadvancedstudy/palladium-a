@@ -693,7 +693,7 @@ impl CodeGenerator {
                 let instantiations = self
                     .generic_struct_instantiation_map
                     .entry(struct_name.clone())
-                    .or_insert_with(Vec::new);
+                    .or_default();
                 instantiations.push((type_args.clone(), concrete_struct.name.clone()));
 
                 self.generate_struct(&concrete_struct)?;
@@ -830,10 +830,7 @@ impl CodeGenerator {
         ));
 
         // First, generate the tag enum
-        self.output.push_str(&format!(
-            "typedef enum {{
-"
-        ));
+        self.output.push_str("typedef enum {\n");
         for variant in &enum_def.variants {
             self.output.push_str(&format!(
                 "    __{}__{},
@@ -855,10 +852,7 @@ impl CodeGenerator {
                 }
                 EnumVariantData::Tuple(types) => {
                     if !types.is_empty() {
-                        self.output.push_str(&format!(
-                            "typedef struct {{
-"
-                        ));
+                        self.output.push_str("typedef struct {\n");
                         for (i, ty) in types.iter().enumerate() {
                             let c_type = self.type_to_c(ty);
                             self.output.push_str(&format!(
@@ -875,10 +869,7 @@ impl CodeGenerator {
                     }
                 }
                 EnumVariantData::Struct(fields) => {
-                    self.output.push_str(&format!(
-                        "typedef struct {{
-"
-                    ));
+                    self.output.push_str("typedef struct {\n");
                     for (field_name, field_type) in fields {
                         let c_type = self.type_to_c(field_type);
                         self.output.push_str(&format!(
@@ -2251,7 +2242,7 @@ impl CodeGenerator {
             .push_str(&format!("// Future struct for async function {}\n", name));
         self.output
             .push_str(&format!("typedef struct {} {{\n", future_name));
-        self.output.push_str(&format!("    int state;\n"));
+        self.output.push_str("    int state;\n");
         if output_type != "void" {
             self.output
                 .push_str(&format!("    {} result;\n", output_type));

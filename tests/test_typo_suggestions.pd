@@ -1,6 +1,0 @@
-// Test typo suggestions
-
-fn main() {
-    // Test function typo
-    printl("Hello"); // Should suggest println
-}

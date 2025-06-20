@@ -1,0 +1,76 @@
+// Test 04: Control Flow - While Loops
+// Tests while loops, break, continue
+
+fn main() {
+    // Basic while loop
+    print("Basic while loop:");
+    let mut i = 0;
+    while i < 5 {
+        print_int(i);
+        i = i + 1;
+    }
+    
+    // While with complex condition
+    print("\nWhile with complex condition:");
+    let mut x = 10;
+    let mut y = 0;
+    while x > 0 && y < 5 {
+        print_int(x);
+        x = x - 2;
+        y = y + 1;
+    }
+    
+    // While with break
+    print("\nWhile with break:");
+    let mut n = 0;
+    while true {
+        if n >= 3 {
+            break;
+        }
+        print_int(n);
+        n = n + 1;
+    }
+    
+    // While with continue
+    print("\nWhile with continue (skip even numbers):");
+    let mut j = 0;
+    while j < 10 {
+        j = j + 1;
+        if j % 2 == 0 {
+            continue;
+        }
+        print_int(j);
+    }
+    
+    // Nested while loops
+    print("\nNested while loops:");
+    let mut outer = 0;
+    while outer < 3 {
+        let mut inner = 0;
+        while inner < 2 {
+            print_int(outer * 10 + inner);
+            inner = inner + 1;
+        }
+        outer = outer + 1;
+    }
+    
+    // While loop with early exit
+    print("\nFind first number divisible by 7:");
+    let mut num = 20;
+    while num < 100 {
+        if num % 7 == 0 {
+            print_int(num);
+            break;
+        }
+        num = num + 1;
+    }
+    
+    // Countdown
+    print("\nCountdown:");
+    let mut count = 5;
+    while count > 0 {
+        print_int(count);
+        count = count - 1;
+    }
+    print("Liftoff!");
+}

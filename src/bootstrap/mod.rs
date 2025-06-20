@@ -31,6 +31,7 @@ impl BootstrapCompiler {
     }
 
     /// Build the bootstrap compiler from source
+    #[allow(dead_code)]
     fn build_bootstrap_compiler() -> Result<Self> {
         println!("🔨 Building bootstrap compiler...");
 
@@ -47,8 +48,13 @@ impl BootstrapCompiler {
 
         // Compile C to executable
         println!("🔗 Compiling bootstrap compiler to native code...");
+        
+        // Get the runtime library path
+        let runtime_path = Path::new("runtime/palladium_runtime.c");
+        
         let gcc_output = Command::new("gcc")
             .arg(output_c)
+            .arg(runtime_path)
             .arg("-o")
             .arg(output_exe)
             .output()
@@ -79,7 +85,7 @@ impl BootstrapCompiler {
         );
 
         // The bootstrap compiler (tiny_v16) reads from stdin and outputs C code
-        let source = fs::read_to_string(source_path).map_err(|e| CompileError::IoError(e))?;
+        let source = fs::read_to_string(source_path).map_err(CompileError::IoError)?;
 
         // Run the bootstrap compiler with source on stdin
         let mut child = Command::new(&self.compiler_path)
@@ -97,7 +103,7 @@ impl BootstrapCompiler {
             let mut stdin = stdin;
             stdin
                 .write_all(source.as_bytes())
-                .map_err(|e| CompileError::IoError(e))?;
+                .map_err(CompileError::IoError)?;
         }
 
         let output = child
@@ -114,7 +120,7 @@ impl BootstrapCompiler {
 
         // Save the generated C code
         let c_output_path = source_path.with_extension("bootstrap.c");
-        fs::write(&c_output_path, &output.stdout).map_err(|e| CompileError::IoError(e))?;
+        fs::write(&c_output_path, &output.stdout).map_err(CompileError::IoError)?;
 
         println!("✅ Bootstrap compilation successful!");
         println!("   Generated C code: {}", c_output_path.display());
@@ -127,9 +133,9 @@ impl BootstrapCompiler {
         match feature {
             "functions" => true,
             "variables" => true,
-            "if_else" => self.version >= "tiny_v14".to_string(),
-            "while_loops" => self.version >= "tiny_v14".to_string(),
-            "arrays" => self.version >= "tiny_v16".to_string(),
+            "if_else" => self.version.as_str() >= "tiny_v14",
+            "while_loops" => self.version.as_str() >= "tiny_v14",
+            "arrays" => self.version.as_str() >= "tiny_v16",
             "structs" => false, // Not yet supported
             "enums" => false,   // Not yet supported
             _ => false,

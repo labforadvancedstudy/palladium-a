@@ -1,0 +1,70 @@
+// Simple Calculator in Palladium
+// Demonstrates basic arithmetic operations and error handling
+
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn subtract(a: i64, b: i64) -> i64 {
+    return a - b;
+}
+
+fn multiply(a: i64, b: i64) -> i64 {
+    return a * b;
+}
+
+fn divide(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        print("Error: Division by zero!");
+        return 0;
+    }
+    return a / b;
+}
+
+fn print_operation(a: i64, b: i64, op: String, result: i64) {
+    print_int(a);
+    print(" ");
+    print(op);
+    print(" ");
+    print_int(b);
+    print(" = ");
+    print_int(result);
+}
+
+fn main() {
+    print("=== Simple Calculator ===");
+    
+    let x = 20;
+    let y = 5;
+    
+    print("\nBasic operations:");
+    print("\n");
+    print_operation(x, y, "+", add(x, y));
+    print("\n");
+    print_operation(x, y, "-", subtract(x, y));
+    print("\n");
+    print_operation(x, y, "*", multiply(x, y));
+    print("\n");
+    print_operation(x, y, "/", divide(x, y));
+    
+    // More examples
+    print("\n\nMore calculations:");
+    let a = 100;
+    let b = 25;
+    
+    print("\n");
+    print_operation(a, b, "+", add(a, b));
+    print("\n");
+    print_operation(a, b, "-", subtract(a, b));
+    print("\n");
+    print_operation(a, b, "*", multiply(a, b));
+    print("\n");
+    print_operation(a, b, "/", divide(a, b));
+    
+    // Division by zero test
+    print("\n\nError handling:");
+    print("\n");
+    let result = divide(10, 0);
+    
+    print("\n=== Calculator complete ===");
+}

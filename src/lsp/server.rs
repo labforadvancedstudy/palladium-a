@@ -14,12 +14,14 @@ pub struct LspServer {
     /// Language server state
     pub(super) server: Arc<Mutex<LanguageServer>>,
     /// Request ID counter
+    #[allow(dead_code)]
     next_id: i64,
 }
 
 /// JSON-RPC request
 #[derive(Debug, Deserialize)]
 struct Request {
+    #[allow(dead_code)]
     jsonrpc: String,
     id: Option<Value>,
     method: String,
@@ -54,19 +56,27 @@ pub struct ResponseError {
 }
 
 // Error codes
+#[allow(dead_code)]
 const PARSE_ERROR: i32 = -32700;
+#[allow(dead_code)]
 const INVALID_REQUEST: i32 = -32600;
 const METHOD_NOT_FOUND: i32 = -32601;
 const INVALID_PARAMS: i32 = -32602;
 const INTERNAL_ERROR: i32 = -32603;
 
-impl LspServer {
-    /// Create a new LSP server
-    pub fn new() -> Self {
+impl Default for LspServer {
+    fn default() -> Self {
         Self {
             server: Arc::new(Mutex::new(LanguageServer::new())),
             next_id: 1,
         }
+    }
+}
+
+impl LspServer {
+    /// Create a new LSP server
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Run the LSP server

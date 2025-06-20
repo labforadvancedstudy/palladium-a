@@ -1,0 +1,35 @@
+// Test 01: Lexical Structure - Literals
+// Tests integer, string, and boolean literals
+
+fn main() {
+    // Integer literals - decimal
+    let dec1 = 42;
+    let dec2 = 1000000;
+    print_int(dec1);
+    print_int(dec2);
+    
+    // Hex and binary literals not yet implemented
+    // TODO: Test these when compiler supports them
+    
+    // String literals
+    let str1 = "Hello, Palladium!";
+    let str2 = "String with\nescape sequences\ttab";
+    let str3 = "Quote \" and backslash \\";
+    print(str1);
+    print(str2);
+    print(str3);
+    
+    // Boolean literals
+    let t = true;
+    let f = false;
+    if t {
+        print("true works");
+    }
+    if !f {
+        print("false works");
+    }
+    
+    // Special string escape
+    let null_char = "null\0terminator";
+    print(null_char);
+}

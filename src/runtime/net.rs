@@ -1,6 +1,8 @@
 // Runtime support for networking operations
 // "Connecting Palladium to the world"
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use std::net::{
     TcpStream as StdTcpStream, TcpListener as StdTcpListener,
     UdpSocket as StdUdpSocket, SocketAddr as StdSocketAddr,

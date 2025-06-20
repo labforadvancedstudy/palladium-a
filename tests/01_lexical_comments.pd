@@ -1,0 +1,39 @@
+// Test 01: Lexical Structure - Comments
+// This file tests various comment styles
+
+// Single line comment
+fn main() {
+    // Comment before statement
+    print("Testing comments");
+    
+    print("Inline comment test"); // This is an inline comment
+    
+    /* Block comment on single line */
+    print("After block comment");
+    
+    /* 
+     * Multi-line
+     * block comment
+     * with multiple lines
+     */
+    print("After multi-line block");
+    
+    // Nested block comments not supported
+    print("After single block comment");
+    
+    let x = 42; // Comment after variable
+    print_int(x);
+    
+    // Comment with special chars: @#$%^&*()_+-=[]{}|;':",./<>?
+    
+    /*
+    let commented_out = "This won't compile";
+    print(commented_out);
+    */
+    
+    // Inline block comments not supported
+    print("String without inline comment");
+    
+    // Unicode in comments: 한글 中文 🎉
+    print("Comments test complete");
+}

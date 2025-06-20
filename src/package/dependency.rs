@@ -171,6 +171,7 @@ pub struct ResolvedDependencies {
 }
 
 /// Dependency resolver using a simple SAT-like approach
+#[derive(Default)]
 pub struct DependencyResolver {
     /// Available packages in the registry
     available_packages: HashMap<String, Vec<Package>>,
@@ -178,9 +179,7 @@ pub struct DependencyResolver {
 
 impl DependencyResolver {
     pub fn new() -> Self {
-        Self {
-            available_packages: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Add a package to the available packages
@@ -273,7 +272,7 @@ impl DependencyResolver {
         // Fill the graph with dependencies
         for package_name in resolved.keys() {
             if let Some(packages) = self.available_packages.get(package_name) {
-                if let Some(package) = packages.iter().find(|p| &p.version == &resolved[package_name])
+                if let Some(package) = packages.iter().find(|p| p.version == resolved[package_name])
                 {
                     for dep_name in package.dependencies.keys() {
                         if resolved.contains_key(dep_name) {

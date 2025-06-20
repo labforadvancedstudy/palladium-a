@@ -14,6 +14,7 @@ use std::collections::HashMap;
 /// Parsed macro definition
 #[derive(Clone)]
 struct ParsedMacro {
+    #[allow(dead_code)]
     name: String,
     pattern: Vec<PatternElement>,
     template: Vec<Token>,
@@ -256,6 +257,7 @@ impl MacroExpander {
     }
 
     /// Tokenize a pattern string
+    #[allow(dead_code)]
     fn tokenize_pattern(&self, pattern: &str) -> Result<Vec<Token>> {
         let mut lexer = Lexer::new(pattern);
         let tokens_with_spans = lexer.collect_tokens()?;
@@ -266,6 +268,7 @@ impl MacroExpander {
     }
 
     /// Tokenize a template string
+    #[allow(dead_code)]
     fn tokenize_template(&self, template: &str) -> Result<Vec<Token>> {
         let mut lexer = Lexer::new(template);
         let tokens_with_spans = lexer.collect_tokens()?;
@@ -276,6 +279,7 @@ impl MacroExpander {
     }
 
     /// Convert AST tokens to lexer tokens
+    #[allow(clippy::only_used_in_recursion)]
     fn convert_ast_tokens_to_lexer_tokens(
         &self,
         ast_tokens: &[crate::ast::Token],
@@ -517,22 +521,10 @@ impl MacroExpander {
             Expr::FieldAccess { object, .. } => {
                 self.expand_expr(object)?;
             }
-            Expr::EnumConstructor { data, .. } => {
-                if let Some(data) = data {
-                    match data {
-                        crate::ast::EnumConstructorData::Tuple(exprs) => {
-                            for e in exprs {
-                                self.expand_expr(e)?;
-                            }
-                        }
-                        crate::ast::EnumConstructorData::Struct(fields) => {
-                            for (_, e) in fields {
-                                self.expand_expr(e)?;
-                            }
-                        }
-                    }
-                }
+            Expr::EnumConstructor { data: Some(data), .. } => {
+                self.expand_enum_constructor_data(data)?;
             }
+            Expr::EnumConstructor { data: None, .. } => {}
             Expr::Range { start, end, .. } => {
                 self.expand_expr(start)?;
                 self.expand_expr(end)?;
@@ -548,6 +540,23 @@ impl MacroExpander {
             }
             // Literals don't need expansion
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// Helper method to expand enum constructor data
+    fn expand_enum_constructor_data(&mut self, data: &mut crate::ast::EnumConstructorData) -> Result<()> {
+        match data {
+            crate::ast::EnumConstructorData::Tuple(exprs) => {
+                for e in exprs {
+                    self.expand_expr(e)?;
+                }
+            }
+            crate::ast::EnumConstructorData::Struct(fields) => {
+                for (_, e) in fields {
+                    self.expand_expr(e)?;
+                }
+            }
         }
         Ok(())
     }

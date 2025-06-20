@@ -81,7 +81,7 @@ impl LLVMCodeGenerator {
             match item {
                 Item::Function(func) => {
                     ir.push_str(&self.generate_function(func)?);
-                    ir.push_str("\n");
+                    ir.push('\n');
                 }
                 _ => {
                     // Skip other items for now
@@ -237,6 +237,7 @@ impl LLVMCodeGenerator {
 
     /// Generate LLVM IR for an expression
     /// Returns (IR code, result variable/value)
+    #[allow(clippy::only_used_in_recursion)]
     fn generate_expression(&self, expr: &Expr, var_counter: &mut i32) -> Result<(String, String)> {
         let mut ir = String::new();
 

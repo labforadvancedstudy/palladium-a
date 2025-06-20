@@ -1,0 +1,96 @@
+// Prime Number Checker in Palladium
+// Demonstrates loops, conditionals, and mathematical operations
+
+fn is_prime(n: i64) -> bool {
+    // Handle special cases
+    if n <= 1 {
+        return false;
+    }
+    if n <= 3 {
+        return true;
+    }
+    if n % 2 == 0 || n % 3 == 0 {
+        return false;
+    }
+    
+    // Check for divisors up to sqrt(n)
+    // We'll check up to n/2 for simplicity (no sqrt function)
+    let mut i = 5;
+    while i * i <= n {
+        if n % i == 0 || n % (i + 2) == 0 {
+            return false;
+        }
+        i = i + 6;
+    }
+    
+    return true;
+}
+
+fn find_primes_up_to(limit: i64) {
+    print("Prime numbers up to ");
+    print_int(limit);
+    print(":");
+    
+    let mut count = 0;
+    for n in 2..(limit + 1) {
+        if is_prime(n) {
+            print("\n");
+            print_int(n);
+            count = count + 1;
+        }
+    }
+    
+    print("\n\nTotal primes found: ");
+    print_int(count);
+}
+
+fn check_number(n: i64) {
+    print("\nIs ");
+    print_int(n);
+    print(" prime? ");
+    
+    if is_prime(n) {
+        print("Yes");
+    } else {
+        print("No");
+        
+        // Find factors
+        print(" (factors: ");
+        let mut first = true;
+        for i in 2..n {
+            if n % i == 0 {
+                if !first {
+                    print(", ");
+                }
+                print_int(i);
+                first = false;
+            }
+        }
+        print(")");
+    }
+}
+
+fn main() {
+    print("=== Prime Number Checker ===");
+    
+    // Check specific numbers
+    print("\n\nChecking specific numbers:");
+    check_number(2);
+    check_number(17);
+    check_number(20);
+    check_number(29);
+    check_number(100);
+    
+    // Find all primes up to 50
+    print("\n\n");
+    find_primes_up_to(50);
+    
+    // Check larger primes
+    print("\n\nChecking larger numbers:");
+    check_number(97);
+    check_number(101);
+    check_number(121);  // 11 * 11
+    check_number(127);
+    
+    print("\n\n=== Prime checker complete ===");
+}

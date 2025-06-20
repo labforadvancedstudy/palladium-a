@@ -1,0 +1,63 @@
+// Test 05: Ownership - Basic Ownership Rules
+// Tests move semantics and ownership transfer
+
+struct Data {
+    value: i64,
+}
+
+fn take_ownership(data: Data) {
+    print("\nInside take_ownership:");
+    print_int(data.value);
+    // data is dropped here
+}
+
+fn give_ownership_back(data: Data) -> Data {
+    print("\nInside give_ownership_back:");
+    print_int(data.value);
+    return data;  // Ownership transferred back
+}
+
+fn create_data(val: i64) -> Data {
+    let d = Data { value: val };
+    return d;  // Ownership transferred to caller
+}
+
+fn main() {
+    // Basic ownership - integers are Copy
+    let x = 42;
+    let y = x;  // Copy, not move
+    print("After copy:");
+    print_int(x);  // x is still valid
+    print_int(y);
+    
+    // Ownership transfer with structs
+    let data1 = Data { value: 100 };
+    // Move semantics not yet implemented for structs
+    print("\nStruct value:");
+    print_int(data1.value);
+    
+    // Ownership in function calls
+    let data3 = Data { value: 200 };
+    take_ownership(data3);  // data3 is moved here
+    // print_int(data3.value);  // ERROR: data3 has been moved
+    
+    // Getting ownership back from function
+    let data4 = Data { value: 300 };
+    let data5 = give_ownership_back(data4);
+    print("\nAfter round trip:");
+    print_int(data5.value);
+    
+    // Creating and returning ownership
+    let data6 = create_data(400);
+    print("\nCreated data:");
+    print_int(data6.value);
+    
+    // Ownership with strings
+    let s1: String = "Hello";
+    print("\nString before assignment:");
+    print(s1);
+    let s2: String = s1;  // Move happens
+    print("String after move:");
+    // print(s1);  // Would error: moved
+    print(s2);
+}

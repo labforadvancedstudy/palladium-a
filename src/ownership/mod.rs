@@ -71,6 +71,7 @@ pub enum Place {
 }
 
 /// Ownership context for tracking ownership state
+#[derive(Default)]
 pub struct OwnershipContext {
     /// Current ownership state of each place
     ownership: HashMap<Place, Ownership>,
@@ -95,14 +96,7 @@ pub struct LifetimeConstraint {
 
 impl OwnershipContext {
     pub fn new() -> Self {
-        Self {
-            ownership: HashMap::new(),
-            borrows: Vec::new(),
-            current_scope: 0,
-            next_lifetime: 0,
-            next_temp: 0,
-            constraints: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Enter a new scope

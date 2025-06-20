@@ -31,6 +31,7 @@ impl Parser {
     }
 
     /// Parse generic parameters (<'a, T, const N: usize>)
+    #[allow(clippy::type_complexity)]
     fn parse_generic_params(&mut self) -> Result<(Vec<String>, Vec<String>, Vec<(String, Type)>)> {
         let mut lifetime_params = Vec::new();
         let mut type_params = Vec::new();

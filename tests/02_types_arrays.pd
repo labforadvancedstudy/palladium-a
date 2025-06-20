@@ -1,0 +1,40 @@
+// Test 02: Type System - Arrays
+// Tests array types with various sizes and operations
+
+fn main() {
+    // Basic array declaration
+    let arr1: [i64; 5] = [1, 2, 3, 4, 5];
+    print("Basic array:");
+    print_int(arr1[0]);
+    print_int(arr1[4]);
+    
+    // Array with type inference
+    let arr2 = [10, 20, 30];  // Should infer [i64; 3]
+    print("\nInferred array:");
+    print_int(arr2[1]);
+    
+    // Array of strings
+    let strings: [String; 3] = ["Hello", "World", "!"];
+    print("\nString array:");
+    print(strings[0]);
+    print(strings[1]);
+    print(strings[2]);
+    
+    // Array indexing
+    let mut arr3 = [0, 0, 0, 0, 0];
+    arr3[0] = 100;
+    arr3[2] = 200;
+    arr3[4] = 300;
+    print("\nMutable array after modification:");
+    print_int(arr3[0]);
+    print_int(arr3[2]);
+    print_int(arr3[4]);
+    
+    // Array in expressions
+    let sum = arr1[0] + arr1[1] + arr1[2] + arr1[3] + arr1[4];
+    print("\nSum of array elements:");
+    print_int(sum);  // Should be 15
+    
+    // 2D arrays not yet fully supported
+    print("\n2D array: skipped");
+}

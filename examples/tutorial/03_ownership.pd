@@ -1,0 +1,64 @@
+// Palladium Tutorial: Ownership and Borrowing
+// This example demonstrates Palladium's ownership model
+
+struct Data {
+    value: i64,
+}
+
+fn take_ownership(s: String) {
+    print("Taking ownership of: ");
+    print(s);
+    // s is dropped here
+}
+
+fn borrow_string(s: &String) {
+    print("Borrowing: ");
+    print(s);  // No need to dereference for print
+    // s is just borrowed, not moved
+}
+
+fn borrow_data(d: &Data) {
+    print("Borrowed data value: ");
+    print_int(d.value);
+}
+
+fn modify_data(d: &mut Data) {
+    d.value = d.value * 2;
+}
+
+fn main() {
+    print("=== Ownership in Palladium ===");
+    
+    // Move semantics with strings
+    print("\n\nMove semantics:");
+    let s1 = "Hello, ownership!";
+    print("Before move: ");
+    print(s1);
+    take_ownership(s1);
+    // print(s1);  // ERROR: s1 was moved
+    
+    // Borrowing strings
+    print("\n\nBorrowing:");
+    let s2 = "Borrowed string";
+    borrow_string(&s2);
+    print("Still valid: ");
+    print(s2);  // OK: s2 was only borrowed
+    
+    // Structs and ownership
+    print("\n\nStruct ownership:");
+    let data = Data { value: 42 };
+    borrow_data(&data);
+    print("Original still valid: ");
+    print_int(data.value);
+    
+    // Mutable borrowing
+    print("\n\nMutable borrowing:");
+    let mut mutable_data = Data { value: 10 };
+    print("Before modification: ");
+    print_int(mutable_data.value);
+    modify_data(&mut mutable_data);
+    print("After modification: ");
+    print_int(mutable_data.value);
+    
+    print("\n\n=== Ownership demo complete ===");
+}

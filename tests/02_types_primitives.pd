@@ -1,0 +1,45 @@
+// Test 02: Type System - Primitive Types
+// Tests i32, i64, u32, u64, bool, String, ()
+
+fn main() {
+    // Integer types (using smaller values due to lexer limitations)
+    let i32_val: i32 = 2147483647;  // max i32
+    let i64_val: i64 = 9223372036854775807;  // max i64  
+    let u32_val: u32 = 4294967295;  // max u32
+    let u64_val: u64 = 1000000000;  // Large u64 (max not supported)
+    
+    print("Integer types:");
+    print_int(i32_val);
+    print_int(i64_val);
+    print_int(u32_val);
+    print_int(u64_val);
+    
+    // Negative values for signed types
+    let neg_i32: i32 = -2147483648;  // min i32
+    let neg_i64: i64 = -1000000000;  // Large negative (min not supported)
+    print("\nNegative values:");
+    print_int(neg_i32);
+    print_int(neg_i64);
+    
+    // Boolean type
+    let b1: bool = true;
+    let b2: bool = false;
+    print("\nBoolean operations:");
+    if b1 && !b2 {
+        print("Boolean logic works");
+    }
+    
+    // String type
+    let s: String = "Palladium String Type";
+    print("\nString type:");
+    print(s);
+    
+    // Unit type not yet supported
+    print("\nUnit type: skipped");
+    
+    // Type inference
+    let inferred = 42;  // Should infer i64
+    let inferred_string = "Inferred string";  // Should infer String
+    print_int(inferred);
+    print(inferred_string);
+}

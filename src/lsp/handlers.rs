@@ -256,6 +256,7 @@ impl LspServer {
             text_document: TextDocumentIdentifier,
             position: super::Position,
             #[serde(rename = "context")]
+            #[allow(dead_code)]
             context: Option<CompletionContext>,
         }
         
@@ -265,6 +266,7 @@ impl LspServer {
         }
         
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct CompletionContext {
             #[serde(rename = "triggerKind")]
             trigger_kind: i32,

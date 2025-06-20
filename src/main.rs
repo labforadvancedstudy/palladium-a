@@ -92,8 +92,13 @@ fn compile_file(
                 let output_path = build_dir.join(name);
 
                 println!("🔗 Linking with gcc...");
+                
+                // Get the runtime library path
+                let runtime_path = Path::new("runtime/palladium_runtime.c");
+                
                 let gcc_output = Command::new("gcc")
                     .arg(&c_path)
+                    .arg(runtime_path)
                     .arg("-o")
                     .arg(&output_path)
                     .output()
@@ -213,12 +218,10 @@ fn generate_docs(_open: bool, _private: bool) -> Result<(), String> {
 }
 
 fn clean_artifacts(target: bool, cache: bool) -> Result<(), String> {
-    if target {
-        if Path::new("target").exists() {
-            std::fs::remove_dir_all("target")
-                .map_err(|e| format!("Failed to remove target directory: {}", e))?;
-            println!("✅ Removed target directory");
-        }
+    if target && Path::new("target").exists() {
+        std::fs::remove_dir_all("target")
+            .map_err(|e| format!("Failed to remove target directory: {}", e))?;
+        println!("✅ Removed target directory");
     }
 
     if cache {

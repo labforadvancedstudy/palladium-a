@@ -135,6 +135,7 @@ fn worker_loop(
 
 /// Handle to a spawned task
 pub struct TaskHandle {
+    #[allow(dead_code)]
     id: usize,
 }
 
@@ -168,11 +169,17 @@ pub struct Channel<T> {
     queue: Arc<Mutex<VecDeque<T>>>,
 }
 
-impl<T> Channel<T> {
-    pub fn new() -> Self {
+impl<T> Default for Channel<T> {
+    fn default() -> Self {
         Self {
             queue: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+}
+
+impl<T> Channel<T> {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn sender(&self) -> Sender<T> {
@@ -300,6 +307,7 @@ pub mod io {
 
     enum WriteFileState {
         NotStarted,
+        #[allow(dead_code)]
         Writing,
         Done(io::Result<()>),
     }

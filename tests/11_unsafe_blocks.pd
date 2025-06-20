@@ -1,0 +1,20 @@
+// Test 11: Unsafe Blocks - Not Yet Implemented
+// Unsafe blocks and raw pointers are in the specification but not implemented
+
+fn main() {
+    print("=== Unsafe Blocks Test ===");
+    print("\nUnsafe blocks are not yet implemented");
+    print("Current limitations:");
+    print("- unsafe blocks are parsed but not enforced");
+    print("- Raw pointer types (*const T, *mut T) not supported");
+    print("- unsafe functions not supported");
+    print("- unsafe traits not supported");
+    
+    // When implemented, unsafe will provide:
+    // - Raw pointer operations
+    // - Unchecked array access
+    // - FFI (Foreign Function Interface)
+    // - Manual memory management
+    
+    print("\n=== Unsafe test complete ===");
+}

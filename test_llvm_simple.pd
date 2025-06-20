@@ -1,4 +1,0 @@
-fn main() {
-    print("Hello from LLVM\n");
-    print_int(42);
-}

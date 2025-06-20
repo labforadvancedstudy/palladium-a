@@ -18,6 +18,7 @@ pub enum CaptureValue {
 }
 
 /// Macro match context
+#[derive(Default)]
 pub struct MatchContext {
     /// Captured variables
     captures: HashMap<String, CaptureValue>,
@@ -25,9 +26,7 @@ pub struct MatchContext {
 
 impl MatchContext {
     pub fn new() -> Self {
-        Self {
-            captures: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Add a capture
@@ -274,6 +273,7 @@ fn capture_balanced_group(tokens: &[Token]) -> Result<Vec<Token>> {
 }
 
 /// Match a repetition pattern
+#[allow(clippy::type_complexity)]
 fn match_repetition(
     pattern: &[PatternElement],
     separator: Option<&Token>,
@@ -292,7 +292,7 @@ fn match_repetition(
             for (name, value) in ctx.captures {
                 match value {
                     CaptureValue::Single(tokens) => {
-                        captures.entry(name).or_insert_with(Vec::new).push(tokens);
+                        captures.entry(name).or_default().push(tokens);
                     }
                     CaptureValue::List(_) => {
                         // Nested repetitions not supported yet

@@ -1,0 +1,75 @@
+// Palladium Tutorial: Control Flow
+// This example demonstrates if/else, loops, and basic pattern matching
+
+fn main() {
+    print("=== Control Flow in Palladium ===");
+    
+    // If/else statements
+    print("\n\nIf/else statements:");
+    let x = 10;
+    if x > 5 {
+        print("x is greater than 5");
+    } else {
+        print("x is not greater than 5");
+    }
+    
+    // Nested if/else (no else-if syntax)
+    let score = 85;
+    print("\n\nGrade calculation:");
+    if score >= 90 {
+        print("Grade: A");
+    } else {
+        if score >= 80 {
+            print("Grade: B");
+        } else {
+            if score >= 70 {
+                print("Grade: C");
+            } else {
+                print("Grade: F");
+            }
+        }
+    }
+    
+    // While loops
+    print("\n\nWhile loop:");
+    let mut i = 0;
+    while i < 5 {
+        print_int(i);
+        i = i + 1;
+    }
+    
+    // While with break
+    print("\n\nWhile with break:");
+    let mut j = 0;
+    while true {
+        if j >= 3 {
+            break;
+        }
+        print_int(j);
+        j = j + 1;
+    }
+    
+    // For loops with ranges
+    print("\n\nFor loop with range:");
+    for k in 0..5 {
+        print_int(k);
+    }
+    
+    // For loops with arrays
+    print("\n\nFor loop with array:");
+    let numbers = [10, 20, 30, 40, 50];
+    for num in numbers {
+        print_int(num);
+    }
+    
+    // Continue in loops
+    print("\n\nLoop with continue (skip even):");
+    for m in 0..10 {
+        if m % 2 == 0 {
+            continue;
+        }
+        print_int(m);
+    }
+    
+    print("\n\n=== Control flow demo complete ===");
+}

@@ -256,8 +256,13 @@ impl Driver {
 
         // Compile C code with gcc
         println!("🔗 Linking with gcc...");
+        
+        // Get the runtime library path
+        let runtime_path = PathBuf::from("runtime/palladium_runtime.c");
+        
         let gcc_output = Command::new("gcc")
             .arg(&c_path)
+            .arg(&runtime_path)
             .arg("-o")
             .arg(&binary_path)
             .output()

@@ -1,0 +1,90 @@
+// Test 04: Control Flow - If Statements
+// Tests if, else if, else, and nested conditions
+
+fn main() {
+    // Basic if statement
+    let x = 10;
+    if x > 5 {
+        print("x is greater than 5");
+    }
+    
+    // If-else
+    let y = 3;
+    if y > 5 {
+        print("y is greater than 5");
+    } else {
+        print("y is not greater than 5");
+    }
+    
+    // If-else chain (else if not supported, using nested)
+    let score = 85;
+    print("\nGrade evaluation:");
+    if score >= 90 {
+        print("Grade: A");
+    } else {
+        if score >= 80 {
+            print("Grade: B");
+        } else {
+            if score >= 70 {
+                print("Grade: C");
+            } else {
+                if score >= 60 {
+                    print("Grade: D");
+                } else {
+                    print("Grade: F");
+                }
+            }
+        }
+    }
+    
+    // Nested if statements
+    let a = 10;
+    let b = 20;
+    print("\nNested conditions:");
+    if a > 5 {
+        if b > 15 {
+            print("Both conditions are true");
+        } else {
+            print("Only first condition is true");
+        }
+    } else {
+        print("First condition is false");
+    }
+    
+    // Complex boolean expressions
+    let age = 25;
+    let has_license = true;
+    if age >= 18 && has_license {
+        print("\nCan drive");
+    }
+    
+    let temperature = 15;
+    let is_raining = false;
+    if temperature < 20 || is_raining {
+        print("Take a jacket");
+    }
+    
+    // If with negation
+    let is_debug = false;
+    if !is_debug {
+        print("\nRelease mode");
+    }
+    
+    // If expression not supported
+    let mut max = 0;
+    if a > b {
+        max = a;
+    } else {
+        max = b;
+    }
+    print("\nMaximum value:");
+    print_int(max);
+    
+    // Multiple conditions
+    let x1 = 5;
+    let y1 = 10;
+    let z1 = 15;
+    if x1 < y1 && y1 < z1 {
+        print("\nValues are in ascending order");
+    }
+}

@@ -111,7 +111,7 @@ impl LanguageServer {
 
         // Create edits for each reference
         for location in references {
-            let doc_edits = edits.entry(location.uri).or_insert_with(Vec::new);
+            let doc_edits = edits.entry(location.uri).or_default();
             doc_edits.push(TextEdit {
                 range: location.range,
                 new_text: new_name.to_string(),
@@ -197,11 +197,10 @@ impl ReferenceFinder {
             Stmt::Expr(expr) => {
                 self.find_in_expression(expr);
             }
-            Stmt::Return(expr) => {
-                if let Some(expr) = expr {
-                    self.find_in_expression(expr);
-                }
+            Stmt::Return(Some(expr)) => {
+                self.find_in_expression(expr);
             }
+            Stmt::Return(None) => {}
             Stmt::If {
                 condition,
                 then_branch,

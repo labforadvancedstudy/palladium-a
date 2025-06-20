@@ -1,11 +1,46 @@
 [package]
-name = "palladium"
-version = "0.1.0"
+name = "alan-von-palladium"
+version = "0.1.1"
 edition = "2021"
-authors = ["Alan von Palladium Team"]
-description = "Alan von Palladium - Where Legends Compile"
-repository = "https://github.com/alan-von-palladium/palladium"
+authors = ["z@2lab.ai"]
+description = "The Alan von Palladium Programming Language - A systems programming language combining Turing's correctness with von Neumann's performance"
+documentation = "https://github.com/labforadvancedstudy/palladium-a"
+homepage = "https://github.com/labforadvancedstudy/palladium-a"
+repository = "https://github.com/labforadvancedstudy/palladium-a"
+readme = "README.md"
+keywords = ["compiler", "programming-language", "systems-programming", "palladium"]
+categories = ["compilers", "development-tools", "command-line-utilities"]
 license = "MIT"
+exclude = [
+    "tests/*",
+    "benches/*",
+    "examples/*.pd",
+    ".github/*",
+    "bootstrap/*",
+    "docs/*",
+    "scripts/*",
+    "*.pd",
+    "coverage_report/*",
+    "build/*",
+    "reports/*",
+    "archive/*",
+    "benchmarks/*",
+    "test_*",
+    "*.sh",
+    "final_test_report.md",
+    "projectplan.md",
+    "test_results_summary.md",
+    "src_pd/*",
+    "stdlib/*",
+    "tools/*",
+    "hello_*",
+    "quick_test.sh",
+    "run_full_tests.sh",
+    "test_runner.sh",
+]
+
+[lib]
+name = "palladium"
 
 [[bin]]
 name = "pdc"

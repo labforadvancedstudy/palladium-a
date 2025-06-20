@@ -30,6 +30,7 @@ pub struct EnumInfo {
 #[derive(Debug, Clone)]
 pub struct VariantInfo {
     pub name: String,
+    #[allow(dead_code)]
     pub arity: usize, // Number of fields (0 for unit variants)
 }
 
@@ -106,9 +107,7 @@ impl ExhaustivenessChecker {
                     }
 
                     // Check if already covered by wildcard
-                    if has_wildcard {
-                        unreachable_patterns.push((i, pattern.to_string()));
-                    } else if covered_variants.contains(variant) {
+                    if has_wildcard || covered_variants.contains(variant) {
                         unreachable_patterns.push((i, pattern.to_string()));
                     } else {
                         covered_variants.insert(variant.clone());
@@ -144,6 +143,7 @@ impl ExhaustivenessChecker {
     }
 
     /// Check for redundant patterns (patterns that can never match)
+    #[allow(dead_code)]
     pub fn check_redundancy(patterns: &[Pattern]) -> Vec<(usize, String)> {
         let mut redundant = Vec::new();
         let mut seen_wildcard = false;
@@ -223,6 +223,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn create_result_enum() -> EnumInfo {
         EnumInfo {
             name: "Result".to_string(),

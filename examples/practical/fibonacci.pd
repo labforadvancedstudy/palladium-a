@@ -1,0 +1,80 @@
+// Fibonacci Sequence Generator in Palladium
+// Demonstrates recursion and iteration
+
+// Recursive approach
+fn fibonacci_recursive(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    return fibonacci_recursive(n - 1) + fibonacci_recursive(n - 2);
+}
+
+// Iterative approach (more efficient)
+fn fibonacci_iterative(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    
+    let mut prev = 0;
+    let mut curr = 1;
+    
+    for i in 2..(n + 1) {
+        let next = prev + curr;
+        prev = curr;
+        curr = next;
+    }
+    
+    return curr;
+}
+
+// Generate and print fibonacci sequence
+fn print_fibonacci_sequence(count: i64) {
+    print("Fibonacci sequence:");
+    for i in 0..count {
+        print("\nF(");
+        print_int(i);
+        print(") = ");
+        print_int(fibonacci_iterative(i));
+    }
+}
+
+fn main() {
+    print("=== Fibonacci Sequence Generator ===");
+    
+    // Compare recursive vs iterative for small values
+    print("\n\nComparing approaches for small values:");
+    
+    for n in 0..10 {
+        let recursive_result = fibonacci_recursive(n);
+        let iterative_result = fibonacci_iterative(n);
+        
+        print("\nF(");
+        print_int(n);
+        print("): recursive = ");
+        print_int(recursive_result);
+        print(", iterative = ");
+        print_int(iterative_result);
+    }
+    
+    // Generate longer sequence with iterative method
+    print("\n\nLonger sequence (iterative only):");
+    print("\n");
+    print_fibonacci_sequence(15);
+    
+    // Calculate specific fibonacci numbers
+    print("\n\nSpecific fibonacci numbers:");
+    
+    let n = 20;
+    print("\nF(");
+    print_int(n);
+    print(") = ");
+    print_int(fibonacci_iterative(n));
+    
+    let n2 = 25;
+    print("\nF(");
+    print_int(n2);
+    print(") = ");
+    print_int(fibonacci_iterative(n2));
+    
+    print("\n\n=== Fibonacci demo complete ===");
+}

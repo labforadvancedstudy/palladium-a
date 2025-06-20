@@ -173,7 +173,7 @@ impl LLVMCodeGenerator {
                 escaped
             ));
         }
-        ir.push_str("\n");
+        ir.push('\n');
 
         // Generate functions
         for item in &program.items {
@@ -182,7 +182,7 @@ impl LLVMCodeGenerator {
                     self.ssa_counter = 0; // Reset for each function
                     self.var_map.clear();
                     ir.push_str(&self.generate_function(func)?);
-                    ir.push_str("\n");
+                    ir.push('\n');
                 }
                 _ => {
                     // Skip other items for now
@@ -234,6 +234,7 @@ impl LLVMCodeGenerator {
     }
 
     /// Convert Palladium type to LLVM type
+    #[allow(clippy::only_used_in_recursion)]
     fn type_to_llvm(&self, ty: &Option<Type>) -> String {
         match ty {
             None => "void".to_string(),

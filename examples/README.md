@@ -1,84 +1,78 @@
 # Palladium Examples
 
-This directory contains example Palladium programs organized by category.
+This directory contains example programs demonstrating various features of the Palladium programming language.
 
-## Directory Structure
+## Tutorial Examples
 
-### 📚 basic/
-Basic language features and syntax examples:
-- `hello.pd` - Classic Hello World
-- `function_params.pd` - Function parameter examples
-- `function_returns.pd` - Function return value examples
-- `arrays_basic.pd` - Basic array usage
-- `mutability.pd` - Mutable vs immutable variables
-- `while_loop.pd` - While loop examples
-- `arithmetic.pd` - Basic arithmetic operations
-- `conditions.pd` - If/else conditions
+Step-by-step introduction to Palladium features:
 
-### 🏗️ data_structures/
-Data structure implementations and patterns:
-- `struct_design.pd` - Struct definitions and usage
-- `enum_design.pd` - Enum types and variants
-- `pattern_matching.pd` - Pattern matching examples
-- `string_design.pd` - String manipulation
-- `result_design.pd` - Result type for error handling
-- `file_io_design.pd` - File I/O operations
+1. **[01_variables.pd](tutorial/01_variables.pd)** - Variable declarations, mutability, and basic types
+2. **[02_functions.pd](tutorial/02_functions.pd)** - Function definitions, parameters, and return values
+3. **[03_ownership.pd](tutorial/03_ownership.pd)** - Ownership model, moves, and borrowing
+4. **[04_structs.pd](tutorial/04_structs.pd)** - Struct definitions and usage
+5. **[05_control_flow.pd](tutorial/05_control_flow.pd)** - If/else, loops, and control flow
+6. **[06_arrays.pd](tutorial/06_arrays.pd)** - Array operations and iteration
 
-### 🔧 algorithms/
-Algorithm implementations:
-- `bubble_sort.pd` - Bubble sort implementation
-- `fibonacci_iterative.pd` - Iterative Fibonacci
-- `binary_search_simulation.pd` - Binary search
-- `prime_checker.pd` - Prime number checking
-- `splay_tree_palladium.pd` - Splay tree data structure
+## Practical Examples
 
-### 🧪 testing/
-Test examples and verification:
-- `test_result.pd` - Result type tests
-- `test_option.pd` - Option type tests
-- `test_strings.pd` - String manipulation tests
-- `test_vec.pd` - Vector implementation tests
-- `test_file_io.pd` - File I/O tests
-- And more...
+Complete programs demonstrating real-world usage:
 
-### 🎮 demo/
-Complete demo applications:
-- `demo_calculator.pd` - Simple calculator
-- `demo_calculator_simple.pd` - Simplified calculator
-- `demo_text_processor.pd` - Text processing demo
-
-### 🚀 bootstrap/
-Bootstrap compiler components written in Palladium:
-- Lexer, parser, and AST implementations
-- Self-hosting compiler components
-
-### 📚 stdlib/
-Standard library implementations:
-- Core data structures
-- Utility functions
+- **[calculator.pd](practical/calculator.pd)** - Basic arithmetic calculator with error handling
+- **[bubble_sort.pd](practical/bubble_sort.pd)** - Bubble sort algorithm implementation
+- **[fibonacci.pd](practical/fibonacci.pd)** - Fibonacci sequence generator (recursive and iterative)
+- **[prime_checker.pd](practical/prime_checker.pd)** - Prime number checker and generator
 
 ## Running Examples
 
-To compile and run an example:
+To run any example:
 
 ```bash
-# Compile an example
-pdc compile examples/basic/hello.pd
-
-# Run the compiled program
-./build_output/hello
+pdc run examples/tutorial/01_variables.pd
 ```
+
+Or compile first:
+
+```bash
+pdc compile examples/tutorial/01_variables.pd
+./build_output/01_variables
+```
+
+## Language Features Demonstrated
+
+### Working Features ✅
+- Variable declarations (immutable and mutable)
+- Basic types (i64, i32, bool, String)
+- Functions with parameters and returns
+- Structs with fields
+- Arrays (1D, fixed size)
+- For loops with ranges and arrays
+- While loops with break/continue
+- If/else conditionals
+- Basic ownership and borrowing
+- References (&T, &mut T)
+
+### Limitations ⚠️
+- No string concatenation with `+`
+- No else-if syntax (use nested if)
+- No match expressions (statements only)
+- No generic types
+- No traits
+- No modules/imports
+- Arrays are fixed-size only
+- Enums have limited support
+
+## Key Differences from Rust
+
+- **Simpler type system**: No lifetimes, simpler strings
+- **No trait system**: Functions instead of impl blocks
+- **Fixed arrays only**: No Vec<T> or dynamic collections
+- **Basic pattern matching**: Limited to enum variants
+- **Explicit returns**: No implicit returns, must use `return`
 
 ## Contributing
 
 When adding new examples:
-1. Place them in the appropriate category directory
-2. Include comments explaining the concepts demonstrated
-3. Keep examples focused on a single concept when possible
-4. Add a brief description to this README
-
-## Version Notes
-
-Some examples may require specific Palladium versions:
-- Files ending in `_v0_2.pd` are from v0.2 and may need updates
-- Current examples target v0.3+ features
+1. Test with `pdc run` before committing
+2. Add comments explaining the concepts
+3. Keep examples focused on specific features
+4. Update this README with new examples

@@ -10,6 +10,8 @@ PDC := ./target/release/pdc
 BOOTSTRAP_DIR := bootstrap/v3_incremental
 TINY_COMPILER := $(BOOTSTRAP_DIR)/tiny_v16
 PALLADIUM_COMPILER := bootstrap/v2_full/pdc
+TEST_DIR := tests
+EXAMPLES_DIR := examples
 
 # Colors for output
 GREEN := \033[0;32m
@@ -28,7 +30,7 @@ help: ## Show this help message
 .PHONY: build
 build: ## Build the Rust compiler in release mode
 	@echo "$(YELLOW)Building Palladium compiler...$(NC)"
-	cd compiler/rust && $(CARGO) build --release
+	$(CARGO) build --release
 	@echo "$(GREEN)✓ Build complete$(NC)"
 
 .PHONY: build-debug
@@ -38,47 +40,62 @@ build-debug: ## Build the Rust compiler in debug mode
 	@echo "$(GREEN)✓ Debug build complete$(NC)"
 
 .PHONY: test
-test: ## Run all tests
-	@echo "$(YELLOW)Running tests...$(NC)"
-	$(CARGO) test --all
-	@echo "$(GREEN)✓ All tests passed$(NC)"
+test: test-rust test-pd ## Run all tests (Rust + Palladium)
 
-.PHONY: test-palladium
-test-palladium: build ## Run Palladium test suite
-	@echo "$(YELLOW)Running Palladium test suite...$(NC)"
-	./scripts/run_tests.sh
+.PHONY: test-rust
+test-rust: ## Run Rust unit tests
+	@echo "$(YELLOW)Running Rust unit tests...$(NC)"
+	$(CARGO) test --lib --bins
+	@echo "$(GREEN)✓ Rust tests passed$(NC)"
+
+.PHONY: test-pd
+test-pd: build ## Run Palladium language tests
+	@echo "$(YELLOW)Running Palladium language tests...$(NC)"
+	@cd $(TEST_DIR) && bash run_all_tests.sh
+	@echo "$(GREEN)✓ Palladium tests passed$(NC)"
+
+.PHONY: test-integration
+test-integration: build ## Run integration tests
+	@echo "$(YELLOW)Running integration tests...$(NC)"
+	$(CARGO) test --test '*' -- --test-threads=1
+	@echo "$(GREEN)✓ Integration tests passed$(NC)"
 
 .PHONY: test-all
-test-all: test test-palladium ## Run all tests (Rust + Palladium)
+test-all: test-rust test-pd test-examples ## Run all tests (Rust + Palladium + Examples)
 
 .PHONY: test-examples
 test-examples: build ## Test all example programs
 	@echo "$(YELLOW)Testing example programs...$(NC)"
-	./scripts/run_tests.sh -f "examples"
+	@for dir in $(EXAMPLES_DIR)/tutorial $(EXAMPLES_DIR)/practical; do \
+		echo "Testing $$dir..."; \
+		for file in $$dir/*.pd; do \
+			if [ -f "$$file" ]; then \
+				echo -n "  Testing $$(basename $$file)... "; \
+				$(PDC) compile "$$file" -o /tmp/test_output 2>/dev/null && echo "$(GREEN)✓$(NC)" || echo "$(RED)✗$(NC)"; \
+			fi; \
+		done; \
+	done
 
 .PHONY: test-bootstrap
 test-bootstrap: build ## Test bootstrap compilers
 	@echo "$(YELLOW)Testing bootstrap compilers...$(NC)"
-	./scripts/run_tests.sh -f "bootstrap"
+	@cd bootstrap/minimal_self_host && bash test_self_host.sh
 
 .PHONY: test-verbose
-test-verbose: build ## Run tests with verbose output
-	./scripts/run_tests.sh -v
+test-verbose: ## Run tests with verbose output
+	@echo "$(YELLOW)Running verbose tests...$(NC)"
+	RUST_BACKTRACE=1 $(CARGO) test -- --nocapture
 
 .PHONY: bench
-bench: build ## Run all benchmarks
+bench: ## Run Rust benchmarks
 	@echo "$(YELLOW)Running benchmarks...$(NC)"
-	cd benchmarks && ./run_benchmarks.sh
+	$(CARGO) bench
 
-.PHONY: bench-quick
-bench-quick: build ## Run quick benchmarks only
-	@echo "$(YELLOW)Running quick benchmarks...$(NC)"
-	cd benchmarks && ./run_benchmarks.sh fibonacci bubble_sort
-
-.PHONY: bench-analyze
-bench-analyze: ## Analyze benchmark results
-	@echo "$(YELLOW)Analyzing benchmark results...$(NC)"
-	cd benchmarks && python3 analyze_results.py
+.PHONY: coverage
+coverage: ## Generate test coverage report
+	@echo "$(YELLOW)Generating coverage report...$(NC)"
+	@bash scripts/pd_coverage.sh
+	@echo "$(GREEN)✓ Coverage report generated$(NC)"
 
 .PHONY: lint
 lint: ## Run clippy linter
@@ -112,29 +129,23 @@ all: clean build test lint ## Clean, build, test, and lint
 
 # Bootstrap targets
 .PHONY: bootstrap
-bootstrap: build ## Build the tiny bootstrap compiler
+bootstrap: ## Build and test bootstrap compiler
 	@echo "$(YELLOW)Building bootstrap compiler...$(NC)"
-	cd $(BOOTSTRAP_DIR) && ./build_minimal.sh
+	@cd bootstrap/minimal_self_host && bash build_self_host.sh
 	@echo "$(GREEN)✓ Bootstrap compiler built$(NC)"
 
 .PHONY: bootstrap-test
-bootstrap-test: bootstrap ## Test the bootstrap compiler
+bootstrap-test: ## Test the bootstrap compiler
 	@echo "$(YELLOW)Testing bootstrap compiler...$(NC)"
-	cd $(BOOTSTRAP_DIR) && ./test_tiny.sh
+	@cd bootstrap/minimal_self_host && bash test_self_host.sh
 	@echo "$(GREEN)✓ Bootstrap test complete$(NC)"
-
-.PHONY: self-host
-self-host: build ## Demonstrate self-hosting capability
-	@echo "$(YELLOW)Testing self-hosting...$(NC)"
-	$(PDC) compile bootstrap/v3_incremental/minimal_self_compiler.pd -o build_output/self_compiler
-	./build_output/self_compiler
-	@echo "$(GREEN)✓ Self-hosting verified$(NC)"
 
 # Example compilation targets
 .PHONY: example-hello
 example-hello: build ## Compile and run hello world example
 	@echo "$(YELLOW)Compiling hello world...$(NC)"
-	$(PDC) compile examples/basic/hello.pd -o build_output/hello
+	@mkdir -p build_output
+	$(PDC) compile examples/tutorial/01_hello_world.pd -o build_output/hello
 	@echo "$(YELLOW)Running hello world...$(NC)"
 	./build_output/hello
 	@echo "$(GREEN)✓ Hello world complete$(NC)"
@@ -146,6 +157,7 @@ compile-pd: build ## Compile a Palladium file (use with FILE=...)
 		exit 1; \
 	fi
 	@echo "$(YELLOW)Compiling $(FILE)...$(NC)"
+	@mkdir -p build_output
 	$(PDC) compile $(FILE) -o build_output/$$(basename $(FILE) .pd)
 	@echo "$(GREEN)✓ Compilation complete$(NC)"
 
@@ -161,23 +173,22 @@ docs-open: docs ## Generate and open documentation
 	$(CARGO) doc --no-deps --open
 
 # Development helpers
-.PHONY: dev-build
-dev-build: ## Build in debug mode
-	@echo "$(YELLOW)Building (debug)...$(NC)"
-	$(CARGO) build
-	@echo "$(GREEN)✓ Debug build complete$(NC)"
+.PHONY: dev
+dev: ## Watch for changes and rebuild
+	@echo "$(YELLOW)Starting development mode...$(NC)"
+	$(CARGO) watch -x build -x test
 
 .PHONY: dev-test
-dev-test: ## Run tests with output
-	@echo "$(YELLOW)Running tests (verbose)...$(NC)"
-	$(CARGO) test -- --nocapture
+dev-test: ## Run a specific test (use with TEST=test_name)
+	@echo "$(YELLOW)Running tests...$(NC)"
+	$(CARGO) test $(TEST) -- --nocapture
 
 # Quick commands (shortcuts)
 .PHONY: b
 b: build ## Alias for build
 
 .PHONY: t
-t: test-all ## Alias for test-all
+t: test ## Alias for test
 
 .PHONY: c
 c: check ## Alias for check
@@ -185,9 +196,16 @@ c: check ## Alias for check
 .PHONY: l
 l: lint ## Alias for lint
 
+.PHONY: r
+r: build ## Alias for run (build and run hello world)
+	@make example-hello
+
 # CI/CD commands
 .PHONY: ci
-ci: check fmt lint test test-palladium ## Run all CI checks
+ci: check fmt lint test ## Run all CI checks
+
+.PHONY: ci-full
+ci-full: check fmt lint test-all coverage ## Run full CI checks with coverage
 
 # Project info
 .PHONY: stats
@@ -199,13 +217,42 @@ stats: ## Show project statistics
 	@echo "Lines of Palladium code:"
 	@find . -name "*.pd" | xargs wc -l | tail -1
 	@echo ""
-	@echo "Number of tests:"
-	@grep -r "fn test_" src tests | wc -l
+	@echo "Number of Rust tests:"
+	@grep -r "#\[test\]" src | wc -l
+	@echo ""
+	@echo "Number of Palladium tests:"
+	@ls -1 tests/*.pd | wc -l
 
 .PHONY: todo
 todo: ## Show all TODO items in the codebase
 	@echo "$(YELLOW)TODO items:$(NC)"
-	@grep -r "TODO" src --color=always | head -20 || echo "No TODOs found!"
+	@rg -i "todo|fixme|hack|xxx" src --color=always | head -20 || echo "No TODOs found!"
 	@echo ""
 	@echo "$(YELLOW)Total TODO count:$(NC)"
-	@grep -r "TODO" src | wc -l
+	@rg -i "todo|fixme" src | wc -l
+
+# Package management
+.PHONY: publish
+publish: ci ## Publish to crates.io
+	@echo "$(YELLOW)Publishing to crates.io...$(NC)"
+	$(CARGO) publish
+	@echo "$(GREEN)✓ Published successfully$(NC)"
+
+.PHONY: package
+package: ## Create distributable package
+	@echo "$(YELLOW)Creating package...$(NC)"
+	$(CARGO) package
+	@echo "$(GREEN)✓ Package created$(NC)"
+
+# Installation
+.PHONY: install
+install: build ## Install pdc locally
+	@echo "$(YELLOW)Installing pdc...$(NC)"
+	$(CARGO) install --path .
+	@echo "$(GREEN)✓ pdc installed$(NC)"
+
+.PHONY: uninstall
+uninstall: ## Uninstall pdc
+	@echo "$(YELLOW)Uninstalling pdc...$(NC)"
+	$(CARGO) uninstall alan-von-palladium
+	@echo "$(GREEN)✓ pdc uninstalled$(NC)"

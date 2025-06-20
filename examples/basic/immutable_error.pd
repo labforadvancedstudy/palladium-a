@@ -1,9 +1,0 @@
-// This example should fail during type checking
-fn main() {
-    let x = 42;
-    print_int(x);
-    
-    // ERROR: Cannot assign to immutable variable 'x'
-    x = 100;
-    print_int(x);
-}

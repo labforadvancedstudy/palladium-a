@@ -1,5 +1,0 @@
-fn main() {
-    print_int(42);
-    print_int(1337);
-    print_int(9999);
-}

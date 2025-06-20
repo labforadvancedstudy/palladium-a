@@ -71,7 +71,7 @@ impl BuildContext {
 
         // Build dependency list
         let mut deps = Vec::new();
-        for (dep_name, _dep_spec) in &manifest.dependencies {
+        for dep_name in manifest.dependencies.keys() {
             deps.push(dep_name.clone());
             // TODO: Resolve and load dependency packages
         }
@@ -362,8 +362,11 @@ impl BuildSystem {
         if self.needs_executable_rebuild(&c_file, &exe_file) {
             println!("🔗 Linking {}", exe_name);
 
+            // Get the runtime library path
+            let runtime_path = PathBuf::from("runtime/palladium_runtime.c");
+            
             let mut gcc_cmd = std::process::Command::new("gcc");
-            gcc_cmd.arg(&c_file).arg("-o").arg(&exe_file);
+            gcc_cmd.arg(&c_file).arg(&runtime_path).arg("-o").arg(&exe_file);
 
             if self.context.config.release {
                 gcc_cmd.arg("-O3");
@@ -423,7 +426,7 @@ impl BuildSystem {
             for entry in fs::read_dir(tests_dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "pd") {
+                if path.extension().is_some_and(|ext| ext == "pd") {
                     let name = path
                         .file_stem()
                         .and_then(|s| s.to_str())
@@ -496,8 +499,12 @@ impl BuildSystem {
         // Link to executable
         let exe_path = output_dir.join(test_name);
 
+        // Get the runtime library path
+        let runtime_path = PathBuf::from("runtime/palladium_runtime.c");
+        
         let gcc_output = std::process::Command::new("gcc")
             .arg(&output_path)
+            .arg(&runtime_path)
             .arg("-o")
             .arg(&exe_path)
             .output()?;

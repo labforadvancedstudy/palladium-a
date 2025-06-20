@@ -8,16 +8,21 @@ use std::collections::HashMap;
 /// Information about a trait
 #[derive(Debug, Clone)]
 pub struct TraitInfo {
+    #[allow(dead_code)]
     pub name: String,
     pub methods: HashMap<String, TraitMethodInfo>,
+    #[allow(dead_code)]
     pub type_params: Vec<String>,
 }
 
 /// Information about a trait method
 #[derive(Debug, Clone)]
 pub struct TraitMethodInfo {
+    #[allow(dead_code)]
     pub name: String,
+    #[allow(dead_code)]
     pub params: Vec<Type>,
+    #[allow(dead_code)]
     pub return_type: Option<Type>,
     pub has_default: bool,
 }
@@ -25,16 +30,22 @@ pub struct TraitMethodInfo {
 /// Implementation information
 #[derive(Debug, Clone)]
 pub struct ImplInfo {
+    #[allow(dead_code)]
     pub trait_name: Option<String>, // None for inherent impl
+    #[allow(dead_code)]
     pub for_type: Type,
+    #[allow(dead_code)]
     pub methods: HashMap<String, MethodImpl>,
 }
 
 /// Method implementation details
 #[derive(Debug, Clone)]
 pub struct MethodImpl {
+    #[allow(dead_code)]
     pub name: String,
+    #[allow(dead_code)]
     pub type_params: Vec<String>,
+    #[allow(dead_code)]
     pub is_generic: bool,
 }
 
@@ -131,7 +142,7 @@ impl TraitResolver {
         if let Some(type_name) = self.get_type_name(&impl_block.for_type) {
             self.type_impls
                 .entry(type_name)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(impl_index);
         }
 
@@ -139,6 +150,7 @@ impl TraitResolver {
     }
 
     /// Check if a type implements a trait
+    #[allow(dead_code)]
     pub fn type_implements_trait(&self, ty: &Type, trait_name: &str) -> bool {
         if let Some(type_name) = self.get_type_name(ty) {
             if let Some(impl_indices) = self.type_impls.get(&type_name) {
@@ -154,6 +166,7 @@ impl TraitResolver {
     }
 
     /// Find method implementation for a type
+    #[allow(dead_code)]
     pub fn find_method(&self, ty: &Type, method_name: &str) -> Option<MethodResolution> {
         if let Some(type_name) = self.get_type_name(ty) {
             if let Some(impl_indices) = self.type_impls.get(&type_name) {
@@ -190,6 +203,7 @@ impl TraitResolver {
     }
 
     /// Get all traits implemented by a type
+    #[allow(dead_code)]
     pub fn get_implemented_traits(&self, ty: &Type) -> Vec<String> {
         let mut traits = Vec::new();
 
@@ -266,8 +280,11 @@ impl TraitResolver {
 /// Result of method resolution
 #[derive(Debug, Clone)]
 pub struct MethodResolution {
+    #[allow(dead_code)]
     pub trait_name: Option<String>,
+    #[allow(dead_code)]
     pub method_name: String,
+    #[allow(dead_code)]
     pub is_generic: bool,
 }
 

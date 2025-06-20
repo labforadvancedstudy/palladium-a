@@ -1,0 +1,5 @@
+fn main() {
+    print("Test 1 passed\!");
+    print_int(42);
+}
+EOF < /dev/null

@@ -1,0 +1,17 @@
+// Ultra simple Palladium program that generates C code
+// This demonstrates the minimal features needed for self-hosting
+
+fn main() {
+    print("Generating C code...");
+    
+    // Generate a simple C program
+    print("#include <stdio.h>");
+    print("");
+    print("int main() {");
+    print("    printf(\"Hello from generated C!\\n\");");
+    print("    return 0;");
+    print("}");
+    
+    print("");
+    print("C code generation complete!");
+}

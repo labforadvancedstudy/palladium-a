@@ -1,0 +1,83 @@
+// Palladium Tutorial: Arrays
+// This example demonstrates array usage and operations
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn main() {
+    print("=== Arrays in Palladium ===");
+    
+    // Fixed-size arrays
+    print("\n\nFixed-size arrays:");
+    let numbers: [i64; 5] = [1, 2, 3, 4, 5];
+    
+    // Array access
+    print("First element: ");
+    print_int(numbers[0]);
+    print("\nLast element: ");
+    print_int(numbers[4]);
+    
+    // Array with type inference
+    print("\n\nInferred array type:");
+    let primes = [2, 3, 5, 7, 11];
+    for i in 0..5 {
+        print_int(primes[i]);
+    }
+    
+    // Mutable arrays
+    print("\n\nMutable array:");
+    let mut scores = [0, 0, 0, 0];
+    scores[0] = 95;
+    scores[1] = 87;
+    scores[2] = 92;
+    scores[3] = 88;
+    
+    print("Scores: ");
+    for i in 0..4 {
+        print_int(scores[i]);
+        if i < 3 {
+            print(", ");
+        }
+    }
+    
+    // Sum array elements
+    print("\n\nSum of array:");
+    let values = [10, 20, 30, 40, 50];
+    let mut sum = 0;
+    for val in values {
+        sum = sum + val;
+    }
+    print("Sum: ");
+    print_int(sum);
+    
+    // String arrays
+    print("\n\nString array:");
+    let languages: [String; 3] = ["Palladium", "Rust", "C"];
+    print("Programming languages:");
+    for i in 0..3 {
+        print("\n  - ");
+        print(languages[i]);
+    }
+    
+    // Array of structs
+    print("\n\nArray of structs:");
+    let points = [
+        Point { x: 0, y: 0 },
+        Point { x: 10, y: 20 },
+        Point { x: 30, y: 40 },
+    ];
+    
+    for i in 0..3 {
+        print("\nPoint ");
+        print_int(i);
+        print(": (");
+        print_int(points[i].x);
+        print(", ");
+        print_int(points[i].y);
+        print(")");
+    }
+    
+    print("\n\n=== Arrays demo complete ===");
+}

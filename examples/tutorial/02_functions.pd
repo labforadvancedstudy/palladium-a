@@ -1,0 +1,40 @@
+// Palladium vs Rust: Functions
+
+// In Rust:
+// fn add(a: i32, b: i32) -> i32 {
+//     a + b  // implicit return
+// }
+
+// In Palladium:
+fn add(a: i32, b: i32) -> i32 {
+    return a + b;  // explicit return required
+}
+
+// Explicit return
+fn multiply(a: i32, b: i32) -> i32 {
+    return a * b;
+}
+
+// No return type means void
+fn greet(name: String) {
+    print("Hello, ");
+    print(name);
+    print("!");
+}
+
+// Main difference: Palladium doesn't have lifetime annotations
+// Rust: fn longest<'a>(x: &'a str, y: &'a str) -> &'a str
+// Palladium: references are simpler (no explicit lifetimes)
+
+fn main() {
+    let sum = add(5, 3);
+    let product = multiply(4, 7);
+    
+    print("Sum: ");
+    print_int(sum);      // 8
+    print("\nProduct: ");
+    print_int(product);  // 28
+    print("\n");
+    
+    greet("Palladium");
+}

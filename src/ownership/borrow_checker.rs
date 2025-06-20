@@ -26,6 +26,7 @@ struct FunctionSig {
     /// Parameter ownership requirements
     params: Vec<ParamOwnership>,
     /// Return value ownership
+    #[allow(dead_code)]
     returns: ReturnOwnership,
 }
 
@@ -46,6 +47,7 @@ enum ReturnOwnership {
     /// Returns owned value
     Owned,
     /// Returns borrowed value with lifetime
+    #[allow(dead_code)]
     Borrowed(Lifetime),
     /// No return value
     Unit,
@@ -53,8 +55,8 @@ enum ReturnOwnership {
     Copy,
 }
 
-impl BorrowChecker {
-    pub fn new() -> Self {
+impl Default for BorrowChecker {
+    fn default() -> Self {
         let mut functions = HashMap::new();
 
         // Register built-in functions
@@ -284,8 +286,15 @@ impl BorrowChecker {
             unsafe_depth: 0,
         }
     }
+}
+
+impl BorrowChecker {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Check if we're currently in an unsafe context
+    #[allow(dead_code)]
     fn in_unsafe_context(&self) -> bool {
         self.unsafe_depth > 0
     }

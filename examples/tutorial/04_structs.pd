@@ -1,0 +1,108 @@
+// Palladium Tutorial: Structs
+// This example demonstrates struct definitions and usage
+
+// Basic struct definition
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+// Struct with multiple fields
+struct Rectangle {
+    top_left: Point,
+    width: i64,
+    height: i64,
+}
+
+// Struct with different types
+struct Person {
+    name: String,
+    age: i64,
+    active: bool,
+}
+
+// Functions that work with structs
+fn create_point(x: i64, y: i64) -> Point {
+    return Point { x: x, y: y };
+}
+
+fn distance_squared(p1: &Point, p2: &Point) -> i64 {
+    let dx = p2.x - p1.x;
+    let dy = p2.y - p1.y;
+    return dx * dx + dy * dy;
+}
+
+fn print_person(p: &Person) {
+    print("Person: ");
+    print(p.name);
+    print(", age: ");
+    print_int(p.age);
+    if p.active {
+        print(" (active)");
+    }
+}
+
+fn main() {
+    print("=== Structs in Palladium ===");
+    
+    // Creating structs
+    print("\n\nCreating structs:");
+    let origin = Point { x: 0, y: 0 };
+    let p1 = create_point(3, 4);
+    
+    print("Origin: (");
+    print_int(origin.x);
+    print(", ");
+    print_int(origin.y);
+    print(")");
+    
+    print("\nPoint 1: (");
+    print_int(p1.x);
+    print(", ");
+    print_int(p1.y);
+    print(")");
+    
+    // Using struct fields
+    let dist = distance_squared(&origin, &p1);
+    print("\nDistance squared: ");
+    print_int(dist);  // Should be 25
+    
+    // Nested structs
+    print("\n\nNested structs:");
+    let rect = Rectangle {
+        top_left: Point { x: 10, y: 20 },
+        width: 100,
+        height: 50,
+    };
+    
+    print("Rectangle at (");
+    print_int(rect.top_left.x);
+    print(", ");
+    print_int(rect.top_left.y);
+    print(") with size ");
+    print_int(rect.width);
+    print("x");
+    print_int(rect.height);
+    
+    // Complex struct
+    print("\n\nComplex struct:");
+    let person = Person {
+        name: "Alice",
+        age: 30,
+        active: true,
+    };
+    print_person(&person);
+    
+    // Mutable struct
+    print("\n\nMutable struct:");
+    let mut counter = Point { x: 0, y: 0 };
+    counter.x = 10;
+    counter.y = 20;
+    print("Updated counter: (");
+    print_int(counter.x);
+    print(", ");
+    print_int(counter.y);
+    print(")");
+    
+    print("\n\n=== Structs demo complete ===");
+}

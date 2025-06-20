@@ -1,6 +1,8 @@
 // Runtime support for I/O operations
 // "Bridging Palladium to the system"
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write, Seek, SeekFrom as StdSeekFrom};
 use std::path::Path;
@@ -46,6 +48,7 @@ pub enum IoErrorCode {
 }
 
 /// Convert Rust io::Error to our error code
+#[allow(dead_code)]
 fn io_error_to_code(err: &io::Error) -> IoErrorCode {
     match err.kind() {
         io::ErrorKind::NotFound => IoErrorCode::NotFound,
@@ -400,22 +403,20 @@ pub extern "C" fn pd_read_dir(path: *const u8, path_len: usize, entries: *mut *m
             Ok(dir) => {
                 let mut entry_vec = Vec::new();
                 
-                for entry in dir {
-                    if let Ok(entry) = entry {
-                        if let Some(name) = entry.file_name().to_str() {
-                            let name_bytes = name.as_bytes();
-                            let name_copy = name_bytes.to_vec().into_boxed_slice();
-                            let name_ptr = Box::into_raw(name_copy) as *mut u8;
-                            
-                            let file_type = entry.file_type().ok();
-                            let de = DirEntry {
-                                name: name_ptr,
-                                name_len: name_bytes.len(),
-                                is_file: file_type.map(|t| if t.is_file() { 1 } else { 0 }).unwrap_or(0),
-                                is_dir: file_type.map(|t| if t.is_dir() { 1 } else { 0 }).unwrap_or(0),
-                            };
-                            entry_vec.push(de);
-                        }
+                for entry in dir.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        let name_bytes = name.as_bytes();
+                        let name_copy = name_bytes.to_vec().into_boxed_slice();
+                        let name_ptr = Box::into_raw(name_copy) as *mut u8;
+                        
+                        let file_type = entry.file_type().ok();
+                        let de = DirEntry {
+                            name: name_ptr,
+                            name_len: name_bytes.len(),
+                            is_file: file_type.map(|t| if t.is_file() { 1 } else { 0 }).unwrap_or(0),
+                            is_dir: file_type.map(|t| if t.is_dir() { 1 } else { 0 }).unwrap_or(0),
+                        };
+                        entry_vec.push(de);
                     }
                 }
                 

@@ -1,0 +1,46 @@
+// Palladium Tutorial: Variables and Mutability
+// This example demonstrates variable declarations in Palladium
+
+fn main() {
+    print("=== Variables in Palladium ===");
+    
+    // Immutable variables (default)
+    let x = 5;
+    print("\nImmutable x:");
+    print_int(x);
+    // x = 10;  // ERROR: Cannot assign to immutable variable
+    
+    // Mutable variables (explicit mut keyword)
+    let mut y = 10;
+    print("\nMutable y before:");
+    print_int(y);
+    
+    y = 20;  // OK: y is mutable
+    print("Mutable y after:");
+    print_int(y);
+    
+    // Type annotations (optional with inference)
+    let a: i64 = 42;        // 64-bit signed integer
+    let b: i32 = 100;       // 32-bit signed integer  
+    let flag: bool = true;  // Boolean
+    
+    print("\nType annotated values:");
+    print_int(a);
+    print_int(b);
+    if flag {
+        print("Flag is true");
+    }
+    
+    // String variables
+    let message: String = "Hello, Palladium!";
+    print("\nString variable:");
+    print(message);
+    
+    // Arrays with fixed size
+    let numbers = [1, 2, 3, 4, 5];
+    print("\nArray elements:");
+    print_int(numbers[0]);  // First element
+    print_int(numbers[4]);  // Last element
+    
+    print("\n=== Variables demo complete ===");
+}

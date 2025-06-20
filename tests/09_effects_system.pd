@@ -1,0 +1,17 @@
+// Test 09: Effects System - Not Yet Implemented
+// Effects tracking is in the specification but not implemented
+
+fn main() {
+    print("=== Effects System Test ===");
+    print("\nEffects system is not yet implemented");
+    print("The compiler tracks IO effects internally");
+    print("But explicit effect annotations are not supported");
+    
+    // When implemented, effects will provide:
+    // - Explicit effect tracking (io, fs, net, unsafe)
+    // - Effect polymorphism
+    // - Effect inference
+    // - Compile-time effect checking
+    
+    print("\n=== Effects test complete ===");
+}

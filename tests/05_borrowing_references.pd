@@ -1,0 +1,57 @@
+// Test 05: Borrowing - References
+// Tests shared and mutable references
+
+struct Counter {
+    count: i64,
+}
+
+fn print_counter(c: &Counter) {
+    print("\nCounter value:");
+    print_int(c.count);
+}
+
+fn increment_counter(c: &mut Counter) {
+    c.count = c.count + 1;
+}
+
+fn get_count(c: &Counter) -> i64 {
+    return c.count;
+}
+
+fn main() {
+    // Shared reference (simplified)
+    let data = Counter { count: 42 };
+    print("Original value:");
+    print_int(data.count);
+    
+    // Reference through function call
+    print_counter(&data);
+    print("After shared ref, original still valid:");
+    print_int(data.count);
+    
+    // Mutable reference
+    let mut counter = Counter { count: 10 };
+    increment_counter(&mut counter);
+    print("\nAfter mutable ref modification:");
+    print_int(counter.count);  // Should be 11
+    
+    // Reference in function call
+    let c1 = Counter { count: 100 };
+    print_counter(&c1);
+    print_int(c1.count);  // c1 is still valid
+    
+    // Mutable reference in function
+    let mut c2 = Counter { count: 200 };
+    increment_counter(&mut c2);
+    print("\nAfter increment:");
+    print_int(c2.count);  // Should be 201
+    
+    // Reference lifetime
+    let temp = Counter { count: 42 };
+    let result = get_count(&temp);
+    print("\nReference result:");
+    print_int(result);
+    
+    // Nested references not yet supported
+    print("\nNested reference: skipped");
+}

@@ -1,0 +1,20 @@
+// Test 10: Async/Await - Not Yet Implemented
+// Async functions and await are in the specification but not implemented
+
+fn main() {
+    print("=== Async/Await Test ===");
+    print("\nAsync/await is not yet implemented");
+    print("Current status:");
+    print("- async keyword is parsed but not functional");
+    print("- await expressions are not supported");
+    print("- No async runtime exists yet");
+    print("- Future type is not implemented");
+    
+    // When implemented, async/await will provide:
+    // - Asynchronous function execution
+    // - Cooperative multitasking
+    // - Future-based concurrency
+    // - Integration with I/O operations
+    
+    print("\n=== Async test complete ===");
+}

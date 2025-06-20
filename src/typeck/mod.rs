@@ -821,9 +821,7 @@ impl TypeChecker {
                 }
                 Item::Trait(trait_def) => {
                     // Register trait with the trait resolver
-                    if let Err(e) = self.trait_resolver.register_trait(trait_def) {
-                        return Err(e);
-                    }
+                    self.trait_resolver.register_trait(trait_def)?;
                 }
                 Item::TypeAlias(type_alias) => {
                     // Check if this is a generic type alias
@@ -845,20 +843,12 @@ impl TypeChecker {
                 }
                 Item::Impl(impl_block) => {
                     // Register impl block with trait resolver
-                    if let Err(e) = self.trait_resolver.register_impl(impl_block) {
-                        return Err(e);
-                    }
+                    self.trait_resolver.register_impl(impl_block)?;
 
                     // If this is a trait impl, verify all required methods are implemented
-                    if let Some(trait_type) = &impl_block.trait_type {
-                        if let Type::Custom(trait_name) = trait_type {
-                            if let Err(e) = self
-                                .trait_resolver
-                                .check_trait_impl_complete(impl_block, trait_name)
-                            {
-                                return Err(e);
-                            }
-                        }
+                    if let Some(Type::Custom(trait_name)) = &impl_block.trait_type {
+                        self.trait_resolver
+                            .check_trait_impl_complete(impl_block, trait_name)?;
                     }
 
                     // Register methods from impl blocks
@@ -1284,13 +1274,11 @@ impl TypeChecker {
                                     .collect();
 
                                 // Substitute type parameters in the field type
-                                let concrete_field_type = self.substitute_type_params(
+                                self.substitute_type_params(
                                     field_type,
                                     &generic_struct.type_params,
                                     &type_args,
-                                )?;
-
-                                concrete_field_type
+                                )?
                             }
                             _ => {
                                 return Err(CompileError::Generic(format!(
@@ -1557,6 +1545,7 @@ impl TypeChecker {
     }
 
     /// Substitute type parameters in a type using a substitution map
+    #[allow(clippy::only_used_in_recursion)]
     fn substitute_type_params_map(
         &self,
         ty: &crate::ast::Type,

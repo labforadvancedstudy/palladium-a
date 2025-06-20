@@ -25,6 +25,7 @@ pub struct LLVMTextBackend {
 struct VarInfo {
     ptr: String,    // SSA register holding the pointer
     ty: String,     // LLVM type string
+    #[allow(dead_code)]
     is_param: bool, // Whether this is a function parameter
 }
 
@@ -102,7 +103,7 @@ impl LLVMTextBackend {
                 escaped
             ));
         }
-        ir.push_str("\n");
+        ir.push('\n');
 
         // Generate functions
         for item in &program.items {
@@ -111,7 +112,7 @@ impl LLVMTextBackend {
                     self.ssa_counter = 0; // Reset for each function
                     self.var_map.clear();
                     ir.push_str(&self.generate_function(func)?);
-                    ir.push_str("\n");
+                    ir.push('\n');
                 }
                 _ => {
                     // Skip other items for now
@@ -268,6 +269,7 @@ impl LLVMTextBackend {
     }
 
     /// Convert Palladium type to LLVM type
+    #[allow(clippy::only_used_in_recursion)]
     fn type_to_llvm(&self, ty: &Option<Type>) -> String {
         match ty {
             None => "void".to_string(),
@@ -369,9 +371,7 @@ impl LLVMTextBackend {
                     } else {
                         // For other array expressions, assume result_var is a pointer
                         // This is a simplification - proper array assignment would need memcpy
-                        ir.push_str(&format!(
-                            "  ; TODO: Proper array copy for non-literal arrays\n"
-                        ));
+                        ir.push_str("  ; TODO: Proper array copy for non-literal arrays\n");
                     }
                 } else {
                     ir.push_str(&format!(
@@ -780,7 +780,7 @@ impl LLVMTextBackend {
                                     .ty
                                     .strip_prefix('[')
                                     .and_then(|s| s.find(" x "))
-                                    .and_then(|i| Some(&var_info.ty[1..i]))
+                                    .map(|i| &var_info.ty[1..i])
                                 {
                                     let _size: usize = array_type.parse().unwrap_or(5);
                                     ir.push_str(&format!(
@@ -997,14 +997,8 @@ impl LLVMTextBackend {
                 };
 
                 // Determine operand type (for now, assume i64 for arithmetic)
-                let op_type = if matches!(
-                    op,
-                    BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
-                ) {
-                    "i64" // Comparisons work on i64
-                } else {
-                    "i64" // Arithmetic on i64
-                };
+                // All operations work on i64 for now
+                let op_type = "i64";
 
                 ir.push_str(&format!(
                     "  {} = {} {} {}, {}\n",
@@ -1317,12 +1311,13 @@ impl LLVMTextBackend {
                     "i64".to_string() // Default for dynamic arrays
                 }
             }
-            Expr::Binary { op, .. } => match op {
-                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne => {
+            Expr::Binary { op, .. } => {
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne) {
                     "i1".to_string()
+                } else {
+                    "i64".to_string()
                 }
-                _ => "i64".to_string(),
-            },
+            }
             Expr::Call { .. } => "i64".to_string(), // Default
             Expr::Ident(name) => {
                 if let Some(var_info) = self.var_map.get(name) {

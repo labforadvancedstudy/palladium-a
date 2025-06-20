@@ -196,6 +196,7 @@ fn is_pascal_case(s: &str) -> bool {
 }
 
 /// Check if string is SCREAMING_SNAKE_CASE
+#[allow(dead_code)]
 fn is_screaming_snake_case(s: &str) -> bool {
     !s.is_empty()
         && s.chars()

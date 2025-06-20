@@ -23,7 +23,7 @@ pub enum Effect {
 }
 
 /// Effect set for a function or expression
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EffectSet {
     effects: HashSet<Effect>,
 }
@@ -31,9 +31,7 @@ pub struct EffectSet {
 impl EffectSet {
     /// Create an empty effect set (pure)
     pub fn new() -> Self {
-        Self {
-            effects: HashSet::new(),
-        }
+        Self::default()
     }
 
     /// Create an effect set with a single effect
@@ -83,8 +81,8 @@ pub struct EffectAnalyzer {
     builtin_effects: std::collections::HashMap<String, EffectSet>,
 }
 
-impl EffectAnalyzer {
-    pub fn new() -> Self {
+impl Default for EffectAnalyzer {
+    fn default() -> Self {
         let mut builtin_effects = std::collections::HashMap::new();
 
         // IO functions
@@ -123,6 +121,12 @@ impl EffectAnalyzer {
             function_effects: std::collections::HashMap::new(),
             builtin_effects,
         }
+    }
+}
+
+impl EffectAnalyzer {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Analyze effects for a function

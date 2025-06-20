@@ -1,7 +1,0 @@
-fn greet() {
-    print("Hello from a void function!");
-}
-
-fn main() {
-    greet();
-}

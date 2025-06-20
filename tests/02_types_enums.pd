@@ -1,0 +1,19 @@
+// Test 02: Type System - Enums (Not Yet Fully Implemented)
+// Enums have partial implementation with known issues
+
+fn main() {
+    print("=== Enum Type Test ===");
+    print("\nEnums are partially implemented but have issues:");
+    print("- Simple unit enums cause type checking errors");
+    print("- Enum variants with data have code generation issues");
+    print("- Pattern matching on enums is limited");
+    
+    // When fully implemented, enums will support:
+    // - Unit variants (no data)
+    // - Tuple variants (unnamed fields)
+    // - Struct variants (named fields)
+    // - Full pattern matching
+    // - Exhaustiveness checking
+    
+    print("\n=== Enum test complete ===");
+}

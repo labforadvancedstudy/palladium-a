@@ -578,6 +578,7 @@ impl LanguageServer {
     }
 
     /// Convert type to string
+    #[allow(clippy::only_used_in_recursion)]
     pub fn type_to_string(&self, ty: &Type) -> String {
         match ty {
             Type::I32 => "i32".to_string(),

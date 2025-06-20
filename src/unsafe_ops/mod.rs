@@ -5,6 +5,7 @@ use crate::ast::{Expr, Function, Stmt};
 use crate::errors::{CompileError, Result};
 
 /// Unsafe operation checker
+#[derive(Default)]
 pub struct UnsafeChecker {
     /// Whether we're currently in an unsafe context
     in_unsafe_context: bool,
@@ -14,10 +15,7 @@ pub struct UnsafeChecker {
 
 impl UnsafeChecker {
     pub fn new() -> Self {
-        Self {
-            in_unsafe_context: false,
-            unsafe_stack: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Enter an unsafe context
@@ -139,7 +137,7 @@ impl UnsafeChecker {
                 if !self.is_unsafe_context() && self.is_raw_pointer_expr(inner) {
                     return Err(CompileError::UnsafeOperation {
                         operation: "raw pointer dereference".to_string(),
-                        span: span.clone(),
+                        span: *span,
                     });
                 }
 
@@ -154,7 +152,7 @@ impl UnsafeChecker {
                     if self.is_unsafe_function(func_name) && !self.is_unsafe_context() {
                         return Err(CompileError::UnsafeOperation {
                             operation: format!("call to unsafe function '{}'", func_name),
-                            span: span.clone(),
+                            span: *span,
                         });
                     }
                 }

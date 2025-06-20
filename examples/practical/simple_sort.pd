@@ -1,0 +1,45 @@
+// Simple Sort Example in Palladium
+// Basic sorting without complex borrowing
+
+fn sort_array(arr: &mut [i64; 5]) {
+    let n = 5;
+    
+    for i in 0..n {
+        for j in 0..(n - i - 1) {
+            if arr[j] > arr[j + 1] {
+                // Swap elements
+                let temp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = temp;
+            }
+        }
+    }
+}
+
+fn print_array(arr: &[i64; 5]) {
+    print("[");
+    for i in 0..5 {
+        print(" ");
+        print_int(arr[i]);
+        if i < 4 {
+            print(",");
+        }
+    }
+    print(" ]");
+}
+
+fn main() {
+    print("=== Simple Sort Demo ===");
+    
+    let mut numbers = [5, 2, 8, 1, 3];
+    
+    print("\n\nOriginal array:\n");
+    print_array(&numbers);
+    
+    sort_array(&mut numbers);
+    
+    print("\n\nSorted array:\n");
+    print_array(&numbers);
+    
+    print("\n\n=== Sort complete ===");
+}

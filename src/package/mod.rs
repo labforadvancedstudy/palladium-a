@@ -110,6 +110,7 @@ pub struct PackageManager {
     registry_url: String,
 
     /// Loaded package manifests
+    #[allow(dead_code)]
     manifests: HashMap<String, PackageManifest>,
     
     /// Registry client
@@ -132,7 +133,7 @@ impl PackageManager {
 
         // Create cache directory if it doesn't exist
         if !cache_dir.exists() {
-            fs::create_dir_all(&cache_dir).map_err(|e| CompileError::IoError(e))?;
+            fs::create_dir_all(&cache_dir).map_err(CompileError::IoError)?;
         }
 
         let registry_url = "https://packages.palladium-lang.org".to_string();
@@ -150,7 +151,7 @@ impl PackageManager {
 
     /// Load package manifest from a file
     pub fn load_manifest(path: &Path) -> Result<PackageManifest> {
-        let content = fs::read_to_string(path).map_err(|e| CompileError::IoError(e))?;
+        let content = fs::read_to_string(path).map_err(CompileError::IoError)?;
 
         // For now, we'll parse a simple format
         // In the future, this could be TOML or a custom format
@@ -312,14 +313,14 @@ impl PackageManager {
         // Create directory structure
         let src_dir = path.join("src");
         if !src_dir.exists() {
-            fs::create_dir_all(&src_dir).map_err(|e| CompileError::IoError(e))?;
+            fs::create_dir_all(&src_dir).map_err(CompileError::IoError)?;
         }
 
         // Create default package.pd
         let manifest = PackageManifest {
             name: name.to_string(),
             version: "0.1.0".to_string(),
-            description: Some(format!("A new Palladium package")),
+            description: Some("A new Palladium package".to_string()),
             authors: vec![Self::get_default_author()],
             license: Some("MIT".to_string()),
             dependencies: HashMap::new(),
@@ -334,7 +335,7 @@ impl PackageManager {
 
         let manifest_path = path.join("package.pd");
         let manifest_content = Self::manifest_to_string(&manifest);
-        fs::write(&manifest_path, manifest_content).map_err(|e| CompileError::IoError(e))?;
+        fs::write(&manifest_path, manifest_content).map_err(CompileError::IoError)?;
 
         // Create default main.pd
         let main_path = src_dir.join("main.pd");
@@ -346,7 +347,7 @@ fn main() {
 "#
         .replace("{}", name);
 
-        fs::write(&main_path, main_content).map_err(|e| CompileError::IoError(e))?;
+        fs::write(&main_path, main_content).map_err(CompileError::IoError)?;
 
         println!("✅ Created package '{}' at {}", name, path.display());
 
@@ -357,7 +358,7 @@ fn main() {
     fn get_default_author() -> String {
         // Try to get from git config
         if let Ok(output) = std::process::Command::new("git")
-            .args(&["config", "--global", "user.name"])
+            .args(["config", "--global", "user.name"])
             .output()
         {
             if output.status.success() {
@@ -366,7 +367,7 @@ fn main() {
 
                     // Also try to get email
                     if let Ok(email_output) = std::process::Command::new("git")
-                        .args(&["config", "--global", "user.email"])
+                        .args(["config", "--global", "user.email"])
                         .output()
                     {
                         if email_output.status.success() {
@@ -394,7 +395,7 @@ fn main() {
     pub fn install(&mut self) -> Result<()> {
         // Load manifest
         let manifest_path = Path::new("package.pd");
-        let manifest = Self::load_manifest(&manifest_path)?;
+        let manifest = Self::load_manifest(manifest_path)?;
         
         println!("📦 Installing dependencies for '{}'...", manifest.name);
         
@@ -402,7 +403,7 @@ fn main() {
         let lockfile_path = Path::new("package.lock");
         if lockfile_path.exists() {
             println!("🔒 Found lockfile, installing exact versions...");
-            self.lockfile = Some(Lockfile::load(&lockfile_path)?);
+            self.lockfile = Some(Lockfile::load(lockfile_path)?);
             return self.install_from_lockfile();
         }
         
@@ -444,7 +445,7 @@ fn main() {
         }
         
         // Save lockfile
-        lockfile.save(&lockfile_path)?;
+        lockfile.save(lockfile_path)?;
         println!("🔒 Created lockfile");
         
         println!("✅ Installation complete! {} packages installed", resolved.packages.len() - 1);
@@ -520,7 +521,7 @@ fn main() {
     pub fn update(&mut self, package: Option<&str>) -> Result<()> {
         // Load manifest
         let manifest_path = Path::new("package.pd");
-        let manifest = Self::load_manifest(&manifest_path)?;
+        let manifest = Self::load_manifest(manifest_path)?;
         
         if let Some(pkg_name) = package {
             println!("📦 Updating {}...", pkg_name);
@@ -534,7 +535,7 @@ fn main() {
         // Compare with existing lockfile if any
         let lockfile_path = Path::new("package.lock");
         if lockfile_path.exists() {
-            let old_lockfile = Lockfile::load(&lockfile_path)?;
+            let old_lockfile = Lockfile::load(lockfile_path)?;
             let mut new_lockfile = Lockfile::new(&manifest.name, &manifest.version);
             
             // Add resolved packages to new lockfile
@@ -559,7 +560,7 @@ fn main() {
             println!("\n{}", diff.display());
             
             // Save new lockfile
-            new_lockfile.save(&lockfile_path)?;
+            new_lockfile.save(lockfile_path)?;
         } else {
             // No existing lockfile, just install
             self.install()?;
@@ -633,7 +634,7 @@ fn main() {
     pub fn add_dependency(&mut self, name: &str, version: &str, dev: bool) -> Result<()> {
         // Load current manifest
         let manifest_path = Path::new("package.pd");
-        let mut manifest = Self::load_manifest(&manifest_path)?;
+        let mut manifest = Self::load_manifest(manifest_path)?;
 
         // Add dependency
         let dep = Dependency::Version(version.to_string());
@@ -647,7 +648,7 @@ fn main() {
 
         // Save manifest
         let content = Self::manifest_to_string(&manifest);
-        fs::write(&manifest_path, content).map_err(|e| CompileError::IoError(e))?;
+        fs::write(manifest_path, content).map_err(CompileError::IoError)?;
 
         Ok(())
     }
@@ -656,7 +657,7 @@ fn main() {
     pub fn build(&self, release: bool) -> Result<()> {
         // Load manifest
         let manifest_path = Path::new("package.pd");
-        let manifest = Self::load_manifest(&manifest_path)?;
+        let manifest = Self::load_manifest(manifest_path)?;
 
         println!("🔨 Building package '{}'...", manifest.name);
 
@@ -672,25 +673,22 @@ fn main() {
         }
 
         // Use the driver to compile
-        let driver = if release {
-            crate::Driver::new() // TODO: Add optimization flags
-        } else {
-            crate::Driver::new()
-        };
+        let driver = crate::Driver::new();
+        // TODO: Add optimization flags for release builds
 
         // Create build directory
         let build_dir = Path::new("target").join(if release { "release" } else { "debug" });
         if !build_dir.exists() {
-            fs::create_dir_all(&build_dir).map_err(|e| CompileError::IoError(e))?;
+            fs::create_dir_all(&build_dir).map_err(CompileError::IoError)?;
         }
 
         // Compile the package
-        let output = driver.compile_file(&entry_path)?;
+        let output = driver.compile_file(entry_path)?;
 
         // Move output to target directory
         let target_name = format!("{}.c", manifest.name);
         let target_path = build_dir.join(&target_name);
-        fs::rename(&output, &target_path).map_err(|e| CompileError::IoError(e))?;
+        fs::rename(&output, &target_path).map_err(CompileError::IoError)?;
 
         println!("✅ Build complete: {}", target_path.display());
 
@@ -712,8 +710,13 @@ fn main() {
 
         // Compile C to executable
         println!("🔗 Linking executable...");
+        
+        // Get the runtime library path
+        let runtime_path = PathBuf::from("runtime/palladium_runtime.c");
+        
         let gcc_output = std::process::Command::new("gcc")
             .arg(&c_file)
+            .arg(&runtime_path)
             .arg("-o")
             .arg(&exe_file)
             .output()

@@ -162,7 +162,7 @@ impl FunctionAnalyzer {
         self.analyze_statements(&func.body, results);
 
         // Check for unused variables
-        for (var, _) in &self.declared_vars {
+        for var in self.declared_vars.keys() {
             if !self.used_vars.contains(var) && !var.starts_with('_') {
                 results.unused_vars.insert(var.clone());
             }

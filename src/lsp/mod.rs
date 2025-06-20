@@ -183,9 +183,8 @@ pub struct CompletionOptions {
     pub trigger_characters: Vec<String>,
 }
 
-impl LanguageServer {
-    /// Create a new language server
-    pub fn new() -> Self {
+impl Default for LanguageServer {
+    fn default() -> Self {
         Self {
             workspace_root: None,
             documents: HashMap::new(),
@@ -211,6 +210,13 @@ impl LanguageServer {
                 diagnostic_provider: true,
             },
         }
+    }
+}
+
+impl LanguageServer {
+    /// Create a new language server
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Initialize the language server
@@ -396,7 +402,7 @@ impl LanguageServer {
             self.symbol_index
                 .symbols
                 .entry(symbol.name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(symbol);
         }
 
@@ -411,8 +417,8 @@ impl LanguageServer {
 
     /// Convert URI to file path
     fn uri_to_path(&self, uri: &str) -> Result<PathBuf> {
-        if uri.starts_with("file://") {
-            Ok(PathBuf::from(&uri[7..]))
+        if let Some(path) = uri.strip_prefix("file://") {
+            Ok(PathBuf::from(path))
         } else {
             Err(CompileError::Generic(format!("Invalid URI: {}", uri)))
         }

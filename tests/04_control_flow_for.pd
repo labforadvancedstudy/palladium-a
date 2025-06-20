@@ -1,0 +1,62 @@
+// Test 04: Control Flow - For Loops
+// Tests for loops with ranges and arrays
+
+fn main() {
+    // Basic for loop with range
+    print("For loop with range 0..5:");
+    for i in 0..5 {
+        print_int(i);
+    }
+    
+    // For loop with different range
+    print("\nFor loop with range 1..4:");
+    for j in 1..4 {
+        print_int(j);
+    }
+    
+    // For loop with array
+    let arr = [10, 20, 30, 40, 50];
+    print("\nFor loop iterating over array:");
+    for val in arr {
+        print_int(val);
+    }
+    
+    // For loop with break
+    print("\nFor loop with break:");
+    for k in 0..10 {
+        if k == 5 {
+            break;
+        }
+        print_int(k);
+    }
+    
+    // For loop with continue
+    print("\nFor loop with continue (skip odd numbers):");
+    for m in 0..10 {
+        if m % 2 == 1 {
+            continue;
+        }
+        print_int(m);
+    }
+    
+    // Nested for loops
+    print("\nNested for loops (multiplication table):");
+    for x in 1..4 {
+        for y in 1..4 {
+            let product = x * y;
+            print_int(product);
+        }
+    }
+    
+    // String array iteration not yet fully supported
+    print("\nString array iteration: skipped");
+    
+    // Sum using for loop
+    let numbers = [1, 2, 3, 4, 5];
+    let mut sum = 0;
+    for n in numbers {
+        sum = sum + n;
+    }
+    print("\nSum of array elements:");
+    print_int(sum);  // Should be 15
+}

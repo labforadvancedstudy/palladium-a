@@ -1,0 +1,72 @@
+// Test 02: Type System - Structs
+// Tests struct definitions, field access, and nested structs
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Rectangle {
+    top_left: Point,
+    bottom_right: Point,
+}
+
+struct Person {
+    name: String,
+    age: i64,
+    active: bool,
+}
+
+// Unit struct not supported
+// struct Empty;
+
+fn make_point(x: i64, y: i64) -> Point {
+    return Point { x: x, y: y };
+}
+
+fn main() {
+    // Basic struct creation
+    let p1 = Point { x: 10, y: 20 };
+    print("Point struct:");
+    print_int(p1.x);
+    print_int(p1.y);
+    
+    // Mutable struct
+    let mut p2 = Point { x: 0, y: 0 };
+    p2.x = 100;
+    p2.y = 200;
+    print("\nMutable point after modification:");
+    print_int(p2.x);
+    print_int(p2.y);
+    
+    // Nested structs
+    let rect = Rectangle {
+        top_left: Point { x: 0, y: 0 },
+        bottom_right: Point { x: 100, y: 100 },
+    };
+    print("\nRectangle:");
+    print_int(rect.top_left.x);
+    print_int(rect.bottom_right.y);
+    
+    // Struct with different field types
+    let person = Person {
+        name: "Alice",
+        age: 30,
+        active: true,
+    };
+    print("\nPerson:");
+    print(person.name);
+    print_int(person.age);
+    if person.active {
+        print("Person is active");
+    }
+    
+    // Unit struct not supported
+    print("\nUnit struct: skipped");
+    
+    // Struct in function return
+    let p3 = make_point(42, 84);
+    print("\nPoint from function:");
+    print_int(p3.x);
+    print_int(p3.y);
+}

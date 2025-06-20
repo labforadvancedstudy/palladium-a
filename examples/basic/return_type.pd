@@ -1,4 +1,0 @@
-fn main() -> i32 {
-    print("Testing return type parsing");
-    return 0;
-}

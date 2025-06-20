@@ -1,0 +1,14 @@
+// Test 08: Generics - Not Yet Fully Implemented
+// Generics are partially implemented but have limitations
+
+fn main() {
+    print("=== Generics Test ===");
+    print("\nGenerics are not yet fully implemented");
+    print("Current limitations:");
+    print("- Generic structs may not work correctly");
+    print("- Generic enums have type checking issues");
+    print("- Generic functions are not supported");
+    print("- Type parameters cannot be used in all contexts");
+    
+    print("\n=== Generics test complete ===");
+}

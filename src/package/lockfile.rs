@@ -160,7 +160,7 @@ impl Lockfile {
         }
         
         // Check if all manifest dependencies are in lockfile
-        for (dep_name, _dep_spec) in &manifest.dependencies {
+        for dep_name in manifest.dependencies.keys() {
             if let Some(locked) = self.get_package(dep_name) {
                 // TODO: Check if locked version satisfies dependency spec
                 let _ = locked; // Placeholder
