@@ -6,10 +6,10 @@
 
 # Variables
 CARGO := cargo
-PDC := ./compiler/rust/target/release/pdc
-BOOTSTRAP_DIR := compiler/bootstrap/v3_incremental
-TINY_COMPILER := $(BOOTSTRAP_DIR)/tiny_compiler
-PALLADIUM_COMPILER := compiler/palladium/pdc
+PDC := ./target/release/pdc
+BOOTSTRAP_DIR := bootstrap/v3_incremental
+TINY_COMPILER := $(BOOTSTRAP_DIR)/tiny_v16
+PALLADIUM_COMPILER := bootstrap/v2_full/pdc
 
 # Colors for output
 GREEN := \033[0;32m

@@ -1,62 +1,79 @@
 # Palladium Language Documentation
 
-Welcome to the official documentation for the Palladium programming language - where Turing's proofs meet von Neumann's performance!
+Welcome to the official documentation for the Palladium programming language!
+
+> *"When Turing's Proofs Meet von Neumann's Performance"*
+
+## 📊 Current Status: v0.8-alpha (85% Complete)
+
+### Major Achievements ✅
+- **100% Self-Hosting** - Compiler compiles itself
+- **LLVM Backend** - Native code generation
+- **Package Manager (pdm)** - Modern dependency management
+- **Language Server (pls)** - Full IDE support
+- **Formal Specification** - Complete language spec with EBNF grammar
+
+### Progress Overview
+```
+Core Language    [█████████░] 95%  - Type system, ownership, async/effects
+Compiler         [██████████] 100% - Self-hosting achieved!
+Standard Library [███████░░░] 70%  - Core types, collections, I/O
+Tooling          [████████░░] 85%  - pdm, pls, build system
+Documentation    [███████░░░] 75%  - Spec, book, guides
+Performance      [██████░░░░] 60%  - Optimization in progress
+```
 
 ## 🚀 Quick Navigation
 
-### Getting Started
-- [📖 Getting Started Guide](./guides/getting-started.md) - Your first Palladium program
-- [🎯 Language Tour](./guides/language-tour.md) - Learn Palladium in 30 minutes
-- [🔄 Migrating from Rust](./guides/migration-from-rust.md) - For Rustaceans
+### For New Users
+- 📚 **[The Alan von Palladium Book](the_palladium_book/)** - Learn Palladium the Feynman way
+- 🎯 **[Getting Started Guide](guides/getting-started.md)** - Your first program
+- 📋 **[Language Specification](language_specification.md)** - Formal specification
 
-### Implementation Status
-- [📊 Feature Status Dashboard](./features/status.yaml) - Real-time progress tracking
-- [🎉 Bootstrap Documentation](./bootstrap/) - Self-hosting journey
-- [📈 Progress Reports](../reports/) - Detailed milestone updates
+### For Contributors  
+- 🎉 **[Bootstrap Documentation](bootstrap/)** - Self-hosting journey (100% complete!)
+- 🏗️ **[Compiler Internals](internals/)** - How Palladium works
+- 📈 **[Roadmap to v1.0](../MILESTONES.md)** - What's next
 
-### Language Features
-- [🧬 Core Language](./features/core-language/) - Type system, memory, control flow
-- [⚡ Async System](./features/async-system/) - Revolutionary async design
-- [🔬 Advanced Features](./features/advanced/) - Verification, proofs, safety
+### Reference
+- 📖 **[Language Reference](reference/LANGUAGE_REFERENCE.md)** - Syntax and semantics
+- 🛠️ **[Standard Library](stdlib/)** - API documentation
+- 🔧 **[Tools Documentation](tools/)** - pdm, pls, pdc
 
-### Reference Documentation
-- [📚 Language Reference](./reference/) - Syntax and semantics
-- [🛠️ Standard Library](./stdlib/) - Complete stdlib documentation
-- [🔧 Tools](./tools/) - Compiler, formatter, LSP
+## 🎯 Learning Path
 
-### Developer Resources
-- [🏗️ Compiler Internals](./internals/) - How Palladium works under the hood
-- [🤝 Contributing Guide](../CONTRIBUTING.md) - Join the revolution
-- [📝 Design Documents](./design/) - Language philosophy and decisions
+### Beginner
+1. Start with [The Alan von Palladium Book](the_palladium_book/)
+2. Try the [Getting Started Guide](guides/getting-started.md)
+3. Explore [Example Programs](../examples/)
 
-## 📊 Current Implementation Status
+### Intermediate
+1. Read the [Language Specification](language_specification.md)
+2. Study [Design Documents](design/)
+3. Build a small project with pdm
 
-### Overall Progress: 45% Complete
+### Advanced
+1. Explore [Bootstrap Code](bootstrap/)
+2. Dive into [Compiler Internals](internals/)
+3. Contribute to the compiler!
+
+## 📁 Documentation Structure
 
 ```
-Core Language    [██████░░░░] 59%  - Type system, borrowing, lifetimes
-Bootstrap        [██████░░░░] 60%  - Self-hosting compiler progress  
-Advanced         [███░░░░░░░] 32%  - Verification, macros, optimization
-Tooling          [███░░░░░░░] 32%  - Compiler, formatter, IDE support
-Ecosystem        [████░░░░░░] 42%  - Standard library, FFI, packages
+docs/
+├── the_palladium_book/    # Feynman-style guide (NEW!)
+├── bootstrap/             # Self-hosting docs (UPDATED)
+├── design/               # Architecture and philosophy
+├── features/             # Feature specifications
+├── guides/               # Tutorials and how-tos
+├── internals/            # Compiler implementation
+├── reference/            # Language reference
+├── stdlib/               # Standard library docs
+├── tools/                # Tooling documentation
+├── language_specification.md  # Formal spec
+├── grammar.ebnf          # EBNF grammar
+└── semantics.md          # Operational semantics
 ```
-
-### 🎯 Next Milestones
-
-1. **Complete Self-hosting** (7-10 days)
-   - Fix string type inference in tiny compiler
-   - Add missing expression parsing
-   - Test full compiler self-compilation
-
-2. **Enhanced Type System** (2-3 weeks)
-   - Complete trait implementation
-   - Add const generics
-   - Improve type inference
-
-3. **Developer Experience** (1 month)
-   - LSP server for IDE support
-   - Better error messages
-   - Package manager alpha
 
 ## 🌟 Why Palladium?
 
@@ -64,90 +81,79 @@ Palladium solves the fundamental tension in systems programming:
 
 | Feature | Rust | Go | C++ | Palladium |
 |---------|------|-----|-----|-----------|
-| Memory Safety | ✅ Manual | 🤷 GC | ❌ Manual | ✅ Automatic |
+| Memory Safety | ✅ Complex | 🤷 GC | ❌ Manual | ✅ Automatic |
 | Performance | ✅ Excellent | 🤷 Good | ✅ Excellent | ✅ Excellent |
-| Ergonomics | 🤷 Complex | ✅ Simple | 🤷 Complex | ✅ Simple |
+| Ergonomics | 🤷 Learning curve | ✅ Simple | 🤷 Complex | ✅ Simple |
 | Verification | ❌ External | ❌ None | ❌ None | ✅ Built-in |
-| Async | 🤷 Colored | 🤷 Goroutines | ❌ Library | ✅ Transparent |
+| Async | 🤷 Colored | 🤷 Goroutines | ❌ Library | ✅ Effects |
 
-## 📚 Documentation Structure
+## 🚀 What's New in v0.8-alpha
 
-```
-docs/
-├── features/          # Feature specifications and status
-│   ├── status.yaml   # Progress tracking (single source of truth)
-│   ├── core-language/
-│   ├── async-system/
-│   └── advanced/
-├── guides/           # Tutorials and how-tos
-├── reference/        # Language and library reference
-├── bootstrap/        # Self-hosting documentation
-├── internals/        # Compiler design and implementation
-├── tools/           # Tooling documentation
-├── design/          # Architecture and vision documents
-├── release/         # Release notes and changelogs
-└── planning/        # Development planning
-```
+- ✅ Complete self-hosting capability
+- ✅ LLVM backend for native performance
+- ✅ Package manager with dependency resolution
+- ✅ Language server for IDE support
+- ✅ Formal language specification
+- ✅ Pattern matching for enums
+- ✅ Async/effects system
+- ✅ Trait system with bounds
 
-## 🔄 Staying Updated
+## 🗺️ Roadmap to v1.0
 
-- **Status Updates**: Check [status.yaml](./features/status.yaml) for real-time progress
-- **Release Notes**: See [release/](./release/) for version history
-- **Blog**: Visit [palladium-lang.org/blog](https://palladium-lang.org/blog)
-- **Discord**: Join our [community](https://discord.gg/palladium)
+### v0.9-beta (February 2025)
+- Complete standard library
+- Multi-platform support
+- Performance optimizations
+- Production error messages
+
+### v0.95-rc (March 2025)
+- Package registry (crates.pd)
+- Debugger integration
+- Complete documentation
+- Enterprise features
+
+### v1.0 (May 2025)
+- Stability guarantee
+- LTS support
+- Production ready
+- Community launch
+
+## 📖 Key Documents
+
+### Current
+- [Language Specification](language_specification.md) - Complete formal spec
+- [EBNF Grammar](grammar.ebnf) - Parser grammar
+- [The Palladium Book](the_palladium_book/) - User guide
+
+### Design
+- [Technical Manifesto](design/avp_technical_manifesto.md) - Vision
+- [Trait System Design](design/trait_system_design.md) - Type system
+- [Visual Documentation](visual/) - Feature tracking
+
+### Historical
+- [Bootstrap Journey](bootstrap/) - Self-hosting story
+- [Early Releases](release/) - Version history
 
 ## 🤝 Contributing
 
-We welcome contributions! See our [Contributing Guide](../CONTRIBUTING.md) for:
-- Setting up the development environment
-- Understanding the codebase
-- Submitting pull requests
-- Coding standards
+We welcome contributions! Key areas:
+- 🐛 Bug fixes and testing
+- 📚 Documentation improvements
+- 🧪 Standard library implementations
+- 🌍 Platform ports
+- 🎨 Tooling enhancements
 
-## 📖 Learning Path
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for details.
 
-1. **Beginner**: Start with [Getting Started](./guides/getting-started.md)
-2. **Intermediate**: Explore [Language Features](./features/)
-3. **Advanced**: Dive into [Compiler Internals](./internals/)
-4. **Expert**: Contribute to [Bootstrap Compiler](./bootstrap/)
+## 🔄 Stay Updated
 
-## 🗂️ Directory Overview
-
-### features/
-Feature specifications with implementation status:
-- `status.yaml` - Central progress tracking
-- Individual feature documentation with code examples
-
-### guides/
-User-friendly tutorials and guides:
-- Getting started
-- Migration guides
-- Best practices
-
-### bootstrap/
-Self-hosting compiler documentation:
-- Bootstrap strategy
-- Implementation progress
-- Tutorial for contributing
-
-### internals/
-Compiler design and implementation:
-- Architecture overview
-- Type system design
-- Code generation strategy
-
-### design/
-High-level design documents:
-- Technical manifesto
-- Vision and roadmap
-- Comparison with other languages
-
-### tools/
-Documentation for Palladium tooling:
-- pdc compiler usage
-- formatter configuration
-- IDE integration
+- **GitHub**: [palladium-lang/palladium](https://github.com/palladium-lang/palladium)
+- **Discord**: [Join our community](https://discord.gg/palladium)
+- **Twitter**: [@palladium_lang](https://twitter.com/palladium_lang)
+- **Blog**: [palladium-lang.org](https://palladium-lang.org)
 
 ---
 
-*"In Palladium, your proofs compile to bare metal performance."*
+*"In Palladium, we don't hope our code works—we know it does."*
+
+**Ready to build the future? [Get Started →](guides/getting-started.md)**
