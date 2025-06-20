@@ -1,12 +1,12 @@
 // Macro expander implementation
 // "Expanding code like expanding minds"
 
+use super::parser::{CaptureKind, PatternElement, RepetitionKind};
 use crate::ast::{Expr, Stmt};
 use crate::errors::{CompileError, Result};
-use crate::lexer::{Token, Lexer};
+use crate::lexer::{Lexer, Token};
 use crate::parser::Parser;
 use std::collections::HashMap;
-use super::parser::{PatternElement, CaptureKind, RepetitionKind};
 
 /// Captured values from macro matching
 #[derive(Debug, Clone)]
@@ -29,17 +29,17 @@ impl MatchContext {
             captures: HashMap::new(),
         }
     }
-    
+
     /// Add a capture
     pub fn add_capture(&mut self, name: String, value: Vec<Token>) {
         self.captures.insert(name, CaptureValue::Single(value));
     }
-    
+
     /// Add a list capture
     pub fn add_list_capture(&mut self, name: String, values: Vec<Vec<Token>>) {
         self.captures.insert(name, CaptureValue::List(values));
     }
-    
+
     /// Get a capture
     pub fn get_capture(&self, name: &str) -> Option<&CaptureValue> {
         self.captures.get(name)
@@ -47,14 +47,11 @@ impl MatchContext {
 }
 
 /// Match a token stream against a pattern
-pub fn match_pattern(
-    pattern: &[PatternElement],
-    tokens: &[Token],
-) -> Result<Option<MatchContext>> {
+pub fn match_pattern(pattern: &[PatternElement], tokens: &[Token]) -> Result<Option<MatchContext>> {
     let mut context = MatchContext::new();
     let mut token_pos = 0;
     let mut pattern_pos = 0;
-    
+
     while pattern_pos < pattern.len() && token_pos < tokens.len() {
         match &pattern[pattern_pos] {
             PatternElement::Literal(expected) => {
@@ -65,39 +62,39 @@ pub fn match_pattern(
                 token_pos += 1;
                 pattern_pos += 1;
             }
-            
+
             PatternElement::Variable { name, kind } => {
                 // Capture tokens based on kind
                 let captured = capture_tokens(kind, &tokens[token_pos..])?;
                 if captured.is_empty() {
                     return Ok(None); // No match
                 }
-                
+
                 context.add_capture(name.clone(), captured.clone());
                 token_pos += captured.len();
                 pattern_pos += 1;
             }
-            
-            PatternElement::Repetition { pattern: rep_pattern, separator, kind } => {
+
+            PatternElement::Repetition {
+                pattern: rep_pattern,
+                separator,
+                kind,
+            } => {
                 // Match repetition
-                let (captured_lists, consumed) = match_repetition(
-                    rep_pattern,
-                    separator.as_ref(),
-                    kind,
-                    &tokens[token_pos..],
-                )?;
-                
+                let (captured_lists, consumed) =
+                    match_repetition(rep_pattern, separator.as_ref(), kind, &tokens[token_pos..])?;
+
                 // Add captures from repetition
                 for (name, values) in captured_lists {
                     context.add_list_capture(name, values);
                 }
-                
+
                 token_pos += consumed;
                 pattern_pos += 1;
             }
         }
     }
-    
+
     // Check if we consumed all tokens and pattern
     if pattern_pos == pattern.len() && token_pos == tokens.len() {
         Ok(Some(context))
@@ -111,7 +108,7 @@ fn capture_tokens(kind: &CaptureKind, tokens: &[Token]) -> Result<Vec<Token>> {
     if tokens.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     match kind {
         CaptureKind::Ident => {
             // Capture single identifier
@@ -121,37 +118,38 @@ fn capture_tokens(kind: &CaptureKind, tokens: &[Token]) -> Result<Vec<Token>> {
                 Ok(Vec::new())
             }
         }
-        
+
         CaptureKind::Lit => {
             // Capture literal (int, string, bool)
             match &tokens[0] {
-                Token::Integer(_) | Token::String(_) |
-                Token::True | Token::False => Ok(vec![tokens[0].clone()]),
+                Token::Integer(_) | Token::String(_) | Token::True | Token::False => {
+                    Ok(vec![tokens[0].clone()])
+                }
                 _ => Ok(Vec::new()),
             }
         }
-        
+
         CaptureKind::Expr => {
             // Capture expression tokens
             // This is simplified - real implementation would parse balanced expressions
             capture_balanced_expr(tokens)
         }
-        
+
         CaptureKind::Stmt => {
             // Capture statement tokens
             capture_until_semicolon(tokens)
         }
-        
+
         CaptureKind::Type => {
             // Capture type tokens
             capture_type_tokens(tokens)
         }
-        
+
         CaptureKind::Pat => {
             // Capture pattern tokens
             capture_pattern_tokens(tokens)
         }
-        
+
         CaptureKind::Tt => {
             // Token tree - capture any single token or balanced group
             capture_token_tree(tokens)
@@ -164,7 +162,7 @@ fn capture_balanced_expr(tokens: &[Token]) -> Result<Vec<Token>> {
     let mut captured = Vec::new();
     let mut depth = 0;
     let mut i = 0;
-    
+
     while i < tokens.len() {
         match &tokens[i] {
             Token::LeftParen | Token::LeftBrace | Token::LeftBracket => {
@@ -187,14 +185,14 @@ fn capture_balanced_expr(tokens: &[Token]) -> Result<Vec<Token>> {
         }
         i += 1;
     }
-    
+
     Ok(captured)
 }
 
 /// Capture tokens until semicolon
 fn capture_until_semicolon(tokens: &[Token]) -> Result<Vec<Token>> {
     let mut captured = Vec::new();
-    
+
     for token in tokens {
         if let Token::Semicolon = token {
             captured.push(token.clone());
@@ -202,7 +200,7 @@ fn capture_until_semicolon(tokens: &[Token]) -> Result<Vec<Token>> {
         }
         captured.push(token.clone());
     }
-    
+
     Ok(captured)
 }
 
@@ -212,7 +210,7 @@ fn capture_type_tokens(tokens: &[Token]) -> Result<Vec<Token>> {
     if tokens.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     match &tokens[0] {
         Token::Identifier(_) => Ok(vec![tokens[0].clone()]),
         _ => Ok(Vec::new()),
@@ -230,7 +228,7 @@ fn capture_token_tree(tokens: &[Token]) -> Result<Vec<Token>> {
     if tokens.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     match &tokens[0] {
         Token::LeftParen | Token::LeftBrace | Token::LeftBracket => {
             // Capture balanced group
@@ -248,30 +246,30 @@ fn capture_balanced_group(tokens: &[Token]) -> Result<Vec<Token>> {
     if tokens.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     let (open, close) = match &tokens[0] {
         Token::LeftParen => (Token::LeftParen, Token::RightParen),
         Token::LeftBrace => (Token::LeftBrace, Token::RightBrace),
         Token::LeftBracket => (Token::LeftBracket, Token::RightBracket),
         _ => return Ok(vec![tokens[0].clone()]),
     };
-    
+
     let mut captured = vec![tokens[0].clone()];
     let mut depth = 1;
     let mut i = 1;
-    
+
     while i < tokens.len() && depth > 0 {
         captured.push(tokens[i].clone());
-        
+
         if std::mem::discriminant(&tokens[i]) == std::mem::discriminant(&open) {
             depth += 1;
         } else if std::mem::discriminant(&tokens[i]) == std::mem::discriminant(&close) {
             depth -= 1;
         }
-        
+
         i += 1;
     }
-    
+
     Ok(captured)
 }
 
@@ -285,7 +283,7 @@ fn match_repetition(
     let mut captures: HashMap<String, Vec<Vec<Token>>> = HashMap::new();
     let mut consumed = 0;
     let mut match_count = 0;
-    
+
     loop {
         // Try to match pattern
         let remaining = &tokens[consumed..];
@@ -299,21 +297,22 @@ fn match_repetition(
                     CaptureValue::List(_) => {
                         // Nested repetitions not supported yet
                         return Err(CompileError::Generic(
-                            "Nested repetitions not supported".to_string()
+                            "Nested repetitions not supported".to_string(),
                         ));
                     }
                 }
             }
-            
+
             // Count tokens consumed by this match
             let pattern_consumed = count_pattern_tokens(pattern, remaining)?;
             consumed += pattern_consumed;
             match_count += 1;
-            
+
             // Check for separator
             if let Some(sep) = separator {
-                if consumed < tokens.len() &&
-                   std::mem::discriminant(&tokens[consumed]) == std::mem::discriminant(sep) {
+                if consumed < tokens.len()
+                    && std::mem::discriminant(&tokens[consumed]) == std::mem::discriminant(sep)
+                {
                     consumed += 1; // Consume separator
                 } else {
                     break; // No separator, end of repetition
@@ -323,26 +322,26 @@ fn match_repetition(
             break; // No match
         }
     }
-    
+
     // Validate match count
     match kind {
         RepetitionKind::ZeroOrMore => {} // Any count OK
         RepetitionKind::OneOrMore => {
             if match_count == 0 {
                 return Err(CompileError::Generic(
-                    "Expected at least one match".to_string()
+                    "Expected at least one match".to_string(),
                 ));
             }
         }
         RepetitionKind::ZeroOrOne => {
             if match_count > 1 {
                 return Err(CompileError::Generic(
-                    "Expected at most one match".to_string()
+                    "Expected at most one match".to_string(),
                 ));
             }
         }
     }
-    
+
     Ok((captures, consumed))
 }
 
@@ -351,7 +350,7 @@ fn count_pattern_tokens(pattern: &[PatternElement], tokens: &[Token]) -> Result<
     // This is a simplified implementation
     // Real implementation would track exact token consumption
     let mut count = 0;
-    
+
     for element in pattern {
         match element {
             PatternElement::Literal(_) => count += 1,
@@ -365,18 +364,15 @@ fn count_pattern_tokens(pattern: &[PatternElement], tokens: &[Token]) -> Result<
             }
         }
     }
-    
+
     Ok(count)
 }
 
 /// Substitute captured values into template
-pub fn substitute_template(
-    template: &[Token],
-    context: &MatchContext,
-) -> Result<Vec<Token>> {
+pub fn substitute_template(template: &[Token], context: &MatchContext) -> Result<Vec<Token>> {
     let mut result = Vec::new();
     let mut i = 0;
-    
+
     while i < template.len() {
         if let Token::Dollar = &template[i] {
             if i + 1 < template.len() {
@@ -400,11 +396,11 @@ pub fn substitute_template(
                 }
             }
         }
-        
+
         result.push(template[i].clone());
         i += 1;
     }
-    
+
     Ok(result)
 }
 
@@ -425,24 +421,24 @@ pub fn expand_to_stmts(tokens: Vec<Token>) -> Result<Vec<Stmt>> {
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.collect_tokens()?;
     let mut parser = Parser::new(tokens);
-    
+
     let mut stmts = Vec::new();
     while parser.current_token() != &Token::Eof {
         stmts.push(parser.parse_statement()?);
     }
-    
+
     Ok(stmts)
 }
 
 /// Convert tokens to string (for re-parsing)
 fn tokens_to_string(tokens: &[Token]) -> String {
     let mut result = String::new();
-    
+
     for (i, token) in tokens.iter().enumerate() {
         if i > 0 {
             result.push(' ');
         }
-        
+
         match token {
             Token::Identifier(s) => result.push_str(s),
             Token::Integer(n) => result.push_str(&n.to_string()),
@@ -487,6 +483,6 @@ fn tokens_to_string(tokens: &[Token]) -> String {
             _ => result.push_str(&format!("{:?}", token)),
         }
     }
-    
+
     result
 }

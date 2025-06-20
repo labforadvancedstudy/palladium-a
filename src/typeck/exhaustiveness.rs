@@ -30,7 +30,7 @@ pub struct EnumInfo {
 #[derive(Debug, Clone)]
 pub struct VariantInfo {
     pub name: String,
-    pub arity: usize,  // Number of fields (0 for unit variants)
+    pub arity: usize, // Number of fields (0 for unit variants)
 }
 
 /// Pattern exhaustiveness checker
@@ -45,18 +45,15 @@ impl ExhaustivenessChecker {
     }
 
     /// Check if a match expression is exhaustive
-    pub fn check_match(
-        &self,
-        matched_type: &str,
-        patterns: &[Pattern],
-        span: Span,
-    ) -> Result<()> {
+    pub fn check_match(&self, matched_type: &str, patterns: &[Pattern], span: Span) -> Result<()> {
         // If the matched type is an enum, check exhaustiveness
         if let Some(enum_info) = self.enums.get(matched_type) {
             self.check_enum_exhaustiveness(enum_info, patterns, span)
         } else {
             // For non-enum types, we need at least one wildcard or binding pattern
-            let has_catchall = patterns.iter().any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_)));
+            let has_catchall = patterns
+                .iter()
+                .any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_)));
             if !has_catchall {
                 Err(CompileError::NonExhaustiveMatch {
                     missing_patterns: vec!["_ (wildcard pattern)".to_string()],
@@ -89,7 +86,9 @@ impl ExhaustivenessChecker {
                     }
                     has_wildcard = true;
                 }
-                Pattern::EnumPattern { enum_name, variant, .. } => {
+                Pattern::EnumPattern {
+                    enum_name, variant, ..
+                } => {
                     if enum_name != &enum_info.name {
                         return Err(CompileError::TypeMismatch {
                             expected: enum_info.name.clone(),
@@ -158,7 +157,9 @@ impl ExhaustivenessChecker {
                     }
                     seen_wildcard = true;
                 }
-                Pattern::EnumPattern { enum_name, variant, .. } => {
+                Pattern::EnumPattern {
+                    enum_name, variant, ..
+                } => {
                     let variant_key = format!("{}::{}", enum_name, variant);
                     if seen_wildcard {
                         redundant.push((i, "This pattern is unreachable (previous wildcard pattern covers all cases)".to_string()));
@@ -182,7 +183,11 @@ impl Pattern {
         match self {
             Pattern::Wildcard => PatternKind::Wildcard,
             Pattern::Ident(name) => PatternKind::Binding(name.clone()),
-            Pattern::EnumPattern { enum_name, variant, data } => {
+            Pattern::EnumPattern {
+                enum_name,
+                variant,
+                data,
+            } => {
                 let arity = match data {
                     None => 0,
                     Some(PatternData::Tuple(patterns)) => patterns.len(),
@@ -206,8 +211,14 @@ mod tests {
         EnumInfo {
             name: "Option".to_string(),
             variants: vec![
-                VariantInfo { name: "Some".to_string(), arity: 1 },
-                VariantInfo { name: "None".to_string(), arity: 0 },
+                VariantInfo {
+                    name: "Some".to_string(),
+                    arity: 1,
+                },
+                VariantInfo {
+                    name: "None".to_string(),
+                    arity: 0,
+                },
             ],
         }
     }
@@ -216,8 +227,14 @@ mod tests {
         EnumInfo {
             name: "Result".to_string(),
             variants: vec![
-                VariantInfo { name: "Ok".to_string(), arity: 1 },
-                VariantInfo { name: "Err".to_string(), arity: 1 },
+                VariantInfo {
+                    name: "Ok".to_string(),
+                    arity: 1,
+                },
+                VariantInfo {
+                    name: "Err".to_string(),
+                    arity: 1,
+                },
             ],
         }
     }
@@ -226,9 +243,9 @@ mod tests {
     fn test_exhaustive_enum_match() {
         let mut enums = HashMap::new();
         enums.insert("Option".to_string(), create_option_enum());
-        
+
         let checker = ExhaustivenessChecker::new(enums);
-        
+
         let patterns = vec![
             Pattern::EnumPattern {
                 enum_name: "Option".to_string(),
@@ -241,29 +258,32 @@ mod tests {
                 data: None,
             },
         ];
-        
-        assert!(checker.check_match("Option", &patterns, Span::dummy()).is_ok());
+
+        assert!(checker
+            .check_match("Option", &patterns, Span::dummy())
+            .is_ok());
     }
 
     #[test]
     fn test_non_exhaustive_enum_match() {
         let mut enums = HashMap::new();
         enums.insert("Option".to_string(), create_option_enum());
-        
+
         let checker = ExhaustivenessChecker::new(enums);
-        
-        let patterns = vec![
-            Pattern::EnumPattern {
-                enum_name: "Option".to_string(),
-                variant: "Some".to_string(),
-                data: Some(PatternData::Tuple(vec![Pattern::Ident("x".to_string())])),
-            },
-        ];
-        
+
+        let patterns = vec![Pattern::EnumPattern {
+            enum_name: "Option".to_string(),
+            variant: "Some".to_string(),
+            data: Some(PatternData::Tuple(vec![Pattern::Ident("x".to_string())])),
+        }];
+
         let result = checker.check_match("Option", &patterns, Span::dummy());
         assert!(result.is_err());
-        
-        if let Err(CompileError::NonExhaustiveMatch { missing_patterns, .. }) = result {
+
+        if let Err(CompileError::NonExhaustiveMatch {
+            missing_patterns, ..
+        }) = result
+        {
             assert_eq!(missing_patterns, vec!["Option::None"]);
         } else {
             panic!("Expected NonExhaustiveMatch error");
@@ -274,9 +294,9 @@ mod tests {
     fn test_wildcard_makes_exhaustive() {
         let mut enums = HashMap::new();
         enums.insert("Option".to_string(), create_option_enum());
-        
+
         let checker = ExhaustivenessChecker::new(enums);
-        
+
         let patterns = vec![
             Pattern::EnumPattern {
                 enum_name: "Option".to_string(),
@@ -285,17 +305,19 @@ mod tests {
             },
             Pattern::Wildcard,
         ];
-        
-        assert!(checker.check_match("Option", &patterns, Span::dummy()).is_ok());
+
+        assert!(checker
+            .check_match("Option", &patterns, Span::dummy())
+            .is_ok());
     }
 
     #[test]
     fn test_unreachable_pattern_after_wildcard() {
         let mut enums = HashMap::new();
         enums.insert("Option".to_string(), create_option_enum());
-        
+
         let checker = ExhaustivenessChecker::new(enums);
-        
+
         let patterns = vec![
             Pattern::Wildcard,
             Pattern::EnumPattern {
@@ -304,10 +326,10 @@ mod tests {
                 data: None,
             },
         ];
-        
+
         let result = checker.check_match("Option", &patterns, Span::dummy());
         assert!(result.is_err());
-        
+
         if let Err(CompileError::UnreachablePattern { .. }) = result {
             // Expected
         } else {
@@ -319,9 +341,9 @@ mod tests {
     fn test_duplicate_variant_pattern() {
         let mut enums = HashMap::new();
         enums.insert("Option".to_string(), create_option_enum());
-        
+
         let checker = ExhaustivenessChecker::new(enums);
-        
+
         let patterns = vec![
             Pattern::EnumPattern {
                 enum_name: "Option".to_string(),
@@ -339,10 +361,10 @@ mod tests {
                 data: Some(PatternData::Tuple(vec![Pattern::Wildcard])),
             },
         ];
-        
+
         let result = checker.check_match("Option", &patterns, Span::dummy());
         assert!(result.is_err());
-        
+
         if let Err(CompileError::UnreachablePattern { .. }) = result {
             // Expected
         } else {

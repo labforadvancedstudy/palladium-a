@@ -113,13 +113,14 @@ impl OwnershipContext {
     /// Exit a scope, invalidating borrows
     pub fn exit_scope(&mut self) {
         let scope_lifetime = Lifetime::Scope(self.current_scope);
-        
+
         // Remove borrows that end with this scope
-        self.borrows.retain(|borrow| borrow.lifetime != scope_lifetime);
-        
+        self.borrows
+            .retain(|borrow| borrow.lifetime != scope_lifetime);
+
         // Clean up moved values in this scope
         // TODO: Implement proper drop semantics
-        
+
         self.current_scope -= 1;
     }
 
@@ -153,32 +154,30 @@ impl OwnershipContext {
                 Ok(())
             }
             Some(Ownership::Borrowed { .. }) => {
-                Err(CompileError::CannotMoveOutOfBorrowedContent {
-                    span: Some(span),
-                })
+                Err(CompileError::CannotMoveOutOfBorrowedContent { span: Some(span) })
             }
             Some(Ownership::BorrowedMut { .. }) => {
-                Err(CompileError::CannotMoveOutOfBorrowedContent {
-                    span: Some(span),
-                })
+                Err(CompileError::CannotMoveOutOfBorrowedContent { span: Some(span) })
             }
-            Some(Ownership::Moved) => {
-                Err(CompileError::UseOfMovedValue {
-                    name: from.to_string(),
-                    span: Some(span),
-                })
-            }
-            None => {
-                Err(CompileError::UseOfUninitializedValue {
-                    name: from.to_string(),
-                    span: Some(span),
-                })
-            }
+            Some(Ownership::Moved) => Err(CompileError::UseOfMovedValue {
+                name: from.to_string(),
+                span: Some(span),
+            }),
+            None => Err(CompileError::UseOfUninitializedValue {
+                name: from.to_string(),
+                span: Some(span),
+            }),
         }
     }
 
     /// Borrow a value
-    pub fn borrow(&mut self, place: Place, kind: RefKind, lifetime: Lifetime, span: Span) -> Result<()> {
+    pub fn borrow(
+        &mut self,
+        place: Place,
+        kind: RefKind,
+        lifetime: Lifetime,
+        span: Span,
+    ) -> Result<()> {
         // Check if the place can be borrowed
         match self.ownership.get(&place) {
             Some(Ownership::Owned) | Some(Ownership::Borrowed { .. }) => {
@@ -212,35 +211,37 @@ impl OwnershipContext {
                 // Update ownership state
                 match kind {
                     RefKind::Shared => {
-                        if !matches!(self.ownership.get(&place), Some(Ownership::BorrowedMut { .. })) {
-                            self.ownership.insert(place, Ownership::Borrowed { lifetime });
+                        if !matches!(
+                            self.ownership.get(&place),
+                            Some(Ownership::BorrowedMut { .. })
+                        ) {
+                            self.ownership
+                                .insert(place, Ownership::Borrowed { lifetime });
                         }
                     }
                     RefKind::Mutable => {
-                        self.ownership.insert(place, Ownership::BorrowedMut { lifetime });
+                        self.ownership
+                            .insert(place, Ownership::BorrowedMut { lifetime });
                     }
                 }
 
                 Ok(())
             }
-            Some(Ownership::BorrowedMut { .. }) => {
-                Err(CompileError::ConflictingBorrows {
-                    message: format!("cannot borrow `{}` because it is already mutably borrowed", place),
-                    span: Some(span),
-                })
-            }
-            Some(Ownership::Moved) => {
-                Err(CompileError::UseOfMovedValue {
-                    name: place.to_string(),
-                    span: Some(span),
-                })
-            }
-            None => {
-                Err(CompileError::UseOfUninitializedValue {
-                    name: place.to_string(),
-                    span: Some(span),
-                })
-            }
+            Some(Ownership::BorrowedMut { .. }) => Err(CompileError::ConflictingBorrows {
+                message: format!(
+                    "cannot borrow `{}` because it is already mutably borrowed",
+                    place
+                ),
+                span: Some(span),
+            }),
+            Some(Ownership::Moved) => Err(CompileError::UseOfMovedValue {
+                name: place.to_string(),
+                span: Some(span),
+            }),
+            None => Err(CompileError::UseOfUninitializedValue {
+                name: place.to_string(),
+                span: Some(span),
+            }),
         }
     }
 
@@ -251,7 +252,8 @@ impl OwnershipContext {
 
     /// Add a lifetime constraint
     pub fn add_constraint(&mut self, longer: Lifetime, shorter: Lifetime) {
-        self.constraints.push(LifetimeConstraint { longer, shorter });
+        self.constraints
+            .push(LifetimeConstraint { longer, shorter });
     }
 
     /// Get the ownership state of a place
@@ -264,12 +266,10 @@ impl OwnershipContext {
 pub fn expr_to_place(expr: &Expr) -> Option<Place> {
     match expr {
         Expr::Ident(name) => Some(Place::Local(name.clone())),
-        Expr::FieldAccess { object, field, .. } => {
-            expr_to_place(object).map(|base| Place::Field {
-                base: Box::new(base),
-                field: field.clone(),
-            })
-        }
+        Expr::FieldAccess { object, field, .. } => expr_to_place(object).map(|base| Place::Field {
+            base: Box::new(base),
+            field: field.clone(),
+        }),
         Expr::Index { array, index, .. } => {
             // For simplicity, we convert index to string
             // In a real implementation, we'd need more sophisticated handling
@@ -320,11 +320,11 @@ mod tests {
     fn test_basic_ownership() {
         let mut ctx = OwnershipContext::new();
         let x = Place::Local("x".to_string());
-        
+
         // Initialize owned value
         ctx.init_owned(x.clone());
         assert_eq!(ctx.get_ownership(&x), Some(&Ownership::Owned));
-        
+
         // Move value
         let y = Place::Local("y".to_string());
         ctx.move_value(x.clone(), y.clone(), Span::dummy()).unwrap();
@@ -336,16 +336,18 @@ mod tests {
     fn test_borrow_checking() {
         let mut ctx = OwnershipContext::new();
         let x = Place::Local("x".to_string());
-        
+
         ctx.init_owned(x.clone());
-        
+
         // Immutable borrow
         let lifetime = ctx.new_lifetime();
-        ctx.borrow(x.clone(), RefKind::Shared, lifetime.clone(), Span::dummy()).unwrap();
-        
+        ctx.borrow(x.clone(), RefKind::Shared, lifetime.clone(), Span::dummy())
+            .unwrap();
+
         // Second immutable borrow should succeed
-        ctx.borrow(x.clone(), RefKind::Shared, lifetime.clone(), Span::dummy()).unwrap();
-        
+        ctx.borrow(x.clone(), RefKind::Shared, lifetime.clone(), Span::dummy())
+            .unwrap();
+
         // Mutable borrow should fail
         let result = ctx.borrow(x.clone(), RefKind::Mutable, lifetime, Span::dummy());
         assert!(result.is_err());

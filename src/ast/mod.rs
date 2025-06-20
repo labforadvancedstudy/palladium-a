@@ -113,7 +113,7 @@ pub struct Function {
     pub is_async: bool,
     pub name: String,
     pub lifetime_params: Vec<String>, // Lifetime parameters like ["'a", "'b"]
-    pub type_params: Vec<String>, // Generic type parameters like ["T", "U"]
+    pub type_params: Vec<String>,     // Generic type parameters like ["T", "U"]
     pub const_params: Vec<(String, Type)>, // Const parameters like [("N", Type::U64)]
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
@@ -128,7 +128,7 @@ pub struct StructDef {
     pub visibility: Visibility,
     pub name: String,
     pub lifetime_params: Vec<String>, // Lifetime parameters like ["'a", "'b"]
-    pub type_params: Vec<String>, // Generic type parameters like ["T", "U"]
+    pub type_params: Vec<String>,     // Generic type parameters like ["T", "U"]
     pub const_params: Vec<(String, Type)>, // Const parameters like [("N", Type::U64)]
     pub fields: Vec<(String, Type)>,
     pub span: Span,
@@ -139,7 +139,7 @@ pub struct StructDef {
 pub struct EnumDef {
     pub name: String,
     pub lifetime_params: Vec<String>, // Lifetime parameters like ["'a", "'b"]
-    pub type_params: Vec<String>, // Generic type parameters like ["T", "U"]
+    pub type_params: Vec<String>,     // Generic type parameters like ["T", "U"]
     pub const_params: Vec<(String, Type)>, // Const parameters like [("N", Type::U64)]
     pub variants: Vec<EnumVariant>,
     pub span: Span,
@@ -204,7 +204,7 @@ pub struct TypeAlias {
     pub visibility: Visibility,
     pub name: String,
     pub lifetime_params: Vec<String>, // Lifetime parameters like ["'a", "'b"]
-    pub type_params: Vec<String>, // Generic type parameters like ["T", "U"]
+    pub type_params: Vec<String>,     // Generic type parameters like ["T", "U"]
     pub ty: Type,
     pub span: Span,
 }
@@ -296,10 +296,7 @@ pub enum Stmt {
         span: Span,
     },
     /// Unsafe block
-    Unsafe {
-        body: Vec<Stmt>,
-        span: Span,
-    },
+    Unsafe { body: Vec<Stmt>, span: Span },
 }
 
 /// Match arm
@@ -409,26 +406,17 @@ pub enum Expr {
         span: Span,
     },
     /// Dereference expression (*expr)
-    Deref {
-        expr: Box<Expr>,
-        span: Span,
-    },
+    Deref { expr: Box<Expr>, span: Span },
     /// Question mark operator (expr?)
-    Question {
-        expr: Box<Expr>,
-        span: Span,
-    },
+    Question { expr: Box<Expr>, span: Span },
     /// Macro invocation
     MacroInvocation {
         name: String,
-        args: Vec<Token>,  // Token stream for arguments
+        args: Vec<Token>, // Token stream for arguments
         span: Span,
     },
     /// Await expression
-    Await {
-        expr: Box<Expr>,
-        span: Span,
-    },
+    Await { expr: Box<Expr>, span: Span },
 }
 
 /// Enum constructor data
@@ -616,8 +604,8 @@ impl std::fmt::Display for EnumDef {
 #[derive(Debug, Clone)]
 pub struct MacroDef {
     pub name: String,
-    pub params: Vec<String>,  // Macro parameters
-    pub body: Vec<Token>,     // Token stream for the macro body
+    pub params: Vec<String>, // Macro parameters
+    pub body: Vec<Token>,    // Token stream for the macro body
     pub span: Span,
 }
 
@@ -633,9 +621,9 @@ pub enum Token {
 /// Delimiter for grouped tokens
 #[derive(Debug, Clone, PartialEq)]
 pub enum Delimiter {
-    Paren,    // ()
-    Brace,    // {}
-    Bracket,  // []
+    Paren,   // ()
+    Brace,   // {}
+    Bracket, // []
 }
 
 impl std::fmt::Display for MacroDef {
@@ -667,7 +655,11 @@ impl std::fmt::Display for Type {
                 }
                 write!(f, ">")
             }
-            Type::Reference { lifetime, mutable, inner } => {
+            Type::Reference {
+                lifetime,
+                mutable,
+                inner,
+            } => {
                 write!(f, "&")?;
                 if let Some(lt) = lifetime {
                     write!(f, "'{} ", lt)?;
@@ -689,7 +681,7 @@ impl std::fmt::Display for TraitDef {
             Visibility::Private => "",
         };
         write!(f, "{}trait {}", vis, self.name)?;
-        
+
         // Generic parameters
         if !self.lifetime_params.is_empty() || !self.type_params.is_empty() {
             write!(f, "<")?;
@@ -710,11 +702,11 @@ impl std::fmt::Display for TraitDef {
             }
             write!(f, ">")?;
         }
-        
+
         writeln!(f, " {{")?;
         for method in &self.methods {
             write!(f, "    fn {}", method.name)?;
-            
+
             // Method generic parameters
             if !method.lifetime_params.is_empty() || !method.type_params.is_empty() {
                 write!(f, "<")?;
@@ -735,7 +727,7 @@ impl std::fmt::Display for TraitDef {
                 }
                 write!(f, ">")?;
             }
-            
+
             write!(f, "(")?;
             for (i, param) in method.params.iter().enumerate() {
                 if i > 0 {
@@ -747,11 +739,11 @@ impl std::fmt::Display for TraitDef {
                 write!(f, "{}: {}", param.name, param.ty)?;
             }
             write!(f, ")")?;
-            
+
             if let Some(ret) = &method.return_type {
                 write!(f, " -> {}", ret)?;
             }
-            
+
             if method.has_body {
                 writeln!(f, " {{ ... }}")?;
             } else {
@@ -765,7 +757,7 @@ impl std::fmt::Display for TraitDef {
 impl std::fmt::Display for ImplBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "impl")?;
-        
+
         // Generic parameters
         if !self.lifetime_params.is_empty() || !self.type_params.is_empty() {
             write!(f, "<")?;
@@ -786,18 +778,18 @@ impl std::fmt::Display for ImplBlock {
             }
             write!(f, ">")?;
         }
-        
+
         if let Some(trait_type) = &self.trait_type {
             write!(f, " {} for", trait_type)?;
         }
-        
+
         write!(f, " {} {{", self.for_type)?;
-        
+
         for method in &self.methods {
             writeln!(f)?;
             write!(f, "    {}", method)?;
         }
-        
+
         write!(f, "\n}}")
     }
 }
@@ -809,7 +801,7 @@ impl std::fmt::Display for TypeAlias {
             Visibility::Private => "",
         };
         write!(f, "{}type {}", vis, self.name)?;
-        
+
         // Generic parameters
         if !self.lifetime_params.is_empty() || !self.type_params.is_empty() {
             write!(f, "<")?;
@@ -830,7 +822,7 @@ impl std::fmt::Display for TypeAlias {
             }
             write!(f, ">")?;
         }
-        
+
         write!(f, " = {};", self.ty)
     }
 }
@@ -1049,11 +1041,11 @@ impl std::fmt::Display for Expr {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{:?}", token)?;  // TODO: better formatting
+                    write!(f, "{:?}", token)?; // TODO: better formatting
                 }
                 write!(f, ")")
             }
-            Expr::Await { expr, .. } => write!(f, "{}.await", expr)
+            Expr::Await { expr, .. } => write!(f, "{}.await", expr),
         }
     }
 }

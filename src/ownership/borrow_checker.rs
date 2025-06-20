@@ -56,7 +56,7 @@ enum ReturnOwnership {
 impl BorrowChecker {
     pub fn new() -> Self {
         let mut functions = HashMap::new();
-        
+
         // Register built-in functions
         // These functions take their arguments by value (for simplicity)
         functions.insert(
@@ -66,7 +66,7 @@ impl BorrowChecker {
                 returns: ReturnOwnership::Unit,
             },
         );
-        
+
         functions.insert(
             "print_int".to_string(),
             FunctionSig {
@@ -74,27 +74,31 @@ impl BorrowChecker {
                 returns: ReturnOwnership::Unit,
             },
         );
-        
+
         // String manipulation functions
         functions.insert(
             "string_concat".to_string(),
             FunctionSig {
-                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string())), 
-                           ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                params: vec![
+                    ParamOwnership::Borrow(Lifetime::Named("fn".to_string())),
+                    ParamOwnership::Borrow(Lifetime::Named("fn".to_string())),
+                ],
                 returns: ReturnOwnership::Owned,
             },
         );
-        
+
         functions.insert(
             "string_substring".to_string(),
             FunctionSig {
-                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string())), 
-                           ParamOwnership::Copy, 
-                           ParamOwnership::Copy],
+                params: vec![
+                    ParamOwnership::Borrow(Lifetime::Named("fn".to_string())),
+                    ParamOwnership::Copy,
+                    ParamOwnership::Copy,
+                ],
                 returns: ReturnOwnership::Owned,
             },
         );
-        
+
         functions.insert(
             "int_to_string".to_string(),
             FunctionSig {
@@ -102,7 +106,7 @@ impl BorrowChecker {
                 returns: ReturnOwnership::Owned,
             },
         );
-        
+
         functions.insert(
             "string_to_int".to_string(),
             FunctionSig {
@@ -111,6 +115,167 @@ impl BorrowChecker {
             },
         );
         
+        // File I/O functions (if not already present)
+        functions.insert(
+            "file_open".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "file_close".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Copy],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "file_exists".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        // Enhanced I/O functions
+        functions.insert(
+            "path_exists".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "path_is_file".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "path_is_dir".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "create_dir".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "create_dir_all".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "remove_file".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "remove_dir".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "remove_dir_all".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "read_file_to_string".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Borrow(Lifetime::Named("fn".to_string()))],
+                returns: ReturnOwnership::Owned,
+            },
+        );
+        
+        functions.insert(
+            "write_string_to_file".to_string(),
+            FunctionSig {
+                params: vec![
+                    ParamOwnership::Borrow(Lifetime::Named("fn".to_string())),
+                    ParamOwnership::Borrow(Lifetime::Named("fn".to_string())),
+                ],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "file_flush".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Copy],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "file_seek".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Copy, ParamOwnership::Copy, ParamOwnership::Copy],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        // Enhanced file operations with mode support
+        functions.insert(
+            "file_open_ex".to_string(),
+            FunctionSig {
+                params: vec![
+                    ParamOwnership::Borrow(Lifetime::Named("fn".to_string())),
+                    ParamOwnership::Copy,
+                ],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "file_close_ex".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Copy],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "file_read_ex".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Copy, ParamOwnership::Copy, ParamOwnership::Copy],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+        
+        functions.insert(
+            "file_write_ex".to_string(),
+            FunctionSig {
+                params: vec![ParamOwnership::Copy, ParamOwnership::Copy, ParamOwnership::Copy],
+                returns: ReturnOwnership::Copy,
+            },
+        );
+
         Self {
             context: OwnershipContext::new(),
             functions,
@@ -168,11 +333,11 @@ impl BorrowChecker {
     fn collect_function_sig(&mut self, func: &Function) {
         self.collect_function_sig_with_name(func, &func.name);
     }
-    
+
     /// Collect function signature with a custom name
     fn collect_function_sig_with_name(&mut self, func: &Function, name: &str) {
         let mut params = Vec::new();
-        
+
         for param in &func.params {
             let ownership = match &param.ty {
                 Type::String | Type::Array(_, _) | Type::Custom(_) => {
@@ -196,15 +361,15 @@ impl BorrowChecker {
         }
 
         let returns = match &func.return_type {
-            Some(Type::Reference { .. }) => ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string())),
+            Some(Type::Reference { .. }) => {
+                ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))
+            }
             Some(_) => ReturnOwnership::Owned,
             None => ReturnOwnership::Unit,
         };
 
-        self.functions.insert(
-            name.to_string(),
-            FunctionSig { params, returns },
-        );
+        self.functions
+            .insert(name.to_string(), FunctionSig { params, returns });
     }
 
     /// Check a function for ownership violations
@@ -217,7 +382,8 @@ impl BorrowChecker {
         for param in &func.params {
             let place = Place::Local(param.name.clone());
             self.context.init_owned(place);
-            self.local_types.insert(param.name.clone(), param.ty.clone());
+            self.local_types
+                .insert(param.name.clone(), param.ty.clone());
         }
 
         // Check function body
@@ -233,10 +399,12 @@ impl BorrowChecker {
     /// Check a statement for ownership violations
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
-            Stmt::Let { name, value, ty, .. } => {
+            Stmt::Let {
+                name, value, ty, ..
+            } => {
                 // Check the value expression
                 self.check_expr(value)?;
-                
+
                 // Store the type if provided
                 if let Some(ty) = ty {
                     self.local_types.insert(name.clone(), ty.clone());
@@ -245,10 +413,10 @@ impl BorrowChecker {
                     let inferred_type = self.expr_type(value);
                     self.local_types.insert(name.clone(), inferred_type);
                 }
-                
+
                 // Initialize the new variable
                 let place = Place::Local(name.clone());
-                
+
                 // Check if value is moved or copied
                 if let Some(from_place) = expr_to_place(value) {
                     if self.is_expr_copy(value) {
@@ -263,11 +431,15 @@ impl BorrowChecker {
                     self.context.init_owned(place);
                 }
             }
-            
-            Stmt::Assign { target, value, span } => {
+
+            Stmt::Assign {
+                target,
+                value,
+                span,
+            } => {
                 // Check the value expression
                 self.check_expr(value)?;
-                
+
                 // Get target place
                 let target_place = match target {
                     AssignTarget::Ident(name) => Place::Local(name.clone()),
@@ -314,7 +486,7 @@ impl BorrowChecker {
                         }
                     }
                 };
-                
+
                 // Check if assignment is allowed
                 if let Some(from_place) = expr_to_place(value) {
                     if !self.is_expr_copy(value) {
@@ -323,27 +495,32 @@ impl BorrowChecker {
                     }
                 }
             }
-            
+
             Stmt::Expr(expr) => {
                 self.check_expr(expr)?;
             }
-            
+
             Stmt::Return(Some(expr)) => {
                 self.check_expr(expr)?;
                 // TODO: Check return value ownership matches function signature
             }
-            
+
             Stmt::Return(None) => {}
-            
-            Stmt::If { condition, then_branch, else_branch, .. } => {
+
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 self.check_expr(condition)?;
-                
+
                 self.context.enter_scope();
                 for stmt in then_branch {
                     self.check_stmt(stmt)?;
                 }
                 self.context.exit_scope();
-                
+
                 if let Some(else_stmts) = else_branch {
                     self.context.enter_scope();
                     for stmt in else_stmts {
@@ -352,50 +529,54 @@ impl BorrowChecker {
                     self.context.exit_scope();
                 }
             }
-            
-            Stmt::While { condition, body, .. } => {
+
+            Stmt::While {
+                condition, body, ..
+            } => {
                 self.check_expr(condition)?;
-                
+
                 self.context.enter_scope();
                 for stmt in body {
                     self.check_stmt(stmt)?;
                 }
                 self.context.exit_scope();
             }
-            
-            Stmt::For { var, iter, body, .. } => {
+
+            Stmt::For {
+                var, iter, body, ..
+            } => {
                 self.check_expr(iter)?;
-                
+
                 self.context.enter_scope();
                 // Initialize loop variable
                 let place = Place::Local(var.clone());
                 self.context.init_owned(place);
-                
+
                 for stmt in body {
                     self.check_stmt(stmt)?;
                 }
                 self.context.exit_scope();
             }
-            
+
             Stmt::Match { expr, arms, .. } => {
                 self.check_expr(expr)?;
-                
+
                 for arm in arms {
                     self.context.enter_scope();
-                    
+
                     // Bind pattern variables
                     self.bind_pattern(&arm.pattern)?;
-                    
+
                     for stmt in &arm.body {
                         self.check_stmt(stmt)?;
                     }
-                    
+
                     self.context.exit_scope();
                 }
             }
-            
+
             Stmt::Break { .. } | Stmt::Continue { .. } => {}
-            
+
             Stmt::Unsafe { body, .. } => {
                 // In unsafe blocks, we still perform ownership checks
                 // but allow certain operations that would normally be forbidden
@@ -408,7 +589,7 @@ impl BorrowChecker {
                 self.unsafe_depth -= 1;
             }
         }
-        
+
         Ok(())
     }
 
@@ -421,9 +602,9 @@ impl BorrowChecker {
                     // It's a function - no ownership check needed
                     return Ok(());
                 }
-                
+
                 let place = Place::Local(name.clone());
-                
+
                 // Check if the value is initialized and not moved
                 match self.context.get_ownership(&place) {
                     Some(crate::ownership::Ownership::Owned) => {
@@ -449,20 +630,20 @@ impl BorrowChecker {
                     }
                 }
             }
-            
+
             Expr::Call { func, args, span } => {
                 // Check function expression
                 self.check_expr(func)?;
-                
+
                 // Check arguments and handle ownership transfer
                 if let Expr::Ident(func_name) = func.as_ref() {
                     // Clone the function signature to avoid borrow conflicts
                     let sig_opt = self.functions.get(func_name).cloned();
-                    
+
                     if let Some(sig) = sig_opt {
                         for (i, arg) in args.iter().enumerate() {
                             self.check_expr(arg)?;
-                            
+
                             // Handle ownership based on parameter type
                             if let Some(param_ownership) = sig.params.get(i) {
                                 if let Some(place) = expr_to_place(arg) {
@@ -474,11 +655,21 @@ impl BorrowChecker {
                                         }
                                         ParamOwnership::Borrow(lifetime) => {
                                             // Borrow immutably
-                                            self.context.borrow(place, RefKind::Shared, lifetime.clone(), *span)?;
+                                            self.context.borrow(
+                                                place,
+                                                RefKind::Shared,
+                                                lifetime.clone(),
+                                                *span,
+                                            )?;
                                         }
                                         ParamOwnership::BorrowMut(lifetime) => {
                                             // Borrow mutably
-                                            self.context.borrow(place, RefKind::Mutable, lifetime.clone(), *span)?;
+                                            self.context.borrow(
+                                                place,
+                                                RefKind::Mutable,
+                                                lifetime.clone(),
+                                                *span,
+                                            )?;
                                         }
                                         ParamOwnership::Copy => {
                                             // No ownership transfer
@@ -500,67 +691,69 @@ impl BorrowChecker {
                     }
                 }
             }
-            
+
             Expr::Binary { left, right, .. } => {
                 self.check_expr(left)?;
                 self.check_expr(right)?;
             }
-            
+
             Expr::Unary { operand, .. } => {
                 self.check_expr(operand)?;
             }
-            
+
             Expr::ArrayLiteral { elements, .. } => {
                 for elem in elements {
                     self.check_expr(elem)?;
                 }
             }
-            
+
             Expr::ArrayRepeat { value, count, .. } => {
                 self.check_expr(value)?;
                 self.check_expr(count)?;
             }
-            
+
             Expr::Index { array, index, .. } => {
                 self.check_expr(array)?;
                 self.check_expr(index)?;
             }
-            
+
             Expr::StructLiteral { fields, .. } => {
                 for (_, expr) in fields {
                     self.check_expr(expr)?;
                 }
             }
-            
+
             Expr::FieldAccess { object, .. } => {
                 self.check_expr(object)?;
             }
-            
-            Expr::EnumConstructor { data, .. } => {
-                match data {
-                    Some(crate::ast::EnumConstructorData::Tuple(exprs)) => {
-                        for expr in exprs {
-                            self.check_expr(expr)?;
-                        }
+
+            Expr::EnumConstructor { data, .. } => match data {
+                Some(crate::ast::EnumConstructorData::Tuple(exprs)) => {
+                    for expr in exprs {
+                        self.check_expr(expr)?;
                     }
-                    Some(crate::ast::EnumConstructorData::Struct(fields)) => {
-                        for (_, expr) in fields {
-                            self.check_expr(expr)?;
-                        }
-                    }
-                    None => {}
                 }
-            }
-            
+                Some(crate::ast::EnumConstructorData::Struct(fields)) => {
+                    for (_, expr) in fields {
+                        self.check_expr(expr)?;
+                    }
+                }
+                None => {}
+            },
+
             Expr::Range { start, end, .. } => {
                 self.check_expr(start)?;
                 self.check_expr(end)?;
             }
-            
-            Expr::Reference { mutable, expr, span } => {
+
+            Expr::Reference {
+                mutable,
+                expr,
+                span,
+            } => {
                 // Taking a reference to an expression
                 self.check_expr(expr)?;
-                
+
                 // If we can get a place for the expression, create a borrow
                 if let Some(place) = expr_to_place(expr) {
                     let lifetime = self.context.new_lifetime();
@@ -578,19 +771,19 @@ impl BorrowChecker {
                     });
                 }
             }
-            
+
             Expr::Deref { expr, .. } => {
                 // Dereferencing an expression
                 self.check_expr(expr)?;
                 // TODO: Check that the expression is actually a reference type
             }
-            
+
             Expr::Question { expr, .. } => {
                 // Question operator checks the inner expression
                 self.check_expr(expr)?;
                 // TODO: Handle ownership implications of early return
             }
-            
+
             // Literals don't need ownership checking
             Expr::String(_) | Expr::Integer(_) | Expr::Bool(_) => {}
             Expr::MacroInvocation { .. } => {
@@ -603,7 +796,7 @@ impl BorrowChecker {
                 self.check_expr(expr)?;
             }
         }
-        
+
         Ok(())
     }
 
@@ -647,7 +840,7 @@ impl BorrowChecker {
             Type::Future { .. } => false, // Futures are not Copy
         }
     }
-    
+
     /// Check if an expression type is Copy
     fn is_expr_copy(&self, expr: &Expr) -> bool {
         match expr {
@@ -673,7 +866,7 @@ impl BorrowChecker {
             Expr::String(_) => Type::String,
             Expr::Bool(_) => Type::Bool,
             Expr::Ident(_) => Type::I64, // TODO: Proper type lookup
-            _ => Type::I64, // Default for now
+            _ => Type::I64,              // Default for now
         }
     }
 }
@@ -690,7 +883,7 @@ mod tests {
     #[test]
     fn test_basic_move() {
         let mut checker = BorrowChecker::new();
-        
+
         let func = Function {
             visibility: Visibility::Private,
             is_async: false,
@@ -721,7 +914,7 @@ mod tests {
             ],
             span: dummy_span(),
         };
-        
+
         let result = checker.check_function(&func);
         assert!(result.is_err());
     }
@@ -729,7 +922,7 @@ mod tests {
     #[test]
     fn test_copy_type_no_move() {
         let mut checker = BorrowChecker::new();
-        
+
         let func = Function {
             visibility: Visibility::Private,
             is_async: false,
@@ -760,7 +953,7 @@ mod tests {
             ],
             span: dummy_span(),
         };
-        
+
         let result = checker.check_function(&func);
         if let Err(ref e) = result {
             eprintln!("Error in test_copy_type_no_move: {:?}", e);

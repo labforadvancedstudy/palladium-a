@@ -10,10 +10,7 @@ pub enum PatternElement {
     /// Literal token to match
     Literal(Token),
     /// Variable to capture (e.g., $expr:expr)
-    Variable {
-        name: String,
-        kind: CaptureKind,
-    },
+    Variable { name: String, kind: CaptureKind },
     /// Repetition (e.g., $($x:expr),*)
     Repetition {
         pattern: Vec<PatternElement>,
@@ -62,18 +59,18 @@ impl PatternParser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Self { tokens, pos: 0 }
     }
-    
+
     /// Parse a macro pattern
     pub fn parse_pattern(&mut self) -> Result<Vec<PatternElement>> {
         let mut elements = Vec::new();
-        
+
         while !self.is_at_end() {
             elements.push(self.parse_element()?);
         }
-        
+
         Ok(elements)
     }
-    
+
     /// Parse a single pattern element
     fn parse_element(&mut self) -> Result<PatternElement> {
         if self.check_token(&Token::Dollar) {
@@ -84,11 +81,11 @@ impl PatternParser {
             Ok(PatternElement::Literal(token))
         }
     }
-    
+
     /// Parse a capture variable or repetition
     fn parse_capture_or_repetition(&mut self) -> Result<PatternElement> {
         self.consume(Token::Dollar)?;
-        
+
         if self.check_token(&Token::LeftParen) {
             // Repetition: $(...)
             self.parse_repetition()
@@ -97,20 +94,20 @@ impl PatternParser {
             self.parse_capture()
         }
     }
-    
+
     /// Parse a capture variable
     fn parse_capture(&mut self) -> Result<PatternElement> {
         let name = self.expect_ident()?;
         self.consume(Token::Colon)?;
         let kind = self.parse_capture_kind()?;
-        
+
         Ok(PatternElement::Variable { name, kind })
     }
-    
+
     /// Parse capture kind
     fn parse_capture_kind(&mut self) -> Result<CaptureKind> {
         let kind_name = self.expect_ident()?;
-        
+
         match kind_name.as_str() {
             "expr" => Ok(CaptureKind::Expr),
             "stmt" => Ok(CaptureKind::Stmt),
@@ -125,27 +122,26 @@ impl PatternParser {
             ))),
         }
     }
-    
+
     /// Parse a repetition
     fn parse_repetition(&mut self) -> Result<PatternElement> {
         self.consume(Token::LeftParen)?;
-        
+
         // Parse inner pattern
         let mut pattern = Vec::new();
         while !self.check_token(&Token::RightParen) {
             pattern.push(self.parse_element()?);
         }
-        
+
         self.consume(Token::RightParen)?;
-        
+
         // Parse separator (optional)
-        let separator = if self.check_token(&Token::Comma) 
-            || self.check_token(&Token::Semicolon) {
+        let separator = if self.check_token(&Token::Comma) || self.check_token(&Token::Semicolon) {
             Some(self.advance()?)
         } else {
             None
         };
-        
+
         // Parse repetition kind
         let kind = if self.check_token(&Token::Star) {
             self.advance()?;
@@ -158,22 +154,22 @@ impl PatternParser {
             RepetitionKind::ZeroOrOne
         } else {
             return Err(CompileError::Generic(
-                "Expected repetition operator (*, +, or ?)".to_string()
+                "Expected repetition operator (*, +, or ?)".to_string(),
             ));
         };
-        
+
         Ok(PatternElement::Repetition {
             pattern,
             separator,
             kind,
         })
     }
-    
+
     /// Check if we're at the end
     fn is_at_end(&self) -> bool {
         self.pos >= self.tokens.len()
     }
-    
+
     /// Check if current token matches
     fn check_token(&self, expected: &Token) -> bool {
         if self.is_at_end() {
@@ -182,7 +178,7 @@ impl PatternParser {
             std::mem::discriminant(&self.tokens[self.pos]) == std::mem::discriminant(expected)
         }
     }
-    
+
     /// Consume a specific token
     fn consume(&mut self, expected: Token) -> Result<()> {
         if self.check_token(&expected) {
@@ -196,7 +192,7 @@ impl PatternParser {
             )))
         }
     }
-    
+
     /// Advance to next token
     fn advance(&mut self) -> Result<Token> {
         if self.is_at_end() {
@@ -207,7 +203,7 @@ impl PatternParser {
             Ok(token)
         }
     }
-    
+
     /// Get current token
     fn current(&self) -> Option<&Token> {
         if self.is_at_end() {
@@ -216,7 +212,7 @@ impl PatternParser {
             Some(&self.tokens[self.pos])
         }
     }
-    
+
     /// Expect an identifier
     fn expect_ident(&mut self) -> Result<String> {
         match self.advance()? {

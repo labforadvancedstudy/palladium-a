@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 pub struct Driver {
     // Future: compilation options, session state, etc.
@@ -26,7 +27,7 @@ impl Driver {
             use_llvm: false, // Default to C backend
         }
     }
-    
+
     /// Enable LLVM backend
     pub fn with_llvm(mut self) -> Self {
         self.use_llvm = true;
@@ -35,25 +36,43 @@ impl Driver {
 
     /// Compile a string of source code and return the output path
     pub fn compile_string(&self, source: &str, filename: &str) -> Result<PathBuf> {
+        let total_start = Instant::now();
         println!("🔨 Compiling {}...", filename);
 
         // Phase 1: Lexing
         println!("📖 Lexing...");
+        let lex_start = Instant::now();
         let mut lexer = Lexer::new(source);
         let tokens = lexer.collect_tokens()?;
-        println!("   Found {} tokens", tokens.len());
+        let lex_time = lex_start.elapsed();
+        println!(
+            "   Found {} tokens ({:.2}ms)",
+            tokens.len(),
+            lex_time.as_secs_f64() * 1000.0
+        );
 
         // Phase 2: Parsing
         println!("🌳 Parsing...");
+        let parse_start = Instant::now();
         let mut parser = Parser::new(tokens);
         let mut ast = parser.parse()?;
-        println!("   Parsed {} top-level items", ast.items.len());
+        let parse_time = parse_start.elapsed();
+        println!(
+            "   Parsed {} top-level items ({:.2}ms)",
+            ast.items.len(),
+            parse_time.as_secs_f64() * 1000.0
+        );
 
         // Phase 2.3: Macro expansion
         println!("🔮 Expanding macros...");
+        let macro_start = Instant::now();
         let mut macro_expander = MacroExpander::new();
         macro_expander.expand_program(&mut ast)?;
-        println!("   Macros expanded successfully!");
+        let macro_time = macro_start.elapsed();
+        println!(
+            "   Macros expanded successfully! ({:.2}ms)",
+            macro_time.as_secs_f64() * 1000.0
+        );
 
         // Phase 2.5: Module resolution
         let resolved_modules = if !ast.imports.is_empty() {
@@ -68,6 +87,7 @@ impl Driver {
 
         // Phase 3: Type checking
         println!("🔍 Type checking...");
+        let type_start = Instant::now();
         let mut type_checker = TypeChecker::new();
 
         // Pass resolved modules to type checker
@@ -76,25 +96,40 @@ impl Driver {
         }
 
         type_checker.check(&ast)?;
-        println!("   All types check out!");
+        let type_time = type_start.elapsed();
+        println!(
+            "   All types check out! ({:.2}ms)",
+            type_time.as_secs_f64() * 1000.0
+        );
 
         // Get generic instantiations from type checker
         let instantiations = type_checker.get_instantiations();
         if !instantiations.is_empty() {
-            println!("   Found {} generic function instantiations", instantiations.len());
+            println!(
+                "   Found {} generic function instantiations",
+                instantiations.len()
+            );
         }
-        
+
         // Get generic struct instantiations from type checker
         let struct_instantiations = type_checker.get_struct_instantiations();
         if !struct_instantiations.is_empty() {
-            println!("   Found {} generic struct instantiations", struct_instantiations.len());
+            println!(
+                "   Found {} generic struct instantiations",
+                struct_instantiations.len()
+            );
         }
 
         // Phase 3.5: Borrow checking
         println!("🔒 Borrow checking...");
+        let borrow_start = Instant::now();
         let mut borrow_checker = BorrowChecker::new();
         borrow_checker.check_program(&ast)?;
-        println!("   Memory safety verified!");
+        let borrow_time = borrow_start.elapsed();
+        println!(
+            "   Memory safety verified! ({:.2}ms)",
+            borrow_time.as_secs_f64() * 1000.0
+        );
 
         // Phase 3.6: Effect analysis
         println!("🌊 Analyzing effects...");
@@ -103,7 +138,11 @@ impl Driver {
             if let crate::ast::Item::Function(func) = item {
                 let effects = effect_analyzer.analyze_function(func)?;
                 if !effects.is_pure() {
-                    println!("   Function '{}' has effects: {:?}", func.name, effects.effects());
+                    println!(
+                        "   Function '{}' has effects: {:?}",
+                        func.name,
+                        effects.effects()
+                    );
                 }
             }
         }
@@ -121,8 +160,14 @@ impl Driver {
 
         // Phase 3.8: Optimization (optional but enabled by default)
         println!("🔧 Optimizing...");
+        let opt_start = Instant::now();
         let mut optimizer = Optimizer::new().with_logging();
         optimizer.optimize(&mut ast)?;
+        let opt_time = opt_start.elapsed();
+        println!(
+            "   Optimization complete ({:.2}ms)",
+            opt_time.as_secs_f64() * 1000.0
+        );
 
         // Phase 4: Code generation
         let output_path = if self.use_llvm {
@@ -134,6 +179,7 @@ impl Driver {
             path
         } else {
             println!("⚡ Generating C code...");
+            let gen_start = Instant::now();
             let mut codegen = CodeGenerator::new(filename)?;
 
             // Pass resolved modules to code generator
@@ -145,18 +191,26 @@ impl Driver {
             if !instantiations.is_empty() {
                 codegen.set_generic_instantiations(instantiations);
             }
-            
+
             // Pass generic struct instantiations to code generator
             if !struct_instantiations.is_empty() {
                 codegen.set_generic_struct_instantiations(struct_instantiations);
             }
 
             codegen.compile(&ast)?;
-            codegen.write_output()?
+            let output = codegen.write_output()?;
+            let gen_time = gen_start.elapsed();
+            println!(
+                "   Code generation complete ({:.2}ms)",
+                gen_time.as_secs_f64() * 1000.0
+            );
+            output
         };
 
+        let total_time = total_start.elapsed();
         println!("✅ Compilation successful!");
         println!("   Output: {}", output_path.display());
+        println!("   Total time: {:.2}ms", total_time.as_secs_f64() * 1000.0);
 
         Ok(output_path)
     }

@@ -9,7 +9,7 @@ use std::time::Duration;
 /// Future trait for asynchronous computations
 pub trait Future {
     type Output;
-    
+
     /// Poll the future to check if it's ready
     fn poll(&mut self) -> Poll<Self::Output>;
 }
@@ -47,48 +47,49 @@ impl AsyncRuntime {
             running: Arc::new(Mutex::new(false)),
         }
     }
-    
+
     /// Spawn a new async task
     pub fn spawn<F>(&self, mut future: F) -> TaskHandle
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        static TASK_ID_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        static TASK_ID_COUNTER: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
         let id = TASK_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        
+
         let task = Task {
             id,
             poll_fn: Box::new(move || future.poll()),
         };
-        
+
         self.ready_queue.lock().unwrap().push_back(task);
-        
+
         TaskHandle { id }
     }
-    
+
     /// Run the async runtime
     pub fn run(&self) {
         *self.running.lock().unwrap() = true;
-        
+
         let mut workers = Vec::new();
-        
+
         for worker_id in 0..self.num_workers {
             let ready_queue = Arc::clone(&self.ready_queue);
             let running = Arc::clone(&self.running);
-            
+
             let handle = thread::spawn(move || {
                 worker_loop(worker_id, ready_queue, running);
             });
-            
+
             workers.push(handle);
         }
-        
+
         // Wait for all workers to finish
         for worker in workers {
             worker.join().unwrap();
         }
     }
-    
+
     /// Stop the runtime
     pub fn stop(&self) {
         *self.running.lock().unwrap() = false;
@@ -106,13 +107,13 @@ fn worker_loop(
         if !*running.lock().unwrap() {
             break;
         }
-        
+
         // Try to get a task from the queue
         let task = {
             let mut queue = ready_queue.lock().unwrap();
             queue.pop_front()
         };
-        
+
         if let Some(mut task) = task {
             // Poll the task
             match (task.poll_fn)() {
@@ -152,7 +153,7 @@ impl Sleep {
 
 impl Future for Sleep {
     type Output = ();
-    
+
     fn poll(&mut self) -> Poll<Self::Output> {
         if std::time::Instant::now() >= self.deadline {
             Poll::Ready(())
@@ -173,13 +174,13 @@ impl<T> Channel<T> {
             queue: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
-    
+
     pub fn sender(&self) -> Sender<T> {
         Sender {
             queue: Arc::clone(&self.queue),
         }
     }
-    
+
     pub fn receiver(&self) -> Receiver<T> {
         Receiver {
             queue: Arc::clone(&self.queue),
@@ -222,7 +223,7 @@ impl<T> RecvFuture<T> {
 
 impl<T> Future for RecvFuture<T> {
     type Output = Option<T>;
-    
+
     fn poll(&mut self) -> Poll<Self::Output> {
         if let Some(value) = self.receiver.try_recv() {
             Poll::Ready(Some(value))
@@ -238,19 +239,19 @@ pub mod io {
     use std::fs;
     use std::io;
     use std::path::Path;
-    
+
     /// Async file read
     pub struct ReadFile {
         path: String,
         state: ReadFileState,
     }
-    
+
     enum ReadFileState {
         NotStarted,
         Reading,
         Done(io::Result<String>),
     }
-    
+
     impl ReadFile {
         pub fn new(path: impl AsRef<Path>) -> Self {
             Self {
@@ -259,18 +260,16 @@ pub mod io {
             }
         }
     }
-    
+
     impl Future for ReadFile {
         type Output = io::Result<String>;
-        
+
         fn poll(&mut self) -> Poll<Self::Output> {
             match &mut self.state {
                 ReadFileState::NotStarted => {
                     // Start reading in a background thread
                     let path = self.path.clone();
-                    thread::spawn(move || {
-                        fs::read_to_string(path)
-                    });
+                    thread::spawn(move || fs::read_to_string(path));
                     self.state = ReadFileState::Reading;
                     Poll::Pending
                 }
@@ -291,20 +290,20 @@ pub mod io {
             }
         }
     }
-    
+
     /// Async file write
     pub struct WriteFile {
         path: String,
         content: String,
         state: WriteFileState,
     }
-    
+
     enum WriteFileState {
         NotStarted,
         Writing,
         Done(io::Result<()>),
     }
-    
+
     impl WriteFile {
         pub fn new(path: impl AsRef<Path>, content: String) -> Self {
             Self {
@@ -314,10 +313,10 @@ pub mod io {
             }
         }
     }
-    
+
     impl Future for WriteFile {
         type Output = io::Result<()>;
-        
+
         fn poll(&mut self) -> Poll<Self::Output> {
             match &mut self.state {
                 WriteFileState::NotStarted => {
@@ -327,12 +326,10 @@ pub mod io {
                     Poll::Pending
                 }
                 WriteFileState::Writing => Poll::Pending,
-                WriteFileState::Done(result) => {
-                    match result {
-                        Ok(()) => Poll::Ready(Ok(())),
-                        Err(e) => Poll::Ready(Err(io::Error::new(e.kind(), e.to_string()))),
-                    }
-                }
+                WriteFileState::Done(result) => match result {
+                    Ok(()) => Poll::Ready(Ok(())),
+                    Err(e) => Poll::Ready(Err(io::Error::new(e.kind(), e.to_string()))),
+                },
             }
         }
     }
@@ -341,14 +338,14 @@ pub mod io {
 /// Combinators for futures
 pub mod combinators {
     use super::*;
-    
+
     /// Map combinator
     pub struct Map<F, U, G> {
         future: F,
         mapper: Option<G>,
         _phantom: std::marker::PhantomData<U>,
     }
-    
+
     impl<F, U, G> Map<F, U, G>
     where
         F: Future,
@@ -362,14 +359,14 @@ pub mod combinators {
             }
         }
     }
-    
+
     impl<F, U, G> Future for Map<F, U, G>
     where
         F: Future,
         G: FnOnce(F::Output) -> U,
     {
         type Output = U;
-        
+
         fn poll(&mut self) -> Poll<Self::Output> {
             match self.future.poll() {
                 Poll::Ready(value) => {
@@ -380,9 +377,9 @@ pub mod combinators {
             }
         }
     }
-    
+
     /// Join two futures
-    pub struct Join<F1, F2, O1, O2> 
+    pub struct Join<F1, F2, O1, O2>
     where
         F1: Future<Output = O1>,
         F2: Future<Output = O2>,
@@ -392,7 +389,7 @@ pub mod combinators {
         output1: Option<O1>,
         output2: Option<O2>,
     }
-    
+
     impl<F1, F2, O1, O2> Join<F1, F2, O1, O2>
     where
         F1: Future<Output = O1>,
@@ -407,14 +404,14 @@ pub mod combinators {
             }
         }
     }
-    
+
     impl<F1, F2, O1, O2> Future for Join<F1, F2, O1, O2>
     where
         F1: Future<Output = O1>,
         F2: Future<Output = O2>,
     {
         type Output = (O1, O2);
-        
+
         fn poll(&mut self) -> Poll<Self::Output> {
             // Poll first future if not complete
             if self.output1.is_none() {
@@ -425,7 +422,7 @@ pub mod combinators {
                     }
                 }
             }
-            
+
             // Poll second future if not complete
             if self.output2.is_none() {
                 if let Some(ref mut f2) = self.future2 {
@@ -435,7 +432,7 @@ pub mod combinators {
                     }
                 }
             }
-            
+
             // Check if both are complete
             if let (Some(v1), Some(v2)) = (self.output1.take(), self.output2.take()) {
                 Poll::Ready((v1, v2))
@@ -456,17 +453,17 @@ pub mod combinators {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_sleep_future() {
         let mut sleep = Sleep::new(Duration::from_millis(100));
-        
+
         // Should be pending initially
         match sleep.poll() {
             Poll::Pending => {}
             Poll::Ready(()) => panic!("Sleep should not be ready immediately"),
         }
-        
+
         // Wait and poll again
         thread::sleep(Duration::from_millis(150));
         match sleep.poll() {
@@ -474,17 +471,17 @@ mod tests {
             Poll::Pending => panic!("Sleep should be ready after deadline"),
         }
     }
-    
+
     #[test]
     fn test_channel() {
         let channel = Channel::<i32>::new();
         let sender = channel.sender();
         let receiver = channel.receiver();
-        
+
         // Send some values
         sender.send(42);
         sender.send(100);
-        
+
         // Receive values
         assert_eq!(receiver.try_recv(), Some(42));
         assert_eq!(receiver.try_recv(), Some(100));

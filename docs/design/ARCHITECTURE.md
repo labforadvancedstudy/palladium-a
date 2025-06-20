@@ -67,27 +67,29 @@ pub enum Expr {
 - Borrow checking happens here
 - Optimization-friendly
 
-### 3. Verification Engine (src/verify/)
+### 3. Verification Engine (src/verify/) [PLANNED]
 
 ```rust
+// Future implementation for v0.9+
 pub trait ProofBackend {
     fn verify_termination(&self, func: &MirFunction) -> Result<Proof>;
     fn verify_memory_safety(&self, func: &MirFunction) -> Result<Proof>;
     fn verify_side_channel(&self, func: &MirFunction) -> Result<LeakageBound>;
 }
 
-pub struct LeanBackend;
-pub struct CoqBackend;
-pub struct IsabelleBackend;
+// Planned backends:
+// - LeanBackend
+// - CoqBackend  
+// - IsabelleBackend
 ```
 
 ### 4. Backend
 
-#### LLVM Codegen (src/codegen/)
-- Uses Inkwell for LLVM bindings
-- Generates optimized LLVM IR
-- Supports multiple targets
-- Integrates with LLVM's optimization passes
+#### C Codegen (src/codegen/)
+- Generates portable C code
+- Enables easy bootstrapping
+- Compatible with any C compiler
+- LLVM backend planned for v0.9
 
 #### Runtime (runtime/)
 - Minimal runtime for memory management
@@ -116,8 +118,8 @@ pub struct IsabelleBackend;
        │            └─────────────┘
        ▼
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  LLVM IR    │────▶│  Assembly   │────▶│   Binary    │
-│  CodeGen    │     │    .s       │     │    .out     │
+│  C CodeGen  │────▶│    C Code   │────▶│   Binary    │
+│  Backend    │     │    .c       │     │    .out     │
 └─────────────┘     └─────────────┘     └─────────────┘
 ```
 
@@ -210,35 +212,44 @@ The compiler automatically chooses between:
 
 Based on escape analysis and usage patterns.
 
-### 4. Verification Strategy
+### 4. Verification Strategy [PLANNED v0.9+]
 - Lean for core language semantics
 - Coq for concurrency proofs
 - Isabelle for hardware models
+- Currently: Runtime checks and testing
 
-## Bootstrap Plan
+## Bootstrap Journey (COMPLETED ✅)
 
-### Phase 0: Minimal Compiler (v0.1)
+### Phase 0: Minimal Compiler (v0.1) ✅
 1. Basic lexer and parser
 2. Simple type checker (no inference)
-3. Direct LLVM IR generation
+3. C code generation
 4. Compile basic programs
 
-### Phase 1: Core Features (v0.2-0.4)
+### Phase 1: Core Features (v0.2-0.4) ✅
 1. Type inference
 2. Pattern matching
 3. Modules and namespaces
 4. Basic optimizations
 
-### Phase 2: Advanced Features (v0.5-0.7)
-1. Effect system
-2. Verification integration
-3. Advanced optimizations
-4. Self-hosting preparation
+### Phase 2: Advanced Features (v0.5-0.7) ✅
+1. Effect system (partial)
+2. Advanced optimizations
+3. Self-hosting preparation
+4. Incremental compiler approach
 
-### Phase 3: Self-Hosting (v0.8-1.0)
-1. Compiler written in Palladium
-2. Full verification of compiler
-3. Production ready
+### Phase 3: Self-Hosting Achieved (v0.8-current) ✅
+1. **100% SELF-HOSTING ACHIEVED** (June 17, 2025)
+2. Three bootstrap approaches validated:
+   - Full compiler (bootstrap2/pdc.pd - 1,220 lines)
+   - Incremental tiny compilers (bootstrap3/tiny_v1-v16)
+   - Self-compiling demonstration
+
+### Phase 4: Production Ready (v0.9-1.0) [IN PROGRESS]
+1. Verification engine integration
+2. LLVM backend
+3. Package manager (pdm)
+4. Language server (pls)
 
 ## Performance Targets
 

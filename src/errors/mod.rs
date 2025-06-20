@@ -75,37 +75,37 @@ pub enum CompileError {
     // Invalid function signature
     #[error("Invalid function signature")]
     InvalidFunctionSignature { message: String, span: Option<Span> },
-    
+
     // Borrow checker errors
     #[error("Borrow checker error: {message}")]
     BorrowChecker { message: String, span: Option<Span> },
-    
+
     #[error("Use of moved value: {name}")]
     UseOfMovedValue { name: String, span: Option<Span> },
-    
+
     #[error("Use of uninitialized value: {name}")]
     UseOfUninitializedValue { name: String, span: Option<Span> },
-    
+
     #[error("Cannot move out of borrowed content")]
     CannotMoveOutOfBorrowedContent { span: Option<Span> },
-    
+
     // Unsafe operation errors
     #[error("Unsafe operation '{operation}' requires unsafe block")]
     UnsafeOperation { operation: String, span: Span },
-    
+
     #[error("Conflicting borrows: {message}")]
     ConflictingBorrows { message: String, span: Option<Span> },
-    
+
     #[error("Lifetime error: {message}")]
     LifetimeError { message: String, span: Option<Span> },
-    
+
     // Pattern matching errors
     #[error("Non-exhaustive match: missing patterns {}", missing_patterns.join(", "))]
     NonExhaustiveMatch {
         missing_patterns: Vec<String>,
         span: Option<Span>,
     },
-    
+
     #[error("Unreachable pattern: {}", patterns.join(", "))]
     UnreachablePattern {
         patterns: Vec<String>,
@@ -337,20 +337,23 @@ impl CompileError {
                 None,
             ),
 
-            CompileError::NonExhaustiveMatch { missing_patterns, span } => {
+            CompileError::NonExhaustiveMatch {
+                missing_patterns,
+                span,
+            } => {
                 let mut diag = Diagnostic::error("Non-exhaustive match expression")
                     .with_span(span.unwrap_or(Span::dummy()))
                     .with_note("All possible patterns must be covered in a match expression");
-                
+
                 if missing_patterns.len() == 1 {
                     diag = diag.with_suggestion(
                         format!("Add a pattern for: {}", missing_patterns[0]),
-                        None
+                        None,
                     );
                 } else if missing_patterns.len() <= 3 {
                     diag = diag.with_suggestion(
                         format!("Add patterns for: {}", missing_patterns.join(", ")),
-                        None
+                        None,
                     );
                 } else {
                     diag = diag.with_suggestion(
@@ -358,19 +361,18 @@ impl CompileError {
                         None
                     );
                 }
-                
+
                 diag
             }
 
-            CompileError::UnreachablePattern { patterns: _, span } => {
-                Diagnostic::error("Unreachable pattern detected")
-                    .with_span(span.unwrap_or(Span::dummy()))
-                    .with_note("This pattern can never be matched because previous patterns cover all cases")
-                    .with_suggestion(
-                        "Remove this pattern or reorder the patterns",
-                        None
-                    )
-            }
+            CompileError::UnreachablePattern { patterns: _, span } => Diagnostic::error(
+                "Unreachable pattern detected",
+            )
+            .with_span(span.unwrap_or(Span::dummy()))
+            .with_note(
+                "This pattern can never be matched because previous patterns cover all cases",
+            )
+            .with_suggestion("Remove this pattern or reorder the patterns", None),
 
             _ => {
                 // Default diagnostic for other errors

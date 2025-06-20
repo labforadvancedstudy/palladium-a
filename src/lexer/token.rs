@@ -74,10 +74,10 @@ pub enum Token {
 
     #[token("enum")]
     Enum,
-    
+
     #[token("trait")]
     Trait,
-    
+
     #[token("impl")]
     Impl,
 
@@ -92,25 +92,25 @@ pub enum Token {
 
     #[token("as")]
     As,
-    
+
     #[token("Self")]
     SelfType,
-    
+
     #[token("type")]
     Type,
 
     #[token("const")]
     Const,
-    
+
     #[token("unsafe")]
     Unsafe,
-    
+
     #[token("async")]
     Async,
-    
+
     #[token("await")]
     Await,
-    
+
     #[token("macro")]
     Macro,
 
@@ -123,7 +123,7 @@ pub enum Token {
 
     #[token("*")]
     Star,
-    
+
     #[token("&")]
     Ampersand,
 
@@ -208,19 +208,19 @@ pub enum Token {
 
     #[token("=>")]
     FatArrow,
-    
+
     #[token("'")]
     SingleQuote,
-    
+
     #[token("?")]
     Question,
-    
+
     #[token("$")]
     Dollar,
-    
+
     #[token("|")]
     Pipe,
-    
+
     // End of file marker (not produced by logos)
     Eof,
 }
