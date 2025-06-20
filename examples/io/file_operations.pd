@@ -1,0 +1,129 @@
+// File I/O operations example
+// "Working with files the Palladium way"
+
+use std::io::{File, Path, println, eprintln, read_to_string, write_string};
+use std::result::{Result, ok, err};
+use std::option::{Option, some, none};
+
+fn main() {
+    // Create a path
+    let path = Path::from_str("test_file.txt");
+    
+    // Write to a file
+    match write_string(&path, &"Hello from Palladium!\nThis is a test file.") {
+        Result::Ok(_) => println(&"File written successfully"),
+        Result::Err(e) => eprintln(&string_concat("Error writing file: ", e.to_string())),
+    }
+    
+    // Read from a file
+    match read_to_string(&path) {
+        Result::Ok(contents) => {
+            println(&"File contents:");
+            println(&contents);
+        }
+        Result::Err(e) => eprintln(&string_concat("Error reading file: ", e.to_string())),
+    }
+    
+    // Check if file exists
+    if path.exists() {
+        println(&"File exists!");
+        
+        // Get file name
+        match path.file_name() {
+            Option::Some(name) => println(&string_concat("File name: ", name)),
+            Option::None => println(&"No file name"),
+        }
+        
+        // Get extension
+        match path.extension() {
+            Option::Some(ext) => println(&string_concat("Extension: ", ext)),
+            Option::None => println(&"No extension"),
+        }
+    }
+    
+    // Work with directories
+    let dir_path = Path::from_str("test_directory");
+    
+    // Create directory
+    match create_dir(&dir_path) {
+        Result::Ok(_) => println(&"Directory created"),
+        Result::Err(e) => eprintln(&string_concat("Error creating directory: ", e.to_string())),
+    }
+    
+    // Join paths
+    let file_in_dir = dir_path.join(&Path::from_str("file.txt"));
+    println(&string_concat("Joined path: ", file_in_dir.to_string()));
+    
+    // Clean up
+    match remove_file(&path) {
+        Result::Ok(_) => println(&"File removed"),
+        Result::Err(_) => {},
+    }
+    
+    match remove_dir(&dir_path) {
+        Result::Ok(_) => println(&"Directory removed"),
+        Result::Err(_) => {},
+    }
+}
+
+// Advanced file operations
+fn copy_file_with_progress(src: &Path, dst: &Path) -> Result<(), IoError> {
+    let mut src_file = File::open(&src.to_string())?;
+    let mut dst_file = File::create(&dst.to_string())?;
+    
+    // Read and write in chunks
+    let mut buffer = [0u8; 8192];
+    let mut total_bytes = 0u64;
+    
+    loop {
+        match src_file.read_to_bytes() {
+            Result::Ok(bytes) => {
+                if bytes.is_empty() {
+                    break;
+                }
+                
+                match dst_file.write_bytes(&bytes) {
+                    Result::Ok(written) => {
+                        total_bytes = total_bytes + written;
+                        print(&".");
+                    }
+                    Result::Err(e) => return err(e),
+                }
+            }
+            Result::Err(e) => {
+                if e == IoError::UnexpectedEof {
+                    break;
+                } else {
+                    return err(e);
+                }
+            }
+        }
+    }
+    
+    println(&string_concat("\nCopied ", string_concat(int_to_string(total_bytes), " bytes")));
+    ok(())
+}
+
+// Directory traversal
+fn list_directory(path: &Path, indent: &String) -> Result<(), IoError> {
+    let entries = read_dir(path)?;
+    
+    for entry in entries {
+        let entry_path = entry.path();
+        let name = entry.file_name();
+        
+        print(indent);
+        
+        if entry.is_dir()? {
+            println(&string_concat("[DIR] ", *name));
+            
+            // Recursive listing
+            let new_indent = string_concat(*indent, "  ");
+            list_directory(entry_path, &new_indent)?;
+        } else {
+            println(&string_concat("[FILE] ", *name));
+        }
+    }
+    
+    ok(())
+}

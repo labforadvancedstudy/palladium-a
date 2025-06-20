@@ -1,0 +1,163 @@
+// Network server example
+// "Serving requests with Palladium"
+
+use std::net::{TcpListener, TcpStream, SocketAddr, Ipv4Addr, SocketAddrV4};
+use std::io::{println, eprintln};
+use std::result::{Result, ok, err};
+use std::string::String;
+use std::thread::{spawn, sleep};
+use std::time::Duration;
+
+fn main() {
+    // Bind to localhost:8080
+    let addr = SocketAddr::V4(SocketAddrV4::new(
+        Ipv4Addr::new(127, 0, 0, 1),
+        8080
+    ));
+    
+    match TcpListener::bind(&addr) {
+        Result::Ok(listener) => {
+            println(&string_concat("Server listening on ", addr_to_string(&addr)));
+            
+            // Accept connections
+            for stream_result in listener.incoming() {
+                match stream_result {
+                    Result::Ok(stream) => {
+                        // Handle client in new thread
+                        spawn(|| {
+                            handle_client(stream);
+                        });
+                    }
+                    Result::Err(e) => {
+                        eprintln(&string_concat("Error accepting connection: ", e.to_string()));
+                    }
+                }
+            }
+        }
+        Result::Err(e) => {
+            eprintln(&string_concat("Failed to bind: ", e.to_string()));
+        }
+    }
+}
+
+// Handle a client connection
+fn handle_client(mut stream: TcpStream) {
+    // Get client address
+    let client_addr = match stream.peer_addr() {
+        Result::Ok(addr) => addr_to_string(&addr),
+        Result::Err(_) => String::from("unknown"),
+    };
+    
+    println(&string_concat("Client connected: ", client_addr));
+    
+    // Read request
+    let mut buffer = [0u8; 1024];
+    match stream.read(&mut buffer) {
+        Result::Ok(bytes) => {
+            let request = String::from_utf8(&buffer[0..bytes]);
+            match request {
+                Result::Ok(req) => {
+                    println(&string_concat("Received: ", req));
+                    
+                    // Send response
+                    let response = string_concat("Echo: ", req);
+                    match stream.write(&response.as_bytes()) {
+                        Result::Ok(_) => {},
+                        Result::Err(e) => {
+                            eprintln(&string_concat("Error writing response: ", e.to_string()));
+                        }
+                    }
+                }
+                Result::Err(_) => {
+                    eprintln(&"Received non-UTF8 data");
+                }
+            }
+        }
+        Result::Err(e) => {
+            eprintln(&string_concat("Error reading from client: ", e.to_string()));
+        }
+    }
+    
+    println(&string_concat("Client disconnected: ", client_addr));
+}
+
+// Simple HTTP server
+fn http_server(port: u16) -> Result<(), IoError> {
+    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::localhost(), port));
+    let listener = TcpListener::bind(&addr)?;
+    
+    println(&string_concat("HTTP server listening on port ", int_to_string(port)));
+    
+    for stream_result in listener.incoming() {
+        let mut stream = stream_result?;
+        
+        // Read request
+        let mut buffer = [0u8; 4096];
+        let bytes = stream.read(&mut buffer)?;
+        
+        // Parse request (simple)
+        let request = String::from_utf8(&buffer[0..bytes])?;
+        let lines: Vec<String> = request.split("\r\n");
+        
+        if lines.len() > 0 {
+            println(&string_concat("Request: ", lines[0]));
+        }
+        
+        // Send response
+        let response = "HTTP/1.1 200 OK\r\n\
+                       Content-Type: text/html\r\n\
+                       Content-Length: 55\r\n\
+                       \r\n\
+                       <html><body><h1>Hello from Palladium!</h1></body></html>";
+        
+        stream.write(&response.as_bytes())?;
+        stream.flush()?;
+    }
+    
+    ok(())
+}
+
+// UDP echo server
+fn udp_echo_server(port: u16) -> Result<(), IoError> {
+    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::unspecified(), port));
+    let socket = UdpSocket::bind(&addr)?;
+    
+    println(&string_concat("UDP echo server listening on port ", int_to_string(port)));
+    
+    let mut buffer = [0u8; 1024];
+    
+    loop {
+        match socket.recv_from(&mut buffer) {
+            Result::Ok((bytes, src_addr)) => {
+                println(&string_concat("UDP packet from ", addr_to_string(&src_addr)));
+                
+                // Echo back
+                match socket.send_to(&buffer[0..bytes], &src_addr) {
+                    Result::Ok(_) => {},
+                    Result::Err(e) => {
+                        eprintln(&string_concat("Error sending UDP response: ", e.to_string()));
+                    }
+                }
+            }
+            Result::Err(e) => {
+                eprintln(&string_concat("Error receiving UDP packet: ", e.to_string()));
+            }
+        }
+    }
+}
+
+// Helper to convert address to string
+fn addr_to_string(addr: &SocketAddr) -> String {
+    match addr {
+        SocketAddr::V4(v4) => {
+            let ip = v4.ip();
+            let port = v4.port();
+            string_concat(ip.to_string(), string_concat(":", int_to_string(port)))
+        }
+        SocketAddr::V6(v6) => {
+            let ip = v6.ip();
+            let port = v6.port();
+            string_concat("[", string_concat(ip.to_string(), string_concat("]:", int_to_string(port))))
+        }
+    }
+}
