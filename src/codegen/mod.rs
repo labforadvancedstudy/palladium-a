@@ -41,9 +41,11 @@ pub struct CodeGenerator {
 
 impl CodeGenerator {
     pub fn new(module_name: &str) -> Result<Self> {
+        // Pre-allocate string capacity for better performance
+        let initial_capacity = 64 * 1024; // 64KB initial capacity
         Ok(Self {
             module_name: module_name.to_string(),
-            output: String::new(),
+            output: String::with_capacity(initial_capacity),
             functions: std::collections::HashMap::new(),
             variables: std::collections::HashMap::new(),
             mutable_params: std::collections::HashMap::new(),
@@ -73,7 +75,7 @@ impl CodeGenerator {
     ) {
         self.generic_instantiations = instantiations;
     }
-    
+
     /// Set generic struct instantiations for code generation
     pub fn set_generic_struct_instantiations(
         &mut self,
@@ -100,14 +102,15 @@ impl CodeGenerator {
                             Expr::Bool(_) => "int",
                             _ => "long long",
                         };
-                        
+
                         // Find the matching instantiation
                         for (type_args, mangled_name) in instantiations {
                             // Simple heuristic: check if any type arg matches the field type
                             for type_arg in type_args {
-                                if (type_arg == "i64" && field_type.contains("long long")) ||
-                                   (type_arg == "bool" && field_type == "int") ||
-                                   (type_arg == "String" && field_type.contains("char*")) {
+                                if (type_arg == "i64" && field_type.contains("long long"))
+                                    || (type_arg == "bool" && field_type == "int")
+                                    || (type_arg == "String" && field_type.contains("char*"))
+                                {
                                     return format!("struct {}", mangled_name);
                                 }
                             }
@@ -137,18 +140,21 @@ impl CodeGenerator {
                     }
 
                     // Look up user-defined function return type
-                    if let Some((params, ret_type)) = self.functions.get(func_name) {
+                    if let Some((_params, ret_type)) = self.functions.get(func_name) {
                         // Check if this is an async function
                         if self.async_functions.contains(func_name) {
                             return format!("{}_Future", func_name);
                         }
-                        
+
                         match ret_type {
                             Some(Type::String) => return "const char*".to_string(),
                             Some(Type::Bool) => return "int".to_string(),
                             Some(Type::Custom(name)) => return name.to_string(),
                             Some(Type::Reference { inner: _, .. }) => {
-                                return format!("{}*", self.infer_expr_type(&Expr::Ident("dummy".to_string())));
+                                return format!(
+                                    "{}*",
+                                    self.infer_expr_type(&Expr::Ident("dummy".to_string()))
+                                );
                             }
                             _ => return "long long".to_string(),
                         }
@@ -182,43 +188,60 @@ impl CodeGenerator {
         self.output.push_str("#include <stdio.h>\n");
         self.output.push_str("#include <string.h>\n");
         self.output.push_str("#include <stdlib.h>\n");
-        self.output.push_str("#include <ctype.h>\n\n");
+        self.output.push_str("#include <ctype.h>\n");
+        self.output.push_str("#include <stdint.h>\n\n");
 
         // Memory management for strings
-        self.output.push_str("// String memory pool to prevent leaks\n");
+        self.output
+            .push_str("// String memory pool to prevent leaks\n");
         self.output.push_str("#define STRING_POOL_SIZE 65536\n");
         self.output.push_str("#define MAX_STRINGS 1024\n");
-        self.output.push_str("static char __pd_string_pool[STRING_POOL_SIZE];\n");
-        self.output.push_str("static size_t __pd_string_pool_offset = 0;\n");
-        self.output.push_str("static char* __pd_allocated_strings[MAX_STRINGS];\n");
+        self.output
+            .push_str("static char __pd_string_pool[STRING_POOL_SIZE];\n");
+        self.output
+            .push_str("static size_t __pd_string_pool_offset = 0;\n");
+        self.output
+            .push_str("static char* __pd_allocated_strings[MAX_STRINGS];\n");
         self.output.push_str("static int __pd_num_strings = 0;\n\n");
-        
+
         // String allocation function
-        self.output.push_str("static char* __pd_alloc_string(size_t size) {\n");
-        self.output.push_str("    if (__pd_string_pool_offset + size > STRING_POOL_SIZE) {\n");
-        self.output.push_str("        // Pool exhausted, fall back to malloc\n");
-        self.output.push_str("        char* ptr = (char*)malloc(size);\n");
-        self.output.push_str("        if (__pd_num_strings < MAX_STRINGS) {\n");
-        self.output.push_str("            __pd_allocated_strings[__pd_num_strings++] = ptr;\n");
+        self.output
+            .push_str("static char* __pd_alloc_string(size_t size) {\n");
+        self.output
+            .push_str("    if (__pd_string_pool_offset + size > STRING_POOL_SIZE) {\n");
+        self.output
+            .push_str("        // Pool exhausted, fall back to malloc\n");
+        self.output
+            .push_str("        char* ptr = (char*)malloc(size);\n");
+        self.output
+            .push_str("        if (__pd_num_strings < MAX_STRINGS) {\n");
+        self.output
+            .push_str("            __pd_allocated_strings[__pd_num_strings++] = ptr;\n");
         self.output.push_str("        }\n");
         self.output.push_str("        return ptr;\n");
         self.output.push_str("    }\n");
-        self.output.push_str("    char* ptr = &__pd_string_pool[__pd_string_pool_offset];\n");
-        self.output.push_str("    __pd_string_pool_offset += size;\n");
+        self.output
+            .push_str("    char* ptr = &__pd_string_pool[__pd_string_pool_offset];\n");
+        self.output
+            .push_str("    __pd_string_pool_offset += size;\n");
         self.output.push_str("    return ptr;\n");
         self.output.push_str("}\n\n");
-        
+
         // Cleanup function
-        self.output.push_str("static void __pd_cleanup_strings() {\n");
-        self.output.push_str("    for (int i = 0; i < __pd_num_strings; i++) {\n");
-        self.output.push_str("        free(__pd_allocated_strings[i]);\n");
+        self.output
+            .push_str("static void __pd_cleanup_strings() {\n");
+        self.output
+            .push_str("    for (int i = 0; i < __pd_num_strings; i++) {\n");
+        self.output
+            .push_str("        free(__pd_allocated_strings[i]);\n");
         self.output.push_str("    }\n");
         self.output.push_str("    __pd_num_strings = 0;\n");
         self.output.push_str("    __pd_string_pool_offset = 0;\n");
         self.output.push_str("}\n\n");
-        
+
         // Register cleanup with atexit
-        self.output.push_str("static void __pd_init() __attribute__((constructor));\n");
+        self.output
+            .push_str("static void __pd_init() __attribute__((constructor));\n");
         self.output.push_str("static void __pd_init() {\n");
         self.output.push_str("    atexit(__pd_cleanup_strings);\n");
         self.output.push_str("}\n\n");
@@ -385,8 +408,7 @@ impl CodeGenerator {
             .push_str("        char* result = __pd_alloc_string(len + 1);\n");
         self.output
             .push_str("        strcpy(result, line_buffer);\n");
-        self.output
-            .push_str("        return result;\n");
+        self.output.push_str("        return result;\n");
         self.output.push_str("    }\n");
         self.output.push_str("    return \"\";\n");
         self.output.push_str("}\n\n");
@@ -426,6 +448,119 @@ impl CodeGenerator {
         self.output.push_str("    return 0;\n");
         self.output.push_str("}\n\n");
 
+        // Enhanced I/O Runtime Function Declarations
+        // External function declarations for runtime I/O
+        self.output.push_str("// Enhanced I/O runtime functions\n");
+        self.output.push_str("// File handle type (opaque pointer)\n");
+        self.output.push_str("typedef void* FileHandle;\n\n");
+        
+        // File mode enum
+        self.output.push_str("// File modes\n");
+        self.output.push_str("enum FileMode {\n");
+        self.output.push_str("    FileMode_Read = 0,\n");
+        self.output.push_str("    FileMode_Write = 1,\n");
+        self.output.push_str("    FileMode_Append = 2,\n");
+        self.output.push_str("    FileMode_ReadWrite = 3\n");
+        self.output.push_str("};\n\n");
+        
+        // External function declarations
+        self.output.push_str("// External runtime I/O functions\n");
+        self.output.push_str("extern FileHandle pd_file_open(const char* path, size_t path_len, int mode);\n");
+        self.output.push_str("extern int pd_file_close(FileHandle handle);\n");
+        self.output.push_str("extern int64_t pd_file_read(FileHandle handle, char* buffer, size_t len);\n");
+        self.output.push_str("extern int64_t pd_file_write(FileHandle handle, const char* buffer, size_t len);\n");
+        self.output.push_str("extern int64_t pd_file_seek(FileHandle handle, uint8_t whence, int64_t offset);\n");
+        self.output.push_str("extern int pd_file_flush(FileHandle handle);\n");
+        self.output.push_str("extern int pd_path_exists(const char* path, size_t path_len);\n");
+        self.output.push_str("extern int pd_path_is_file(const char* path, size_t path_len);\n");
+        self.output.push_str("extern int pd_path_is_dir(const char* path, size_t path_len);\n");
+        self.output.push_str("extern int pd_create_dir(const char* path, size_t path_len);\n");
+        self.output.push_str("extern int pd_create_dir_all(const char* path, size_t path_len);\n");
+        self.output.push_str("extern int pd_remove_file(const char* path, size_t path_len);\n");
+        self.output.push_str("extern int pd_remove_dir(const char* path, size_t path_len);\n");
+        self.output.push_str("extern int pd_remove_dir_all(const char* path, size_t path_len);\n");
+        self.output.push_str("extern int pd_read_file_to_string(const char* path, size_t path_len, char** out_str, size_t* out_len);\n");
+        self.output.push_str("extern int pd_write_string_to_file(const char* path, size_t path_len, const char* data, size_t data_len);\n\n");
+        
+        // Wrapper functions that call the external pd_* functions
+        // pd_file_open wrapper (enhanced version with mode)
+        self.output.push_str("FileHandle __pd_file_open_ex(const char* path, int mode) {\n");
+        self.output.push_str("    return pd_file_open(path, strlen(path), mode);\n");
+        self.output.push_str("}\n\n");
+        
+        // pd_file_close wrapper (enhanced version)
+        self.output.push_str("int __pd_file_close_ex(FileHandle handle) {\n");
+        self.output.push_str("    return pd_file_close(handle);\n");
+        self.output.push_str("}\n\n");
+        
+        // pd_file_read wrapper (enhanced version)
+        self.output.push_str("int64_t __pd_file_read_ex(FileHandle handle, char* buffer, size_t len) {\n");
+        self.output.push_str("    return pd_file_read(handle, buffer, len);\n");
+        self.output.push_str("}\n\n");
+        
+        // pd_file_write wrapper (enhanced version)
+        self.output.push_str("int64_t __pd_file_write_ex(FileHandle handle, const char* buffer, size_t len) {\n");
+        self.output.push_str("    return pd_file_write(handle, buffer, len);\n");
+        self.output.push_str("}\n\n");
+        
+        // pd_file_seek wrapper
+        self.output.push_str("int64_t __pd_file_seek(FileHandle handle, uint8_t whence, int64_t offset) {\n");
+        self.output.push_str("    return pd_file_seek(handle, whence, offset);\n");
+        self.output.push_str("}\n\n");
+        
+        // pd_file_flush wrapper
+        self.output.push_str("int __pd_file_flush(FileHandle handle) {\n");
+        self.output.push_str("    return pd_file_flush(handle);\n");
+        self.output.push_str("}\n\n");
+        
+        // Path manipulation functions
+        self.output.push_str("int __pd_path_exists(const char* path) {\n");
+        self.output.push_str("    return pd_path_exists(path, strlen(path));\n");
+        self.output.push_str("}\n\n");
+        
+        self.output.push_str("int __pd_path_is_file(const char* path) {\n");
+        self.output.push_str("    return pd_path_is_file(path, strlen(path));\n");
+        self.output.push_str("}\n\n");
+        
+        self.output.push_str("int __pd_path_is_dir(const char* path) {\n");
+        self.output.push_str("    return pd_path_is_dir(path, strlen(path));\n");
+        self.output.push_str("}\n\n");
+        
+        // Directory operations
+        self.output.push_str("int __pd_create_dir(const char* path) {\n");
+        self.output.push_str("    return pd_create_dir(path, strlen(path));\n");
+        self.output.push_str("}\n\n");
+        
+        self.output.push_str("int __pd_create_dir_all(const char* path) {\n");
+        self.output.push_str("    return pd_create_dir_all(path, strlen(path));\n");
+        self.output.push_str("}\n\n");
+        
+        self.output.push_str("int __pd_remove_file(const char* path) {\n");
+        self.output.push_str("    return pd_remove_file(path, strlen(path));\n");
+        self.output.push_str("}\n\n");
+        
+        self.output.push_str("int __pd_remove_dir(const char* path) {\n");
+        self.output.push_str("    return pd_remove_dir(path, strlen(path));\n");
+        self.output.push_str("}\n\n");
+        
+        self.output.push_str("int __pd_remove_dir_all(const char* path) {\n");
+        self.output.push_str("    return pd_remove_dir_all(path, strlen(path));\n");
+        self.output.push_str("}\n\n");
+        
+        // Enhanced file operations with string helpers
+        self.output.push_str("char* __pd_read_file_to_string(const char* path) {\n");
+        self.output.push_str("    char* out_str = NULL;\n");
+        self.output.push_str("    size_t out_len = 0;\n");
+        self.output.push_str("    if (pd_read_file_to_string(path, strlen(path), &out_str, &out_len) == 0) {\n");
+        self.output.push_str("        return out_str;\n");
+        self.output.push_str("    }\n");
+        self.output.push_str("    return NULL;\n");
+        self.output.push_str("}\n\n");
+        
+        self.output.push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");
+        self.output.push_str("    return pd_write_string_to_file(path, strlen(path), data, strlen(data));\n");
+        self.output.push_str("}\n\n");
+
         // First pass: collect function signatures, type aliases, and enum definitions from imported modules
         for module_info in self.imported_modules.values() {
             for item in &module_info.ast.items {
@@ -444,8 +579,11 @@ impl CodeGenerator {
                     Item::TypeAlias(type_alias) => {
                         if matches!(type_alias.visibility, crate::ast::Visibility::Public) {
                             // Skip generic type aliases for now
-                            if type_alias.type_params.is_empty() && type_alias.lifetime_params.is_empty() {
-                                self.type_aliases.insert(type_alias.name.clone(), type_alias.ty.clone());
+                            if type_alias.type_params.is_empty()
+                                && type_alias.lifetime_params.is_empty()
+                            {
+                                self.type_aliases
+                                    .insert(type_alias.name.clone(), type_alias.ty.clone());
                             }
                         }
                     }
@@ -478,7 +616,8 @@ impl CodeGenerator {
                 Item::TypeAlias(type_alias) => {
                     // Skip generic type aliases for now
                     if type_alias.type_params.is_empty() && type_alias.lifetime_params.is_empty() {
-                        self.type_aliases.insert(type_alias.name.clone(), type_alias.ty.clone());
+                        self.type_aliases
+                            .insert(type_alias.name.clone(), type_alias.ty.clone());
                     }
                 }
                 Item::Enum(enum_def) => {
@@ -502,7 +641,9 @@ impl CodeGenerator {
                     Item::Struct(struct_def) => {
                         if matches!(struct_def.visibility, crate::ast::Visibility::Public) {
                             // Skip generic structs - they should only be generated when instantiated
-                            if struct_def.type_params.is_empty() && struct_def.lifetime_params.is_empty() {
+                            if struct_def.type_params.is_empty()
+                                && struct_def.lifetime_params.is_empty()
+                            {
                                 self.generate_struct(struct_def)?;
                             }
                         }
@@ -541,16 +682,20 @@ impl CodeGenerator {
         if !self.generic_struct_instantiations.is_empty() {
             self.output.push_str("// Monomorphized generic structs\n");
 
-            for (struct_name, type_args, generic_struct) in &self.generic_struct_instantiations.clone() {
+            for (struct_name, type_args, generic_struct) in
+                &self.generic_struct_instantiations.clone()
+            {
                 // Create a concrete struct from the generic template
-                let concrete_struct = self.monomorphize_struct(struct_name, type_args, generic_struct)?;
-                
+                let concrete_struct =
+                    self.monomorphize_struct(struct_name, type_args, generic_struct)?;
+
                 // Track the instantiation mapping for struct literal generation
-                let instantiations = self.generic_struct_instantiation_map
+                let instantiations = self
+                    .generic_struct_instantiation_map
                     .entry(struct_name.clone())
                     .or_insert_with(Vec::new);
                 instantiations.push((type_args.clone(), concrete_struct.name.clone()));
-                
+
                 self.generate_struct(&concrete_struct)?;
             }
             self.output.push('\n');
@@ -614,9 +759,11 @@ impl CodeGenerator {
                             continue;
                         }
                         // Create a mangled method name
-                        let mangled_name = format!("__pd_{}_{}", 
+                        let mangled_name = format!(
+                            "__pd_{}_{}",
                             impl_block.for_type.to_string().replace("::", "_"),
-                            method.name);
+                            method.name
+                        );
                         self.generate_function_with_name(method, &mangled_name)?;
                     }
                 }
@@ -676,19 +823,30 @@ impl CodeGenerator {
     /// Generate code for an enum definition
     fn generate_enum(&mut self, enum_def: &EnumDef) -> Result<()> {
         // Generate a tagged union for the enum
-        self.output.push_str(&format!("// Enum {}
-", enum_def.name));
-        
+        self.output.push_str(&format!(
+            "// Enum {}
+",
+            enum_def.name
+        ));
+
         // First, generate the tag enum
-        self.output.push_str(&format!("typedef enum {{
-"));
+        self.output.push_str(&format!(
+            "typedef enum {{
+"
+        ));
         for variant in &enum_def.variants {
-            self.output.push_str(&format!("    __{}__{},
-", enum_def.name, variant.name));
+            self.output.push_str(&format!(
+                "    __{}__{},
+",
+                enum_def.name, variant.name
+            ));
         }
-        self.output.push_str(&format!("}} {}Tag;
-\n", enum_def.name));
-        
+        self.output.push_str(&format!(
+            "}} {}Tag;
+\n",
+            enum_def.name
+        ));
+
         // Generate data structs for variants with data
         for variant in &enum_def.variants {
             match &variant.data {
@@ -697,42 +855,69 @@ impl CodeGenerator {
                 }
                 EnumVariantData::Tuple(types) => {
                     if !types.is_empty() {
-                        self.output.push_str(&format!("typedef struct {{
-"));
+                        self.output.push_str(&format!(
+                            "typedef struct {{
+"
+                        ));
                         for (i, ty) in types.iter().enumerate() {
                             let c_type = self.type_to_c(ty);
-                            self.output.push_str(&format!("    {} field{};
-", c_type, i));
+                            self.output.push_str(&format!(
+                                "    {} field{};
+",
+                                c_type, i
+                            ));
                         }
-                        self.output.push_str(&format!("}} {}__{}_Data;
-\n", enum_def.name, variant.name));
+                        self.output.push_str(&format!(
+                            "}} {}__{}_Data;
+\n",
+                            enum_def.name, variant.name
+                        ));
                     }
                 }
                 EnumVariantData::Struct(fields) => {
-                    self.output.push_str(&format!("typedef struct {{
-"));
+                    self.output.push_str(&format!(
+                        "typedef struct {{
+"
+                    ));
                     for (field_name, field_type) in fields {
                         let c_type = self.type_to_c(field_type);
-                        self.output.push_str(&format!("    {} {};
-", c_type, field_name));
+                        self.output.push_str(&format!(
+                            "    {} {};
+",
+                            c_type, field_name
+                        ));
                     }
-                    self.output.push_str(&format!("}} {}__{}_Data;
-\n", enum_def.name, variant.name));
+                    self.output.push_str(&format!(
+                        "}} {}__{}_Data;
+\n",
+                        enum_def.name, variant.name
+                    ));
                 }
             }
         }
-        
+
         // Generate the enum struct with tag and union
-        self.output.push_str(&format!("typedef struct {} {{
-", enum_def.name));
-        self.output.push_str(&format!("    {}Tag tag;
-", enum_def.name));
-        
+        self.output.push_str(&format!(
+            "typedef struct {} {{
+",
+            enum_def.name
+        ));
+        self.output.push_str(&format!(
+            "    {}Tag tag;
+",
+            enum_def.name
+        ));
+
         // Only generate union if there are variants with data
-        let has_data_variants = enum_def.variants.iter().any(|v| !matches!(v.data, EnumVariantData::Unit));
+        let has_data_variants = enum_def
+            .variants
+            .iter()
+            .any(|v| !matches!(v.data, EnumVariantData::Unit));
         if has_data_variants {
-            self.output.push_str("    union {
-");
+            self.output.push_str(
+                "    union {
+",
+            );
             for variant in &enum_def.variants {
                 match &variant.data {
                     EnumVariantData::Unit => {
@@ -740,25 +925,38 @@ impl CodeGenerator {
                     }
                     EnumVariantData::Tuple(types) => {
                         if !types.is_empty() {
-                            self.output.push_str(&format!("        {}__{}_Data {};
-", 
-                                enum_def.name, variant.name, variant.name.to_lowercase()));
+                            self.output.push_str(&format!(
+                                "        {}__{}_Data {};
+",
+                                enum_def.name,
+                                variant.name,
+                                variant.name.to_lowercase()
+                            ));
                         }
                     }
                     EnumVariantData::Struct(_) => {
-                        self.output.push_str(&format!("        {}__{}_Data {};
-", 
-                            enum_def.name, variant.name, variant.name.to_lowercase()));
+                        self.output.push_str(&format!(
+                            "        {}__{}_Data {};
+",
+                            enum_def.name,
+                            variant.name,
+                            variant.name.to_lowercase()
+                        ));
                     }
                 }
             }
-            self.output.push_str("    } data;
-");
+            self.output.push_str(
+                "    } data;
+",
+            );
         }
-        
-        self.output.push_str(&format!("}} {};
-\n", enum_def.name));
-        
+
+        self.output.push_str(&format!(
+            "}} {};
+\n",
+            enum_def.name
+        ));
+
         // Generate constructor functions for each variant
         for variant in &enum_def.variants {
             match &variant.data {
@@ -774,8 +972,10 @@ impl CodeGenerator {
 ",
                         enum_def.name, enum_def.name, variant.name
                     ));
-                    self.output.push_str("    return result;
-");
+                    self.output.push_str(
+                        "    return result;
+",
+                    );
                     self.output.push_str("}\n\n");
                 }
                 EnumVariantData::Tuple(types) => {
@@ -784,7 +984,7 @@ impl CodeGenerator {
                         "static inline {} {}_{}__new(",
                         enum_def.name, enum_def.name, variant.name
                     ));
-                    
+
                     for (i, ty) in types.iter().enumerate() {
                         if i > 0 {
                             self.output.push_str(", ");
@@ -792,26 +992,30 @@ impl CodeGenerator {
                         let c_type = self.type_to_c(ty);
                         self.output.push_str(&format!("{} arg{}", c_type, i));
                     }
-                    
+
                     self.output.push_str(") {\n");
                     self.output.push_str(&format!(
                         "    {} result = {{.tag = __{}__{}}};
 ",
                         enum_def.name, enum_def.name, variant.name
                     ));
-                    
+
                     if !types.is_empty() {
                         for i in 0..types.len() {
                             self.output.push_str(&format!(
                                 "    result.data.{}.field{} = arg{};
 ",
-                                variant.name.to_lowercase(), i, i
+                                variant.name.to_lowercase(),
+                                i,
+                                i
                             ));
                         }
                     }
-                    
-                    self.output.push_str("    return result;
-");
+
+                    self.output.push_str(
+                        "    return result;
+",
+                    );
                     self.output.push_str("}\n\n");
                 }
                 EnumVariantData::Struct(fields) => {
@@ -820,7 +1024,7 @@ impl CodeGenerator {
                         "static inline {} {}_{}__new(",
                         enum_def.name, enum_def.name, variant.name
                     ));
-                    
+
                     for (i, (field_name, field_type)) in fields.iter().enumerate() {
                         if i > 0 {
                             self.output.push_str(", ");
@@ -828,29 +1032,33 @@ impl CodeGenerator {
                         let c_type = self.type_to_c(field_type);
                         self.output.push_str(&format!("{} {}", c_type, field_name));
                     }
-                    
+
                     self.output.push_str(") {\n");
                     self.output.push_str(&format!(
                         "    {} result = {{.tag = __{}__{}}};
 ",
                         enum_def.name, enum_def.name, variant.name
                     ));
-                    
+
                     for (field_name, _) in fields {
                         self.output.push_str(&format!(
                             "    result.data.{}.{} = {};
 ",
-                            variant.name.to_lowercase(), field_name, field_name
+                            variant.name.to_lowercase(),
+                            field_name,
+                            field_name
                         ));
                     }
-                    
-                    self.output.push_str("    return result;
-");
+
+                    self.output.push_str(
+                        "    return result;
+",
+                    );
                     self.output.push_str("}\n\n");
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -919,14 +1127,14 @@ impl CodeGenerator {
     fn generate_function(&mut self, func: &Function) -> Result<()> {
         self.generate_function_with_name(func, &func.name)
     }
-    
+
     fn generate_function_with_name(&mut self, func: &Function, name: &str) -> Result<()> {
         // For async functions, generate a Future-returning wrapper
         if func.is_async {
             self.generate_async_function_with_name(func, name)?;
             return Ok(());
         }
-        
+
         // Function signature with return type
         let return_type_string = match &func.return_type {
             Some(Type::Array(_, _)) => {
@@ -938,7 +1146,7 @@ impl CodeGenerator {
             Some(t) => self.type_to_c(t),
             None => "void".to_string(),
         };
-        
+
         let return_type = return_type_string.as_str();
 
         // Special case: main always returns int in C
@@ -1000,22 +1208,40 @@ impl CodeGenerator {
                     // Handle reference parameters
                     match inner.as_ref() {
                         Type::I32 => {
-                            self.output.push_str(if *mutable { "int* " } else { "const int* " });
+                            self.output
+                                .push_str(if *mutable { "int* " } else { "const int* " });
                         }
                         Type::I64 => {
-                            self.output.push_str(if *mutable { "long long* " } else { "const long long* " });
+                            self.output.push_str(if *mutable {
+                                "long long* "
+                            } else {
+                                "const long long* "
+                            });
                         }
                         Type::U32 => {
-                            self.output.push_str(if *mutable { "unsigned int* " } else { "const unsigned int* " });
+                            self.output.push_str(if *mutable {
+                                "unsigned int* "
+                            } else {
+                                "const unsigned int* "
+                            });
                         }
                         Type::U64 => {
-                            self.output.push_str(if *mutable { "unsigned long long* " } else { "const unsigned long long* " });
+                            self.output.push_str(if *mutable {
+                                "unsigned long long* "
+                            } else {
+                                "const unsigned long long* "
+                            });
                         }
                         Type::Bool => {
-                            self.output.push_str(if *mutable { "int* " } else { "const int* " });
+                            self.output
+                                .push_str(if *mutable { "int* " } else { "const int* " });
                         }
                         Type::String => {
-                            self.output.push_str(if *mutable { "char** " } else { "const char** " });
+                            self.output.push_str(if *mutable {
+                                "char** "
+                            } else {
+                                "const char** "
+                            });
                         }
                         Type::Custom(name) => {
                             if *mutable {
@@ -1056,8 +1282,7 @@ impl CodeGenerator {
         for param in &func.params {
             // Track if parameter is a pointer (either mutable or reference)
             let is_pointer = param.mutable || matches!(&param.ty, Type::Reference { .. });
-            self.mutable_params
-                .insert(param.name.clone(), is_pointer);
+            self.mutable_params.insert(param.name.clone(), is_pointer);
 
             // Also track parameter types for type inference
             let c_type = match &param.ty {
@@ -1119,7 +1344,6 @@ impl CodeGenerator {
             } => {
                 self.output.push_str("    ");
 
-
                 // Determine C type
                 let (c_type, is_array, array_size) = match ty {
                     Some(t) => match t {
@@ -1127,10 +1351,10 @@ impl CodeGenerator {
                             let size_val = match size {
                                 ArraySize::Literal(n) => *n,
                                 ArraySize::ConstParam(_) => 0, // TODO: resolve const param
-                                ArraySize::Expr(_) => 0, // TODO: evaluate expression
+                                ArraySize::Expr(_) => 0,       // TODO: evaluate expression
                             };
                             (self.type_to_c(elem_type), true, Some(size_val))
-                        },
+                        }
                         _ => (self.type_to_c(t), false, None),
                     },
                     None => {
@@ -1160,7 +1384,9 @@ impl CodeGenerator {
                                 };
                                 (elem_type, true, Some(size))
                             }
-                            Expr::StructLiteral { name, .. } => (self.infer_expr_type(value), false, None),
+                            Expr::StructLiteral { .. } => {
+                                (self.infer_expr_type(value), false, None)
+                            }
                             Expr::Call { .. } => {
                                 // Use our unified type inference
                                 (inferred_type, false, None)
@@ -1358,13 +1584,15 @@ impl CodeGenerator {
 
                 // Determine the type of the match expression
                 let expr_type = self.infer_expr_type(expr);
-                let is_enum = expr_type != "long long" && expr_type != "const char*" && expr_type != "int";
-                
+                let is_enum =
+                    expr_type != "long long" && expr_type != "const char*" && expr_type != "int";
+
                 // Store the match expression in a temporary variable
                 self.output
                     .push_str("        // Temporary for match expression\n");
                 if is_enum {
-                    self.output.push_str(&format!("        {} _match_expr = ", expr_type));
+                    self.output
+                        .push_str(&format!("        {} _match_expr = ", expr_type));
                 } else {
                     self.output.push_str("        long long _match_expr = ");
                 }
@@ -1406,20 +1634,29 @@ impl CodeGenerator {
                             data,
                         } => {
                             // Generate enum tag check
-                            self.output
-                                .push_str(&format!("_match_expr.tag == __{}__{})", enum_name, variant));
+                            self.output.push_str(&format!(
+                                "_match_expr.tag == __{}__{})",
+                                enum_name, variant
+                            ));
                             self.output.push_str(" {\n");
-                            
+
                             // Extract data if present
                             if let Some(pattern_data) = data {
                                 // Look up the enum definition to get field types
                                 if let Some(enum_def) = self.enums.get(enum_name) {
                                     // Find the variant
-                                    if let Some(variant_def) = enum_def.variants.iter().find(|v| &v.name == variant) {
+                                    if let Some(variant_def) =
+                                        enum_def.variants.iter().find(|v| &v.name == variant)
+                                    {
                                         match (&variant_def.data, pattern_data) {
-                                            (EnumVariantData::Tuple(types), PatternData::Tuple(patterns)) => {
+                                            (
+                                                EnumVariantData::Tuple(types),
+                                                PatternData::Tuple(patterns),
+                                            ) => {
                                                 // Extract tuple fields with proper types
-                                                for (i, (pattern, ty)) in patterns.iter().zip(types.iter()).enumerate() {
+                                                for (i, (pattern, ty)) in
+                                                    patterns.iter().zip(types.iter()).enumerate()
+                                                {
                                                     if let Pattern::Ident(name) = pattern {
                                                         let c_type = self.type_to_c(ty);
                                                         self.output.push_str(&format!(
@@ -1429,12 +1666,18 @@ impl CodeGenerator {
                                                     }
                                                 }
                                             }
-                                            (EnumVariantData::Struct(fields), PatternData::Struct(field_patterns)) => {
+                                            (
+                                                EnumVariantData::Struct(fields),
+                                                PatternData::Struct(field_patterns),
+                                            ) => {
                                                 // Extract struct fields with proper types
                                                 for (field_name, pattern) in field_patterns {
                                                     if let Pattern::Ident(name) = pattern {
                                                         // Find the field type
-                                                        if let Some((_, field_type)) = fields.iter().find(|(fname, _)| fname == field_name) {
+                                                        if let Some((_, field_type)) = fields
+                                                            .iter()
+                                                            .find(|(fname, _)| fname == field_name)
+                                                        {
                                                             let c_type = self.type_to_c(field_type);
                                                             self.output.push_str(&format!(
                                                                 "            {} {} = _match_expr.data.{}.{};\n",
@@ -1447,14 +1690,15 @@ impl CodeGenerator {
                                             _ => {
                                                 // Fallback for mismatched patterns (shouldn't happen with proper type checking)
                                                 return Err(CompileError::Generic(
-                                                    "Pattern type mismatch in enum variant".to_string()
+                                                    "Pattern type mismatch in enum variant"
+                                                        .to_string(),
                                                 ));
                                             }
                                         }
                                     }
                                 }
                             }
-                            
+
                             // Continue with body generation below
                             for stmt in &arm.body {
                                 self.output.push_str("        ");
@@ -1486,13 +1730,13 @@ impl CodeGenerator {
                 // The safety checks are done at compile time
                 self.output.push_str("    // unsafe block\n");
                 self.output.push_str("    {\n");
-                
+
                 // Generate body
                 for stmt in body {
                     self.output.push_str("    "); // Extra indentation
                     self.generate_statement(stmt)?;
                 }
-                
+
                 self.output.push_str("    }\n");
             }
         }
@@ -1578,6 +1822,24 @@ impl CodeGenerator {
                             "file_write" => self.output.push_str("__pd_file_write"),
                             "file_close" => self.output.push_str("__pd_file_close"),
                             "file_exists" => self.output.push_str("__pd_file_exists"),
+                            // Enhanced I/O functions
+                            "path_exists" => self.output.push_str("__pd_path_exists"),
+                            "path_is_file" => self.output.push_str("__pd_path_is_file"),
+                            "path_is_dir" => self.output.push_str("__pd_path_is_dir"),
+                            "create_dir" => self.output.push_str("__pd_create_dir"),
+                            "create_dir_all" => self.output.push_str("__pd_create_dir_all"),
+                            "remove_file" => self.output.push_str("__pd_remove_file"),
+                            "remove_dir" => self.output.push_str("__pd_remove_dir"),
+                            "remove_dir_all" => self.output.push_str("__pd_remove_dir_all"),
+                            "read_file_to_string" => self.output.push_str("__pd_read_file_to_string"),
+                            "write_string_to_file" => self.output.push_str("__pd_write_string_to_file"),
+                            "file_flush" => self.output.push_str("__pd_file_flush"),
+                            "file_seek" => self.output.push_str("__pd_file_seek"),
+                            // Enhanced file operations with mode support
+                            "file_open_ex" => self.output.push_str("__pd_file_open_ex"),
+                            "file_close_ex" => self.output.push_str("__pd_file_close_ex"),
+                            "file_read_ex" => self.output.push_str("__pd_file_read_ex"),
+                            "file_write_ex" => self.output.push_str("__pd_file_write_ex"),
                             _ => {
                                 // Check if this is a method call (contains ::)
                                 if name.contains("::") {
@@ -1740,37 +2002,39 @@ impl CodeGenerator {
             Expr::StructLiteral { name, fields, .. } => {
                 // Generate struct literal: (StructName){.field1 = value1, .field2 = value2}
                 // Check if this is a generic struct instantiation
-                let struct_name = if let Some(instantiations) = self.generic_struct_instantiation_map.get(name) {
-                    // Need to determine which instantiation to use based on field types
-                    // For now, we'll infer from the first field's type
-                    if let Some((_field_name, field_expr)) = fields.first() {
-                        let field_type = self.infer_expr_type(field_expr);
-                        
-                        // Find the matching instantiation
-                        let mut found_name = None;
-                        for (type_args, mangled_name) in instantiations {
-                            // Simple heuristic: check if any type arg matches the field type
-                            for type_arg in type_args {
-                                if (type_arg == "i64" && field_type.contains("long long")) ||
-                                   (type_arg == "bool" && field_type == "int") ||
-                                   (type_arg == "String" && field_type.contains("char*")) {
-                                    found_name = Some(mangled_name.as_str());
+                let struct_name =
+                    if let Some(instantiations) = self.generic_struct_instantiation_map.get(name) {
+                        // Need to determine which instantiation to use based on field types
+                        // For now, we'll infer from the first field's type
+                        if let Some((_field_name, field_expr)) = fields.first() {
+                            let field_type = self.infer_expr_type(field_expr);
+
+                            // Find the matching instantiation
+                            let mut found_name = None;
+                            for (type_args, mangled_name) in instantiations {
+                                // Simple heuristic: check if any type arg matches the field type
+                                for type_arg in type_args {
+                                    if (type_arg == "i64" && field_type.contains("long long"))
+                                        || (type_arg == "bool" && field_type == "int")
+                                        || (type_arg == "String" && field_type.contains("char*"))
+                                    {
+                                        found_name = Some(mangled_name.as_str());
+                                        break;
+                                    }
+                                }
+                                if found_name.is_some() {
                                     break;
                                 }
                             }
-                            if found_name.is_some() {
-                                break;
-                            }
+                            found_name.unwrap_or(name.as_str())
+                        } else {
+                            name.as_str()
                         }
-                        found_name.unwrap_or(name.as_str())
                     } else {
+                        // Use the original name for non-generic structs
                         name.as_str()
-                    }
-                } else {
-                    // Use the original name for non-generic structs
-                    name.as_str()
-                };
-                
+                    };
+
                 self.output.push_str(&format!("(struct {})", struct_name));
                 self.output.push('{');
                 for (i, (field_name, field_expr)) in fields.iter().enumerate() {
@@ -1820,7 +2084,8 @@ impl CodeGenerator {
                     }
                     Some(EnumConstructorData::Tuple(exprs)) => {
                         // Tuple variant
-                        self.output.push_str(&format!("{}_{}__new", enum_name, variant));
+                        self.output
+                            .push_str(&format!("{}_{}__new", enum_name, variant));
                         self.output.push('(');
                         for (i, expr) in exprs.iter().enumerate() {
                             if i > 0 {
@@ -1832,7 +2097,8 @@ impl CodeGenerator {
                     }
                     Some(EnumConstructorData::Struct(fields)) => {
                         // Struct variant
-                        self.output.push_str(&format!("{}_{}__new", enum_name, variant));
+                        self.output
+                            .push_str(&format!("{}_{}__new", enum_name, variant));
                         self.output.push('(');
                         for (i, (_, expr)) in fields.iter().enumerate() {
                             if i > 0 {
@@ -1889,31 +2155,37 @@ impl CodeGenerator {
                 //     Ok(value) => value,
                 //     Err(e) => return Err(e),
                 // }
-                
+
                 // Generate a temporary variable name
                 self.temp_counter += 1;
                 let temp_var = format!("__question_result_{}", self.temp_counter);
-                
+
                 // For now, we'll generate code that assumes Result is a struct with:
                 // - an 'is_ok' field (0 for Err, 1 for Ok)
                 // - a union containing 'ok' and 'err' fields
                 // This is a simplified representation until proper enum support is added
-                
+
                 self.output.push_str("({\n");
-                self.output.push_str(&format!("        struct Result {} = ", temp_var));
+                self.output
+                    .push_str(&format!("        struct Result {} = ", temp_var));
                 self.generate_expression(expr)?;
                 self.output.push_str(";\n");
-                self.output.push_str(&format!("        if (!{}.is_ok) {{\n", temp_var));
-                self.output.push_str(&format!("            return (struct Result){{.is_ok = 0, .data.err = {}.data.err}};\n", temp_var));
+                self.output
+                    .push_str(&format!("        if (!{}.is_ok) {{\n", temp_var));
+                self.output.push_str(&format!(
+                    "            return (struct Result){{.is_ok = 0, .data.err = {}.data.err}};\n",
+                    temp_var
+                ));
                 self.output.push_str("        }\n");
-                self.output.push_str(&format!("        {}.data.ok;\n", temp_var));
+                self.output
+                    .push_str(&format!("        {}.data.ok;\n", temp_var));
                 self.output.push_str("    })");
-                
+
                 // Note: This implementation assumes:
                 // 1. Result is represented as: struct Result { int is_ok; union { T ok; E err; } data; }
                 // 2. The containing function returns a Result type
                 // 3. Error types are compatible between the expression and function return
-                
+
                 // TODO: Once enum support is properly implemented:
                 // - Generate proper enum variant checking
                 // - Handle generic Result<T,E> types correctly
@@ -1929,24 +2201,34 @@ impl CodeGenerator {
                 // For now, generate a simple blocking wait
                 // In a real implementation, this would integrate with an async runtime
                 self.output.push_str("({\n");
-                self.output.push_str("        // Await expression - simplified blocking implementation\n");
-                
+                self.output
+                    .push_str("        // Await expression - simplified blocking implementation\n");
+
                 // Generate temporary for the future
                 self.temp_counter += 1;
                 let future_var = format!("__await_future_{}", self.temp_counter);
-                
+
                 // Get the future
-                self.output.push_str(&format!("        {} {} = ", self.infer_expr_type(expr), future_var));
+                self.output.push_str(&format!(
+                    "        {} {} = ",
+                    self.infer_expr_type(expr),
+                    future_var
+                ));
                 self.generate_expression(expr)?;
                 self.output.push_str(";\n");
-                
+
                 // Poll until ready (simplified - assumes poll function exists)
-                self.output.push_str(&format!("        while (!{}.poll(&{})) {{\n", future_var, future_var));
-                self.output.push_str("            // In real async runtime, would yield here\n");
+                self.output.push_str(&format!(
+                    "        while (!{}.poll(&{})) {{\n",
+                    future_var, future_var
+                ));
+                self.output
+                    .push_str("            // In real async runtime, would yield here\n");
                 self.output.push_str("        }\n");
-                
+
                 // Return the result
-                self.output.push_str(&format!("        {}.result;\n", future_var));
+                self.output
+                    .push_str(&format!("        {}.result;\n", future_var));
                 self.output.push_str("    })");
             }
         }
@@ -1958,72 +2240,85 @@ impl CodeGenerator {
     fn generate_async_function_with_name(&mut self, func: &Function, name: &str) -> Result<()> {
         // For now, we'll generate a simple Future struct
         let future_name = format!("{}_Future", name);
-        let output_type = func.return_type.as_ref()
+        let output_type = func
+            .return_type
+            .as_ref()
             .map(|t| self.type_to_c(t))
             .unwrap_or_else(|| "void".to_string());
-        
+
         // Generate Future struct
-        self.output.push_str(&format!("// Future struct for async function {}\n", name));
-        self.output.push_str(&format!("typedef struct {} {{\n", future_name));
+        self.output
+            .push_str(&format!("// Future struct for async function {}\n", name));
+        self.output
+            .push_str(&format!("typedef struct {} {{\n", future_name));
         self.output.push_str(&format!("    int state;\n"));
         if output_type != "void" {
-            self.output.push_str(&format!("    {} result;\n", output_type));
+            self.output
+                .push_str(&format!("    {} result;\n", output_type));
         }
-        
+
         // Add fields for parameters
         for param in &func.params {
             let param_type = self.type_to_c(&param.ty);
-            self.output.push_str(&format!("    {} {};\n", param_type, param.name));
+            self.output
+                .push_str(&format!("    {} {};\n", param_type, param.name));
         }
-        
+
         self.output.push_str(&format!("}} {};\n\n", future_name));
-        
+
         // Generate poll function
-        self.output.push_str(&format!("// Poll function for {}\n", future_name));
-        self.output.push_str(&format!("int {}_poll({} *future) {{\n", name, future_name));
-        self.output.push_str("    // Simplified async - immediately ready\n");
+        self.output
+            .push_str(&format!("// Poll function for {}\n", future_name));
+        self.output
+            .push_str(&format!("int {}_poll({} *future) {{\n", name, future_name));
+        self.output
+            .push_str("    // Simplified async - immediately ready\n");
         self.output.push_str("    if (future->state == 0) {\n");
         self.output.push_str("        future->state = 1;\n");
-        
+
         // Generate the actual function body
-        self.output.push_str("        // Execute async function body\n");
+        self.output
+            .push_str("        // Execute async function body\n");
         for stmt in &func.body {
             self.output.push_str("        ");
             self.generate_statement(stmt)?;
         }
-        
+
         self.output.push_str("        return 1; // Ready\n");
         self.output.push_str("    }\n");
         self.output.push_str("    return 1; // Already completed\n");
         self.output.push_str("}\n\n");
-        
+
         // Generate the function that creates the Future
         self.output.push_str(&format!("{} {}(", future_name, name));
-        
+
         // Parameters
         for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
                 self.output.push_str(", ");
             }
             let param_type = self.type_to_c(&param.ty);
-            self.output.push_str(&format!("{} {}", param_type, param.name));
+            self.output
+                .push_str(&format!("{} {}", param_type, param.name));
         }
-        
+
         self.output.push_str(") {\n");
-        self.output.push_str(&format!("    {} future;\n", future_name));
+        self.output
+            .push_str(&format!("    {} future;\n", future_name));
         self.output.push_str("    future.state = 0;\n");
-        
+
         // Copy parameters to future
         for param in &func.params {
-            self.output.push_str(&format!("    future.{} = {};\n", param.name, param.name));
+            self.output
+                .push_str(&format!("    future.{} = {};\n", param.name, param.name));
         }
-        
+
         self.output.push_str("    return future;\n");
         self.output.push_str("}\n\n");
-        
+
         Ok(())
     }
-    
+
     fn monomorphize_struct(
         &self,
         struct_name: &str,
@@ -2054,9 +2349,9 @@ impl CodeGenerator {
         // Create the concrete struct
         Ok(StructDef {
             name: mangled_name,
-            lifetime_params: vec![],  // No longer generic
-            type_params: vec![],      // No longer generic
-            const_params: vec![],     // No longer generic
+            lifetime_params: vec![], // No longer generic
+            type_params: vec![],     // No longer generic
+            const_params: vec![],    // No longer generic
             fields: concrete_fields,
             visibility: crate::ast::Visibility::Private, // Monomorphized structs are internal
             span: Span {
@@ -2112,10 +2407,10 @@ impl CodeGenerator {
         // Create the concrete function
         Ok(Function {
             name: mangled_name,
-            is_async: false,                             // Monomorphized functions are not async
-            lifetime_params: vec![],                     // No longer generic
-            type_params: vec![],                         // No longer generic
-            const_params: vec![],                        // No longer generic
+            is_async: false,         // Monomorphized functions are not async
+            lifetime_params: vec![], // No longer generic
+            type_params: vec![],     // No longer generic
+            const_params: vec![],    // No longer generic
             params: concrete_params,
             return_type: concrete_return_type,
             body: concrete_body,
@@ -2227,9 +2522,10 @@ impl CodeGenerator {
                     ty.clone()
                 }
             }
-            Type::Array(elem_type, size) => {
-                Type::Array(Box::new(self.substitute_type(elem_type, type_map)), size.clone())
-            }
+            Type::Array(elem_type, size) => Type::Array(
+                Box::new(self.substitute_type(elem_type, type_map)),
+                size.clone(),
+            ),
             Type::Generic { name, args } => {
                 // Substitute in generic type arguments
                 let substituted_args = args
