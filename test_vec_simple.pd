@@ -1,0 +1,44 @@
+// Simple test for VecI64 without complex borrowing
+
+struct VecI64 {
+    data: [i64; 100],
+    len: i64,
+}
+
+fn main() {
+    // Create vector manually
+    let mut v = VecI64 {
+        data: [0; 100],
+        len: 0,
+    };
+    
+    print("Testing simple vector...");
+    
+    // Manual push
+    v.data[0] = 10;
+    v.data[1] = 20;
+    v.data[2] = 30;
+    v.len = 3;
+    
+    print("Length after adding 3 elements:");
+    print_int(v.len);
+    
+    print("Elements:");
+    print_int(v.data[0]);
+    print_int(v.data[1]);
+    print_int(v.data[2]);
+    
+    // Calculate sum
+    let mut sum = 0;
+    sum = sum + v.data[0];
+    sum = sum + v.data[1];
+    sum = sum + v.data[2];
+    print("Sum:");
+    print_int(sum);
+    
+    // Test array access in loop
+    print("Loop test:");
+    for i in 0..3 {
+        print_int(v.data[i]);
+    }
+}

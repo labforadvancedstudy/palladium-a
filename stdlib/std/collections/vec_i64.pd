@@ -1,0 +1,134 @@
+// VecI64: A growable array for i64 values
+// Simplified version without generics
+
+struct VecI64 {
+    data: [i64; 1000],  // Fixed-size backing array for now
+    len: i64,           // Current number of elements
+    capacity: i64,      // Maximum capacity (1000)
+}
+
+// Create a new empty VecI64
+fn vec_i64_new() -> VecI64 {
+    let mut v: VecI64;
+    v.len = 0;
+    v.capacity = 1000;
+    return v;
+}
+
+// Get the number of elements
+fn vec_i64_len(v: &VecI64) -> i64 {
+    return v.len;
+}
+
+// Check if empty
+fn vec_i64_is_empty(v: &VecI64) -> bool {
+    return v.len == 0;
+}
+
+// Push an element to the end
+fn vec_i64_push(v: &mut VecI64, value: i64) {
+    if v.len >= v.capacity {
+        print("VecI64: capacity exceeded!");
+        return;
+    }
+    v.data[v.len] = value;
+    v.len = v.len + 1;
+}
+
+// Pop an element from the end
+fn vec_i64_pop(v: &mut VecI64) -> i64 {
+    if v.len == 0 {
+        print("VecI64: pop from empty vector!");
+        return 0;
+    }
+    v.len = v.len - 1;
+    return v.data[v.len];
+}
+
+// Get element at index
+fn vec_i64_get(v: &VecI64, index: i64) -> i64 {
+    if index >= v.len {
+        print("VecI64: index out of bounds!");
+        return 0;
+    }
+    return v.data[index];
+}
+
+// Set element at index
+fn vec_i64_set(v: &mut VecI64, index: i64, value: i64) {
+    if index >= v.len {
+        print("VecI64: index out of bounds!");
+        return;
+    }
+    v.data[index] = value;
+}
+
+// Clear all elements
+fn vec_i64_clear(v: &mut VecI64) {
+    v.len = 0;
+}
+
+// Find the sum of all elements
+fn vec_i64_sum(v: &VecI64) -> i64 {
+    let mut sum = 0;
+    for i in 0..v.len {
+        sum = sum + v.data[i];
+    }
+    return sum;
+}
+
+// Find the maximum element
+fn vec_i64_max(v: &VecI64) -> i64 {
+    if v.len == 0 {
+        print("VecI64: max of empty vector!");
+        return 0;
+    }
+    let mut max = v.data[0];
+    for i in 1..v.len {
+        if v.data[i] > max {
+            max = v.data[i];
+        }
+    }
+    return max;
+}
+
+// Find the minimum element
+fn vec_i64_min(v: &VecI64) -> i64 {
+    if v.len == 0 {
+        print("VecI64: min of empty vector!");
+        return 0;
+    }
+    let mut min = v.data[0];
+    for i in 1..v.len {
+        if v.data[i] < min {
+            min = v.data[i];
+        }
+    }
+    return min;
+}
+
+// Reverse the vector in place
+fn vec_i64_reverse(v: &mut VecI64) {
+    let mut i = 0;
+    let mut j = v.len - 1;
+    
+    while i < j {
+        let temp = v.data[i];
+        v.data[i] = v.data[j];
+        v.data[j] = temp;
+        i = i + 1;
+        j = j - 1;
+    }
+}
+
+// Print all elements
+fn vec_i64_print(v: &VecI64) {
+    print("[");
+    for i in 0..v.len {
+        print_int(v.data[i]);
+        if i < v.len - 1 {
+            print(", ");
+        }
+    }
+    print("]");
+}

@@ -1,0 +1,167 @@
+// Test VecI64 implementation
+
+fn main() {
+    // Create a new vector
+    let mut v = vec_i64_new();
+    
+    print("Testing VecI64...");
+    
+    // Test push
+    vec_i64_push(&mut v, 10);
+    vec_i64_push(&mut v, 20);
+    vec_i64_push(&mut v, 30);
+    vec_i64_push(&mut v, 40);
+    vec_i64_push(&mut v, 50);
+    
+    print("After pushing 5 elements:");
+    print_int(vec_i64_len(&v));
+    
+    // Test get
+    print("Elements:");
+    let len = vec_i64_len(&v);
+    for i in 0..len {
+        print_int(vec_i64_get(&v, i));
+    }
+    
+    // Test sum
+    print("Sum:");
+    print_int(vec_i64_sum(&v));
+    
+    // Test max and min
+    print("Max:");
+    print_int(vec_i64_max(&v));
+    print("Min:");
+    print_int(vec_i64_min(&v));
+    
+    // Test reverse
+    vec_i64_reverse(&mut v);
+    print("After reverse:");
+    let len2 = vec_i64_len(&v);
+    for i in 0..len2 {
+        print_int(vec_i64_get(&v, i));
+    }
+    
+    // Test pop
+    print("Popping:");
+    print_int(vec_i64_pop(&mut v));
+    print_int(vec_i64_pop(&mut v));
+    
+    print("Final length:");
+    print_int(vec_i64_len(&v));
+    
+    // Test clear
+    vec_i64_clear(&mut v);
+    print("After clear:");
+    print_int(vec_i64_len(&v));
+}
+
+// Include VecI64 implementation
+struct VecI64 {
+    data: [i64; 1000],
+    len: i64,
+    capacity: i64,
+}
+
+fn vec_i64_new() -> VecI64 {
+    let mut v = VecI64 {
+        data: [0; 1000],
+        len: 0,
+        capacity: 1000,
+    };
+    return v;
+}
+
+fn vec_i64_len(v: &VecI64) -> i64 {
+    return v.len;
+}
+
+fn vec_i64_is_empty(v: &VecI64) -> bool {
+    return v.len == 0;
+}
+
+fn vec_i64_push(v: &mut VecI64, value: i64) {
+    if v.len >= v.capacity {
+        print("VecI64: capacity exceeded!");
+        return;
+    }
+    v.data[v.len] = value;
+    v.len = v.len + 1;
+}
+
+fn vec_i64_pop(v: &mut VecI64) -> i64 {
+    if v.len == 0 {
+        print("VecI64: pop from empty vector!");
+        return 0;
+    }
+    v.len = v.len - 1;
+    return v.data[v.len];
+}
+
+fn vec_i64_get(v: &VecI64, index: i64) -> i64 {
+    if index >= v.len {
+        print("VecI64: index out of bounds!");
+        return 0;
+    }
+    return v.data[index];
+}
+
+fn vec_i64_set(v: &mut VecI64, index: i64, value: i64) {
+    if index >= v.len {
+        print("VecI64: index out of bounds!");
+        return;
+    }
+    v.data[index] = value;
+}
+
+fn vec_i64_clear(v: &mut VecI64) {
+    v.len = 0;
+}
+
+fn vec_i64_sum(v: &VecI64) -> i64 {
+    let mut sum = 0;
+    for i in 0..v.len {
+        sum = sum + v.data[i];
+    }
+    return sum;
+}
+
+fn vec_i64_max(v: &VecI64) -> i64 {
+    if v.len == 0 {
+        print("VecI64: max of empty vector!");
+        return 0;
+    }
+    let mut max = v.data[0];
+    for i in 1..v.len {
+        if v.data[i] > max {
+            max = v.data[i];
+        }
+    }
+    return max;
+}
+
+fn vec_i64_min(v: &VecI64) -> i64 {
+    if v.len == 0 {
+        print("VecI64: min of empty vector!");
+        return 0;
+    }
+    let mut min = v.data[0];
+    for i in 1..v.len {
+        if v.data[i] < min {
+            min = v.data[i];
+        }
+    }
+    return min;
+}
+
+fn vec_i64_reverse(v: &mut VecI64) {
+    let mut i = 0;
+    let mut j = v.len - 1;
+    
+    while i < j {
+        let temp = v.data[i];
+        v.data[i] = v.data[j];
+        v.data[j] = temp;
+        i = i + 1;
+        j = j - 1;
+    }
+}

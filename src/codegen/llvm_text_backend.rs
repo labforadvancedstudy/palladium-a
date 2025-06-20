@@ -254,8 +254,15 @@ impl LLVMTextBackend {
         }
 
         // Function body
+        let mut has_terminator = false;
         for stmt in &func.body {
+            if has_terminator {
+                break; // Don't generate unreachable code
+            }
             ir.push_str(&self.generate_statement(stmt)?);
+            if Self::is_terminator(stmt) {
+                has_terminator = true;
+            }
         }
 
         // Default return if needed
@@ -431,22 +438,48 @@ impl LLVMTextBackend {
 
                 // Then branch
                 ir.push_str(&format!("{}:\n", then_label));
+                let mut has_terminator = false;
                 for stmt in then_branch {
-                    ir.push_str(&self.generate_statement(stmt)?);
-                }
-                ir.push_str(&format!("  br label %{}\n", end_label));
-
-                // Else branch
-                if let Some(else_stmts) = else_branch {
-                    ir.push_str(&format!("{}:\n", else_label));
-                    for stmt in else_stmts {
-                        ir.push_str(&self.generate_statement(stmt)?);
+                    if has_terminator {
+                        break; // Don't generate unreachable code
                     }
+                    ir.push_str(&self.generate_statement(stmt)?);
+                    if Self::is_terminator(stmt) {
+                        has_terminator = true;
+                    }
+                }
+                // Only generate branch to end if the then branch doesn't have a terminator
+                if !has_terminator {
                     ir.push_str(&format!("  br label %{}\n", end_label));
                 }
 
-                // End label
-                ir.push_str(&format!("{}:\n", end_label));
+                // Else branch
+                let mut else_has_terminator = false;
+                if let Some(else_stmts) = else_branch {
+                    ir.push_str(&format!("{}:\n", else_label));
+                    for stmt in else_stmts {
+                        if else_has_terminator {
+                            break; // Don't generate unreachable code
+                        }
+                        ir.push_str(&self.generate_statement(stmt)?);
+                        if Self::is_terminator(stmt) {
+                            else_has_terminator = true;
+                        }
+                    }
+                    // Only generate branch to end if the else branch doesn't have a terminator
+                    if !else_has_terminator {
+                        ir.push_str(&format!("  br label %{}\n", end_label));
+                    }
+                }
+
+                // End label - always generate if we reference it
+                // We reference it when:
+                // 1. No else branch (we branch to it on false condition)
+                // 2. Any branch that doesn't have a terminator branches to it
+                let need_end_label = else_branch.is_none() || !has_terminator || !else_has_terminator;
+                if need_end_label {
+                    ir.push_str(&format!("{}:\n", end_label));
+                }
             }
 
             Stmt::While {
@@ -470,10 +503,20 @@ impl LLVMTextBackend {
 
                 // Body label
                 ir.push_str(&format!("{}:\n", body_label));
+                let mut body_has_terminator = false;
                 for stmt in body {
+                    if body_has_terminator {
+                        break; // Don't generate unreachable code
+                    }
                     ir.push_str(&self.generate_statement(stmt)?);
+                    if Self::is_terminator(stmt) {
+                        body_has_terminator = true;
+                    }
                 }
-                ir.push_str(&format!("  br label %{}\n", cond_label));
+                // Only generate branch back to condition if body doesn't have a terminator
+                if !body_has_terminator {
+                    ir.push_str(&format!("  br label %{}\n", cond_label));
+                }
 
                 // End label
                 ir.push_str(&format!("{}:\n", end_label));
@@ -531,10 +574,20 @@ impl LLVMTextBackend {
 
                         // Body
                         ir.push_str(&format!("{}:\n", body_label));
+                        let mut body_has_terminator = false;
                         for stmt in body {
+                            if body_has_terminator {
+                                break; // Don't generate unreachable code
+                            }
                             ir.push_str(&self.generate_statement(stmt)?);
+                            if Self::is_terminator(stmt) {
+                                body_has_terminator = true;
+                            }
                         }
-                        ir.push_str(&format!("  br label %{}\n", inc_label));
+                        // Only branch to increment if body doesn't have a terminator
+                        if !body_has_terminator {
+                            ir.push_str(&format!("  br label %{}\n", inc_label));
+                        }
 
                         // Increment
                         ir.push_str(&format!("{}:\n", inc_label));
@@ -621,10 +674,20 @@ impl LLVMTextBackend {
                                 ));
                                 
                                 // Execute loop body
+                                let mut body_has_terminator = false;
                                 for stmt in body {
+                                    if body_has_terminator {
+                                        break; // Don't generate unreachable code
+                                    }
                                     ir.push_str(&self.generate_statement(stmt)?);
+                                    if Self::is_terminator(stmt) {
+                                        body_has_terminator = true;
+                                    }
                                 }
-                                ir.push_str(&format!("  br label %{}\n", inc_label));
+                                // Only branch to increment if body doesn't have a terminator
+                                if !body_has_terminator {
+                                    ir.push_str(&format!("  br label %{}\n", inc_label));
+                                }
                                 
                                 // Increment index
                                 ir.push_str(&format!("{}:\n", inc_label));
@@ -726,10 +789,20 @@ impl LLVMTextBackend {
                             elem_type, elem_val, elem_type, loop_var_ptr
                         ));
                         
+                        let mut body_has_terminator = false;
                         for stmt in body {
+                            if body_has_terminator {
+                                break; // Don't generate unreachable code
+                            }
                             ir.push_str(&self.generate_statement(stmt)?);
+                            if Self::is_terminator(stmt) {
+                                body_has_terminator = true;
+                            }
                         }
-                        ir.push_str(&format!("  br label %{}\n", inc_label));
+                        // Only branch to increment if body doesn't have a terminator
+                        if !body_has_terminator {
+                            ir.push_str(&format!("  br label %{}\n", inc_label));
+                        }
                         
                         ir.push_str(&format!("{}:\n", inc_label));
                         let curr_idx = self.fresh_ssa();
@@ -884,13 +957,27 @@ impl LLVMTextBackend {
                     }
                     
                     ir.push_str(&format!("{}:\n", arm_label));
+                    let mut arm_has_terminator = false;
                     for stmt in &arm.body {
+                        if arm_has_terminator {
+                            break; // Don't generate unreachable code
+                        }
                         ir.push_str(&self.generate_statement(stmt)?);
+                        if Self::is_terminator(stmt) {
+                            arm_has_terminator = true;
+                        }
                     }
-                    ir.push_str(&format!("  br label %{}\n", end_label));
+                    // Only branch to end if arm doesn't have a terminator
+                    if !arm_has_terminator {
+                        ir.push_str(&format!("  br label %{}\n", end_label));
+                    }
                 }
                 
-                ir.push_str(&format!("{}:\n", end_label));
+                // Only generate end label if at least one arm can reach it
+                let any_arm_can_reach_end = arms.iter().any(|arm| !Self::has_terminator(&arm.body));
+                if any_arm_can_reach_end {
+                    ir.push_str(&format!("{}:\n", end_label));
+                }
             }
             
             Stmt::Unsafe { body, .. } => {
@@ -1328,6 +1415,16 @@ impl LLVMTextBackend {
             }
             _ => "i64".to_string(), // Default
         }
+    }
+
+    /// Check if a statement is a terminator (return, break, etc.)
+    fn is_terminator(stmt: &Stmt) -> bool {
+        matches!(stmt, Stmt::Return(_) | Stmt::Break { .. } | Stmt::Continue { .. })
+    }
+
+    /// Check if a list of statements ends with a terminator
+    fn has_terminator(stmts: &[Stmt]) -> bool {
+        stmts.last().map_or(false, Self::is_terminator)
     }
 
     /// Write the generated LLVM IR to a file

@@ -3,6 +3,7 @@
 
 pub mod llvm_backend;
 pub mod llvm_backend_improved;
+pub mod llvm_native;
 pub mod llvm_text_backend;
 
 use crate::ast::{AssignTarget, UnaryOp, *};
