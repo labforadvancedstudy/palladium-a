@@ -1,0 +1,443 @@
+// Large stress test file with many functions
+// Generated to test compiler performance
+
+// 100 functions with various operations
+fn func_0(x: i64) -> i64 { return x + 0; }
+fn func_1(x: i64) -> i64 { return x + 1; }
+fn func_2(x: i64) -> i64 { return x + 2; }
+fn func_3(x: i64) -> i64 { return x + 3; }
+fn func_4(x: i64) -> i64 { return x + 4; }
+fn func_5(x: i64) -> i64 { return x + 5; }
+fn func_6(x: i64) -> i64 { return x + 6; }
+fn func_7(x: i64) -> i64 { return x + 7; }
+fn func_8(x: i64) -> i64 { return x + 8; }
+fn func_9(x: i64) -> i64 { return x + 9; }
+fn func_10(x: i64) -> i64 { return x * 2 + 10; }
+fn func_11(x: i64) -> i64 { return x * 2 + 11; }
+fn func_12(x: i64) -> i64 { return x * 2 + 12; }
+fn func_13(x: i64) -> i64 { return x * 2 + 13; }
+fn func_14(x: i64) -> i64 { return x * 2 + 14; }
+fn func_15(x: i64) -> i64 { return x * 2 + 15; }
+fn func_16(x: i64) -> i64 { return x * 2 + 16; }
+fn func_17(x: i64) -> i64 { return x * 2 + 17; }
+fn func_18(x: i64) -> i64 { return x * 2 + 18; }
+fn func_19(x: i64) -> i64 { return x * 2 + 19; }
+fn func_20(x: i64, y: i64) -> i64 { return x + y + 20; }
+fn func_21(x: i64, y: i64) -> i64 { return x + y + 21; }
+fn func_22(x: i64, y: i64) -> i64 { return x + y + 22; }
+fn func_23(x: i64, y: i64) -> i64 { return x + y + 23; }
+fn func_24(x: i64, y: i64) -> i64 { return x + y + 24; }
+fn func_25(x: i64, y: i64) -> i64 { return x + y + 25; }
+fn func_26(x: i64, y: i64) -> i64 { return x + y + 26; }
+fn func_27(x: i64, y: i64) -> i64 { return x + y + 27; }
+fn func_28(x: i64, y: i64) -> i64 { return x + y + 28; }
+fn func_29(x: i64, y: i64) -> i64 { return x + y + 29; }
+fn func_30(x: i64) -> i64 { 
+    if x < 30 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_31(x: i64) -> i64 { 
+    if x < 31 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_32(x: i64) -> i64 { 
+    if x < 32 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_33(x: i64) -> i64 { 
+    if x < 33 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_34(x: i64) -> i64 { 
+    if x < 34 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_35(x: i64) -> i64 { 
+    if x < 35 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_36(x: i64) -> i64 { 
+    if x < 36 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_37(x: i64) -> i64 { 
+    if x < 37 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_38(x: i64) -> i64 { 
+    if x < 38 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_39(x: i64) -> i64 { 
+    if x < 39 { 
+        return x * 2; 
+    } else { 
+        return x * 3; 
+    } 
+}
+fn func_40(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 40;
+}
+fn func_41(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 41;
+}
+fn func_42(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 42;
+}
+fn func_43(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 43;
+}
+fn func_44(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 44;
+}
+fn func_45(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 45;
+}
+fn func_46(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 46;
+}
+fn func_47(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 47;
+}
+fn func_48(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 48;
+}
+fn func_49(x: i64) -> i64 { 
+    let mut sum = 0;
+    for i in 0..x {
+        sum = sum + i;
+    }
+    return sum + 49;
+}
+fn func_50(x: i64) -> i64 { return func_0(x) + func_1(x) + 50; }
+fn func_51(x: i64) -> i64 { return func_1(x) + func_2(x) + 51; }
+fn func_52(x: i64) -> i64 { return func_2(x) + func_3(x) + 52; }
+fn func_53(x: i64) -> i64 { return func_3(x) + func_4(x) + 53; }
+fn func_54(x: i64) -> i64 { return func_4(x) + func_5(x) + 54; }
+fn func_55(x: i64) -> i64 { return func_5(x) + func_6(x) + 55; }
+fn func_56(x: i64) -> i64 { return func_6(x) + func_7(x) + 56; }
+fn func_57(x: i64) -> i64 { return func_7(x) + func_8(x) + 57; }
+fn func_58(x: i64) -> i64 { return func_8(x) + func_9(x) + 58; }
+fn func_59(x: i64) -> i64 { return func_9(x) + func_10(x) + 59; }
+fn func_60(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 60;
+    let c = b * 3;
+    return c;
+}
+fn func_61(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 61;
+    let c = b * 3;
+    return c;
+}
+fn func_62(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 62;
+    let c = b * 3;
+    return c;
+}
+fn func_63(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 63;
+    let c = b * 3;
+    return c;
+}
+fn func_64(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 64;
+    let c = b * 3;
+    return c;
+}
+fn func_65(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 65;
+    let c = b * 3;
+    return c;
+}
+fn func_66(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 66;
+    let c = b * 3;
+    return c;
+}
+fn func_67(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 67;
+    let c = b * 3;
+    return c;
+}
+fn func_68(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 68;
+    let c = b * 3;
+    return c;
+}
+fn func_69(x: i64) -> i64 { 
+    let a = x * 2;
+    let b = a + 69;
+    let c = b * 3;
+    return c;
+}
+fn func_70(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_60(x) + 70;
+    } else {
+        return func_61(x) + 70;
+    }
+}
+fn func_71(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_61(x) + 71;
+    } else {
+        return func_62(x) + 71;
+    }
+}
+fn func_72(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_62(x) + 72;
+    } else {
+        return func_63(x) + 72;
+    }
+}
+fn func_73(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_63(x) + 73;
+    } else {
+        return func_64(x) + 73;
+    }
+}
+fn func_74(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_64(x) + 74;
+    } else {
+        return func_65(x) + 74;
+    }
+}
+fn func_75(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_65(x) + 75;
+    } else {
+        return func_66(x) + 75;
+    }
+}
+fn func_76(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_66(x) + 76;
+    } else {
+        return func_67(x) + 76;
+    }
+}
+fn func_77(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_67(x) + 77;
+    } else {
+        return func_68(x) + 77;
+    }
+}
+fn func_78(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_68(x) + 78;
+    } else {
+        return func_69(x) + 78;
+    }
+}
+fn func_79(x: i64) -> i64 { 
+    if x % 2 == 0 {
+        return func_69(x) + 79;
+    } else {
+        return func_70(x) + 79;
+    }
+}
+fn func_80(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 80;
+}
+fn func_81(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 81;
+}
+fn func_82(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 82;
+}
+fn func_83(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 83;
+}
+fn func_84(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 84;
+}
+fn func_85(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 85;
+}
+fn func_86(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 86;
+}
+fn func_87(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 87;
+}
+fn func_88(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 88;
+}
+fn func_89(x: i64, y: i64, z: i64) -> i64 {
+    return x * y * z + 89;
+}
+fn func_90(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 90;
+}
+fn func_91(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 91;
+}
+fn func_92(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 92;
+}
+fn func_93(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 93;
+}
+fn func_94(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 94;
+}
+fn func_95(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 95;
+}
+fn func_96(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 96;
+}
+fn func_97(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 97;
+}
+fn func_98(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 98;
+}
+fn func_99(x: i64) -> i64 {
+    let mut result = 0;
+    for i in 0..10 {
+        for j in 0..10 {
+            result = result + i * j;
+        }
+    }
+    return result + x + 99;
+}
+
+fn main() {
+    // Call all functions to ensure they're compiled
+    let x = 42;
+    let result = func_0(x) + func_10(x) + func_20(x, x) + func_30(x) + 
+                 func_40(x) + func_50(x) + func_60(x) + func_70(x) +
+                 func_80(x, x, x) + func_90(x) + func_99(x);
+    print_int(result);
+}
