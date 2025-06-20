@@ -1,19 +1,19 @@
 // Language Server Protocol implementation for Palladium
 // "Bringing IDE intelligence to legendary code"
 
-pub mod server;
-pub mod handlers;
 pub mod analysis;
-pub mod diagnostics;
 pub mod completion;
+pub mod diagnostics;
+pub mod handlers;
 pub mod hover;
-pub mod symbols;
 pub mod references;
+pub mod server;
+pub mod symbols;
 
+use crate::errors::{CompileError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::errors::{CompileError, Result};
 
 /// Language server state
 pub struct LanguageServer {
@@ -212,21 +212,21 @@ impl LanguageServer {
             },
         }
     }
-    
+
     /// Initialize the language server
     pub fn initialize(&mut self, root_uri: Option<String>) -> Result<()> {
         if let Some(uri) = root_uri {
             self.workspace_root = Some(self.uri_to_path(&uri)?);
         }
-        
+
         // Index workspace if available
         if let Some(root) = self.workspace_root.clone() {
             self.index_workspace(&root)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Open a document
     pub fn open_document(&mut self, uri: String, version: i32, content: String) -> Result<()> {
         let document = Document {
@@ -236,15 +236,15 @@ impl LanguageServer {
             ast: None,
             type_info: None,
         };
-        
+
         self.documents.insert(uri.clone(), document);
-        
+
         // Analyze the document
         self.analyze_document(&uri)?;
-        
+
         Ok(())
     }
-    
+
     /// Update a document
     pub fn update_document(&mut self, uri: String, version: i32, content: String) -> Result<()> {
         if let Some(doc) = self.documents.get_mut(&uri) {
@@ -253,36 +253,38 @@ impl LanguageServer {
             doc.ast = None;
             doc.type_info = None;
         }
-        
+
         // Re-analyze the document
         self.analyze_document(&uri)?;
-        
+
         Ok(())
     }
-    
+
     /// Close a document
     pub fn close_document(&mut self, uri: String) -> Result<()> {
         self.documents.remove(&uri);
         self.diagnostics.remove(&uri);
         Ok(())
     }
-    
+
     /// Analyze a document
     fn analyze_document(&mut self, uri: &str) -> Result<()> {
-        let doc = self.documents.get(uri)
+        let doc = self
+            .documents
+            .get(uri)
             .ok_or_else(|| CompileError::Generic(format!("Document not found: {}", uri)))?
             .clone();
-        
+
         // Parse the document
         let mut diagnostics = Vec::new();
-        
+
         match self.parse_document(&doc.content) {
             Ok(ast) => {
                 // Update AST
                 if let Some(doc) = self.documents.get_mut(uri) {
                     doc.ast = Some(ast.clone());
                 }
-                
+
                 // Type check
                 match self.typecheck_document(&ast) {
                     Ok(type_info) => {
@@ -294,7 +296,7 @@ impl LanguageServer {
                         diagnostics.push(self.error_to_diagnostic(e));
                     }
                 }
-                
+
                 // Index symbols
                 self.index_document_symbols(uri, &ast)?;
             }
@@ -302,13 +304,13 @@ impl LanguageServer {
                 diagnostics.push(self.error_to_diagnostic(e));
             }
         }
-        
+
         // Store diagnostics
         self.diagnostics.insert(uri.to_string(), diagnostics);
-        
+
         Ok(())
     }
-    
+
     /// Parse a document
     fn parse_document(&self, content: &str) -> Result<crate::ast::Program> {
         let mut lexer = crate::lexer::Lexer::new(content);
@@ -316,12 +318,12 @@ impl LanguageServer {
         let mut parser = crate::parser::Parser::new(tokens);
         parser.parse()
     }
-    
+
     /// Type check a document
     fn typecheck_document(&self, ast: &crate::ast::Program) -> Result<TypeInfo> {
         let mut type_checker = crate::typeck::TypeChecker::new();
         type_checker.check(ast)?;
-        
+
         // Extract type information
         // TODO: Implement type info extraction
         Ok(TypeInfo {
@@ -330,11 +332,11 @@ impl LanguageServer {
             type_aliases: HashMap::new(),
         })
     }
-    
+
     /// Index document symbols
     fn index_document_symbols(&mut self, uri: &str, ast: &crate::ast::Program) -> Result<()> {
         let mut symbols = Vec::new();
-        
+
         for item in &ast.items {
             match item {
                 crate::ast::Item::Function(func) => {
@@ -384,26 +386,29 @@ impl LanguageServer {
                 _ => {}
             }
         }
-        
+
         // Update symbol index
-        self.symbol_index.file_symbols.insert(uri.to_string(), symbols.clone());
-        
+        self.symbol_index
+            .file_symbols
+            .insert(uri.to_string(), symbols.clone());
+
         for symbol in symbols {
-            self.symbol_index.symbols
+            self.symbol_index
+                .symbols
                 .entry(symbol.name.clone())
                 .or_insert_with(Vec::new)
                 .push(symbol);
         }
-        
+
         Ok(())
     }
-    
+
     /// Index the workspace
-    fn index_workspace(&mut self, root: &std::path::Path) -> Result<()> {
+    fn index_workspace(&mut self, _root: &std::path::Path) -> Result<()> {
         // TODO: Walk workspace and index all .pd files
         Ok(())
     }
-    
+
     /// Convert URI to file path
     fn uri_to_path(&self, uri: &str) -> Result<PathBuf> {
         if uri.starts_with("file://") {
@@ -412,7 +417,7 @@ impl LanguageServer {
             Err(CompileError::Generic(format!("Invalid URI: {}", uri)))
         }
     }
-    
+
     /// Convert span to range
     fn span_to_range(&self, span: crate::errors::Span) -> Range {
         Range {
@@ -426,13 +431,19 @@ impl LanguageServer {
             },
         }
     }
-    
+
     /// Convert error to diagnostic
     fn error_to_diagnostic(&self, error: CompileError) -> Diagnostic {
         Diagnostic {
             range: Range {
-                start: Position { line: 0, character: 0 },
-                end: Position { line: 0, character: 0 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
             },
             severity: DiagnosticSeverity::Error,
             code: None,
@@ -441,4 +452,47 @@ impl LanguageServer {
             related_information: Vec::new(),
         }
     }
+    
+    /// Find symbol at position
+    pub fn find_symbol_at_position(&self, content: &str, position: Position) -> Option<String> {
+        let lines: Vec<&str> = content.lines().collect();
+        let line = lines.get(position.line as usize)?;
+        let chars: Vec<char> = line.chars().collect();
+        
+        let pos = position.character as usize;
+        
+        // Check if we're on a valid character
+        if pos >= chars.len() || (!chars[pos].is_alphanumeric() && chars[pos] != '_') {
+            // Try one position before
+            if pos > 0 && (chars[pos - 1].is_alphanumeric() || chars[pos - 1] == '_') {
+                // Continue with pos - 1
+                let pos = pos - 1;
+                return self.extract_symbol_at(chars, pos);
+            }
+            return None;
+        }
+        
+        self.extract_symbol_at(chars, pos)
+    }
+    
+    /// Extract symbol from character position
+    fn extract_symbol_at(&self, chars: Vec<char>, pos: usize) -> Option<String> {
+        // Find word boundaries
+        let mut start = pos;
+        while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
+            start -= 1;
+        }
+        
+        let mut end = pos;
+        while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
+            end += 1;
+        }
+        
+        if start < end {
+            Some(chars[start..end].iter().collect())
+        } else {
+            None
+        }
+    }
+    
 }

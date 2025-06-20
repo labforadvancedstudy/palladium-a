@@ -1,8 +1,8 @@
 // Symbol information provider
 // "Navigate your code with legendary precision"
 
-use super::{LanguageServer, SymbolKind, Location, Range};
-use serde::{Serialize, Deserialize};
+use super::{LanguageServer, Location, Range, SymbolKind};
+use serde::{Deserialize, Serialize};
 
 /// Document symbol
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,22 +38,22 @@ impl LanguageServer {
     /// Get document symbols
     pub fn get_document_symbols(&self, uri: &str) -> Vec<DocumentSymbol> {
         let mut symbols = Vec::new();
-        
+
         let doc = match self.documents.get(uri) {
             Some(doc) => doc,
             None => return symbols,
         };
-        
+
         let ast = match &doc.ast {
             Some(ast) => ast,
             None => return symbols,
         };
-        
+
         for item in &ast.items {
             match item {
                 crate::ast::Item::Function(func) => {
                     let children = self.get_function_symbols(func);
-                    
+
                     symbols.push(DocumentSymbol {
                         name: func.name.clone(),
                         detail: Some(self.function_signature(func)),
@@ -65,7 +65,7 @@ impl LanguageServer {
                 }
                 crate::ast::Item::Struct(struct_def) => {
                     let mut children = Vec::new();
-                    
+
                     for (field_name, field_ty) in &struct_def.fields {
                         children.push(DocumentSymbol {
                             name: field_name.clone(),
@@ -76,7 +76,7 @@ impl LanguageServer {
                             children: Vec::new(),
                         });
                     }
-                    
+
                     symbols.push(DocumentSymbol {
                         name: struct_def.name.clone(),
                         detail: Some(format!("struct {}", struct_def.name)),
@@ -88,24 +88,26 @@ impl LanguageServer {
                 }
                 crate::ast::Item::Enum(enum_def) => {
                     let mut children = Vec::new();
-                    
+
                     for variant in &enum_def.variants {
                         let detail = match &variant.data {
                             crate::ast::EnumVariantData::Unit => None,
                             crate::ast::EnumVariantData::Tuple(types) => {
-                                let type_strs: Vec<String> = types.iter()
-                                    .map(|t| self.type_to_string(t))
-                                    .collect();
+                                let type_strs: Vec<String> =
+                                    types.iter().map(|t| self.type_to_string(t)).collect();
                                 Some(format!("({})", type_strs.join(", ")))
                             }
                             crate::ast::EnumVariantData::Struct(fields) => {
-                                let field_strs: Vec<String> = fields.iter()
-                                    .map(|(name, ty)| format!("{}: {}", name, self.type_to_string(ty)))
+                                let field_strs: Vec<String> = fields
+                                    .iter()
+                                    .map(|(name, ty)| {
+                                        format!("{}: {}", name, self.type_to_string(ty))
+                                    })
                                     .collect();
                                 Some(format!("{{ {} }}", field_strs.join(", ")))
                             }
                         };
-                        
+
                         children.push(DocumentSymbol {
                             name: variant.name.clone(),
                             detail,
@@ -115,7 +117,7 @@ impl LanguageServer {
                             children: Vec::new(),
                         });
                     }
-                    
+
                     symbols.push(DocumentSymbol {
                         name: enum_def.name.clone(),
                         detail: Some(format!("enum {}", enum_def.name)),
@@ -127,7 +129,7 @@ impl LanguageServer {
                 }
                 crate::ast::Item::Trait(trait_def) => {
                     let mut children = Vec::new();
-                    
+
                     for method in &trait_def.methods {
                         children.push(DocumentSymbol {
                             name: method.name.clone(),
@@ -138,7 +140,7 @@ impl LanguageServer {
                             children: Vec::new(),
                         });
                     }
-                    
+
                     symbols.push(DocumentSymbol {
                         name: trait_def.name.clone(),
                         detail: Some(format!("trait {}", trait_def.name)),
@@ -151,7 +153,11 @@ impl LanguageServer {
                 crate::ast::Item::TypeAlias(type_alias) => {
                     symbols.push(DocumentSymbol {
                         name: type_alias.name.clone(),
-                        detail: Some(format!("type {} = {}", type_alias.name, self.type_to_string(&type_alias.ty))),
+                        detail: Some(format!(
+                            "type {} = {}",
+                            type_alias.name,
+                            self.type_to_string(&type_alias.ty)
+                        )),
                         kind: SymbolKind::TypeAlias,
                         range: self.span_to_range(type_alias.span),
                         selection_range: self.span_to_range(type_alias.span),
@@ -161,15 +167,15 @@ impl LanguageServer {
                 _ => {}
             }
         }
-        
+
         symbols
     }
-    
+
     /// Get workspace symbols matching query
     pub fn get_workspace_symbols(&self, query: &str) -> Vec<SymbolInformation> {
         let mut symbols = Vec::new();
         let query_lower = query.to_lowercase();
-        
+
         for symbol_list in self.symbol_index.symbols.values() {
             for symbol in symbol_list {
                 if symbol.name.to_lowercase().contains(&query_lower) {
@@ -182,14 +188,14 @@ impl LanguageServer {
                 }
             }
         }
-        
+
         symbols
     }
-    
+
     /// Get symbols from a function
     fn get_function_symbols(&self, func: &crate::ast::Function) -> Vec<DocumentSymbol> {
         let mut symbols = Vec::new();
-        
+
         // Add parameters as symbols
         for param in &func.params {
             symbols.push(DocumentSymbol {
@@ -201,33 +207,47 @@ impl LanguageServer {
                 children: Vec::new(),
             });
         }
-        
+
         // TODO: Parse function body for local variables
-        
+
         symbols
     }
-    
+
     /// Get function signature
     fn function_signature(&self, func: &crate::ast::Function) -> String {
-        let params: Vec<String> = func.params.iter()
+        let params: Vec<String> = func
+            .params
+            .iter()
             .map(|p| format!("{}: {}", p.name, self.type_to_string(&p.ty)))
             .collect();
-        
+
         if let Some(ret) = &func.return_type {
-            format!("fn {}({}) -> {}", func.name, params.join(", "), self.type_to_string(ret))
+            format!(
+                "fn {}({}) -> {}",
+                func.name,
+                params.join(", "),
+                self.type_to_string(ret)
+            )
         } else {
             format!("fn {}({})", func.name, params.join(", "))
         }
     }
-    
+
     /// Get method signature
     fn method_signature(&self, method: &crate::ast::TraitMethod) -> String {
-        let params: Vec<String> = method.params.iter()
+        let params: Vec<String> = method
+            .params
+            .iter()
             .map(|p| format!("{}: {}", p.name, self.type_to_string(&p.ty)))
             .collect();
-        
+
         if let Some(ret) = &method.return_type {
-            format!("fn {}({}) -> {}", method.name, params.join(", "), self.type_to_string(ret))
+            format!(
+                "fn {}({}) -> {}",
+                method.name,
+                params.join(", "),
+                self.type_to_string(ret)
+            )
         } else {
             format!("fn {}({})", method.name, params.join(", "))
         }

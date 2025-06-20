@@ -1,20 +1,20 @@
 // Diagnostics provider for Palladium LSP
 // "Catching errors before they catch you"
 
-use super::{LanguageServer, Diagnostic, DiagnosticSeverity, Range, Position};
-use crate::errors::CompileError;
+use super::{Diagnostic, DiagnosticSeverity, LanguageServer, Position, Range};
 use crate::ast::Program;
+use crate::errors::CompileError;
 
 impl LanguageServer {
     /// Run diagnostics on a document
     pub fn run_diagnostics(&mut self, uri: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
-        
+
         let doc = match self.documents.get(uri) {
             Some(doc) => doc.clone(),
             None => return diagnostics,
         };
-        
+
         // Parse errors
         match self.parse_document(&doc.content) {
             Ok(ast) => {
@@ -35,35 +35,44 @@ impl LanguageServer {
                 diagnostics.push(self.compile_error_to_diagnostic(e));
             }
         }
-        
+
         diagnostics
     }
-    
+
     /// Convert compile error to diagnostic
     fn compile_error_to_diagnostic(&self, error: CompileError) -> Diagnostic {
         let (message, span) = match &error {
             CompileError::SyntaxError { message, span } => (message.clone(), span.as_ref()),
-            CompileError::TypeMismatch { expected, found, span } => (
+            CompileError::TypeMismatch {
+                expected,
+                found,
+                span,
+            } => (
                 format!("Type mismatch: expected {}, found {}", expected, found),
                 span.as_ref(),
             ),
-            CompileError::UndefinedVariable { name, span } => (
-                format!("Undefined variable: {}", name),
-                span.as_ref(),
-            ),
+            CompileError::UndefinedVariable { name, span } => {
+                (format!("Undefined variable: {}", name), span.as_ref())
+            }
             CompileError::Generic(msg) => (msg.clone(), None),
             _ => (error.to_string(), None),
         };
-        
+
         let range = if let Some(span) = span {
             self.span_to_range(*span)
         } else {
             Range {
-                start: Position { line: 0, character: 0 },
-                end: Position { line: 0, character: 0 },
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
             }
         };
-        
+
         Diagnostic {
             range,
             severity: DiagnosticSeverity::Error,
@@ -73,7 +82,7 @@ impl LanguageServer {
             related_information: Vec::new(),
         }
     }
-    
+
     /// Get error code for compile error
     fn error_code(&self, error: &CompileError) -> String {
         match error {
@@ -85,23 +94,23 @@ impl LanguageServer {
             _ => "E9999".to_string(),
         }
     }
-    
+
     /// Check for unused variables
     fn check_unused_variables(&self, _ast: &Program) -> Vec<Diagnostic> {
         // TODO: Implement unused variable detection
         Vec::new()
     }
-    
+
     /// Check for unreachable code
     fn check_unreachable_code(&self, _ast: &Program) -> Vec<Diagnostic> {
         // TODO: Implement unreachable code detection
         Vec::new()
     }
-    
+
     /// Check naming conventions
     fn check_naming_conventions(&self, ast: &Program) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
-        
+
         for item in &ast.items {
             match item {
                 crate::ast::Item::Function(func) => {
@@ -167,24 +176,28 @@ impl LanguageServer {
                 _ => {}
             }
         }
-        
+
         diagnostics
     }
 }
 
 /// Check if string is snake_case
 fn is_snake_case(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_lowercase() || c.is_numeric() || c == '_')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_lowercase() || c.is_numeric() || c == '_')
 }
 
 /// Check if string is PascalCase
 fn is_pascal_case(s: &str) -> bool {
-    !s.is_empty() 
+    !s.is_empty()
         && s.chars().next().unwrap().is_uppercase()
         && s.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// Check if string is SCREAMING_SNAKE_CASE
 fn is_screaming_snake_case(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_uppercase() || c.is_numeric() || c == '_')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_uppercase() || c.is_numeric() || c == '_')
 }

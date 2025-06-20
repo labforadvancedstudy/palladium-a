@@ -16,22 +16,26 @@ impl LspServer {
             text_document: TextDocumentIdentifier,
             position: super::Position,
         }
-        
+
         #[derive(serde::Deserialize)]
         struct TextDocumentIdentifier {
             uri: String,
         }
-        
+
         if let Some(params) = params {
-            let params: HoverParams = serde_json::from_value(params)
-                .map_err(|_| ResponseError {
+            let params: HoverParams =
+                serde_json::from_value(params).map_err(|_| ResponseError {
                     code: INVALID_PARAMS,
                     message: "Invalid hover params".to_string(),
                     data: None,
                 })?;
-            
-            if let Some(hover) = self.server.lock().unwrap()
-                .get_hover(&params.text_document.uri, params.position) {
+
+            if let Some(hover) = self
+                .server
+                .lock()
+                .unwrap()
+                .get_hover(&params.text_document.uri, params.position)
+            {
                 Ok(serde_json::to_value(hover).unwrap())
             } else {
                 Ok(Value::Null)
@@ -40,31 +44,38 @@ impl LspServer {
             Ok(Value::Null)
         }
     }
-    
+
     /// Handle textDocument/definition request
-    pub fn handle_definition(&self, params: Option<Value>) -> std::result::Result<Value, ResponseError> {
+    pub fn handle_definition(
+        &self,
+        params: Option<Value>,
+    ) -> std::result::Result<Value, ResponseError> {
         #[derive(serde::Deserialize)]
         struct DefinitionParams {
             #[serde(rename = "textDocument")]
             text_document: TextDocumentIdentifier,
             position: super::Position,
         }
-        
+
         #[derive(serde::Deserialize)]
         struct TextDocumentIdentifier {
             uri: String,
         }
-        
+
         if let Some(params) = params {
-            let params: DefinitionParams = serde_json::from_value(params)
-                .map_err(|_| ResponseError {
+            let params: DefinitionParams =
+                serde_json::from_value(params).map_err(|_| ResponseError {
                     code: INVALID_PARAMS,
                     message: "Invalid definition params".to_string(),
                     data: None,
                 })?;
-            
-            if let Some(location) = self.server.lock().unwrap()
-                .find_definition(&params.text_document.uri, params.position) {
+
+            if let Some(location) = self
+                .server
+                .lock()
+                .unwrap()
+                .find_definition(&params.text_document.uri, params.position)
+            {
                 Ok(serde_json::to_value(location).unwrap())
             } else {
                 Ok(Value::Null)
@@ -73,9 +84,12 @@ impl LspServer {
             Ok(Value::Null)
         }
     }
-    
+
     /// Handle textDocument/references request
-    pub fn handle_references(&self, params: Option<Value>) -> std::result::Result<Value, ResponseError> {
+    pub fn handle_references(
+        &self,
+        params: Option<Value>,
+    ) -> std::result::Result<Value, ResponseError> {
         #[derive(serde::Deserialize)]
         struct ReferencesParams {
             #[serde(rename = "textDocument")]
@@ -83,95 +97,109 @@ impl LspServer {
             position: super::Position,
             context: ReferenceContext,
         }
-        
+
         #[derive(serde::Deserialize)]
         struct TextDocumentIdentifier {
             uri: String,
         }
-        
+
         #[derive(serde::Deserialize)]
         struct ReferenceContext {
             #[serde(rename = "includeDeclaration")]
             include_declaration: bool,
         }
-        
+
         if let Some(params) = params {
-            let params: ReferencesParams = serde_json::from_value(params)
-                .map_err(|_| ResponseError {
+            let params: ReferencesParams =
+                serde_json::from_value(params).map_err(|_| ResponseError {
                     code: INVALID_PARAMS,
                     message: "Invalid references params".to_string(),
                     data: None,
                 })?;
-            
-            let references = self.server.lock().unwrap()
-                .find_references(
-                    &params.text_document.uri,
-                    params.position,
-                    params.context.include_declaration,
-                );
-            
+
+            let references = self.server.lock().unwrap().find_references(
+                &params.text_document.uri,
+                params.position,
+                params.context.include_declaration,
+            );
+
             Ok(serde_json::to_value(references).unwrap())
         } else {
             Ok(json!([]))
         }
     }
-    
+
     /// Handle textDocument/documentSymbol request
-    pub fn handle_document_symbols(&self, params: Option<Value>) -> std::result::Result<Value, ResponseError> {
+    pub fn handle_document_symbols(
+        &self,
+        params: Option<Value>,
+    ) -> std::result::Result<Value, ResponseError> {
         #[derive(serde::Deserialize)]
         struct DocumentSymbolParams {
             #[serde(rename = "textDocument")]
             text_document: TextDocumentIdentifier,
         }
-        
+
         #[derive(serde::Deserialize)]
         struct TextDocumentIdentifier {
             uri: String,
         }
-        
+
         if let Some(params) = params {
-            let params: DocumentSymbolParams = serde_json::from_value(params)
-                .map_err(|_| ResponseError {
+            let params: DocumentSymbolParams =
+                serde_json::from_value(params).map_err(|_| ResponseError {
                     code: INVALID_PARAMS,
                     message: "Invalid document symbol params".to_string(),
                     data: None,
                 })?;
-            
-            let symbols = self.server.lock().unwrap()
+
+            let symbols = self
+                .server
+                .lock()
+                .unwrap()
                 .get_document_symbols(&params.text_document.uri);
-            
+
             Ok(serde_json::to_value(symbols).unwrap())
         } else {
             Ok(json!([]))
         }
     }
-    
+
     /// Handle workspace/symbol request
-    pub fn handle_workspace_symbols(&self, params: Option<Value>) -> std::result::Result<Value, ResponseError> {
+    pub fn handle_workspace_symbols(
+        &self,
+        params: Option<Value>,
+    ) -> std::result::Result<Value, ResponseError> {
         #[derive(serde::Deserialize)]
         struct WorkspaceSymbolParams {
             query: String,
         }
-        
+
         if let Some(params) = params {
-            let params: WorkspaceSymbolParams = serde_json::from_value(params)
-                .map_err(|_| ResponseError {
+            let params: WorkspaceSymbolParams =
+                serde_json::from_value(params).map_err(|_| ResponseError {
                     code: INVALID_PARAMS,
                     message: "Invalid workspace symbol params".to_string(),
                     data: None,
                 })?;
-            
-            let symbols = self.server.lock().unwrap()
+
+            let symbols = self
+                .server
+                .lock()
+                .unwrap()
                 .get_workspace_symbols(&params.query);
-            
+
             Ok(serde_json::to_value(symbols).unwrap())
         } else {
             Ok(json!([]))
         }
     }
-    
+
     /// Handle textDocument/rename request
-    pub fn handle_rename(&self, params: Option<Value>) -> std::result::Result<Value, ResponseError> {
+    pub fn handle_rename(
+        &self,
+        params: Option<Value>,
+    ) -> std::result::Result<Value, ResponseError> {
         #[derive(serde::Deserialize)]
         struct RenameParams {
             #[serde(rename = "textDocument")]
@@ -180,27 +208,26 @@ impl LspServer {
             #[serde(rename = "newName")]
             new_name: String,
         }
-        
+
         #[derive(serde::Deserialize)]
         struct TextDocumentIdentifier {
             uri: String,
         }
-        
+
         if let Some(params) = params {
-            let params: RenameParams = serde_json::from_value(params)
-                .map_err(|_| ResponseError {
+            let params: RenameParams =
+                serde_json::from_value(params).map_err(|_| ResponseError {
                     code: INVALID_PARAMS,
                     message: "Invalid rename params".to_string(),
                     data: None,
                 })?;
-            
-            let edits = self.server.lock().unwrap()
-                .compute_rename_edits(
-                    &params.text_document.uri,
-                    params.position,
-                    &params.new_name,
-                );
-            
+
+            let edits = self.server.lock().unwrap().compute_rename_edits(
+                &params.text_document.uri,
+                params.position,
+                &params.new_name,
+            );
+
             Ok(json!({
                 "changes": edits
             }))
@@ -208,10 +235,66 @@ impl LspServer {
             Ok(Value::Null)
         }
     }
-    
+
     /// Handle textDocument/formatting request
-    pub fn handle_formatting(&self, params: Option<Value>) -> std::result::Result<Value, ResponseError> {
+    pub fn handle_formatting(
+        &self,
+        _params: Option<Value>,
+    ) -> std::result::Result<Value, ResponseError> {
         // TODO: Implement formatting
         Ok(json!([]))
+    }
+    
+    /// Handle textDocument/completion request
+    pub fn handle_completion(
+        &self,
+        params: Option<Value>,
+    ) -> std::result::Result<Value, ResponseError> {
+        #[derive(serde::Deserialize)]
+        struct CompletionParams {
+            #[serde(rename = "textDocument")]
+            text_document: TextDocumentIdentifier,
+            position: super::Position,
+            #[serde(rename = "context")]
+            context: Option<CompletionContext>,
+        }
+        
+        #[derive(serde::Deserialize)]
+        struct TextDocumentIdentifier {
+            uri: String,
+        }
+        
+        #[derive(serde::Deserialize)]
+        struct CompletionContext {
+            #[serde(rename = "triggerKind")]
+            trigger_kind: i32,
+            #[serde(rename = "triggerCharacter")]
+            trigger_character: Option<String>,
+        }
+        
+        if let Some(params) = params {
+            let params: CompletionParams =
+                serde_json::from_value(params).map_err(|_| ResponseError {
+                    code: INVALID_PARAMS,
+                    message: "Invalid completion params".to_string(),
+                    data: None,
+                })?;
+                
+            let completions = self
+                .server
+                .lock()
+                .unwrap()
+                .get_completions(&params.text_document.uri, params.position);
+                
+            Ok(json!({
+                "isIncomplete": false,
+                "items": completions
+            }))
+        } else {
+            Ok(json!({
+                "isIncomplete": false,
+                "items": []
+            }))
+        }
     }
 }

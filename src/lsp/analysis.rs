@@ -2,7 +2,7 @@
 // "Deep insights into your legendary code"
 
 use super::LanguageServer;
-use crate::ast::{Program, Item, Type, Expr, Stmt};
+use crate::ast::{Expr, Item, Program, Stmt, Type};
 use std::collections::{HashMap, HashSet};
 
 /// Code analysis results
@@ -34,15 +34,15 @@ impl LanguageServer {
             type_errors: Vec::new(),
             missing_imports: Vec::new(),
         };
-        
+
         // Analyze each item
         for item in &program.items {
             self.analyze_item(item, &mut results);
         }
-        
+
         results
     }
-    
+
     /// Analyze an item
     fn analyze_item(&self, item: &Item, results: &mut AnalysisResults) {
         match item {
@@ -65,16 +65,16 @@ impl LanguageServer {
             _ => {}
         }
     }
-    
+
     /// Get semantic tokens for syntax highlighting
     pub fn get_semantic_tokens(&self, ast: &Program) -> Vec<SemanticToken> {
         let mut tokens = Vec::new();
-        let mut builder = SemanticTokenBuilder::new();
-        
+        let builder = SemanticTokenBuilder::new();
+
         for item in &ast.items {
             builder.process_item(item, &mut tokens);
         }
-        
+
         tokens.sort_by_key(|t| (t.line, t.character));
         tokens
     }
@@ -143,51 +143,69 @@ impl FunctionAnalyzer {
             has_return: false,
         }
     }
-    
+
     fn analyze_function(&mut self, func: &crate::ast::Function, results: &mut AnalysisResults) {
         // Add parameters to declared vars
         for param in &func.params {
-            self.declared_vars.insert(param.name.clone(), crate::errors::Span { start: 0, end: 0, line: 0, column: 0 });
+            self.declared_vars.insert(
+                param.name.clone(),
+                crate::errors::Span {
+                    start: 0,
+                    end: 0,
+                    line: 0,
+                    column: 0,
+                },
+            );
         }
-        
+
         // Analyze body
         self.analyze_statements(&func.body, results);
-        
+
         // Check for unused variables
         for (var, _) in &self.declared_vars {
             if !self.used_vars.contains(var) && !var.starts_with('_') {
                 results.unused_vars.insert(var.clone());
             }
         }
-        
+
         // Check for missing return
         if func.return_type.is_some() && !self.has_return {
             // TODO: Add error for missing return
         }
     }
-    
+
     fn analyze_method(&mut self, method: &crate::ast::TraitMethod, results: &mut AnalysisResults) {
         // Add parameters to declared vars
         for param in &method.params {
-            self.declared_vars.insert(param.name.clone(), crate::errors::Span { start: 0, end: 0, line: 0, column: 0 });
+            self.declared_vars.insert(
+                param.name.clone(),
+                crate::errors::Span {
+                    start: 0,
+                    end: 0,
+                    line: 0,
+                    column: 0,
+                },
+            );
         }
-        
+
         // Analyze body
         if let Some(body) = &method.body {
             self.analyze_statements(body, results);
         }
     }
-    
+
     fn analyze_statements(&mut self, stmts: &[Stmt], results: &mut AnalysisResults) {
         let mut unreachable = false;
-        
+
         for stmt in stmts {
             if unreachable {
                 results.unreachable_code.push(self.get_statement_span(stmt));
             }
-            
+
             match stmt {
-                Stmt::Let { name, value, span, .. } => {
+                Stmt::Let {
+                    name, value, span, ..
+                } => {
                     self.declared_vars.insert(name.clone(), *span);
                     self.analyze_expression(value);
                 }
@@ -198,18 +216,31 @@ impl FunctionAnalyzer {
                 Stmt::Expr(expr) => {
                     self.analyze_expression(expr);
                 }
-                Stmt::If { condition, then_branch, else_branch, .. } => {
+                Stmt::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
                     self.analyze_expression(condition);
                     self.analyze_statements(then_branch, results);
                     if let Some(else_branch) = else_branch {
                         self.analyze_statements(else_branch, results);
                     }
                 }
-                Stmt::While { condition, body, .. } => {
+                Stmt::While {
+                    condition, body, ..
+                } => {
                     self.analyze_expression(condition);
                     self.analyze_statements(body, results);
                 }
-                Stmt::For { var, iter, body, span, .. } => {
+                Stmt::For {
+                    var,
+                    iter,
+                    body,
+                    span,
+                    ..
+                } => {
                     self.declared_vars.insert(var.clone(), *span);
                     self.analyze_expression(iter);
                     self.analyze_statements(body, results);
@@ -218,7 +249,7 @@ impl FunctionAnalyzer {
             }
         }
     }
-    
+
     fn analyze_expression(&mut self, expr: &Expr) {
         match expr {
             Expr::Ident(name) => {
@@ -247,7 +278,7 @@ impl FunctionAnalyzer {
             _ => {}
         }
     }
-    
+
     fn get_statement_span(&self, stmt: &Stmt) -> crate::errors::Span {
         match stmt {
             Stmt::Let { span, .. } => *span,
@@ -256,23 +287,53 @@ impl FunctionAnalyzer {
                 if let Some(expr) = expr {
                     self.get_expression_span(expr)
                 } else {
-                    crate::errors::Span { start: 0, end: 0, line: 0, column: 0 }
+                    crate::errors::Span {
+                        start: 0,
+                        end: 0,
+                        line: 0,
+                        column: 0,
+                    }
                 }
             }
             Stmt::If { span, .. } => *span,
             Stmt::While { span, .. } => *span,
             Stmt::For { span, .. } => *span,
             Stmt::Match { span, .. } => *span,
-            _ => crate::errors::Span { start: 0, end: 0, line: 0, column: 0 },
+            _ => crate::errors::Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                column: 0,
+            },
         }
     }
-    
+
     fn get_expression_span(&self, expr: &Expr) -> crate::errors::Span {
         match expr {
-            Expr::Ident(_) => crate::errors::Span { start: 0, end: 0, line: 0, column: 0 },
-            Expr::Integer(_) => crate::errors::Span { start: 0, end: 0, line: 0, column: 0 },
-            Expr::String(_) => crate::errors::Span { start: 0, end: 0, line: 0, column: 0 },
-            Expr::Bool(_) => crate::errors::Span { start: 0, end: 0, line: 0, column: 0 },
+            Expr::Ident(_) => crate::errors::Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                column: 0,
+            },
+            Expr::Integer(_) => crate::errors::Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                column: 0,
+            },
+            Expr::String(_) => crate::errors::Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                column: 0,
+            },
+            Expr::Bool(_) => crate::errors::Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                column: 0,
+            },
             Expr::Call { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
             Expr::Unary { span, .. } => *span,
@@ -282,7 +343,12 @@ impl FunctionAnalyzer {
             Expr::ArrayRepeat { span, .. } => *span,
             Expr::StructLiteral { span, .. } => *span,
             Expr::EnumConstructor { span, .. } => *span,
-            _ => crate::errors::Span { start: 0, end: 0, line: 0, column: 0 },
+            _ => crate::errors::Span {
+                start: 0,
+                end: 0,
+                line: 0,
+                column: 0,
+            },
         }
     }
 }
@@ -294,7 +360,7 @@ impl SemanticTokenBuilder {
     fn new() -> Self {
         Self
     }
-    
+
     fn process_item(&self, item: &Item, tokens: &mut Vec<SemanticToken>) {
         match item {
             Item::Function(func) => {
@@ -306,7 +372,7 @@ impl SemanticTokenBuilder {
                     token_type: SemanticTokenType::Function,
                     modifiers: vec![SemanticTokenModifier::Declaration],
                 });
-                
+
                 // Parameters
                 for param in &func.params {
                     tokens.push(SemanticToken {
