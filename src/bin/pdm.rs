@@ -1,8 +1,8 @@
 // Palladium Package Manager (pdm)
 // "The legendary package manager"
 
-use palladium::package::cli;
 use palladium::errors::Result;
+use palladium::package::cli;
 
 fn main() -> Result<()> {
     // Initialize logger for better error messages
@@ -10,7 +10,7 @@ fn main() -> Result<()> {
         .with_target(false)
         .with_level(false)
         .init();
-    
+
     // Run the CLI
     cli::run_cli()
 }

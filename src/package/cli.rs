@@ -1,10 +1,13 @@
 // Package manager CLI for Palladium
 // "Command line interface for legendary package management"
 
+use super::{
+    build::{BuildConfig, BuildSystem},
+    PackageManager,
+};
+use crate::errors::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use crate::errors::Result;
-use super::{PackageManager, build::{BuildSystem, BuildConfig}};
 
 /// Palladium package manager
 #[derive(Parser)]
@@ -26,14 +29,14 @@ pub enum Commands {
         #[arg(long)]
         path: Option<PathBuf>,
     },
-    
+
     /// Initialize a new package in the current directory
     Init {
         /// Package name (defaults to directory name)
         #[arg(long)]
         name: Option<String>,
     },
-    
+
     /// Build the current package
     Build {
         /// Build in release mode
@@ -52,7 +55,7 @@ pub enum Commands {
         #[arg(long)]
         features: Vec<String>,
     },
-    
+
     /// Run the current package
     Run {
         /// Build in release mode
@@ -62,7 +65,7 @@ pub enum Commands {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
-    
+
     /// Run tests
     Test {
         /// Test name filter
@@ -74,10 +77,10 @@ pub enum Commands {
         #[arg(long, short)]
         verbose: bool,
     },
-    
+
     /// Clean build artifacts
     Clean,
-    
+
     /// Add a dependency
     Add {
         /// Dependency name
@@ -89,7 +92,7 @@ pub enum Commands {
         #[arg(long)]
         dev: bool,
     },
-    
+
     /// Remove a dependency
     Remove {
         /// Dependency name
@@ -98,13 +101,13 @@ pub enum Commands {
         #[arg(long)]
         dev: bool,
     },
-    
+
     /// Update dependencies
     Update {
         /// Package to update (updates all if not specified)
         package: Option<String>,
     },
-    
+
     /// Search for packages in the registry
     Search {
         /// Search query
@@ -113,20 +116,20 @@ pub enum Commands {
         #[arg(long, default_value_t = 10)]
         limit: usize,
     },
-    
+
     /// Show package information
     Info {
         /// Package name
         name: String,
     },
-    
+
     /// Publish a package to the registry
     Publish {
         /// Dry run (don't actually publish)
         #[arg(long)]
         dry_run: bool,
     },
-    
+
     /// Install a package globally
     Install {
         /// Package name
@@ -135,13 +138,13 @@ pub enum Commands {
         #[arg(long)]
         version: Option<String>,
     },
-    
+
     /// Uninstall a global package
     Uninstall {
         /// Package name
         name: String,
     },
-    
+
     /// List installed packages
     List {
         /// Show global packages
@@ -159,102 +162,118 @@ impl Cli {
         match self.command {
             Commands::New { name, path } => {
                 let target_path = path.unwrap_or_else(|| PathBuf::from(&name));
-                
+
                 if target_path.exists() {
-                    return Err(crate::errors::CompileError::Generic(
-                        format!("Directory '{}' already exists", target_path.display())
-                    ));
+                    return Err(crate::errors::CompileError::Generic(format!(
+                        "Directory '{}' already exists",
+                        target_path.display()
+                    )));
                 }
-                
+
                 std::fs::create_dir_all(&target_path)?;
                 PackageManager::init(&name, &target_path)?;
-                
+
                 println!("\n📝 Next steps:");
                 println!("   cd {}", target_path.display());
                 println!("   pdm build");
                 println!("   pdm run");
             }
-            
+
             Commands::Init { name } => {
                 let current_dir = std::env::current_dir()?;
                 let package_name = name.unwrap_or_else(|| {
-                    current_dir.file_name()
+                    current_dir
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("my_package")
                         .to_string()
                 });
-                
+
                 PackageManager::init(&package_name, &current_dir)?;
             }
-            
-            Commands::Build { release, llvm, verbose, jobs, features } => {
+
+            Commands::Build {
+                release,
+                llvm,
+                verbose,
+                jobs,
+                features,
+            } => {
                 let config = BuildConfig {
                     release,
                     use_llvm: llvm,
                     verbose,
-                    jobs: if jobs == 0 { super::build::num_cpus::get() } else { jobs },
+                    jobs: if jobs == 0 {
+                        super::build::num_cpus::get()
+                    } else {
+                        jobs
+                    },
                     features: features.into_iter().collect(),
                     ..Default::default()
                 };
-                
+
                 let mut build_system = BuildSystem::new(config);
                 build_system.build()?;
             }
-            
+
             Commands::Run { release, args } => {
                 let config = BuildConfig {
                     release,
                     ..Default::default()
                 };
-                
+
                 let mut build_system = BuildSystem::new(config);
                 build_system.run(args)?;
             }
-            
-            Commands::Test { filter, release, verbose } => {
+
+            Commands::Test {
+                filter,
+                release,
+                verbose,
+            } => {
                 let config = BuildConfig {
                     release,
                     verbose,
                     ..Default::default()
                 };
-                
+
                 let mut build_system = BuildSystem::new(config);
                 build_system.test(filter.as_deref())?;
             }
-            
+
             Commands::Clean => {
                 let build_system = BuildSystem::new(BuildConfig::default());
                 build_system.clean()?;
             }
-            
+
             Commands::Add { name, version, dev } => {
                 let mut pm = PackageManager::new()?;
                 pm.add_dependency(&name, &version, dev)?;
             }
-            
+
             Commands::Remove { name: _, dev: _ } => {
                 println!("🚧 Remove command not yet implemented");
                 // TODO: Implement dependency removal
             }
-            
+
             Commands::Update { package: _ } => {
                 println!("🚧 Update command not yet implemented");
                 // TODO: Implement dependency updates
             }
-            
+
             Commands::Search { query, limit } => {
                 println!("🔍 Searching for '{}'...", query);
                 println!("🚧 Search functionality not yet implemented");
                 println!("   (Would show up to {} results)", limit);
                 // TODO: Implement package search
             }
-            
+
             Commands::Info { name } => {
                 println!("📦 Package: {}", name);
                 println!("🚧 Info command not yet implemented");
                 // TODO: Implement package info
             }
-            
+
             Commands::Publish { dry_run } => {
                 if dry_run {
                     println!("🧪 Dry run mode");
@@ -262,35 +281,39 @@ impl Cli {
                 println!("🚧 Publish command not yet implemented");
                 // TODO: Implement package publishing
             }
-            
+
             Commands::Install { name, version } => {
-                println!("📥 Installing {} {}", name, version.as_deref().unwrap_or("latest"));
+                println!(
+                    "📥 Installing {} {}",
+                    name,
+                    version.as_deref().unwrap_or("latest")
+                );
                 println!("🚧 Install command not yet implemented");
                 // TODO: Implement global package installation
             }
-            
+
             Commands::Uninstall { name } => {
                 println!("📤 Uninstalling {}", name);
                 println!("🚧 Uninstall command not yet implemented");
                 // TODO: Implement global package uninstallation
             }
-            
+
             Commands::List { global, tree } => {
                 if global {
                     println!("🌍 Global packages:");
                 } else {
                     println!("📦 Local dependencies:");
                 }
-                
+
                 if tree {
                     println!("🌳 Dependency tree view");
                 }
-                
+
                 println!("🚧 List command not yet implemented");
                 // TODO: Implement package listing
             }
         }
-        
+
         Ok(())
     }
 }
@@ -304,7 +327,7 @@ pub fn run_cli() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_cli_parsing() {
         // Test that CLI can be parsed
