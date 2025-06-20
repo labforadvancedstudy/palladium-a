@@ -35,10 +35,17 @@ Executable
 - **[Generics Design](./GENERICS_DESIGN.md)** - Generic type system
 - **[Module System Design](./MODULE_SYSTEM_DESIGN.md)** - Module resolution
 - **[Error Messages](./ERROR_MESSAGES_IMPROVEMENT.md)** - Diagnostic system
+- **[Performance Optimization](./PERFORMANCE_OPTIMIZATION.md)** - Optimization strategies
 
-### Progress Tracking
-- **[Generics Progress](./GENERICS_PROGRESS.md)** - Implementation status
-- **[Module System Progress](./MODULE_SYSTEM_PROGRESS.md)** - Current state
+### Bootstrap Documentation
+Complete documentation of Palladium's self-hosting journey:
+- **[Bootstrap Overview](./bootstrap/README.md)** - Introduction to bootstrapping
+- **[Bootstrap Strategy](./bootstrap/BOOTSTRAP_STRATEGY.md)** - Approach and methodology
+- **[Bootstrap Internals](./bootstrap/BOOTSTRAP_INTERNALS.md)** - Technical details
+- **[Bootstrap Tutorial](./bootstrap/BOOTSTRAP_TUTORIAL.md)** - Step-by-step guide
+- **[Bootstrap FAQ](./bootstrap/BOOTSTRAP_FAQ.md)** - Common questions
+- **[Self-Hosting Complete](./bootstrap/SELF_HOSTING_COMPLETE.md)** - Achievement details
+- **[Self-Hosting Guide](./bootstrap/SELF_HOSTING_GUIDE.md)** - How to use bootstrap compilers
 
 ## 🔧 Compiler Architecture
 

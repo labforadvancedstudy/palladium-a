@@ -1,6 +1,0 @@
-// Test program for the minimal lexer
-// This will verify that lexer_minimal.pd works correctly
-
-fn main() {
-    test_lexer();
-}
