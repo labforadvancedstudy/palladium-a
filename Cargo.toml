@@ -75,7 +75,7 @@ petgraph = "0.6"
 # Utilities
 tracing = "0.1"
 tracing-subscriber = "0.3"
-colored = "2.1"
+colored = "3.0"
 
 # Performance profiling
 criterion = { version = "0.5", optional = true }
