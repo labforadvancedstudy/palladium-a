@@ -31,11 +31,11 @@ fn main() {
     );
 
     // Check C file was generated in build_output
-    let c_file = Path::new("build_output/hello.c");
+    let c_file = Path::new("target/build/hello.c");
     assert!(c_file.exists(), "C file not generated");
 
     // Check C file contains expected content
-    let c_content = fs::read_to_string(&c_file).unwrap();
+    let c_content = fs::read_to_string(c_file).unwrap();
     assert!(
         c_content.contains("printf"),
         "C file doesn't contain printf"
@@ -81,11 +81,11 @@ fn main() {
     );
 
     // Check C file was generated in build_output
-    let c_file = Path::new("build_output/fibonacci.c");
+    let c_file = Path::new("target/build/fibonacci.c");
     assert!(c_file.exists(), "C file not generated");
 
     // Check C file contains fibonacci function
-    let c_content = fs::read_to_string(&c_file).unwrap();
+    let c_content = fs::read_to_string(c_file).unwrap();
     assert!(
         c_content.contains("fibonacci"),
         "C file doesn't contain fibonacci function"
@@ -119,7 +119,7 @@ fn main() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let c_file = Path::new("build_output/arrays.c");
+    let c_file = Path::new("target/build/arrays.c");
     assert!(c_file.exists(), "C file not generated");
 }
 
@@ -155,11 +155,11 @@ fn main() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let c_file = Path::new("build_output/structs.c");
+    let c_file = Path::new("target/build/structs.c");
     assert!(c_file.exists(), "C file not generated");
 
     // Check struct definition
-    let c_content = fs::read_to_string(&c_file).unwrap();
+    let c_content = fs::read_to_string(c_file).unwrap();
     assert!(
         c_content.contains("struct Point"),
         "C file doesn't contain struct Point"

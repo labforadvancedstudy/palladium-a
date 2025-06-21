@@ -43,10 +43,10 @@ impl OptimizationPass for SimplificationPass {
     fn optimize_statement(&mut self, stmt: &mut Stmt) -> Result<bool, CompileError> {
         match stmt {
             Stmt::Let { value, .. } => {
-                self.optimize_expression(value)?;
+                return self.optimize_expression(value);
             }
             Stmt::Expr(expr) => {
-                self.optimize_expression(expr)?;
+                return self.optimize_expression(expr);
             }
             Stmt::If {
                 condition,
@@ -54,33 +54,41 @@ impl OptimizationPass for SimplificationPass {
                 else_branch,
                 ..
             } => {
-                self.optimize_expression(condition)?;
+                let mut changed = self.optimize_expression(condition)?;
 
                 for stmt in then_branch {
-                    self.optimize_statement(stmt)?;
+                    changed |= self.optimize_statement(stmt)?;
                 }
 
                 if let Some(else_branch) = else_branch {
                     for stmt in else_branch {
-                        self.optimize_statement(stmt)?;
+                        changed |= self.optimize_statement(stmt)?;
                     }
+                }
+                
+                if changed {
+                    return Ok(true);
                 }
             }
             Stmt::While {
                 condition, body, ..
             } => {
-                self.optimize_expression(condition)?;
+                let mut changed = self.optimize_expression(condition)?;
 
                 for stmt in body {
-                    self.optimize_statement(stmt)?;
+                    changed |= self.optimize_statement(stmt)?;
+                }
+                
+                if changed {
+                    return Ok(true);
                 }
             }
             Stmt::Return(Some(expr)) => {
-                self.optimize_expression(expr)?;
+                return self.optimize_expression(expr);
             }
             Stmt::Return(None) => {}
             Stmt::Assign { value, .. } => {
-                self.optimize_expression(value)?;
+                return self.optimize_expression(value);
             }
             _ => {}
         }
@@ -94,8 +102,8 @@ impl OptimizationPass for SimplificationPass {
                 left, op, right, ..
             } => {
                 // Optimize sub-expressions first
-                self.optimize_expression(left)?;
-                self.optimize_expression(right)?;
+                let left_changed = self.optimize_expression(left)?;
+                let right_changed = self.optimize_expression(right)?;
 
                 // Simplify boolean comparisons
                 match (left.as_ref(), *op, right.as_ref()) {
@@ -197,9 +205,13 @@ impl OptimizationPass for SimplificationPass {
                     }
                     _ => {}
                 }
+                
+                if left_changed || right_changed {
+                    return Ok(true);
+                }
             }
             Expr::Unary { op, operand, .. } => {
-                self.optimize_expression(operand)?;
+                let child_changed = self.optimize_expression(operand)?;
 
                 // Simplify double negation: !!x => x
                 if let UnaryOp::Not = op {
@@ -214,22 +226,39 @@ impl OptimizationPass for SimplificationPass {
                         return Ok(true);
                     }
                 }
+                
+                if child_changed {
+                    return Ok(true);
+                }
             }
             Expr::Call { args, .. } => {
+                let mut changed = false;
                 for arg in args {
-                    self.optimize_expression(arg)?;
+                    changed |= self.optimize_expression(arg)?;
+                }
+                if changed {
+                    return Ok(true);
                 }
             }
             Expr::Index { array, index, .. } => {
-                self.optimize_expression(array)?;
-                self.optimize_expression(index)?;
+                let array_changed = self.optimize_expression(array)?;
+                let index_changed = self.optimize_expression(index)?;
+                if array_changed || index_changed {
+                    return Ok(true);
+                }
             }
             Expr::FieldAccess { object, .. } => {
-                self.optimize_expression(object)?;
+                if self.optimize_expression(object)? {
+                    return Ok(true);
+                }
             }
             Expr::ArrayLiteral { elements, .. } => {
+                let mut changed = false;
                 for elem in elements {
-                    self.optimize_expression(elem)?;
+                    changed |= self.optimize_expression(elem)?;
+                }
+                if changed {
+                    return Ok(true);
                 }
             }
             _ => {}

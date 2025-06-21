@@ -1,12 +1,14 @@
 # Palladium Programming Language
 
 [![Crates.io](https://img.shields.io/crates/v/alan-von-palladium.svg)](https://crates.io/crates/alan-von-palladium)
-[![Documentation](https://docs.rs/palladium/badge.svg)](https://docs.rs/palladium)
+[![Documentation](https://docs.rs/alan-von-palladium/badge.svg)](https://docs.rs/alan-von-palladium)
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](LICENSE)
+
+> ⚠️ **Alpha Software**: Palladium is in active development (v0.1.1). APIs and language features are subject to change.
 
 Palladium is a systems programming language that combines Turing's correctness with von Neumann's performance.
 
-## Features
+## 🚀 Features
 
 - **Memory Safety**: Ownership system inspired by Rust
 - **Type Safety**: Strong static typing with inference
@@ -14,17 +16,30 @@ Palladium is a systems programming language that combines Turing's correctness w
 - **Simplicity**: Clean, readable syntax
 - **Self-Hosting**: 100% bootstrap capability achieved
 
-## Quick Start
+## 📦 Installation
 
-### Installation
+### From crates.io (Recommended)
 
 ```bash
 cargo install alan-von-palladium
 ```
 
+### From Source
+
+```bash
+git clone https://github.com/labforadvancedstudy/palladium-a.git
+cd palladium-a
+cargo build --release
+
+# Add to PATH
+export PATH="$PATH:$(pwd)/target/release"
+```
+
+## 🎯 Quick Start
+
 ### Hello World
 
-Create a file `hello.pd`:
+Create `hello.pd`:
 
 ```palladium
 fn main() {
@@ -35,36 +50,53 @@ fn main() {
 Compile and run:
 
 ```bash
-pdc hello.pd -o hello
-./hello
+pdc compile hello.pd -o hello
+./build_output/hello
 ```
 
-## Language Features
+Output:
+```
+Hello, World!
+```
+
+## 📚 Language Tour
 
 ### Variables and Types
 
 ```palladium
 fn main() {
-    let x: i32 = 42;
-    let mut y = 10;  // Type inference
-    y = y + 1;
+    // Immutable by default
+    let x = 42;
+    let y: i64 = 100;
     
-    let message: string = "Hello";
-    let flag: bool = true;
+    // Mutable variables
+    let mut count = 0;
+    count = count + 1;
+    
+    // Strings
+    let message = "Hello, Palladium!";
+    print(message);
 }
 ```
 
 ### Functions
 
 ```palladium
-fn add(a: i32, b: i32) -> i32 {
-    a + b
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;  // Explicit return required
 }
 
-fn greet(name: string) {
+fn greet(name: String) {
     print("Hello, ");
     print(name);
     print("!");
+}
+
+fn main() {
+    let sum = add(10, 20);
+    print_int(sum);  // Output: 30
+    
+    greet("Palladium");
 }
 ```
 
@@ -72,21 +104,24 @@ fn greet(name: string) {
 
 ```palladium
 fn main() {
+    // if-else
     let x = 10;
-    
     if x > 5 {
         print("x is greater than 5");
     } else {
         print("x is 5 or less");
     }
     
-    for i in 0..10 {
-        print(i);
+    // for loops
+    for i in 0..5 {
+        print_int(i);
     }
     
-    let mut count = 0;
-    while count < 5 {
-        count = count + 1;
+    // while loops
+    let mut count = 5;
+    while count > 0 {
+        print_int(count);
+        count = count - 1;
     }
 }
 ```
@@ -95,22 +130,34 @@ fn main() {
 
 ```palladium
 struct Point {
-    x: i32,
-    y: i32
+    x: i64,
+    y: i64,
 }
 
-enum Result<T, E> {
-    Ok(T),
-    Err(E)
+enum Result {
+    Ok(i64),
+    Err(String),
+}
+
+fn divide(a: i64, b: i64) -> Result {
+    if b == 0 {
+        return Result::Err("Division by zero");
+    }
+    return Result::Ok(a / b);
 }
 
 fn main() {
     let p = Point { x: 10, y: 20 };
+    print_int(p.x);
     
-    let result: Result<i32, string> = Result::Ok(42);
+    let result = divide(10, 2);
     match result {
-        Result::Ok(value) => print(value),
-        Result::Err(error) => print(error)
+        Result::Ok(value) => {
+            print_int(value);
+        }
+        Result::Err(msg) => {
+            print(msg);
+        }
     }
 }
 ```
@@ -119,90 +166,190 @@ fn main() {
 
 ```palladium
 fn main() {
-    let numbers: [i32; 5] = [1, 2, 3, 4, 5];
-    let first = numbers[0];
+    // Fixed-size arrays
+    let numbers = [1, 2, 3, 4, 5];
+    let zeros = [0; 10];  // Array of 10 zeros
     
+    // Array access
+    let first = numbers[0];
+    print_int(first);
+    
+    // Iteration
     for i in 0..5 {
-        print(numbers[i]);
+        print_int(numbers[i]);
     }
 }
 ```
 
-## Tools
+### Memory Safety
 
-### Compiler (pdc)
-
-```bash
-# Compile to executable
-pdc program.pd -o program
-
-# Compile to C (for debugging)
-pdc program.pd -c -o program.c
-
-# With optimizations
-pdc program.pd -O3 -o program
+```palladium
+fn main() {
+    let x = 42;
+    let y = &x;        // Immutable borrow
+    print_int(*y);
+    
+    let mut z = 10;
+    let w = &mut z;    // Mutable borrow
+    *w = 20;
+    print_int(z);      // Output: 20
+}
 ```
 
-### Package Manager (pdm)
+## 🛠️ Compiler Usage
+
+### Basic Commands
 
 ```bash
-# Initialize new project
-pdm init my_project
+# Compile a file
+pdc compile program.pd -o program
 
-# Add dependency
-pdm add some_package
+# Compile with optimization
+pdc compile program.pd -o program -O
 
-# Build project
-pdm build
+# Use LLVM backend (experimental)
+pdc compile program.pd -o program --llvm
 
-# Run project
-pdm run
+# Show help
+pdc --help
 ```
 
-### Language Server (pls)
+### Compilation Process
 
-The Palladium Language Server provides IDE support:
+When you compile, you'll see detailed progress:
 
-```bash
-# Start language server
-pls
+```
+🔨 Compiling program.pd...
+📖 Lexing...
+🌳 Parsing...
+🔍 Type checking...
+🔒 Borrow checking...
+🌊 Analyzing effects...
+⚠️  Checking unsafe operations...
+🔧 Optimizing...
+⚡ Generating C code...
+✅ Compilation successful!
+🔗 Linking...
 ```
 
-Supported features:
-- Syntax highlighting
-- Error diagnostics
-- Code completion
-- Go to definition
-- Find references
+## 📊 Current Status
 
-## Current Status
+### ✅ Implemented
 
-- ✅ Core language features
-- ✅ Basic type system
-- ✅ Pattern matching
-- ✅ Memory safety via ownership
-- ✅ Self-hosting compiler
-- ⚠️  Standard library (in progress)
-- ⚠️  Async/await (planned)
-- ⚠️  Generics (planned)
-- ⚠️  Traits (planned)
+- Core language features (variables, functions, control flow)
+- Basic type system (integers, booleans, strings, arrays)
+- Structs and enums
+- Pattern matching (basic)
+- Ownership and borrowing
+- Effects system
+- C code generation backend
 
-## Building from Source
+### 🚧 In Progress
+
+- Standard library (Vec, HashMap, etc.)
+- LLVM backend optimization
+- Package manager (pdm)
+- Language server (pls)
+
+### 📋 Planned
+
+- Generics
+- Traits
+- Async/await
+- Closures
+- Module system
+- Macro system
+
+### ⚠️ Known Limitations
+
+- No implicit returns (use explicit `return`)
+- No `else if` (use nested `if`)
+- No method syntax (`obj.method()`)
+- Limited pattern matching
+- `print` and `print_int` output on separate lines
+- UTF-8 handling in error messages needs work
+
+## 🏗️ Building from Source
 
 ```bash
-git clone https://github.com/palladium-lang/palladium
-cd palladium
+# Clone repository
+git clone https://github.com/labforadvancedstudy/palladium-a.git
+cd palladium-a
+
+# Build in release mode
 cargo build --release
+
+# Run tests
+cargo test
+
+# Install locally
+cargo install --path .
 ```
 
-## Contributing
+## 📖 Documentation
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+- [Getting Started Guide](docs/user-guide/getting-started.md)
+- [Language Reference](docs/specification/language_specification.md)
+- [User Guide](docs/user-guide/)
+- [Examples](examples/)
 
-## License
+## 🧪 Examples
 
-Palladium is dual-licensed under MIT and Apache 2.0. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE) for details.
+Check out the `examples/` directory:
 
-## Acknowledgments
+- `examples/tutorial/` - Step-by-step tutorials
+- `examples/practical/` - Real-world examples
 
-Special thanks to all contributors who helped achieve 100% bootstrap capability!
+```bash
+# Run an example
+pdc compile examples/tutorial/01_hello_world.pd -o hello
+./build_output/hello
+```
+
+## 🤝 Contributing
+
+We welcome contributions! Areas where help is needed:
+
+- Standard library implementation
+- Documentation improvements
+- Bug fixes
+- Test coverage
+- LLVM backend improvements
+
+Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+## 📊 Benchmarks
+
+Performance comparisons coming soon. Goal: within 10% of C performance.
+
+## 🔍 Philosophy
+
+Palladium aims to be:
+
+1. **Safe**: Memory and type safety by default
+2. **Fast**: Zero-cost abstractions, optimal performance
+3. **Simple**: Clear syntax, minimal complexity
+4. **Practical**: Designed for real systems programming
+
+## 📜 License
+
+Palladium is dual-licensed:
+
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+- Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+Choose whichever license works best for you.
+
+## 🙏 Acknowledgments
+
+Special thanks to:
+
+- All contributors who helped achieve 100% bootstrap capability
+- The Rust community for inspiration
+- Alan Turing and John von Neumann for their legendary contributions to computing
+
+---
+
+**Project Status**: Alpha (v0.1.1) | **First Release**: June 2025 | **Bootstrap**: 100% Complete
+
+*"Combining Turing's correctness with von Neumann's performance"*

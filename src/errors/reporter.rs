@@ -258,3 +258,263 @@ impl DiagnosticBuilder {
         diag
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn create_temp_file(content: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{}", content).unwrap();
+        file
+    }
+
+    #[test]
+    fn test_error_reporter_new() {
+        let file = create_temp_file("test content\nline 2\nline 3");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        assert_eq!(reporter.source_file, file.path().to_str().unwrap());
+        assert_eq!(reporter.source_content, "test content\nline 2\nline 3");
+    }
+
+    #[test]
+    fn test_error_reporter_new_file_not_found() {
+        let result = ErrorReporter::new("nonexistent_file.pd".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_estimate_token_length() {
+        let file = create_temp_file("");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        // Alphanumeric tokens
+        assert_eq!(reporter.estimate_token_length("variable123 + other"), 11);
+        assert_eq!(reporter.estimate_token_length("fn_name()"), 7);
+        assert_eq!(reporter.estimate_token_length("_underscore"), 11);
+        
+        // Single character tokens
+        assert_eq!(reporter.estimate_token_length("+ other"), 1);
+        assert_eq!(reporter.estimate_token_length("( expr"), 1);
+        assert_eq!(reporter.estimate_token_length("; next"), 1);
+        
+        // Empty or whitespace
+        assert_eq!(reporter.estimate_token_length(""), 0);
+        assert_eq!(reporter.estimate_token_length("   "), 0);
+    }
+
+    #[test]
+    fn test_show_source_snippet_with_context() {
+        // Note: Since report() prints to stderr, we can't easily capture its output
+        // in tests. Instead, we'll test the helper methods and trust the integration.
+        let file = create_temp_file("line 1\nline 2\nline 3\nline 4\nline 5");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        // Test valid span
+        let span = Span::new(0, 5, 3, 1);
+        // This would normally print to stderr
+        reporter.show_source_snippet_with_context(span, 1);
+        
+        // Test edge cases
+        let span = Span::new(0, 5, 0, 1); // line 0 (invalid)
+        reporter.show_source_snippet_with_context(span, 0);
+        
+        let span = Span::new(0, 5, 100, 1); // line too large
+        reporter.show_source_snippet_with_context(span, 0);
+    }
+
+    #[test]
+    fn test_diagnostic_builder_type_mismatch() {
+        let span = Span::new(10, 20, 5, 5);
+        let diag = DiagnosticBuilder::type_mismatch("int", "string", span);
+        
+        assert_eq!(diag.message, "type mismatch: expected int, found string");
+        assert_eq!(diag.notes.len(), 1);
+        assert_eq!(diag.notes[0], "types must match exactly");
+        assert_eq!(diag.context_lines, 2);
+        assert!(diag.span.is_some());
+    }
+
+    #[test]
+    fn test_diagnostic_builder_undefined_variable() {
+        let span = Span::new(15, 25, 10, 8);
+        let diag = DiagnosticBuilder::undefined_variable("myVar", span);
+        
+        assert_eq!(diag.message, "undefined variable: myVar");
+        assert_eq!(diag.notes.len(), 1);
+        assert_eq!(diag.notes[0], "variables must be declared before use");
+        assert_eq!(diag.suggestions.len(), 1);
+        assert!(diag.suggestions[0].message.contains("let myVar = ..."));
+        assert_eq!(diag.context_lines, 3);
+    }
+
+    #[test]
+    fn test_diagnostic_builder_missing_semicolon() {
+        let span = Span::new(30, 31, 15, 20);
+        let diag = DiagnosticBuilder::missing_semicolon(span);
+        
+        assert_eq!(diag.message, "expected ';' after statement");
+        assert_eq!(diag.notes.len(), 1);
+        assert_eq!(diag.notes[0], "each statement must end with a semicolon");
+        assert_eq!(diag.suggestions.len(), 1);
+        assert_eq!(diag.suggestions[0].message, "add a semicolon at the end of this line");
+        assert_eq!(diag.suggestions[0].replacement, Some(";".to_string()));
+    }
+
+    #[test]
+    fn test_diagnostic_builder_wrong_arg_count_single() {
+        let span = Span::new(40, 50, 20, 10);
+        
+        // Expected 1, found 0
+        let diag = DiagnosticBuilder::wrong_arg_count("print", 1, 0, span);
+        assert!(diag.message.contains("expects 1 argument, but 0 were provided"));
+        assert!(diag.suggestions[0].message.contains("add 1 more argument"));
+        
+        // Expected 1, found 2
+        let diag = DiagnosticBuilder::wrong_arg_count("print", 1, 2, span);
+        assert!(diag.message.contains("expects 1 argument, but 2 were provided"));
+        assert!(diag.suggestions[0].message.contains("remove 1 argument"));
+    }
+
+    #[test]
+    fn test_diagnostic_builder_wrong_arg_count_multiple() {
+        let span = Span::new(40, 50, 20, 10);
+        
+        // Expected 3, found 1
+        let diag = DiagnosticBuilder::wrong_arg_count("add3", 3, 1, span);
+        // Message says "were" even with 1 because expected is plural
+        assert!(diag.message.contains("expects 3 arguments, but 1 were provided"));
+        assert!(diag.suggestions[0].message.contains("add 2 more arguments"));
+        
+        // Expected 2, found 5
+        let diag = DiagnosticBuilder::wrong_arg_count("add", 2, 5, span);
+        assert!(diag.message.contains("expects 2 arguments, but 5 were provided"));
+        assert!(diag.suggestions[0].message.contains("remove 3 arguments"));
+    }
+
+    #[test]
+    fn test_show_suggestion_with_replacement() {
+        let file = create_temp_file("let x = 42\nprint(x)\nlet y = x + 1");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        let suggestion = Suggestion {
+            message: "Use println instead".to_string(),
+            replacement: Some("println".to_string()),
+            span: Some(Span::new(11, 16, 2, 1)), // "print" on line 2
+        };
+        
+        // This would print to stderr
+        reporter.show_suggestion(&suggestion);
+    }
+
+    #[test]
+    fn test_show_suggestion_without_replacement() {
+        let file = create_temp_file("test");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        let suggestion = Suggestion {
+            message: "Consider adding type annotations".to_string(),
+            replacement: None,
+            span: None,
+        };
+        
+        // This would print to stderr
+        reporter.show_suggestion(&suggestion);
+    }
+
+    #[test]
+    fn test_report_full_diagnostic() {
+        let file = create_temp_file("fn main() {\n    let x = 42\n    println(x);\n}");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        let diagnostic = Diagnostic {
+            level: DiagnosticLevel::Error,
+            message: "Missing semicolon".to_string(),
+            span: Some(Span::new(26, 27, 2, 14)),
+            notes: vec!["Each statement must end with a semicolon".to_string()],
+            suggestions: vec![Suggestion {
+                message: "Add a semicolon here".to_string(),
+                replacement: Some(";".to_string()),
+                span: Some(Span::new(26, 27, 2, 14)),
+            }],
+            context_lines: 1,
+        };
+        
+        // This would print a full diagnostic to stderr
+        reporter.report(&diagnostic);
+    }
+
+    #[test]
+    fn test_report_diagnostic_without_span() {
+        let file = create_temp_file("test");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        let diagnostic = Diagnostic {
+            level: DiagnosticLevel::Warning,
+            message: "Generic warning".to_string(),
+            span: None,
+            notes: vec!["This is a note".to_string()],
+            suggestions: vec![],
+            context_lines: 0,
+        };
+        
+        // Should handle missing span gracefully
+        reporter.report(&diagnostic);
+    }
+
+    #[test]
+    fn test_show_source_snippet_edge_cases() {
+        let file = create_temp_file("single line");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        // Test with context lines greater than file size
+        let span = Span::new(0, 6, 1, 1);
+        reporter.show_source_snippet_with_context(span, 10);
+        
+        // Test at boundaries
+        let file = create_temp_file("line 1\nline 2\nline 3");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        // First line with context
+        let span = Span::new(0, 5, 1, 1);
+        reporter.show_source_snippet_with_context(span, 2);
+        
+        // Last line with context
+        let span = Span::new(14, 19, 3, 1);
+        reporter.show_source_snippet_with_context(span, 2);
+    }
+
+    #[test]
+    fn test_diagnostic_levels() {
+        let file = create_temp_file("test");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        // Test each diagnostic level
+        for level in [DiagnosticLevel::Error, DiagnosticLevel::Warning, 
+                      DiagnosticLevel::Info, DiagnosticLevel::Help] {
+            let diagnostic = Diagnostic {
+                level,
+                message: format!("Test {:?} message", level),
+                span: None,
+                notes: vec![],
+                suggestions: vec![],
+                context_lines: 0,
+            };
+            
+            reporter.report(&diagnostic);
+        }
+    }
+
+    #[test]
+    fn test_tab_handling_in_source() {
+        let file = create_temp_file("fn main() {\n\tlet x = 42;\n\t\tprintln(x);\n}");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        
+        // Span pointing to "println" on line 3 with tabs
+        let span = Span::new(24, 31, 3, 3);
+        reporter.show_source_snippet_with_context(span, 0);
+    }
+}

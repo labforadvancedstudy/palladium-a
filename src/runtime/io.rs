@@ -503,3 +503,512 @@ pub extern "C" fn pd_free_string(str: *mut u8, len: usize) {
         let _ = Box::from_raw(std::slice::from_raw_parts_mut(str, len));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    // Helper function to create a test file
+    fn create_test_file(dir: &TempDir, name: &str, content: &str) -> PathBuf {
+        let path = dir.path().join(name);
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    // Helper function to convert string to C-compatible pointer
+    fn str_to_ptr(s: &str) -> (*const u8, usize) {
+        (s.as_ptr(), s.len())
+    }
+
+    #[test]
+    fn test_file_open_read_mode() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = create_test_file(&temp_dir, "test.txt", "Hello, World!");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::Read) };
+        assert!(!handle.is_null());
+        
+        unsafe {
+            assert_eq!((*handle).mode as u8, FileMode::Read as u8);
+            assert_eq!((*handle).path, path_str);
+            assert!((*handle).file.is_some());
+            
+            let result = pd_file_close(handle);
+            assert_eq!(result, 0);
+        }
+    }
+
+    #[test]
+    fn test_file_open_write_mode() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("new_file.txt");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::Write) };
+        assert!(!handle.is_null());
+        
+        unsafe {
+            assert_eq!((*handle).mode as u8, FileMode::Write as u8);
+            assert!(file_path.exists());
+            
+            let result = pd_file_close(handle);
+            assert_eq!(result, 0);
+        }
+    }
+
+    #[test]
+    fn test_file_open_invalid_utf8() {
+        let invalid_utf8 = [0xFF, 0xFE, 0xFD];
+        let handle = unsafe { pd_file_open(invalid_utf8.as_ptr(), invalid_utf8.len(), FileMode::Read) };
+        assert!(handle.is_null());
+    }
+
+    #[test]
+    fn test_file_open_nonexistent() {
+        let (path_ptr, path_len) = str_to_ptr("/nonexistent/path/file.txt");
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::Read) };
+        assert!(handle.is_null());
+    }
+
+    #[test]
+    fn test_file_read() {
+        let temp_dir = TempDir::new().unwrap();
+        let content = "Test content for reading";
+        let file_path = create_test_file(&temp_dir, "read_test.txt", content);
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::Read) };
+        assert!(!handle.is_null());
+        
+        let mut buffer = vec![0u8; 100];
+        let bytes_read = unsafe { pd_file_read(handle, buffer.as_mut_ptr(), buffer.len()) };
+        assert_eq!(bytes_read, content.len() as i64);
+        
+        let read_content = String::from_utf8_lossy(&buffer[..bytes_read as usize]);
+        assert_eq!(read_content, content);
+        
+        unsafe { pd_file_close(handle); }
+    }
+
+    #[test]
+    fn test_file_read_null_handle() {
+        let mut buffer = vec![0u8; 10];
+        let result = unsafe { pd_file_read(std::ptr::null_mut(), buffer.as_mut_ptr(), buffer.len()) };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_file_read_null_buffer() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = create_test_file(&temp_dir, "test.txt", "content");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::Read) };
+        let result = unsafe { pd_file_read(handle, std::ptr::null_mut(), 10) };
+        assert_eq!(result, -1);
+        
+        unsafe { pd_file_close(handle); }
+    }
+
+    #[test]
+    fn test_file_write() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("write_test.txt");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::Write) };
+        assert!(!handle.is_null());
+        
+        let content = "Written content";
+        let bytes_written = unsafe { pd_file_write(handle, content.as_ptr(), content.len()) };
+        assert_eq!(bytes_written, content.len() as i64);
+        
+        unsafe { pd_file_close(handle); }
+        
+        // Verify content was written
+        let written_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(written_content, content);
+    }
+
+    #[test]
+    fn test_file_write_null_handle() {
+        let content = "test";
+        let result = unsafe { pd_file_write(std::ptr::null_mut(), content.as_ptr(), content.len()) };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_file_seek() {
+        let temp_dir = TempDir::new().unwrap();
+        let content = "0123456789";
+        let file_path = create_test_file(&temp_dir, "seek_test.txt", content);
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::Read) };
+        
+        // Seek from start
+        let pos = unsafe { pd_file_seek(handle, 0, 5) };
+        assert_eq!(pos, 5);
+        
+        // Seek from current
+        let pos = unsafe { pd_file_seek(handle, 1, 2) };
+        assert_eq!(pos, 7);
+        
+        // Seek from end
+        let pos = unsafe { pd_file_seek(handle, 2, -3) };
+        assert_eq!(pos, 7); // 10 - 3 = 7
+        
+        // Invalid whence
+        let pos = unsafe { pd_file_seek(handle, 3, 0) };
+        assert_eq!(pos, -1);
+        
+        unsafe { pd_file_close(handle); }
+    }
+
+    #[test]
+    fn test_file_flush() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("flush_test.txt");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::Write) };
+        
+        let content = "Flush test";
+        unsafe { pd_file_write(handle, content.as_ptr(), content.len()); }
+        
+        let result = unsafe { pd_file_flush(handle) };
+        assert_eq!(result, 0);
+        
+        unsafe { pd_file_close(handle); }
+    }
+
+    #[test]
+    fn test_file_flush_null_handle() {
+        let result = unsafe { pd_file_flush(std::ptr::null_mut()) };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_path_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = create_test_file(&temp_dir, "exists.txt", "");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let result = unsafe { pd_path_exists(path_ptr, path_len) };
+        assert_eq!(result, 1);
+        
+        let (path_ptr, path_len) = str_to_ptr("/nonexistent/file.txt");
+        let result = unsafe { pd_path_exists(path_ptr, path_len) };
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_path_is_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = create_test_file(&temp_dir, "file.txt", "");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let result = unsafe { pd_path_is_file(path_ptr, path_len) };
+        assert_eq!(result, 1);
+        
+        let dir_path = temp_dir.path().to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(dir_path);
+        let result = unsafe { pd_path_is_file(path_ptr, path_len) };
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_path_is_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir_path = temp_dir.path().to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(dir_path);
+        
+        let result = unsafe { pd_path_is_dir(path_ptr, path_len) };
+        assert_eq!(result, 1);
+        
+        let file_path = create_test_file(&temp_dir, "file.txt", "");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        let result = unsafe { pd_path_is_dir(path_ptr, path_len) };
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_create_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let new_dir = temp_dir.path().join("new_directory");
+        let path_str = new_dir.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let result = unsafe { pd_create_dir(path_ptr, path_len) };
+        assert_eq!(result, 0);
+        assert!(new_dir.exists());
+        assert!(new_dir.is_dir());
+        
+        // Try to create again (should fail)
+        let result = unsafe { pd_create_dir(path_ptr, path_len) };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_create_dir_all() {
+        let temp_dir = TempDir::new().unwrap();
+        let nested_dir = temp_dir.path().join("a/b/c/d");
+        let path_str = nested_dir.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let result = unsafe { pd_create_dir_all(path_ptr, path_len) };
+        assert_eq!(result, 0);
+        assert!(nested_dir.exists());
+        assert!(nested_dir.is_dir());
+    }
+
+    #[test]
+    fn test_remove_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir_to_remove = temp_dir.path().join("removeme");
+        fs::create_dir(&dir_to_remove).unwrap();
+        
+        let path_str = dir_to_remove.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let result = unsafe { pd_remove_dir(path_ptr, path_len) };
+        assert_eq!(result, 0);
+        assert!(!dir_to_remove.exists());
+    }
+
+    #[test]
+    fn test_remove_dir_all() {
+        let temp_dir = TempDir::new().unwrap();
+        let nested_dir = temp_dir.path().join("a/b/c");
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::write(nested_dir.join("file.txt"), "content").unwrap();
+        
+        let remove_path = temp_dir.path().join("a");
+        let path_str = remove_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let result = unsafe { pd_remove_dir_all(path_ptr, path_len) };
+        assert_eq!(result, 0);
+        assert!(!remove_path.exists());
+    }
+
+    #[test]
+    fn test_remove_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = create_test_file(&temp_dir, "remove_me.txt", "content");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let result = unsafe { pd_remove_file(path_ptr, path_len) };
+        assert_eq!(result, 0);
+        assert!(!file_path.exists());
+    }
+
+    #[test]
+    fn test_file_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let content = "Test file content";
+        let file_path = create_test_file(&temp_dir, "meta.txt", content);
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let mut metadata = FileMetadata {
+            size: 0,
+            is_file: 0,
+            is_dir: 0,
+            is_symlink: 0,
+            readonly: 0,
+            mode: 0,
+            modified_secs: 0,
+            accessed_secs: 0,
+            created_secs: 0,
+        };
+        
+        let result = unsafe { pd_file_metadata(path_ptr, path_len, &mut metadata) };
+        assert_eq!(result, 0);
+        assert_eq!(metadata.size, content.len() as u64);
+        assert_eq!(metadata.is_file, 1);
+        assert_eq!(metadata.is_dir, 0);
+        assert!(metadata.modified_secs > 0);
+    }
+
+    #[test]
+    fn test_file_metadata_null_ptr() {
+        let (path_ptr, path_len) = str_to_ptr("/some/path");
+        let result = unsafe { pd_file_metadata(path_ptr, path_len, std::ptr::null_mut()) };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_read_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_file(&temp_dir, "file1.txt", "");
+        create_test_file(&temp_dir, "file2.txt", "");
+        fs::create_dir(temp_dir.path().join("subdir")).unwrap();
+        
+        let path_str = temp_dir.path().to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let mut entries: *mut DirEntry = std::ptr::null_mut();
+        let mut count: usize = 0;
+        
+        let result = unsafe { pd_read_dir(path_ptr, path_len, &mut entries, &mut count) };
+        assert_eq!(result, 0);
+        assert_eq!(count, 3);
+        assert!(!entries.is_null());
+        
+        // Check entries
+        unsafe {
+            let entries_slice = std::slice::from_raw_parts(entries, count);
+            let mut found_files = 0;
+            let mut found_dirs = 0;
+            
+            for entry in entries_slice {
+                if entry.is_file == 1 { found_files += 1; }
+                if entry.is_dir == 1 { found_dirs += 1; }
+            }
+            
+            assert_eq!(found_files, 2);
+            assert_eq!(found_dirs, 1);
+            
+            pd_free_dir_entries(entries, count);
+        }
+    }
+
+    #[test]
+    fn test_read_file_to_string() {
+        let temp_dir = TempDir::new().unwrap();
+        let content = "File content to read";
+        let file_path = create_test_file(&temp_dir, "read_string.txt", content);
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let mut out_str: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        
+        let result = unsafe { pd_read_file_to_string(path_ptr, path_len, &mut out_str, &mut out_len) };
+        assert_eq!(result, 0);
+        assert_eq!(out_len, content.len());
+        
+        unsafe {
+            let read_content = std::str::from_utf8(std::slice::from_raw_parts(out_str, out_len)).unwrap();
+            assert_eq!(read_content, content);
+            
+            pd_free_string(out_str, out_len);
+        }
+    }
+
+    #[test]
+    fn test_write_string_to_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("write_string.txt");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let content = "Content to write";
+        let result = unsafe { pd_write_string_to_file(path_ptr, path_len, content.as_ptr(), content.len()) };
+        assert_eq!(result, 0);
+        
+        let written_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(written_content, content);
+    }
+
+    #[test]
+    fn test_io_error_to_code() {
+        use std::io::ErrorKind;
+        
+        let error = io::Error::new(ErrorKind::NotFound, "");
+        assert_eq!(io_error_to_code(&error) as u8, IoErrorCode::NotFound as u8);
+        
+        let error = io::Error::new(ErrorKind::PermissionDenied, "");
+        assert_eq!(io_error_to_code(&error) as u8, IoErrorCode::PermissionDenied as u8);
+        
+        let error = io::Error::new(ErrorKind::AlreadyExists, "");
+        assert_eq!(io_error_to_code(&error) as u8, IoErrorCode::AlreadyExists as u8);
+        
+        let error = io::Error::new(ErrorKind::InvalidInput, "");
+        assert_eq!(io_error_to_code(&error) as u8, IoErrorCode::InvalidInput as u8);
+        
+        let error = io::Error::new(ErrorKind::UnexpectedEof, "");
+        assert_eq!(io_error_to_code(&error) as u8, IoErrorCode::UnexpectedEof as u8);
+        
+        let error = io::Error::new(ErrorKind::Other, "");
+        assert_eq!(io_error_to_code(&error) as u8, IoErrorCode::Other as u8);
+    }
+
+    #[test]
+    fn test_file_close_null_handle() {
+        let result = unsafe { pd_file_close(std::ptr::null_mut()) };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_file_append_mode() {
+        let temp_dir = TempDir::new().unwrap();
+        let initial_content = "Initial content\n";
+        let file_path = create_test_file(&temp_dir, "append.txt", initial_content);
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::Append) };
+        assert!(!handle.is_null());
+        
+        let append_content = "Appended content";
+        unsafe { pd_file_write(handle, append_content.as_ptr(), append_content.len()); }
+        unsafe { pd_file_close(handle); }
+        
+        let final_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(final_content, format!("{}{}", initial_content, append_content));
+    }
+
+    #[test]
+    fn test_file_read_write_mode() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = create_test_file(&temp_dir, "rw.txt", "Original");
+        let path_str = file_path.to_str().unwrap();
+        let (path_ptr, path_len) = str_to_ptr(path_str);
+        
+        let handle = unsafe { pd_file_open(path_ptr, path_len, FileMode::ReadWrite) };
+        assert!(!handle.is_null());
+        
+        // Read original content
+        let mut buffer = vec![0u8; 100];
+        let bytes_read = unsafe { pd_file_read(handle, buffer.as_mut_ptr(), buffer.len()) };
+        assert_eq!(bytes_read, 8);
+        
+        // Seek to beginning and write new content
+        unsafe { pd_file_seek(handle, 0, 0); }
+        let new_content = "Modified";
+        unsafe { pd_file_write(handle, new_content.as_ptr(), new_content.len()); }
+        unsafe { pd_file_close(handle); }
+        
+        let final_content = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(final_content, "Modified");
+    }
+
+    #[test]
+    fn test_free_string_null_ptr() {
+        // Should not panic
+        unsafe { pd_free_string(std::ptr::null_mut(), 0); }
+    }
+
+    #[test]
+    fn test_free_dir_entries_null_ptr() {
+        // Should not panic
+        unsafe { pd_free_dir_entries(std::ptr::null_mut(), 0); }
+    }
+}

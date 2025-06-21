@@ -258,6 +258,12 @@ impl CodeGenerator {
         self.output.push_str("    printf(\"%lld\\n\", value);\n");
         self.output.push_str("}\n\n");
 
+        // Generate panic function wrapper
+        self.output.push_str("void __pd_panic(const char* msg) {\n");
+        self.output.push_str("    fprintf(stderr, \"panic: %s\\n\", msg);\n");
+        self.output.push_str("    abort();\n");
+        self.output.push_str("}\n\n");
+
         // Generate string manipulation functions
 
         // string_len
@@ -818,6 +824,10 @@ impl CodeGenerator {
                 // Futures compile to a struct with state and result
                 format!("Future_{}", self.type_to_c(output))
             }
+            Type::Tuple(_) => {
+                // Tuples not yet supported in C codegen
+                "void*".to_string() // TODO: Generate struct for tuple
+            }
         }
     }
 
@@ -1102,6 +1112,11 @@ impl CodeGenerator {
                 Type::Future { .. } => {
                     return Err(CompileError::Generic(
                         "Future types in structs not yet supported".to_string(),
+                    ));
+                }
+                Type::Tuple(_) => {
+                    return Err(CompileError::Generic(
+                        "Tuple types in structs not yet supported".to_string(),
                     ));
                 }
             };
@@ -1797,6 +1812,7 @@ impl CodeGenerator {
                         match name.as_str() {
                             "print" => self.output.push_str("__pd_print"),
                             "print_int" => self.output.push_str("__pd_print_int"),
+                            "panic" => self.output.push_str("__pd_panic"),
                             "string_len" => self.output.push_str("__pd_string_len"),
                             "string_concat" => self.output.push_str("__pd_string_concat"),
                             "string_eq" => self.output.push_str("__pd_string_eq"),

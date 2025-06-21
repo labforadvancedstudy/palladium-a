@@ -449,3 +449,273 @@ impl Diagnostic {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_span_new() {
+        let span = Span::new(10, 20, 5, 3);
+        assert_eq!(span.start, 10);
+        assert_eq!(span.end, 20);
+        assert_eq!(span.line, 5);
+        assert_eq!(span.column, 3);
+    }
+
+    #[test]
+    fn test_span_dummy() {
+        let span = Span::dummy();
+        assert_eq!(span.start, 0);
+        assert_eq!(span.end, 0);
+        assert_eq!(span.line, 0);
+        assert_eq!(span.column, 0);
+    }
+
+    #[test]
+    fn test_span_extend_to() {
+        let span1 = Span::new(10, 20, 5, 3);
+        let span2 = Span::new(15, 25, 6, 5);
+        let extended = span1.extend_to(&span2);
+        
+        assert_eq!(extended.start, 10);
+        assert_eq!(extended.end, 25);
+        assert_eq!(extended.line, 5);
+        assert_eq!(extended.column, 3);
+    }
+
+    #[test]
+    fn test_span_extend_to_same_line() {
+        let span1 = Span::new(10, 20, 5, 10);
+        let span2 = Span::new(5, 15, 5, 5);
+        let extended = span1.extend_to(&span2);
+        
+        assert_eq!(extended.start, 5);
+        assert_eq!(extended.end, 20);
+        assert_eq!(extended.line, 5);
+        assert_eq!(extended.column, 5);
+    }
+
+    #[test]
+    fn test_compile_error_display() {
+        let err = CompileError::UnexpectedChar {
+            ch: '$',
+            line: 10,
+            col: 5,
+            span: None,
+        };
+        assert_eq!(err.to_string(), "Unexpected character '$' at line 10, column 5");
+
+        let err = CompileError::UnterminatedString {
+            line: 42,
+            span: None,
+        };
+        assert_eq!(err.to_string(), "Unterminated string literal at line 42");
+
+        let err = CompileError::TypeMismatch {
+            expected: "int".to_string(),
+            found: "string".to_string(),
+            span: None,
+        };
+        assert_eq!(err.to_string(), "Type mismatch: expected int, found string");
+    }
+
+    #[test]
+    fn test_io_error_conversion() {
+        use std::io;
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let compile_err: CompileError = io_err.into();
+        assert!(matches!(compile_err, CompileError::IoError(_)));
+    }
+
+    #[test]
+    fn test_diagnostic_builder() {
+        let diag = Diagnostic::error("test error")
+            .with_span(Span::new(0, 10, 1, 1))
+            .with_note("this is a note")
+            .with_suggestion("fix it like this", Some("fixed".to_string()))
+            .with_context_lines(5);
+
+        assert!(matches!(diag.level, DiagnosticLevel::Error));
+        assert_eq!(diag.message, "test error");
+        assert_eq!(diag.notes.len(), 1);
+        assert_eq!(diag.notes[0], "this is a note");
+        assert_eq!(diag.suggestions.len(), 1);
+        assert_eq!(diag.suggestions[0].message, "fix it like this");
+        assert_eq!(diag.suggestions[0].replacement, Some("fixed".to_string()));
+        assert_eq!(diag.context_lines, 5);
+    }
+
+    #[test]
+    fn test_unexpected_char_diagnostic() {
+        let err = CompileError::UnexpectedChar {
+            ch: '€',
+            line: 10,
+            col: 5,
+            span: Some(Span::new(100, 101, 10, 5)),
+        };
+        
+        let diag = err.to_diagnostic();
+        assert_eq!(diag.message, "Unexpected character '€' at line 10, column 5");
+        assert_eq!(diag.notes.len(), 1);
+        assert_eq!(diag.suggestions.len(), 1);
+        assert!(diag.span.is_some());
+    }
+
+    #[test]
+    fn test_type_mismatch_suggestions() {
+        // int to string
+        let err = CompileError::TypeMismatch {
+            expected: "string".to_string(),
+            found: "int".to_string(),
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.suggestions.iter().any(|s| s.message.contains("to_string()")));
+
+        // string to int
+        let err = CompileError::TypeMismatch {
+            expected: "int".to_string(),
+            found: "string".to_string(),
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.suggestions.iter().any(|s| s.message.contains("parse_int()")));
+
+        // bool suggestion
+        let err = CompileError::TypeMismatch {
+            expected: "bool".to_string(),
+            found: "int".to_string(),
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.suggestions.iter().any(|s| s.message.contains("true") && s.message.contains("false")));
+    }
+
+    #[test]
+    fn test_undefined_function_suggestions() {
+        // print -> println
+        let err = CompileError::UndefinedFunction {
+            name: "print".to_string(),
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.suggestions.iter().any(|s| s.replacement == Some("println".to_string())));
+
+        // printf -> println
+        let err = CompileError::UndefinedFunction {
+            name: "printf".to_string(),
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.suggestions.iter().any(|s| s.replacement == Some("println".to_string())));
+
+        // generic function
+        let err = CompileError::UndefinedFunction {
+            name: "myFunc".to_string(),
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.suggestions.iter().any(|s| s.message.contains("fn myFunc()")));
+    }
+
+    #[test]
+    fn test_argument_count_mismatch() {
+        // Too few arguments
+        let err = CompileError::ArgumentCountMismatch {
+            name: "add".to_string(),
+            expected: 2,
+            found: 1,
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.message.contains("expects 2 arguments, but 1 was provided"));
+        assert!(diag.suggestions.iter().any(|s| s.message.contains("Add 1 more argument")));
+
+        // Too many arguments
+        let err = CompileError::ArgumentCountMismatch {
+            name: "print".to_string(),
+            expected: 1,
+            found: 3,
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.message.contains("expects 1 argument, but 3 were provided"));
+        assert!(diag.suggestions.iter().any(|s| s.message.contains("Remove 2 arguments")));
+    }
+
+    #[test]
+    fn test_missing_semicolon_diagnostic() {
+        let err = CompileError::MissingSemicolon {
+            span: Some(Span::new(50, 51, 10, 20)),
+        };
+        let diag = err.to_diagnostic();
+        assert_eq!(diag.message, "Missing semicolon after statement");
+        assert!(diag.suggestions.iter().any(|s| s.replacement == Some(";".to_string())));
+    }
+
+    #[test]
+    fn test_non_exhaustive_match_suggestions() {
+        // Single missing pattern
+        let err = CompileError::NonExhaustiveMatch {
+            missing_patterns: vec!["None".to_string()],
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.suggestions.iter().any(|s| s.message.contains("Add a pattern for: None")));
+
+        // Multiple missing patterns (<=3)
+        let err = CompileError::NonExhaustiveMatch {
+            missing_patterns: vec!["Red".to_string(), "Green".to_string(), "Blue".to_string()],
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.suggestions.iter().any(|s| s.message.contains("Red, Green, Blue")));
+
+        // Many missing patterns (>3)
+        let err = CompileError::NonExhaustiveMatch {
+            missing_patterns: vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string(), "E".to_string()],
+            span: None,
+        };
+        let diag = err.to_diagnostic();
+        assert!(diag.suggestions.iter().any(|s| s.message.contains("wildcard pattern (_)")));
+    }
+
+    #[test]
+    fn test_borrow_checker_errors() {
+        let err = CompileError::UseOfMovedValue {
+            name: "x".to_string(),
+            span: Some(Span::new(10, 11, 5, 5)),
+        };
+        assert_eq!(err.to_string(), "Use of moved value: x");
+
+        let err = CompileError::UseOfUninitializedValue {
+            name: "y".to_string(),
+            span: None,
+        };
+        assert_eq!(err.to_string(), "Use of uninitialized value: y");
+
+        let err = CompileError::CannotMoveOutOfBorrowedContent {
+            span: None,
+        };
+        assert_eq!(err.to_string(), "Cannot move out of borrowed content");
+    }
+
+    #[test]
+    fn test_unsafe_operation_error() {
+        let err = CompileError::UnsafeOperation {
+            operation: "raw pointer dereference".to_string(),
+            span: Span::new(0, 10, 1, 1),
+        };
+        assert_eq!(err.to_string(), "Unsafe operation 'raw pointer dereference' requires unsafe block");
+    }
+
+    #[test]
+    fn test_generic_error() {
+        let err = CompileError::Generic("Something went wrong".to_string());
+        assert_eq!(err.to_string(), "Something went wrong");
+        
+        let diag = err.to_diagnostic();
+        assert_eq!(diag.message, "Something went wrong");
+    }
+}

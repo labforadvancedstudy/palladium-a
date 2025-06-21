@@ -1,0 +1,51 @@
+// Testing unsupported features
+
+// 1. Generics - not yet supported
+// struct Vec<T> {
+//     data: [T; 100],
+//     len: i64,
+// }
+
+// 2. Traits - not yet supported
+// trait Display {
+//     fn display(&self);
+// }
+
+// 3. Pattern Matching - partially supported
+enum Result {
+    Ok(i64),
+    Err(String),
+}
+
+fn divide(a: i64, b: i64) -> Result {
+    if b == 0 {
+        return Result::Err("Division by zero");
+    }
+    return Result::Ok(a / b);
+}
+
+// 4. Closures - not yet supported
+// let add = |x, y| x + y;
+
+// 5. async/await - not yet supported
+// async fn fetch_data() -> String {
+//     await some_io_operation()
+// }
+
+fn main() {
+    // Enum and simple pattern matching are supported
+    let result = divide(10, 2);
+    match result {
+        Result::Ok(value) => {
+            print("Result: ");
+            print_int(value);
+        }
+        Result::Err(msg) => {
+            print("Error: ");
+            print(msg);
+        }
+    }
+    
+    // Advanced features are not yet supported
+    print("Note: Generics, traits, closures, and async/await are not yet supported");
+}

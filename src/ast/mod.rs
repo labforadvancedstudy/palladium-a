@@ -242,6 +242,8 @@ pub enum Type {
     Future {
         output: Box<Type>,
     },
+    /// Tuple type (T1, T2, ...)
+    Tuple(Vec<Type>),
 }
 
 /// Statements
@@ -670,6 +672,16 @@ impl std::fmt::Display for Type {
                 write!(f, "{}", inner)
             }
             Type::Future { output } => write!(f, "Future<{}>", output),
+            Type::Tuple(types) => {
+                write!(f, "(")?;
+                for (i, ty) in types.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", ty)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }

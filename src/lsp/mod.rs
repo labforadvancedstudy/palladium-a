@@ -10,6 +10,9 @@ pub mod references;
 pub mod server;
 pub mod symbols;
 
+#[cfg(test)]
+mod server_test;
+
 use crate::errors::{CompileError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -132,7 +135,7 @@ pub struct Diagnostic {
 }
 
 /// Diagnostic severity
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum DiagnosticSeverity {
     Error = 1,

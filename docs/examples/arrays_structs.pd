@@ -1,0 +1,47 @@
+// 배열과 구조체 예제
+
+// 구조체 정의
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Person {
+    age: i64,
+    id: i64,
+}
+
+fn main() {
+    // 배열 선언과 사용
+    let numbers = [1, 2, 3, 4, 5];
+    print("Array elements:");
+    for i in 0..5 {
+        print_int(numbers[i]);
+    }
+    
+    // 배열 수정
+    let mut scores = [0; 5];  // 5개의 0으로 초기화
+    scores[0] = 100;
+    scores[1] = 95;
+    scores[2] = 87;
+    print("Scores:");
+    for i in 0..3 {
+        print_int(scores[i]);
+    }
+    
+    // 구조체 사용
+    let p = Point { x: 10, y: 20 };
+    print("Point x:");
+    print_int(p.x);
+    print("Point y:");
+    print_int(p.y);
+    
+    // 구조체 수정
+    let mut person = Person { age: 25, id: 1001 };
+    print("Initial age:");
+    print_int(person.age);
+    
+    person.age = person.age + 1;
+    print("After birthday:");
+    print_int(person.age);
+}

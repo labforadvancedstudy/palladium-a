@@ -30,6 +30,7 @@ pub enum CheckerType {
         name: String,
         args: Vec<GenericArgValue>,
     },
+    Tuple(Vec<CheckerType>),
 }
 
 /// Array size value for type checking
@@ -118,6 +119,9 @@ impl From<&crate::ast::Type> for CheckerType {
                     args: vec![GenericArgValue::Type(CheckerType::from(output.as_ref()))],
                 }
             }
+            crate::ast::Type::Tuple(types) => {
+                CheckerType::Tuple(types.iter().map(CheckerType::from).collect())
+            }
         }
     }
 }
@@ -161,6 +165,16 @@ impl std::fmt::Display for CheckerType {
                     }
                 }
                 write!(f, ">")
+            }
+            CheckerType::Tuple(types) => {
+                write!(f, "(")?;
+                for (i, ty) in types.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", ty)?;
+                }
+                write!(f, ")")
             }
         }
     }
@@ -322,6 +336,8 @@ pub struct TypeChecker {
     error_helper: TypeErrorHelper,
     /// Unsafe block depth counter (for tracking unsafe context)
     unsafe_depth: usize,
+    /// Current impl type (for resolving Self types)
+    current_impl_type: Option<String>,
 }
 
 impl Default for TypeChecker {
@@ -344,6 +360,12 @@ impl TypeChecker {
         functions.insert(
             "print_int".to_string(),
             CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Unit)),
+        );
+
+        // panic built-in function
+        functions.insert(
+            "panic".to_string(),
+            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Unit)),
         );
 
         // String manipulation functions
@@ -528,6 +550,7 @@ impl TypeChecker {
             loop_depth: 0,
             error_helper: TypeErrorHelper::new(),
             unsafe_depth: 0,
+            current_impl_type: None,
         }
     }
 
@@ -928,10 +951,27 @@ impl TypeChecker {
                     // No body to check
                 }
                 Item::Impl(impl_block) => {
+                    // Set current impl type for Self resolution
+                    self.current_impl_type = Some(match &impl_block.for_type {
+                        Type::Custom(name) => name.clone(),
+                        Type::Generic { name, .. } => name.clone(),
+                        _ => "Unknown".to_string(), // Shouldn't happen for impl blocks
+                    });
+                    
+                    // If this is a generic impl, skip type checking for now
+                    // Generic impls will be checked when instantiated
+                    if !impl_block.type_params.is_empty() {
+                        self.current_impl_type = None;
+                        continue;
+                    }
+                    
                     // Type check impl block methods
                     for method in &impl_block.methods {
                         self.check_function(method)?;
                     }
+                    
+                    // Clear current impl type
+                    self.current_impl_type = None;
                 }
                 Item::Macro(_) => {
                     // Macros are handled during expansion phase, skip here
@@ -946,6 +986,21 @@ impl TypeChecker {
     fn ast_type_to_checker_type(&self, ast_type: &crate::ast::Type) -> CheckerType {
         match ast_type {
             crate::ast::Type::Custom(name) => {
+                // Handle Self type
+                if name == "Self" {
+                    if let Some(impl_type) = &self.current_impl_type {
+                        // Check if it's an enum or struct
+                        if self.enums.contains_key(impl_type) {
+                            return CheckerType::Enum(impl_type.clone());
+                        } else {
+                            return CheckerType::Struct(impl_type.clone());
+                        }
+                    } else {
+                        // Self used outside of impl block - this is an error but return a placeholder
+                        return CheckerType::Struct("Self".to_string());
+                    }
+                }
+                
                 // First check if it's a type alias
                 if let Some(aliased_type) = self.type_aliases.get(name) {
                     // Recursively resolve the aliased type
@@ -2947,6 +3002,13 @@ impl TypeChecker {
                     })
                     .collect();
                 format!("{}<{}>", name, arg_strs.join(", "))
+            }
+            CheckerType::Tuple(types) => {
+                let type_strs: Vec<String> = types
+                    .iter()
+                    .map(|t| self.checker_type_to_string(t))
+                    .collect();
+                format!("({})", type_strs.join(", "))
             }
         }
     }

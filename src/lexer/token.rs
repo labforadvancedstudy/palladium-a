@@ -96,6 +96,9 @@ pub enum Token {
     #[token("Self")]
     SelfType,
 
+    #[token("self")]
+    SelfParam,
+
     #[token("type")]
     Type,
 
@@ -328,6 +331,7 @@ impl std::fmt::Display for Token {
             Token::Const => write!(f, "'const'"),
             Token::Async => write!(f, "'async'"),
             Token::Await => write!(f, "'await'"),
+            Token::SelfParam => write!(f, "'self'"),
         }
     }
 }

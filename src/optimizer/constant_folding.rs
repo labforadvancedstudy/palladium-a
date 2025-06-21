@@ -97,6 +97,12 @@ impl OptimizationPass for ConstantFoldingPass {
             Stmt::Assign { value, .. } => {
                 self.optimize_expression(value)?;
             }
+            Stmt::For { iter, body, .. } => {
+                self.optimize_expression(iter)?;
+                for stmt in body {
+                    self.optimize_statement(stmt)?;
+                }
+            }
             _ => {}
         }
 
@@ -166,6 +172,39 @@ impl OptimizationPass for ConstantFoldingPass {
                             self.changes_made += 1;
                             return Ok(true);
                         }
+                    }
+                    _ => {}
+                }
+
+                // Short-circuit evaluation
+                match (left.as_ref(), *op) {
+                    // false && _ => false
+                    (Expr::Bool(false), BinOp::And) => {
+                        *expr = Expr::Bool(false);
+                        self.changes_made += 1;
+                        return Ok(true);
+                    }
+                    // true || _ => true
+                    (Expr::Bool(true), BinOp::Or) => {
+                        *expr = Expr::Bool(true);
+                        self.changes_made += 1;
+                        return Ok(true);
+                    }
+                    _ => {}
+                }
+                
+                match (*op, right.as_ref()) {
+                    // _ && false => false
+                    (BinOp::And, Expr::Bool(false)) => {
+                        *expr = Expr::Bool(false);
+                        self.changes_made += 1;
+                        return Ok(true);
+                    }
+                    // _ || true => true
+                    (BinOp::Or, Expr::Bool(true)) => {
+                        *expr = Expr::Bool(true);
+                        self.changes_made += 1;
+                        return Ok(true);
                     }
                     _ => {}
                 }

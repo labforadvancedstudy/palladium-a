@@ -61,7 +61,7 @@ impl LLVMCodeGenerator {
         let ir = self.generate_ir(program)?;
 
         // Write to .ll file
-        let output_path = PathBuf::from("build_output").join(format!("{}.ll", self.module_name));
+        let output_path = PathBuf::from("target/build").join(format!("{}.ll", self.module_name));
         std::fs::write(&output_path, ir)?;
 
         println!("   Generated LLVM IR: {}", output_path.display());

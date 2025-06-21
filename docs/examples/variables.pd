@@ -1,0 +1,23 @@
+// 변수와 타입
+fn main() {
+    // 정수형 변수
+    let x = 42;
+    let y: i64 = 100;
+    
+    print("x = ");
+    print_int(x);
+    print("y = ");
+    print_int(y);
+    
+    // 변경 가능한 변수
+    let mut count = 0;
+    count = count + 1;
+    count = count + 1;
+    
+    print("count = ");
+    print_int(count);
+    
+    // 문자열
+    let message = "Hello from Palladium!";
+    print(message);
+}

@@ -1424,7 +1424,7 @@ impl LLVMTextBackend {
 
     /// Check if a list of statements ends with a terminator
     fn has_terminator(stmts: &[Stmt]) -> bool {
-        stmts.last().map_or(false, Self::is_terminator)
+        stmts.last().is_some_and(Self::is_terminator)
     }
 
     /// Write the generated LLVM IR to a file

@@ -1,0 +1,36 @@
+// 제어 흐름 예제
+fn main() {
+    // if-else 문
+    let x = 10;
+    if x > 5 {
+        print("x is greater than 5");
+    } else {
+        print("x is less than or equal to 5");
+    }
+    
+    // while 루프
+    print("Counting down:");
+    let mut i = 5;
+    while i > 0 {
+        print_int(i);
+        i = i - 1;
+    }
+    
+    // for 루프
+    print("For loop:");
+    for j in 0..5 {
+        print_int(j);
+    }
+    
+    // 중첩된 제어 흐름
+    for x in 1..4 {
+        for y in 1..4 {
+            let product = x * y;
+            print_int(x);
+            print(" * ");
+            print_int(y);
+            print(" = ");
+            print_int(product);
+        }
+    }
+}

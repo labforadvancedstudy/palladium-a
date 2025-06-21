@@ -244,8 +244,8 @@ impl Driver {
         // First compile to C (error reporting handled in compile_file)
         let c_path = self.compile_file(path)?;
 
-        // Create build_output directory if it doesn't exist
-        let build_dir = PathBuf::from("build_output");
+        // Create build directory if it doesn't exist
+        let build_dir = PathBuf::from("target/build");
         if !build_dir.exists() {
             fs::create_dir_all(&build_dir).map_err(CompileError::IoError)?;
         }

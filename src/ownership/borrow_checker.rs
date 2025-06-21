@@ -838,6 +838,7 @@ impl BorrowChecker {
     }
 
     /// Check if a type is Copy (doesn't move on assignment)
+    #[allow(clippy::only_used_in_recursion)]
     fn is_copy_type(&self, ty: &Type) -> bool {
         match ty {
             Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool => true,
@@ -847,6 +848,10 @@ impl BorrowChecker {
             Type::TypeParam(_) => false, // Conservative: assume not Copy
             Type::Generic { .. } => false, // Conservative: assume not Copy
             Type::Future { .. } => false, // Futures are not Copy
+            Type::Tuple(types) => {
+                // Tuple is Copy if all its elements are Copy
+                types.iter().all(|t| self.is_copy_type(t))
+            }
         }
     }
 

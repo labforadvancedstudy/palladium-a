@@ -96,6 +96,7 @@ criterion = "0.5"
 
 [[bench]]
 name = "compiler_bench"
+path = "benchmarks/rust/compiler_bench.rs"
 harness = false
 
 [profile.release]

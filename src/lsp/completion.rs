@@ -607,6 +607,10 @@ impl LanguageServer {
                 }
             }
             Type::TypeParam(name) => name.clone(),
+            Type::Tuple(types) => {
+                let type_strs: Vec<String> = types.iter().map(|t| self.type_to_string(t)).collect();
+                format!("({})", type_strs.join(", "))
+            }
         }
     }
 }

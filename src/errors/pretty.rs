@@ -195,17 +195,28 @@ pub fn format_diagnostic(diagnostic: &Diagnostic, style: &ErrorStyle) -> String 
 
     // Format the main error message
     let (level_text, level_start, level_end) = style.level_style(diagnostic.level);
-    write!(
-        &mut output,
-        "{}{}{}: {}{}{}",
-        level_start,
-        level_text,
-        level_end,
-        colors::BOLD,
-        diagnostic.message,
-        colors::RESET
-    )
-    .unwrap();
+    
+    if style.use_color {
+        write!(
+            &mut output,
+            "{}{}{}: {}{}{}",
+            level_start,
+            level_text,
+            level_end,
+            colors::BOLD,
+            diagnostic.message,
+            colors::RESET
+        )
+        .unwrap();
+    } else {
+        write!(
+            &mut output,
+            "{}: {}",
+            level_text,
+            diagnostic.message
+        )
+        .unwrap();
+    }
 
     output
 }
@@ -274,4 +285,375 @@ pub fn boxed_message(title: &str, content: &str, style: &ErrorStyle) -> String {
     .unwrap();
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_style_default() {
+        let style = ErrorStyle::default();
+        assert!(style.use_color);
+        assert!(style.use_unicode);
+        assert!(!style.compact);
+    }
+
+    #[test]
+    fn test_level_style_with_color() {
+        let style = ErrorStyle {
+            use_color: true,
+            use_unicode: true,
+            compact: false,
+        };
+
+        let (text, start, end) = style.level_style(DiagnosticLevel::Error);
+        assert_eq!(text, "error");
+        assert!(start.contains(colors::BRIGHT_RED));
+        assert_eq!(end, colors::RESET);
+
+        let (text, start, end) = style.level_style(DiagnosticLevel::Warning);
+        assert_eq!(text, "warning");
+        assert!(start.contains(colors::BRIGHT_YELLOW));
+        assert_eq!(end, colors::RESET);
+
+        let (text, start, end) = style.level_style(DiagnosticLevel::Info);
+        assert_eq!(text, "info");
+        assert!(start.contains(colors::BRIGHT_CYAN));
+        assert_eq!(end, colors::RESET);
+
+        let (text, start, end) = style.level_style(DiagnosticLevel::Help);
+        assert_eq!(text, "help");
+        assert!(start.contains(colors::BRIGHT_GREEN));
+        assert_eq!(end, colors::RESET);
+    }
+
+    #[test]
+    fn test_level_style_without_color() {
+        let style = ErrorStyle {
+            use_color: false,
+            use_unicode: true,
+            compact: false,
+        };
+
+        let (text, start, end) = style.level_style(DiagnosticLevel::Error);
+        assert_eq!(text, "error");
+        assert_eq!(start, "");
+        assert_eq!(end, "");
+
+        let (text, start, end) = style.level_style(DiagnosticLevel::Warning);
+        assert_eq!(text, "warning");
+        assert_eq!(start, "");
+        assert_eq!(end, "");
+    }
+
+    #[test]
+    fn test_path_style() {
+        let style_with_color = ErrorStyle {
+            use_color: true,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_with_color.path_style();
+        assert!(start.contains(colors::BLUE));
+        assert_eq!(end, colors::RESET);
+
+        let style_without_color = ErrorStyle {
+            use_color: false,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_without_color.path_style();
+        assert_eq!(start, "");
+        assert_eq!(end, "");
+    }
+
+    #[test]
+    fn test_line_number_style() {
+        let style_with_color = ErrorStyle {
+            use_color: true,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_with_color.line_number_style();
+        assert_eq!(start, colors::BLUE);
+        assert_eq!(end, colors::RESET);
+
+        let style_without_color = ErrorStyle {
+            use_color: false,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_without_color.line_number_style();
+        assert_eq!(start, "");
+        assert_eq!(end, "");
+    }
+
+    #[test]
+    fn test_error_style() {
+        let style_with_color = ErrorStyle {
+            use_color: true,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_with_color.error_style();
+        assert!(start.contains(colors::BRIGHT_RED));
+        assert_eq!(end, colors::RESET);
+
+        let style_without_color = ErrorStyle {
+            use_color: false,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_without_color.error_style();
+        assert_eq!(start, "");
+        assert_eq!(end, "");
+    }
+
+    #[test]
+    fn test_note_style() {
+        let style_with_color = ErrorStyle {
+            use_color: true,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_with_color.note_style();
+        assert!(start.contains(colors::BRIGHT_CYAN));
+        assert_eq!(end, colors::RESET);
+    }
+
+    #[test]
+    fn test_suggestion_style() {
+        let style_with_color = ErrorStyle {
+            use_color: true,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_with_color.suggestion_style();
+        assert!(start.contains(colors::BRIGHT_GREEN));
+        assert_eq!(end, colors::RESET);
+    }
+
+    #[test]
+    fn test_dim_style() {
+        let style_with_color = ErrorStyle {
+            use_color: true,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_with_color.dim_style();
+        assert_eq!(start, colors::DIM);
+        assert_eq!(end, colors::RESET);
+
+        let style_without_color = ErrorStyle {
+            use_color: false,
+            use_unicode: true,
+            compact: false,
+        };
+        let (start, end) = style_without_color.dim_style();
+        assert_eq!(start, "");
+        assert_eq!(end, "");
+    }
+
+    #[test]
+    fn test_get_chars_unicode() {
+        let style = ErrorStyle {
+            use_color: true,
+            use_unicode: true,
+            compact: false,
+        };
+        let chars = style.get_chars();
+        assert_eq!(chars.vertical, "│");
+        assert_eq!(chars.horizontal, "─");
+        assert_eq!(chars.top_left, "┌");
+        assert_eq!(chars.arrow, "→");
+        assert_eq!(chars.pointer_start, "^");
+        assert_eq!(chars.pointer_line, "─");
+    }
+
+    #[test]
+    fn test_get_chars_ascii() {
+        let style = ErrorStyle {
+            use_color: true,
+            use_unicode: false,
+            compact: false,
+        };
+        let chars = style.get_chars();
+        assert_eq!(chars.vertical, "|");
+        assert_eq!(chars.horizontal, "-");
+        assert_eq!(chars.top_left, "+");
+        assert_eq!(chars.arrow, "->");
+        assert_eq!(chars.pointer_start, "^");
+        assert_eq!(chars.pointer_line, "~");
+    }
+
+    #[test]
+    fn test_drawing_chars_unicode() {
+        let chars = DrawingChars::unicode();
+        assert_eq!(chars.vertical, "│");
+        assert_eq!(chars.horizontal, "─");
+        assert_eq!(chars.top_left, "┌");
+        assert_eq!(chars.arrow, "→");
+        assert_eq!(chars.pointer_start, "^");
+        assert_eq!(chars.pointer_line, "─");
+    }
+
+    #[test]
+    fn test_drawing_chars_ascii() {
+        let chars = DrawingChars::ascii();
+        assert_eq!(chars.vertical, "|");
+        assert_eq!(chars.horizontal, "-");
+        assert_eq!(chars.top_left, "+");
+        assert_eq!(chars.arrow, "->");
+        assert_eq!(chars.pointer_start, "^");
+        assert_eq!(chars.pointer_line, "~");
+    }
+
+    #[test]
+    fn test_format_diagnostic() {
+        let diagnostic = Diagnostic {
+            level: DiagnosticLevel::Error,
+            message: "Test error message".to_string(),
+            span: None,
+            notes: vec![],
+            suggestions: vec![],
+            context_lines: 2,
+        };
+
+        let style = ErrorStyle {
+            use_color: false,
+            use_unicode: true,
+            compact: false,
+        };
+
+        let formatted = format_diagnostic(&diagnostic, &style);
+        assert!(formatted.contains("error: Test error message"));
+    }
+
+    #[test]
+    fn test_format_diagnostic_with_color() {
+        let diagnostic = Diagnostic {
+            level: DiagnosticLevel::Warning,
+            message: "Test warning".to_string(),
+            span: None,
+            notes: vec![],
+            suggestions: vec![],
+            context_lines: 2,
+        };
+
+        let style = ErrorStyle {
+            use_color: true,
+            use_unicode: true,
+            compact: false,
+        };
+
+        let formatted = format_diagnostic(&diagnostic, &style);
+        assert!(formatted.contains("warning"));
+        assert!(formatted.contains("Test warning"));
+        assert!(formatted.contains(colors::RESET));
+    }
+
+    #[test]
+    fn test_boxed_message_simple() {
+        let style = ErrorStyle {
+            use_color: false,
+            use_unicode: false,
+            compact: false,
+        };
+
+        let boxed = boxed_message("Title", "Content line 1\nContent line 2", &style);
+        
+        // Check structure
+        assert!(boxed.contains("+--"));
+        assert!(boxed.contains(" Title"));
+        assert!(boxed.contains("| Content line 1"));
+        assert!(boxed.contains("| Content line 2"));
+    }
+
+    #[test]
+    fn test_boxed_message_unicode() {
+        let style = ErrorStyle {
+            use_color: false,
+            use_unicode: true,
+            compact: false,
+        };
+
+        let boxed = boxed_message("Unicode Box", "Test content", &style);
+        
+        // Check unicode characters
+        assert!(boxed.contains("┌"));
+        assert!(boxed.contains("─"));
+        assert!(boxed.contains("│"));
+    }
+
+    #[test]
+    fn test_boxed_message_empty_title() {
+        let style = ErrorStyle {
+            use_color: false,
+            use_unicode: false,
+            compact: false,
+        };
+
+        let boxed = boxed_message("", "Just content", &style);
+        
+        // Should not have title separator when title is empty
+        // Count the horizontal lines - should only have top and bottom borders
+        let horizontal_count = boxed.matches("+--").count();
+        assert_eq!(horizontal_count, 2); // Only top and bottom borders
+        assert!(boxed.contains("| Just content"));
+    }
+
+    #[test]
+    fn test_boxed_message_multiline() {
+        let style = ErrorStyle {
+            use_color: false,
+            use_unicode: false,
+            compact: false,
+        };
+
+        let content = "First line\nSecond line\nThird line with more text";
+        let boxed = boxed_message("Multi", content, &style);
+        
+        // Check all lines are present
+        assert!(boxed.contains("| First line"));
+        assert!(boxed.contains("| Second line"));
+        assert!(boxed.contains("| Third line with more text"));
+        
+        // Check padding is correct
+        let lines: Vec<&str> = boxed.lines().collect();
+        let content_lines: Vec<&str> = lines.iter()
+            .filter(|l| l.contains("| ") && !l.contains("Multi"))
+            .copied()
+            .collect();
+        
+        // All content lines should have the same length
+        if !content_lines.is_empty() {
+            let first_len = content_lines[0].len();
+            assert!(content_lines.iter().all(|l| l.len() == first_len));
+        }
+    }
+
+    #[test]
+    fn test_colors_constants() {
+        // Just verify the color constants are defined correctly
+        assert_eq!(colors::RESET, "\x1b[0m");
+        assert_eq!(colors::BOLD, "\x1b[1m");
+        assert_eq!(colors::DIM, "\x1b[2m");
+        assert_eq!(colors::UNDERLINE, "\x1b[4m");
+        
+        assert_eq!(colors::RED, "\x1b[31m");
+        assert_eq!(colors::GREEN, "\x1b[32m");
+        assert_eq!(colors::YELLOW, "\x1b[33m");
+        assert_eq!(colors::BLUE, "\x1b[34m");
+        assert_eq!(colors::MAGENTA, "\x1b[35m");
+        assert_eq!(colors::CYAN, "\x1b[36m");
+        assert_eq!(colors::WHITE, "\x1b[37m");
+        
+        assert_eq!(colors::BRIGHT_RED, "\x1b[91m");
+        assert_eq!(colors::BRIGHT_GREEN, "\x1b[92m");
+        assert_eq!(colors::BRIGHT_YELLOW, "\x1b[93m");
+        assert_eq!(colors::BRIGHT_BLUE, "\x1b[94m");
+        assert_eq!(colors::BRIGHT_MAGENTA, "\x1b[95m");
+        assert_eq!(colors::BRIGHT_CYAN, "\x1b[96m");
+    }
 }

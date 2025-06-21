@@ -433,35 +433,76 @@ impl Parser {
 
         if !self.check(&Token::RightParen) {
             loop {
-                // Check for optional 'mut' keyword
-                let mutable = if self.check(&Token::Mut) {
-                    self.advance()?; // consume 'mut'
-                    true
-                } else {
-                    false
-                };
-
-                // Parse parameter name
-                let param_name = match self.advance()? {
-                    (Token::Identifier(name), _) => name,
-                    (token, _) => {
+                // Check for self parameter variants
+                if self.check(&Token::SelfParam) {
+                    self.advance()?; // consume 'self'
+                    params.push(Param {
+                        name: "self".to_string(),
+                        ty: Type::Custom("Self".to_string()),
+                        mutable: false,
+                    });
+                } else if self.check(&Token::Ampersand) {
+                    self.advance()?; // consume '&'
+                    
+                    // Check for optional 'mut' after '&'
+                    let mutable = if self.check(&Token::Mut) {
+                        self.advance()?; // consume 'mut'
+                        true
+                    } else {
+                        false
+                    };
+                    
+                    // Now must be 'self'
+                    if self.check(&Token::SelfParam) {
+                        self.advance()?; // consume 'self'
+                        params.push(Param {
+                            name: "self".to_string(),
+                            ty: Type::Reference {
+                                lifetime: None,
+                                mutable,
+                                inner: Box::new(Type::Custom("Self".to_string())),
+                            },
+                            mutable: false,
+                        });
+                    } else {
                         return Err(CompileError::UnexpectedToken {
-                            expected: "parameter name".to_string(),
-                            found: token.to_string(),
+                            expected: "self".to_string(),
+                            found: self.peek()?.to_string(),
                             span: self.current_span(),
                         });
                     }
-                };
+                } else {
+                    // Regular parameter parsing
+                    // Check for optional 'mut' keyword
+                    let mutable = if self.check(&Token::Mut) {
+                        self.advance()?; // consume 'mut'
+                        true
+                    } else {
+                        false
+                    };
 
-                // Parse parameter type
-                self.consume(Token::Colon, "Expected ':' after parameter name")?;
-                let param_type = self.parse_type()?;
+                    // Parse parameter name
+                    let param_name = match self.advance()? {
+                        (Token::Identifier(name), _) => name,
+                        (token, _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "parameter name".to_string(),
+                                found: token.to_string(),
+                                span: self.current_span(),
+                            });
+                        }
+                    };
 
-                params.push(Param {
-                    name: param_name,
-                    ty: param_type,
-                    mutable,
-                });
+                    // Parse parameter type
+                    self.consume(Token::Colon, "Expected ':' after parameter name")?;
+                    let param_type = self.parse_type()?;
+
+                    params.push(Param {
+                        name: param_name,
+                        ty: param_type,
+                        mutable,
+                    });
+                }
 
                 if !self.check(&Token::Comma) {
                     break;
@@ -482,10 +523,7 @@ impl Parser {
 
         self.consume(Token::LeftBrace, "Expected '{'")?;
 
-        let mut body = Vec::new();
-        while !self.check(&Token::RightBrace) && !self.is_at_end() {
-            body.push(self.parse_statement()?);
-        }
+        let body = self.parse_block_with_implicit_return()?;
 
         let end_span = self.consume(Token::RightBrace, "Expected '}'")?;
 
@@ -1221,6 +1259,40 @@ impl Parser {
         }
     }
 
+    /// Parse a block of statements that may have an implicit return
+    fn parse_block_with_implicit_return(&mut self) -> Result<Vec<Stmt>> {
+        let mut stmts = Vec::new();
+        
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            // Check if this could be the last expression (implicit return)
+            let checkpoint = self.current;
+            
+            // Try to parse as expression first
+            if let Ok(expr) = self.parse_expression() {
+                // Check if this is followed by a closing brace (implicit return)
+                if self.check(&Token::RightBrace) {
+                    // This is an implicit return
+                    stmts.push(Stmt::Expr(expr));
+                    break;
+                } else if self.check(&Token::Semicolon) {
+                    // Normal expression statement
+                    self.advance()?; // consume ';'
+                    stmts.push(Stmt::Expr(expr));
+                } else {
+                    // Rewind and parse as statement
+                    self.current = checkpoint;
+                    stmts.push(self.parse_statement()?);
+                }
+            } else {
+                // Rewind and parse as statement
+                self.current = checkpoint;
+                stmts.push(self.parse_statement()?);
+            }
+        }
+        
+        Ok(stmts)
+    }
+
     /// Parse a statement
     pub fn parse_statement(&mut self) -> Result<Stmt> {
         match self.peek()? {
@@ -1362,10 +1434,7 @@ impl Parser {
 
         self.consume(Token::LeftBrace, "Expected '{' after if condition")?;
 
-        let mut then_branch = Vec::new();
-        while !self.check(&Token::RightBrace) && !self.is_at_end() {
-            then_branch.push(self.parse_statement()?);
-        }
+        let then_branch = self.parse_block_with_implicit_return()?;
 
         self.consume(Token::RightBrace, "Expected '}' after if body")?;
 
@@ -1373,10 +1442,7 @@ impl Parser {
             self.advance()?; // consume 'else'
             self.consume(Token::LeftBrace, "Expected '{' after else")?;
 
-            let mut else_stmts = Vec::new();
-            while !self.check(&Token::RightBrace) && !self.is_at_end() {
-                else_stmts.push(self.parse_statement()?);
-            }
+            let else_stmts = self.parse_block_with_implicit_return()?;
 
             let _end_span = self.consume(Token::RightBrace, "Expected '}' after else body")?;
             Some(else_stmts)
@@ -1528,7 +1594,15 @@ impl Parser {
             } else {
                 // Single expression body
                 let expr = self.parse_expression()?;
-                self.consume(Token::Comma, "Expected ',' after match arm expression")?;
+                
+                // Comma is optional if this is the last arm
+                if !self.check(&Token::RightBrace) {
+                    self.consume(Token::Comma, "Expected ',' after match arm expression")?;
+                } else if self.check(&Token::Comma) {
+                    // Allow optional trailing comma
+                    self.advance()?;
+                }
+                
                 vec![Stmt::Expr(expr)]
             };
 
@@ -2029,8 +2103,34 @@ impl Parser {
                 }
             }
             (Token::LeftParen, _) => {
-                self.consume(Token::RightParen, "Expected ')' for unit type")?;
-                Ok(Type::Unit)
+                // Parse tuple type: (), (T,), (T1, T2), etc.
+                let mut types = Vec::new();
+                
+                // Check for unit type
+                if self.check(&Token::RightParen) {
+                    self.advance()?; // consume ')'
+                    return Ok(Type::Unit);
+                }
+                
+                // Parse first element
+                types.push(self.parse_type()?);
+                
+                // Parse remaining elements
+                while self.check(&Token::Comma) {
+                    self.advance()?; // consume ','
+                    
+                    // Allow trailing comma
+                    if self.check(&Token::RightParen) {
+                        break;
+                    }
+                    
+                    types.push(self.parse_type()?);
+                }
+                
+                self.consume(Token::RightParen, "Expected ')' after tuple type")?;
+                
+                // All tuples, including single element ones
+                Ok(Type::Tuple(types))
             }
             (Token::LeftBracket, _) => {
                 // Parse array type: [T; N]
@@ -2083,6 +2183,10 @@ impl Parser {
             (Token::Integer(n), _) => Ok(Expr::Integer(n)),
             (Token::True, _) => Ok(Expr::Bool(true)),
             (Token::False, _) => Ok(Expr::Bool(false)),
+            (Token::SelfParam, _span) => {
+                // Handle 'self' as an identifier in expression context
+                Ok(Expr::Ident("self".to_string()))
+            }
             (Token::Identifier(name), span) => {
                 // Check if this is a struct literal
                 // We need to be careful here - only parse as struct literal if we see

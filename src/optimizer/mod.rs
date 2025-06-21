@@ -10,6 +10,13 @@ mod constant_folding;
 mod dead_code;
 mod simplify;
 
+#[cfg(test)]
+mod constant_folding_test;
+#[cfg(test)]
+mod dead_code_test;
+#[cfg(test)]
+mod simplify_test;
+
 pub use constant_folding::ConstantFoldingPass;
 pub use dead_code::DeadCodeEliminationPass;
 pub use simplify::SimplificationPass;
@@ -131,9 +138,9 @@ pub mod helpers {
     /// Evaluate a binary operation on integers at compile time
     pub fn eval_binary_int(left: i64, op: BinOp, right: i64) -> Option<i64> {
         match op {
-            BinOp::Add => Some(left + right),
-            BinOp::Sub => Some(left - right),
-            BinOp::Mul => Some(left * right),
+            BinOp::Add => Some(left.wrapping_add(right)),
+            BinOp::Sub => Some(left.wrapping_sub(right)),
+            BinOp::Mul => Some(left.wrapping_mul(right)),
             BinOp::Div => {
                 if right != 0 {
                     Some(left / right)

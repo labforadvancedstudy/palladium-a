@@ -1,0 +1,4 @@
+// 가장 기본적인 Hello World
+fn main() {
+    print("Hello, Palladium!");
+}

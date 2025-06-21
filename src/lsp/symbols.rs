@@ -253,3 +253,617 @@ impl LanguageServer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{Program, Item, Function, StructDef, EnumDef, TraitDef, TypeAlias, Type, Param, 
+                      EnumVariant, EnumVariantData, TraitMethod, Visibility};
+    use crate::errors::Span;
+    use crate::lsp::{Position, Location, Symbol};
+    
+
+    fn create_test_server() -> LanguageServer {
+        let mut server = LanguageServer::new();
+        server.initialize(None).unwrap();
+        server
+    }
+
+    #[test]
+    fn test_document_symbol_creation() {
+        let symbol = DocumentSymbol {
+            name: "test_function".to_string(),
+            detail: Some("fn test_function()".to_string()),
+            kind: SymbolKind::Function,
+            range: Range {
+                start: Position { line: 0, character: 0 },
+                end: Position { line: 5, character: 1 },
+            },
+            selection_range: Range {
+                start: Position { line: 0, character: 3 },
+                end: Position { line: 0, character: 16 },
+            },
+            children: vec![],
+        };
+
+        assert_eq!(symbol.name, "test_function");
+        assert_eq!(symbol.detail, Some("fn test_function()".to_string()));
+        assert_eq!(symbol.kind, SymbolKind::Function);
+        assert!(symbol.children.is_empty());
+    }
+
+    #[test]
+    fn test_symbol_information_creation() {
+        let symbol = SymbolInformation {
+            name: "MyStruct".to_string(),
+            kind: SymbolKind::Struct,
+            location: Location {
+                uri: "file:///test.pd".to_string(),
+                range: Range {
+                    start: Position { line: 10, character: 0 },
+                    end: Position { line: 15, character: 1 },
+                },
+            },
+            container_name: Some("module".to_string()),
+        };
+
+        assert_eq!(symbol.name, "MyStruct");
+        assert_eq!(symbol.kind, SymbolKind::Struct);
+        assert_eq!(symbol.location.uri, "file:///test.pd");
+        assert_eq!(symbol.container_name, Some("module".to_string()));
+    }
+
+    #[test]
+    fn test_get_document_symbols_empty() {
+        let server = create_test_server();
+        let symbols = server.get_document_symbols("file:///test.pd");
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn test_get_document_symbols_no_ast() {
+        let mut server = create_test_server();
+        
+        server.open_document(
+            "file:///test.pd".to_string(),
+            1,
+            "fn main() {}".to_string()
+        ).unwrap();
+
+        // Manually clear AST to test behavior without AST
+        if let Some(doc) = server.documents.get_mut("file:///test.pd") {
+            doc.ast = None;
+        }
+        
+        let symbols = server.get_document_symbols("file:///test.pd");
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn test_get_document_symbols_function() {
+        let mut server = create_test_server();
+        
+        server.open_document(
+            "file:///test.pd".to_string(),
+            1,
+            "fn add(a: i32, b: i32) -> i32 { a + b }".to_string()
+        ).unwrap();
+
+        let ast = Program {
+            imports: vec![],
+            items: vec![
+                Item::Function(Function {
+                    name: "add".to_string(),
+                    lifetime_params: vec![],
+                    type_params: vec![],
+                    const_params: vec![],
+                    params: vec![
+                        Param {
+                            name: "a".to_string(),
+                            ty: Type::I32,
+                            mutable: false,
+                        },
+                        Param {
+                            name: "b".to_string(),
+                            ty: Type::I32,
+                            mutable: false,
+                        },
+                    ],
+                    return_type: Some(Type::I32),
+                    body: vec![],
+                    visibility: Visibility::Private,
+                    is_async: false,
+                    effects: None,
+                    span: Span::new(0, 40, 0, 0),
+                }),
+            ],
+        };
+
+        let doc = server.documents.get_mut("file:///test.pd").unwrap();
+        doc.ast = Some(ast);
+
+        let symbols = server.get_document_symbols("file:///test.pd");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "add");
+        assert_eq!(symbols[0].kind, SymbolKind::Function);
+        assert!(symbols[0].detail.as_ref().unwrap().contains("fn add(a: i32, b: i32) -> i32"));
+        
+        // Function should have parameter children
+        assert_eq!(symbols[0].children.len(), 2);
+        assert_eq!(symbols[0].children[0].name, "a");
+        assert_eq!(symbols[0].children[0].kind, SymbolKind::Variable);
+        assert_eq!(symbols[0].children[1].name, "b");
+        assert_eq!(symbols[0].children[1].kind, SymbolKind::Variable);
+    }
+
+    #[test]
+    fn test_get_document_symbols_struct() {
+        let mut server = create_test_server();
+        
+        server.open_document(
+            "file:///test.pd".to_string(),
+            1,
+            "struct Point { x: i32, y: i32 }".to_string()
+        ).unwrap();
+
+        let ast = Program {
+            imports: vec![],
+            items: vec![
+                Item::Struct(StructDef {
+                    name: "Point".to_string(),
+                    lifetime_params: vec![],
+                    type_params: vec![],
+                    const_params: vec![],
+                    fields: vec![
+                        ("x".to_string(), Type::I32),
+                        ("y".to_string(), Type::I32),
+                    ],
+                    visibility: Visibility::Private,
+                    span: Span::new(0, 31, 0, 0),
+                }),
+            ],
+        };
+
+        let doc = server.documents.get_mut("file:///test.pd").unwrap();
+        doc.ast = Some(ast);
+
+        let symbols = server.get_document_symbols("file:///test.pd");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "Point");
+        assert_eq!(symbols[0].kind, SymbolKind::Struct);
+        assert_eq!(symbols[0].detail, Some("struct Point".to_string()));
+        
+        // Struct should have field children
+        assert_eq!(symbols[0].children.len(), 2);
+        assert_eq!(symbols[0].children[0].name, "x");
+        assert_eq!(symbols[0].children[0].kind, SymbolKind::Field);
+        assert_eq!(symbols[0].children[0].detail, Some("i32".to_string()));
+        assert_eq!(symbols[0].children[1].name, "y");
+        assert_eq!(symbols[0].children[1].kind, SymbolKind::Field);
+    }
+
+    #[test]
+    fn test_get_document_symbols_enum() {
+        let mut server = create_test_server();
+        
+        server.open_document(
+            "file:///test.pd".to_string(),
+            1,
+            "enum Option { Some(T), None }".to_string()
+        ).unwrap();
+
+        let ast = Program {
+            imports: vec![],
+            items: vec![
+                Item::Enum(EnumDef {
+                    name: "Option".to_string(),
+                    lifetime_params: vec![],
+                    type_params: vec![],
+                    const_params: vec![],
+                    variants: vec![
+                        EnumVariant {
+                            name: "Some".to_string(),
+                            data: EnumVariantData::Tuple(vec![Type::TypeParam("T".to_string())]),
+                        },
+                        EnumVariant {
+                            name: "None".to_string(),
+                            data: EnumVariantData::Unit,
+                        },
+                    ],
+                    span: Span::new(0, 29, 0, 0),
+                }),
+            ],
+        };
+
+        let doc = server.documents.get_mut("file:///test.pd").unwrap();
+        doc.ast = Some(ast);
+
+        let symbols = server.get_document_symbols("file:///test.pd");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "Option");
+        assert_eq!(symbols[0].kind, SymbolKind::Enum);
+        
+        // Enum should have variant children
+        assert_eq!(symbols[0].children.len(), 2);
+        assert_eq!(symbols[0].children[0].name, "Some");
+        assert_eq!(symbols[0].children[0].kind, SymbolKind::EnumVariant);
+        assert_eq!(symbols[0].children[0].detail, Some("(T)".to_string()));
+        assert_eq!(symbols[0].children[1].name, "None");
+        assert_eq!(symbols[0].children[1].detail, None);
+    }
+
+    #[test]
+    fn test_get_document_symbols_enum_struct_variant() {
+        let mut server = create_test_server();
+        
+        let ast = Program {
+            imports: vec![],
+            items: vec![
+                Item::Enum(EnumDef {
+                    name: "Message".to_string(),
+                    lifetime_params: vec![],
+                    type_params: vec![],
+                    const_params: vec![],
+                    variants: vec![
+                        EnumVariant {
+                            name: "Move".to_string(),
+                            data: EnumVariantData::Struct(vec![
+                                ("x".to_string(), Type::I32),
+                                ("y".to_string(), Type::I32),
+                            ]),
+                        },
+                    ],
+                    span: Span::new(0, 30, 0, 0),
+                }),
+            ],
+        };
+
+        server.open_document(
+            "file:///test.pd".to_string(),
+            1,
+            "enum Message { Move { x: i32, y: i32 } }".to_string()
+        ).unwrap();
+
+        let doc = server.documents.get_mut("file:///test.pd").unwrap();
+        doc.ast = Some(ast);
+
+        let symbols = server.get_document_symbols("file:///test.pd");
+        assert_eq!(symbols[0].children[0].name, "Move");
+        assert_eq!(symbols[0].children[0].detail, Some("{ x: i32, y: i32 }".to_string()));
+    }
+
+    #[test]
+    fn test_get_document_symbols_trait() {
+        let mut server = create_test_server();
+        
+        server.open_document(
+            "file:///test.pd".to_string(),
+            1,
+            "trait Display { fn fmt(&self) -> String; }".to_string()
+        ).unwrap();
+
+        let ast = Program {
+            imports: vec![],
+            items: vec![
+                Item::Trait(TraitDef {
+                    name: "Display".to_string(),
+                    lifetime_params: vec![],
+                    type_params: vec![],
+                    methods: vec![
+                        TraitMethod {
+                            name: "fmt".to_string(),
+                            lifetime_params: vec![],
+                            type_params: vec![],
+                            params: vec![
+                                Param {
+                                    name: "self".to_string(),
+                                    ty: Type::Custom("Self".to_string()),
+                                    mutable: false,
+                                },
+                            ],
+                            return_type: Some(Type::String),
+                            has_body: false,
+                            body: None,                            span: Span::new(16, 40, 0, 0),
+                        },
+                    ],
+                    visibility: Visibility::Private,
+                    span: Span::new(0, 42, 0, 0),
+                }),
+            ],
+        };
+
+        let doc = server.documents.get_mut("file:///test.pd").unwrap();
+        doc.ast = Some(ast);
+
+        let symbols = server.get_document_symbols("file:///test.pd");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "Display");
+        assert_eq!(symbols[0].kind, SymbolKind::Trait);
+        
+        // Trait should have method children
+        assert_eq!(symbols[0].children.len(), 1);
+        assert_eq!(symbols[0].children[0].name, "fmt");
+        assert_eq!(symbols[0].children[0].kind, SymbolKind::Method);
+        assert!(symbols[0].children[0].detail.as_ref().unwrap().contains("fn fmt(self: Self) -> String"));
+    }
+
+    #[test]
+    fn test_get_document_symbols_type_alias() {
+        let mut server = create_test_server();
+        
+        server.open_document(
+            "file:///test.pd".to_string(),
+            1,
+            "type Size = i64;".to_string()
+        ).unwrap();
+
+        let ast = Program {
+            imports: vec![],
+            items: vec![
+                Item::TypeAlias(TypeAlias {
+                    name: "Size".to_string(),
+                    lifetime_params: vec![],
+                    type_params: vec![],
+                    ty: Type::I64,
+                    visibility: Visibility::Private,
+                    span: Span::new(0, 16, 0, 0),
+                }),
+            ],
+        };
+
+        let doc = server.documents.get_mut("file:///test.pd").unwrap();
+        doc.ast = Some(ast);
+
+        let symbols = server.get_document_symbols("file:///test.pd");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "Size");
+        assert_eq!(symbols[0].kind, SymbolKind::TypeAlias);
+        assert_eq!(symbols[0].detail, Some("type Size = i64".to_string()));
+        assert!(symbols[0].children.is_empty());
+    }
+
+    #[test]
+    fn test_get_document_symbols_multiple() {
+        let mut server = create_test_server();
+        
+        let ast = Program {
+            imports: vec![],
+            items: vec![
+                Item::Function(Function {
+                    name: "main".to_string(),
+                    lifetime_params: vec![],
+                    type_params: vec![],
+                    const_params: vec![],
+                    params: vec![],
+                    return_type: None,
+                    body: vec![],
+                    visibility: Visibility::Private,
+                    is_async: false,
+                    effects: None,
+                    span: Span::new(0, 20, 0, 0),
+                }),
+                Item::Struct(StructDef {
+                    name: "Data".to_string(),
+                    lifetime_params: vec![],
+                    type_params: vec![],
+                    const_params: vec![],
+                    fields: vec![("value".to_string(), Type::I32)],
+                    visibility: Visibility::Private,
+                    span: Span::new(22, 40, 0, 0),
+                }),
+                Item::Enum(EnumDef {
+                    name: "Status".to_string(),
+                    lifetime_params: vec![],
+                    type_params: vec![],
+                    const_params: vec![],
+                    variants: vec![
+                        EnumVariant {
+                            name: "Ok".to_string(),
+                            data: EnumVariantData::Unit,
+                        },
+                        EnumVariant {
+                            name: "Error".to_string(),
+                            data: EnumVariantData::Unit,
+                        },
+                    ],
+                    span: Span::new(42, 60, 0, 0),
+                }),
+            ],
+        };
+
+        server.open_document(
+            "file:///test.pd".to_string(),
+            1,
+            "content".to_string()
+        ).unwrap();
+
+        let doc = server.documents.get_mut("file:///test.pd").unwrap();
+        doc.ast = Some(ast);
+
+        let symbols = server.get_document_symbols("file:///test.pd");
+        assert_eq!(symbols.len(), 3);
+        assert_eq!(symbols[0].name, "main");
+        assert_eq!(symbols[0].kind, SymbolKind::Function);
+        assert_eq!(symbols[1].name, "Data");
+        assert_eq!(symbols[1].kind, SymbolKind::Struct);
+        assert_eq!(symbols[2].name, "Status");
+        assert_eq!(symbols[2].kind, SymbolKind::Enum);
+    }
+
+    #[test]
+    fn test_get_workspace_symbols_empty() {
+        let server = create_test_server();
+        let symbols = server.get_workspace_symbols("test");
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn test_get_workspace_symbols_with_matches() {
+        let mut server = create_test_server();
+        
+        // Add some symbols to the index
+        server.symbol_index.symbols.insert(
+            "file:///test1.pd".to_string(),
+            vec![
+                Symbol {
+                    name: "test_function".to_string(),
+                    kind: SymbolKind::Function,
+                    location: Location {
+                        uri: "file:///test1.pd".to_string(),
+                        range: Range {
+                            start: Position { line: 0, character: 0 },
+                            end: Position { line: 0, character: 20 },
+                        },
+                    },
+                    container_name: None,
+                },
+                Symbol {
+                    name: "TestStruct".to_string(),
+                    kind: SymbolKind::Struct,
+                    location: Location {
+                        uri: "file:///test1.pd".to_string(),
+                        range: Range {
+                            start: Position { line: 5, character: 0 },
+                            end: Position { line: 10, character: 1 },
+                        },
+                    },
+                    container_name: None,
+                },
+            ],
+        );
+
+        server.symbol_index.symbols.insert(
+            "file:///test2.pd".to_string(),
+            vec![
+                Symbol {
+                    name: "another_test".to_string(),
+                    kind: SymbolKind::Function,
+                    location: Location {
+                        uri: "file:///test2.pd".to_string(),
+                        range: Range {
+                            start: Position { line: 0, character: 0 },
+                            end: Position { line: 0, character: 20 },
+                        },
+                    },
+                    container_name: Some("module".to_string()),
+                },
+            ],
+        );
+
+        // Search for "test"
+        let symbols = server.get_workspace_symbols("test");
+        assert_eq!(symbols.len(), 3);
+        
+        // Verify all matches contain "test" (case-insensitive)
+        for symbol in &symbols {
+            assert!(symbol.name.to_lowercase().contains("test"));
+        }
+    }
+
+    #[test]
+    fn test_get_workspace_symbols_case_insensitive() {
+        let mut server = create_test_server();
+        
+        server.symbol_index.symbols.insert(
+            "file:///test.pd".to_string(),
+            vec![
+                Symbol {
+                    name: "TEST_CONSTANT".to_string(),
+                    kind: SymbolKind::Constant,
+                    location: Location {
+                        uri: "file:///test.pd".to_string(),
+                        range: Range {
+                            start: Position { line: 0, character: 0 },
+                            end: Position { line: 0, character: 13 },
+                        },
+                    },
+                    container_name: None,
+                },
+            ],
+        );
+
+        // Search with lowercase should find uppercase
+        let symbols = server.get_workspace_symbols("test");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "TEST_CONSTANT");
+    }
+
+    #[test]
+    fn test_function_signature_simple() {
+        let server = create_test_server();
+        
+        let func = Function {
+            name: "main".to_string(),
+            lifetime_params: vec![],
+            type_params: vec![],
+            const_params: vec![],
+            params: vec![],
+            return_type: None,
+            body: vec![],
+            visibility: Visibility::Private,
+            is_async: false,
+            effects: None,
+            span: Span::new(0, 10, 0, 0),
+        };
+
+        let sig = server.function_signature(&func);
+        assert_eq!(sig, "fn main()");
+    }
+
+    #[test]
+    fn test_function_signature_with_params_and_return() {
+        let server = create_test_server();
+        
+        let func = Function {
+            name: "add".to_string(),
+            lifetime_params: vec![],
+            type_params: vec![],
+            const_params: vec![],
+            params: vec![
+                Param {
+                    name: "a".to_string(),
+                    ty: Type::I32,
+                    mutable: false,
+                },
+                Param {
+                    name: "b".to_string(),
+                    ty: Type::I32,
+                    mutable: false,
+                },
+            ],
+            return_type: Some(Type::I32),
+            body: vec![],
+            visibility: Visibility::Private,
+            is_async: false,
+            effects: None,
+            span: Span::new(0, 20, 0, 0),
+        };
+
+        let sig = server.function_signature(&func);
+        assert_eq!(sig, "fn add(a: i32, b: i32) -> i32");
+    }
+
+    #[test]
+    fn test_method_signature() {
+        let server = create_test_server();
+        
+        let method = TraitMethod {
+            name: "display".to_string(),
+            lifetime_params: vec![],
+            type_params: vec![],
+            params: vec![
+                Param {
+                    name: "self".to_string(),
+                    ty: Type::Custom("Self".to_string()),
+                    mutable: false,
+                },
+            ],
+            return_type: Some(Type::String),
+            has_body: false,
+                            body: None,            span: Span::new(0, 20, 0, 0),
+        };
+
+        let sig = server.method_signature(&method);
+        assert_eq!(sig, "fn display(self: Self) -> String");
+    }
+}

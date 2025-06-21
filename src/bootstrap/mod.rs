@@ -38,7 +38,7 @@ impl BootstrapCompiler {
         // First, we need to compile tiny_v16.pd to C using our Rust compiler
         let source_path =
             Path::new("bootstrap/v3_incremental/archive/versioned_compilers/tiny_v16.pd");
-        let output_c = Path::new("build_output/tiny_v16.c");
+        let output_c = Path::new("target/build/tiny_v16.c");
         let output_exe =
             Path::new("bootstrap/v3_incremental/archive/versioned_compilers/tiny_v16_compiler");
 
