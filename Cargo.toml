@@ -62,7 +62,7 @@ thiserror = "1.0"
 
 # Lexer and Parser
 logos = "0.14"
-chumsky = "0.9"
+chumsky = "0.10"
 
 # Code generation
 # inkwell = { version = "0.4", features = ["llvm17-0"] } # TODO: Enable when LLVM is installed
