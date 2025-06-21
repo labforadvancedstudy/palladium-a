@@ -61,7 +61,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # Lexer and Parser
-logos = "0.14"
+logos = "0.15"
 chumsky = "0.9"
 
 # Code generation
