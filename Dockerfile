@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.75 AS builder
+FROM rust:1.88 AS builder
 
 WORKDIR /usr/src/palladium
 
