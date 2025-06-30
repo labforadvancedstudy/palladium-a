@@ -69,7 +69,7 @@ chumsky = "0.9"
 llvm-sys = { version = "170", optional = true }
 
 # Data structures
-indexmap = "2.2"
+indexmap = "2.10"
 petgraph = "0.6"
 
 # Utilities
