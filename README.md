@@ -1,4 +1,15 @@
-# Palladium Programming Language
+# 'Alan von Palladium' - Palladium Programming Language
+
+```
+     _    __     ______    ____                      _ _ _                 
+    / \   \ \   / /  _ \  / ___|___  _ __ ___  _ __ (_) | ___ _ __       
+   / _ \   \ \ / /| |_) || |   / _ \| '_ ` _ \| '_ \| | |/ _ \ '__|      
+  / ___ \   \ V / |  __/ | |__| (_) | | | | | | |_) | | |  __/ |        
+ /_/   \_\   \_/  |_|     \____\___/|_| |_| |_| .__/|_|_|\___|_|         
+                                               |_|                        
+```
+
+> *"When Turing's Proofs Meet von Neumann's Performance"*
 
 [![Crates.io](https://img.shields.io/crates/v/alan-von-palladium.svg)](https://crates.io/crates/alan-von-palladium)
 [![Documentation](https://docs.rs/alan-von-palladium/badge.svg)](https://docs.rs/alan-von-palladium)
