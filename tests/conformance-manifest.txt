@@ -49,7 +49,7 @@
 examples/practical/calculator.pd	run	-	expected	-	-
 examples/practical/fibonacci.pd	run	-	expected	-	-
 examples/practical/prime_checker.pd	run	-	expected	-	-
-examples/practical/simple_sort.pd	xfail	compile	Unsupported type in reference parameter	M1	defect D9: &mut [i64; N] reference parameter rejected by codegen. HANDOFF: the branch that fixes D9 must not DELETE this row - the fixture still exists, so a deleted row is UNDECLARED and the gate stays red. Change the row to `examples/practical/simple_sort.pd<TAB>run<TAB>-<TAB>expected<TAB>-<TAB>-` and add examples/practical/simple_sort.expected in the same commit.
+examples/practical/simple_sort.pd	run	-	expected	-	-
 examples/tutorial/01_variables.pd	run	-	expected	-	-
 examples/tutorial/02_functions.pd	run	-	expected	-	-
 examples/tutorial/03_ownership.pd	run	-	expected	-	-
@@ -90,3 +90,6 @@ tests/projects/hello_pdm/src/main.pd	run	-	expected	-	-
 tests/projects/hello_pdm/src/math.pd	skip	compile	No main function found	-	library module providing add()/factorial(); the compiler itself confirms it has no entry point
 tests/projects/hello_pdm/tests/test_math.pd	xfail	compile	Undefined function: add	M3	calls add()/factorial() from src/math.pd; needs cross-file module imports (no use/mod in the language)
 tests/projects/hello_pdm/tests/test_simple.pd	run	-	expected	-	-
+tests/regression/array_binding_scope.pd	run	-	expected	-	-
+tests/regression/array_reference_params.pd	run	-	expected	-	-
+tests/regression/for_over_array_param.pd	run	-	expected	-	-
