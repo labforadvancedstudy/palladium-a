@@ -149,10 +149,12 @@ impl Driver {
             if let crate::ast::Item::Function(func) = item {
                 let effects = effect_analyzer.analyze_function(func)?;
                 if !effects.is_pure() {
+                    // Sorted, not the raw HashSet: two runs of the same compiler
+                    // over the same source must print the same line.
                     println!(
                         "   Function '{}' has effects: {:?}",
                         func.name,
-                        effects.effects()
+                        effects.sorted()
                     );
                 }
             }

@@ -2,15 +2,34 @@
 // "One table to rule them all"
 //
 // This module is the SINGLE SOURCE OF TRUTH for the compiler's built-in functions.
-// Every pass that needs to know about built-ins (type checker, borrow checker, ...)
-// must derive its own tables from `BUILTINS` instead of hand-maintaining a copy.
+// Every pass that needs to know about built-ins (type checker, borrow checker,
+// effect analyzer, LSP) must derive its own tables from `BUILTINS` instead of
+// hand-maintaining a copy.
 //
-// History: the type checker knew 36 built-ins while the borrow checker only knew 25,
-// so 11 built-ins (string_len, string_eq, string_char_at, string_from_char,
-// char_is_digit, char_is_alpha, char_is_whitespace, file_read_all, file_read_line,
-// file_write, panic) type-checked fine but were rejected by the borrow checker with
-// "Use of uninitialized value". The tests at the bottom of this file make that class
-// of drift impossible to reintroduce.
+// History, part 1 (type checker / borrow checker): the type checker knew 36
+// built-ins while the borrow checker only knew 25, so 11 built-ins (string_len,
+// string_eq, string_char_at, string_from_char, char_is_digit, char_is_alpha,
+// char_is_whitespace, file_read_all, file_read_line, file_write, panic)
+// type-checked fine but were rejected by the borrow checker with "Use of
+// uninitialized value".
+//
+// History, part 2 (effect analyzer / LSP): three more hand-written copies survived
+// that first consolidation, and all three had drifted:
+//
+//   consumer            entries  missing from it
+//   effects/mod.rs      19       19 (panic, arg_count, arg_at, every path_*/dir/
+//                                remove_* built-in, read_file_to_string,
+//                                write_string_to_file, file_flush, file_seek and
+//                                the four *_ex built-ins)
+//   lsp/completion.rs    6       32
+//   lsp/hover.rs         6       32
+//
+// The effects gap was the dangerous one: `EffectAnalyzer` treats a built-in with no
+// entry as contributing no effect (effects/mod.rs, `Expr::Call` arm), so 19 built-ins
+// — 18 of which do real file or console I/O — were invisible to effect analysis.
+//
+// The tests at the bottom of this file make that class of drift impossible to
+// reintroduce: every consumer's view is compared against `BUILTINS` by set equality.
 
 /// Type of a built-in parameter or return value.
 ///
@@ -44,129 +63,297 @@ pub enum ParamMode {
 pub enum ReturnMode {
     /// Returns an owned value (caller must manage it)
     Owned,
+    /// Returns a pointer into storage the built-in did not allocate and that
+    /// outlives the call — the caller must never free it.
+    ///
+    /// `arg_at` is the case that forced this variant to exist: it hands back a
+    /// pointer into `argv`, or a literal `""`. Calling that `Owned` made the
+    /// canonical metadata false, and `ReturnMode` is what the ownership pass
+    /// derives its signatures from; a comment could not fix that.
+    BorrowedStatic,
     /// Returns a copy value (primitives)
     Copy,
     /// No return value
     Unit,
 }
 
-/// One parameter of a built-in: its type plus its ownership mode.
+/// One parameter of a built-in: its name, its type and its ownership mode.
+///
+/// The name carries no semantics for any compiler pass; it exists so that the LSP
+/// can render `fn print(s: String)` instead of `fn print(String)` without a
+/// hand-written signature string. These are the user-visible Palladium-level names,
+/// so where the C implementation in `src/codegen/mod.rs` is less readable the
+/// Palladium name wins: `string_len(s)` here vs `__pd_string_len(str)` there,
+/// `string_concat(a, b)` vs `__pd_string_concat(str1, str2)`. They coincide where
+/// the C name was already the clearer one (`file_seek(handle, whence, offset)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltinParam {
+    pub name: &'static str,
     pub ty: BuiltinType,
     pub mode: ParamMode,
 }
 
 /// Shorthand for building a `BuiltinParam` in the const table below.
-const fn p(ty: BuiltinType, mode: ParamMode) -> BuiltinParam {
-    BuiltinParam { ty, mode }
+const fn p(name: &'static str, ty: BuiltinType, mode: ParamMode) -> BuiltinParam {
+    BuiltinParam { name, ty, mode }
 }
 
-/// A built-in function: name, parameter list, return type and return ownership.
+/// Whether a call to a built-in can actually be compiled.
+///
+/// The registry describes more built-ins than the runtime can currently honour.
+/// Recording that as data — rather than leaving the built-in advertised and
+/// letting it fail in gcc, or deleting it and losing the description — lets the
+/// type checker refuse the call with a reason and the LSP stop offering it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Support {
+    /// A call compiles, links and runs.
+    Callable,
+    /// Registered and described, but a call cannot be compiled. The string says
+    /// why, and is shown to the user by the type checker and by LSP hover.
+    Unsupported(&'static str),
+}
+
+impl Support {
+    pub fn is_callable(self) -> bool {
+        matches!(self, Support::Callable)
+    }
+
+    /// Why this built-in cannot be called, if it cannot.
+    pub fn reason(self) -> Option<&'static str> {
+        match self {
+            Support::Callable => None,
+            Support::Unsupported(reason) => Some(reason),
+        }
+    }
+}
+
+/// A built-in function: name, parameter list, return type, return ownership,
+/// effects, support status and documentation.
 #[derive(Debug, Clone, Copy)]
 pub struct Builtin {
     pub name: &'static str,
     pub params: &'static [BuiltinParam],
     pub ret: BuiltinType,
     pub ret_mode: ReturnMode,
+    /// Whether a call to this built-in can be compiled today. Unsupported
+    /// built-ins are still registered — every pass and the seam test keep
+    /// describing them — but the type checker rejects calls to them.
+    pub support: Support,
+    /// Effects this built-in contributes to its caller. An empty slice means pure:
+    /// `EffectSet::is_pure()` is true for the empty set.
+    pub effects: &'static [Effect],
+    /// One-line description, shown by LSP hover and completion. This is the only
+    /// piece of LSP metadata that cannot be derived from the typed data above.
+    pub doc: &'static str,
 }
 
+impl BuiltinType {
+    /// How this type is spelled in Palladium source (LSP-facing).
+    pub fn display(self) -> &'static str {
+        match self {
+            BuiltinType::I64 => "i64",
+            BuiltinType::Str => "String",
+            BuiltinType::Bool => "bool",
+            BuiltinType::Unit => "()",
+        }
+    }
+}
+
+impl Builtin {
+    /// The Palladium signature of this built-in, derived from its typed parameter
+    /// and return data — never hand-written.
+    ///
+    /// A `Unit` return is rendered by omitting the arrow, matching how the language
+    /// spells a function with no return value.
+    pub fn signature(&self) -> String {
+        let params = self
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", p.name, p.ty.display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        match self.ret {
+            BuiltinType::Unit => format!("fn {}({})", self.name, params),
+            ret => format!("fn {}({}) -> {}", self.name, params, ret.display()),
+        }
+    }
+}
+
+use crate::effects::Effect;
 use BuiltinType::{Bool, I64, Str, Unit};
 use ParamMode::{Borrow, Copy as ByCopy};
 
+/// No effects: calling this built-in leaves the outside world alone.
+const PURE: &[Effect] = &[];
+/// Reads or writes the outside world (file system, console, process arguments).
+const IO: &[Effect] = &[Effect::IO];
+/// Writes to the outside world *and* aborts the process.
+const IO_PANIC: &[Effect] = &[Effect::IO, Effect::Panic];
+/// Allocates the string it returns; the caller inherits that storage.
+const MEMORY: &[Effect] = &[Effect::Memory];
+/// Touches the outside world *and* allocates the string it returns.
+const IO_MEMORY: &[Effect] = &[Effect::IO, Effect::Memory];
+
 /// The canonical list of every built-in function the compiler knows about.
 ///
-/// Adding a built-in here automatically registers it in the type checker and the
-/// borrow checker. Adding one anywhere else is a bug the tests below will catch.
+/// Adding a built-in here automatically registers it in the type checker, the
+/// borrow checker, the effect analyzer and the LSP. Adding one anywhere else is a
+/// bug the tests below will catch.
+///
+/// Effect classification follows the implementation emitted by `src/codegen/mod.rs`
+/// and `runtime/palladium_runtime.c`: anything that touches a file, the console or
+/// the process argument vector is `Effect::IO`, and anything that allocates the
+/// value it hands back is `Effect::Memory`.
+///
+/// The seven allocating built-ins are string_concat, string_substring,
+/// string_from_char, int_to_string, file_read_all, file_read_line (all six call
+/// `__pd_alloc_string` in the emitted prelude) and read_file_to_string (mallocs one
+/// layer down, at runtime/palladium_runtime.c:470). `Effect::Memory` had been
+/// defined but never attributed to anything ("For now, we don't have explicit
+/// allocation functions" — the deleted table in effects/mod.rs); an effect no value
+/// can ever carry is a claim about the model that the model does not honour, so it
+/// is attributed here rather than left decorative.
+///
+/// `arg_at` allocates nothing — it returns a pointer into `argv` (or a literal
+/// "") — so it is `ReturnMode::BorrowedStatic`, not `Owned`. Owned is therefore
+/// exactly the set that allocates, and `Owned` and `Memory` agree on every row.
 pub const BUILTINS: &[Builtin] = &[
     // ---- Output ----
     Builtin {
         name: "print",
         // NOTE: `print` deliberately treats its String argument as Copy (historic
         // behavior of the borrow checker); it neither moves nor borrows the value.
-        params: &[p(Str, ByCopy)],
+        params: &[p("s", Str, ByCopy)],
         ret: Unit,
         ret_mode: ReturnMode::Unit,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Print a string to stdout",
     },
     Builtin {
         name: "print_int",
-        params: &[p(I64, ByCopy)],
+        params: &[p("n", I64, ByCopy)],
         ret: Unit,
         ret_mode: ReturnMode::Unit,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Print an integer to stdout",
     },
     Builtin {
         name: "panic",
-        params: &[p(Str, Borrow)],
+        params: &[p("msg", Str, Borrow)],
         ret: Unit,
         ret_mode: ReturnMode::Unit,
+        support: Support::Callable,
+        // `__pd_panic` writes the message to stderr and then calls abort()
+        // (src/codegen/mod.rs), so it is both console I/O and a panic.
+        effects: IO_PANIC,
+        doc: "Print a message to stderr and abort the process",
     },
     // ---- String manipulation ----
     Builtin {
         name: "string_len",
-        params: &[p(Str, Borrow)],
+        params: &[p("s", Str, Borrow)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: PURE,
+        doc: "Get the length of a string",
     },
     Builtin {
         name: "string_concat",
-        params: &[p(Str, Borrow), p(Str, Borrow)],
+        params: &[p("a", Str, Borrow), p("b", Str, Borrow)],
         ret: Str,
         ret_mode: ReturnMode::Owned,
+        support: Support::Callable,
+        effects: MEMORY,
+        doc: "Concatenate two strings",
     },
     Builtin {
         name: "string_eq",
-        params: &[p(Str, Borrow), p(Str, Borrow)],
+        params: &[p("s1", Str, Borrow), p("s2", Str, Borrow)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: PURE,
+        doc: "Compare two strings for equality",
     },
     Builtin {
         name: "string_char_at",
-        params: &[p(Str, Borrow), p(I64, ByCopy)],
+        params: &[p("s", Str, Borrow), p("index", I64, ByCopy)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: PURE,
+        doc: "Get the character code at a byte index",
     },
     Builtin {
         name: "string_substring",
-        params: &[p(Str, Borrow), p(I64, ByCopy), p(I64, ByCopy)],
+        params: &[
+            p("s", Str, Borrow),
+            p("start", I64, ByCopy),
+            p("end", I64, ByCopy),
+        ],
         ret: Str,
         ret_mode: ReturnMode::Owned,
+        support: Support::Callable,
+        effects: MEMORY,
+        doc: "Extract the substring in [start, end)",
     },
     Builtin {
         name: "string_from_char",
-        params: &[p(I64, ByCopy)],
+        params: &[p("c", I64, ByCopy)],
         ret: Str,
         ret_mode: ReturnMode::Owned,
+        support: Support::Callable,
+        effects: MEMORY,
+        doc: "Build a one-character string from a character code",
     },
     Builtin {
         name: "string_to_int",
-        params: &[p(Str, Borrow)],
+        params: &[p("s", Str, Borrow)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: PURE,
+        doc: "Parse an integer from a string",
     },
     Builtin {
         name: "int_to_string",
-        params: &[p(I64, ByCopy)],
+        params: &[p("n", I64, ByCopy)],
         ret: Str,
         ret_mode: ReturnMode::Owned,
+        support: Support::Callable,
+        effects: MEMORY,
+        doc: "Convert an integer to a string",
     },
     // ---- Character classification ----
     Builtin {
         name: "char_is_digit",
-        params: &[p(I64, ByCopy)],
+        params: &[p("c", I64, ByCopy)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: PURE,
+        doc: "Is this character code a decimal digit?",
     },
     Builtin {
         name: "char_is_alpha",
-        params: &[p(I64, ByCopy)],
+        params: &[p("c", I64, ByCopy)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: PURE,
+        doc: "Is this character code a letter?",
     },
     Builtin {
         name: "char_is_whitespace",
-        params: &[p(I64, ByCopy)],
+        params: &[p("c", I64, ByCopy)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: PURE,
+        doc: "Is this character code whitespace?",
     },
     // ---- Command-line arguments ----
     Builtin {
@@ -175,149 +362,247 @@ pub const BUILTINS: &[Builtin] = &[
         params: &[],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        // Reads the process argument vector captured by main(): program input from
+        // outside, so it is not pure.
+        effects: IO,
+        doc: "Number of command-line arguments, including argv[0]",
     },
     Builtin {
         // Argument `i`; returns "" when out of range, never NULL, because every
         // string built-in assumes a non-NULL `const char*`.
         name: "arg_at",
-        params: &[p(I64, ByCopy)],
+        params: &[p("i", I64, ByCopy)],
         ret: Str,
-        ret_mode: ReturnMode::Owned,
+        ret_mode: ReturnMode::BorrowedStatic,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Command-line argument `i`, or \"\" when out of range",
     },
     // ---- File I/O ----
     Builtin {
         name: "file_open",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Open a file and return a handle",
     },
     Builtin {
         name: "file_read_all",
-        params: &[p(I64, ByCopy)],
+        params: &[p("handle", I64, ByCopy)],
         ret: Str,
         ret_mode: ReturnMode::Owned,
+        support: Support::Callable,
+        effects: IO_MEMORY,
+        doc: "Read a whole open file into a string",
     },
     Builtin {
         name: "file_read_line",
-        params: &[p(I64, ByCopy)],
+        params: &[p("handle", I64, ByCopy)],
         ret: Str,
         ret_mode: ReturnMode::Owned,
+        support: Support::Callable,
+        effects: IO_MEMORY,
+        doc: "Read one line from an open file",
     },
     Builtin {
         name: "file_write",
-        params: &[p(I64, ByCopy), p(Str, Borrow)],
+        params: &[p("handle", I64, ByCopy), p("content", Str, Borrow)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Write a string to an open file",
     },
     Builtin {
         name: "file_close",
-        params: &[p(I64, ByCopy)],
+        params: &[p("handle", I64, ByCopy)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Close an open file handle",
     },
     Builtin {
         name: "file_exists",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Does this file exist?",
     },
     // ---- Enhanced I/O ----
     Builtin {
         name: "path_exists",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Does this path exist?",
     },
     Builtin {
         name: "path_is_file",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Is this path a regular file?",
     },
     Builtin {
         name: "path_is_dir",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Is this path a directory?",
     },
     Builtin {
         name: "create_dir",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Create a directory",
     },
     Builtin {
         name: "create_dir_all",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Create a directory and every missing parent",
     },
     Builtin {
         name: "remove_file",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Delete a file",
     },
     Builtin {
         name: "remove_dir",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Delete an empty directory",
     },
     Builtin {
         name: "remove_dir_all",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Delete a directory and its contents",
     },
     Builtin {
         name: "read_file_to_string",
-        params: &[p(Str, Borrow)],
+        params: &[p("path", Str, Borrow)],
         ret: Str,
         ret_mode: ReturnMode::Owned,
+        support: Support::Callable,
+        effects: IO_MEMORY,
+        doc: "Read a file at `path` into a string",
     },
     Builtin {
         name: "write_string_to_file",
-        params: &[p(Str, Borrow), p(Str, Borrow)],
+        params: &[p("path", Str, Borrow), p("data", Str, Borrow)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Callable,
+        effects: IO,
+        doc: "Write a string to the file at `path`",
     },
     Builtin {
         name: "file_flush",
-        params: &[p(I64, ByCopy)],
+        params: &[p("handle", I64, ByCopy)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Unsupported(
+            "the enhanced file API takes an opaque FileHandle (typedef void*), while a Palladium handle is an i64; a call does not compile. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
+        ),
+        effects: IO,
+        doc: "Flush buffered writes on an open file",
     },
     Builtin {
         name: "file_seek",
-        params: &[p(I64, ByCopy), p(I64, ByCopy), p(I64, ByCopy)],
+        params: &[
+            p("handle", I64, ByCopy),
+            p("whence", I64, ByCopy),
+            p("offset", I64, ByCopy),
+        ],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Unsupported(
+            "the enhanced file API takes an opaque FileHandle (typedef void*), while a Palladium handle is an i64; a call does not compile. Its `whence` also narrows to uint8_t. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
+        ),
+        effects: IO,
+        doc: "Move the read/write position of an open file",
     },
     // ---- Enhanced file operations with mode support ----
     Builtin {
         name: "file_open_ex",
-        params: &[p(Str, Borrow), p(I64, ByCopy)],
+        params: &[p("path", Str, Borrow), p("mode", I64, ByCopy)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Unsupported(
+            "returns an opaque FileHandle (typedef void*), which no Palladium type can hold, and its `mode` narrows to int; a call does not compile. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
+        ),
+        effects: IO,
+        doc: "Open a file with an explicit mode and return a handle",
     },
     Builtin {
         name: "file_close_ex",
-        params: &[p(I64, ByCopy)],
+        params: &[p("handle", I64, ByCopy)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Unsupported(
+            "takes an opaque FileHandle (typedef void*), while a Palladium handle is an i64; a call does not compile. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
+        ),
+        effects: IO,
+        doc: "Close a handle opened with file_open_ex",
     },
     Builtin {
         name: "file_read_ex",
-        params: &[p(I64, ByCopy), p(Str, ByCopy), p(I64, ByCopy)],
+        params: &[
+            p("handle", I64, ByCopy),
+            p("buffer", Str, ByCopy),
+            p("len", I64, ByCopy),
+        ],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Unsupported(
+            "takes an opaque FileHandle, and its destination is a writable char* buffer that Palladium can only supply as an immutable String; a call does not compile, and could not be made memory-safe by casting. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
+        ),
+        effects: IO,
+        doc: "Read up to `len` bytes from an open file into `buffer`",
     },
     Builtin {
         name: "file_write_ex",
-        params: &[p(I64, ByCopy), p(Str, ByCopy), p(I64, ByCopy)],
+        params: &[
+            p("handle", I64, ByCopy),
+            p("buffer", Str, ByCopy),
+            p("len", I64, ByCopy),
+        ],
         ret: I64,
         ret_mode: ReturnMode::Copy,
+        support: Support::Unsupported(
+            "takes an opaque FileHandle (typedef void*), while a Palladium handle is an i64, and its length narrows to an unsigned size_t; a call does not compile. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
+        ),
+        effects: IO,
+        doc: "Write `len` bytes from `buffer` to an open file",
     },
 ];
 
@@ -368,6 +653,13 @@ mod tests {
                 (BuiltinType::Unit, ReturnMode::Unit) => {}
                 (BuiltinType::Unit, _) => panic!("{}: Unit return with non-Unit mode", b.name),
                 (_, ReturnMode::Unit) => panic!("{}: non-Unit return with Unit mode", b.name),
+                // Only a string can be a pointer into storage someone else owns.
+                (ty, ReturnMode::BorrowedStatic) => assert_eq!(
+                    ty,
+                    BuiltinType::Str,
+                    "{}: only a String return can be BorrowedStatic",
+                    b.name
+                ),
                 _ => {}
             }
         }
@@ -376,6 +668,17 @@ mod tests {
     /// The canonical names, owned, for comparison against a pass's registry.
     fn canonical() -> BTreeSet<String> {
         BUILTINS.iter().map(|b| b.name.to_string()).collect()
+    }
+
+    /// The names a `.pd` program can actually call. Every pass still *registers*
+    /// the full canonical set — an unsupported built-in is described, not hidden —
+    /// but surfaces that propose code to the user are limited to these.
+    fn callable() -> BTreeSet<String> {
+        BUILTINS
+            .iter()
+            .filter(|b| b.support.is_callable())
+            .map(|b| b.name.to_string())
+            .collect()
     }
 
     /// THE DURABLE GATE: a fresh type checker must know exactly the canonical set.
@@ -414,6 +717,200 @@ mod tests {
         );
     }
 
+    // ---- Registration-level gates -------------------------------------------
+    //
+    // The tests from here to `test_signature_rendering` inspect what a consumer has
+    // *registered*. That is necessary but not sufficient: a consumer could keep a
+    // correct registry-derived table and stop consulting it. The behavioural gates
+    // at the bottom of this file drive the real entry points — effect analysis of
+    // parsed source, and the LSP completion/hover requests — and are what catch a
+    // consumer that unhooks itself. Both layers are kept deliberately: the
+    // registration gates localise the fault, the behavioural gates prove the fault
+    // would be user-visible.
+
+    /// THE DURABLE GATE: a fresh effect analyzer must know exactly the canonical
+    /// set. The hand-written table this replaced knew 19 of 38, and a built-in with
+    /// no entry contributes *no effect*, so a file-writing call was analyzed as pure.
+    #[test]
+    fn test_effect_analyzer_registers_exactly_the_canonical_builtins() {
+        let ea = crate::effects::EffectAnalyzer::new();
+        assert_eq!(
+            ea.registered_builtin_names(),
+            canonical(),
+            "effect analyzer builtin set drifted from src/builtins.rs"
+        );
+    }
+
+    /// And the effects it attributes must be the ones this table declares — being
+    /// *registered* with the wrong effect set is the same bug one level down.
+    #[test]
+    fn test_effect_analyzer_attributes_the_canonical_effects() {
+        use crate::effects::{Effect, EffectSet};
+
+        let ea = crate::effects::EffectAnalyzer::new();
+        for b in BUILTINS {
+            let mut expected = EffectSet::new();
+            for effect in b.effects {
+                expected.add(effect.clone());
+            }
+            let actual = ea
+                .builtin_effects_of(b.name)
+                .unwrap_or_else(|| panic!("effect analyzer is missing builtin: {}", b.name));
+            assert_eq!(actual, &expected, "effects drifted for builtin: {}", b.name);
+            assert_eq!(
+                actual.is_pure(),
+                b.effects.is_empty(),
+                "purity drifted for builtin: {}",
+                b.name
+            );
+            // A built-in that does I/O must never be analyzed as pure: that is the
+            // exact failure the 19 missing entries produced.
+            if b.effects.contains(&Effect::IO) {
+                assert!(
+                    !actual.is_pure() && actual.contains(&Effect::IO),
+                    "{} does I/O but the analyzer treats it as effect-free",
+                    b.name
+                );
+            }
+        }
+    }
+
+    /// The 19 built-ins that used to be missing from the effect analyzer. 18 of
+    /// them do file or console I/O and were analyzed as pure.
+    #[test]
+    fn test_previously_effect_free_builtins_have_effects() {
+        const PREVIOUSLY_MISSING: &[&str] = &[
+            "panic",
+            "arg_count",
+            "arg_at",
+            "path_exists",
+            "path_is_file",
+            "path_is_dir",
+            "create_dir",
+            "create_dir_all",
+            "remove_file",
+            "remove_dir",
+            "remove_dir_all",
+            "read_file_to_string",
+            "write_string_to_file",
+            "file_flush",
+            "file_seek",
+            "file_open_ex",
+            "file_close_ex",
+            "file_read_ex",
+            "file_write_ex",
+        ];
+        let ea = crate::effects::EffectAnalyzer::new();
+        for name in PREVIOUSLY_MISSING {
+            let effects = ea
+                .builtin_effects_of(name)
+                .unwrap_or_else(|| panic!("effect analyzer is missing builtin: {}", name));
+            assert!(
+                !effects.is_pure(),
+                "{} is back to being silently effect-free",
+                name
+            );
+        }
+    }
+
+    /// THE DURABLE GATE: LSP completion must offer exactly the canonical set.
+    /// The empty prefix matches every built-in, so this is a full set comparison.
+    #[test]
+    fn test_lsp_completion_offers_exactly_the_canonical_builtins() {
+        let offered: BTreeSet<String> = crate::lsp::completion::builtin_completions("")
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+        assert_eq!(
+            offered,
+            callable(),
+            "LSP completion builtin set drifted from src/builtins.rs"
+        );
+    }
+
+    /// THE DURABLE GATE: LSP hover must answer for exactly the canonical set, and
+    /// with the derived signature — not a hand-written one that can go stale (the
+    /// deleted list claimed `string_to_int` returned `Option<i64>`).
+    #[test]
+    fn test_lsp_hover_answers_for_exactly_the_canonical_builtins() {
+        for b in BUILTINS {
+            let hover = crate::lsp::hover::builtin_hover(b.name)
+                .unwrap_or_else(|| panic!("LSP hover is missing builtin: {}", b.name));
+            assert!(
+                hover.contents.value.contains(&b.signature()),
+                "hover for {} does not show its derived signature",
+                b.name
+            );
+            assert!(
+                hover.contents.value.contains(b.doc),
+                "hover for {} does not show its documentation",
+                b.name
+            );
+        }
+        assert!(
+            crate::lsp::hover::builtin_hover("definitely_not_a_builtin").is_none(),
+            "LSP hover invented a builtin that is not in src/builtins.rs"
+        );
+    }
+
+    /// Completion and hover must describe a built-in identically; they used to keep
+    /// two lists with two different wordings of the same doc.
+    #[test]
+    fn test_lsp_completion_and_hover_agree() {
+        for item in crate::lsp::completion::builtin_completions("") {
+            let hover = crate::lsp::hover::builtin_hover(&item.label)
+                .unwrap_or_else(|| panic!("LSP hover is missing builtin: {}", item.label));
+            let detail = item.detail.expect("completion item without a signature");
+            let doc = item
+                .documentation
+                .expect("completion item without documentation");
+            assert!(
+                hover.contents.value.contains(&detail) && hover.contents.value.contains(&doc),
+                "completion and hover disagree about builtin: {}",
+                item.label
+            );
+        }
+    }
+
+    /// Every built-in must carry LSP metadata; a new one added with an empty doc
+    /// would show up as a blank tooltip rather than a compile error.
+    #[test]
+    fn test_every_builtin_has_lsp_metadata() {
+        for b in BUILTINS {
+            assert!(!b.doc.is_empty(), "{} has no documentation", b.name);
+            for (i, param) in b.params.iter().enumerate() {
+                assert!(!param.name.is_empty(), "{}: param {} has no name", b.name, i);
+            }
+            let sig = b.signature();
+            assert!(
+                sig.starts_with(&format!("fn {}(", b.name)),
+                "{}: derived signature is malformed: {}",
+                b.name,
+                sig
+            );
+        }
+    }
+
+    /// The signature renderer, pinned on the shapes the LSP used to hard-code.
+    #[test]
+    fn test_signature_rendering() {
+        let sig = |name: &str| lookup(name).expect(name).signature();
+        assert_eq!(sig("print"), "fn print(s: String)");
+        assert_eq!(sig("print_int"), "fn print_int(n: i64)");
+        assert_eq!(sig("string_len"), "fn string_len(s: String) -> i64");
+        assert_eq!(
+            sig("string_concat"),
+            "fn string_concat(a: String, b: String) -> String"
+        );
+        assert_eq!(sig("int_to_string"), "fn int_to_string(n: i64) -> String");
+        assert_eq!(sig("arg_count"), "fn arg_count() -> i64");
+        assert_eq!(sig("file_exists"), "fn file_exists(path: String) -> bool");
+        // The deleted LSP lists said `-> Option<i64>`; the compiler emits
+        // `long long __pd_string_to_int(const char*)` (src/codegen/mod.rs) and the
+        // type checker derives i64 from this table, so i64 is the truth.
+        assert_eq!(sig("string_to_int"), "fn string_to_int(s: String) -> i64");
+    }
+
     /// The 11 built-ins that used to be missing from the borrow checker.
     #[test]
     fn test_previously_missing_builtins_are_registered() {
@@ -437,6 +934,896 @@ mod tests {
                 registered.contains(*name),
                 "borrow checker is missing builtin: {}",
                 name
+            );
+        }
+    }
+
+    // ---- Behavioural gates ---------------------------------------------------
+    //
+    // Everything above asks a consumer what it has registered. These ask what the
+    // consumer actually *does*, through the same entry points the driver and an
+    // editor use. A consumer that keeps a correct table and stops consulting it —
+    // `analyze_expression` no longer unioning built-in effects, a completion or
+    // hover handler no longer calling its registry-derived helper — passes every
+    // test above and fails every test below.
+
+    /// Palladium source calling `builtin` with literal arguments, as a statement.
+    fn probe_source(b: &Builtin) -> String {
+        let args = b
+            .params
+            .iter()
+            .map(|param| match param.ty {
+                BuiltinType::I64 => "0".to_string(),
+                BuiltinType::Str => "\"x\"".to_string(),
+                BuiltinType::Bool => "true".to_string(),
+                BuiltinType::Unit => unreachable!("no builtin takes a Unit parameter"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Named `main` because the type checker requires a main function, and
+        // these probes are fed to it as whole programs.
+        format!("fn main() {{\n    {}({});\n}}\n", b.name, args)
+    }
+
+    /// Parse Palladium source the way the driver does and hand back its one function.
+    fn parse_probe(source: &str) -> crate::ast::Function {
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer
+            .collect_tokens()
+            .unwrap_or_else(|e| panic!("probe failed to lex: {:?}\n{}", e, source));
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser
+            .parse()
+            .unwrap_or_else(|e| panic!("probe failed to parse: {:?}\n{}", e, source));
+        match program.items.into_iter().next() {
+            Some(crate::ast::Item::Function(f)) => f,
+            other => panic!("probe did not produce a function: {:?}", other),
+        }
+    }
+
+    /// THE BEHAVIOURAL GATE for effects: analyzing real source that calls a built-in
+    /// must attribute that built-in's effects to the calling function.
+    ///
+    /// This is the property the driver depends on (`src/driver/mod.rs`, phase 3.6).
+    /// It goes red if `analyze_expression` stops consulting the built-in table, which
+    /// no registration-level test can see.
+    #[test]
+    fn test_effect_analysis_of_real_source_attributes_builtin_effects() {
+        use crate::effects::{EffectAnalyzer, EffectSet};
+
+        for b in BUILTINS {
+            let func = parse_probe(&probe_source(b));
+            let mut analyzer = EffectAnalyzer::new();
+            let actual = analyzer
+                .analyze_function(&func)
+                .unwrap_or_else(|e| panic!("{}: effect analysis failed: {:?}", b.name, e));
+
+            let mut expected = EffectSet::new();
+            for effect in b.effects {
+                expected.add(effect.clone());
+            }
+            assert_eq!(
+                actual, expected,
+                "calling {} does not carry its registered effects into the caller",
+                b.name
+            );
+            assert_eq!(
+                actual.is_pure(),
+                b.effects.is_empty(),
+                "a function whose whole body is a call to {} reports the wrong purity",
+                b.name
+            );
+        }
+    }
+
+    /// A function that calls nothing is pure — the control for the test above, so
+    /// that "everything is effectful" could not make it pass.
+    #[test]
+    fn test_effect_analysis_control_pure_function() {
+        use crate::effects::EffectAnalyzer;
+
+        let func = parse_probe("fn main() {\n    let x: i64 = 1 + 2;\n}\n");
+        let mut analyzer = EffectAnalyzer::new();
+        let effects = analyzer.analyze_function(&func).unwrap();
+        assert!(
+            effects.is_pure(),
+            "a function with no calls should be pure, got {:?}",
+            effects.sorted()
+        );
+    }
+
+    /// An LSP server with one open document, no AST attached.
+    ///
+    /// With no AST the only `Function`-kind completions the server can produce are
+    /// the built-ins (`src/lsp/completion.rs`: the other source is the document's
+    /// own functions), which is what makes the set comparison below exact.
+    fn server_with(content: &str) -> crate::lsp::LanguageServer {
+        let mut server = crate::lsp::LanguageServer::new();
+        server.initialize(None).expect("initialize");
+        server
+            .open_document("file:///probe.pd".to_string(), 1, content.to_string())
+            .expect("open_document");
+        server
+    }
+
+    /// THE BEHAVIOURAL GATE for completion: a real completion request must offer
+    /// exactly the canonical built-ins, with their derived signature and doc.
+    ///
+    /// The document is a bare `_`, and the server's word scan stops at any
+    /// non-alphanumeric character (`get_completion_context`), so the prefix is empty
+    /// and every built-in is in scope. Goes red if the handler stops calling
+    /// `builtin_completions`, however healthy that helper is.
+    #[test]
+    fn test_lsp_completion_request_offers_exactly_the_canonical_builtins() {
+        use crate::lsp::completion::CompletionItemKind;
+        use crate::lsp::Position;
+
+        let server = server_with("_");
+        let items = server.get_completions(
+            "file:///probe.pd",
+            Position {
+                line: 0,
+                character: 1,
+            },
+        );
+        let functions: Vec<_> = items
+            .iter()
+            .filter(|item| matches!(item.kind, Some(CompletionItemKind::Function)))
+            .collect();
+
+        let offered: BTreeSet<String> = functions.iter().map(|i| i.label.clone()).collect();
+        assert_eq!(
+            offered,
+            callable(),
+            "a completion request no longer offers exactly the callable builtin set"
+        );
+
+        for b in BUILTINS.iter().filter(|b| b.support.is_callable()) {
+            let item = functions
+                .iter()
+                .find(|i| i.label == b.name)
+                .unwrap_or_else(|| panic!("completion request omitted {}", b.name));
+            assert_eq!(
+                item.detail.as_deref(),
+                Some(b.signature().as_str()),
+                "completion request shows a stale signature for {}",
+                b.name
+            );
+            assert_eq!(
+                item.documentation.as_deref(),
+                Some(b.doc),
+                "completion request shows stale documentation for {}",
+                b.name
+            );
+        }
+    }
+
+    // ---- The registry-to-runtime seam ---------------------------------------
+    //
+    // Every gate above lives inside the Rust compiler. None of them look at the C
+    // the compiler emits, and that is where the last copy of built-in knowledge
+    // lives: the prelude in src/codegen/mod.rs writes a `__pd_<name>` C function
+    // for every built-in, by hand, and runtime/pd_prelude.h is generated from it
+    // (scripts/gen-prelude.sh) for the bootstrap compiler to #include.
+    //
+    // A built-in whose C wrapper disagrees with this table type-checks, borrow-
+    // checks, and then dies in gcc — which is the same D2 drift class, one layer
+    // below the compiler. Six built-ins are in exactly that state today; see
+    // `PRELUDE_TYPE_MISMATCHES`.
+
+    /// The C shape of a value, recorded finely enough to see a lossy conversion.
+    ///
+    /// The first version of this test compared integer-vs-pointer only, on the
+    /// argument that width differences are value-preserving. That is true of
+    /// widening and false of narrowing, and the prelude does both: measured with
+    /// gcc, `256` passed to a `uint8_t whence` arrives as `0`, `-1` passed to a
+    /// `size_t len` arrives as `18446744073709551615`, and `2^32` passed to an
+    /// `int mode` arrives as `0`. Width, signedness and mutability are all recorded
+    /// here because each of them can silently corrupt a value or a pointer.
+    #[derive(Debug, PartialEq, Eq, Clone)]
+    enum CShape {
+        Integer { bits: u32, signed: bool },
+        /// `char*` / `const char*`; `mutable` is true for the non-const form, which
+        /// is a *writable destination* the callee may store into.
+        StringPointer { mutable: bool },
+        Void,
+        /// A pointer that is not a string — an opaque handle. No Palladium built-in
+        /// type can be passed as one.
+        OpaquePointer,
+    }
+
+    impl CShape {
+        fn describe(&self) -> String {
+            match self {
+                CShape::Integer { bits, signed } => {
+                    format!("{}{}", if *signed { "i" } else { "u" }, bits)
+                }
+                CShape::StringPointer { mutable: true } => "char* (writable)".to_string(),
+                CShape::StringPointer { mutable: false } => "const char*".to_string(),
+                CShape::Void => "void".to_string(),
+                CShape::OpaquePointer => "opaque pointer".to_string(),
+            }
+        }
+    }
+
+    /// Assumes the LP64 model this compiler targets (`long` and `size_t` are 64-bit).
+    fn classify_c_type(c_type: &str) -> CShape {
+        let t = c_type.trim();
+        let is_const = t.starts_with("const ");
+        let bare = t.trim_start_matches("const ").trim();
+        if bare == "void" {
+            return CShape::Void;
+        }
+        if bare.ends_with('*') {
+            let pointee = bare.trim_end_matches('*').trim();
+            return if pointee == "char" {
+                CShape::StringPointer { mutable: !is_const }
+            } else {
+                CShape::OpaquePointer
+            };
+        }
+        match bare {
+            "char" | "int8_t" => CShape::Integer {
+                bits: 8,
+                signed: true,
+            },
+            "uint8_t" | "unsigned char" => CShape::Integer {
+                bits: 8,
+                signed: false,
+            },
+            "short" | "int16_t" => CShape::Integer {
+                bits: 16,
+                signed: true,
+            },
+            "uint16_t" | "unsigned short" => CShape::Integer {
+                bits: 16,
+                signed: false,
+            },
+            "int" | "int32_t" => CShape::Integer {
+                bits: 32,
+                signed: true,
+            },
+            "uint32_t" | "unsigned" | "unsigned int" => CShape::Integer {
+                bits: 32,
+                signed: false,
+            },
+            "long" | "long long" | "int64_t" | "ssize_t" | "ptrdiff_t" => CShape::Integer {
+                bits: 64,
+                signed: true,
+            },
+            "uint64_t" | "size_t" | "unsigned long" | "unsigned long long" => CShape::Integer {
+                bits: 64,
+                signed: false,
+            },
+            // FileHandle and friends are typedefs for pointers.
+            _ => CShape::OpaquePointer,
+        }
+    }
+
+    /// The C shape a Palladium type has when the compiler hands it to C.
+    ///
+    /// `I64` is a 64-bit signed integer and `Str` is an immutable string; those are
+    /// the only things a `.pd` program can produce.
+    fn palladium_shape(ty: BuiltinType) -> CShape {
+        match ty {
+            BuiltinType::I64 => CShape::Integer {
+                bits: 64,
+                signed: true,
+            },
+            // Bool is `int` in the emitted C; there is no C bool in the prelude.
+            BuiltinType::Bool => CShape::Integer {
+                bits: 32,
+                signed: true,
+            },
+            BuiltinType::Str => CShape::StringPointer { mutable: false },
+            BuiltinType::Unit => CShape::Void,
+        }
+    }
+
+    /// Can a Palladium value of shape `from` be passed *into* a C parameter of
+    /// shape `to` without loss?
+    ///
+    /// Directional on purpose. Into a parameter, the C type must be able to hold
+    /// every value the Palladium type can produce: narrowing loses the high bits and
+    /// an unsigned destination turns negatives into huge positives. A writable
+    /// `char*` destination cannot be supplied at all, because the only string a
+    /// `.pd` program has is immutable and may live in read-only memory — measured:
+    /// writing through such a pointer is SIGBUS.
+    fn param_is_lossless(from: &CShape, to: &CShape) -> bool {
+        match (from, to) {
+            (
+                CShape::Integer {
+                    bits: fb,
+                    signed: fs,
+                },
+                CShape::Integer {
+                    bits: tb,
+                    signed: ts,
+                },
+            ) => {
+                if *fs == *ts {
+                    tb >= fb
+                } else if *fs && !*ts {
+                    // signed -> unsigned: negatives wrap
+                    false
+                } else {
+                    // unsigned -> signed needs a strictly wider destination
+                    tb > fb
+                }
+            }
+            (CShape::StringPointer { .. }, CShape::StringPointer { mutable: true }) => false,
+            (CShape::StringPointer { .. }, CShape::StringPointer { mutable: false }) => true,
+            (CShape::Void, CShape::Void) => true,
+            _ => false,
+        }
+    }
+
+    /// Can a C return value of shape `from` be received into Palladium's `to`?
+    ///
+    /// The mirror image: here widening is what happens, and it is safe. `int` into
+    /// an `i64` result is fine; an unsigned 64-bit result is not, because it can
+    /// exceed `i64::MAX` and arrive negative.
+    fn return_is_lossless(from: &CShape, to: &CShape) -> bool {
+        match (from, to) {
+            (
+                CShape::Integer {
+                    bits: fb,
+                    signed: fs,
+                },
+                CShape::Integer {
+                    bits: tb,
+                    signed: ts,
+                },
+            ) => {
+                if *fs == *ts {
+                    tb >= fb
+                } else if !*fs && *ts {
+                    tb > fb
+                } else {
+                    false
+                }
+            }
+            // Returning a writable char* into an immutable Palladium String is fine;
+            // the language simply never writes through it.
+            (CShape::StringPointer { .. }, CShape::StringPointer { .. }) => true,
+            (CShape::Void, CShape::Void) => true,
+            _ => false,
+        }
+    }
+
+    /// The C prelude the compiler emits, obtained from the real code generator.
+    fn emitted_prelude() -> String {
+        let mut generator =
+            crate::codegen::CodeGenerator::new("prelude_probe").expect("codegen::new");
+        let empty = crate::ast::Program {
+            imports: vec![],
+            items: vec![],
+        };
+        generator.compile(&empty).expect("compile empty program");
+        generator.generated_c().to_string()
+    }
+
+    /// The C definition of `__pd_<name>` in `prelude`, as (return type, params).
+    ///
+    /// Every wrapper in the prelude is written with its whole signature on one
+    /// line, ending in `{`, which is what makes this scan sufficient.
+    fn c_signature_of(prelude: &str, name: &str) -> Option<(String, Vec<String>)> {
+        let needle = format!(" __pd_{}(", name);
+        for line in prelude.lines() {
+            let line = line.trim_end();
+            if !line.ends_with('{') || !line.contains(&needle) {
+                continue;
+            }
+            let at = line.find(&needle)?;
+            let ret = line[..at].trim().to_string();
+            let open = at + needle.len();
+            let close = line.rfind(')')?;
+            let inside = line[open..close].trim();
+            let params = if inside.is_empty() || inside == "void" {
+                Vec::new()
+            } else {
+                inside.split(',').map(|p| p.trim().to_string()).collect()
+            };
+            return Some((ret, params));
+        }
+        None
+    }
+
+    /// The C type of a parameter declaration such as `const char* path`.
+    fn param_c_type(decl: &str) -> String {
+        let decl = decl.trim();
+        // Strip the parameter name: everything after the last space, unless that
+        // space is part of the type (`long long`), which the `*` case also covers.
+        match decl.rfind(['*', ' ']) {
+            Some(idx) if decl[idx..].starts_with('*') => decl[..=idx].trim().to_string(),
+            Some(idx) => decl[..idx].trim().to_string(),
+            None => decl.to_string(),
+        }
+    }
+
+    /// The built-ins whose C wrapper contradicts this table today.
+    ///
+    /// All six take or return the *enhanced* file API's handle, which is
+    /// `FileHandle` (`typedef void*`, a cast FILE*), while this table types every
+    /// handle as `I64`. They pass the type checker and the borrow checker and then
+    /// fail to compile:
+    ///
+    ///   incompatible integer to pointer conversion passing 'long long'
+    ///   to parameter of type 'FileHandle' (aka 'void *')
+    ///
+    /// Every way in which the C prelude contradicts this table today, one entry per
+    /// *dimension* — not one per function.
+    ///
+    /// Pinning by function name was not enough: a second defect added to a function
+    /// already on the list left the set unchanged and the gate green. These strings
+    /// are produced by the test below, so a new defect on an already-broken function
+    /// is a new string and turns it red.
+    ///
+    /// Every entry belongs to the enhanced file API, whose handle is an opaque
+    /// `FileHandle` (`typedef void*`) that no Palladium type can hold. The narrowing
+    /// entries were measured with gcc: `whence` 256 arrives as 0, a length of -1
+    /// arrives as 18446744073709551615, a `mode` of 2^32 arrives as 0. The
+    /// `char* (writable)` entry is the memory-safety one: `file_read_ex` wants a
+    /// destination to write into, and a Palladium String may be a literal in
+    /// read-only memory — writing through it is SIGBUS.
+    ///
+    /// This list states a known defect; it is not permission. Fixing any dimension
+    /// must delete its line, and the test fails if it does not.
+    const PRELUDE_TYPE_MISMATCHES: &[&str] = &[
+        "file_close_ex param 0 (handle): i64 -> opaque pointer",
+        "file_flush param 0 (handle): i64 -> opaque pointer",
+        "file_open_ex param 1 (mode): i64 -> i32",
+        "file_open_ex return: opaque pointer -> i64",
+        "file_read_ex param 0 (handle): i64 -> opaque pointer",
+        "file_read_ex param 1 (buffer): const char* -> char* (writable)",
+        "file_read_ex param 2 (len): i64 -> u64",
+        "file_seek param 0 (handle): i64 -> opaque pointer",
+        "file_seek param 1 (whence): i64 -> u8",
+        "file_write_ex param 0 (handle): i64 -> opaque pointer",
+        "file_write_ex param 2 (len): i64 -> u64",
+    ];
+
+    /// THE SEAM GATE: for every built-in, the C wrapper the compiler emits must be
+    /// able to carry the values this table describes — every parameter and the
+    /// return, checked in the direction the value actually travels.
+    ///
+    /// The known-broken dimensions must be exactly `PRELUDE_TYPE_MISMATCHES`.
+    #[test]
+    fn test_emitted_prelude_agrees_with_the_registry() {
+        let prelude = emitted_prelude();
+        let mut mismatched: BTreeSet<String> = BTreeSet::new();
+
+        for b in BUILTINS {
+            let (ret, params) = c_signature_of(&prelude, b.name).unwrap_or_else(|| {
+                panic!(
+                    "{} is registered but the emitted C prelude defines no __pd_{}",
+                    b.name, b.name
+                )
+            });
+
+            assert_eq!(
+                params.len(),
+                b.params.len(),
+                "{}: registry declares {} parameters, C prelude declares {} ({:?})",
+                b.name,
+                b.params.len(),
+                params.len(),
+                params
+            );
+
+            // Return: the C value travels back into a Palladium value.
+            let c_ret = classify_c_type(&ret);
+            let pd_ret = palladium_shape(b.ret);
+            if !return_is_lossless(&c_ret, &pd_ret) {
+                mismatched.insert(format!(
+                    "{} return: {} -> {}",
+                    b.name,
+                    c_ret.describe(),
+                    pd_ret.describe()
+                ));
+            }
+
+            // Parameters: the Palladium value travels into the C parameter.
+            for (i, (param, decl)) in b.params.iter().zip(params.iter()).enumerate() {
+                let pd = palladium_shape(param.ty);
+                let c = classify_c_type(&param_c_type(decl));
+                if !param_is_lossless(&pd, &c) {
+                    mismatched.insert(format!(
+                        "{} param {} ({}): {} -> {}",
+                        b.name,
+                        i,
+                        param.name,
+                        pd.describe(),
+                        c.describe()
+                    ));
+                }
+            }
+        }
+
+        let known: BTreeSet<String> = PRELUDE_TYPE_MISMATCHES
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            mismatched, known,
+            "the ways in which the C prelude contradicts src/builtins.rs changed. \
+             New lines = a value that will be corrupted or a call that will not \
+             compile; missing lines = a fix that should also delete the line from \
+             PRELUDE_TYPE_MISMATCHES"
+        );
+    }
+
+    /// THE BEHAVIOURAL GATE for support status: a program that calls an unsupported
+    /// built-in must be rejected by the type checker, naming the built-in and the
+    /// reason — not passed through to gcc to fail there in generated C.
+    #[test]
+    fn test_calling_an_unsupported_builtin_is_rejected_by_typeck() {
+        for b in BUILTINS.iter().filter(|b| !b.support.is_callable()) {
+            let func = probe_source(b);
+            let mut lexer = crate::lexer::Lexer::new(&func);
+            let tokens = lexer.collect_tokens().expect("probe lexes");
+            let program = crate::parser::Parser::new(tokens)
+                .parse()
+                .expect("probe parses");
+
+            let err = crate::typeck::TypeChecker::new()
+                .check(&program)
+                .expect_err(&format!(
+                    "{} is unsupported but the type checker accepted a call to it",
+                    b.name
+                ));
+            match err {
+                crate::errors::CompileError::UnsupportedBuiltin { name, reason, .. } => {
+                    assert_eq!(name, b.name);
+                    assert_eq!(Some(reason.as_str()), b.support.reason());
+                }
+                other => panic!("{}: expected UnsupportedBuiltin, got {:?}", b.name, other),
+            }
+        }
+    }
+
+    /// A supported built-in must still type-check, so the rejection above cannot be
+    /// passing by rejecting everything.
+    #[test]
+    fn test_calling_a_supported_builtin_is_accepted_by_typeck() {
+        let b = lookup("print").expect("print");
+        let source = probe_source(b);
+        let mut lexer = crate::lexer::Lexer::new(&source);
+        let tokens = lexer.collect_tokens().expect("probe lexes");
+        let program = crate::parser::Parser::new(tokens)
+            .parse()
+            .expect("probe parses");
+        crate::typeck::TypeChecker::new()
+            .check(&program)
+            .expect("a call to print must type-check");
+    }
+
+    /// Hover does not hide an unsupported built-in — it says so. Completion omits
+    /// them (asserted by the `callable()` comparisons); hover is the surface where
+    /// a user asks *about* a name they have already typed, so silence there would
+    /// answer the question with nothing.
+    #[test]
+    fn test_hover_marks_unsupported_builtins_as_not_callable() {
+        for b in BUILTINS {
+            let hover = crate::lsp::hover::builtin_hover(b.name)
+                .unwrap_or_else(|| panic!("hover is missing {}", b.name));
+            match b.support.reason() {
+                Some(reason) => {
+                    assert!(
+                        hover.contents.value.contains("Not callable"),
+                        "hover for the unsupported {} does not say it is not callable",
+                        b.name
+                    );
+                    assert!(
+                        hover.contents.value.contains(reason),
+                        "hover for {} does not give the reason",
+                        b.name
+                    );
+                }
+                None => assert!(
+                    !hover.contents.value.contains("Not callable"),
+                    "hover for the callable {} claims it is not callable",
+                    b.name
+                ),
+            }
+        }
+    }
+
+    /// `Owned` must mean "this built-in allocated it", which is exactly the set
+    /// carrying `Effect::Memory`. `arg_at` was the counter-example: it returned
+    /// storage belonging to `argv` while claiming `Owned`, so the ownership pass was
+    /// told the caller may free process memory. It is `BorrowedStatic` now.
+    #[test]
+    fn test_owned_returns_are_exactly_the_allocating_builtins() {
+        for b in BUILTINS {
+            let allocates = b.effects.contains(&Effect::Memory);
+            let owned = b.ret_mode == ReturnMode::Owned;
+            assert_eq!(
+                owned, allocates,
+                "{}: ret_mode Owned = {} but Effect::Memory = {}",
+                b.name, owned, allocates
+            );
+        }
+        assert_eq!(
+            lookup("arg_at").expect("arg_at").ret_mode,
+            ReturnMode::BorrowedStatic,
+            "arg_at returns a pointer into argv; it must not claim Owned"
+        );
+    }
+
+    /// THE OTHER SEAM: the prelude's `extern pd_*` declarations against the real
+    /// definitions in `runtime/palladium_runtime.c`.
+    ///
+    /// Those live in different translation units, so C never compares them: a
+    /// disagreement links cleanly and corrupts arguments at run time. Forcing the
+    /// declarations into the same translation unit as the definitions makes the
+    /// compiler check them. No existing gate covered this — conformance and
+    /// selfhost link the two objects together, which is exactly the situation in
+    /// which C does *not* check.
+    #[test]
+    fn test_prelude_externs_match_the_runtime_definitions() {
+        use std::process::Command;
+
+        let root = env!("CARGO_MANIFEST_DIR");
+
+        // No skip. Every language-level gate in this repo already requires gcc, so
+        // skipping could not buy portability — it could only report success for a
+        // check that never ran, which is the failure mode this milestone exists to
+        // remove.
+        let output = Command::new("gcc")
+            .arg("-fsyntax-only")
+            .arg("-I")
+            .arg(format!("{}/runtime", root))
+            .arg("-include")
+            .arg(format!("{}/runtime/pd_prelude.h", root))
+            .arg(format!("{}/runtime/palladium_runtime.c", root))
+            .output()
+            .expect("gcc must be available: every gate in this repo compiles C");
+
+        assert!(
+            output.status.success(),
+            "the prelude's `extern pd_*` declarations disagree with the definitions \
+             in runtime/palladium_runtime.c. C does not diagnose this across \
+             translation units, so it would link and then corrupt arguments:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// A C expression with pointer casts and whitespace removed: `(char*)0`
+    /// becomes `0`. An inner `(a + b)` is left alone — stripping it would change
+    /// what the expression says.
+    fn strip_casts(expr: &str) -> String {
+        let mut s: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
+        while s.starts_with('(') {
+            let Some(close) = s.find(')') else { break };
+            let inside = &s[1..close];
+            let is_pointer_cast = inside.ends_with('*')
+                && inside
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '*');
+            if !is_pointer_cast {
+                break;
+            }
+            s = s[close + 1..].to_string();
+        }
+        s
+    }
+
+    /// Every value returned by `body`, normalised by `strip_casts`.
+    fn returned_values(body: &str) -> Vec<String> {
+        let mut values = Vec::new();
+        let mut rest = body;
+        while let Some(at) = rest.find("return") {
+            rest = &rest[at + "return".len()..];
+            // `returns_x` is not a return statement.
+            if rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+                continue;
+            }
+            let Some(semi) = rest.find(';') else { break };
+            values.push(strip_casts(&rest[..semi]));
+            rest = &rest[semi..];
+        }
+        values
+    }
+
+    /// A Palladium String is a non-NULL `const char*` and the string built-ins
+    /// dereference it immediately (`string_len` is `strlen`), so no wrapper may
+    /// hand back a null pointer. `read_file_to_string` used to, which turned a
+    /// missing file into SIGSEGV.
+    ///
+    /// SCOPE, stated precisely because the name of the first version of this test
+    /// claimed more than it checked: this rejects a returned null *constant* in any
+    /// spelling — `NULL`, `0`, `(char*)0`, `(void*)0`. It does **not** prove a
+    /// wrapper never returns null at run time. `char* p = NULL; ...; return p;`
+    /// returns a variable, and nothing here evaluates it — which is not
+    /// hypothetical: `__pd_read_file_to_string` has exactly that shape, returning
+    /// `out_str`, which the callee fills in only on success. This is a guard
+    /// against the constant coming back, not a proof of non-nullness.
+    #[test]
+    fn test_no_builtin_wrapper_returns_a_null_constant() {
+        const NULL_CONSTANTS: &[&str] = &["NULL", "0", "nullptr"];
+
+        let prelude = emitted_prelude();
+        for b in BUILTINS.iter().filter(|b| b.ret == BuiltinType::Str) {
+            let needle = format!(" __pd_{}(", b.name);
+            let start = prelude
+                .find(&needle)
+                .unwrap_or_else(|| panic!("no wrapper for {}", b.name));
+            let body_start = start + prelude[start..].find('{').expect("wrapper body");
+            let end = body_start
+                + prelude[body_start..]
+                    .find("\n}")
+                    .expect("wrapper body ends");
+            let body = &prelude[body_start..end];
+
+            for value in returned_values(body) {
+                assert!(
+                    !NULL_CONSTANTS.contains(&value.as_str()),
+                    "__pd_{} returns the null constant `{}`, but its Palladium type \
+                     is a non-NULL String:\n{}",
+                    b.name,
+                    value,
+                    body
+                );
+            }
+        }
+    }
+
+    /// The null-constant scan must recognise the spellings it claims to, including
+    /// the ones the exact-match version of it missed.
+    #[test]
+    fn test_null_constant_scan_recognises_every_spelling() {
+        for spelling in ["NULL", "0", "(char*)0", "(void*)0", " ( char * ) 0 "] {
+            let body = format!("{{\n    return {};\n}}", spelling);
+            let expected = if spelling.contains("NULL") { "NULL" } else { "0" };
+            assert_eq!(
+                returned_values(&body),
+                vec![expected.to_string()],
+                "null spelling not normalised: {}",
+                spelling
+            );
+        }
+        // And it must not mistake ordinary returns for null.
+        assert_eq!(
+            returned_values("{\n    return result;\n    return \"\";\n}"),
+            vec!["result".to_string(), "\"\"".to_string()]
+        );
+        assert_eq!(
+            returned_values("{\n    return (a + b);\n}"),
+            vec!["(a+b)".to_string()]
+        );
+    }
+
+    /// Every built-in with a pinned mismatch must also be marked unsupported, and
+    /// every unsupported built-in must have a pinned mismatch. Otherwise the two
+    /// records of "this does not work" could drift apart, and the type checker would
+    /// let through a call that gcc rejects.
+    #[test]
+    fn test_unsupported_builtins_are_exactly_the_mismatched_ones() {
+        let mismatched: BTreeSet<&str> = PRELUDE_TYPE_MISMATCHES
+            .iter()
+            .map(|entry| entry.split(' ').next().expect("mismatch entry has a name"))
+            .collect();
+        let unsupported: BTreeSet<&str> = BUILTINS
+            .iter()
+            .filter(|b| !b.support.is_callable())
+            .map(|b| b.name)
+            .collect();
+        assert_eq!(
+            unsupported, mismatched,
+            "Support::Unsupported and PRELUDE_TYPE_MISMATCHES disagree about which \
+             built-ins are broken"
+        );
+    }
+
+    /// The generated header the bootstrap compiler includes must not go stale: it
+    /// has to declare the same `__pd_*` signatures the Rust compiler emits.
+    /// Regenerate with scripts/gen-prelude.sh.
+    #[test]
+    fn test_generated_prelude_header_matches_the_compiler() {
+        // Reproduce scripts/gen-prelude.sh in process: compile its probe and take
+        // everything above the generated `int main(`.
+        const PROBE: &str = concat!(
+            "fn main() {\n",
+            "    let s: String = \"x\";\n",
+            "    print(s);\n",
+            "    print_int(string_len(s));\n",
+            "    print_int(arg_count());\n",
+            "}\n"
+        );
+        let mut lexer = crate::lexer::Lexer::new(PROBE);
+        let tokens = lexer.collect_tokens().expect("probe lexes");
+        let program = crate::parser::Parser::new(tokens).parse().expect("probe parses");
+        let mut generator =
+            crate::codegen::CodeGenerator::new("pd_prelude_probe").expect("codegen::new");
+        generator.compile(&program).expect("probe compiles");
+        let generated = generator.generated_c().to_string();
+        let boundary = generated
+            .lines()
+            .position(|line| line.starts_with("int main("))
+            .expect("generated C has an int main(");
+        let from_compiler: Vec<&str> = generated.lines().take(boundary).collect();
+
+        let header = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/runtime/pd_prelude.h"
+        ))
+        .expect("runtime/pd_prelude.h");
+
+        // Strip only the scaffolding gen-prelude.sh wraps around the extract: four
+        // comment lines, the include guard, and the closing #endif.
+        let from_header: Vec<&str> = header
+            .lines()
+            .skip_while(|l| l.starts_with("//"))
+            .skip_while(|l| l.starts_with("#ifndef") || l.starts_with("#define PD_PRELUDE_H"))
+            .take_while(|l| !l.starts_with("#endif"))
+            .collect();
+
+        // Whole-text comparison, not just signatures. A change to a wrapper *body*
+        // or to a helper leaves every signature intact while making the header
+        // behaviourally stale — and the bootstrap compiler #includes this header,
+        // so it would be compiling against different code than the Rust compiler
+        // emits.
+        if from_compiler != from_header {
+            let first_diff = from_compiler
+                .iter()
+                .zip(from_header.iter())
+                .position(|(a, b)| a != b);
+            let detail = match first_diff {
+                Some(i) => format!(
+                    "first difference at prelude line {}:\n  compiler: {}\n  header:   {}",
+                    i + 1,
+                    from_compiler[i],
+                    from_header[i]
+                ),
+                None => format!(
+                    "prelude lengths differ: compiler {} lines, header {} lines",
+                    from_compiler.len(),
+                    from_header.len()
+                ),
+            };
+            panic!(
+                "runtime/pd_prelude.h is stale — regenerate with scripts/gen-prelude.sh\n{}",
+                detail
+            );
+        }
+    }
+
+    /// THE BEHAVIOURAL GATE for hover: a real hover request over a call to any
+    /// built-in must answer with that built-in's derived signature and doc.
+    /// Goes red if the handler stops calling `builtin_hover`.
+    ///
+    /// The document is the same well-typed probe used for effect analysis, because
+    /// `get_hover` bails out on a document that did not parse (`src/lsp/hover.rs`,
+    /// `doc.ast.as_ref()?`) — the call has to sit inside a real function.
+    #[test]
+    fn test_lsp_hover_request_answers_for_every_builtin() {
+        use crate::lsp::Position;
+
+        for b in BUILTINS {
+            // probe_source puts the call on line 1, indented by four spaces.
+            let source = probe_source(b);
+            let server = server_with(&source);
+            let hover = server
+                .get_hover(
+                    "file:///probe.pd",
+                    Position {
+                        line: 1,
+                        character: 4,
+                    },
+                )
+                .unwrap_or_else(|| {
+                    panic!("hover request returned nothing for {}\n{}", b.name, source)
+                });
+            assert!(
+                hover.contents.value.contains(&b.signature()),
+                "hover request does not show the derived signature for {}",
+                b.name
+            );
+            assert!(
+                hover.contents.value.contains(b.doc),
+                "hover request does not show the documentation for {}",
+                b.name
             );
         }
     }
