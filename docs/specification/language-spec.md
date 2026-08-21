@@ -411,7 +411,9 @@ Each fixture declares a class:
   exit-code verdict cannot see a wrong answer.
 - **untranscribed** — ran, but carries no transcript. The reviewed allowance for a fixture that
   genuinely cannot have one; it needs an owner and a `why:` reason and is reported as a debt on
-  every run, so "no transcript" is always a signed decision rather than a default. Currently zero.
+  every run, so "no transcript" is a written decision rather than a default. Currently zero. (The
+  owner field is an editable label; the authorisation boundary is review of the manifest, not the
+  runner, which cannot distinguish an honest reclassification from an evasive one.)
 - **vacuous** — runs, but only prints that its feature is unimplemented. Its note must name the
   feature it fails to cover. ⚠️ **Seven** files are in this state: `02_types_enums`,
   `07_traits_basic`, `08_generics_basic`, `09_effects_system`, `10_async_await`,
@@ -427,7 +429,7 @@ Each fixture declares a class:
 
 Because the inventory is closed, a fixture that is deleted, renamed, or added without a declaration
 fails the gate rather than silently shrinking or growing it. The gate's own ability to fail is
-tested by `make test-conformance-runner` (61 cases).
+tested by `make test-conformance-runner` (75 cases).
 
 ## 12. Relationship to the bootstrap subset
 

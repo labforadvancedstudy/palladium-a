@@ -17,6 +17,10 @@
 #        untranscribed  ran, but has no transcript. The reviewed allowance for a
 #                       fixture that genuinely cannot have one. Needs an owner and
 #                       a `why:` reason, and is reported as a debt every run.
+#                       NOTE: `owner` is an editable label, so reassigning a row
+#                       to another milestone slips a CONFORMANCE_FORBID_OWNER
+#                       check. What authorises a row is REVIEW OF THIS FILE; the
+#                       runner provides visibility, not enforcement of intent.
 #        vacuous        runs, but only prints that its feature is unimplemented.
 #                       Note must begin `claims:` and name the feature it does not
 #                       actually cover.

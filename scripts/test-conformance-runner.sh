@@ -229,6 +229,65 @@ manifest "$D" 'tests/real.pd|run|-|expected|-|-' 'tests/alias.pd|run|-|expected|
 run_case "$D"
 expect_rc 0 && expect_out "verified=2" && ok
 
+# --- the repository root as a scope ----------------------------------------
+# `.` resolves to the repo root, which contains every repo-relative path. Scope
+# membership did not know that, so declared_in_scope was 0 and MISSING never
+# fired: the closed inventory failing open in the invocation a person is most
+# likely to reach for.
+start "root scope: '.' contains repo-relative paths (was: declared_in_scope=0)"
+D=$(new_repo rootscope)
+fixture "$D" tests/a.pd "$good_program"
+fixture "$D" tests/b.pd "$good_program"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/b.pd|run|-|expected|-|-'
+run_case "$D" .
+expect_rc 0 && expect_out "declared_in_scope=2" && ok
+
+start "root scope: a deleted fixture is caught under '.' (was: escaped MISSING)"
+rm "$D/tests/b.pd"
+run_case "$D" .
+expect_rc 1 && expect_out "MISSING" && ok
+
+start "root scope: the absolute repository root behaves identically"
+OUT=$( cd "$D" && bash scripts/conformance.sh "$D" 2>&1 ); RC=$?
+expect_rc 1 && expect_out "MISSING" && ok
+
+# --- overlapping scopes ------------------------------------------------------
+# `find tests ./tests` visited every fixture twice and still exited 0, so the
+# coverage number could be doubled by repeating an argument.
+start "overlap: the same scope twice is refused (was: everything counted twice)"
+D=$(new_repo overlap)
+fixture "$D" tests/a.pd "$good_program"
+mkdir -p "$D/tests/inner"
+fixture "$D" tests/inner/b.pd "$good_program"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/inner/b.pd|run|-|expected|-|-'
+run_case "$D" tests ./tests
+expect_rc 2 && expect_out "given more than once" && ok
+
+start "overlap: a nested scope pair is refused"
+run_case "$D" tests tests/inner
+expect_rc 2 && expect_out "overlap" && ok
+
+start "overlap: '.' plus any other scope is refused"
+run_case "$D" . tests
+expect_rc 2 && expect_out "overlap" && ok
+
+start "overlap: the non-overlapping baseline still counts each fixture once"
+run_case "$D" tests
+expect_rc 0 && expect_out "fixtures=2" && ok
+
+# --- transport ---------------------------------------------------------------
+start "transport: a scope path containing a newline is refused"
+run_case "$D" "$(printf 'tests\ntests')"
+expect_rc 2 && expect_out "newline" && ok
+
+start "transport: a dangling symlink is enumerated, not mistaken for a split path"
+D=$(new_repo dangling)
+fixture "$D" tests/a.pd "$good_program"
+ln -sfn nonexistent.pd "$D/tests/broken_link.pd"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
+run_case "$D" tests
+expect_rc 1 && expect_out "UNDECLARED" && ok
+
 start "item3: an XPASS is still caught through an alternate spelling"
 D=$(new_repo canonxpass)
 fixture "$D" tests/a.pd "$good_program"
@@ -430,6 +489,35 @@ start "handoff: TRANSITIONING the row to run+transcript is what makes it green"
 manifest "$D" 'tests/wasbroken.pd|run|-|expected|-|-'
 run_case "$D"
 expect_rc 0 && expect_out "verified=1" && ok
+
+# The XPASS text tells the fixing branch to generate the transcript with bless.
+# But bless cannot start from a genuinely absent file: declaring `expected` with
+# no golden is a manifest error, so the run aborts before blessing. The text
+# therefore has to name a bootstrap step, and that whole sequence is walked here
+# from a truly missing transcript — the exact path the D9 branch will take.
+start "handoff bootstrap: a transition with NO transcript file aborts"
+D=$(new_repo bootstrap)
+fixture "$D" tests/wasbroken.pd "$good_program"
+rm -f "$D/tests/wasbroken.expected"
+manifest "$D" 'tests/wasbroken.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 2 && expect_out "does not exist" && ok
+
+start "handoff bootstrap: ...and blessing cannot rescue it either"
+OUT=$( cd "$D" && CONFORMANCE_BLESS=1 bash scripts/conformance.sh tests 2>&1 ); RC=$?
+expect_rc 2 && expect_out "does not exist" && ok
+
+start "handoff bootstrap: creating it empty then blessing populates it"
+: > "$D/tests/wasbroken.expected"
+OUT=$( cd "$D" && CONFORMANCE_BLESS=1 bash scripts/conformance.sh tests 2>&1 ); RC=$?
+expect_rc 2 && expect_out "BLESS MODE" && ok
+
+start "handoff bootstrap: the populated transcript then passes a normal run"
+run_case "$D"
+expect_rc 0 && expect_out "verified=1" && ok
+
+start "handoff bootstrap: and the transcript holds the program's real output"
+if [ "$(cat "$D/tests/wasbroken.expected")" = "ok" ]; then ok; else bad "transcript content wrong"; fi
 
 # ---------------------------------------------------------------------------
 # class=reject — same fingerprint machinery as xfail, opposite meaning. This is

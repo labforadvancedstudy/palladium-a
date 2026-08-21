@@ -22,8 +22,15 @@
 #            allowance for a fixture that genuinely cannot have one (nondetermin-
 #            istic output, a timestamp, a machine-dependent value). It is shaped
 #            exactly like an xfail row — owner plus a `why:` reason — and is
-#            reported as a debt on every run. It exists so that "no transcript"
-#            is always a decision somebody signed, never a default.
+#            reported as a debt on every run, so "no transcript" is a written
+#            decision rather than a default.
+#
+#            Be precise about how much that is worth: `owner` is an editable
+#            label, so reassigning a row to another milestone or to `unscheduled`
+#            slips a specific CONFORMANCE_FORBID_OWNER check. The authorisation
+#            boundary is REVIEW OF THIS MANIFEST, not the runner. Printing a debt
+#            creates visibility; it does not create mechanical pressure, and this
+#            file cannot tell an honest reclassification from an evasive one.
 #
 #            Why the distinction is load-bearing: a missing C `return` is
 #            undefined behaviour, so a tail-return miscompile (defect D3) prints
@@ -155,11 +162,29 @@ resolve_scope() {
   esac
 }
 
+# Does scope $1 contain path $2 (or equal it)? `.` is the repository root and so
+# contains every repo-relative path — the special case that made `conformance.sh .`
+# report declared_in_scope=0 and let a deleted fixture escape MISSING entirely.
+scope_contains() {
+  [ "$1" = "$2" ] && return 0
+  [ "$1" = "." ] && return 0
+  case "$2" in "$1"/*) return 0 ;; esac
+  return 1
+}
+
 if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
 i=0
 while [ "$i" -lt "${#SCOPES[@]}" ]; do
   raw=${SCOPES[$i]}
   if [ -z "$raw" ]; then echo "error: empty scope argument" >&2; exit 2; fi
+  # Enumeration and the manifest are both newline-delimited, so a newline in a
+  # path would split into two meaningless entries rather than fail.
+  # $'\n' and not "$(printf '\n')": command substitution strips trailing
+  # newlines, so the latter is the empty string and matches every path.
+  case "$raw" in *$'\n'*)
+    echo "error: scope path contains a newline; paths must be newline-free" >&2
+    exit 2 ;;
+  esac
   if [ ! -d "$raw" ]; then
     echo "error: scope '$raw' is not a directory. Refusing to report a green run" >&2
     echo "       over a scope that does not exist." >&2
@@ -179,6 +204,31 @@ while [ "$i" -lt "${#SCOPES[@]}" ]; do
     exit 2
   fi
   SCOPES[i]=$s
+  i=$((i+1))
+done
+
+# Overlapping scopes are rejected rather than silently deduplicated. `find tests
+# ./tests` visits every fixture twice, which inflated fixtures/evaluated/verified
+# and still exited 0 — a coverage number doubled by repeating an argument. Silent
+# dedup would hide the mistake; naming it is the point.
+i=0
+while [ "$i" -lt "${#SCOPES[@]}" ]; do
+  j=$((i+1))
+  while [ "$j" -lt "${#SCOPES[@]}" ]; do
+    a=${SCOPES[$i]}; b=${SCOPES[$j]}
+    if [ "$a" = "$b" ]; then
+      echo "error: scope '$a' given more than once (as '$a' and '$b' after resolution)." >&2
+      echo "       Every fixture under it would be compiled and counted twice." >&2
+      exit 2
+    fi
+    if scope_contains "$a" "$b" || scope_contains "$b" "$a"; then
+      echo "error: scopes '$a' and '$b' overlap; one contains the other." >&2
+      echo "       Every fixture in the nested scope would be counted twice." >&2
+      echo "       Pass the outer directory alone." >&2
+      exit 2
+    fi
+    j=$((j+1))
+  done
   i=$((i+1))
 done
 
@@ -304,7 +354,7 @@ m_index() {
 in_scope() {
   local p=$1 d
   for d in "${SCOPES[@]}"; do
-    case "$p" in "$d"/*|"$d") return 0 ;; esac
+    scope_contains "$d" "$p" && return 0
   done
   return 1
 }
@@ -312,26 +362,38 @@ in_scope() {
 # --------------------------------------------------------------------------
 # Enumeration — status captured, never discarded
 # --------------------------------------------------------------------------
+FIND_RAW=$TMPROOT/found.raw
 FIND_OUT=$TMPROOT/found
 FIND_ERR=$TMPROOT/found.err
 # No -type f: tests/integration/test.pd is a symlink, and silently dropping a
 # fixture is precisely the failure this manifest exists to prevent.
-find "${SCOPES[@]}" -name '*.pd' >"$FIND_OUT" 2>"$FIND_ERR"
+find "${SCOPES[@]}" -name '*.pd' >"$FIND_RAW" 2>"$FIND_ERR"
 find_rc=$?
 if [ "$find_rc" -ne 0 ] || [ -s "$FIND_ERR" ]; then
   echo "error: enumeration failed (find exit $find_rc):" >&2
   sed 's/^/       /' "$FIND_ERR" >&2
   exit 2
 fi
+# Canonicalise once, here, so every later comparison — scope membership, manifest
+# lookup, reconciliation — is against the same form. `find .` emits `./tests/x.pd`
+# for the repo-root scope, which no manifest key would ever match.
+: > "$FIND_OUT"
+while IFS= read -r rawline; do
+  canon "$rawline" >> "$FIND_OUT"
+  printf '\n' >> "$FIND_OUT"
+done < "$FIND_RAW"
 sort "$FIND_OUT" -o "$FIND_OUT"
 # Per scope, not just overall: a valid-but-wrong directory contributing nothing
 # would otherwise ride along invisibly behind a scope that did find something.
 for d in "${SCOPES[@]}"; do
-  if ! grep -q "^$d/" "$FIND_OUT"; then
-    echo "error: no .pd fixtures under scope '$d'" >&2
-    echo "       an empty corpus is a broken invocation, not a pass." >&2
-    exit 2
+  if [ "$d" = "." ]; then
+    [ -s "$FIND_OUT" ] && continue
+  else
+    grep -q "^$d/" "$FIND_OUT" && continue
   fi
+  echo "error: no .pd fixtures under scope '$d'" >&2
+  echo "       an empty corpus is a broken invocation, not a pass." >&2
+  exit 2
 done
 
 verified=0; untranscribed=0; vacuous=0; xfail=0; reject=0; skip=0
@@ -348,8 +410,18 @@ printf '%-52s %s\n' "FILE" "VERDICT"
 printf '%s\n' "-------------------------------------------------- ----------------"
 
 n=0
-while IFS= read -r raw_f; do
-  f=$(canon "$raw_f")
+while IFS= read -r f; do
+  # Already canonicalised during enumeration. If a path does not resolve to a
+  # real file here, the newline-delimited transport split it — refuse rather than
+  # report a phantom fixture.
+  # -e is false for a DANGLING symlink, which is a real enumerated path (the repo
+  # has one: bootstrap/v3_incremental/test.pd). Only a path that is neither a file
+  # nor a link indicates the newline-delimited transport split it.
+  if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+    echo "error: enumerated path '$f' does not exist; a filename containing a" >&2
+    echo "       newline would split like this. Fixture paths must be newline-free." >&2
+    exit 2
+  fi
   n=$((n+1))
 
   idx=$(m_index "$f")
@@ -469,7 +541,7 @@ while IFS= read -r raw_f; do
                # closed inventory a deleted row is UNDECLARED and the gate stays
                # red. Paying off an xfail is a TRANSITION, and this text is the
                # handoff protocol for whoever fixes it.
-               fail "$f [XPASS] declared to fail at $stage_exp but now passes. Do NOT delete the row (the fixture still exists, so that would make it UNDECLARED). In $MANIFEST change its row to:  $f<TAB>run<TAB>-<TAB>expected<TAB>-<TAB>-  and add the transcript ${f%.pd}.expected (generate with CONFORMANCE_BLESS=1, then READ it before committing). Was: $note" ;;
+               fail "$f [XPASS] declared to fail at $stage_exp but now passes. Do NOT delete the row (the fixture still exists, so that would make it UNDECLARED). In $MANIFEST change its row to:  $f<TAB>run<TAB>-<TAB>expected<TAB>-<TAB>-  and add the transcript ${f%.pd}.expected. Bootstrap it in this order, because declaring 'expected' while the file is absent is a manifest error and bless would never get to run:  (1) create it empty: : > ${f%.pd}.expected  (2) CONFORMANCE_BLESS=1 bash scripts/conformance.sh  (3) READ the generated transcript and confirm the values are right before committing. Was: $note" ;;
       reject)  printf '%-52s %s\n' "$f" "REJECT_ACCEPTED"
                fail "$f [REJECT_ACCEPTED] the compiler must refuse this program at $stage_exp ('$fp') but accepted it: $note" ;;
     esac
