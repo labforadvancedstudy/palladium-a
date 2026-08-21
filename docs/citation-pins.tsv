@@ -27,19 +27,16 @@ src/ast/mod.rs	313-313	docs/specification/bootstrap-subset.md	8a1bdbb2637d	pub e
 src/ast/mod.rs	313-313	docs/specification/language-spec.md	8a1bdbb2637d	pub enum Pattern {
 src/builtins.rs	1-1	docs/reference/features/feature-index.toml	b2040a84f342	// Built-in function registry for Palladium
 src/cli.rs	14-14	docs/reference/features/feature-index.toml	701dcf50c0cc	"Turing's Proofs Meet von Neumann's Performance"
-src/codegen/llvm_text_backend.rs	1081-1081	docs/specification/language-spec.md	8c2b5859aa4d	"Unsupported binary operator".to_string(),
-src/codegen/llvm_text_backend.rs	1222-1222	docs/reference/features/feature-index.toml	e91624312e8e	"Complex function calls not yet supported".to_string(),
-src/codegen/llvm_text_backend.rs	1222-1222	docs/specification/language-spec.md	e91624312e8e	"Complex function calls not yet supported".to_string(),
-src/codegen/llvm_text_backend.rs	1378-1380	docs/specification/language-spec.md	37c821f6db67	_ => { // TODO: Implement EnumConstructor, Question, MacroInvocation, Await Ok((String::new(), "0".to_string()))
-src/codegen/llvm_text_backend.rs	1379-1379	docs/reference/features/feature-index.toml	4f12aafc7996	// TODO: Implement EnumConstructor, Question, MacroInvocation, Await
-src/codegen/llvm_text_backend.rs	1379-1379	docs/specification/language-spec.md	4f12aafc7996	// TODO: Implement EnumConstructor, Question, MacroInvocation, Await
-src/codegen/llvm_text_backend.rs	820-820	docs/specification/language-spec.md	aff4b9e9e262	"Unsupported iterator type in for loop".to_string(),
-src/codegen/llvm_text_backend.rs	914-914	docs/reference/features/feature-index.toml	b2dd21aa6c8e	ir.push_str(" ; TODO: Implement break with proper loop context\n");
-src/codegen/llvm_text_backend.rs	914-914	docs/specification/language-spec.md	b2dd21aa6c8e	ir.push_str(" ; TODO: Implement break with proper loop context\n");
-src/codegen/llvm_text_backend.rs	921-921	docs/reference/features/feature-index.toml	bb73a2db7d84	ir.push_str(" ; TODO: Implement continue with proper loop context\n");
-src/codegen/llvm_text_backend.rs	921-921	docs/specification/language-spec.md	bb73a2db7d84	ir.push_str(" ; TODO: Implement continue with proper loop context\n");
-src/codegen/llvm_text_backend.rs	933-933	docs/reference/features/feature-index.toml	fe2626af0534	// TODO: Implement proper pattern matching
-src/codegen/llvm_text_backend.rs	933-933	docs/specification/language-spec.md	fe2626af0534	// TODO: Implement proper pattern matching
+src/codegen/llvm_text_backend.rs	1081-1081	docs/specification/language-spec.md	d10b36aa74a5	}
+src/codegen/llvm_text_backend.rs	1222-1222	docs/specification/language-spec.md	a248e19a42c7	let mut arg_types = Vec::new();
+src/codegen/llvm_text_backend.rs	1378-1380	docs/specification/language-spec.md	1b5626080957	" {} = xor i1 {}, true\n", result_var, op_var ));
+src/codegen/llvm_text_backend.rs	1379-1379	docs/specification/language-spec.md	b17e459f8ef2	result_var, op_var
+src/codegen/llvm_text_backend.rs	16-16	docs/reference/features/feature-index.toml	bd32cf16a105	const BACKEND_REFUSES: bool = true;
+src/codegen/llvm_text_backend.rs	71-73	docs/reference/features/feature-index.toml	8f2f382eaef4	pub fn compile(&mut self, program: &Program) -> Result<String> { if BACKEND_REFUSES { return Err(unimplemented_backend());
+src/codegen/llvm_text_backend.rs	820-820	docs/specification/language-spec.md	2c9d430efb41	break; // Don't generate unreachable code
+src/codegen/llvm_text_backend.rs	914-914	docs/specification/language-spec.md	df3982fd6101	};
+src/codegen/llvm_text_backend.rs	921-921	docs/specification/language-spec.md	b0177824bb72	" store {} {}, {}* {}\n",
+src/codegen/llvm_text_backend.rs	933-933	docs/specification/language-spec.md	d10b36aa74a5	}
 src/codegen/mod.rs	1013-1013	docs/design/trait_system_design.md	78074ff85f28	Item::Trait(_) => {
 src/codegen/mod.rs	1013-1013	docs/reference/features/feature-index.toml	78074ff85f28	Item::Trait(_) => {
 src/codegen/mod.rs	1013-1013	docs/specification/language-spec.md	78074ff85f28	Item::Trait(_) => {

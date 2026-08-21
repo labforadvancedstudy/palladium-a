@@ -401,15 +401,14 @@ evidence = [
 [advanced_features.compilation.llvm_backend]
 description = "LLVM IR generation with optimisation passes."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
-implementation = "partial"
+implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/llvm_text_backend.rs:914 '; TODO: Implement break with proper loop context'",
-  "src: src/codegen/llvm_text_backend.rs:921 '; TODO: Implement continue with proper loop context'",
-  "src: src/codegen/llvm_text_backend.rs:933 '// TODO: Implement proper pattern matching'",
-  "src: src/codegen/llvm_text_backend.rs:1379 '// TODO: Implement EnumConstructor, Question, MacroInvocation, Await'",
-  "src: src/codegen/llvm_text_backend.rs:1222 'Complex function calls not yet supported'",
+  "src: src/codegen/llvm_text_backend.rs:16 'const BACKEND_REFUSES: bool = true;'",
+  "src: src/codegen/llvm_text_backend.rs:71-73 'pub fn compile'",
+  "cmd: grep -c 'TODO: Implement' src/codegen/llvm_text_backend.rs -> 0; the per-construct TODOs this row used to cite were replaced by refusals",
+  "cmd: grep -rn '--llvm' scripts/ Makefile -> exit 1, 0 lines; no gate selects this backend",
 ]
-note = "No conformance row exercises it."
+note = "Refuses unconditionally as of the wholesale gate; the lowering is retained for development and is exercised only through compile_unchecked in that file's tests. Previously cited five TODO comments that no longer exist."
 
 [advanced_features.compilation.optimizer]
 description = "Inlining, const propagation, dead code elimination."
