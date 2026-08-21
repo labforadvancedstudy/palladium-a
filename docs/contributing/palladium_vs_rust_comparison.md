@@ -1,7 +1,7 @@
 # Palladium vs Rust — measured
 
 **Date**: 2026-08-22 · **Data**: [`benchmarks/results/latest.json`](../../benchmarks/results/latest.json)
-· **Reproduce**: `bash benchmarks/run_benchmarks.sh`
+· **Reproduce**: `bash benchmarks/run_benchmarks.sh` · **Measured at** `e72c39b`
 
 The previous version of this document compared a splay-tree implementation written in a language
 that did not exist — `pdc translate --from-rust`, `pdc --verify-total`, implicit smart pointers,
@@ -11,50 +11,58 @@ buried.
 
 ## The short version
 
-On numeric code, **Palladium's runtime performance is the C compiler's performance**. The
-generated C, when optimized, produces machine code byte-identical to hand-written C. That is the
-honest ceiling, and Palladium reaches it.
+On numeric code, **Palladium's runtime performance is the C compiler's performance** — it matches
+C and Rust to within measurement noise. The generated C produces machine code byte-identical to
+hand-written C. That is the honest ceiling, and Palladium reaches it.
 
-Two things sit between that ceiling and what a user gets today:
+On string-heavy code Palladium is **4× slower than C**, and that one *is* Palladium's fault: the
+string arena never frees, so a quadratic concatenation benchmark peaks at 2.2 GB where C uses
+2.7 MB.
 
-1. **`pdc` forks `gcc` with no `-O` flag**, so the shipped binary is `-O0` — a 2–6× loss that has
-   nothing to do with the language.
-2. **String-heavy code is genuinely slow**, and that one *is* Palladium's fault: the string arena
-   never frees, so a quadratic concatenation benchmark peaked at **2.2 GB** where C used 2.7 MB.
+> These numbers were taken after fixing a defect this benchmark suite found: `pdc` forked `gcc`
+> with no `-O` flag, so every shipped binary was `-O0`, and `pdc compile -O` was parsed into a
+> variable nothing read. That was a 2–6× tax with nothing to do with the language. The
+> before/after is in [What this measurement changed](#what-this-measurement-changed).
 
 ## Runtime
 
 Wall-clock, minimum of 12 runs, milliseconds. Lower is better. Minimum is the reported statistic
 because the machine was not quiesced — see [Methodology](#methodology).
 
-| Benchmark | Palladium (as shipped) | Palladium C, `-O2` | C `gcc -O2` | Rust `rustc -O` |
+| Benchmark | Palladium | C `gcc -O2` | Rust `rustc -O` | Rust unchecked |
 |---|---:|---:|---:|---:|
-| fibonacci — `fib(42)`, naive recursion | 732.1 | **383.7** | 374.1 | 374.9 |
-| bubble_sort — 45 000 reversed `i64` | 1686.6 | **280.4** | 280.2 | 279.3 |
-| matrix_multiply — 200 × (200×200 `i64`) | 1785.9 | **329.9** | 329.9 | 329.4 |
-| string_concat — 20 000 concatenations | 245.4 | 242.7 | 55.6 | 36.5 |
+| fibonacci — `fib(42)`, naive recursion | 395.9 | 380.7 | 380.9 | — |
+| bubble_sort — 45 000 reversed `i64` | **282.4** | 285.2 | 283.8 | 284.5 |
+| matrix_multiply — 200 × (200×200 `i64`) | 333.3 | 331.8 | **316.0** | 315.7 |
+| string_concat — 20 000 concatenations | 230.8 | 57.0 | 38.1 | 2.9 † |
 
-Read the third and fourth columns together: on the three numeric benchmarks, Palladium's
-optimized number and C's number are identical to within noise, and Rust matches both. For
-`fibonacci` this was confirmed at the instruction level — the `fibonacci` function in the
-Palladium-derived binary and in the C binary is **byte-identical AArch64 machine code**; the
-residual 3% is code placement relative to the 64-byte fetch block.
+† `rust_pushstr` is a *different algorithm* (amortised append, not quadratic concatenation) and
+sits below the process-startup floor. It is here to show what the workload costs when you are not
+required to allocate a fresh string per step — not as a like-for-like number.
+
+On the three numeric benchmarks Palladium, C and Rust are the same to within noise — Palladium is
+1.0% *faster* than C on bubble_sort and 4% slower on fibonacci, which is the spread you get from
+re-running any of them. For `fibonacci` the identity was confirmed at the instruction level: the
+`fibonacci` function in the Palladium-derived binary and in the C binary is **byte-identical
+AArch64 machine code**, and the residual difference is code placement relative to the 64-byte
+fetch block.
 
 That is the whole result. Palladium does not make numeric code faster than C, and it does not
-make it slower. It emits C.
+make it slower. It emits C. Rust's 5% edge on matrix_multiply is the one place LLVM's optimizer
+beat clang's on identical arithmetic.
 
 ### Bounds checking is not the difference
 
-Rust's bounds-checked indexing and `get_unchecked` were measured separately: 279.3 ms vs 281.5 ms
-on bubble_sort, 329.4 vs 328.6 on matrix_multiply. LLVM hoists the checks out of these loops
+Rust's bounds-checked indexing and `get_unchecked` were measured separately: 283.8 ms vs 284.5 ms
+on bubble_sort, 316.0 vs 315.7 on matrix_multiply. LLVM hoists the checks out of these loops
 entirely. Palladium emits no bounds checks at all and gains nothing measurable for it — so the
 safety asymmetry here is real, but it is not a performance argument in either direction.
 
 ### Where Palladium actually loses
 
-`string_concat` is the one benchmark where the gap is Palladium's own doing. Same quadratic
-algorithm in all three languages, and `-O2` barely helps (245.4 → 242.7 ms) because the workload
-is memory-bound, not compute-bound:
+`string_concat` is the one benchmark where the gap is Palladium's own doing: **230.8 ms against
+C's 57.0 ms**, on the same quadratic algorithm. Optimization does not help it — the workload is
+memory-bound, not compute-bound:
 
 | | peak RSS |
 |---|---:|
@@ -63,8 +71,8 @@ is memory-bound, not compute-bound:
 
 `__pd_alloc_string` bump-allocates from a 64 KiB arena, falls back to `malloc`, tracks only the
 first 1 024 allocations, and frees nothing until `atexit`. Every intermediate string in the loop
-is retained. (Rust's `String::push_str` variant finishes in 3.1 ms, but that is a *different
-algorithm* and must not be quoted as a like-for-like number.)
+is retained. (Rust's `String::push_str` variant finishes in 2.9 ms, but that is a *different algorithm* —
+see the footnote on the runtime table.)
 
 This is the clearest signal in the data: Palladium's memory model, not its code generation, is
 what needs work.
@@ -73,16 +81,19 @@ what needs work.
 
 | Benchmark | `pdc` end-to-end | `pdc` front end only | `rustc -O` | `gcc -O2` |
 |---|---:|---:|---:|---:|
-| fibonacci | 67.4 | **4.0** | 64.1 | 43.8 |
-| bubble_sort | 80.7 | **5.2** | 70.6 | 50.8 |
-| matrix_multiply | 99.1 | **6.6** | 70.9 | 49.6 |
-| string_concat | 66.2 | **4.2** | 80.1 | 48.6 |
+| fibonacci | 92.1 | **3.9** | 66.7 | 45.0 |
+| bubble_sort | 111.5 | **5.4** | 74.5 | 52.5 |
+| matrix_multiply | 130.6 | **6.7** | 75.2 | 51.0 |
+| string_concat | 93.0 | **4.3** | 87.4 | 49.5 |
 
-Palladium's own front end is **10–16× faster than rustc**. End-to-end it is *slower* than rustc
-on three of four, because ~93% of the time is the forked C compiler — and because `pdc` hands
-that compiler a bloated file. An array initializer expands to a literal element list, so
-`[0; 40000]` becomes forty thousand zeros: matrix_multiply's 2 KB of Palladium becomes 370 KB of
-C.
+Palladium's own front end is **11–19× faster than rustc** (3.9–6.7 ms against 66.7–87.4 ms).
+End-to-end it is *slower* than rustc on all four, because ~95% of the time is the forked C
+compiler — and because `pdc` hands that compiler a bloated file. An array initializer expands to a
+literal element list, so `[0; 40000]` becomes forty thousand zeros: matrix_multiply's 2 KB of
+Palladium becomes 370 KB of C, which takes gcc 125 ms to chew through.
+
+Compile time went *up* with the `-O2` default, which is the expected trade and is visible here:
+gcc doing real optimization is most of the wall clock.
 
 Binary size: Palladium 55 KB, C 34 KB, Rust 432 KB.
 
@@ -138,7 +149,7 @@ reproduces itself byte for byte.
 - `hyperfine` was not installed; timing is `perf_counter` around fork/exec/wait.
 
 **Environment**: Apple M5 Max (arm64, 6P + 12E, 128 GB), macOS 26.5.2 · rustc 1.96.1 ·
-Apple clang 21.0.0 · pdc at commit `6ffabf2`.
+Apple clang 21.0.0 · pdc at commit `e72c39b`. Load average 47–55 throughout.
 
 ## What this measurement changed
 
@@ -147,6 +158,17 @@ benchmarks alongside the other gates:
 
 1. `pdc` never passed `-O` to gcc, and `pdc compile -O` was parsed into a variable named
    `_optimize` that nothing read — a flag that accepted the request and silently ignored it.
+   Fixing it is what moved these numbers, and the size of the effect is the reason to state it
+   plainly:
+
+   | Benchmark | before (`-O0`) | after (`-O2` default) |
+   |---|---:|---:|
+   | bubble_sort | 1686.6 | 282.4 |
+   | matrix_multiply | 1785.9 | 333.3 |
+   | fibonacci | 732.1 | 395.9 |
+
+   Self-hosting was proven invariant under the change: stage 1 built at `-O0`, `-O2` and `-O3`
+   emits byte-identical C.
 2. The string arena's retain-everything behaviour is invisible at test-suite scale and an ~800×
    memory difference at benchmark scale.
 
