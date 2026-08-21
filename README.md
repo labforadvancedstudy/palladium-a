@@ -240,12 +240,14 @@ pdc compile program.pd -o program
 # Compile with optimization
 pdc compile program.pd -o program -O
 
-# Use LLVM backend (experimental)
-pdc compile program.pd -o program --llvm
-
 # Show help
 pdc --help
 ```
+
+There is one working backend: the default, which compiles to C. The `--llvm`
+flag exists and refuses — the LLVM text backend is a skeleton kept for
+development, not something you can build with. See
+[the specification](docs/specification/language-spec.md) §1.
 
 ### Compilation Process
 

@@ -6,6 +6,15 @@ use crate::errors::{CompileError, Result, Span};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Whether `LLVMTextBackend::compile` refuses before doing any work.
+///
+/// A constant rather than a `cfg` or an option, because there is no
+/// configuration in which this backend is correct today and offering one would
+/// be the same lie in a switch. Flipping it to `false` restores the lowering
+/// wholesale, and the granular refusals at the bottom of this file become the
+/// live behaviour again — which is the point of keeping them.
+const BACKEND_REFUSES: bool = true;
+
 /// LLVM IR text generator - works without llvm-sys
 pub struct LLVMTextBackend {
     module_name: String,
@@ -55,8 +64,24 @@ impl LLVMTextBackend {
         label
     }
 
-    /// Compile a program to LLVM IR
+    /// Compile a program to LLVM IR.
+    ///
+    /// Refuses unconditionally. See [`unimplemented_backend`] for why the gate
+    /// is here and not spread across the individual gaps.
     pub fn compile(&mut self, program: &Program) -> Result<String> {
+        if BACKEND_REFUSES {
+            return Err(unimplemented_backend());
+        }
+        self.compile_unchecked(program)
+    }
+
+    /// The lowering itself, with the backend gate lifted.
+    ///
+    /// Private, and reached only by this file's own tests. It exists so that
+    /// the granular refusals below stay executable — they are the record of
+    /// *what* is unimplemented, and they become the live behaviour again the
+    /// moment `compile` stops refusing.
+    fn compile_unchecked(&mut self, program: &Program) -> Result<String> {
         // First pass: collect string constants
         self.collect_string_constants(program)?;
 
@@ -1468,21 +1493,71 @@ impl LLVMTextBackend {
 // ---------------------------------------------------------------------------
 // Refusals
 //
-// Every construct this backend cannot lower gets one of these instead of
-// approximate IR. They live in this file rather than next to the shared
-// constructors in `src/errors/mod.rs` because each one describes what *this*
-// backend would otherwise emit — a claim that can only be checked against the
-// code a few hundred lines above — and because they are used nowhere else.
-// The error variant itself is the shared `CompileError::Unimplemented`, so
-// there is still only one way for the compiler to say "not implemented".
+// These live in this file rather than next to the shared constructors in
+// `src/errors/mod.rs` because each one describes what *this* backend would
+// otherwise emit — a claim that can only be checked against the code above —
+// and because they are used nowhere else. The error variant itself is the
+// shared `CompileError::Unimplemented`, so there is still only one way for the
+// compiler to say "not implemented".
 //
 // Two rules hold for every message below:
 //   * the `consequence` describes IR that was actually observed, not IR that
 //     was imagined;
-//   * the `workaround` is compiled and run by `tests/d10_llvm_refuses.rs`.
-//     A suggestion nobody has executed is a claim, and this milestone is about
-//     the compiler not making claims it cannot back.
+//   * the `workaround` is compiled and run by the `*_help_*` tests in this
+//     file's `mod tests`, which read the suggestion the diagnostic actually
+//     carries rather than a copy of it in a comment, and only then execute the
+//     rewrite. A suggestion nobody has executed is a claim, and this milestone
+//     is about the compiler not making claims it cannot back.
 // ---------------------------------------------------------------------------
+
+/// The whole backend refuses, before it looks at the program.
+///
+/// The granular refusals below cover seven constructs that fail *loudly*. They
+/// are not the whole problem. Auditing the rest of this file turned up seven
+/// more sites that fail *quietly*, producing IR that assembles and runs while
+/// meaning something other than the source:
+///
+///   * `compile` skips every non-function `Item`, so struct and enum
+///     definitions are dropped while expressions still refer to them.
+///   * `type_to_llvm` maps every type it does not enumerate — custom, generic,
+///     tuple, reference, `Future` — to `i8*`.
+///   * every user-function call is emitted as returning `i64`, whatever the
+///     declared signature says, and `infer_expr_type` agrees with it.
+///   * field access hard-codes index 0, for reads and for assignment alike.
+///     Measured: `struct Point { x, y }` with `print_int(p.y)` lowers to a
+///     `getelementptr` on index 0 and reads `x`. The module is valid. The
+///     answer is wrong.
+///   * `match` on a wildcard or identifier pattern discards the scrutinee and
+///     never binds the identifier.
+///   * string collection does not walk `Stmt::Match` or `Stmt::Unsafe`, so a
+///     literal inside either becomes `@.str.unknown`, which is never defined.
+///   * a plain `main` emits `ret void`, putting the process exit status
+///     outside the program's semantics — measured as a correct-looking run
+///     that exits 2.
+///
+/// Verifying the assembly is not a defence against that list, because
+/// field-zero corruption produces *valid* IR with the wrong meaning. Half a
+/// gate reads as protection while providing none, so the gate is whole: the
+/// flag refuses, and the seven granular refusals stay underneath as the record
+/// of what is missing.
+///
+/// No span: this is a property of the backend, not of any one line of source.
+fn unimplemented_backend() -> CompileError {
+    CompileError::Unimplemented {
+        construct: "the LLVM backend (`--llvm`)".to_string(),
+        consequence: "it is a skeleton kept for development, not a working backend: it drops \
+             type, struct and enum definitions, reads every struct field as if it were the \
+             first, gives every function call the type i64, and leaves a program's exit status \
+             undefined — some of which produces assembly that is valid and silently means \
+             something other than what was written"
+            .to_string(),
+        workaround: "build with the default C backend by dropping `--llvm`; it is the backend \
+             this language is defined against, as described in \
+             docs/specification/language-spec.md §1"
+            .to_string(),
+        span: None,
+    }
+}
 
 /// Enum construction, e.g. `Color::Green`.
 ///
@@ -1492,22 +1567,27 @@ impl LLVMTextBackend {
 /// byte-identical IR (`store i64 0`) and the arguments of a data-carrying
 /// variant — `Wrapper::Val(loud(99))` — vanished with the call inside them.
 ///
-/// The workaround points at the C backend because the C backend really does
-/// lower enum construction and `match`; that is receipted by
-/// `enum_workaround_on_the_c_backend_compiles_and_runs`.
-fn unimplemented_enum_constructor(
-    enum_name: &str,
-    variant: &str,
-    span: Span,
-) -> CompileError {
+/// The workaround says *non-generic* because that is exactly as far as the
+/// receipts go, and no further. Measured on the C backend: unit and tuple
+/// variants run (`enum_help_recommends_the_c_backend_and_the_c_backend_delivers`)
+/// and struct variants run (`enum_help_covers_struct_variants_because_it_says_so`)
+/// — but a generic enum does not. `enum Opt<T> { None, Some(T) }` with
+/// `Opt::Some(41)` emits
+/// `struct Opt o = Opt_Some__new(41);` against a type it only forward-declares,
+/// and gcc answers `variable has incomplete type 'struct Opt'`. Advising the C
+/// backend without that qualifier would send a `Result<T, E>` user to a second
+/// broken backend, which is the disease, not the cure. Pinned by
+/// `the_generic_enum_caveat_in_the_help_is_real`.
+fn unimplemented_enum_constructor(enum_name: &str, variant: &str, span: Span) -> CompileError {
     CompileError::Unimplemented {
         construct: format!("enum construction (`{}::{}`)", enum_name, variant),
         consequence: "the LLVM backend has no lowering for enum constructors, and would emit \
              the constant 0 for every variant of every enum — so distinct variants become the \
              same value — while dropping the constructor's arguments and any effects they have"
             .to_string(),
-        workaround: "build with the default C backend by dropping `--llvm`; it lowers enum \
-             construction and `match` on enums"
+        workaround: "build with the default C backend by dropping `--llvm`; it lowers \
+             construction of non-generic enums — unit, tuple and struct variants — and `match` \
+             on them"
             .to_string(),
         span: Some(span),
     }
@@ -1522,7 +1602,7 @@ fn unimplemented_enum_constructor(
 /// The workaround cannot say "use the C backend" on its own — the C backend
 /// emits C for a `struct Result` layout it never defines, and gcc rejects it.
 /// The rewrite has to remove the `?` as well, which is what
-/// `question_workaround_on_the_c_backend_compiles_and_runs` executes.
+/// `question_help_requires_both_a_match_and_the_c_backend` executes.
 fn unimplemented_question(span: Span) -> CompileError {
     CompileError::Unimplemented {
         construct: "the `?` operator".to_string(),
@@ -1569,8 +1649,9 @@ fn unimplemented_macro_invocation(name: &str, span: Span) -> CompileError {
 /// `-> Future<T>` (a call to an `async fn` is typed as its bare return type, so
 /// awaiting one never type checked), and dropping `.await` there leaves a
 /// `Future<T>` where a `T` is required. Receipted by
-/// `await_workaround_compiles_and_runs_under_llvm` and, for the suggestion this
-/// message must never make, `deleting_the_await_alone_does_not_compile`.
+/// `await_help_changes_the_signature_and_that_program_runs` and, for the
+/// suggestion this message must never make,
+/// `deleting_the_await_alone_does_not_compile`.
 fn unimplemented_await(span: Span) -> CompileError {
     CompileError::Unimplemented {
         construct: "`.await`".to_string(),
@@ -1624,8 +1705,771 @@ fn unimplemented_enum_pattern(enum_name: &str, variant: &str, span: Span) -> Com
              rejected by the assembler"
             .to_string(),
         workaround: "build with the default C backend by dropping `--llvm`; it lowers `match` \
-             on enums"
+             on non-generic enums"
             .to_string(),
         span: Some(span),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The granular refusals, kept executable behind the backend gate.
+    //!
+    //! `compile` now refuses before it looks at the program, so no integration
+    //! test can reach the arms below any more. They are still the record of
+    //! *what* is unimplemented, and they become the live behaviour the moment
+    //! `BACKEND_REFUSES` flips — so they are driven here through
+    //! `compile_unchecked`, which is the same code path minus the gate.
+    //!
+    //! Assertions here read `to_diagnostic()`, not just `to_string()`. The
+    //! headline is the least interesting part of these diagnostics: the `note:`
+    //! and the `help:` are the claims that can quietly become false.
+
+    use super::*;
+    use crate::ast::{EnumConstructorData, MatchArm, Visibility};
+    use crate::errors::Diagnostic;
+
+    fn main_fn(body: Vec<Stmt>) -> Program {
+        Program {
+            imports: vec![],
+            items: vec![Item::Function(Function {
+                visibility: Visibility::Private,
+                is_async: false,
+                name: "main".to_string(),
+                lifetime_params: vec![],
+                type_params: vec![],
+                const_params: vec![],
+                params: vec![],
+                return_type: None,
+                body,
+                span: Span::dummy(),
+                effects: None,
+            })],
+        }
+    }
+
+    /// Drive the lowering with the backend gate lifted, and return the
+    /// diagnostic it refuses with.
+    fn refusal_for(body: Vec<Stmt>) -> Diagnostic {
+        let program = main_fn(body);
+        let err = LLVMTextBackend::new("granular")
+            .unwrap()
+            .compile_unchecked(&program)
+            .expect_err("the backend must refuse this, not lower it");
+        err.to_diagnostic()
+    }
+
+    fn assert_refusal(diag: &Diagnostic, construct: &str, note_fragment: &str) {
+        assert!(
+            diag.message.contains(construct) && diag.message.contains("is not implemented"),
+            "headline was {:?}",
+            diag.message
+        );
+        assert!(
+            diag.notes.iter().any(|n| n.contains(note_fragment)),
+            "no note mentioning {:?}; notes = {:?}",
+            note_fragment,
+            diag.notes
+        );
+        assert!(
+            !diag.suggestions.is_empty(),
+            "a refusal with no `help:` is half a diagnostic"
+        );
+    }
+
+    /// Every refusal must offer a way forward, and none may promise one.
+    ///
+    /// The second half is the rule that is easy to lose: a message saying
+    /// "coming in M4" is a schedule, not a workaround, and it ages into a lie
+    /// without anyone editing it.
+    fn assert_help_is_actionable_and_makes_no_promise(diag: &Diagnostic) {
+        for s in &diag.suggestions {
+            let lower = s.message.to_lowercase();
+            for banned in [
+                "coming in", "will be", "planned", "roadmap", "future release", "milestone",
+                "soon", "not yet supported but", "next version",
+            ] {
+                assert!(
+                    !lower.contains(banned),
+                    "help text promises a schedule ({:?}): {:?}",
+                    banned,
+                    s.message
+                );
+            }
+        }
+    }
+
+    fn enum_ctor(variant: &str, data: Option<EnumConstructorData>) -> Expr {
+        Expr::EnumConstructor {
+            enum_name: "Color".to_string(),
+            variant: variant.to_string(),
+            data,
+            span: Span::dummy(),
+        }
+    }
+
+    #[test]
+    fn enum_construction_is_refused() {
+        let diag = refusal_for(vec![Stmt::Expr(enum_ctor("Green", None))]);
+        assert_refusal(
+            &diag,
+            "enum construction (`Color::Green`)",
+            "would emit the constant 0 for every variant",
+        );
+        assert_help_is_actionable_and_makes_no_promise(&diag);
+        // The caveat the reviewers were right to demand: the help must not
+        // recommend the C backend for generic enums, which it cannot build.
+        assert!(
+            diag.suggestions[0].message.contains("non-generic"),
+            "help must not advertise the C backend for generic enums: {:?}",
+            diag.suggestions[0].message
+        );
+    }
+
+    #[test]
+    fn enum_constructor_arguments_are_refused_not_dropped() {
+        let diag = refusal_for(vec![Stmt::Expr(enum_ctor(
+            "Val",
+            Some(EnumConstructorData::Tuple(vec![Expr::Integer(99)])),
+        ))]);
+        assert_refusal(
+            &diag,
+            "enum construction (`Color::Val`)",
+            "dropping the constructor's arguments",
+        );
+    }
+
+    #[test]
+    fn question_is_refused() {
+        let diag = refusal_for(vec![Stmt::Expr(Expr::Question {
+            expr: Box::new(Expr::Integer(1)),
+            span: Span::dummy(),
+        })]);
+        assert_refusal(
+            &diag,
+            "the `?` operator",
+            "without evaluating the operand at all",
+        );
+        assert_help_is_actionable_and_makes_no_promise(&diag);
+    }
+
+    #[test]
+    fn await_is_refused() {
+        let diag = refusal_for(vec![Stmt::Expr(Expr::Await {
+            expr: Box::new(Expr::Integer(1)),
+            span: Span::dummy(),
+        })]);
+        assert_refusal(&diag, "`.await`", "there is no async runtime");
+        assert_help_is_actionable_and_makes_no_promise(&diag);
+        // The suggestion this diagnostic must never make: deleting `.await`
+        // alone leaves a Future where a value is required.
+        assert!(
+            diag.suggestions[0].message.contains("-> T"),
+            "help must change the signature, not just delete `.await`: {:?}",
+            diag.suggestions[0].message
+        );
+    }
+
+    #[test]
+    fn a_macro_invocation_reaching_the_backend_is_refused() {
+        let diag = refusal_for(vec![Stmt::Expr(Expr::MacroInvocation {
+            name: "println".to_string(),
+            args: vec![],
+            span: Span::dummy(),
+        })]);
+        assert_refusal(
+            &diag,
+            "the macro invocation `println!`",
+            "macro expansion runs before code generation",
+        );
+        assert_help_is_actionable_and_makes_no_promise(&diag);
+    }
+
+    #[test]
+    fn break_is_refused() {
+        let diag = refusal_for(vec![Stmt::Break {
+            span: Span::dummy(),
+        }]);
+        assert_refusal(&diag, "`break`", "%loop_end_placeholder");
+        assert_help_is_actionable_and_makes_no_promise(&diag);
+    }
+
+    #[test]
+    fn continue_is_refused() {
+        let diag = refusal_for(vec![Stmt::Continue {
+            span: Span::dummy(),
+        }]);
+        assert_refusal(&diag, "`continue`", "%loop_inc_placeholder");
+        assert_help_is_actionable_and_makes_no_promise(&diag);
+    }
+
+    #[test]
+    fn enum_patterns_are_refused() {
+        let diag = refusal_for(vec![Stmt::Match {
+            expr: Expr::Integer(0),
+            arms: vec![MatchArm {
+                pattern: Pattern::EnumPattern {
+                    enum_name: "Color".to_string(),
+                    variant: "Red".to_string(),
+                    data: None,
+                },
+                body: vec![],
+            }],
+            span: Span::dummy(),
+        }]);
+        assert_refusal(
+            &diag,
+            "matching the enum pattern `Color::Red`",
+            "never compares the scrutinee against an enum pattern",
+        );
+        assert_help_is_actionable_and_makes_no_promise(&diag);
+    }
+
+    /// Nothing that the granular arms refuse ever yields IR.
+    ///
+    /// `compile_unchecked` returning `Err` is the property; a future arm that
+    /// "refuses" by pushing a comment into `ir` and carrying on would pass the
+    /// message assertions above and fail here.
+    #[test]
+    fn no_granular_refusal_yields_ir() {
+        let cases: Vec<Vec<Stmt>> = vec![
+            vec![Stmt::Expr(enum_ctor("Green", None))],
+            vec![Stmt::Expr(Expr::Question {
+                expr: Box::new(Expr::Integer(1)),
+                span: Span::dummy(),
+            })],
+            vec![Stmt::Expr(Expr::Await {
+                expr: Box::new(Expr::Integer(1)),
+                span: Span::dummy(),
+            })],
+            vec![Stmt::Expr(Expr::MacroInvocation {
+                name: "m".to_string(),
+                args: vec![],
+                span: Span::dummy(),
+            })],
+            vec![Stmt::Break {
+                span: Span::dummy(),
+            }],
+            vec![Stmt::Continue {
+                span: Span::dummy(),
+            }],
+        ];
+        for body in cases {
+            let program = main_fn(body);
+            let result = LLVMTextBackend::new("no_ir").unwrap().compile_unchecked(&program);
+            assert!(result.is_err(), "lowered to IR: {:?}", result.ok());
+        }
+    }
+
+    /// The gate itself: `compile` refuses without consulting the program.
+    ///
+    /// The body here lowers perfectly well — `compile_unchecked` produces a
+    /// module for it — which is the point. The refusal is a property of the
+    /// backend, not of anything the user wrote.
+    #[test]
+    fn the_backend_gate_refuses_a_program_it_could_otherwise_lower() {
+        let body = vec![Stmt::Expr(Expr::Integer(1))];
+
+        let ir = LLVMTextBackend::new("gate")
+            .unwrap()
+            .compile_unchecked(&main_fn(body.clone()))
+            .expect("this program is within what the skeleton can lower");
+        assert!(ir.contains("define void @main()"));
+
+        let diag = LLVMTextBackend::new("gate")
+            .unwrap()
+            .compile(&main_fn(body))
+            .expect_err("`--llvm` must refuse regardless of the program")
+            .to_diagnostic();
+
+        assert!(
+            diag.message.contains("the LLVM backend (`--llvm`)")
+                && diag.message.contains("is not implemented"),
+            "headline was {:?}",
+            diag.message
+        );
+        assert_help_is_actionable_and_makes_no_promise(&diag);
+        assert!(
+            diag.span.is_none() || diag.span == Some(Span::dummy()),
+            "a whole-backend refusal must not point at a line of source"
+        );
+    }
+
+    /// The wholesale refusal has to say three things, and it is the only
+    /// message a `--llvm` user will now see.
+    #[test]
+    fn the_backend_refusal_states_what_it_is_and_what_to_use_instead() {
+        let diag = LLVMTextBackend::new("msg")
+            .unwrap()
+            .compile(&main_fn(vec![]))
+            .unwrap_err()
+            .to_diagnostic();
+
+        let note = diag.notes.join(" ");
+        assert!(
+            note.contains("kept for development"),
+            "the note must say why the backend still exists: {:?}",
+            note
+        );
+        assert!(
+            note.contains("valid and silently means something other than what was written"),
+            "the note must say the failure is silent, not loud: {:?}",
+            note
+        );
+
+        let help = diag.suggestions[0].message.clone();
+        assert!(
+            help.contains("default C backend") && help.contains("--llvm"),
+            "the help must name the working backend: {:?}",
+            help
+        );
+        assert!(
+            help.contains("docs/specification/language-spec.md"),
+            "the help must point at the specification, not a milestone: {:?}",
+            help
+        );
+        assert_help_is_actionable_and_makes_no_promise(&diag);
+    }
+
+    // -----------------------------------------------------------------------
+    // The workarounds, executed — and bound to the message that suggests them
+    // -----------------------------------------------------------------------
+    //
+    // These sit next to the constructors rather than in `tests/`, because the
+    // coupling is the point. Each one reads the real
+    // `to_diagnostic().suggestions[0].message`, asserts the property it is
+    // about to rely on, and only then compiles and runs the rewrite. If the
+    // help text drifts, the assertion fires before anything is executed; if the
+    // rewrite stops working, the run fails. Asserting a quoted copy of the help
+    // in a doc comment — which is what this change did at first — catches
+    // neither.
+
+    use crate::linker::{link_command, OptLevel};
+    use crate::Driver;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    /// Compile with the default C backend, link against the real runtime, run,
+    /// and return stdout.
+    fn run_on_the_c_backend(source: &str, name: &str) -> String {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join(format!("{}.pd", name));
+        let exe = dir.path().join(name);
+        std::fs::write(&src, source).unwrap();
+
+        let c_file = Driver::new()
+            .compile_file(&src)
+            .unwrap_or_else(|e| panic!("the suggested workaround did not compile: {}", e));
+
+        let out = link_command(&c_file, &exe, OptLevel::Default)
+            .expect("link_command")
+            .output()
+            .expect("gcc");
+        assert!(
+            out.status.success(),
+            "gcc rejected the suggested workaround: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let run = Command::new(&exe).output().expect("run");
+        assert!(
+            run.status.success(),
+            "the suggested workaround failed at runtime: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        String::from_utf8_lossy(&run.stdout).to_string()
+    }
+
+    fn help_of(diag: &Diagnostic) -> String {
+        diag.suggestions
+            .first()
+            .expect("a refusal with no `help:` is half a diagnostic")
+            .message
+            .clone()
+    }
+
+    fn words(s: &str) -> Vec<&str> {
+        s.split_whitespace().collect()
+    }
+
+    /// `help:` for enum construction — unit and tuple variants.
+    #[test]
+    fn enum_help_recommends_the_c_backend_and_the_c_backend_delivers() {
+        let diag = refusal_for(vec![Stmt::Expr(enum_ctor("Green", None))]);
+        let help = help_of(&diag);
+        assert!(
+            help.contains("dropping `--llvm`") && help.contains("unit, tuple and struct"),
+            "help changed shape: {:?}",
+            help
+        );
+
+        // Unit variants: `Color::Green` is the *second* variant, so a backend
+        // that fabricated 0 would print 1 here.
+        let out = run_on_the_c_backend(
+            r#"
+enum Color { Red, Green }
+
+fn main() {
+    let c = Color::Green;
+    match c {
+        Color::Red => print_int(1),
+        Color::Green => print_int(2),
+    }
+}
+"#,
+            "wa_enum_unit",
+        );
+        assert_eq!(out.trim(), "2");
+
+        // Tuple variants, carrying a side effect the old catch-all deleted.
+        let out = run_on_the_c_backend(
+            r#"
+enum Wrapper { Val(i64) }
+
+fn loud(x: i64) -> i64 {
+    print_int(x);
+    return x;
+}
+
+fn main() {
+    let w = Wrapper::Val(loud(99));
+    print_int(1);
+}
+"#,
+            "wa_enum_tuple",
+        );
+        assert_eq!(words(&out), vec!["99", "1"]);
+    }
+
+    /// The third variant shape the help now advertises. Field bindings are
+    /// written out (`w: w`) because the parser has no shorthand for them.
+    #[test]
+    fn enum_help_covers_struct_variants_because_it_says_so() {
+        let diag = refusal_for(vec![Stmt::Expr(enum_ctor("Green", None))]);
+        assert!(help_of(&diag).contains("struct"));
+
+        let out = run_on_the_c_backend(
+            r#"
+enum Shape {
+    Circle { r: i64 },
+    Rect { w: i64, h: i64 },
+}
+
+fn main() {
+    let s = Shape::Rect { w: 3, h: 4 };
+    match s {
+        Shape::Circle { r: r } => print_int(r),
+        Shape::Rect { w: w, h: h } => print_int(w * h),
+    }
+}
+"#,
+            "wa_enum_struct",
+        );
+        assert_eq!(out.trim(), "12");
+    }
+
+    /// The word "non-generic" in the help is load-bearing, not hedging.
+    ///
+    /// Without it the message would send a `Result<T, E>` user to a backend
+    /// that cannot build their program either. This pins the reason the
+    /// qualifier exists, so nobody "tidies" it away.
+    #[test]
+    fn the_generic_enum_caveat_in_the_help_is_real() {
+        let diag = refusal_for(vec![Stmt::Expr(enum_ctor("Green", None))]);
+        assert!(
+            help_of(&diag).contains("non-generic"),
+            "help must qualify the recommendation: {:?}",
+            help_of(&diag)
+        );
+
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("wa_enum_generic.pd");
+        std::fs::write(
+            &src,
+            r#"
+enum Opt<T> {
+    None,
+    Some(T),
+}
+
+fn main() {
+    let o = Opt::Some(41);
+    print_int(7);
+}
+"#,
+        )
+        .unwrap();
+
+        // The C backend accepts this and then emits C that gcc rejects with
+        // `variable has incomplete type 'struct Opt'`. Front-end success is
+        // exactly why the caveat has to be in the help text.
+        let c_file = Driver::new()
+            .compile_file(&src)
+            .expect("the front end accepts generic enums");
+        let exe = dir.path().join("wa_enum_generic");
+        let out = link_command(&c_file, &exe, OptLevel::Default)
+            .expect("link_command")
+            .output()
+            .expect("gcc");
+        assert!(
+            !out.status.success(),
+            "generic enums now build on the C backend — widen the help text"
+        );
+    }
+
+    /// `help:` for `?` — both halves are load-bearing.
+    ///
+    /// Dropping `--llvm` alone is not enough: the C backend emits C for a
+    /// `struct Result` layout it never defines. The `?` has to go too.
+    #[test]
+    fn question_help_requires_both_a_match_and_the_c_backend() {
+        let diag = refusal_for(vec![Stmt::Expr(Expr::Question {
+            expr: Box::new(Expr::Integer(1)),
+            span: Span::dummy(),
+        })]);
+        let help = help_of(&diag);
+        assert!(
+            help.contains("match on the enum") && help.contains("dropping `--llvm`"),
+            "help must ask for both: {:?}",
+            help
+        );
+
+        let out = run_on_the_c_backend(
+            r#"
+enum Result {
+    Ok(i64),
+    Err(i64),
+}
+
+fn might_fail(x: i64) -> Result {
+    if x < 0 {
+        return Result::Err(0 - x);
+    }
+    return Result::Ok(x * 2);
+}
+
+fn main() {
+    match might_fail(5) {
+        Result::Ok(v) => print_int(v),
+        Result::Err(e) => print_int(e),
+    }
+    match might_fail(0 - 7) {
+        Result::Ok(v) => print_int(v),
+        Result::Err(e) => print_int(e),
+    }
+}
+"#,
+            "wa_question",
+        );
+        assert_eq!(words(&out), vec!["10", "7"]);
+    }
+
+    /// `help:` for `.await` — the signature changes, the call stays.
+    #[test]
+    fn await_help_changes_the_signature_and_that_program_runs() {
+        let diag = refusal_for(vec![Stmt::Expr(Expr::Await {
+            expr: Box::new(Expr::Integer(1)),
+            span: Span::dummy(),
+        })]);
+        let help = help_of(&diag);
+        assert!(
+            help.contains("-> T") && help.contains("not `-> Future<T>`"),
+            "help must change the signature: {:?}",
+            help
+        );
+
+        let out = run_on_the_c_backend(
+            r#"
+fn work(x: i64) -> i64 {
+    return x * 2;
+}
+
+fn main() {
+    let v: i64 = work(3);
+    print_int(v);
+}
+"#,
+            "wa_await",
+        );
+        assert_eq!(out.trim(), "6");
+    }
+
+    /// The suggestion the `.await` help must never make.
+    ///
+    /// Deleting `.await` and changing nothing else leaves a `Future<i64>` bound
+    /// to an `i64`. If anyone "simplifies" the help back to "just remove the
+    /// .await", the receipt for why that is wrong is already here.
+    #[test]
+    fn deleting_the_await_alone_does_not_compile() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("wa_await_naive.pd");
+        std::fs::write(
+            &src,
+            r#"
+fn work(x: i64) -> Future<i64> {
+    return work(x);
+}
+
+fn main() {
+    let v: i64 = work(3);
+    print_int(v);
+}
+"#,
+        )
+        .unwrap();
+        let err = Driver::new()
+            .compile_file(&src)
+            .expect_err("a Future bound to an i64 must not type check")
+            .to_string();
+        assert!(err.contains("Type mismatch"), "{}", err);
+        assert!(err.contains("Future"), "{}", err);
+    }
+
+    /// `help:` for the macro invocation — the clause a user can always take.
+    #[test]
+    fn macro_help_offers_writing_the_expansion_out() {
+        let diag = refusal_for(vec![Stmt::Expr(Expr::MacroInvocation {
+            name: "println".to_string(),
+            args: vec![],
+            span: Span::dummy(),
+        })]);
+        assert!(
+            help_of(&diag).contains("write out the code"),
+            "help must offer the inline expansion: {:?}",
+            help_of(&diag)
+        );
+
+        let out = run_on_the_c_backend("fn main() { print_int(6); }", "wa_macro");
+        assert_eq!(out.trim(), "6");
+    }
+
+    /// `help:` for `break` and `continue`.
+    #[test]
+    fn loop_jump_help_recommends_the_c_backend_and_it_lowers_them() {
+        let brk = refusal_for(vec![Stmt::Break {
+            span: Span::dummy(),
+        }]);
+        assert!(help_of(&brk).contains("dropping `--llvm`") && help_of(&brk).contains("`break`"));
+
+        let out = run_on_the_c_backend(
+            r#"
+fn main() {
+    let mut i: i64 = 0;
+    while i < 10 {
+        if i > 3 {
+            break;
+        }
+        print_int(i);
+        i = i + 1;
+    }
+}
+"#,
+            "wa_break",
+        );
+        assert_eq!(words(&out), vec!["0", "1", "2", "3"]);
+
+        let cont = refusal_for(vec![Stmt::Continue {
+            span: Span::dummy(),
+        }]);
+        assert!(
+            help_of(&cont).contains("dropping `--llvm`") && help_of(&cont).contains("`continue`")
+        );
+
+        let out = run_on_the_c_backend(
+            r#"
+fn main() {
+    let mut i: i64 = 0;
+    while i < 5 {
+        i = i + 1;
+        if i == 3 {
+            continue;
+        }
+        print_int(i);
+    }
+}
+"#,
+            "wa_continue",
+        );
+        assert_eq!(words(&out), vec!["1", "2", "4", "5"]);
+    }
+
+    /// `help:` for the enum pattern.
+    #[test]
+    fn enum_pattern_help_recommends_the_c_backend_and_it_matches() {
+        let diag = refusal_for(vec![Stmt::Match {
+            expr: Expr::Integer(0),
+            arms: vec![MatchArm {
+                pattern: Pattern::EnumPattern {
+                    enum_name: "Color".to_string(),
+                    variant: "Red".to_string(),
+                    data: None,
+                },
+                body: vec![],
+            }],
+            span: Span::dummy(),
+        }]);
+        let help = help_of(&diag);
+        assert!(
+            help.contains("dropping `--llvm`") && help.contains("non-generic"),
+            "help changed shape: {:?}",
+            help
+        );
+
+        let out = run_on_the_c_backend(
+            r#"
+enum Color { Red, Green }
+
+fn describe(c: Color) {
+    match c {
+        Color::Red => print_int(1),
+        Color::Green => print_int(2),
+    }
+}
+
+fn main() {
+    describe(Color::Red);
+    describe(Color::Green);
+}
+"#,
+            "wa_enum_pattern",
+        );
+        assert_eq!(words(&out), vec!["1", "2"]);
+    }
+
+    /// `help:` for the wholesale refusal — the only message a `--llvm` user now
+    /// sees, so its advice had better work on a real program.
+    #[test]
+    fn backend_help_recommends_the_default_and_the_default_works() {
+        let diag = LLVMTextBackend::new("wa_backend")
+            .unwrap()
+            .compile(&main_fn(vec![]))
+            .unwrap_err()
+            .to_diagnostic();
+        assert!(help_of(&diag).contains("dropping `--llvm`"));
+
+        let out = run_on_the_c_backend(
+            r#"
+enum Color { Red, Green }
+
+fn main() {
+    let mut i: i64 = 0;
+    while i < 3 {
+        if i == 1 {
+            i = i + 1;
+            continue;
+        }
+        print_int(i);
+        i = i + 1;
+    }
+    let c = Color::Green;
+    match c {
+        Color::Red => print_int(100),
+        Color::Green => print_int(200),
+    }
+}
+"#,
+            "wa_backend",
+        );
+        assert_eq!(words(&out), vec!["0", "2", "200"]);
     }
 }

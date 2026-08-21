@@ -34,9 +34,24 @@ lex → parse → resolve imports → macro expand → typecheck → borrow chec
     → effect analysis (informational only) → optimize → C codegen → gcc
 ```
 
-The C backend is the real backend. An LLVM text backend exists
-(`src/codegen/llvm_text_backend.rs`) but is skeletal — break, continue, pattern matching, enum
-construction, `?`, and `await` are all unimplemented there (`:914`, `:921`, `:933`, `:1379`).
+**The C backend is the only backend.** An LLVM text backend exists in the tree
+(`src/codegen/llvm_text_backend.rs`) and `--llvm` selects it, but as of 2026-08-22 it **refuses
+unconditionally**: `LLVMTextBackend::compile` returns `CompileError::Unimplemented` before it looks
+at the program. It is retained for development, not for building.
+
+It refuses wholesale rather than per-construct because its gaps are not all loud ones. Seven
+constructs failed visibly — `break`, `continue`, enum patterns, enum construction, `?`, `await`,
+and stray macro invocations — and each now carries its own diagnostic underneath the gate. Seven
+more failed *silently*, emitting IR that assembles and runs while meaning something else:
+non-function items (structs, enums) are dropped from the module while expressions still refer to
+them; every unenumerated type becomes `i8*`; every call is typed `i64` regardless of signature;
+struct field access uses index 0 for reads and writes alike, so `p.y` reads `p.x`; `match` on a
+wildcard or identifier pattern discards the scrutinee and never binds the identifier; string
+collection skips `Stmt::Match` and `Stmt::Unsafe`, leaving an undefined `@.str.unknown`; and a
+plain `main` emits `ret void`, putting the process exit status outside the program's semantics.
+
+Field-zero corruption in particular produces *valid* IR, so verifying the assembly does not detect
+it. A gate covering only the loud half would read as protection while providing none.
 
 Generated C is linked against `runtime/palladium_runtime.c`, which supplies 16 file/path
 symbols. `pdc` resolves that runtime relative to its own install location — `pdc --print-runtime`

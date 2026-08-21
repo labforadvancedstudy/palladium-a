@@ -71,11 +71,17 @@ pub enum CompileError {
     #[error("Code generation failed: {message}")]
     CodegenError { message: String },
 
-    // A construct the parser accepts but that no backend can lower. Emitting
-    // approximate code for these is how a compiler starts lying: the program
-    // either fails inside generated C the user never wrote, or — worse — links
-    // and runs with the wrong semantics. Refusing at the construct's own span
-    // is the honest answer until the feature lands.
+    // A construct the parser accepts but that the selected backend cannot lower.
+    // Emitting approximate code for these is how a compiler starts lying: the
+    // program either fails inside generated C the user never wrote, or — worse
+    // — links and runs with the wrong semantics. Refusing at the construct's
+    // own span is the honest answer until the feature lands.
+    //
+    // "The selected backend", not "no backend": the LLVM backend raises these
+    // too, and its `workaround` is to use the C backend, which lowers the
+    // construct fine. The two backends do not have the same gaps, and a comment
+    // claiming otherwise would be the same kind of false statement this variant
+    // exists to remove.
     //
     // These are raised *before* the operand is examined, so `consequence` and
     // `workaround` must hold for every operand the construct can be written
@@ -90,6 +96,8 @@ pub enum CompileError {
         /// What the programmer can do today instead. Must be true for any
         /// operand, and must name its own limits rather than imply generality.
         workaround: String,
+        /// `None` when the refusal is a property of the backend rather than of
+        /// any one line of source.
         span: Option<Span>,
     },
 
@@ -482,11 +490,23 @@ impl CompileError {
                 consequence,
                 workaround,
                 span,
-            } => Diagnostic::error(format!("{} is not implemented", construct))
-                .with_span(span.unwrap_or(Span::dummy()))
-                .with_note(consequence.clone())
-                .with_suggestion(workaround.clone(), None)
-                .with_context_lines(1),
+            } => {
+                let diag = Diagnostic::error(format!("{} is not implemented", construct))
+                    .with_note(consequence.clone())
+                    .with_suggestion(workaround.clone(), None)
+                    .with_context_lines(1);
+                // Only claim a location when there is one. The arms above
+                // default a missing span to `Span::dummy()`, which the reporter
+                // renders as `--> file.pd:0:0` — a line and column that do not
+                // exist. For a refusal that is a property of the whole backend
+                // rather than of any one construct, inventing a source position
+                // is a small instance of exactly the fabrication these
+                // diagnostics exist to remove.
+                match span {
+                    Some(s) => diag.with_span(*s),
+                    None => diag,
+                }
+            }
 
             _ => {
                 // Default diagnostic for other errors
