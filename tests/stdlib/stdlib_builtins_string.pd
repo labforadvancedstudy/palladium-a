@@ -16,6 +16,30 @@
 // diffs stdout against the sibling .expected. `make stdlib-gate` checks the
 // generated C for structural defects instead. One mechanism each.
 
+
+// COVERAGE MARKERS. `covers_*` prints `@builtin <name> -> <observed result>`,
+// where the result is COMPUTED BY CALLING THE BUILTIN, not written as a literal.
+// The line therefore cannot be produced without the call running and returning
+// that value: delete the call and the golden loses the line; change the result
+// and the golden changes. scripts/stdlib-gate.sh Phase 3 requires the marker to
+// appear in THIS driver's own golden, so a marker in one file can no longer
+// vouch for a call in another.
+fn covers_i64(name: String, value: i64) {
+    print(string_concat(string_concat("@builtin ", name), string_concat(" -> ", int_to_string(value))));
+}
+
+fn covers_str(name: String, value: String) {
+    print(string_concat(string_concat("@builtin ", name), string_concat(" -> ", value)));
+}
+
+fn covers_bool(name: String, value: bool) {
+    if value {
+        print(string_concat(string_concat("@builtin ", name), " -> true"));
+    } else {
+        print(string_concat(string_concat("@builtin ", name), " -> false"));
+    }
+}
+
 fn expect_i64(label: String, actual: i64, expected: i64) {
     print(label);
     print_int(actual);
@@ -56,6 +80,8 @@ fn main() {
     // ---- print / print_int -------------------------------------------------
     // Provenance: runtime/pd_prelude.h:60,64 — both printf with a trailing
     // newline. Every other line of this transcript is evidence that they work.
+        // print/print_int return nothing, so there is no result to observe. Their
+    // effect IS every line of this transcript; recorded COVERED_BY_EFFECT.
     print("@builtin print");
     print("print_literal");
     print("@builtin print_int");
@@ -64,7 +90,7 @@ fn main() {
 
     // ---- string_len --------------------------------------------------------
     // Provenance: runtime/pd_prelude.h:73 -> strlen = bytes before the NUL.
-    print("@builtin string_len");
+    covers_i64("string_len", string_len("abcd"));
     expect_i64("string_len_empty", string_len(""), 0);
     expect_i64("string_len_abcd", string_len("abcd"), 4);
     // 3 bytes: the lexer decodes "\n" to one byte, it is not passed through raw.
@@ -72,7 +98,7 @@ fn main() {
 
     // ---- string_concat -----------------------------------------------------
     // Provenance: runtime/pd_prelude.h:77 — allocates len1+len2+1, copies both.
-    print("@builtin string_concat");
+    covers_str("string_concat", string_concat("foo", "bar"));
     expect_str("string_concat", string_concat("foo", "bar"), "foobar");
     expect_str("string_concat_empty_lhs", string_concat("", "bar"), "bar");
     expect_str("string_concat_empty_rhs", string_concat("foo", ""), "foo");
@@ -80,7 +106,7 @@ fn main() {
     // ---- string_eq ---------------------------------------------------------
     // Provenance: runtime/pd_prelude.h:80 -> strcmp == 0. Full-length equality,
     // so a strict prefix must NOT compare equal.
-    print("@builtin string_eq");
+    covers_bool("string_eq", string_eq("abc", "abc"));
     expect_true("string_eq_same", string_eq("abc", "abc"));
     expect_false("string_eq_diff", string_eq("abc", "abd"));
     expect_false("string_eq_prefix", string_eq("abc", "ab"));
@@ -90,7 +116,7 @@ fn main() {
     // Provenance: runtime/pd_prelude.h:90 — returns the byte as (unsigned char),
     // and -1 (not 0, not a trap) when index is outside [0, strlen).
     // 97 = 'a', 99 = 'c' in ASCII.
-    print("@builtin string_char_at");
+    covers_i64("string_char_at", string_char_at("abc", 0));
     expect_i64("string_char_at_0", string_char_at("abc", 0), 97);
     expect_i64("string_char_at_2", string_char_at("abc", 2), 99);
     expect_i64("string_char_at_oob", string_char_at("abc", 3), -1);
@@ -99,7 +125,7 @@ fn main() {
     // ---- string_substring --------------------------------------------------
     // Provenance: runtime/pd_prelude.h:95 — half-open [start, end); start clamps
     // up to 0, end clamps down to len, and start >= end yields "".
-    print("@builtin string_substring");
+    covers_str("string_substring", string_substring("hello world", 1, 4));
     expect_str("string_substring_mid", string_substring("hello world", 0, 5), "hello");
     expect_str("string_substring_tail", string_substring("hello world", 6, 11), "world");
     expect_str("string_substring_clamp_end", string_substring("abc", 1, 99), "bc");
@@ -109,7 +135,7 @@ fn main() {
     // ---- string_from_char --------------------------------------------------
     // Provenance: runtime/pd_prelude.h:107 — one byte plus NUL.
     // 65 = 'A', 122 = 'z' in ASCII.
-    print("@builtin string_from_char");
+    covers_str("string_from_char", string_from_char(65));
     expect_str("string_from_char_A", string_from_char(65), "A");
     expect_str("string_from_char_z", string_from_char(122), "z");
 
@@ -117,7 +143,7 @@ fn main() {
     // Provenance: runtime/pd_prelude.h:126 -> atoll. C99 7.20.1.2 specifies 0
     // when no conversion can be performed, which is why "abc" is 0 rather than
     // an error: this builtin has no way to report failure.
-    print("@builtin string_to_int");
+    covers_i64("string_to_int", string_to_int("42"));
     expect_i64("string_to_int_42", string_to_int("42"), 42);
     expect_i64("string_to_int_neg", string_to_int("-7"), -7);
     expect_i64("string_to_int_garbage", string_to_int("abc"), 0);
@@ -125,7 +151,7 @@ fn main() {
     // ---- int_to_string -----------------------------------------------------
     // Provenance: runtime/pd_prelude.h:130 -> snprintf "%lld" into 32 bytes, so
     // every i64 (20 chars incl. sign at most) round-trips without truncation.
-    print("@builtin int_to_string");
+    covers_str("int_to_string", int_to_string(-123));
     expect_str("int_to_string_0", int_to_string(0), "0");
     expect_str("int_to_string_neg", int_to_string(-123), "-123");
     // 2^53+1: exact in i64 and NOT representable in f64, so this pins integer

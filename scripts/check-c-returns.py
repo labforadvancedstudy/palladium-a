@@ -50,6 +50,8 @@ DEF_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9 *]*\(.*\)[ \t]*\{[ \t]*$")
 VOID_RE = re.compile(r"^(?:static\s+)?(?:inline\s+)?void\s+[A-Za-z_]")
 # Calls that do not return, so a body ending in one cannot fall through.
 NORETURN_RE = re.compile(r"^(?:__pd_panic|abort|exit|__builtin_unreachable)\s*\(")
+# `return` as a whole word. `returning();` is a call, not a return statement.
+RETURN_RE = re.compile(r"^return\b")
 
 
 def parse_block(lines, i):
@@ -88,6 +90,27 @@ def parse_block(lines, i):
     return items, i
 
 
+def contains_break(items, depth=0):
+    """Is there a `break` that escapes THIS loop?
+
+    A `break` inside a nested loop or a `switch` binds to that construct, not to
+    ours, so only breaks at loop-depth 0 count.
+    """
+    for item in items:
+        if item[0] == "stmt":
+            if depth == 0 and re.match(r"^break\b", item[1]):
+                return True
+            continue
+        _, header, then_items, else_items = item
+        h = header.rstrip("{").strip()
+        nested = depth + 1 if re.match(r"^(while|for|do|switch)\b", h) else depth
+        if contains_break(then_items, nested):
+            return True
+        if else_items is not None and contains_break(else_items, depth):
+            return True
+    return False
+
+
 def terminates(items):
     """Does this statement list definitely return / not fall through?"""
     if not items:
@@ -95,12 +118,14 @@ def terminates(items):
     kind = items[-1]
     if kind[0] == "stmt":
         text = kind[1]
-        return text.startswith("return") or bool(NORETURN_RE.match(text))
+        return bool(RETURN_RE.match(text)) or bool(NORETURN_RE.match(text))
     _, header, then_items, else_items = kind
     h = header.rstrip("{").strip()
-    # An infinite loop never falls through.
+    # An infinite loop never falls through — UNLESS it can `break` out of itself.
+    # `while (1) { ... break; ... }` reaches the code after the loop, so treating
+    # every `while (1)` as terminating would wrongly clear a real fall-through.
     if re.match(r"^(while\s*\(\s*1\s*\)|for\s*\(\s*;\s*;\s*\))", h):
-        return True
+        return not contains_break(then_items)
     if h.startswith("if"):
         # Needs BOTH arms; an `if` with no `else` always has a fall-through path.
         return else_items is not None and terminates(then_items) and terminates(else_items)

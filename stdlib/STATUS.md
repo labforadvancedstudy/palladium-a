@@ -176,17 +176,21 @@ defect's real victims were ordinary user programs.
 > **369** further sites in `stdlib/` where a `}` is preceded by a `}`, an upper bound on the
 > tail-`if` shape. So the true counterfactual blast radius is wider than 437, not narrower.
 
-**Every live occurrence of the false claim has been corrected**, each with the original wording
-preserved and a correction adjacent to it:
+**What this branch corrected.** Each keeps the original wording with a correction adjacent to it,
+rather than deleting the record:
 
-| File | Status |
+| File | Corrected by |
 |---|---|
-| `docs/contributing/MILESTONES.md` | corrected — retraction on the page |
-| `docs/CHANGELOG.md` | corrected — note under the D3 entry |
-| `docs/specification/bootstrap-subset.md` | corrected — note under the defect table |
-| `CLAUDE.md` | corrected — note on the D3 line |
-| `docs/specification/language-spec.md:295` | **NOT corrected — out of reach.** That file is being restructured on `docs/restore-design-corpus`, where the claim has already moved to line 607 and the surrounding text is rewritten. Editing it here would collide. Routed to the coordinator. |
-| commit message `191f8c1` | immutable history; corrected by this commit's message and by the table above |
+| `docs/contributing/MILESTONES.md` | this branch — retraction on the page |
+| `docs/CHANGELOG.md` | this branch — note under the D3 entry |
+| `docs/specification/bootstrap-subset.md` | this branch — note under the defect table |
+| `CLAUDE.md` | this branch — note on the D3 line |
+| `docs/specification/language-spec.md` | **not this branch.** Corrected on `docs/restore-design-corpus` (commit `93573f3`), which owns that file's restructuring. It also found the line reference given in this branch's first hand-off was stale: the claim is in A6.6 "Tail expressions", not at `:295`/`:607`. It re-measured independently rather than accepting the hand-off, and attributes the two Homebrew formula paths to this unit |
+| commit message `191f8c1` | immutable history; corrected by this branch's commit messages and by this table |
+
+This table is a statement about *where the correction was made*, not a claim that the set is closed.
+A later grep may find occurrences neither unit has seen; the honest position is that these are the
+ones that were found and fixed, not that none remain.
 
 The distinction matters because the false version misdirects the fix. It says "gate `stdlib/`",
 which would produce a gate over 21 files that cannot compile — a gate that can only ever report
@@ -230,16 +234,33 @@ transcript diff is not a guarantee in principle: on another libc or another comp
 could equal the expected value by accident and the diff would pass.
 
 The only stable statement about D3 is **structural**, so `scripts/check-generated-c.sh` inspects
-`build_output/*.c` and never runs anything. It uses two independent nets:
+`build_output/*.c` and never runs anything. It uses two nets, and the invariant is the *combination*
+of them — neither is a proof on its own:
 
-- **Net A** — every non-void function definition must contain at least one `return`. D3 emits
-  functions with *zero* returns, so this catches it exactly, without needing a C compiler to have
-  an opinion.
-- **Net B** — `-Werror=return-type`, which does real control-flow analysis and also catches a
-  function returning on some paths but falling off others. It is a frontend diagnostic, verified
-  identical at `-O0`, `-O2` and `-O3`.
+- **Net A** (`scripts/check-c-returns.py`) — every non-void function's body must **return on every
+  path**. This is a terminator analysis, not "contains a `return`" (which passed `classify`, above)
+  and not "the last line is a `return`" (which would wrongly flag a legitimate
+  `if (c) { return 1; } else { return 2; }`, whose last line is `}`). An if/else terminates iff both
+  arms do; an `if` with no `else` never does; `while (1)` terminates only if nothing `break`s out of
+  it. Its value is that it needs no C compiler to have an opinion.
+- **Net B** — `-Werror=return-type`: the same question answered by a real compiler's control-flow
+  graph over the real grammar. A frontend diagnostic, verified identical at `-O0`, `-O2` and `-O3`.
+  A non-zero exit is only accepted as a Net B finding if the diagnostic is actually the return-type
+  one; an unrelated failure (a missing header, say) is reported as "could not run", not as a defect.
 
-Neither subsumes the other, and a defect must defeat both.
+**Net A is not independently sound**, and is not documented as though it were. It reads the shape
+pdc happens to emit line by line, so unusual formatting, `switch`, or `goto` could defeat it — Net B
+covers those. Conversely Net B only exists while the C compiler cooperates. This is
+defence-in-depth: a defect has to get past both.
+
+> **Interim gap, measured 2026-08-22.** The transcript-diffing conformance runner is on
+> `fix/m1-conformance-fixtures` and is **not merged**. On this branch
+> `grep -c expected scripts/conformance.sh` returns **0**: the runner here checks exit status only.
+> So today the goldens in `tests/stdlib/` are *inventory-checked* (every driver has one, every
+> golden has a driver) but their **contents are verified by nothing**. Editing a golden to disagree
+> with its program is currently caught by neither gate. This is not fixed here on purpose —
+> duplicating the diff would ship the second semantic standard the consolidation ruling exists to
+> prevent — and it closes when that branch merges.
 
 ### Seam with `make conformance`
 

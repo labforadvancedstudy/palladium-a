@@ -81,6 +81,9 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "error: python3 not found; Net A cannot run" >&2
   exit 2
 fi
+# Exit 0 = clean, 1 = violations found, anything else = the analyser itself
+# broke. Conflating the third with the second would report a crashed analyser as
+# a structural defect (and, in a negative control, as proof the net works).
 net_a() { python3 "$NET_A" "$1" 2>&1; }
 
 for c in "$@"; do
@@ -92,19 +95,34 @@ for c in "$@"; do
   checked=$((checked+1))
   file_bad=0
 
-  a_out=$(net_a "$c")
-  if [ -n "$a_out" ]; then
-    printf '  %sFAIL%s Net A (missing return) in %s\n' "$RED" "$NC" "$c"
+  a_out=$(net_a "$c"); a_rc=$?
+  if [ "$a_rc" -eq 1 ]; then
+    printf '  %sFAIL%s Net A (falls off the end) in %s\n' "$RED" "$NC" "$c"
+    printf '%s\n' "$a_out" | sed 's/^/        /'
+    file_bad=1
+  elif [ "$a_rc" -ne 0 ]; then
+    printf '  %sFAIL%s Net A HARNESS ERROR (exit %d) on %s — the net did not run\n' "$RED" "$NC" "$a_rc" "$c"
     printf '%s\n' "$a_out" | sed 's/^/        /'
     file_bad=1
   fi
 
   # Net B. Redirect to a file rather than piping: a `| head` here would SIGPIPE
   # the compiler and could be mistaken for a diagnostic.
+  # A non-zero exit from the C compiler is NOT by itself a return-type finding:
+  # a missing header, a syntax error or an out-of-memory abort all exit non-zero
+  # too. Measured: a file with a bad #include was reported as a
+  # "-Werror=return-type" failure by the previous form. The diagnostic must
+  # actually be the return-type one, and anything else is a distinct verdict.
   b_log=$(mktemp)
   if ! "$CC" -fsyntax-only -Werror=return-type -I "$RUNTIME_DIR" "$c" >"$b_log" 2>&1; then
-    printf '  %sFAIL%s Net B (%s -Werror=return-type) in %s\n' "$RED" "$NC" "$CC" "$c"
-    grep -a "error:" "$b_log" | head -5 | sed 's/^/        /'
+    if grep -qa -e '-Wreturn-type' -e 'does not return a value' -e 'no return statement' "$b_log"; then
+      printf '  %sFAIL%s Net B (%s -Werror=return-type) in %s\n' "$RED" "$NC" "$CC" "$c"
+      grep -a "error:" "$b_log" | head -5 | sed 's/^/        /'
+    else
+      printf '  %sFAIL%s Net B could not run on %s — %s failed for an UNRELATED reason, so it proves nothing here\n' \
+        "$RED" "$NC" "$c" "$CC"
+      grep -a -e "error:" -e "fatal error:" "$b_log" | head -3 | sed 's/^/        /'
+    fi
     file_bad=1
   fi
   rm -f "$b_log"

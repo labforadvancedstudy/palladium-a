@@ -141,19 +141,43 @@ else
   ok "control compiled, ran, and its planted mismatch was detected"
 fi
 
-# panic() must abort. Run via a child shell so this shell's own "Abort trap" job
-# message does not land in the gate output. The trailing `exit $?` is required:
-# with a single command, bash exec()s it and the abort is reported by THIS shell
-# anyway.
-cat >"$SCRATCH/negpanic.pd" <<'EOF'
-fn main() { if 1 != 2 { panic("negative control"); } }
+# panic() must ABORT — not merely "fail somehow".
+#
+# The previous version accepted ANY non-zero exit as proof that panic() worked:
+# a missing binary (127), a loader failure, a wrong-architecture exec would all
+# have been read as "panic aborts correctly". That is the same defect this very
+# phase exists to catch, reproduced one control down. Three things are now
+# required, and each is checked separately:
+#   1. the executable exists,
+#   2. it died from SIGABRT specifically — abort() raises signal 6, which a
+#      POSIX shell reports as 128+6 = 134. A generic failure exit (1, 127, …) is
+#      NOT an abort and must not be accepted,
+#   3. the panic message reached stderr, proving the runtime's panic path ran
+#      rather than the process dying on the way in.
+# Run via a child shell (with a trailing `exit $?`, or bash exec()s the binary
+# and reports the abort itself) so no "Abort trap" job message reaches the gate.
+PANIC_MSG="negative control panic reached the runtime"
+cat >"$SCRATCH/negpanic.pd" <<EOF
+fn main() { if 1 != 2 { panic("$PANIC_MSG"); } }
 EOF
 if ! "$PDC" compile "$SCRATCH/negpanic.pd" -o stdlibgate_negpanic >"$SCRATCH/negpanic.log" 2>&1; then
-  note "negative control for panic() failed to compile — the control is broken"
-elif bash -c "'$OUT_DIR/stdlibgate_negpanic' >/dev/null 2>&1; exit \$?" 2>/dev/null; then
-  note "panic() did not produce a non-zero exit — assertions are vacuous"
+  note "negative control for panic() failed to compile — the control is broken, not passing"
+  strip_ansi <"$SCRATCH/negpanic.log" | grep -m1 -a 'error' | sed 's/^/        /'
+elif [ ! -x "$OUT_DIR/stdlibgate_negpanic" ]; then
+  note "negative control for panic() produced no executable — the control is broken, not passing"
 else
-  ok "panic() exits non-zero (covers the panic builtin)"
+  bash -c "'$OUT_DIR/stdlibgate_negpanic' >/dev/null 2>\"$SCRATCH/negpanic.err\"; exit \$?" 2>/dev/null
+  panic_rc=$?
+  if [ "$panic_rc" -eq 0 ]; then
+    note "panic() exited 0 — assertions are vacuous"
+  elif [ "$panic_rc" -ne 134 ]; then
+    note "panic() exited $panic_rc, which is not SIGABRT (134) — the program failed for some OTHER reason, so this proves nothing about panic()"
+    sed 's/^/        /' "$SCRATCH/negpanic.err" 2>/dev/null | head -3
+  elif ! grep -qaF "$PANIC_MSG" "$SCRATCH/negpanic.err" 2>/dev/null; then
+    note "panic() aborted but its message never reached stderr — the runtime panic path did not run"
+  else
+    ok "panic() aborts with SIGABRT and its message reaches stderr"
+  fi
 fi
 
 # And the generated-C checker must itself be able to fail.
@@ -163,8 +187,18 @@ long long falls_off(long long a, long long b) {
 }
 int main(void) { return 0; }
 EOF
-if bash scripts/check-generated-c.sh "$SCRATCH/negc.c" >/dev/null 2>&1; then
-  note "the generated-C checker accepted a function with no return — Phase 2 is vacuous"
+# Same discipline: the checker must REJECT this file (exit 1), not merely fail.
+# It exits 2 when its own harness is broken — a missing analyser, no python3, no
+# C compiler — and accepting that as "rejection works" would report success
+# precisely when the checker was checking nothing. Verified: deleting
+# scripts/check-c-returns.py made the old form print "ok".
+bash scripts/check-generated-c.sh "$SCRATCH/negc.c" >"$SCRATCH/negc.log" 2>&1
+negc_rc=$?
+if [ "$negc_rc" -eq 0 ]; then
+  note "the generated-C checker ACCEPTED a function with no return — Phase 2 is vacuous"
+elif [ "$negc_rc" -ne 1 ]; then
+  note "the generated-C checker exited $negc_rc (harness failure, not a rejection) — Phase 2 proves nothing"
+  sed 's/^/        /' "$SCRATCH/negc.log" | head -3
 else
   ok "generated-C checker rejects a non-void function that never returns"
 fi
@@ -277,6 +311,7 @@ fi
 # expectation cannot go stale in either direction: if the violation spreads, or
 # moves, or disappears, the gate goes red and someone updates DRIVERS.tsv.
 clean_n=0; known_n=0
+phase2_before=$failures
 while IFS=$'\t' read -r base golden cverdict purpose; do
   case "$base" in ''|\#*) continue;; esac
   drv="$DRIVER_DIR/$base.pd"
@@ -326,7 +361,11 @@ while IFS=$'\t' read -r base golden cverdict purpose; do
       ;;
   esac
 done < "$DRIVER_MANIFEST"
-ok "generated C: $clean_n clean, $known_n pinned to an open defect (2 independent nets)"
+if [ "$failures" -eq "$phase2_before" ]; then
+  ok "generated C: $clean_n clean, $known_n pinned to an open defect (2 independent nets)"
+else
+  printf '  %s--%s   generated C: %d clean, %d pinned — see failures above\n' "$RED" "$NC" "$clean_n" "$known_n"
+fi
 
 # ---------------------------------------------------------------------------
 echo
@@ -342,19 +381,39 @@ else
 fi
 
 covered=0; partial=0; unusable=0
-while IFS=$'\t' read -r name status stage fp detail; do
+while IFS=$'\t' read -r name status stage fp detail note; do
   case "$name" in ''|\#*) continue;; esac
   case "$status" in
-    COVERED|PARTIAL)
-      if [ "$status" = "PARTIAL" ]; then partial=$((partial+1)); else covered=$((covered+1)); fi
-      # (a) statically called somewhere in the drivers, AND
-      # (b) its marker reached a GOLDEN transcript, i.e. the path really ran.
-      # Either alone is defeatable: (a) by dead code, (b) by a stray print.
-      if ! grep -qhE "(^|[^a-z_0-9])${name}\(" "$DRIVER_DIR"/*.pd; then
-        note "builtin '$name' is $status but no driver in $DRIVER_DIR calls it"
-      fi
-      if ! grep -qhxF "@builtin $name" "$DRIVER_DIR"/*.expected; then
-        note "builtin '$name' is $status but no golden contains '@builtin $name' — no runtime evidence it was exercised"
+    COVERED|PARTIAL|COVERED_BY_EFFECT)
+      case "$status" in
+        PARTIAL) partial=$((partial+1)) ;;
+        *)       covered=$((covered+1)) ;;
+      esac
+      # The manifest NAMES the driver. Both pieces of evidence must come from
+      # THAT driver, not from anywhere in the directory: searching all sources
+      # for the call and all goldens for the marker independently let a call in
+      # one file be vouched for by a marker in another.
+      src="$DRIVER_DIR/$detail"
+      gold="$DRIVER_DIR/${detail%.pd}.expected"
+      if [ ! -f "$src" ]; then
+        note "builtin '$name' names driver '$detail', which does not exist"
+      elif [ ! -f "$gold" ]; then
+        note "builtin '$name' names driver '$detail', which has no golden transcript"
+      else
+        if ! grep -qE "(^|[^a-z_0-9])${name}\(" "$src"; then
+          note "builtin '$name' is $status but $detail does not call it"
+        fi
+        if [ "$status" = "COVERED_BY_EFFECT" ]; then
+          # No return value to observe; the marker is a plain name. Justified
+          # per-builtin in BUILTINS.tsv.
+          grep -qxF "@builtin $name" "$gold" || \
+            note "builtin '$name' is COVERED_BY_EFFECT but $gold has no '@builtin $name' line"
+        else
+          # The marker must carry the builtin's OBSERVED RESULT, computed by
+          # calling it. A bare name would only prove that a print ran.
+          grep -qE "^@builtin ${name} -> .+$" "$gold" || \
+            note "builtin '$name' is $status but $gold has no '@builtin $name -> <result>' line — a marker without an observed result is not evidence the call ran"
+        fi
       fi
       ;;
     NEGATIVE_CONTROL)

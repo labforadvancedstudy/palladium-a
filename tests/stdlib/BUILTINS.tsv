@@ -12,10 +12,22 @@
 #     defect and fails the gate, so an unrelated parser or typeck regression
 #     cannot masquerade as this one. A probe that starts compiling is XPASS.
 #
-# Columns (tab-separated): name  status  stage  fingerprint  detail
+# Columns (tab-separated): name  status  stage  fingerprint  driver_or_probe  note
+#   driver_or_probe = the driver FILENAME for COVERED/PARTIAL/COVERED_BY_EFFECT,
+#                     the probe BODY for UNUSABLE, `-` otherwise. Keeping prose
+#                     out of this column is load-bearing: the gate resolves it
+#                     to a path, and it caught this file getting it wrong.
 #
 # status:
-#   COVERED           called and asserted; marker present in the golden
+#   COVERED           called and asserted, and its named driver's golden carries
+#                     `@builtin <name> -> <observed result>` — a value COMPUTED
+#                     by calling it, so the line cannot exist without the call
+#   COVERED_BY_EFFECT  the builtin RETURNS NOTHING, so there is no result to put
+#                     after the arrow. Only `print` and `print_int` qualify:
+#                     their observable effect is every line of every transcript
+#                     in this directory, so a regression in either turns all
+#                     five goldens red at once in `make conformance`. Marker is
+#                     the bare name, and that is declared, not overlooked.
 #   PARTIAL           as COVERED, but a documented part of the contract is NOT
 #                     exercised. Counted separately so "N usable" is never read
 #                     as "N with a fully verified contract".
@@ -32,41 +44,41 @@
 # (same I64 declarations there), so the fingerprints below should agree with
 # whatever test that branch adds; if they diverge, one of us is wrong.
 #
-print	COVERED	-	-	stdlib_builtins_string.pd
-print_int	COVERED	-	-	stdlib_builtins_string.pd
-panic	NEGATIVE_CONTROL	-	-	aborts the process; proved by Phase 0
-string_len	COVERED	-	-	stdlib_builtins_string.pd
-string_concat	COVERED	-	-	stdlib_builtins_string.pd
-string_eq	COVERED	-	-	stdlib_builtins_string.pd
-string_char_at	COVERED	-	-	stdlib_builtins_string.pd
-string_substring	COVERED	-	-	stdlib_builtins_string.pd
-string_from_char	COVERED	-	-	stdlib_builtins_string.pd
-string_to_int	COVERED	-	-	stdlib_builtins_string.pd
-int_to_string	COVERED	-	-	stdlib_builtins_string.pd
-char_is_digit	COVERED	-	-	stdlib_builtins_char_args.pd
-char_is_alpha	COVERED	-	-	stdlib_builtins_char_args.pd
-char_is_whitespace	COVERED	-	-	stdlib_builtins_char_args.pd
-arg_count	COVERED	-	-	stdlib_builtins_char_args.pd
-arg_at	COVERED	-	-	stdlib_builtins_char_args.pd
-file_open	COVERED	-	-	stdlib_builtins_file.pd
-file_read_all	COVERED	-	-	stdlib_builtins_file.pd
-file_read_line	COVERED	-	-	stdlib_builtins_file.pd
-file_write	COVERED	-	-	stdlib_builtins_file.pd
-file_close	COVERED	-	-	stdlib_builtins_file.pd
-file_exists	COVERED	-	-	stdlib_builtins_file.pd
-path_exists	COVERED	-	-	stdlib_builtins_file.pd
-path_is_file	COVERED	-	-	stdlib_builtins_file.pd
-path_is_dir	COVERED	-	-	stdlib_builtins_file.pd
-create_dir	COVERED	-	-	stdlib_builtins_file.pd
-create_dir_all	COVERED	-	-	stdlib_builtins_file.pd
-remove_file	COVERED	-	-	stdlib_builtins_file.pd
-remove_dir	COVERED	-	-	stdlib_builtins_file.pd
-remove_dir_all	COVERED	-	-	stdlib_builtins_file.pd
-write_string_to_file	COVERED	-	-	stdlib_builtins_file.pd
-read_file_to_string	PARTIAL	-	-	stdlib_builtins_file.pd — SUCCESS PATH ONLY. On failure it returns NULL (pd_prelude.h:285) where arg_at deliberately returns ""; handing that NULL to a string builtin would segfault, so the failure path cannot be exercised without crashing the driver. Contract verified only for files that exist.
-file_flush	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_flush(1); print_int(r);
-file_seek	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_seek(1, 0, 0); print_int(r);
-file_open_ex	UNUSABLE	link	incompatible pointer to integer conversion	let r = file_open_ex("/tmp/pd", 0); print_int(r);
-file_close_ex	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_close_ex(1); print_int(r);
-file_read_ex	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_read_ex(1, "buf", 3); print_int(r);
-file_write_ex	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_write_ex(1, "buf", 3); print_int(r);
+print	COVERED_BY_EFFECT	-	-	stdlib_builtins_string.pd	-
+print_int	COVERED_BY_EFFECT	-	-	stdlib_builtins_string.pd	-
+panic	NEGATIVE_CONTROL	-	-	-	aborts the process; proved by Phase 0
+string_len	COVERED	-	-	stdlib_builtins_string.pd	-
+string_concat	COVERED	-	-	stdlib_builtins_string.pd	-
+string_eq	COVERED	-	-	stdlib_builtins_string.pd	-
+string_char_at	COVERED	-	-	stdlib_builtins_string.pd	-
+string_substring	COVERED	-	-	stdlib_builtins_string.pd	-
+string_from_char	COVERED	-	-	stdlib_builtins_string.pd	-
+string_to_int	COVERED	-	-	stdlib_builtins_string.pd	-
+int_to_string	COVERED	-	-	stdlib_builtins_string.pd	-
+char_is_digit	COVERED	-	-	stdlib_builtins_char_args.pd	-
+char_is_alpha	COVERED	-	-	stdlib_builtins_char_args.pd	-
+char_is_whitespace	COVERED	-	-	stdlib_builtins_char_args.pd	-
+arg_count	COVERED	-	-	stdlib_builtins_char_args.pd	-
+arg_at	COVERED	-	-	stdlib_builtins_char_args.pd	-
+file_open	COVERED	-	-	stdlib_builtins_file.pd	-
+file_read_all	COVERED	-	-	stdlib_builtins_file.pd	-
+file_read_line	COVERED	-	-	stdlib_builtins_file.pd	-
+file_write	COVERED	-	-	stdlib_builtins_file.pd	-
+file_close	COVERED	-	-	stdlib_builtins_file.pd	-
+file_exists	COVERED	-	-	stdlib_builtins_file.pd	-
+path_exists	COVERED	-	-	stdlib_builtins_file.pd	-
+path_is_file	COVERED	-	-	stdlib_builtins_file.pd	-
+path_is_dir	COVERED	-	-	stdlib_builtins_file.pd	-
+create_dir	COVERED	-	-	stdlib_builtins_file.pd	-
+create_dir_all	COVERED	-	-	stdlib_builtins_file.pd	-
+remove_file	COVERED	-	-	stdlib_builtins_file.pd	-
+remove_dir	COVERED	-	-	stdlib_builtins_file.pd	-
+remove_dir_all	COVERED	-	-	stdlib_builtins_file.pd	-
+write_string_to_file	COVERED	-	-	stdlib_builtins_file.pd	-
+read_file_to_string	PARTIAL	-	-	stdlib_builtins_file.pd	SUCCESS PATH ONLY. On failure it returns NULL (pd_prelude.h:285) where arg_at deliberately returns ""; handing that NULL to a string builtin would segfault, so the failure path cannot be exercised without crashing the driver. Contract verified only for files that exist.
+file_flush	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_flush(1); print_int(r);	-
+file_seek	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_seek(1, 0, 0); print_int(r);	-
+file_open_ex	UNUSABLE	link	incompatible pointer to integer conversion	let r = file_open_ex("/tmp/pd", 0); print_int(r);	-
+file_close_ex	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_close_ex(1); print_int(r);	-
+file_read_ex	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_read_ex(1, "buf", 3); print_int(r);	-
+file_write_ex	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_write_ex(1, "buf", 3); print_int(r);	-

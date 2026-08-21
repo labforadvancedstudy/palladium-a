@@ -2,21 +2,21 @@
 print_literal
 @builtin print_int
 -9223372036854775807
-@builtin string_len
+@builtin string_len -> 4
 string_len_empty
 0
 string_len_abcd
 4
 string_len_escape
 3
-@builtin string_concat
+@builtin string_concat -> foobar
 string_concat
 foobar
 string_concat_empty_lhs
 bar
 string_concat_empty_rhs
 foo
-@builtin string_eq
+@builtin string_eq -> true
 string_eq_same
 true
 string_eq_diff
@@ -25,7 +25,7 @@ string_eq_prefix
 false
 string_eq_empty
 true
-@builtin string_char_at
+@builtin string_char_at -> 97
 string_char_at_0
 97
 string_char_at_2
@@ -34,7 +34,7 @@ string_char_at_oob
 -1
 string_char_at_neg
 -1
-@builtin string_substring
+@builtin string_substring -> ell
 string_substring_mid
 hello
 string_substring_tail
@@ -45,19 +45,19 @@ string_substring_empty
 
 string_substring_inverted
 
-@builtin string_from_char
+@builtin string_from_char -> A
 string_from_char_A
 A
 string_from_char_z
 z
-@builtin string_to_int
+@builtin string_to_int -> 42
 string_to_int_42
 42
 string_to_int_neg
 -7
 string_to_int_garbage
 0
-@builtin int_to_string
+@builtin int_to_string -> -123
 int_to_string_0
 0
 int_to_string_neg

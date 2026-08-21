@@ -10,6 +10,30 @@
 // the harness happened to use, so asserting on it would make the golden
 // transcript depend on the caller rather than on the compiler.
 
+
+// COVERAGE MARKERS. `covers_*` prints `@builtin <name> -> <observed result>`,
+// where the result is COMPUTED BY CALLING THE BUILTIN, not written as a literal.
+// The line therefore cannot be produced without the call running and returning
+// that value: delete the call and the golden loses the line; change the result
+// and the golden changes. scripts/stdlib-gate.sh Phase 3 requires the marker to
+// appear in THIS driver's own golden, so a marker in one file can no longer
+// vouch for a call in another.
+fn covers_i64(name: String, value: i64) {
+    print(string_concat(string_concat("@builtin ", name), string_concat(" -> ", int_to_string(value))));
+}
+
+fn covers_str(name: String, value: String) {
+    print(string_concat(string_concat("@builtin ", name), string_concat(" -> ", value)));
+}
+
+fn covers_bool(name: String, value: bool) {
+    if value {
+        print(string_concat(string_concat("@builtin ", name), " -> true"));
+    } else {
+        print(string_concat(string_concat("@builtin ", name), " -> false"));
+    }
+}
+
 fn expect_true(label: String, actual: bool) {
     print(label);
     if actual {
@@ -41,7 +65,7 @@ fn expect_str(label: String, actual: String, expected: String) {
 fn main() {
     // ---- char_is_digit ----
     // Provenance: runtime/pd_prelude.h:114 -> isdigit. 48='0', 57='9' ASCII.
-    print("@builtin char_is_digit");
+    covers_bool("char_is_digit", char_is_digit(48));
     expect_true("digit_0", char_is_digit(48));
     expect_true("digit_9", char_is_digit(57));
     expect_false("digit_a", char_is_digit(97));
@@ -49,7 +73,7 @@ fn main() {
 
     // ---- char_is_alpha ----
     // Provenance: runtime/pd_prelude.h:118 -> isalpha. 65='A', 122='z' ASCII.
-    print("@builtin char_is_alpha");
+    covers_bool("char_is_alpha", char_is_alpha(65));
     expect_true("alpha_A", char_is_alpha(65));
     expect_true("alpha_z", char_is_alpha(122));
     expect_false("alpha_0", char_is_alpha(48));
@@ -57,7 +81,7 @@ fn main() {
 
     // ---- char_is_whitespace ----
     // Provenance: runtime/pd_prelude.h:122 -> isspace. 32=SP, 9=TAB, 10=LF.
-    print("@builtin char_is_whitespace");
+    covers_bool("char_is_whitespace", char_is_whitespace(32));
     expect_true("ws_space", char_is_whitespace(32));
     expect_true("ws_tab", char_is_whitespace(9));
     expect_true("ws_newline", char_is_whitespace(10));
@@ -72,8 +96,8 @@ fn main() {
     // ---- arg_count / arg_at ----
     // Provenance: runtime/pd_prelude.h:51 -> argc; :55 returns "" (never NULL)
     // outside [0,argc), which every string builtin depends on.
-    print("@builtin arg_count");
-    print("@builtin arg_at");
+    covers_bool("arg_count", arg_count() >= 1);
+    covers_i64("arg_at", string_len(arg_at(9999)));
     // argv[0] always exists, so argc >= 1 under every harness.
     expect_true("arg_count_at_least_1", arg_count() >= 1);
     expect_true("argv0_non_empty", string_len(arg_at(0)) > 0);

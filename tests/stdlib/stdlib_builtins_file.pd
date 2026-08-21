@@ -19,6 +19,28 @@
 // The scratch tree lives under build_output/ so that it shares the lifetime of
 // every other build artefact and `make clean` reclaims it.
 
+
+// COVERAGE MARKERS. `covers_*` prints `@builtin <name> -> <observed result>`,
+// where the result is COMPUTED BY CALLING THE BUILTIN, not written as a literal.
+// Where the call mutates state, the result is BOUND ONCE, then marked, then
+// asserted — so the marker and the assertion describe the same single call and
+// the filesystem is not touched twice.
+fn covers_i64(name: String, value: i64) {
+    print(string_concat(string_concat("@builtin ", name), string_concat(" -> ", int_to_string(value))));
+}
+
+fn covers_str(name: String, value: String) {
+    print(string_concat(string_concat("@builtin ", name), string_concat(" -> ", value)));
+}
+
+fn covers_bool(name: String, value: bool) {
+    if value {
+        print(string_concat(string_concat("@builtin ", name), " -> true"));
+    } else {
+        print(string_concat(string_concat("@builtin ", name), " -> false"));
+    }
+}
+
 fn expect_i64(label: String, actual: i64, expected: i64) {
     print(label);
     print_int(actual);
@@ -69,18 +91,20 @@ fn main() {
 
     // ---- create_dir / create_dir_all ----
     // Provenance: palladium_runtime.c:358,374 — 0 on success, -1 on failure.
-    print("@builtin create_dir");
-    print("@builtin create_dir_all");
-    expect_i64("create_dir_root", create_dir(root), 0);
-    expect_i64("create_dir_all_nested", create_dir_all(nested), 0);
+    let rc_mkdir = create_dir(root);
+    covers_i64("create_dir", rc_mkdir);
+    expect_i64("create_dir_root", rc_mkdir, 0);
+    let rc_mkdirp = create_dir_all(nested);
+    covers_i64("create_dir_all", rc_mkdirp);
+    expect_i64("create_dir_all_nested", rc_mkdirp, 0);
 
     // ---- path_exists / path_is_dir / path_is_file ----
     // Provenance: palladium_runtime.c:325,332,343 — stat-based, 1/0.
-    print("@builtin path_exists");
-    print("@builtin path_is_dir");
-    print("@builtin path_is_file");
+    covers_bool("path_exists", path_exists(root));
     expect_true("path_exists_root", path_exists(root));
+    covers_bool("path_is_dir", path_is_dir(root));
     expect_true("path_is_dir_root", path_is_dir(root));
+    covers_bool("path_is_file", path_is_file(root));
     expect_false("path_is_file_root", path_is_file(root));
     expect_true("path_is_dir_nested", path_is_dir(nested));
     expect_false("path_exists_absent", path_exists(absent));
@@ -92,12 +116,13 @@ fn main() {
     // read_file_to_string: only the SUCCESS path is exercised; on failure it
     // returns NULL (pd_prelude.h:285), which would segfault any string builtin.
     // Recorded PARTIAL in BUILTINS.tsv for exactly that reason.
-    print("@builtin write_string_to_file");
-    print("@builtin read_file_to_string");
-    expect_i64("write_string_to_file", write_string_to_file(data_path, "hello\nworld\n"), 0);
+    let rc_write = write_string_to_file(data_path, "hello\nworld\n");
+    covers_i64("write_string_to_file", rc_write);
+    expect_i64("write_string_to_file", rc_write, 0);
     expect_true("path_is_file_data", path_is_file(data_path));
     expect_false("path_is_dir_data", path_is_dir(data_path));
     expect_str("read_file_to_string", read_file_to_string(data_path), "hello\nworld\n");
+    covers_i64("read_file_to_string", string_len(read_file_to_string(data_path)));
     expect_i64("read_file_len", string_len(read_file_to_string(data_path)), 12);
 
     // Overwrite semantics: "wb" truncates.
@@ -107,31 +132,36 @@ fn main() {
     // ---- file_open / file_write / file_close / file_exists ----
     // Provenance: pd_prelude.h:141 — handles start at 1, -1 on failure;
     // :177 fputs>=0, :183 fclose==0, :190 fopen "r" probe.
-    print("@builtin file_open");
-    print("@builtin file_write");
-    print("@builtin file_close");
-    print("@builtin file_exists");
     expect_false("file_exists_before", file_exists(handle_path));
     let h = file_open(handle_path);
+    covers_bool("file_open", h >= 1);
     expect_true("file_open_handle", h >= 1);
-    expect_true("file_write", file_write(h, "line1\nline2\n"));
-    expect_true("file_close", file_close(h));
+    let ok_write = file_write(h, "line1\nline2\n");
+    covers_bool("file_write", ok_write);
+    expect_true("file_write", ok_write);
+    let ok_close = file_close(h);
+    covers_bool("file_close", ok_close);
+    expect_true("file_close", ok_close);
+    covers_bool("file_exists", file_exists(handle_path));
     expect_true("file_exists_after", file_exists(handle_path));
     expect_false("file_exists_absent", file_exists(absent));
 
     // ---- file_read_all ----
     // Provenance: pd_prelude.h:150 — seeks to end for the size, reads whole file.
-    print("@builtin file_read_all");
     let h2 = file_open(handle_path);
     expect_true("file_open_reread", h2 >= 1);
-    expect_str("file_read_all", file_read_all(h2), "line1\nline2\n");
+    covers_i64("file_read_all", string_len(file_read_all(h2)));
+    let h2b = file_open(handle_path);
+    expect_str("file_read_all", file_read_all(h2b), "line1\nline2\n");
+    expect_true("file_close_h2b", file_close(h2b));
     expect_true("file_close_reread", file_close(h2));
 
     // ---- file_read_line (newline stripped, "" at EOF) ----
     // Provenance: pd_prelude.h:163 — fgets, trailing newline stripped, "" at EOF.
-    print("@builtin file_read_line");
     let h3 = file_open(handle_path);
-    expect_str("file_read_line_1", file_read_line(h3), "line1");
+    let line1 = file_read_line(h3);
+    covers_str("file_read_line", line1);
+    expect_str("file_read_line_1", line1, "line1");
     expect_str("file_read_line_2", file_read_line(h3), "line2");
     expect_str("file_read_line_eof", file_read_line(h3), "");
     expect_true("file_close_lines", file_close(h3));
@@ -145,17 +175,20 @@ fn main() {
     // ---- remove_file / remove_dir / remove_dir_all ----
     // Provenance: palladium_runtime.c:390,406,422 — 0 on success, -1 on failure.
     // rmdir refuses a non-empty directory; remove_dir_all recurses.
-    print("@builtin remove_file");
-    print("@builtin remove_dir");
-    print("@builtin remove_dir_all");
-    expect_i64("remove_file_data", remove_file(data_path), 0);
+    let rc_rm = remove_file(data_path);
+    covers_i64("remove_file", rc_rm);
+    expect_i64("remove_file_data", rc_rm, 0);
     expect_false("path_exists_after_remove", path_exists(data_path));
     expect_i64("remove_file_absent", remove_file(absent), -1);
-    expect_i64("remove_dir_nested", remove_dir(nested), 0);
+    let rc_rmdir = remove_dir(nested);
+    covers_i64("remove_dir", rc_rmdir);
+    expect_i64("remove_dir_nested", rc_rmdir, 0);
     expect_false("nested_gone", path_exists(nested));
     // A non-empty directory cannot be rmdir'd; remove_dir_all can.
     expect_i64("remove_dir_non_empty", remove_dir(root), -1);
-    expect_i64("remove_dir_all_root", remove_dir_all(root), 0);
+    let rc_rmtree = remove_dir_all(root);
+    covers_i64("remove_dir_all", rc_rmtree);
+    expect_i64("remove_dir_all_root", rc_rmtree, 0);
     expect_false("root_gone", path_exists(root));
 
     print("builtins_file_ok");
