@@ -1,0 +1,37 @@
+// Regression test for D4: `for x in xs` where `xs` is a function *parameter*.
+//
+// Codegen bounded the loop with `sizeof(xs)/sizeof(xs[0])`, which is the
+// element count only when `xs` names an array object. A parameter has already
+// decayed to a pointer, so on a 64-bit target that division is 8/8 = 1 and the
+// loop silently ran exactly once.
+//
+// The program panics (abort -> non-zero exit) instead of printing a wrong
+// answer, so the conformance runner reports the defect as a failure rather
+// than a PASS with bad output.
+
+fn sum_elements(xs: [i64; 4]) -> i64 {
+    let mut count = 0;
+    let mut total = 0;
+    for x in xs {
+        count = count + 1;
+        total = total + x;
+    }
+    print("iterations:");
+    print_int(count);
+    print("sum:");
+    print_int(total);
+    if count != 4 {
+        panic("for over an array parameter did not visit every element");
+    }
+    if total != 100 {
+        panic("for over an array parameter summed the wrong elements");
+    }
+    return total;
+}
+
+fn main() {
+    let nums = [10, 20, 30, 40];
+    let total = sum_elements(nums);
+    print("total:");
+    print_int(total);
+}

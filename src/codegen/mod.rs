@@ -382,6 +382,18 @@ impl CodeGenerator {
         }
     }
 
+    /// The outermost dimension of an array-dimension suffix, when it is a
+    /// literal length: `"[3][2]"` -> `Some(3)`, `"[N]"` / `""` / `"[0]"` ->
+    /// `None` (a const-parameter or unevaluated length is not a number here).
+    fn outer_array_len(dims: &str) -> Option<usize> {
+        let inner = dims.strip_prefix('[')?;
+        let end = inner.find(']')?;
+        match inner[..end].parse::<usize>() {
+            Ok(0) | Err(_) => None,
+            Ok(len) => Some(len),
+        }
+    }
+
     /// Human-readable name of an expression kind, for diagnostics.
     fn expr_kind_name(expr: &Expr) -> &'static str {
         match expr {
@@ -1509,6 +1521,48 @@ impl CodeGenerator {
         Ok(())
     }
 
+    /// The C declarator for an array parameter: `long long xs[5]`.
+    ///
+    /// C decays every array parameter to a pointer, so `[T; N]`, `&[T; N]` and
+    /// `&mut [T; N]` are all passed the same way; `is_const` is the only thing
+    /// that distinguishes a shared reference from a mutable one. Keeping the
+    /// `[N]` suffix (rather than writing `T*`) documents the length at the call
+    /// site and lets indexing and element assignment read naturally.
+    fn array_param_declarator(
+        elem_type: &Type,
+        size: &ArraySize,
+        param_name: &str,
+        is_const: bool,
+    ) -> Result<String> {
+        let elem_c_type = match elem_type {
+            Type::I32 => "int",
+            Type::I64 => "long long",
+            Type::U32 => "unsigned int",
+            Type::U64 => "unsigned long long",
+            Type::Bool => "int",
+            Type::String => "char*", // String arrays are arrays of char pointers
+            Type::Custom(name) => name.as_str(), // Support struct arrays
+            _ => {
+                return Err(CompileError::Generic(format!(
+                    "Unsupported array element type in function parameter: {:?}",
+                    elem_type
+                )))
+            }
+        };
+        let size_str = match size {
+            ArraySize::Literal(n) => n.to_string(),
+            ArraySize::ConstParam(name) => name.clone(),
+            ArraySize::Expr(_) => String::new(), // Arrays as params don't need size
+        };
+        Ok(format!(
+            "{}{} {}[{}]",
+            if is_const { "const " } else { "" },
+            elem_c_type,
+            param_name,
+            size_str
+        ))
+    }
+
     /// Build the C signature line for a function, without a trailing `{` or `;`.
     ///
     /// Single source of truth: both the definition (`generate_function_with_name`)
@@ -1555,30 +1609,11 @@ impl CodeGenerator {
 
             match &param.ty {
                 Type::Array(elem_type, size) => {
-                    // For arrays, we need to generate proper C array parameter syntax
-                    let elem_c_type = match elem_type.as_ref() {
-                        Type::I32 => "int",
-                        Type::I64 => "long long",
-                        Type::U32 => "unsigned int",
-                        Type::U64 => "unsigned long long",
-                        Type::Bool => "int",
-                        Type::String => "char*", // String arrays are arrays of char pointers
-                        Type::Custom(name) => name.as_str(), // Support struct arrays
-                        _ => {
-                            return Err(CompileError::Generic(format!(
-                                "Unsupported array element type in function parameter: {:?}",
-                                elem_type
-                            )))
-                        }
-                    };
-                    // In C, array parameters are passed as pointers
+                    // In C, array parameters are passed as pointers.
                     // We'll generate: type name[size] for clarity, though it decays to pointer
-                    let size_str = match size {
-                        ArraySize::Literal(n) => n.to_string(),
-                        ArraySize::ConstParam(name) => name.clone(),
-                        ArraySize::Expr(_) => "".to_string(), // Arrays as params don't need size
-                    };
-                    sig.push_str(&format!("{} {}[{}]", elem_c_type, param.name, size_str));
+                    sig.push_str(&Self::array_param_declarator(
+                        elem_type, size, &param.name, false,
+                    )?);
                 }
                 Type::Custom(_) => {
                     // Use type_to_c to resolve type aliases
@@ -1592,6 +1627,17 @@ impl CodeGenerator {
                     }
                 }
                 Type::Reference { inner, mutable, .. } => {
+                    // A reference to an array is passed exactly like the array
+                    // itself - C decays both to a pointer to the first element -
+                    // so `&[T; N]` differs from `&mut [T; N]` only by const.
+                    // Without this case the whole parameter was rejected, which
+                    // is why examples/practical/simple_sort.pd did not compile.
+                    if let Type::Array(elem_type, size) = inner.as_ref() {
+                        sig.push_str(&Self::array_param_declarator(
+                            elem_type, size, &param.name, !*mutable,
+                        )?);
+                        continue;
+                    }
                     // Handle reference parameters
                     match inner.as_ref() {
                         Type::I32 => {
@@ -1695,12 +1741,19 @@ impl CodeGenerator {
                 Type::I64 => "long long".to_string(),
                 Type::Bool => "int".to_string(),
                 Type::Custom(name) => name.clone(),
+                // Array parameters keep their dimensions, in the same encoding
+                // `self.variables` uses for locals ("long long[4]"). Recording
+                // the bare element type instead lost the length, which is what
+                // forced `for x in arr` to fall back to `sizeof` on a pointer,
+                // and left `let e = arr[i];` with no inferable type at all.
+                Type::Array(_, _) => self.type_to_c(&param.ty),
                 Type::Reference { inner, .. } => {
                     // For references, we track the base type
                     match inner.as_ref() {
                         Type::Custom(name) => name.clone(),
                         Type::I32 => "int".to_string(),
                         Type::I64 => "long long".to_string(),
+                        Type::Array(_, _) => self.type_to_c(inner),
                         _ => "long long".to_string(),
                     }
                 }
@@ -1918,17 +1971,34 @@ impl CodeGenerator {
                     _ => {
                         // For arrays and other iterables
                         self.output.push_str("        // For-in loop\n");
-                        self.output
-                            .push_str("        for (long long _i = 0; _i < sizeof(");
-                        self.generate_expression(iter)?;
-                        self.output.push_str(")/sizeof(");
-                        self.generate_expression(iter)?;
-                        self.output.push_str("[0]); _i++) {\n");
+
+                        // The element count comes from the *declared* type
+                        // whenever it is statically known. `sizeof(x)/sizeof(x[0])`
+                        // only counts elements when `x` is an array object: a
+                        // parameter has already decayed to a pointer, so for
+                        // `[i64; N]` that division is 8/8 = 1 and the loop ran
+                        // exactly once, silently. The sizeof form is kept only
+                        // for iterables whose length codegen cannot name.
+                        let (elem_type, dims) =
+                            Self::split_array_dims(&self.infer_expr_type(iter));
+                        let static_len = Self::outer_array_len(&dims);
+
+                        self.output.push_str("        for (long long _i = 0; _i < ");
+                        match static_len {
+                            Some(len) => self.output.push_str(&len.to_string()),
+                            None => {
+                                self.output.push_str("sizeof(");
+                                self.generate_expression(iter)?;
+                                self.output.push_str(")/sizeof(");
+                                self.generate_expression(iter)?;
+                                self.output.push_str("[0])");
+                            }
+                        }
+                        self.output.push_str("; _i++) {\n");
 
                         // Declare loop variable and assign current element.
                         // Its type is the array's element type, not always an
                         // integer, and the body needs to know it.
-                        let elem_type = Self::split_array_dims(&self.infer_expr_type(iter)).0;
                         self.output
                             .push_str(&format!("            {} {} = ", elem_type, var));
                         self.variables.insert(var.clone(), elem_type);
@@ -2149,20 +2219,16 @@ impl CodeGenerator {
                 // Check if this is a mutable parameter
                 if let Some(&is_mutable) = self.mutable_params.get(name) {
                     if is_mutable {
-                        // For arrays, don't dereference as they're already pointers
-                        // We need to check the parameter type
-                        let is_array =
-                            self.functions
-                                .values()
-                                .find_map(|(params, _)| {
-                                    params.iter().find(|p| &p.name == name).and_then(|p| {
-                                        match &p.ty {
-                                            Type::Array(_, _) => Some(true),
-                                            _ => None,
-                                        }
-                                    })
-                                })
-                                .unwrap_or(false);
+                        // For arrays, don't dereference as they're already pointers.
+                        // The recorded type of the binding answers this for the
+                        // function being generated; searching every function's
+                        // parameter list by name (the previous approach) both
+                        // missed `&[T; N]` parameters and could answer with an
+                        // unrelated function's parameter of the same name.
+                        let is_array = self
+                            .variables
+                            .get(name)
+                            .is_some_and(|ty| ty.contains('['));
 
                         if is_array {
                             // Arrays are already pointers, don't dereference
@@ -2485,16 +2551,24 @@ impl CodeGenerator {
                     }
                 }
             }
-            Expr::Reference { mutable, expr, .. } => {
-                // Generate reference (address-of) expression
-                if *mutable {
-                    // For now, C doesn't distinguish between & and &mut
-                    self.output.push_str("(&(");
+            Expr::Reference { expr, .. } => {
+                // Generate reference (address-of) expression.
+                // C doesn't distinguish between & and &mut.
+                //
+                // A reference to an array is the exception: `&[T; N]` parameters
+                // are received as `T*` (see `array_param_declarator`), so the
+                // operand must *decay* rather than have its address taken —
+                // `&arr` would be a `T (*)[N]`, a different pointer type.
+                let is_array = self
+                    .try_infer_expr_type(expr)
+                    .is_some_and(|ty| ty.contains('['));
+                if is_array {
+                    self.generate_expression(expr)?;
                 } else {
                     self.output.push_str("(&(");
+                    self.generate_expression(expr)?;
+                    self.output.push_str("))");
                 }
-                self.generate_expression(expr)?;
-                self.output.push_str("))");
             }
             Expr::Deref { expr, .. } => {
                 // Generate dereference expression
@@ -3233,5 +3307,57 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("`.await`"), "{}", msg);
         assert!(msg.contains("not implemented"), "{}", msg);
+    }
+
+    // A reference to an array had no case in the parameter arm at all, so
+    // `fn f(xs: &mut [i64; 3])` was rejected with "Unsupported type in
+    // reference parameter" and examples/practical/simple_sort.pd could not be
+    // compiled. C decays array parameters to pointers, so the referent is
+    // passed like the array itself and `&` vs `&mut` is a const difference.
+    #[test]
+    fn test_array_reference_parameters_compile_to_pointers() {
+        let c = generate(
+            r#"
+        fn read(xs: &[i64; 3]) -> i64 { return xs[0]; }
+        fn write(xs: &mut [i64; 3]) { xs[0] = 9; }
+        fn main() {
+            let mut values = [1, 2, 3];
+            write(&mut values);
+            print_int(read(&values));
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("long long read(const long long xs[3])"), "{}", c);
+        assert!(c.contains("void write(long long xs[3])"), "{}", c);
+        // The body indexes the pointer directly - `(*xs)[0]` would not compile.
+        assert!(c.contains("xs[0] = 9;"), "{}", c);
+        // `&values` must decay: `&(values)` is a `long long (*)[3]`, a
+        // different pointer type from the parameter's `long long*`.
+        assert!(c.contains("write(values)"), "{}", c);
+        assert!(c.contains("read(values)"), "{}", c);
+    }
+
+    // `sizeof(xs)/sizeof(xs[0])` counts elements only for an array *object*.
+    // A parameter has already decayed to a pointer, so for `[i64; N]` that is
+    // 8/8 = 1 and the loop silently ran exactly once.
+    #[test]
+    fn test_for_over_array_parameter_uses_the_declared_length() {
+        let c = generate(
+            r#"
+        fn total(xs: [i64; 4]) {
+            for x in xs {
+                print_int(x);
+            }
+        }
+        fn main() {
+            let nums = [1, 2, 3, 4];
+            total(nums);
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("for (long long _i = 0; _i < 4; _i++)"), "{}", c);
+        assert!(!c.contains("sizeof(xs)"), "{}", c);
     }
 }

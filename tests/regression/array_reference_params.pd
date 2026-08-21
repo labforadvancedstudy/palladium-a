@@ -1,0 +1,63 @@
+// Regression test for D9: `&[T; N]` and `&mut [T; N]` parameters.
+//
+// The reference-parameter arm of the C signature builder had no case for an
+// array referent, so any program with such a parameter was rejected outright
+// with "Unsupported type in reference parameter" - examples/practical/
+// simple_sort.pd could not be compiled at all.
+//
+// Both directions are exercised: the shared reference reads through the
+// pointer, and the mutable reference writes through it so the *caller* can
+// observe the mutation. Wrong answers panic (abort -> non-zero exit) rather
+// than printing quietly.
+
+fn sum(xs: &[i64; 3]) -> i64 {
+    let mut total = 0;
+    for i in 0..3 {
+        total = total + xs[i];
+    }
+    return total;
+}
+
+fn fill(xs: &mut [i64; 3]) {
+    xs[0] = 7;
+    xs[1] = 8;
+    xs[2] = 9;
+}
+
+fn double_each(xs: &mut [i64; 3]) {
+    for i in 0..3 {
+        xs[i] = xs[i] * 2;
+    }
+}
+
+fn main() {
+    let mut values = [1, 2, 3];
+
+    let before = sum(&values);
+    print("before:");
+    print_int(before);
+    if before != 6 {
+        panic("shared array reference read the wrong elements");
+    }
+
+    fill(&mut values);
+    let after = sum(&values);
+    print("after fill:");
+    print_int(after);
+    if after != 24 {
+        panic("mutable array reference did not write through to the caller");
+    }
+    if values[0] != 7 {
+        panic("caller does not observe the mutation at index 0");
+    }
+    if values[2] != 9 {
+        panic("caller does not observe the mutation at index 2");
+    }
+
+    double_each(&mut values);
+    print("after double:");
+    print_int(values[1]);
+    if values[1] != 16 {
+        panic("read-modify-write through a mutable array reference is wrong");
+    }
+}
