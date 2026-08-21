@@ -44,9 +44,13 @@ pub enum Commands {
         #[arg(long)]
         llvm: bool,
 
-        /// Enable optimizations
+        /// Optimize harder: gcc -O3 (default is -O2)
         #[arg(short = 'O', long)]
         optimize: bool,
+
+        /// Disable optimization: gcc -O0, for debugging the generated C
+        #[arg(long, conflicts_with = "optimize")]
+        no_opt: bool,
     },
 
     /// Compile and run a Palladium source file
@@ -57,6 +61,14 @@ pub enum Commands {
         /// Use LLVM backend instead of C
         #[arg(long)]
         llvm: bool,
+
+        /// Optimize harder: gcc -O3 (default is -O2)
+        #[arg(short = 'O', long)]
+        optimize: bool,
+
+        /// Disable optimization: gcc -O0, for debugging the generated C
+        #[arg(long, conflicts_with = "optimize")]
+        no_opt: bool,
 
         /// Arguments to pass to the program
         #[arg(trailing_var_arg = true)]

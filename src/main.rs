@@ -2,7 +2,7 @@
 // "Where Legends Begin to Compile"
 
 use clap::Parser;
-use palladium::{driver::Driver, package::PackageManager, runtime_paths};
+use palladium::{driver::Driver, linker::OptLevel, package::PackageManager, runtime_paths};
 use std::path::Path;
 use std::process;
 
@@ -41,8 +41,20 @@ fn main() {
             output,
             llvm,
             optimize,
-        } => compile_file(&file, output.as_deref(), llvm, optimize),
-        Commands::Run { file, llvm, args } => run_file(&file, llvm, args),
+            no_opt,
+        } => compile_file(
+            &file,
+            output.as_deref(),
+            llvm,
+            OptLevel::from_flags(optimize, no_opt),
+        ),
+        Commands::Run {
+            file,
+            llvm,
+            optimize,
+            no_opt,
+            args,
+        } => run_file(&file, llvm, OptLevel::from_flags(optimize, no_opt), args),
         Commands::New { name, path, lib } => new_package(&name, path.as_deref(), lib),
         Commands::Init { name, lib } => init_package(name.as_deref(), lib),
         Commands::Build { release, llvm } => build_package(release, llvm),
@@ -94,11 +106,11 @@ fn compile_file(
     path: &Path,
     output: Option<&str>,
     llvm: bool,
-    _optimize: bool,
+    opt: OptLevel,
 ) -> Result<(), String> {
     println!("Compiling {}...", path.display());
 
-    let mut driver = Driver::new();
+    let mut driver = Driver::new().with_opt_level(opt);
     if llvm {
         driver = driver.with_llvm();
     }
@@ -107,24 +119,13 @@ fn compile_file(
         Ok(c_path) => {
             // If output name specified, also compile to executable
             if let Some(name) = output {
-                use std::process::Command;
-
                 let build_dir = Path::new("build_output");
                 let output_path = build_dir.join(name);
 
-                println!("🔗 Linking with gcc...");
+                println!("🔗 Linking with gcc ({})...", opt.flag());
 
-                // Locate the runtime wherever this pdc is installed, not relative to cwd.
-                let runtime_dir = runtime_paths::runtime_dir().map_err(|e| e.to_string())?;
-                let runtime_path = runtime_dir.join(runtime_paths::RUNTIME_C_FILE);
-
-                let gcc_output = Command::new("gcc")
-                    .arg("-I")
-                    .arg(&runtime_dir)
-                    .arg(&c_path)
-                    .arg(&runtime_path)
-                    .arg("-o")
-                    .arg(&output_path)
+                let gcc_output = palladium::linker::link_command(&c_path, &output_path, opt)
+                    .map_err(|e| e.to_string())?
                     .output()
                     .map_err(|e| format!("Failed to run gcc: {}", e))?;
 
@@ -141,10 +142,10 @@ fn compile_file(
     }
 }
 
-fn run_file(path: &Path, llvm: bool, _args: Vec<String>) -> Result<(), String> {
+fn run_file(path: &Path, llvm: bool, opt: OptLevel, _args: Vec<String>) -> Result<(), String> {
     println!("Compiling and running {}...", path.display());
 
-    let mut driver = Driver::new();
+    let mut driver = Driver::new().with_opt_level(opt);
     if llvm {
         driver = driver.with_llvm();
     }

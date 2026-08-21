@@ -4,6 +4,7 @@
 use crate::codegen::CodeGenerator;
 use crate::errors::{reporter::ErrorReporter, CompileError, Result};
 use crate::lexer::Lexer;
+use crate::linker::{link_command, OptLevel};
 use crate::macros::MacroExpander;
 use crate::optimizer::Optimizer;
 use crate::ownership::BorrowChecker;
@@ -19,18 +20,28 @@ use std::time::Instant;
 pub struct Driver {
     // Future: compilation options, session state, etc.
     use_llvm: bool,
+    opt_level: OptLevel,
 }
 
 impl Driver {
     pub fn new() -> Self {
         Self {
             use_llvm: false, // Default to C backend
+            // Optimized by default: the C backend emits naive C and relies on
+            // gcc for the constant factor. See src/linker.rs.
+            opt_level: OptLevel::default(),
         }
     }
 
     /// Enable LLVM backend
     pub fn with_llvm(mut self) -> Self {
         self.use_llvm = true;
+        self
+    }
+
+    /// Set the optimization level handed to gcc when linking a native binary.
+    pub fn with_opt_level(mut self, opt_level: OptLevel) -> Self {
+        self.opt_level = opt_level;
         self
     }
 
@@ -255,19 +266,9 @@ impl Driver {
         let binary_path = build_dir.join(binary_name);
 
         // Compile C code with gcc
-        println!("🔗 Linking with gcc...");
+        println!("🔗 Linking with gcc ({})...", self.opt_level.flag());
 
-        // Locate the runtime wherever this pdc is installed, not relative to cwd.
-        let runtime_dir = crate::runtime_paths::runtime_dir()?;
-        let runtime_path = runtime_dir.join(crate::runtime_paths::RUNTIME_C_FILE);
-
-        let gcc_output = Command::new("gcc")
-            .arg("-I")
-            .arg(&runtime_dir)
-            .arg(&c_path)
-            .arg(&runtime_path)
-            .arg("-o")
-            .arg(&binary_path)
+        let gcc_output = link_command(&c_path, &binary_path, self.opt_level)?
             .output()
             .map_err(|e| CompileError::Generic(format!("Failed to run gcc: {}", e)))?;
 

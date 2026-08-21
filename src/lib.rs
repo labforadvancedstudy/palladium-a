@@ -10,6 +10,7 @@ pub mod driver;
 pub mod effects;
 pub mod errors;
 pub mod lexer;
+pub mod linker;
 pub mod lsp;
 pub mod macros;
 pub mod optimizer;

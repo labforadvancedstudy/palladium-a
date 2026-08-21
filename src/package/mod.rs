@@ -709,19 +709,10 @@ fn main() {
         let exe_file = build_dir.join(&manifest.name);
 
         // Compile C to executable
-        println!("🔗 Linking executable...");
+        let opt = crate::linker::OptLevel::for_release(release);
+        println!("🔗 Linking executable ({})...", opt.flag());
 
-        // Locate the runtime wherever this pdc is installed, not relative to cwd.
-        let runtime_dir = crate::runtime_paths::runtime_dir()?;
-        let runtime_path = runtime_dir.join(crate::runtime_paths::RUNTIME_C_FILE);
-
-        let gcc_output = std::process::Command::new("gcc")
-            .arg("-I")
-            .arg(&runtime_dir)
-            .arg(&c_file)
-            .arg(&runtime_path)
-            .arg("-o")
-            .arg(&exe_file)
+        let gcc_output = crate::linker::link_command(&c_file, &exe_file, opt)?
             .output()
             .map_err(|e| CompileError::Generic(format!("Failed to run gcc: {}", e)))?;
 

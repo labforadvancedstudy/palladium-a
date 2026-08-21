@@ -2,6 +2,7 @@
 // "Bridging the gap between Rust and self-hosted Palladium"
 
 use crate::errors::{CompileError, Result};
+use crate::linker::OptLevel;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -49,17 +50,9 @@ impl BootstrapCompiler {
         // Compile C to executable
         println!("🔗 Compiling bootstrap compiler to native code...");
 
-        // Locate the runtime wherever this pdc is installed, not relative to cwd.
-        let runtime_dir = crate::runtime_paths::runtime_dir()?;
-        let runtime_path = runtime_dir.join(crate::runtime_paths::RUNTIME_C_FILE);
-
-        let gcc_output = Command::new("gcc")
-            .arg("-I")
-            .arg(&runtime_dir)
-            .arg(output_c)
-            .arg(&runtime_path)
-            .arg("-o")
-            .arg(output_exe)
+        // The bootstrap compiler is a real workload (it compiles Palladium), so
+        // it gets the same default optimization as any other binary.
+        let gcc_output = crate::linker::link_command(output_c, output_exe, OptLevel::default())?
             .output()
             .map_err(|e| CompileError::Generic(format!("Failed to run gcc: {}", e)))?;
 

@@ -360,26 +360,10 @@ impl BuildSystem {
 
         // Compile C to executable if needed
         if self.needs_executable_rebuild(&c_file, &exe_file) {
-            println!("🔗 Linking {}", exe_name);
+            let opt = crate::linker::OptLevel::for_release(self.context.config.release);
+            println!("🔗 Linking {} ({})", exe_name, opt.flag());
 
-            // Locate the runtime wherever this pdc is installed, not relative to cwd.
-            let runtime_dir = crate::runtime_paths::runtime_dir()?;
-            let runtime_path = runtime_dir.join(crate::runtime_paths::RUNTIME_C_FILE);
-
-            let mut gcc_cmd = std::process::Command::new("gcc");
-            gcc_cmd
-                .arg("-I")
-                .arg(&runtime_dir)
-                .arg(&c_file)
-                .arg(&runtime_path)
-                .arg("-o")
-                .arg(&exe_file);
-
-            if self.context.config.release {
-                gcc_cmd.arg("-O3");
-            }
-
-            let output = gcc_cmd.output()?;
+            let output = crate::linker::link_command(&c_file, &exe_file, opt)?.output()?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -506,18 +490,13 @@ impl BuildSystem {
         // Link to executable
         let exe_path = output_dir.join(test_name);
 
-        // Locate the runtime wherever this pdc is installed, not relative to cwd.
-        let runtime_dir = crate::runtime_paths::runtime_dir()?;
-        let runtime_path = runtime_dir.join(crate::runtime_paths::RUNTIME_C_FILE);
-
-        let gcc_output = std::process::Command::new("gcc")
-            .arg("-I")
-            .arg(&runtime_dir)
-            .arg(&output_path)
-            .arg(&runtime_path)
-            .arg("-o")
-            .arg(&exe_path)
-            .output()?;
+        // Tests link like any other binary: optimized unless told otherwise.
+        let gcc_output = crate::linker::link_command(
+            &output_path,
+            &exe_path,
+            crate::linker::OptLevel::for_release(self.context.config.release),
+        )?
+        .output()?;
 
         if !gcc_output.status.success() {
             let stderr = String::from_utf8_lossy(&gcc_output.stderr);
