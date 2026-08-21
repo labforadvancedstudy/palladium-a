@@ -114,8 +114,8 @@ impl ErrorReporter {
                     span.end - span.start
                 } else {
                     // Try to highlight the whole token if we can
-                    self.estimate_token_length(&line_text[span.column.saturating_sub(1)..])
-                        .max(1)
+                    let from = clamp_to_char_boundary(line_text, span.column.saturating_sub(1));
+                    self.estimate_token_length(&line_text[from..]).max(1)
                 };
 
                 for _ in 1..error_len {
@@ -149,13 +149,18 @@ impl ErrorReporter {
                     let line = lines[span.line - 1];
                     let mut fixed_line = String::new();
 
-                    // Build the fixed line
-                    if span.column > 1 {
-                        fixed_line.push_str(&line[..span.column - 1]);
-                    }
+                    // Build the fixed line. Both offsets are clamped: `column`
+                    // can point past the end of a short line, and `end` is a
+                    // file offset being used to index a single line, so it can
+                    // be anywhere. Rendering something slightly wrong is
+                    // acceptable here; panicking is not — see
+                    // `clamp_to_char_boundary`.
+                    let cut = clamp_to_char_boundary(line, span.column.saturating_sub(1));
+                    fixed_line.push_str(&line[..cut]);
                     fixed_line.push_str(replacement);
                     if span.end < line.len() {
-                        fixed_line.push_str(&line[span.end..]);
+                        let tail = clamp_to_char_boundary(line, span.end);
+                        fixed_line.push_str(&line[tail..]);
                     }
 
                     eprintln!("\x1b[1;32m         Suggested fix:\x1b[0m");
@@ -257,6 +262,28 @@ impl DiagnosticBuilder {
 
         diag
     }
+}
+
+/// Clamp a byte offset to a valid `char` boundary at or before `idx`.
+///
+/// Spans reaching this reporter are not trustworthy. Many are `Span::dummy()`,
+/// `Expr::span()` returns a dummy for every literal (`src/ast/mod.rs:476-479`),
+/// and `Suggestion` carries a *file* offset in `end` that the fix renderer
+/// indexes a single line with. Slicing on those numbers panicked: a macro
+/// diagnostic was measured aborting the compiler with `end byte index 15 is
+/// out of bounds for string of length 11`.
+///
+/// That panic sits on the fail-closed boundary. The reporter runs *after* a
+/// phase has correctly decided to refuse, in `Driver::compile_file`, so a
+/// crash here converts a clean refusal into an abort and destroys the very
+/// message the refusal existed to deliver. Rendering a slightly wrong caret is
+/// acceptable; losing the diagnostic is not.
+fn clamp_to_char_boundary(s: &str, idx: usize) -> usize {
+    let mut i = idx.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 #[cfg(test)]
@@ -506,6 +533,82 @@ mod tests {
             
             reporter.report(&diagnostic);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Out-of-range spans must degrade, never abort
+    // -----------------------------------------------------------------------
+    //
+    // This reporter runs *after* a phase has correctly decided to refuse, from
+    // `Driver::compile_file`. A panic here converts a clean refusal into an
+    // abort and destroys the diagnostic it was called to deliver — the failure
+    // mode is not a bad caret, it is a lost error. Measured before the fix:
+    // compiling a program with an undefined macro aborted the compiler with
+    // `end byte index 15 is out of bounds for string of length 11` and printed
+    // no diagnostic at all.
+    //
+    // Spans reaching here are genuinely untrustworthy: `Expr::span()` returns
+    // `Span::dummy()` for every literal, and `Suggestion.end` is a file offset
+    // that the fix renderer indexes a single line with.
+
+    /// A column past the end of its line, with `end <= start` so the caret
+    /// length is computed by slicing the line. Pre-hardening this panicked.
+    #[test]
+    fn a_column_past_the_end_of_the_line_does_not_panic() {
+        let file = create_temp_file("fn main() {\n");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        reporter.show_source_snippet_with_context(Span::new(0, 0, 1, 999), 1);
+    }
+
+    /// The exact shape of the measured abort: `column - 1` lands beyond an
+    /// 11-byte line, and `end` is a file offset larger than the line.
+    #[test]
+    fn a_suggestion_with_a_file_offset_end_does_not_panic() {
+        let file = create_temp_file("fn main() {\n    x!();\n}\n");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        reporter.show_suggestion(&Suggestion {
+            message: "write out the code the macro expands to".to_string(),
+            replacement: Some("print_int(6);".to_string()),
+            span: Some(Span::new(12, 15, 1, 16)),
+        });
+    }
+
+    /// Multi-byte characters: clamping must land on a `char` boundary, not
+    /// merely inside the string.
+    #[test]
+    fn a_span_landing_inside_a_multibyte_character_does_not_panic() {
+        let file = create_temp_file("let s = \"\u{d55c}\u{ae00}\";\n");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        reporter.show_source_snippet_with_context(Span::new(0, 0, 1, 11), 0);
+        reporter.show_suggestion(&Suggestion {
+            message: "replace".to_string(),
+            replacement: Some("x".to_string()),
+            span: Some(Span::new(0, 11, 1, 11)),
+        });
+    }
+
+    /// A refusal with no span renders without inventing one.
+    ///
+    /// `CompileError::Unimplemented` carries `span: None` when the refusal is a
+    /// property of the backend rather than of a construct, and the reporter
+    /// must simply skip the snippet rather than print `--> file:0:0`.
+    #[test]
+    fn a_diagnostic_without_a_span_reports_without_a_location() {
+        let file = create_temp_file("fn main() {}\n");
+        let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
+        let diagnostic = Diagnostic {
+            level: DiagnosticLevel::Error,
+            message: "the LLVM backend (`--llvm`) is not implemented".to_string(),
+            span: None,
+            notes: vec!["kept for development".to_string()],
+            suggestions: vec![Suggestion {
+                message: "drop `--llvm`".to_string(),
+                replacement: None,
+                span: None,
+            }],
+            context_lines: 1,
+        };
+        reporter.report(&diagnostic);
     }
 
     #[test]

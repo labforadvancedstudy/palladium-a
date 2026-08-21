@@ -34,9 +34,31 @@ lex → parse → resolve imports → macro expand → typecheck → borrow chec
     → effect analysis (informational only) → optimize → C codegen → gcc
 ```
 
-The C backend is the real backend. An LLVM text backend exists
-(`src/codegen/llvm_text_backend.rs`) but is skeletal — break, continue, pattern matching, enum
-construction, `?`, and `await` are all unimplemented there (`:914`, `:921`, `:933`, `:1379`).
+**The C backend is the only backend.** An LLVM text backend exists in the tree
+(`src/codegen/llvm_text_backend.rs`) and `--llvm` selects it, but as of 2026-08-22 it **refuses
+unconditionally**: `LLVMTextBackend::compile` returns `CompileError::Unimplemented` before it looks
+at the program. It is retained for development, not for building.
+
+It refuses wholesale rather than per-construct because its gaps are not all loud ones. Seven
+constructs failed visibly — `break`, `continue`, enum patterns, enum construction, `?`, `await`,
+and stray macro invocations — and each now carries its own diagnostic underneath the gate. Seven
+more fabricated rather than refused, without saying so:
+
+- struct field access uses index 0 for reads and writes alike, so `p.y` reads `p.x`
+- every unenumerated type becomes `i8*`, and every call is typed `i64` regardless of signature
+- `match` on a wildcard or identifier pattern discards the scrutinee and never binds the identifier
+- a plain `main` emits `ret void`, putting the process exit status outside the program's semantics
+- non-function items (structs, enums) are dropped while expressions still refer to them
+- string collection skips `Stmt::Match` and `Stmt::Unsafe`, leaving an undefined `@.str.unknown`
+
+These do not all fail the same way. The last two emit **invalid** IR, which an assembler rejects.
+*Some* of the others emit IR that is **valid and means something other than the source**. The
+demonstrated case is field-zero access: `struct Point { x: i64, y: i64 }` with `print_int(p.y)`
+lowers to `getelementptr i64, i64* %4, i32 0, i32 0` and reads `x`, in a module that assembles,
+links and runs. The C backend prints `22`.
+
+That case is why the gate is wholesale: verifying the assembly cannot detect it, so a gate covering
+only the loud half would read as protection while providing none.
 
 Generated C is linked against `runtime/palladium_runtime.c`, which supplies 16 file/path
 symbols. `pdc` resolves that runtime relative to its own install location — `pdc --print-runtime`

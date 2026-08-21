@@ -148,8 +148,10 @@ functions.
 - I/O beyond the current handle-based builtins
 - `pdm` (package manager) and `pls` (language server): both exist as binaries, neither is driven
   by any gate
-- The LLVM backend, which is skeletal — break, continue, pattern matching, enum construction, `?`
-  and `await` are all unimplemented there
+- The LLVM backend, which is skeletal and now refuses unconditionally. Fourteen sites fabricated
+  rather than lowered; seven of them said nothing about it, and struct field access used index 0
+  for every field, so `p.y` read `p.x` in IR that assembled, linked and ran. It is retained for
+  development; see [the specification](../specification/language-spec.md) §1 for the full list
 
 ## Not scheduled, and why
 
