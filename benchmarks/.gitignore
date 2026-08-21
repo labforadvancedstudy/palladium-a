@@ -1,0 +1,10 @@
+# Built benchmark artifacts. Regenerated in full by run_benchmarks.sh.
+build/
+
+# The root .gitignore carries a blanket `*.c` (.gitignore:30) with negations for
+# examples/, src/, tests/ and runtime/ -- but not for benchmarks/c/. That blanket
+# is the same defect that kept runtime/palladium_runtime.c out of every commit
+# (bootstrap-subset.md D1), and it is why benchmarks/c/ used to hold committed
+# binaries with no committed sources. Re-include the C benchmark sources here so
+# the suite is reproducible from a fresh clone.
+!c/*.c

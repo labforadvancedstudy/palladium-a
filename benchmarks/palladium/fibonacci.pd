@@ -1,5 +1,9 @@
-// Fibonacci benchmark in Palladium
-// Tests recursive function performance
+// Fibonacci benchmark in Palladium (PBS-1 subset)
+// Tests recursive function call overhead and integer arithmetic.
+//
+// Workload: naive recursive fib(42) = 267914296 (~866M calls).
+// Output must stay byte-identical to benchmarks/rust/fibonacci.rs
+// and benchmarks/c/fibonacci.c.
 
 fn fibonacci(n: i64) -> i64 {
     if n <= 1 {
@@ -9,11 +13,11 @@ fn fibonacci(n: i64) -> i64 {
 }
 
 fn main() {
-    let n = 40;
-    print("Computing fibonacci(40)...");
-    
-    let result = fibonacci(n);
-    
-    print("Result:");
+    let n: i64 = 42;
+    print("benchmark: fibonacci");
+    print("n:");
+    print_int(n);
+    let result: i64 = fibonacci(n);
+    print("result:");
     print_int(result);
 }

@@ -1,20 +1,23 @@
-// Matrix multiplication benchmark in Palladium
-// Tests nested loops and array performance
+// Matrix multiplication benchmark in Palladium (PBS-1 subset)
+// Tests nested loops, strided array access and integer multiply-accumulate.
+//
+// Workload: 200 repetitions of a 200x200 naive i*k*j matmul => 1.6G multiply-adds.
+// 2D matrices are flattened into 1D arrays (Palladium has no 2D arrays).
+// `a` is perturbed between repetitions and `c` is folded into an accumulator so
+// that no compiler can hoist or delete the repetition loop.
+// PBS-1 notes:
+//   - no top-level `const`: sizes are literals / locals
+//   - array params are `mut arr: [i64; N]` (defect D9), walked with `while` (defect D4)
+// Output must stay byte-identical to benchmarks/rust/matrix_multiply.rs
+// and benchmarks/c/matrix_multiply.c.
 
-const SIZE: i64 = 100;
-
-fn matrix_multiply(n: i64) {
-    // Since we don't have 2D arrays yet, simulate with 1D
-    let a: [i64; 10000] = [1; 10000];  // SIZE * SIZE
-    let b: [i64; 10000] = [1; 10000];
-    let mut c: [i64; 10000] = [0; 10000];
-    
-    let mut i = 0;
+fn matmul(mut a: [i64; 40000], mut b: [i64; 40000], mut c: [i64; 40000], n: i64) {
+    let mut i: i64 = 0;
     while i < n {
-        let mut j = 0;
+        let mut j: i64 = 0;
         while j < n {
-            let mut sum = 0;
-            let mut k = 0;
+            let mut sum: i64 = 0;
+            let mut k: i64 = 0;
             while k < n {
                 sum = sum + a[i * n + k] * b[k * n + j];
                 k = k + 1;
@@ -24,13 +27,45 @@ fn matrix_multiply(n: i64) {
         }
         i = i + 1;
     }
-    
-    // Print a sample result to verify correctness
-    print_int(c[0]);
 }
 
 fn main() {
-    print("Matrix multiplication 100x100...");
-    matrix_multiply(SIZE);
-    print("Done!");
+    let n: i64 = 200;
+    let reps: i64 = 200;
+    print("benchmark: matrix_multiply");
+    print("n:");
+    print_int(n);
+    print("reps:");
+    print_int(reps);
+
+    let mut a: [i64; 40000] = [0; 40000];
+    let mut b: [i64; 40000] = [0; 40000];
+    let mut c: [i64; 40000] = [0; 40000];
+
+    let mut i: i64 = 0;
+    while i < n {
+        let mut j: i64 = 0;
+        while j < n {
+            a[i * n + j] = (i + j) % 7;
+            b[i * n + j] = (i + 2 * j) % 5;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    let mut acc: i64 = 0;
+    let mut r: i64 = 0;
+    while r < reps {
+        a[r] = a[r] + 1;
+        matmul(a, b, c, n);
+        acc = acc + c[r];
+        r = r + 1;
+    }
+
+    print("c[0]:");
+    print_int(c[0]);
+    print("c[39999]:");
+    print_int(c[39999]);
+    print("acc:");
+    print_int(acc);
 }

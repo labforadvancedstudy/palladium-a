@@ -1,98 +1,83 @@
 # Palladium Benchmarks
 
-Performance benchmarks comparing Palladium with C and Rust.
+Runtime and compile-speed comparison of **Palladium vs Rust vs C**, on identical
+algorithms with byte-identical output.
 
-## Directory Structure
+## One command
+
+```bash
+bash benchmarks/run_benchmarks.sh
+```
+
+It wipes `benchmarks/build/`, rebuilds every implementation from source, refuses
+to time anything until all implementations of a benchmark print identical bytes,
+then writes raw data to `benchmarks/results/benchmark_<stamp>.json` (+ `.csv`,
++ `latest.json` / `latest.csv`).
+
+Knobs: `BENCH_RUNTIME_RUNS` (default 10), `BENCH_COMPILE_RUNS` (default 10).
+
+## Layout
 
 ```
 benchmarks/
-├── palladium/     # Palladium implementations
-├── c/            # Equivalent C implementations
-├── rust/         # Equivalent Rust implementations
-└── results/      # Benchmark results and analysis
+├── palladium/     4 benchmarks in the PBS-1 subset (docs/specification/bootstrap-subset.md)
+├── c/             hand-written C, same algorithm       -> gcc -O2
+├── rust/          hand-written Rust, same algorithm    -> rustc -O
+│                  (+ *_unchecked / *_pushstr fairness variants)
+│                  compiler_bench.rs is unrelated: it is the criterion
+│                  [[bench]] target declared in Cargo.toml, run by `cargo bench`
+├── build/         generated, gitignored, wiped on every run
+├── results/       raw data (JSON + CSV)
+├── measure.py     timing + statistics + JSON/CSV emission
+└── run_benchmarks.sh
 ```
 
-## Benchmark Suite
+## The four benchmarks
 
-### Core Benchmarks
-1. **Fibonacci** - Recursive and iterative implementations
-2. **Matrix Multiplication** - Nested loops and memory access
-3. **Binary Trees** - Allocation and pointer manipulation
-4. **String Processing** - String operations and concatenation
-5. **Hash Table** - Data structure implementation
+| Benchmark | Workload | Exercises |
+|---|---|---|
+| `fibonacci` | naive recursive fib(42), ~866M calls | function-call overhead, integer arithmetic |
+| `bubble_sort` | 45000 i64 reverse-ordered, ~1.01G compare/swap | array indexing, branches, swaps |
+| `matrix_multiply` | 200 reps of naive 200x200 i64 matmul, 1.6G MACs | nested loops, strided access |
+| `string_concat` | 20000 quadratic immutable concats, final length 108895 B | string builtins, allocation strategy |
 
-### System Benchmarks
-1. **File I/O** - Reading and writing files
-2. **Network Echo** - TCP server performance
-3. **Threading** - Parallel computation
-4. **Memory Allocation** - Allocation patterns
+Sizes were chosen so that **every** variant runs >=200ms, including the fastest
+one, so that process startup is not what is being measured. The one exception is
+noted below.
 
-## Running Benchmarks
+## Variants, and why each exists
 
-```bash
-# Run all benchmarks
-make bench
+| Variant | What it is |
+|---|---|
+| `palladium` | `pdc compile X.pd -o Y` — **what a Palladium user actually gets today.** pdc forks gcc with *no* optimization flag (`src/main.rs:99-105`), so this is an `-O0` binary. `pdc -O` is parsed and then ignored (`src/main.rs:76`). |
+| `palladium_gccO2` | the *same* pdc-generated C, hand-recompiled at `gcc -O2`. The ceiling of the C backend; pdc cannot produce this today. |
+| `c` | hand-written C, `gcc -O2`. |
+| `rust` | hand-written Rust, `rustc -O`, fixed-size stack arrays (not `Vec`), bounds-checked. |
+| `rust_unchecked` | same with `get_unchecked`, since Palladium emits no bounds checks at all. |
+| `rust_pushstr` | idiomatic amortized `push_str`. **A different algorithm** — context only, not a like-for-like number. |
 
-# Run specific benchmark
-make bench-fibonacci
+## Reading the numbers honestly
 
-# Compare results
-make compare
-```
+- **Use `min_ms`.** This host has 6 performance + 12 efficiency cores; under load
+  the scheduler will drop a process onto an efficiency core and the same binary
+  measures ~2x slower. `mean`/`max`/`stddev` are reported so contention is
+  visible, but they are contention, not language behaviour.
+- The machine was not quiesced; `environment.load_average_start/end` is recorded
+  in every result file.
+- `gcc` on macOS is Apple clang. Palladium and C therefore share a backend
+  compiler, which is exactly the point of the `palladium` vs `c` column.
+- The C sources are deliberately **not** `static`, to match the external linkage
+  Palladium's codegen emits — `static` alone was worth 4.9% on `matrix_multiply`.
+- `string_concat` is the one case where a fair >=200ms workload was impossible
+  without a memory blowup: Palladium's `__pd_alloc_string` never frees before
+  exit, so total allocation tracks total bytes copied. At 20000 iterations
+  Palladium peaks at ~2.2GB RSS while C and Rust stay under 3MB. Compare the
+  `peak_rss_bytes` column, not just the time.
 
-## Metrics
+Every caveat is also carried inside each result file under `caveats`, so the raw
+data cannot be quoted without them.
 
-- **Execution Time**: Wall clock time for completion
-- **Memory Usage**: Peak memory consumption
-- **Binary Size**: Size of compiled executable
-- **Compilation Time**: Time to compile from source
+## Note on `analyze_results.py`
 
-## Benchmark Suite
-
-### 1. Fibonacci (fibonacci)
-- **Type**: CPU-intensive, recursive
-- **Description**: Calculates fibonacci(40) recursively
-- **Tests**: Function call overhead, integer arithmetic
-
-### 2. Matrix Multiplication (matrix_multiply)
-- **Type**: Memory-intensive, nested loops
-- **Description**: Multiplies two 100x100 matrices
-- **Tests**: Array access patterns, loop optimization
-
-### 3. String Concatenation (string_concat)
-- **Type**: Memory allocation, string operations
-- **Description**: Concatenates 1000 strings
-- **Tests**: String handling, memory management
-
-### 4. Bubble Sort (bubble_sort)
-- **Type**: Array manipulation, comparisons
-- **Description**: Sorts 1000 elements (worst case)
-- **Tests**: Array operations, conditional branches
-
-## Running Benchmarks
-
-```bash
-# Run all benchmarks
-make bench
-
-# Run specific benchmarks
-make bench-quick  # Only fibonacci and bubble_sort
-
-# Analyze results
-make bench-analyze
-
-# Manual execution
-cd benchmarks
-./run_benchmarks.sh [benchmark_name]
-```
-
-## Current Results
-
-Results are automatically saved to `benchmarks/results/` directory.
-View the latest report: `benchmarks/results/latest_report.md`
-
-## Goals
-
-- Palladium performance within 10% of C
-- Zero-cost abstractions verified
-- Predictable performance characteristics
+Superseded by `measure.py`. It predates this harness, only models C vs Palladium,
+and is not called by anything.

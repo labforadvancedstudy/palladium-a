@@ -1,14 +1,20 @@
-// Bubble sort benchmark in Palladium
-// Tests array operations and swapping
+// Bubble sort benchmark in Palladium (PBS-1 subset)
+// Tests array indexing, comparison branches and swapping.
+//
+// Workload: 45000 elements in reverse order (worst case) => ~1.0G compare/swap.
+// PBS-1 notes:
+//   - arrays pass directly as `mut arr: [i64; N]`, never `&mut [i64; N]` (defect D9)
+//   - arrays are walked with `while` + index, never `for` over a parameter (defect D4)
+// Output must stay byte-identical to benchmarks/rust/bubble_sort.rs
+// and benchmarks/c/bubble_sort.c.
 
-fn bubble_sort(arr: &mut [i64; 1000], n: i64) {
-    let mut i = 0;
+fn bubble_sort(mut arr: [i64; 45000], n: i64) {
+    let mut i: i64 = 0;
     while i < n - 1 {
-        let mut j = 0;
+        let mut j: i64 = 0;
         while j < n - i - 1 {
             if arr[j] > arr[j + 1] {
-                // Swap
-                let temp = arr[j];
+                let temp: i64 = arr[j];
                 arr[j] = arr[j + 1];
                 arr[j + 1] = temp;
             }
@@ -18,24 +24,35 @@ fn bubble_sort(arr: &mut [i64; 1000], n: i64) {
     }
 }
 
-fn main() {
-    print("Bubble sort benchmark (1000 elements)...");
-    
-    let mut arr: [i64; 1000] = [0; 1000];
-    
-    // Initialize with reverse order (worst case)
-    let mut i = 0;
-    while i < 1000 {
-        arr[i] = 1000 - i;
+fn checksum(mut arr: [i64; 45000], n: i64) -> i64 {
+    let mut sum: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        sum = sum + arr[i] * (i % 7 + 1);
         i = i + 1;
     }
-    
-    bubble_sort(&mut arr, 1000);
-    
-    // Verify first and last elements
-    print("First element:");
+    return sum;
+}
+
+fn main() {
+    let n: i64 = 45000;
+    print("benchmark: bubble_sort");
+    print("n:");
+    print_int(n);
+
+    let mut arr: [i64; 45000] = [0; 45000];
+    let mut i: i64 = 0;
+    while i < n {
+        arr[i] = n - i;
+        i = i + 1;
+    }
+
+    bubble_sort(arr, n);
+
+    print("first:");
     print_int(arr[0]);
-    print("Last element:");
-    print_int(arr[999]);
-    print("Done!");
+    print("last:");
+    print_int(arr[44999]);
+    print("checksum:");
+    print_int(checksum(arr, n));
 }

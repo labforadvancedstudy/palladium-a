@@ -1,26 +1,38 @@
-// String concatenation benchmark in Palladium
-// Tests string operations and memory allocation
+// String concatenation benchmark in Palladium (PBS-1 subset)
+// Tests string builtins and the runtime's allocation strategy.
+//
+// Workload: 20000 iterations, each appending " " and the decimal form of the
+// counter to an immutable string. Every concat allocates a fresh buffer and
+// copies both operands, so total work is quadratic in the iteration count --
+// this is the semantics of Palladium's `string_concat`, and the Rust and C
+// versions replicate exactly that (a "fresh buffer per concat" model), plus an
+// idiomatic Rust `push_str` variant for contrast.
+// Output must stay byte-identical to benchmarks/rust/string_concat.rs
+// and benchmarks/c/string_concat.c.
 
 fn string_benchmark(iterations: i64) -> String {
-    let mut result = "Start";
-    let mut i = 0;
-    
+    let mut result: String = "Start";
+    let mut i: i64 = 0;
     while i < iterations {
         result = string_concat(result, " ");
         result = string_concat(result, int_to_string(i));
         i = i + 1;
     }
-    
     return result;
 }
 
 fn main() {
-    print("String concatenation benchmark...");
-    
-    let iterations = 1000;
-    let result = string_benchmark(iterations);
-    
-    print("Final string length:");
+    let iterations: i64 = 20000;
+    print("benchmark: string_concat");
+    print("iterations:");
+    print_int(iterations);
+
+    let result: String = string_benchmark(iterations);
+
+    print("length:");
     print_int(string_len(result));
-    print("Done!");
+    print("first_char:");
+    print_int(string_char_at(result, 0));
+    print("last_char:");
+    print_int(string_char_at(result, string_len(result) - 1));
 }
