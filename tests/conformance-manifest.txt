@@ -1,0 +1,92 @@
+# Palladium conformance corpus — CLOSED INVENTORY.
+#
+# Every .pd file under the scanned roots must appear here exactly once, and
+# every entry must correspond to a file on disk. A fixture that is deleted,
+# renamed, or moved out of the gate turns the gate RED rather than quietly
+# shrinking it. That is the point: this repo has twice been burned by things
+# disappearing silently (.gitignore *.c hid runtime/palladium_runtime.c for a
+# year; *.txt nearly hid this file).
+#
+# Columns are TAB-separated. All six are mandatory; use `-` for N/A.
+#   path	class	stage	observable	owner	note
+#
+# class: run            compiles, links, runs, AND its stdout matches the sibling
+#                       <fixture>.expected transcript. There is no exit-code-only
+#                       spelling: a tail-return miscompile (D3) prints garbage and
+#                       still exits 0, so an exit code proves almost nothing.
+#        untranscribed  ran, but has no transcript. The reviewed allowance for a
+#                       fixture that genuinely cannot have one. Needs an owner and
+#                       a `why:` reason, and is reported as a debt every run.
+#                       NOTE: `owner` is an editable label, so reassigning a row
+#                       to another milestone slips a CONFORMANCE_FORBID_OWNER
+#                       check. What authorises a row is REVIEW OF THIS FILE; the
+#                       runner provides visibility, not enforcement of intent.
+#        vacuous        runs, but only prints that its feature is unimplemented.
+#                       Note must begin `claims:` and name the feature it does not
+#                       actually cover.
+#        xfail          known failure, pinned to a stage AND a diagnostic.
+#        reject         MUST fail, and that is correct — a negative test. Real
+#                       coverage, owed to nobody, so owner is `-`.
+#        skip           not a program - and it must prove it, by the compiler
+#                       refusing it at a declared stage with a declared
+#                       diagnostic (e.g. "No main function found"). An `fn main`
+#                       regex was evaded by three compiler-valid spellings.
+#
+# PAYING OFF AN xfail IS A TRANSITION, NOT A DELETION. The fixture stays on disk,
+# so removing its row makes it UNDECLARED and the gate stays red. Change the row
+# to `<path>	run	-	expected	-	-` and add the .expected transcript in the same
+# commit. The same applies to a vacuous fixture once its feature is implemented:
+# rewrite the fixture to actually exercise it, then transition the row.
+#
+# A .expected file is a CONTRACT, not a recording. Changing one changes the
+# expected behaviour of the language and must be reviewed separately from — and
+# more carefully than — the compiler change that motivated it.
+#
+# Adding coverage (e.g. tests/stdlib/): add the root to the make target and add
+# one line per fixture here. An undeclared fixture fails the gate, so new files
+# cannot arrive unnoticed either.
+
+examples/practical/calculator.pd	run	-	expected	-	-
+examples/practical/fibonacci.pd	run	-	expected	-	-
+examples/practical/prime_checker.pd	run	-	expected	-	-
+examples/practical/simple_sort.pd	xfail	compile	Unsupported type in reference parameter	M1	defect D9: &mut [i64; N] reference parameter rejected by codegen. HANDOFF: the branch that fixes D9 must not DELETE this row - the fixture still exists, so a deleted row is UNDECLARED and the gate stays red. Change the row to `examples/practical/simple_sort.pd<TAB>run<TAB>-<TAB>expected<TAB>-<TAB>-` and add examples/practical/simple_sort.expected in the same commit.
+examples/tutorial/01_variables.pd	run	-	expected	-	-
+examples/tutorial/02_functions.pd	run	-	expected	-	-
+examples/tutorial/03_ownership.pd	run	-	expected	-	-
+examples/tutorial/04_structs.pd	run	-	expected	-	-
+examples/tutorial/05_control_flow.pd	run	-	expected	-	-
+examples/tutorial/06_arrays.pd	run	-	expected	-	-
+tests/01_lexical_comments.pd	run	-	expected	-	-
+tests/01_lexical_literals.pd	run	-	expected	-	-
+tests/02_types_arrays.pd	run	-	expected	-	-
+tests/02_types_enums.pd	vacuous	-	-	unscheduled	claims: enum types. Declares no enum, constructs no variant, matches on nothing; body is only print calls. Enum conformance is ZERO.
+tests/02_types_primitives.pd	run	-	expected	-	-
+tests/02_types_structs.pd	run	-	expected	-	-
+tests/03_functions_basic.pd	run	-	expected	-	-
+tests/04_control_flow_for.pd	run	-	expected	-	-
+tests/04_control_flow_if.pd	run	-	expected	-	-
+tests/04_control_flow_while.pd	run	-	expected	-	-
+tests/05_borrowing_references.pd	run	-	expected	-	-
+tests/05_ownership_basic.pd	run	-	expected	-	-
+tests/06_pattern_matching.pd	run	-	expected	-	-
+tests/07_traits_basic.pd	vacuous	-	-	M4	claims: traits. Declares no trait and no impl; body is only print calls. Trait conformance is ZERO.
+tests/08_generics_basic.pd	vacuous	-	-	M4	claims: generics. Instantiates no generic type or function; body is only print calls. Generic conformance is ZERO.
+tests/09_effects_system.pd	vacuous	-	-	unscheduled	claims: the effect system. No effect annotation appears anywhere; body is only print calls. Effect conformance is ZERO.
+tests/10_async_await.pd	vacuous	-	-	unscheduled	claims: async/await. Contains no async fn and no .await; body is only print calls. Async conformance is ZERO - this is why defect D5 survived.
+tests/11_unsafe_blocks.pd	vacuous	-	-	unscheduled	claims: unsafe blocks and raw pointers. Contains no unsafe block and no pointer type; body is only print calls. Unsafe conformance is ZERO.
+tests/12_modules_imports.pd	vacuous	-	-	M3	claims: modules and imports. Exercises no module construct; body is only print calls. Module conformance is ZERO.
+tests/bootstrap_capability_probe.pd	run	-	expected	-	-
+tests/integration/simple_test.pd	run	-	expected	-	-
+tests/integration/test.pd	run	-	expected	-	symlink to simple_test.pd — duplicate coverage, kept so the inventory matches what find sees
+tests/integration/test_break_continue.pd	run	-	expected	-	-
+tests/integration/test_break_simple.pd	run	-	expected	-	-
+tests/integration/test_optimizations.pd	run	-	expected	-	-
+tests/misc/test1.pd	run	-	expected	-	-
+tests/misc/test_llvm_example.pd	run	-	expected	-	-
+tests/misc/test_vec_i64.pd	run	-	expected	-	-
+tests/misc/test_vec_simple.pd	run	-	expected	-	-
+tests/projects/hello_pdm/package.pd	skip	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	package manifest; not Palladium source at all, so the parser rejects it outright
+tests/projects/hello_pdm/src/main.pd	run	-	expected	-	-
+tests/projects/hello_pdm/src/math.pd	skip	compile	No main function found	-	library module providing add()/factorial(); the compiler itself confirms it has no entry point
+tests/projects/hello_pdm/tests/test_math.pd	xfail	compile	Undefined function: add	M3	calls add()/factorial() from src/math.pd; needs cross-file module imports (no use/mod in the language)
+tests/projects/hello_pdm/tests/test_simple.pd	run	-	expected	-	-

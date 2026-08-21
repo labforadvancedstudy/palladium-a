@@ -1,0 +1,86 @@
+=== Simple Calculator ===
+
+Basic operations:
+
+
+20
+ 
++
+ 
+5
+ = 
+25
+
+
+20
+ 
+-
+ 
+5
+ = 
+15
+
+
+20
+ 
+*
+ 
+5
+ = 
+100
+
+
+20
+ 
+/
+ 
+5
+ = 
+4
+
+
+More calculations:
+
+
+100
+ 
++
+ 
+25
+ = 
+125
+
+
+100
+ 
+-
+ 
+25
+ = 
+75
+
+
+100
+ 
+*
+ 
+25
+ = 
+2500
+
+
+100
+ 
+/
+ 
+25
+ = 
+4
+
+
+Error handling:
+
+
+Error: Division by zero!
+
+=== Calculator complete ===

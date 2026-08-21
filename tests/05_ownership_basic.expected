@@ -1,0 +1,23 @@
+After copy:
+42
+42
+
+Struct value:
+100
+
+Inside take_ownership:
+200
+
+Inside give_ownership_back:
+300
+
+After round trip:
+300
+
+Created data:
+400
+
+String before assignment:
+Hello
+String after move:
+Hello

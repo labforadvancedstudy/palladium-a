@@ -1,0 +1,21 @@
+Basic array:
+1
+5
+
+Inferred array:
+20
+
+String array:
+Hello
+World
+!
+
+Mutable array after modification:
+100
+200
+300
+
+Sum of array elements:
+15
+
+2D array: skipped

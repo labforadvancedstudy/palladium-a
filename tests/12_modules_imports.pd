@@ -1,3 +1,4 @@
+//@ vacuous: prints that modules are unimplemented; exercises no module construct — M3 owns the feature
 // Test 12: Modules and Imports - Not Yet Implemented
 // Module system and imports are in the specification but not implemented
 

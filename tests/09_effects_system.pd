@@ -1,3 +1,4 @@
+//@ vacuous: prints that the effect system is unimplemented; no effect annotation appears anywhere — M-unscheduled owns the feature
 // Test 09: Effects System - Not Yet Implemented
 // Effects tracking is in the specification but not implemented
 

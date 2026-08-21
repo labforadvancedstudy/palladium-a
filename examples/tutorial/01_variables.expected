@@ -1,0 +1,23 @@
+=== Variables in Palladium ===
+
+Immutable x:
+5
+
+Mutable y before:
+10
+Mutable y after:
+20
+
+Type annotated values:
+42
+100
+Flag is true
+
+String variable:
+Hello, Palladium!
+
+Array elements:
+1
+5
+
+=== Variables demo complete ===

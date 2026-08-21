@@ -1,3 +1,4 @@
+//@ vacuous: prints that unsafe is unimplemented; contains no unsafe block and no raw pointer — no milestone owns unsafe yet
 // Test 11: Unsafe Blocks - Not Yet Implemented
 // Unsafe blocks and raw pointers are in the specification but not implemented
 

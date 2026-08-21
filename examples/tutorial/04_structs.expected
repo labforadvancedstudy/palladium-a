@@ -1,0 +1,48 @@
+=== Structs in Palladium ===
+
+
+Creating structs:
+Origin: (
+0
+, 
+0
+)
+
+Point 1: (
+3
+, 
+4
+)
+
+Distance squared: 
+25
+
+
+Nested structs:
+Rectangle at (
+10
+, 
+20
+) with size 
+100
+x
+50
+
+
+Complex struct:
+Person: 
+Alice
+, age: 
+30
+ (active)
+
+
+Mutable struct:
+Updated counter: (
+10
+, 
+20
+)
+
+
+=== Structs demo complete ===

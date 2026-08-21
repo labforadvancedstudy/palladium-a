@@ -1,3 +1,4 @@
+//@ vacuous: prints that async/await is unimplemented; contains no async fn and no .await — M-unscheduled owns the feature
 // Test 10: Async/Await - Not Yet Implemented
 // Async functions and await are in the specification but not implemented
 

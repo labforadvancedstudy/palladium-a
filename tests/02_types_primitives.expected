@@ -1,0 +1,19 @@
+Integer types:
+2147483647
+9223372036854775807
+4294967295
+1000000000
+
+Negative values:
+-2147483648
+-1000000000
+
+Boolean operations:
+Boolean logic works
+
+String type:
+Palladium String Type
+
+Unit type: skipped
+42
+Inferred string

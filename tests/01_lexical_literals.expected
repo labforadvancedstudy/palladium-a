@@ -1,0 +1,9 @@
+42
+1000000
+Hello, Palladium!
+String with
+escape sequences	tab
+Quote " and backslash \
+true works
+false works
+null\0terminator

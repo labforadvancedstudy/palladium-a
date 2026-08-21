@@ -16,7 +16,8 @@ opinion.
 | | |
 |---|---|
 | Self-hosting | ✅ fixed point — `make selfhost` |
-| Language conformance | 39 of 42 programs compile, link and run — `make conformance` |
+| Language conformance | 33 of 44 fixtures run with a transcript diffed byte-for-byte; 7 are vacuous placeholders, 2 declared-failing, 2 non-programs — `make conformance` |
+| Conformance gate itself | 96 representative regression cases, each pinning a way it must still go RED — `make test-conformance-runner` |
 | Documentation | every snippet compiles — `make check-docs` |
 | Unit tests | 404 pass, 2 pre-existing failures |
 | Integration tests | 43 fail, all pre-existing — `make test-honest` |
@@ -31,10 +32,16 @@ emit wrong code. This milestone converts silent wrongness into diagnostics.
 
 | Defect | What happens today |
 |---|---|
-| D7 | an un-annotated `let` is emitted as `long long` whatever the initializer was, so references, enum values and string copies silently become integers |
 | D5 | `?` emits C referencing a `struct Result` layout codegen never defines; `.await` calls a `poll` member that is never generated. Neither reports an error |
 | D4 | `for` over an array *parameter* uses `sizeof` on a pointer that has already decayed |
-| D9 | `&[T; N]` / `&mut [T; N]` parameters are rejected in codegen — `examples/practical/simple_sort.pd` still fails on exactly this |
+| D9 | `&[T; N]` / `&mut [T; N]` parameters are rejected in codegen — `examples/practical/simple_sort.pd` still fails on exactly this, and is the one M1-owned entry in `tests/conformance-manifest.txt` |
+
+Closed:
+
+- **D7** — an un-annotated `let` was emitted as `long long` regardless of its initializer. Fixed in
+  `04104c5` ("fix(codegen): infer let types instead of defaulting them to i64"). Verified: a program
+  containing `let s = "hello"; let b = true; let p = P { x: 3 };` compiles, links and runs, and the
+  emitted C declares `const char* s` and `struct P p` rather than `long long`.
 
 Two structural gaps belong here too, because both are gates that cannot see their own failures:
 
@@ -44,8 +51,36 @@ Two structural gaps belong here too, because both are gates that cannot see thei
   effects checker and in two LSP files. The "one table" invariant currently holds only for the
   type checker and the borrow checker.
 
-**Exit**: nothing in the language specification is marked ⚠️ "parses, then breaks" without also
-being reported as an error. `make conformance` at 42/42. `stdlib/` behind a gate.
+**Exit** — every criterion is a command, not a reading of prose:
+
+1. `make conformance` exits 0 (`failures=0`).
+2. `make m1-exit` exits 0. This is `CONFORMANCE_FORBID_OWNER=M1`, which fails while any fixture
+   in `tests/conformance-manifest.txt` is still owed to M1. Today exactly one is:
+   `examples/practical/simple_sort.pd` (D9). The owner column is a structured, enforced field, so
+   this criterion is decided by the runner rather than by reading the table above.
+3. `make test-conformance-runner` exits 0 — the gate is still able to fail.
+4. Nothing in the language specification is marked ⚠️ "parses, then breaks" without also being
+   reported as an error.
+5. `stdlib/` behind a gate.
+
+`42/42` was the old exit criterion and it was the wrong target twice over.
+
+It counted **seven** placeholder programs — `02_types_enums`, `07_traits_basic`,
+`08_generics_basic`, `09_effects_system`, `10_async_await`, `11_unsafe_blocks`,
+`12_modules_imports` — that only *print* "not yet implemented". None declares an enum or a trait,
+instantiates a generic, carries an effect annotation, opens an `unsafe` block, or contains an
+`async fn` or `.await`. The consequence was not theoretical: **defect D5 survived because
+`10_async_await.pd` was counted as async coverage while testing nothing.** These are now reported
+as `vacuous`, each declaring which feature it fails to cover, and are expected to stay vacuous
+through M1. Sixteen per cent of the corpus proves nothing, which is the honest number.
+
+It also counted a *green exit code* as a correct program. A missing C `return` is undefined
+behaviour: measured here at both `-O0` and `-O2`, `long long f(a,b){ (a+b); }` returns
+`8261746944` and exits 0. That is defect D3's exact signature, which is how D3 miscompiled
+`stdlib/` for a year underneath a green gate. The runner now diffs each fixture's stdout against a
+recorded transcript. There is no exit-code-only class: a fixture that genuinely cannot be
+transcribed must be declared `untranscribed` with an owner and a `why:` reason, and is reported as
+a debt on every run. That count is currently zero.
 
 ## M2 — Writing real programs stops hurting (v0.4)
 

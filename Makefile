@@ -259,8 +259,16 @@ uninstall: ## Uninstall pdc
 # --- Language conformance and self-hosting gates ---------------------------
 
 .PHONY: conformance
-conformance: build ## Compile+link+run every .pd under tests/ and examples/
+conformance: build ## Compile+link+run every .pd under tests/ and examples/, against tests/conformance-manifest.txt
 	@bash scripts/conformance.sh tests examples
+
+.PHONY: test-conformance-runner
+test-conformance-runner: build ## Prove the conformance gate still goes RED when it should
+	@bash scripts/test-conformance-runner.sh
+
+.PHONY: m1-exit
+m1-exit: build ## M1's exit criterion, as a command: nothing in the corpus still owed to M1
+	@CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests examples
 
 .PHONY: selfhost
 selfhost: build ## Run the self-hosting fixed-point gate (bootstrap/pdc.pd)
@@ -278,5 +286,5 @@ check-docs: build ## Compile every ```palladium block in the documentation
 	@bash scripts/check-docs.sh docs README.md
 
 .PHONY: gates
-gates: conformance check-docs selfhost ## Run every language-level gate
+gates: conformance test-conformance-runner check-docs selfhost ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
