@@ -268,14 +268,14 @@ citations in `language-spec.md` before this change were taken from the pre-clean
 `function` production carries an optional `async` (`docs/specification/grammar.ebnf:91`), `.await`
 is a postfix operator (`docs/specification/grammar.ebnf:216`), and the keyword list names both
 (`docs/specification/grammar.ebnf:56`). The parser sets `Function.is_async` from that keyword
-(`src/parser/mod.rs:354`, `:365`). The implementation therefore offers exactly the two things this
+(`src/parser/mod.rs:354`, `src/parser/mod.rs:365`). The implementation therefore offers exactly the two things this
 document says the language does not have: an `async` marker and an await operator.
 
 **2. Effects are inferred, but the result is print-only — it gates nothing.**
 The parser hardcodes `Function.effects` to `None`, commented "Effects will be inferred during
 analysis" (`src/parser/mod.rs:565`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
-`Effect` enum at `:10-23`, `analyze_function` at `:133`) and it does union effects across
-statements and calls (`:245-268`). But `crate::effects::` is referenced from exactly one place in
+`Effect` enum at `src/parser/mod.rs:10-23`, `analyze_function` at `src/parser/mod.rs:133`) and it does union effects across
+statements and calls (`src/parser/mod.rs:245-268`). But `crate::effects::` is referenced from exactly one place in
 the compiler — `src/driver/mod.rs:147` — and all the driver does with the result is `println!` it
 (`src/driver/mod.rs:151-157`). No later phase reads it. It cannot reject a program, cannot change
 codegen, and cannot schedule anything.
@@ -301,7 +301,7 @@ no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 
 **7. `.await` generates C that references a member no part of the compiler emits.**
 Codegen for an await expression emits `while (!<tmp>.poll(&<tmp>)) { }`
-(`src/codegen/mod.rs:2604-2611`) and then reads `<tmp>.result` (`:2613-2615`). Nothing generates a
+(`src/codegen/mod.rs:2604-2611`) and then reads `<tmp>.result` (`src/codegen/mod.rs:2613-2615`). Nothing generates a
 `poll` member on the produced C type. This is not an error at any earlier stage — it is silent
 breakage discovered by the C compiler, and it is the failure mode `language-spec.md` §6.5 already
 recorded. The parallel defect for `?` is at `src/codegen/mod.rs:2548-2569`, which emits a
@@ -424,5 +424,5 @@ fn reliable_fetch(id: u64) -> Result<User> {
 - [Palladium v1.0 feature definition](../PALLADIUM_V1_FEATURES.md) — where this sits among the rest
 - [Totality checking](../advanced/totality-checking.md)
 - [Implicit lifetimes](../core-language/implicit-lifetimes.md)
-- [Feature index](../feature-index.yaml)
+- [Feature index](../feature-index.toml)
 - [Language specification](../../../specification/language-spec.md)

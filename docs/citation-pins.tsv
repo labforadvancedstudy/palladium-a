@@ -3,9 +3,9 @@
 # still supports the claim made about it — that is a reading. The excerpt
 # column exists so a reviewer can spot-check meaning without a source checkout.
 # path	lines	citing-doc	fingerprint	excerpt
-Cargo.toml	45-45	docs/reference/features/feature-index.yaml	fa72a98b6370	[[bin]]
-Cargo.toml	49-49	docs/reference/features/feature-index.yaml	fa72a98b6370	[[bin]]
-Cargo.toml	53-53	docs/reference/features/feature-index.yaml	fa72a98b6370	[[bin]]
+Cargo.toml	45-45	docs/reference/features/feature-index.toml	fa72a98b6370	[[bin]]
+Cargo.toml	49-49	docs/reference/features/feature-index.toml	fa72a98b6370	[[bin]]
+Cargo.toml	53-53	docs/reference/features/feature-index.toml	fa72a98b6370	[[bin]]
 benchmarks/palladium/bubble_sort.pd	11-11	docs/specification/language-spec.md	df0f5c145b7b	fn bubble_sort(mut arr: [i64; 45000], n: i64) {
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
@@ -18,169 +18,195 @@ grammar.ebnf	130-130	docs/reference/features/core-language/implicit-lifetimes.md
 grammar.ebnf	145-145	docs/reference/features/core-language/implicit-lifetimes.md	27eae3e7e3c5	reference = '&' [ "'" identifier ] [ "mut" ] type ;
 grammar.ebnf	58-59	docs/reference/features/core-language/implicit-lifetimes.md	41773243f31f	# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
 grammar.ebnf	66-67	docs/reference/features/advanced/totality-checking.md	445c16d1a73f	punctuation = '(' | ')' | '{' | '}' | '[' | ']' | ';' | ',' | ':' | '.' | ".." | "->" | "::" | '_' | "=>" | '\'' | '?' ;
-scripts/conformance.sh	15-15	docs/reference/features/feature-index.yaml	359f7c2a5075	OUT_DIR=build_output
 scripts/conformance.sh	15-15	docs/specification/language-spec.md	359f7c2a5075	OUT_DIR=build_output
+scripts/conformance.sh	17-17	docs/reference/features/feature-index.toml	e3b0c44298fc	
 src/ast/mod.rs	139-146	docs/specification/language-spec.md	b09f347fba93	pub struct EnumDef { pub name: String, pub lifetime_params: Vec<String>, // L ... ters like [("N", Type::U64)] pub variants: Vec<EnumVariant>, pub span: Span, }
-src/ast/mod.rs	313-313	docs/reference/features/feature-index.yaml	8a1bdbb2637d	pub enum Pattern {
+src/ast/mod.rs	313-313	docs/reference/features/feature-index.toml	8a1bdbb2637d	pub enum Pattern {
 src/ast/mod.rs	313-323	docs/reference/features/advanced/totality-checking.md	1eddf7da482f	pub enum Pattern { /// Wildcard pattern (_) Wildcard, /// Identifier pattern  ... numPattern { enum_name: String, variant: String, data: Option<PatternData>, },
 src/ast/mod.rs	313-323	docs/specification/bootstrap-subset.md	1eddf7da482f	pub enum Pattern { /// Wildcard pattern (_) Wildcard, /// Identifier pattern  ... numPattern { enum_name: String, variant: String, data: Option<PatternData>, },
 src/ast/mod.rs	313-323	docs/specification/language-spec.md	1eddf7da482f	pub enum Pattern { /// Wildcard pattern (_) Wildcard, /// Identifier pattern  ... numPattern { enum_name: String, variant: String, data: Option<PatternData>, },
-src/builtins.rs	1-1	docs/reference/features/feature-index.yaml	b2040a84f342	// Built-in function registry for Palladium
-src/cli.rs	14-14	docs/reference/features/feature-index.yaml	701dcf50c0cc	"Turing's Proofs Meet von Neumann's Performance"
-src/codegen/llvm_text_backend.rs	1222-1222	docs/reference/features/feature-index.yaml	e91624312e8e	"Complex function calls not yet supported".to_string(),
-src/codegen/llvm_text_backend.rs	1379-1379	docs/reference/features/feature-index.yaml	4f12aafc7996	// TODO: Implement EnumConstructor, Question, MacroInvocation, Await
-src/codegen/llvm_text_backend.rs	914-914	docs/reference/features/feature-index.yaml	b2dd21aa6c8e	ir.push_str(" ; TODO: Implement break with proper loop context\n");
-src/codegen/llvm_text_backend.rs	921-921	docs/reference/features/feature-index.yaml	bb73a2db7d84	ir.push_str(" ; TODO: Implement continue with proper loop context\n");
-src/codegen/llvm_text_backend.rs	933-933	docs/reference/features/feature-index.yaml	fe2626af0534	// TODO: Implement proper pattern matching
+src/builtins.rs	1-1	docs/reference/features/feature-index.toml	b2040a84f342	// Built-in function registry for Palladium
+src/cli.rs	14-14	docs/reference/features/feature-index.toml	701dcf50c0cc	"Turing's Proofs Meet von Neumann's Performance"
+src/codegen/llvm_text_backend.rs	1081-1081	docs/specification/language-spec.md	8c2b5859aa4d	"Unsupported binary operator".to_string(),
+src/codegen/llvm_text_backend.rs	1222-1222	docs/reference/features/feature-index.toml	e91624312e8e	"Complex function calls not yet supported".to_string(),
+src/codegen/llvm_text_backend.rs	1222-1222	docs/specification/language-spec.md	e91624312e8e	"Complex function calls not yet supported".to_string(),
+src/codegen/llvm_text_backend.rs	1379-1379	docs/reference/features/feature-index.toml	4f12aafc7996	// TODO: Implement EnumConstructor, Question, MacroInvocation, Await
+src/codegen/llvm_text_backend.rs	1379-1379	docs/specification/language-spec.md	4f12aafc7996	// TODO: Implement EnumConstructor, Question, MacroInvocation, Await
+src/codegen/llvm_text_backend.rs	820-820	docs/specification/language-spec.md	aff4b9e9e262	"Unsupported iterator type in for loop".to_string(),
+src/codegen/llvm_text_backend.rs	914-914	docs/reference/features/feature-index.toml	b2dd21aa6c8e	ir.push_str(" ; TODO: Implement break with proper loop context\n");
+src/codegen/llvm_text_backend.rs	914-914	docs/specification/language-spec.md	b2dd21aa6c8e	ir.push_str(" ; TODO: Implement break with proper loop context\n");
+src/codegen/llvm_text_backend.rs	921-921	docs/reference/features/feature-index.toml	bb73a2db7d84	ir.push_str(" ; TODO: Implement continue with proper loop context\n");
+src/codegen/llvm_text_backend.rs	921-921	docs/specification/language-spec.md	bb73a2db7d84	ir.push_str(" ; TODO: Implement continue with proper loop context\n");
+src/codegen/llvm_text_backend.rs	933-933	docs/reference/features/feature-index.toml	fe2626af0534	// TODO: Implement proper pattern matching
+src/codegen/llvm_text_backend.rs	933-933	docs/specification/language-spec.md	fe2626af0534	// TODO: Implement proper pattern matching
 src/codegen/mod.rs	1011-1011	docs/design/trait_system_design.md	78074ff85f28	Item::Trait(_) => {
-src/codegen/mod.rs	1011-1011	docs/reference/features/feature-index.yaml	78074ff85f28	Item::Trait(_) => {
+src/codegen/mod.rs	1011-1011	docs/reference/features/feature-index.toml	78074ff85f28	Item::Trait(_) => {
 src/codegen/mod.rs	1011-1011	docs/specification/language-spec.md	78074ff85f28	Item::Trait(_) => {
 src/codegen/mod.rs	1025-1031	docs/specification/language-spec.md	ec336e107f91	// Create a mangled method name let mangled_name = format!( "__pd_{}_{}", imp ... "_"), method.name ); self.generate_function_with_name(method, &mangled_name)?;
-src/codegen/mod.rs	1084-1084	docs/specification/bootstrap-subset.md	56053f73329f	Type::Tuple(_) => {
 src/codegen/mod.rs	1084-1085	docs/specification/language-spec.md	c4c224f90274	Type::Tuple(_) => { // Tuples not yet supported in C codegen
+src/codegen/mod.rs	1084-1087	docs/specification/bootstrap-subset.md	d82e53204d45	Type::Tuple(_) => { // Tuples not yet supported in C codegen "void*".to_string() // TODO: Generate struct for tuple }
 src/codegen/mod.rs	1349-1351	docs/specification/language-spec.md	833a4f731f3d	ArraySize::Literal(n) => n.to_string(), ArraySize::ConstParam(name) => name.clone(), ArraySize::Expr(_) => "0".to_string(), // TODO: evaluate expression
-src/codegen/mod.rs	1350-1350	docs/reference/features/feature-index.yaml	0b77a4dad597	ArraySize::ConstParam(name) => name.clone(),
-src/codegen/mod.rs	1351-1351	docs/reference/features/feature-index.yaml	8b19754605ea	ArraySize::Expr(_) => "0".to_string(), // TODO: evaluate expression
+src/codegen/mod.rs	1350-1350	docs/reference/features/feature-index.toml	0b77a4dad597	ArraySize::ConstParam(name) => name.clone(),
+src/codegen/mod.rs	1351-1351	docs/reference/features/feature-index.toml	8b19754605ea	ArraySize::Expr(_) => "0".to_string(), // TODO: evaluate expression
+src/codegen/mod.rs	1360-1360	docs/specification/language-spec.md	8201357187f2	let resolved_type = self.type_to_c(field_type);
 src/codegen/mod.rs	1367-1367	docs/reference/features/advanced/totality-checking.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1367-1367	docs/reference/features/feature-index.yaml	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1367-1367	docs/reference/features/feature-index.toml	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
 src/codegen/mod.rs	1367-1367	docs/specification/bootstrap-subset.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
 src/codegen/mod.rs	1367-1367	docs/specification/language-spec.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
 src/codegen/mod.rs	1372-1372	docs/specification/bootstrap-subset.md	08e3d0b4aa7f	"Reference types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1372-1372	docs/specification/language-spec.md	08e3d0b4aa7f	"Reference types in structs not yet supported".to_string(),
 src/codegen/mod.rs	1382-1382	docs/specification/bootstrap-subset.md	eac9f4b0ef4d	"Tuple types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1382-1382	docs/specification/language-spec.md	eac9f4b0ef4d	"Tuple types in structs not yet supported".to_string(),
 src/codegen/mod.rs	1521-1521	docs/specification/bootstrap-subset.md	5c869d0d42bf	"Returning arrays from functions is not yet supported".to_string(),
-src/codegen/mod.rs	1555-1555	docs/reference/features/feature-index.yaml	9b66c55c534f	Type::Array(elem_type, size) => {
+src/codegen/mod.rs	1555-1555	docs/reference/features/feature-index.toml	9b66c55c534f	Type::Array(elem_type, size) => {
 src/codegen/mod.rs	1555-1555	docs/specification/language-spec.md	9b66c55c534f	Type::Array(elem_type, size) => {
-src/codegen/mod.rs	1634-1634	docs/reference/features/feature-index.yaml	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
+src/codegen/mod.rs	1634-1634	docs/reference/features/feature-index.toml	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
 src/codegen/mod.rs	1634-1634	docs/specification/bootstrap-subset.md	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
 src/codegen/mod.rs	1634-1634	docs/specification/language-spec.md	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
-src/codegen/mod.rs	1870-1870	docs/specification/language-spec.md	d10b36aa74a5	}
-src/codegen/mod.rs	1920-1920	docs/reference/features/feature-index.yaml	e43720b5a954	.push_str(" for (long long _i = 0; _i < sizeof(");
+src/codegen/mod.rs	1920-1920	docs/reference/features/feature-index.toml	e43720b5a954	.push_str(" for (long long _i = 0; _i < sizeof(");
 src/codegen/mod.rs	1920-1922	docs/specification/bootstrap-subset.md	4d72fc46bc15	.push_str(" for (long long _i = 0; _i < sizeof("); self.generate_expression(iter)?; self.output.push_str(")/sizeof(");
 src/codegen/mod.rs	1920-1922	docs/specification/language-spec.md	4d72fc46bc15	.push_str(" for (long long _i = 0; _i < sizeof("); self.generate_expression(iter)?; self.output.push_str(")/sizeof(");
-src/codegen/mod.rs	1954-1954	docs/reference/features/feature-index.yaml	4532c5ca86ed	// Generate a series of if-else statements for pattern matching
+src/codegen/mod.rs	1954-1954	docs/reference/features/feature-index.toml	4532c5ca86ed	// Generate a series of if-else statements for pattern matching
 src/codegen/mod.rs	1954-1954	docs/specification/language-spec.md	4532c5ca86ed	// Generate a series of if-else statements for pattern matching
+src/codegen/mod.rs	1975-1986	docs/specification/language-spec.md	c33d926d3542	// Generate if-else chain for each arm for (i, arm) in arms.iter().enumerate( ... ndition match &arm.pattern { Pattern::Wildcard => { // Wildcard always matches
 src/codegen/mod.rs	2186-2226	docs/specification/language-spec.md	589ccd32776c	"print" => self.output.push_str("__pd_print"), "print_int" => self.output.pus ... file_read_ex"), "file_write_ex" => self.output.push_str("__pd_file_write_ex"),
 src/codegen/mod.rs	2498-2501	docs/specification/language-spec.md	d548f6be2b65	// Range expressions are not directly translatable to C // They should only a ... Error::Generic( "Range expressions can only be used in for loops".to_string(),
 src/codegen/mod.rs	2501-2501	docs/specification/bootstrap-subset.md	7441348c0721	"Range expressions can only be used in for loops".to_string(),
 src/codegen/mod.rs	2548-2569	docs/reference/features/async-system/async-as-effect.md	fc7cf423d335	// - an 'is_ok' field (0 for Err, 1 for Ok) // - a union containing 'ok' and  ... t is represented as: struct Result { int is_ok; union { T ok; E err; } data; }
 src/codegen/mod.rs	2548-2569	docs/specification/bootstrap-subset.md	fc7cf423d335	// - an 'is_ok' field (0 for Err, 1 for Ok) // - a union containing 'ok' and  ... t is represented as: struct Result { int is_ok; union { T ok; E err; } data; }
 src/codegen/mod.rs	2548-2569	docs/specification/language-spec.md	fc7cf423d335	// - an 'is_ok' field (0 for Err, 1 for Ok) // - a union containing 'ok' and  ... t is represented as: struct Result { int is_ok; union { T ok; E err; } data; }
-src/codegen/mod.rs	2554-2554	docs/reference/features/feature-index.yaml	5cebb58f42fe	.push_str(&format!(" struct Result {} = ", temp_var));
+src/codegen/mod.rs	2553-2554	docs/reference/features/feature-index.toml	ffb4a175ceab	self.output .push_str(&format!(" struct Result {} = ", temp_var));
 src/codegen/mod.rs	2554-2554	docs/specification/bootstrap-subset.md	5cebb58f42fe	.push_str(&format!(" struct Result {} = ", temp_var));
-src/codegen/mod.rs	2569-2569	docs/reference/features/feature-index.yaml	693d50f99a4d	// 1. Result is represented as: struct Result { int is_ok; union { T ok; E err; } data; }
+src/codegen/mod.rs	2569-2569	docs/reference/features/feature-index.toml	693d50f99a4d	// 1. Result is represented as: struct Result { int is_ok; union { T ok; E err; } data; }
 src/codegen/mod.rs	2604-2611	docs/reference/features/async-system/async-as-effect.md	c3029163bae5	// Poll until ready (simplified - assumes poll function exists) self.output.p ...  // In real async runtime, would yield here\n"); self.output.push_str(" }\n");
 src/codegen/mod.rs	2604-2615	docs/specification/language-spec.md	bbd77b9bc02f	// Poll until ready (simplified - assumes poll function exists) self.output.p ... eturn the result self.output .push_str(&format!(" {}.result;\n", future_var));
-src/codegen/mod.rs	2606-2606	docs/reference/features/feature-index.yaml	21cf5e367dbd	" while (!{}.poll(&{})) {{\n",
+src/codegen/mod.rs	2606-2606	docs/reference/features/feature-index.toml	21cf5e367dbd	" while (!{}.poll(&{})) {{\n",
 src/codegen/mod.rs	2606-2606	docs/specification/bootstrap-subset.md	21cf5e367dbd	" while (!{}.poll(&{})) {{\n",
+src/codegen/mod.rs	2613-2615	docs/reference/features/async-system/async-as-effect.md	a2587d7978a2	// Return the result self.output .push_str(&format!(" {}.result;\n", future_var));
 src/codegen/mod.rs	427-476	docs/specification/language-spec.md	3d44246e7c5e	self.output.push_str("#define STRING_POOL_SIZE 65536\n"); self.output.push_st ... d __pd_init() {\n"); self.output.push_str(" atexit(__pd_cleanup_strings);\n");
-src/codegen/mod.rs	497-497	docs/specification/language-spec.md	e1ba13ee9909	self.output.push_str("void __pd_print(const char* str) {\n");
+src/codegen/mod.rs	497-575	docs/specification/language-spec.md	e3427dc4609c	self.output.push_str("void __pd_print(const char* str) {\n"); self.output.pus ... eturn result;\n"); self.output.push_str("}\n\n"); // char_is_digit self.output
+src/driver/mod.rs	139-145	docs/specification/language-spec.md	760f04349e68	let borrow_time = borrow_start.elapsed(); println!( " Memory safety verified! ({:.2}ms)", borrow_time.as_secs_f64() * 1000.0 ); // Phase 3.6: Effect analysis
 src/driver/mod.rs	147-147	docs/reference/features/async-system/async-as-effect.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
-src/driver/mod.rs	147-147	docs/reference/features/feature-index.yaml	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
+src/driver/mod.rs	147-147	docs/reference/features/feature-index.toml	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
 src/driver/mod.rs	147-147	docs/specification/language-spec.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
 src/driver/mod.rs	148-149	docs/reference/features/async-system/async-as-effect.md	cd67d9d37d37	for item in &ast.items { if let crate::ast::Item::Function(func) = item {
 src/driver/mod.rs	151-157	docs/reference/features/async-system/async-as-effect.md	4674cb84f56d	if !effects.is_pure() { println!( " Function '{}' has effects: {:?}", func.name, effects.effects() ); }
 src/driver/mod.rs	151-157	docs/specification/language-spec.md	4674cb84f56d	if !effects.is_pure() { println!( " Function '{}' has effects: {:?}", func.name, effects.effects() ); }
-src/driver/mod.rs	152-152	docs/reference/features/feature-index.yaml	0e752a9d643b	println!(
-src/driver/mod.rs	162-162	docs/reference/features/feature-index.yaml	cec9e49f3460	// Phase 3.7: Unsafe checking
+src/driver/mod.rs	152-152	docs/reference/features/feature-index.toml	0e752a9d643b	println!(
+src/driver/mod.rs	162-162	docs/reference/features/feature-index.toml	cec9e49f3460	// Phase 3.7: Unsafe checking
 src/driver/mod.rs	162-170	docs/specification/language-spec.md	0a20c11de2ec	// Phase 3.7: Unsafe checking println!("⚠️ Checking unsafe operations..."); l ... e_checker.check_function(func)?; } } println!(" Unsafe operations verified!");
-src/driver/mod.rs	172-172	docs/reference/features/feature-index.yaml	6632d08a5576	// Phase 3.8: Optimization (optional but enabled by default)
-src/driver/mod.rs	183-183	docs/reference/features/feature-index.yaml	5d3dcfb7f3f5	// Phase 4: Code generation
-src/driver/mod.rs	261-261	docs/specification/bootstrap-subset.md	ff94819b6dbd	fs::create_dir_all(&build_dir).map_err(CompileError::IoError)?;
+src/driver/mod.rs	172-172	docs/reference/features/feature-index.toml	6632d08a5576	// Phase 3.8: Optimization (optional but enabled by default)
+src/driver/mod.rs	183-183	docs/reference/features/feature-index.toml	5d3dcfb7f3f5	// Phase 4: Code generation
 src/driver/mod.rs	49-228	docs/specification/language-spec.md	344fb20ecd18	pub fn compile_string(&self, source: &str, filename: &str) -> Result<PathBuf> ... (" Total time: {:.2}ms", total_time.as_secs_f64() * 1000.0); Ok(output_path) }
-src/driver/mod.rs	49-49	docs/reference/features/feature-index.yaml	9ec5ae2ed903	pub fn compile_string(&self, source: &str, filename: &str) -> Result<PathBuf> {
-src/driver/mod.rs	53-53	docs/reference/features/feature-index.yaml	56f8f09ac839	// Phase 1: Lexing
+src/driver/mod.rs	49-49	docs/reference/features/feature-index.toml	9ec5ae2ed903	pub fn compile_string(&self, source: &str, filename: &str) -> Result<PathBuf> {
+src/driver/mod.rs	53-53	docs/reference/features/feature-index.toml	56f8f09ac839	// Phase 1: Lexing
 src/effects/mod.rs	262-266	docs/reference/features/async-system/async-as-effect.md	0e62bcd75db9	} else if let Some(func_effects) = self.function_effects.get(func_name) { eff ... nc_effects); } // If function is unknown, we conservatively assume it's pure }
-src/effects/mod.rs	265-265	docs/reference/features/feature-index.yaml	2ac8aa9dd67a	// If function is unknown, we conservatively assume it's pure
-src/lexer/token.rs	111-111	docs/reference/features/feature-index.yaml	85cf6095e7f9	#[token("async")]
+src/effects/mod.rs	265-265	docs/reference/features/feature-index.toml	2ac8aa9dd67a	// If function is unknown, we conservatively assume it's pure
+src/lexer/token.rs	111-111	docs/reference/features/feature-index.toml	85cf6095e7f9	#[token("async")]
 src/lexer/token.rs	111-115	docs/reference/features/async-system/async-as-effect.md	b95041e6d755	#[token("async")] Async, #[token("await")] Await,
-src/lexer/token.rs	117-117	docs/reference/features/feature-index.yaml	4ef16b8da51c	#[token("macro")]
+src/lexer/token.rs	117-117	docs/reference/features/feature-index.toml	4ef16b8da51c	#[token("macro")]
 src/lexer/token.rs	12-30	docs/specification/bootstrap-subset.md	454b4aa8fe39	#[regex(r#""([^"\\]|\\.)*""#, |lex| { let s = lex.slice(); // Remove quotes a ... zA-Z_][a-zA-Z0-9_]*", |lex| Some(lex.slice().to_owned()))] Identifier(String),
 src/lexer/token.rs	12-30	docs/specification/language-spec.md	454b4aa8fe39	#[regex(r#""([^"\\]|\\.)*""#, |lex| { let s = lex.slice(); // Remove quotes a ... zA-Z_][a-zA-Z0-9_]*", |lex| Some(lex.slice().to_owned()))] Identifier(String),
 src/lexer/token.rs	26-26	docs/specification/bootstrap-subset.md	d88acb4bceb1	#[regex(r"-?[0-9]+", |lex| lex.slice().parse().ok())]
 src/lexer/token.rs	33-118	docs/specification/language-spec.md	a82fe85ed84a	#[token("fn")] Fn, #[token("let")] Let, #[token("mut")] Mut, #[token("if")] I ... fe, #[token("async")] Async, #[token("await")] Await, #[token("macro")] Macro,
-src/lexer/token.rs	33-33	docs/reference/features/feature-index.yaml	b97e219c157c	#[token("fn")]
-src/lib.rs	5-5	docs/reference/features/feature-index.yaml	edf3e84c20a2	pub mod async_runtime;
-src/macros/mod.rs	167-167	docs/reference/features/feature-index.yaml	4937b6ff3ab8	Token::Identifier("print_debug".to_string()),
+src/lexer/token.rs	33-33	docs/reference/features/feature-index.toml	b97e219c157c	#[token("fn")]
+src/lib.rs	5-5	docs/reference/features/feature-index.toml	edf3e84c20a2	pub mod async_runtime;
+src/linker.rs	74-75	docs/specification/bootstrap-subset.md	6a2ba36046fb	let runtime_dir = runtime_paths::runtime_dir()?; let runtime_c = runtime_dir.join(runtime_paths::RUNTIME_C_FILE);
+src/macros/mod.rs	167-167	docs/reference/features/feature-index.toml	4937b6ff3ab8	Token::Identifier("print_debug".to_string()),
 src/macros/mod.rs	167-167	docs/specification/bootstrap-subset.md	4937b6ff3ab8	Token::Identifier("print_debug".to_string()),
 src/macros/mod.rs	167-167	docs/specification/language-spec.md	4937b6ff3ab8	Token::Identifier("print_debug".to_string()),
-src/macros/mod.rs	41-41	docs/reference/features/feature-index.yaml	8922f12cdd4a	fn register_builtin_macros(&mut self) {
+src/macros/mod.rs	41-41	docs/reference/features/feature-index.toml	8922f12cdd4a	fn register_builtin_macros(&mut self) {
 src/macros/mod.rs	41-54	docs/specification/language-spec.md	9cf5e3dc4a7d	fn register_builtin_macros(&mut self) { // println! macro self.register_built ... acro self.register_builtin_vec(); // dbg! macro self.register_builtin_dbg(); }
-src/main.rs	100-100	docs/reference/features/feature-index.yaml	701dcf50c0cc	"Turing's Proofs Meet von Neumann's Performance"
+src/main.rs	100-100	docs/reference/features/feature-index.toml	701dcf50c0cc	"Turing's Proofs Meet von Neumann's Performance"
 src/ownership/borrow_checker.rs	179-185	docs/specification/bootstrap-subset.md	bd6e8465c947	} Ok(()) } /// Collect function signature for ownership analysis fn collect_function_sig(&mut self, func: &Function) {
 src/ownership/borrow_checker.rs	179-185	docs/specification/language-spec.md	bd6e8465c947	} Ok(()) } /// Collect function signature for ownership analysis fn collect_function_sig(&mut self, func: &Function) {
 src/ownership/borrow_checker.rs	205-205	docs/specification/language-spec.md	df0db2adcfc4	ParamOwnership::BorrowMut
 src/ownership/borrow_checker.rs	207-207	docs/specification/bootstrap-subset.md	af0940c0792c	ParamOwnership::Borrow
 src/ownership/borrow_checker.rs	219-219	docs/specification/bootstrap-subset.md	54091cbd14cb	ParamOwnership::Move
 src/ownership/borrow_checker.rs	219-219	docs/specification/language-spec.md	54091cbd14cb	ParamOwnership::Move
-src/ownership/borrow_checker.rs	236-236	docs/reference/features/core-language/implicit-lifetimes.md	3975922a5a94	ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))
 src/ownership/borrow_checker.rs	236-236	docs/specification/language-spec.md	3975922a5a94	ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))
+src/ownership/borrow_checker.rs	43-44	docs/specification/language-spec.md	c118c15fa11c	/// The borrowing modes carry no lifetime: the caller-side borrow always lasts /// exactly for the call expression, so `check_call_args` supplies that lifetime.
 src/ownership/borrow_checker.rs	48-48	docs/specification/language-spec.md	10c086f545ca	Move,
-src/ownership/borrow_checker.rs	514-514	docs/reference/features/feature-index.yaml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	514-514	docs/reference/features/core-language/implicit-lifetimes.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	514-514	docs/reference/features/feature-index.toml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
 src/ownership/borrow_checker.rs	514-514	docs/specification/bootstrap-subset.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
 src/ownership/borrow_checker.rs	514-514	docs/specification/language-spec.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	520-520	docs/reference/features/feature-index.yaml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	520-520	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	520-520	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	520-520	docs/specification/bootstrap-subset.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	520-520	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/mod.rs	109-109	docs/reference/features/core-language/implicit-lifetimes.md	8103577ec368	let scope_lifetime = Lifetime::Scope(self.current_scope);
 src/ownership/mod.rs	132-132	docs/specification/bootstrap-subset.md	160044bf88bc	pub fn end_borrows(&mut self, lifetime: &Lifetime) {
 src/ownership/mod.rs	27-27	docs/reference/features/core-language/implicit-lifetimes.md	e06a29f1a329	pub enum Lifetime {
-src/package/lockfile.rs	341-341	docs/reference/features/feature-index.yaml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),
+src/package/lockfile.rs	341-341	docs/reference/features/feature-index.toml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),
+src/parser/mod.rs	10-23	docs/reference/features/async-system/async-as-effect.md	532eb9398f67	current: usize, /// Type parameters currently in scope (for parsing generic f ... token_cache = if !tokens.is_empty() { Some(tokens[0].clone()) } else { None };
 src/parser/mod.rs	1045-1051	docs/specification/language-spec.md	2623da5935b7	if !self.check(&Token::Fn) { return Err(CompileError::UnexpectedToken { expec ... to_string(), found: self.peek()?.to_string(), span: self.current_span(), }); }
-src/parser/mod.rs	1274-1274	docs/reference/features/feature-index.yaml	7ffcc503358f	_ => AstToken::Ident(format!("{:?}", token)), // Fallback for other tokens
+src/parser/mod.rs	1274-1274	docs/reference/features/feature-index.toml	7ffcc503358f	_ => AstToken::Ident(format!("{:?}", token)), // Fallback for other tokens
 src/parser/mod.rs	1274-1274	docs/specification/language-spec.md	7ffcc503358f	_ => AstToken::Ident(format!("{:?}", token)), // Fallback for other tokens
 src/parser/mod.rs	1321-1331	docs/specification/language-spec.md	37de7f2c8797	pub fn parse_statement(&mut self) -> Result<Stmt> { match self.peek()? { Toke ... e(), Token::Match => self.parse_match(), Token::Unsafe => self.parse_unsafe(),
-src/parser/mod.rs	1325-1325	docs/reference/features/feature-index.yaml	3a905244830e	Token::If => self.parse_if(),
+src/parser/mod.rs	1325-1325	docs/reference/features/feature-index.toml	3a905244830e	Token::If => self.parse_if(),
 src/parser/mod.rs	1325-1325	docs/specification/bootstrap-subset.md	3a905244830e	Token::If => self.parse_if(),
 src/parser/mod.rs	1325-1325	docs/specification/language-spec.md	3a905244830e	Token::If => self.parse_if(),
-src/parser/mod.rs	1331-1331	docs/reference/features/feature-index.yaml	eb07adc20e9e	Token::Unsafe => self.parse_unsafe(),
+src/parser/mod.rs	133-133	docs/reference/features/async-system/async-as-effect.md	b99fd73ccbc0	span.start,
+src/parser/mod.rs	1330-1330	docs/specification/bootstrap-subset.md	88adfe6bdb8e	Token::Match => self.parse_match(),
+src/parser/mod.rs	1330-1330	docs/specification/language-spec.md	88adfe6bdb8e	Token::Match => self.parse_match(),
+src/parser/mod.rs	1331-1331	docs/reference/features/feature-index.toml	eb07adc20e9e	Token::Unsafe => self.parse_unsafe(),
 src/parser/mod.rs	1405-1435	docs/specification/language-spec.md	30a14c83a3c6	fn parse_let(&mut self) -> Result<Stmt> { let start_span = self.consume(Token ... } else { None }; self.consume(Token::Eq, "Expected '=' after variable name")?;
 src/parser/mod.rs	1435-1435	docs/specification/bootstrap-subset.md	dffe3e672db5	self.consume(Token::Eq, "Expected '=' after variable name")?;
-src/parser/mod.rs	1469-1469	docs/reference/features/feature-index.yaml	5659f666d863	self.consume(Token::LeftBrace, "Expected '{' after else")?;
+src/parser/mod.rs	1469-1469	docs/reference/features/feature-index.toml	5659f666d863	self.consume(Token::LeftBrace, "Expected '{' after else")?;
 src/parser/mod.rs	1469-1469	docs/specification/bootstrap-subset.md	5659f666d863	self.consume(Token::LeftBrace, "Expected '{' after else")?;
 src/parser/mod.rs	1469-1469	docs/specification/language-spec.md	5659f666d863	self.consume(Token::LeftBrace, "Expected '{' after else")?;
-src/parser/mod.rs	176-176	docs/reference/features/feature-index.yaml	45976242aecd	while self.check(&Token::Import) {
+src/parser/mod.rs	176-176	docs/reference/features/feature-index.toml	45976242aecd	while self.check(&Token::Import) {
 src/parser/mod.rs	176-176	docs/specification/language-spec.md	45976242aecd	while self.check(&Token::Import) {
 src/parser/mod.rs	1990-1990	docs/specification/language-spec.md	a86c29990d38	let right = self.parse_postfix()?;
 src/parser/mod.rs	2062-2070	docs/specification/bootstrap-subset.md	0ae185fc0cc4	let base_type = match name.as_str() { "i32" => Type::I32, "i64" | "int" => Ty ... " => Type::Bool, "String" => Type::String, _ => Type::Custom(name.clone()), };
 src/parser/mod.rs	2062-2070	docs/specification/language-spec.md	0ae185fc0cc4	let base_type = match name.as_str() { "i32" => Type::I32, "i64" | "int" => Ty ... " => Type::Bool, "String" => Type::String, _ => Type::Custom(name.clone()), };
 src/parser/mod.rs	2064-2064	docs/specification/language-spec.md	4093f823773b	"i64" | "int" => Type::I64, // "int" is an alias for i64
-src/parser/mod.rs	2094-2094	docs/reference/features/feature-index.yaml	6bbab2f9611c	.all(|c| c.is_uppercase() || c == '_') =>
-src/parser/mod.rs	2094-2094	docs/specification/bootstrap-subset.md	6bbab2f9611c	.all(|c| c.is_uppercase() || c == '_') =>
+src/parser/mod.rs	2090-2100	docs/specification/bootstrap-subset.md	784ad42c33e0	match &ty { Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() ||  ... arams args.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); }
+src/parser/mod.rs	2094-2094	docs/reference/features/feature-index.toml	6bbab2f9611c	.all(|c| c.is_uppercase() || c == '_') =>
 src/parser/mod.rs	2094-2094	docs/specification/language-spec.md	6bbab2f9611c	.all(|c| c.is_uppercase() || c == '_') =>
+src/parser/mod.rs	245-268	docs/reference/features/async-system/async-as-effect.md	4ce5a941bac0	// Multiple item import: import std::math::{pd_abs, pd_sin} items = Some(self ... nexpectedToken { expected: "alias name".to_string(), found: token.to_string(),
 src/parser/mod.rs	259-259	docs/specification/language-spec.md	17c6d474e56f	if self.check(&Token::As) {
 src/parser/mod.rs	344-406	docs/specification/language-spec.md	48061a60b658	fn parse_item(&mut self) -> Result<Item> { // Check for visibility modifier l ... impl, or macro declaration".to_string(), span: self.current_span(), }) } } } }
 src/parser/mod.rs	354-354	docs/reference/features/async-system/async-as-effect.md	bf78a17122be	let is_async = if self.check(&Token::Async) {
-src/parser/mod.rs	36-36	docs/reference/features/feature-index.yaml	941171fa2fb0	let mut lifetime_params = Vec::new();
 src/parser/mod.rs	36-98	docs/reference/features/core-language/implicit-lifetimes.md	14b9759a9c36	let mut lifetime_params = Vec::new(); let mut type_params = Vec::new(); let m ... fter generic parameters")?; } Ok((lifetime_params, type_params, const_params))
+src/parser/mod.rs	365-365	docs/reference/features/async-system/async-as-effect.md	8f88aac7b00e	func.is_async = is_async;
 src/parser/mod.rs	379-379	docs/specification/language-spec.md	cc99843703d1	Token::Enum => Ok(Item::Enum(self.parse_enum()?)),
 src/parser/mod.rs	536-539	docs/specification/bootstrap-subset.md	cd167a45f318	if return_type.is_some() && has_tail_expr { if matches!(body.last(), Some(Stm ... let Some(Stmt::Expr(expr)) = body.pop() { body.push(Stmt::Return(Some(expr)));
 src/parser/mod.rs	549-549	docs/internals/ARCHITECTURE.md	c5f143e3557a	Ok(Function {
+src/parser/mod.rs	549-549	docs/specification/language-spec.md	c5f143e3557a	Ok(Function {
 src/parser/mod.rs	553-553	docs/reference/features/core-language/implicit-lifetimes.md	3691b2469f5b	lifetime_params,
-src/parser/mod.rs	553-553	docs/reference/features/feature-index.yaml	3691b2469f5b	lifetime_params,
+src/parser/mod.rs	553-553	docs/reference/features/feature-index.toml	3691b2469f5b	lifetime_params,
 src/parser/mod.rs	553-553	docs/specification/language-spec.md	3691b2469f5b	lifetime_params,
 src/parser/mod.rs	565-565	docs/reference/features/async-system/async-as-effect.md	3497d410c0eb	effects: None, // Effects will be inferred during analysis
-src/parser/mod.rs	565-565	docs/reference/features/feature-index.yaml	3497d410c0eb	effects: None, // Effects will be inferred during analysis
+src/parser/mod.rs	565-565	docs/reference/features/feature-index.toml	3497d410c0eb	effects: None, // Effects will be inferred during analysis
 src/parser/mod.rs	565-565	docs/specification/language-spec.md	3497d410c0eb	effects: None, // Effects will be inferred during analysis
+src/parser/mod.rs	58-60	docs/reference/features/feature-index.toml	a90547973646	} else if self.check(&Token::Const) { // It's a const parameter self.advance()?; // consume 'const'
 src/parser/mod.rs	752-752	docs/design/trait_system_design.md	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
-src/parser/mod.rs	752-752	docs/reference/features/feature-index.yaml	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
+src/parser/mod.rs	752-752	docs/reference/features/feature-index.toml	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
 src/parser/mod.rs	752-977	docs/specification/language-spec.md	3ee71ffc32ab	fn parse_trait(&mut self) -> Result<TraitDef> { let start_span = self.consume ... w( start_span.start, end_span.end, start_span.line, start_span.column, ), }) }
 src/parser/mod.rs	875-911	docs/specification/language-spec.md	e1330cc9d1cd	// Parse parameters self.consume(Token::LeftParen, "Expected '(' after method ... m_type, mutable, }); if !self.check(&Token::Comma) { break; } self.advance()?;
-src/parser/mod.rs	876-876	docs/reference/features/feature-index.yaml	cb78d967e569	self.consume(Token::LeftParen, "Expected '(' after method name")?;
-src/resolver/mod.rs	51-51	docs/reference/features/feature-index.yaml	891ba0920fa5	// Check for PALLADIUM_PATH environment variable
+src/parser/mod.rs	876-876	docs/reference/features/feature-index.toml	cb78d967e569	self.consume(Token::LeftParen, "Expected '(' after method name")?;
+src/resolver/mod.rs	51-51	docs/reference/features/feature-index.toml	891ba0920fa5	// Check for PALLADIUM_PATH environment variable
 src/resolver/mod.rs	51-52	docs/specification/language-spec.md	07ec7e442f32	// Check for PALLADIUM_PATH environment variable if let Ok(pd_path) = std::env::var("PALLADIUM_PATH") {
 src/runtime/string_ops.rs	398-398	docs/reference/features/advanced/totality-checking.md	b8736fb052c9	fn test_null_termination() {
-src/runtime/string_ops.rs	398-398	docs/reference/features/feature-index.yaml	b8736fb052c9	fn test_null_termination() {
-src/typeck/mod.rs	121-121	docs/reference/features/feature-index.yaml	338e779ddf8c	crate::ast::Type::Reference { inner, .. } => {
+src/runtime/string_ops.rs	398-398	docs/reference/features/feature-index.toml	b8736fb052c9	fn test_null_termination() {
+src/runtime_paths.rs	19-19	docs/specification/bootstrap-subset.md	fa5d8c58282c	pub const RUNTIME_C_FILE: &str = "palladium_runtime.c";
 src/typeck/mod.rs	121-125	docs/reference/features/core-language/implicit-lifetimes.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
+src/typeck/mod.rs	121-125	docs/reference/features/feature-index.toml	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	121-125	docs/specification/language-spec.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
-src/typeck/mod.rs	1349-1349	docs/reference/features/feature-index.yaml	785cb833e3d8	// Pattern exhaustiveness checking
+src/typeck/mod.rs	1349-1349	docs/reference/features/feature-index.toml	785cb833e3d8	// Pattern exhaustiveness checking
 src/typeck/mod.rs	1349-1381	docs/specification/language-spec.md	d2443382a1f8	// Pattern exhaustiveness checking if let CheckerType::Enum(enum_name) = &exp ... ).collect(); exhaustiveness_checker.check_match(enum_name, &patterns, *span)?;
 src/typeck/mod.rs	1562-1562	docs/specification/bootstrap-subset.md	44666adec598	"Indirect function calls not yet supported".to_string(),
 src/typeck/mod.rs	1562-1562	docs/specification/language-spec.md	44666adec598	"Indirect function calls not yet supported".to_string(),
-src/typeck/mod.rs	2345-2345	docs/reference/features/feature-index.yaml	6dbf48a5b2ee	CheckerType::Generic { name, args } if name == "Result" && args.len() == 2 => {
+src/typeck/mod.rs	2345-2345	docs/reference/features/feature-index.toml	6dbf48a5b2ee	CheckerType::Generic { name, args } if name == "Result" && args.len() == 2 => {
 src/typeck/mod.rs	2345-2345	docs/specification/language-spec.md	6dbf48a5b2ee	CheckerType::Generic { name, args } if name == "Result" && args.len() == 2 => {
-src/typeck/mod.rs	2784-2784	docs/reference/features/feature-index.yaml	917b6d488770	"Cannot infer type from empty array".to_string(),
+src/typeck/mod.rs	2784-2784	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
 src/typeck/mod.rs	2784-2784	docs/specification/bootstrap-subset.md	917b6d488770	"Cannot infer type from empty array".to_string(),
 src/typeck/mod.rs	2784-2784	docs/specification/language-spec.md	917b6d488770	"Cannot infer type from empty array".to_string(),
 src/typeck/mod.rs	365-365	docs/specification/bootstrap-subset.md	25d1c4d5945e	let functions: HashMap<String, CheckerType> = crate::builtins::BUILTINS
 src/typeck/mod.rs	365-365	docs/specification/language-spec.md	25d1c4d5945e	let functions: HashMap<String, CheckerType> = crate::builtins::BUILTINS
 src/typeck/mod.rs	795-795	docs/design/trait_system_design.md	78074ff85f28	Item::Trait(_) => {
-src/typeck/mod.rs	795-795	docs/reference/features/feature-index.yaml	78074ff85f28	Item::Trait(_) => {
+src/typeck/mod.rs	795-797	docs/reference/features/feature-index.toml	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
 src/typeck/mod.rs	795-797	docs/specification/language-spec.md	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
+src/typeck/mod.rs	947-947	docs/specification/language-spec.md	b283b5e48b13	self.symbols.enter_scope();

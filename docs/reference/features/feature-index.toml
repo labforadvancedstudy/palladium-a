@@ -1,0 +1,549 @@
+# Palladium feature index
+#
+# WHAT THIS FILE IS. It used to be `status.yaml`, a progress tracker: every feature
+# carried status glyphs and `progress: <N>`, plus a top-level `self_hosting_progress: 60%`.
+# Not one of those numbers came from a measurement, several flattered the project
+# ("generics: 85", "traits: 70" for features that emit no code at all), and a percentage
+# is unfalsifiable by construction — no command can disagree with it. They are deleted.
+#
+# WHY TOML, AND NOT YAML. This was `.yaml` until 2026-08-22. Reading it required either
+# PyYAML — an unprovisioned host dependency — or a hand-rolled parser, and the hand-rolled
+# parser could only be held honest by differentially testing it against PyYAML, which is
+# available exactly when it is not needed. That is a class of bug, not an instance: a
+# second parser can always disagree with the first. TOML is in the standard library
+# (`tomllib`, Python 3.11+), so there is ONE parser, nobody's fallback, and no differential
+# test to maintain. This file is a machine-readable index; nothing here is hand-written
+# prose that needed YAML's ergonomics.
+#
+# SCHEMA. One [table] per feature, nested to mirror the taxonomy:
+#
+#   description     what the feature is.
+#   spec            where it is DEFINED. The definition does not change when the compiler
+#                   does. Paths are relative to this file.
+#   implementation  what `pdc` does today: implemented | partial | unimplemented
+#   evidence        an array. Every item must be checkable and must begin with one of four
+#                   tags. Prose is not evidence; it goes in `note`.
+#   note            optional prose. Never load-bearing.
+#
+# EVIDENCE TAGS (enforced by scripts/check-doc-evidence.sh):
+#
+#   src: <path>:<line>[-<line>] <symbol or quoted text>
+#       A non-documentation repository file. Path and range are checked to exist, the range
+#       is pinned by fingerprint in docs/citation-pins.tsv, and any text quoted in backticks
+#       or double quotes must actually appear in the cited range — a citation whose excerpt
+#       does not contain the thing being claimed is the failure the pin file exists to expose.
+#
+#   cmd: <command> -> <result>
+#       A reproducible command and what it produced. THIS IS HOW AN ABSENCE IS PROVED:
+#       a grep that returns nothing, quoted with its exit status. "There is no X" on its own
+#       is an assertion, not evidence, and the gate rejects it.
+#
+#   conformance: <file>.pd <VERDICT>      a row from scripts/conformance.sh
+#   gate: <make target> -> <result>       a project gate and its outcome
+#
+# CAUTION about conformance evidence. Six files under tests/ are named after a feature and
+# PASS without exercising it: 07_traits_basic, 08_generics_basic, 09_effects_system,
+# 10_async_await, 11_unsafe_blocks and 12_modules_imports each only `print` a message saying
+# the feature is unimplemented. A green row for those names is evidence of nothing.
+#
+# Measured at commit abeb665 (2026-08-22):
+#   cargo build --release && scripts/conformance.sh
+#     -> total=42 pass=39 compile_fail=3 link_fail=0 run_fail=0 skipped=2
+
+[meta]
+measured_at = "abeb665"
+measured_on = "2026-08-22"
+specification = "../../specification/language-spec.md"
+annex = "../../specification/language-spec.md#part-ii-implementation-status-annex"
+
+[core_language.memory_management.implicit_lifetimes]
+description = "Lifetimes inferred; no 'a parameter lists. Explicit ref<'a> T only on ambiguity."
+spec = "core-language/implicit-lifetimes.md"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'region\\|Region' src/ --include='*.rs' -> exit 1, 0 lines",
+  "src: src/parser/mod.rs:553 lifetime_params, populated by the parser",
+  "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> 0 real readers; every hit is `lifetime_params: vec![]` in an src/lsp or src/optimizer test fixture",
+]
+
+[core_language.memory_management.reference_syntax]
+description = "ref / ref mut instead of & and &mut."
+spec = "core-language/implicit-lifetimes.md"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -nE '#\\[token\\(\"ref\"\\)\\]' src/lexer/token.rs -> exit 1, 0 lines",
+  "cmd: pdc compile 'fn f(x: ref String) {} fn main(){}' -> error: Unexpected token: expected ')', found identifier 'String'",
+  "src: src/lexer/token.rs:33 #[token(\"fn\")] — start of the 29-keyword block; ref is not in it",
+]
+note = "The implemented spelling is Rust's & / &mut with 'a parameter lists — the exact annotation burden the definition removes."
+
+[core_language.memory_management.array_parameter_semantics]
+description = "Whether a [T; N] parameter copies or aliases the caller's array. OPEN DECISION."
+spec = "../../specification/language-spec.md#n121-array-parameters-open-decision"
+implementation = "unimplemented"
+evidence = [
+  "src: src/codegen/mod.rs:1555 Type::Array param lowered to a C array declarator, which decays to a pointer",
+  "cmd: pdc compile 'fn bump(mut a: [i64;3]) { a[0]=99; } fn main(){ let mut v:[i64;3]=[1,2,3]; bump(v); print_int(v[0]); }' -> generated C is `void bump(long long a[3])`; program prints 99",
+  "cmd: pdc compile 'fn bump(a: [i64;3]) { a[0]=99; } ...' (no mut) -> compiles, links, prints 99, no diagnostic",
+  "src: src/codegen/mod.rs:1634 'Unsupported type in reference parameter' — &mut [T; N] does not compile at all",
+]
+note = "Marked unimplemented because no spelling copies. Under Option A (value semantics) this stays unimplemented and src/codegen/mod.rs:1555 is the gap. Under Option B (reference semantics) it becomes partial AT BEST, never implemented: Option B still needs a rule that does not exist — either the reference spellings are forbidden or &mut [T; N] becomes required for a written-through parameter — and current behaviour satisfies neither, permitting mutation through a bare non-mut array while rejecting &mut [T; N] outright. The specification states both options rather than picking silently; see language-spec.md N12.1 and A9.2."
+
+[core_language.memory_management.borrow_checker]
+description = "Rust-compatible ownership: moves, borrows, no GC."
+spec = "../../specification/language-spec.md#n12-memory-model"
+implementation = "partial"
+evidence = [
+  "conformance: tests/05_ownership_basic.pd PASS",
+  "conformance: tests/05_borrowing_references.pd PASS",
+  "src: src/typeck/mod.rs:121-125 Type::Reference maps to its inner type — 'TODO: Proper reference type handling'",
+  "src: src/ownership/borrow_checker.rs:514 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",
+  "src: src/ownership/borrow_checker.rs:520 self.context.end_borrows(&call_lifetime) — argument borrows end with the call",
+  "cmd: pdc compile 'fn t(a: String) -> i64 { return string_len(a); } fn main(){ let s: String = \"hello\"; print_int(t(s)); print_int(t(s)); }' -> accepted, prints 5 5 (defect D6 does not reproduce)",
+  "cmd: pdc compile 'struct S { x: i64 } fn bump(s: &mut S) { s.x = 77; } fn main(){ let v: S = S { x: 1 }; bump(&mut v); print_int(v.x); }' -> compiles, links, prints 77 — an immutable local mutated with no diagnostic",
+]
+note = "Enforces a move/initialization discipline and conflicting-borrow detection, but is not represented in the type system. One known defect: `&mut` of an immutable local is accepted for struct types. Defect D6 (\"call arguments borrowed forever\") was FIXED in commit 191f8c1 and is retracted here — see language-spec.md A9.4 for the re-measurement. CLAUDE.md still lists D6 as open and is stale."
+
+[core_language.memory_management.unsafe_blocks]
+description = "Restricted unsafe with side-channel protection; forbidden in #![total(strict)] crates."
+spec = "../../specification/language-spec.md#n12-memory-model"
+implementation = "partial"
+evidence = [
+  "src: src/parser/mod.rs:1331 Token::Unsafe => self.parse_unsafe()",
+  "src: src/driver/mod.rs:162 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
+  "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
+  "conformance: tests/11_unsafe_blocks.pd PASS (placeholder: only prints that the feature is unimplemented)",
+]
+
+[core_language.type_system.type_inference]
+description = "Hindley-Milner type inference with extensions; minimal annotations."
+spec = "../../specification/language-spec.md#n4-types"
+implementation = "partial"
+evidence = [
+  "conformance: examples/tutorial/01_variables.pd PASS",
+  "cmd: grep -rn 'HindleyMilner\\|unify\\|Substitution' src/typeck/ --include='*.rs' -> exit 1, 0 lines",
+  "src: src/typeck/mod.rs:2784 'Cannot infer type from empty array'",
+]
+note = "Local `let` inference works (the i64 default was replaced by real inference in 04104c5). There is no unification engine and no polymorphic generalisation, so it is not Hindley-Milner."
+
+[core_language.type_system.generics]
+description = "Monomorphization-based generics, generic structs and enums, where clauses."
+spec = "../../specification/language-spec.md#n10-traits-and-generics"
+implementation = "unimplemented"
+evidence = [
+  "src: src/codegen/mod.rs:1367 'Generic types in structs not yet supported'",
+  "src: src/parser/mod.rs:2094 all-uppercase name inside <...> reclassified as a const argument",
+  "cmd: pdc compile 'fn f<T: Clone>(x: T) {} fn main(){}' -> error: expected '>' after generic parameters, found ':'",
+  "conformance: tests/08_generics_basic.pd PASS (placeholder: only prints that generics are unimplemented)",
+]
+note = "Design detail: ../../design/generics.md"
+
+[core_language.type_system.traits]
+description = "Trait definitions, impls, bounds on generics, associated types."
+spec = "../../specification/language-spec.md#n10-traits-and-generics"
+implementation = "unimplemented"
+evidence = [
+  "src: src/parser/mod.rs:752 fn parse_trait — traits do parse",
+  "src: src/codegen/mod.rs:1011 Item::Trait(_) => emits nothing",
+  "src: src/typeck/mod.rs:795-797 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
+  "src: src/parser/mod.rs:876 trait-method parameter loop, which has no self_param branch",
+  "conformance: tests/07_traits_basic.pd PASS (placeholder: only prints that traits are unimplemented)",
+]
+note = "Design detail: ../../design/trait_system_design.md"
+
+[core_language.type_system.const_generics]
+description = "Compile-time generic parameters; arrays with generic sizes."
+spec = "../../specification/language-spec.md#n4-types"
+implementation = "partial"
+evidence = [
+  "src: src/parser/mod.rs:58-60 the const-parameter branch of parse_generic_params",
+  "src: src/codegen/mod.rs:1350 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
+  "src: src/codegen/mod.rs:1351 ArraySize::Expr(_) => \"0\".to_string()",
+]
+note = "Neither case is monomorphised."
+
+[core_language.control_flow.pattern_matching]
+description = "match with exhaustiveness checking, destructuring, guards, wildcards."
+spec = "../../specification/language-spec.md#n6-patterns"
+implementation = "partial"
+evidence = [
+  "conformance: tests/06_pattern_matching.pd PASS",
+  "src: src/ast/mod.rs:313 pub enum Pattern — three variants only",
+  "src: src/typeck/mod.rs:1349 exhaustiveness runs only when the scrutinee is an enum",
+  "src: src/codegen/mod.rs:1954 match lowers to an if/else-if chain",
+]
+note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
+
+[core_language.control_flow.loops]
+description = "for over iterators, while, loop, break, continue."
+spec = "../../specification/language-spec.md#n5-statements-and-expressions"
+implementation = "partial"
+evidence = [
+  "conformance: tests/04_control_flow_for.pd PASS",
+  "conformance: tests/04_control_flow_while.pd PASS",
+  "cmd: pdc compile 'fn main() { loop { break; } }' -> error: expected ';' after expression, found '{'",
+  "src: src/codegen/mod.rs:1920 for-over-array emits sizeof(...) on a decayed pointer",
+]
+
+[core_language.control_flow.conditionals]
+description = "if/else as expressions; no ternary."
+spec = "../../specification/language-spec.md#n5-statements-and-expressions"
+implementation = "partial"
+evidence = [
+  "conformance: tests/04_control_flow_if.pd PASS",
+  "src: src/parser/mod.rs:1469 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
+  "src: src/parser/mod.rs:1325 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
+]
+
+[core_language.functions.function_definitions]
+description = "Typed parameters, optional return type, expression-oriented bodies."
+spec = "../../specification/language-spec.md#n3-program-structure-and-items"
+implementation = "implemented"
+evidence = [
+  "conformance: tests/03_functions_basic.pd PASS",
+  "gate: make selfhost -> byte-identical fixed point, exercising every function in bootstrap/pdc.pd",
+]
+note = "A tail expression in a function body with a declared return type is lowered to a return. A tail expression in a nested block is not."
+
+[core_language.functions.tail_returns]
+description = "A function body's trailing expression is its return value."
+spec = "../../specification/language-spec.md#n5-statements-and-expressions"
+implementation = "partial"
+evidence = [
+  "cmd: pdc compile 'fn add(a: i64, b: i64) -> i64 { a + b } fn main(){ print_int(add(2,3)); }' -> prints 5 (tail expression is lowered)",
+  "cmd: pdc compile 'fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n-1)+fib(n-2) } } fn main(){ print_int(fib(10)); }' -> compiles clean, prints 8261746944; the answer is 55",
+  "src: src/codegen/mod.rs:1954 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return",
+]
+note = "Defect D3 is half-fixed: a tail EXPRESSION becomes a return, a tail `if` does not, and the tail-`if` shape is the idiomatic one for a recursive function. CLAUDE.md:66 records D3 as fixed, which holds only for the expression case. The \"437 affected sites\" figure is an understatement — the heuristic behind it cannot see a function ending in the else block's brace."
+
+[core_language.functions.closures]
+description = "Anonymous functions with inferred capture; move closures."
+spec = "../../specification/language-spec.md#n5-statements-and-expressions"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'Closure\\|Lambda' src/ast/ src/parser/ --include='*.rs' -> exit 1, 0 lines",
+  "cmd: pdc compile 'fn main() { let f = |x: i64| x; }' -> error: Expected expression, but found '|'",
+]
+
+[core_language.modules.module_system]
+description = "File-based modules, nested paths, visibility, `import`."
+spec = "../../specification/language-spec.md#n11-modules"
+implementation = "partial"
+evidence = [
+  "src: src/parser/mod.rs:176 while self.check(&Token::Import) — imports are drained before items",
+  "cmd: grep -rn 'Item::Module\\|Token::Mod' src/ --include='*.rs' -> exit 1, 0 lines",
+  "conformance: tests/12_modules_imports.pd PASS (placeholder: only prints that modules are unimplemented)",
+  "conformance: tests/projects/hello_pdm/src/main.pd PASS",
+]
+note = "Design detail: ../../design/module-system.md"
+
+[error_handling.result_type]
+description = "Built-in Result<T, E> with Ok/Err."
+spec = "../../specification/language-spec.md#n4-types"
+implementation = "unimplemented"
+evidence = [
+  "src: src/typeck/mod.rs:2345 the only special-casing — `?` typechecks against a Generic{name:\"Result\"} shape",
+  "cmd: grep -rn 'prelude' src/driver/ --include='*.rs' -> exit 1, 0 lines (stdlib/prelude.pd is never loaded)",
+]
+note = "Result and Option are ordinary user enums if you declare them."
+
+[error_handling.question_mark]
+description = "`?` for error propagation with early return."
+spec = "../../specification/language-spec.md#n5-statements-and-expressions"
+implementation = "partial"
+evidence = [
+  "src: src/codegen/mod.rs:2553-2554 emits a struct Result temporary — a layout codegen never defines",
+  "src: src/codegen/mod.rs:2569 the comment describing that layout",
+]
+note = "Silent breakage: it typechecks, and the failure surfaces in gcc."
+
+[error_handling.try_blocks]
+description = "`try { ... }` for scoped error handling."
+spec = "../../specification/language-spec.md#n5-statements-and-expressions"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'TryBlock\\|Token::Try' src/ --include='*.rs' -> exit 1, 0 lines",
+  "cmd: pdc compile 'fn main() { try { } }' -> error: Unknown struct type: try",
+]
+
+[async_and_effects.async_as_effect]
+description = "Async is an algebraic effect: no async keyword, no .await, effects inferred and propagated."
+spec = "async-system/async-as-effect.md"
+implementation = "unimplemented"
+evidence = [
+  "src: src/lexer/token.rs:111 #[token(\"async\")] — one of the two things the definition removes",
+  "src: src/parser/mod.rs:565 effects: None, // Effects will be inferred during analysis",
+  "src: src/driver/mod.rs:152 the analyser's result is println!ed and nothing else",
+  "src: src/effects/mod.rs:265 'If function is unknown, we conservatively assume it's pure' — the unsound direction",
+  "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> 1 line, src/driver/mod.rs:147",
+  "conformance: tests/09_effects_system.pd PASS (placeholder: only prints that effects are unimplemented)",
+]
+
+[async_and_effects.no_await_syntax]
+description = "No await operator; the compiler places async boundaries."
+spec = "async-system/async-as-effect.md"
+implementation = "unimplemented"
+evidence = [
+  "src: src/codegen/mod.rs:2606 emits `while (!{}.poll(&{})) {` — a poll member nothing generates",
+  "cmd: pdc compile 'async fn g() -> i64 { return 1; } fn main(){}' -> error: Type mismatch: expected Future<Int>, found Int",
+  "conformance: tests/10_async_await.pd PASS (placeholder: only prints that async/await is unimplemented)",
+]
+
+[async_and_effects.effect_contexts]
+description = "with_timeout / with_retry / trace scoping over a block; effect::sync and -> async T escape hatches."
+spec = "async-system/async-as-effect.md"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -nE '#\\[token\\(\"(with|effect)\"\\)\\]' src/lexer/token.rs -> exit 1, 0 lines",
+  "src: src/lexer/token.rs:117 the last token attribute of the keyword block",
+]
+
+[async_and_effects.automatic_parallelization]
+description = "Independent effectful operations run in parallel by default."
+spec = "async-system/async-as-effect.md"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'parallel' src/effects/mod.rs src/codegen/mod.rs -> exit 1, 0 lines",
+]
+
+[async_and_effects.structured_concurrency]
+description = "Scoped tasks, automatic cancellation, no orphans."
+spec = "async-system/async-as-effect.md"
+implementation = "unimplemented"
+evidence = [
+  "src: src/lib.rs:5 pub mod async_runtime — the module's only reachable entry point",
+  "cmd: grep -rn 'async_runtime' src/ --include='*.rs' | grep -v '^src/async_runtime' -> 1 line, src/lib.rs:5",
+]
+note = "src/async_runtime/mod.rs is a Rust-side thread pool that no compiler phase and no generated C uses."
+
+[advanced_features.verification.totality_checking]
+description = "#[total], #[decreases(expr)], #![total(strict)], fuel-bounded termination."
+spec = "advanced/totality-checking.md"
+implementation = "unimplemented"
+evidence = [
+  "cmd: pdc compile '#[total] fn f(n: i64) -> i64 { return n; }' -> error: Unexpected character '#' at line 1, column 1",
+  "cmd: grep -rn 'total\\|decreases\\|Fuel' src/ --include='*.rs' -> 1 line, src/runtime/string_ops.rs:398, an unrelated test named test_null_termination",
+]
+note = "The blocker is lexical: there is no '#' token, so attributes fail one level below the parser."
+
+[advanced_features.verification.refinement_types]
+description = "Types carrying predicates, checked at compile time."
+spec = "PALLADIUM_V1_FEATURES.md#41-verification"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'Refinement\\|Predicate' src/ --include='*.rs' -> exit 1, 0 lines",
+  "cmd: grep -nE '#\\[token\\(\"where\"\\)\\]' src/lexer/token.rs -> exit 1, 0 lines",
+]
+
+[advanced_features.verification.proof_generation]
+description = "Export machine-checkable proofs to Lean/Coq."
+spec = "PALLADIUM_V1_FEATURES.md#41-verification"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'Coq\\|Lean\\|Isabelle\\|Proof' src/ --include='*.rs' -> 2 lines, both the marketing tagline \"Turing's Proofs Meet von Neumann's Performance\" at src/main.rs:100 and src/cli.rs:14",
+  "cmd: find . -name '*.v' -o -name '*.thy' -o -name '*.lean' -not -path './target/*' -> exit 0, 0 lines",
+]
+note = "Depends on totality_checking, which is also unimplemented."
+
+[advanced_features.verification.side_channel_safety]
+description = "Constant-time guarantees for cryptographic code."
+spec = "PALLADIUM_V1_FEATURES.md#41-verification"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
+]
+
+[advanced_features.macro_system.unified_macros]
+description = "One macro system, pattern-based, no macro_rules!/proc-macro split."
+spec = "../../specification/language-spec.md#n3-program-structure-and-items"
+implementation = "partial"
+evidence = [
+  "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
+  "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
+  "src: src/parser/mod.rs:1274 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
+]
+
+[advanced_features.macro_system.hygiene]
+description = "Hygienic expansion by default."
+spec = "../../specification/language-spec.md#n3-program-structure-and-items"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'hygien' src/ --include='*.rs' -> exit 1, 0 lines",
+]
+
+[advanced_features.compilation.incremental]
+description = "Function-level incremental compilation with dependency tracking."
+spec = "PALLADIUM_V1_FEATURES.md#6-compilation--optimization"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'incremental\\|Incremental\\|cache' src/driver/ --include='*.rs' -> exit 1, 0 lines",
+  "src: src/driver/mod.rs:49 pub fn compile_string — the whole pipeline runs per invocation",
+]
+
+[advanced_features.compilation.parallel_pipeline]
+description = "Multi-threaded compilation pipeline."
+spec = "PALLADIUM_V1_FEATURES.md#6-compilation--optimization"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'thread::spawn\\|rayon\\|par_iter' src/ --include='*.rs' -> 2 lines, both in src/async_runtime/mod.rs (:80, :279), which no compiler phase uses",
+  "src: src/driver/mod.rs:53 // Phase 1: Lexing — the phases run in sequence from here",
+]
+
+[advanced_features.compilation.c_backend]
+description = "C code generation; the backend the compiler actually ships."
+spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
+implementation = "implemented"
+evidence = [
+  "gate: make conformance -> total=42 pass=39 compile_fail=3 link_fail=0 run_fail=0 skipped=2",
+  "gate: make selfhost -> byte-identical fixed point",
+]
+
+[advanced_features.compilation.llvm_backend]
+description = "LLVM IR generation with optimisation passes."
+spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
+implementation = "partial"
+evidence = [
+  "src: src/codegen/llvm_text_backend.rs:914 '; TODO: Implement break with proper loop context'",
+  "src: src/codegen/llvm_text_backend.rs:921 '; TODO: Implement continue with proper loop context'",
+  "src: src/codegen/llvm_text_backend.rs:933 '// TODO: Implement proper pattern matching'",
+  "src: src/codegen/llvm_text_backend.rs:1379 '// TODO: Implement EnumConstructor, Question, MacroInvocation, Await'",
+  "src: src/codegen/llvm_text_backend.rs:1222 'Complex function calls not yet supported'",
+]
+note = "No conformance row exercises it."
+
+[advanced_features.compilation.optimizer]
+description = "Inlining, const propagation, dead code elimination."
+spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
+implementation = "partial"
+evidence = [
+  "src: src/driver/mod.rs:172 Phase 3.8, enabled by default",
+  "conformance: tests/integration/test_optimizations.pd PASS",
+]
+note = "gcc receives an explicit -O level since commit e72c39b."
+
+[tooling.compiler.pdc]
+description = "The compiler."
+spec = "../../specification/language-spec.md"
+implementation = "implemented"
+evidence = [
+  "cmd: cargo build --release -> exit 0, produces target/release/pdc",
+  "gate: make conformance -> total=42 pass=39 compile_fail=3 skipped=2",
+]
+
+[tooling.compiler.bootstrapping]
+description = "A Palladium compiler that compiles its own source to a fixed point."
+spec = "../../specification/bootstrap-subset.md"
+implementation = "implemented"
+evidence = [
+  "gate: make selfhost -> stage1 and stage2 outputs byte-identical",
+]
+note = "The subset it implements is PBS-1, deliberately smaller than what pdc accepts."
+
+[tooling.developer_tools.formatter]
+description = "pdfmt — automatic code formatting."
+spec = "PALLADIUM_V1_FEATURES.md#72-development-tools"
+implementation = "unimplemented"
+evidence = [
+  "src: Cargo.toml:45 the first of three [[bin]] declarations — pdc, pdm, pls",
+  "cmd: grep -rn 'pdfmt' src/ Cargo.toml -> exit 1, 0 lines",
+]
+
+[tooling.developer_tools.lsp_server]
+description = "pls — completion, go-to-definition, diagnostics."
+spec = "PALLADIUM_V1_FEATURES.md#72-development-tools"
+implementation = "partial"
+evidence = [
+  "src: Cargo.toml:53 [[bin]] for pls",
+  "cmd: ls src/lsp/ -> completion.rs, diagnostics.rs and their tests",
+]
+note = "No conformance or integration row covers it."
+
+[tooling.developer_tools.debugger]
+description = "GDB/LLDB integration, source-level debugging."
+spec = "PALLADIUM_V1_FEATURES.md#72-development-tools"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'DWARF\\|debug_info\\|#line\\|gimli' src/ --include='*.rs' -> exit 1, 0 lines",
+  "cmd: grep -c '#line' build_output/01_lexical_comments.c -> 0, exit 1 (generated C carries no line directives)",
+]
+
+[tooling.package_management.cargo_compat]
+description = "Read Cargo.toml, resolve dependencies compatibly."
+spec = "PALLADIUM_V1_FEATURES.md#73-package-management"
+implementation = "partial"
+evidence = [
+  "src: Cargo.toml:49 [[bin]] for pdm",
+  "conformance: tests/projects/hello_pdm/tests/test_math.pd COMPILE_FAIL (\"Undefined function: add\")",
+  "conformance: tests/projects/hello_pdm/src/main.pd PASS",
+]
+
+[tooling.package_management.registry]
+description = "Central package registry with version management."
+spec = "PALLADIUM_V1_FEATURES.md#73-package-management"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rnE 'reqwest|ureq|hyper|curl|isahc' Cargo.toml -> exit 1, 0 lines — no HTTP client is a dependency, so no registry can be contacted",
+  "src: src/package/lockfile.rs:341 url: \"https://packages.palladium-lang.org\" — a hardcoded default with no client behind it",
+]
+
+[ecosystem.std_library.core]
+description = "Core types and traits, memory utilities, iterator protocol."
+spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
+implementation = "unimplemented"
+evidence = [
+  "cmd: for f in $(find stdlib -name '*.pd'); do pdc compile $f; done -> 0 of 21 compile; every file is rejected at lex or parse time",
+  "cmd: pdc compile stdlib/std/option.pd -> error: Expected 'fn' for method, but found 'pub'",
+  "cmd: PALLADIUM_PATH=.../stdlib/std pdc compile 'import option; fn main(){}' -> error: Unexpected token: expected 'fn' for method, found 'pub' — forcing it onto the search path does not help",
+  "src: src/resolver/mod.rs:51 the resolver reads PALLADIUM_PATH, so this is not a dead-resolver problem",
+  "cmd: grep -rn stdlib .github/ -> exit 1, 0 lines — stdlib is not packaged by any workflow, and neither Homebrew formula installs it",
+  "src: scripts/conformance.sh:17 the DIRS default — stdlib/ is never scanned, which is why this was invisible",
+]
+note = "Because nothing here has ever compiled, no compiler defect can have \"silently miscompiled the standard library\"; the D3 claim to that effect is retracted in language-spec.md A6.6."
+
+[ecosystem.std_library.collections]
+description = "Vec<T>, HashMap<K, V>, String, Option<T>."
+spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
+implementation = "unimplemented"
+evidence = [
+  "src: src/macros/mod.rs:41 vec![e] is registered here and expands to a 1-element array, not a growable vector",
+  "src: src/codegen/mod.rs:1367 'Generic types in structs not yet supported' — no generic container can exist",
+]
+
+[ecosystem.std_library.io]
+description = "Files, network, buffered and async I/O."
+spec = "../../specification/language-spec.md#n14-builtins-and-the-standard-library"
+implementation = "partial"
+evidence = [
+  "src: src/builtins.rs:1 the SSOT table the file and path builtins are generated from",
+  "cmd: grep -rniE 'socket|TcpStream|BufReader' src/runtime/ -> exit 1, 0 lines — no network, no buffering",
+]
+note = "See reference/builtins.md, generated from src/builtins.rs."
+
+[ecosystem.interop.rust_ffi]
+description = "Call Rust from Palladium, share data structures."
+spec = "PALLADIUM_V1_FEATURES.md#8-interoperability"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rn 'Extern\\|ExternBlock' src/ast/mod.rs src/parser/mod.rs -> exit 1, 0 lines",
+  "cmd: pdc compile 'extern \"C\" { fn puts(s: String) -> i64; } fn main(){}' -> error: Expected function, struct, enum, trait, type, impl, or macro declaration",
+]
+note = "The extern \"C\" symbols in src/runtime/ are the compiler's own runtime, not a user-facing FFI."
+
+[ecosystem.interop.c_ffi]
+description = "C ABI compatibility; call C libraries and export to C."
+spec = "PALLADIUM_V1_FEATURES.md#8-interoperability"
+implementation = "partial"
+evidence = [
+  "src: src/driver/mod.rs:183 // Phase 4: Code generation — output is C, which gcc then links, so the ABI is C by construction",
+  "cmd: grep -rn 'Extern\\|ExternBlock' src/ast/mod.rs src/parser/mod.rs -> exit 1, 0 lines — no syntax for importing a C symbol",
+]
+
+[ecosystem.interop.wasm]
+description = "WASM target with WASI support."
+spec = "PALLADIUM_V1_FEATURES.md#8-interoperability"
+implementation = "unimplemented"
+evidence = [
+  "cmd: grep -rniE 'wasm|WebAssembly|wasi' src/ --include='*.rs' -> exit 1, 0 lines",
+  "cmd: ls src/codegen/ -> mod.rs and llvm_text_backend.rs only; there is no third backend",
+]
+

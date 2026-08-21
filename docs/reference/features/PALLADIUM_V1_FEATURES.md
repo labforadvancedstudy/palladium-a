@@ -2,7 +2,7 @@
 > `pdc` implements today. What is implemented, partial, or unimplemented is recorded per
 > specification section in the
 > [implementation status annex](../../specification/language-spec.md#part-ii-implementation-status-annex),
-> and per feature in [`feature-index.yaml`](feature-index.yaml). Palladium blocks below are fenced `no-compile`:
+> and per feature in [`feature-index.toml`](feature-index.toml). Palladium blocks below are fenced `no-compile`:
 > the syntax is normative, the compiler does not accept all of it yet, and
 > `scripts/check-docs.sh` counts each fence rather than hiding it.
 
@@ -24,7 +24,7 @@ came from a measurement. They are deleted, not adjusted.
 
 Status lives in exactly two places, both of which cite the compiler:
 
-- [`feature-index.yaml`](feature-index.yaml) — one row per feature: the spec section that defines it, and the
+- [`feature-index.toml`](feature-index.toml) — one row per feature: the spec section that defines it, and the
   evidence for what `pdc` does with it (a conformance test, a source location, or `unimplemented`).
 - [The implementation status annex](../../specification/language-spec.md#part-ii-implementation-status-annex)
   — the same information organised by specification section, with the failure mode of each partial
@@ -482,7 +482,7 @@ Three sections are gone. Each asserted progress rather than defining a feature, 
 when it was written:
 
 - **"Feature Status Legend"**, and the per-heading ✅/⏳/🔲 marks and percentages that used it.
-  Superseded by [`feature-index.yaml`](feature-index.yaml) and the annex, which carry evidence.
+  Superseded by [`feature-index.toml`](feature-index.toml) and the annex, which carry evidence.
 - **"Implementation Roadmap"** ("Phase 1: Core Language (✅ Complete)", "Phase 2: Self-Hosting
   (✅ Complete)", …). Sequencing belongs in
   [`MILESTONES.md`](../../contributing/MILESTONES.md), where each milestone's exit criterion is a

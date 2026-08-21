@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PINS = ROOT / "docs" / "citation-pins.tsv"
 ALLOW = ROOT / "docs" / "no-compile-allowlist.txt"
-INDEX = ROOT / "docs" / "reference" / "features" / "feature-index.yaml"
+INDEX = ROOT / "docs" / "reference" / "features" / "feature-index.toml"
 
 CITED_ROOTS = ("src/", "scripts/", "tests/", "examples/", "stdlib/", "benchmarks/",
                "runtime/", "bootstrap/", "docs/")
@@ -52,6 +52,15 @@ CONF_EVIDENCE = re.compile(r"^conformance:\s+([\w./-]+\.pd)\s+"
                            r"(PASS|COMPILE_FAIL|LINK_FAIL|RUN_FAIL|SKIP_NO_MAIN)\b")
 GATE_EVIDENCE = re.compile(r"^gate:\s+(?:make\s+([\w-]+)|cargo\s+[^\n]+?)\s*->\s*\S")
 TAGGED = re.compile(r"^(src|cmd|conformance|gate):")
+
+# A bare `:1330` continuation carries no path, so CITATION cannot match it and it gets no
+# pin and no movement check. One such form escaped four rounds of review. Authors must write
+# the full path; the shorthand is rejected wherever a citation could live.
+CONTINUATION = re.compile(r"(?<![\w/.]):(\d+)(?:-\d+)?`")
+
+# Text a `src:` evidence item quotes must actually appear in the range it cites. This is the
+# mechanical form of "a pin whose excerpt does not contain the thing being claimed".
+QUOTED = re.compile(r"`([^`]{6,})`|\"([^\"]{6,})\"|'([^']{8,})'")
 
 
 def norm(text: str) -> str:
@@ -107,7 +116,7 @@ def collect_citations() -> list[tuple[str, str, str, str, str]]:
     Fingerprinting only the first line let everything in `path:49-228` change while green.
     """
     out = []
-    docs = sorted(ROOT.glob("docs/**/*.md")) + sorted(ROOT.glob("docs/**/*.yaml"))
+    docs = (sorted(ROOT.glob("docs/**/*.md")) + sorted(ROOT.glob("docs/**/*.toml")))
     for doc in docs:
         text = doc.read_text(encoding="utf-8")
         if doc.suffix == ".md":
@@ -132,6 +141,25 @@ def collect_citations() -> list[tuple[str, str, str, str, str]]:
     return sorted(set(out))
 
 
+def collect_continuations() -> list[tuple[str, str]]:
+    """Citation shorthands that cannot be pinned. -> (citing-doc, matched-text)"""
+    out = []
+    for doc in sorted(ROOT.glob("docs/**/*.md")) + sorted(ROOT.glob("docs/**/*.toml")):
+        text = doc.read_text(encoding="utf-8")
+        if doc.suffix == ".md":
+            text = strip_fenced(text)
+        rel = str(doc.relative_to(ROOT))
+        for m in CONTINUATION.finditer(text):
+            ctx = text[max(0, m.start() - 90):m.end()]
+            # Only a continuation *of a citation* matters: something earlier on the line
+            # named a real file. Line/column numbers in prose about other things do not.
+            if re.search(r"(src|scripts|tests|examples|stdlib|benchmarks|runtime|bootstrap"
+                         r"|docs)/[\w./-]+\.(rs|pd|sh|py|ebnf|md|toml)|Cargo\.toml|Makefile",
+                         ctx):
+                out.append((rel, ctx[-60:].strip()))
+    return out
+
+
 def collect_fences() -> list[tuple[str, int]]:
     out = []
     for doc in sorted(ROOT.glob("docs/**/*.md")) + [ROOT / "README.md"]:
@@ -144,156 +172,39 @@ def collect_fences() -> list[tuple[str, int]]:
     return sorted(out)
 
 
-# --- feature-index parsing, without a hard PyYAML dependency -------------------------
+# --- feature-index parsing: one parser, from the standard library ---------------------
 
-def _parse_rows_fallback(text: str):
-    """Extract rows with no third-party parser.
+def load_rows():
+    """Parse feature-index.toml with `tomllib`.
 
-    PyYAML is not in the standard library and nothing in this repository provisions it, so
-    coupling the gate to `make check-docs` must not introduce a host-dependency failure.
-    When PyYAML IS present, its parse is cross-checked against this one, so the fallback
-    cannot silently drift.
+    There is deliberately no second parser and no fallback. The previous design had a
+    hand-rolled YAML reader whose honesty was established by differentially testing it
+    against PyYAML — which is available exactly when the fallback is not needed, so with
+    PyYAML absent the loose parser accepted whatever it managed to read. That is a weaker
+    gate than the dependency it replaced. TOML is in the standard library, so the class is
+    deleted rather than guarded.
     """
-    rows, stack, cur = [], [], None
-    for raw in text.split("\n"):
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
-        indent = len(raw) - len(raw.lstrip(" "))
-        line = raw.strip()
-        if line.startswith("- "):
-            if cur is not None and cur.get("_in") == "evidence":
-                v = line[2:].strip()
-                if len(v) >= 2 and v[0] == v[-1] == '"':
-                    v = v[1:-1].replace('\\"', '"').replace("\\\\", "\\")
-                cur["evidence"].append(v)
-            continue
-        if ":" not in line:
-            continue
-        key, _, rest = line.partition(":")
-        key, rest = key.strip(), rest.strip()
-        while stack and stack[-1][0] >= indent:
-            stack.pop()
-        if rest in ("", ">-", "|", "|-", ">"):
-            if cur is not None and key == "evidence":
-                cur["_in"] = "evidence"
-                continue
-            if cur is not None and key in ("note", "description"):
-                cur["_in"] = None
-                continue
-            stack.append((indent, key))
-            cur = {"path": [k for _, k in stack], "evidence": [], "_in": None}
-            rows.append(cur)
-        else:
-            if cur is not None:
-                if key in ("implementation", "spec"):
-                    cur[key] = rest.strip('"')
-                cur["_in"] = None
-    return [r for r in rows if "implementation" in r]
-
-
-def load_rows(text: str | None = None, strict_only: bool = False):
-    """Parse feature-index rows, and CROSS-CHECK the two parsers semantically.
-
-    Comparing row counts only was not a cross-check: a duplicate `evidence` key makes the
-    fallback keep both lists while PyYAML keeps the last, and `spec: null` is the truthy
-    string "null" to the fallback but None to PyYAML. Either divergence passes a count
-    comparison, so the gate could pass without PyYAML and fail with it. The comparison is
-    now over the full (name, implementation, spec, evidence) tuple of every row.
-    """
-    if text is None:
-        text = INDEX.read_text(encoding="utf-8")
-    # Drop the `feature_index:` root so both parsers name rows identically. The semantic
-    # cross-check caught this the moment it was switched on from counting to comparing.
-    loose = [(".".join(r["path"][1:] if r["path"][:1] == ["feature_index"] else r["path"]),
-              r.get("implementation"), r.get("spec"), tuple(r["evidence"]))
-             for r in _parse_rows_fallback(text)]
-    try:
-        import yaml
-    except ImportError:
-        if strict_only:
-            raise
-        return loose, "fallback parser (PyYAML absent)"
-    doc = yaml.safe_load(text)
-    strict = []
+    if sys.version_info < (3, 11):
+        raise SystemExit(
+            "scripts/check-doc-evidence.sh needs Python 3.11+ for tomllib (found "
+            f"{sys.version.split()[0]}). tomllib is standard library from 3.11; there is no "
+            "fallback parser on purpose — see load_rows().")
+    import tomllib
+    with INDEX.open("rb") as fh:
+        doc = tomllib.load(fh)
+    rows = []
 
     def walk(node, path):
         if isinstance(node, dict):
             if "implementation" in node:
-                ev = node.get("evidence") or []
-                strict.append((".".join(path), node.get("implementation"),
-                               node.get("spec"),
-                               tuple(ev) if isinstance(ev, list) else (ev,)))
+                rows.append((".".join(path), node.get("implementation"),
+                             node.get("spec"), node.get("evidence") or []))
             else:
                 for k, v in node.items():
                     walk(v, path + [k])
 
-    walk(doc.get("feature_index", {}), [])
-    if strict_only:
-        return strict, "PyYAML"
-    if strict != loose:
-        diff = [f"    row {i}: fallback={l!r}\n              PyYAML  ={s!r}"
-                for i, (l, s) in enumerate(zip(loose, strict)) if l != s][:3]
-        extra = ""
-        if len(strict) != len(loose):
-            extra = f"\n    row counts differ: fallback={len(loose)} PyYAML={len(strict)}"
-        raise SystemExit(
-            "the two feature-index parsers disagree, so the gate's verdict would depend on "
-            "whether PyYAML happens to be installed. Fix by writing the file in the supported "
-            "style (block mappings, double-quoted scalars, one `evidence:` key per row) or by "
-            "teaching _parse_rows_fallback the construct.\n"
-            + "\n".join(diff) + extra)
-    return strict, "PyYAML, cross-checked semantically against the built-in fallback parser"
-
-
-SELFTESTS = [
-    ("duplicate evidence key",
-     'feature_index:\n a:\n  b:\n   implementation: partial\n   spec: "x"\n'
-     '   evidence:\n    - "cmd: one -> ok"\n   evidence:\n    - "cmd: two -> ok"\n'),
-    ("null spec",
-     'feature_index:\n a:\n  b:\n   implementation: partial\n   spec: null\n'
-     '   evidence:\n    - "cmd: one -> ok"\n'),
-    ("single-quoted scalar",
-     "feature_index:\n a:\n  b:\n   implementation: partial\n   spec: 'x'\n"
-     '   evidence:\n    - \'cmd: one -> ok\'\n'),
-    ("inline collection",
-     'feature_index:\n a:\n  b:\n   implementation: partial\n   spec: "x"\n'
-     '   evidence: ["cmd: one -> ok"]\n'),
-    ("folded scalar in evidence",
-     'feature_index:\n a:\n  b:\n   implementation: partial\n   spec: "x"\n'
-     '   evidence:\n    - >-\n       cmd: one\n       -> ok\n'),
-]
-
-
-def selftest(quiet: bool = False) -> int:
-    """Differential tests: the fallback must agree with PyYAML, or say it cannot parse.
-
-    Silent disagreement is the failure mode that matters. A fallback that refuses a
-    construct is safe; one that returns a different answer is not.
-    """
-    try:
-        import yaml  # noqa: F401
-    except ImportError:
-        print("selftest: needs PyYAML to differentially compare; skipped")
-        return 0
-    bad = 0
-    for name, doc in SELFTESTS:
-        try:
-            loose, _ = load_rows(doc, strict_only=False)
-        except SystemExit as e:
-            if not quiet:
-                print(f"  {name:28s} DIVERGENCE CAUGHT (gate fails loudly, as intended)")
-                print("      " + str(e).split(chr(10))[0])
-            continue
-        strict, _ = load_rows(doc, strict_only=True)
-        if loose == strict:
-            if not quiet:
-                print(f"  {name:28s} agree -> {strict}")
-        else:
-            print(f"  {name:28s} SILENT DISAGREEMENT  fallback={loose} pyyaml={strict}")
-            bad += 1
-    if not quiet:
-        print("selftest:", "OK" if not bad else f"{bad} silent divergence(s)")
-    return 1 if bad else 0
+    walk({k: v for k, v in doc.items() if k != "meta"}, [])
+    return rows, "tomllib (standard library, single parser)"
 
 
 def check_index():
@@ -322,11 +233,26 @@ def check_index():
                     if not tgt.exists():
                         problems.append(f"{name}: `src:` path missing -> {m.group(1)}")
                     else:
-                        n = len(tgt.read_text(encoding="utf-8",
-                                              errors="replace").split("\n"))
-                        if start < 1 or end > n:
+                        lines = tgt.read_text(encoding="utf-8",
+                                              errors="replace").split("\n")
+                        if start < 1 or end > len(lines):
                             problems.append(
                                 f"{name}: `src:` line out of range -> {item[:60]!r}")
+                        else:
+                            body = norm("\n".join(lines[start - 1:end]))
+                            # re.Match.end(n) returns -1 for a non-participating group, so
+                            # `m.end(3) or m.end(2)` silently sliced to the LAST CHARACTER
+                            # whenever the citation had no end line — which is most of them.
+                            # The check ran and matched nothing for two rounds.
+                            claim = item[m.end(3) if m.group(3) else m.end(2):]
+                            for q in QUOTED.finditer(claim):
+                                text = (q.group(1) or q.group(2) or q.group(3))
+                                if norm(text) not in body:
+                                    problems.append(
+                                        f"{name}: `src:` cites {m.group(1)}:{start}-{end} but "
+                                        f"the range does not contain the quoted claim "
+                                        f"{text[:50]!r} — widen the range to include what is "
+                                        f"being claimed")
             elif item.startswith("cmd:") and not CMD_EVIDENCE.match(item):
                 problems.append(f"{name}: `cmd:` shows no result — an absence needs its "
                                 f"exit status -> {item[:70]!r}")
@@ -366,11 +292,10 @@ def read_pins():
 
 
 def main() -> int:
-    if "--selftest" in sys.argv:
-        return selftest()
     update = "--update" in sys.argv
     cites = collect_citations()
     fences = collect_fences()
+    conts = collect_continuations()
 
     if update:
         old = read_pins() if PINS.exists() else {}
@@ -445,16 +370,17 @@ def main() -> int:
                 fail.append(f"no-compile fences in {p}: allowed {want_f.get(p, 0)}, "
                             f"found {have_f.get(p, 0)} — justify and --update")
 
+    for rel, ctx in conts:
+        fail.append(f"unpinnable citation shorthand in {rel}: ...{ctx} — write the full path; "
+                    f"a bare `:LINE` gets no pin and no movement check")
+
     problems, nrows, how = check_index()
     fail.extend(problems)
-
-    if selftest(quiet=True):
-        fail.append("parser differential selftest found a SILENT disagreement between the "
-                    "fallback and PyYAML (scripts/check-doc-evidence.sh --selftest)")
 
     print("=" * 62)
     print(f"citations pinned:   {len(cites)} (whole cited range fingerprinted)")
     print(f"no-compile fences:  {sum(n for _, n in fences)} across {len(fences)} file(s)")
+    print(f"unpinnable shorthands: {len(conts)}")
     print(f"feature-index rows: {nrows} via {how}"
           + (", all evidence tagged and resolved" if not problems
              else f", {len(problems)} evidence problem(s)"))

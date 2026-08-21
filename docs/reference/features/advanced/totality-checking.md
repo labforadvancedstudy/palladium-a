@@ -412,5 +412,5 @@ order in which a measure is compared. Neither is a measure, so neither belongs i
 - [Palladium v1.0 feature definition](../PALLADIUM_V1_FEATURES.md) — where this sits among the rest
 - [Async as effect](../async-system/async-as-effect.md)
 - [Implicit lifetimes](../core-language/implicit-lifetimes.md)
-- [Feature index](../feature-index.yaml)
+- [Feature index](../feature-index.toml)
 - [Language specification](../../../specification/language-spec.md)

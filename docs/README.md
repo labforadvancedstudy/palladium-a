@@ -45,7 +45,7 @@ evidence.
 | [Async as effect](reference/features/async-system/async-as-effect.md) | no `async`, no `.await`, no function coloring |
 | [Totality checking](reference/features/advanced/totality-checking.md) | `#![total(strict)]`, `#[decreases(expr)]` |
 | [Implicit lifetimes](reference/features/core-language/implicit-lifetimes.md) | `ref` / `ref mut`, no `'a` |
-| [Feature index](reference/features/feature-index.yaml) | one row per feature: where it is defined, what `pdc` does, and the evidence |
+| [Feature index](reference/features/feature-index.toml) | one row per feature: where it is defined, what `pdc` does, and the evidence |
 
 ## Internals
 

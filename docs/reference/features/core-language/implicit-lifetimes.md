@@ -25,6 +25,12 @@ with the memory-safety guarantee unchanged.
 There is no `'a` parameter list on functions, structs or impls. A region name appears only inside
 a `ref<...>`, and only when the compiler has asked for one.
 
+> **Known inconsistency, not yet resolved.** The examples below use `ref str` and `usize`, but
+> [`language-spec.md` §N4](../../../specification/language-spec.md#n4-types) lists neither `str`
+> nor `usize` among the primitives, so under the current definition `ref str` names no type. The
+> two candidate resolutions are stated in N4; the owner picks. Nothing else in this document
+> depends on which way it goes — the feature is `ref` and inference, not the referent type.
+
 ## Code Comparison
 
 ### Rust (Explicit Lifetimes Required)
@@ -218,10 +224,19 @@ relation could be inferred even if the machinery existed.
 
 **5. What exists instead is a move/initialization discipline.**
 `src/ownership/borrow_checker.rs` (1165 lines) tracks moves and conflicting borrows over a scope
-counter (`Lifetime` enum at `src/ownership/mod.rs:27`, scope lifetimes at `:109`). It has a known
-defect where a call argument is borrowed with `Lifetime::Named("fn")`
-(`src/ownership/borrow_checker.rs:236`) but released against `Lifetime::Scope(n)`, so the borrow
-is never released. That is a bug in a different mechanism, not partial delivery of this one.
+counter (`Lifetime` enum at `src/ownership/mod.rs:27`, scope lifetimes at
+`src/ownership/mod.rs:109`). Whatever its defects, that is a different mechanism, not partial
+delivery of this one: a scope counter is not region inference, and no amount of fixing it produces
+inferred lifetimes.
+
+*A previous version of this paragraph asserted a live defect here — that a call argument is
+borrowed as `Lifetime::Named("fn")` and never released, so a value cannot be passed twice. That is
+false and is retracted: the defect was real, it is D6, and it was fixed in commit `191f8c1`, before
+this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:514`) and end
+its borrows when the call finishes (`src/ownership/borrow_checker.rs:520`). Five probes are in
+[`language-spec.md` A9.4](../../../specification/language-spec.md#a94-defect-d6-retracted). The
+defect that IS live is `&mut` of an immutable local, which the borrow checker accepts for struct
+types ([A9.3](../../../specification/language-spec.md#a93-mut-of-an-immutable-local-is-accepted)).*
 
 ## Design intent, not measurements
 
@@ -271,5 +286,5 @@ fn process(data: ref mut Data, config: ref Config) -> ref str {
 - [Palladium v1.0 feature definition](../PALLADIUM_V1_FEATURES.md) — where this sits among the rest
 - [Async as effect](../async-system/async-as-effect.md)
 - [Totality checking](../advanced/totality-checking.md)
-- [Feature index](../feature-index.yaml)
+- [Feature index](../feature-index.toml)
 - [Language specification](../../../specification/language-spec.md)

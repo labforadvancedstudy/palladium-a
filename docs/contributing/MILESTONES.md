@@ -169,7 +169,7 @@ are not. Effect clauses do not exist in the surface syntax; effects are inferred
 gate nothing; `.await` emits a call to a member that is never generated; `ref` is not a keyword;
 attributes do not even lex, so `#[total]` fails at the character `#`. The per-section evidence is
 in the [implementation status annex](../specification/language-spec.md#part-ii-implementation-status-annex)
-and the [feature index](../reference/features/feature-index.yaml).
+and the [feature index](../reference/features/feature-index.toml).
 
 They are unscheduled, not undefined, and they belong after M4 at the earliest — each needs a type
 system able to express it, and for two of the three the first prerequisite is smaller than the
