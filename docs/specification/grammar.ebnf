@@ -1,13 +1,26 @@
 # Palladium Grammar
 #
-# Version 0.2 (2026-08-21) — derived from the parser, not from intent.
+# Version 0.3 (2026-08-22).
 #
-# This grammar describes what src/parser/mod.rs actually accepts. The previous
-# version of this file specified where-clauses, trait bounds, closures, slices,
-# tuple expressions, `loop`, compound assignment, bitwise operators, `as` casts,
-# labelled breaks, range-inclusive, float and char literals, and `else if` — none
-# of which parse. Constructs that parse but are rejected or miscompiled later are
-# marked; see language-spec.md for each one's failure mode.
+# THIS FILE HAS TWO PARTS, AND THEY ARE NOT INTERCHANGEABLE.
+#
+#   Part A (everything up to the NORMATIVE BUT UNPARSED banner near the end)
+#   is DERIVED FROM THE PARSER. Every production here is accepted by
+#   src/parser/mod.rs today. Constructs that parse but are rejected or
+#   miscompiled later are marked; see language-spec.md Part II for each one's
+#   failure mode.
+#
+#   Part B (after that banner) is NORMATIVE BUT UNPARSED: syntax that
+#   language-spec.md Part I defines as part of Palladium and that the parser
+#   does NOT accept. It is listed separately, never merged into Part A, so that
+#   this file can never be read as a claim about the parser's capabilities.
+#
+# The 2025 version of this file made exactly that mistake: it specified
+# where-clauses, trait bounds, closures, slices, tuple expressions, `loop`,
+# compound assignment, bitwise operators, `as` casts, labelled breaks,
+# range-inclusive, float and char literals, and `else if` inline, as though they
+# parsed. None of them do. Widening Part A to match the specification would
+# reintroduce that lie; the separation is the fix.
 #
 # Notation:  |  alternation   ()  grouping   []  optional   {}  zero or more
 
@@ -257,3 +270,119 @@ pattern        = '_'
 # 10. ..     (only meaningful in a `for` header)
 #
 # Assignment is a STATEMENT, not an operator, so it has no precedence entry.
+
+# =============================================================================
+# =============================================================================
+# NORMATIVE BUT UNPARSED
+# =============================================================================
+# =============================================================================
+#
+# Everything below is part of the language as defined by language-spec.md Part I
+# and is NOT accepted by src/parser/mod.rs at commit abeb665. Nothing here is a
+# claim about the compiler. Each entry names the normative section it comes from
+# and, where the blocker is below the parser, says so.
+#
+# Do not move a production from here into Part A because it "should" work. Move
+# it when `pdc` parses it, and add the conformance row that proves it.
+
+# ---- Attributes (spec N2, N8) ------------------------------------------------
+# BLOCKER IS LEXICAL: there is no '#' token. `#[total]` fails with
+# "Unexpected character '#' at line 1, column 1", before the parser runs.
+
+attribute       = "#" [ "!" ] "[" attr_name [ "(" attr_args ")" ] "]" ;
+attr_name       = identifier ;
+attr_args       = attr_arg { "," attr_arg } ;
+attr_arg        = identifier "=" expression | expression | identifier ;
+
+# The totality obligations of spec N8 are all attributes:
+#   #![total(strict)]   #[total]   #[decreases(expr)]
+#   #[total(fuel = N)]  #[partial]
+
+# ---- References and lifetimes (spec N9) --------------------------------------
+# `ref` is not a keyword (see the keyword list in Part A); it lexes as an
+# ordinary identifier, so none of these parse.
+
+ref_type        = "ref" [ "mut" ] type
+                | "ref" "<" "'" identifier ">" [ "mut" ] type ;
+
+# Part A's `reference = '&' [ "'" identifier ] [ "mut" ] type` is the IMPLEMENTED
+# spelling. Spec N9 removes both the '&' sigil and the `'a` parameter lists that
+# Part A's `generic_param` still accepts.
+
+# ---- Effects and asynchrony (spec N7) ----------------------------------------
+# Spec N7 REMOVES syntax rather than adding it: `async` must stop being a
+# function modifier and `.await` must stop being a postfix operator. Both appear
+# in Part A because the parser accepts them; neither is normative.
+#
+# What N7 adds, and what does not parse (`with` and `effect` are not keywords):
+
+effect_context  = "with_timeout" "(" expression ")" block
+                | "with_retry" "(" expression [ "," expression ] ")" block
+                | "with" identifier "{" field_init_list "}" block ;
+effect_escape   = "effect" "::" "sync" block ;
+async_ret_type  = "async" type ;              (* only in `-> async T` *)
+effect_decl     = "effect" identifier "{" field { "," field } "}" ;
+
+# ---- Types (spec N4) ---------------------------------------------------------
+
+float_literal   = digit { digit } "." digit { digit } ;
+char_literal    = "'" ( char | escape ) "'" ;
+slice_type      = "[" type "]" ;
+fn_type         = "fn" "(" [ type { "," type } ] ")" [ "->" type ] ;
+# Primitives absent from the implemented table: f32 f64 char str u8 usize
+
+# ---- Generics and traits (spec N10) ------------------------------------------
+# Part A accepts only bare names inside <...>, and reclassifies an all-uppercase
+# name as a const argument.
+
+bounded_param   = identifier ":" bound { "+" bound } ;
+bound           = path [ "<" type { "," type } ">" ] ;
+where_clause    = "where" bounded_param { "," bounded_param } ;
+trait_item_norm = "fn" identifier "(" [ self_param [ "," params ] ] ")"
+                  [ "->" type ] ( block | ";" )
+                | "type" identifier [ ":" bound ] ";"
+                | "const" identifier ":" type [ "=" expression ] ";" ;
+
+# ---- Expressions and statements (spec N5) ------------------------------------
+# In Part A, `if`, `match` and blocks are STATEMENTS. Spec N5 makes them
+# expressions, which changes `expression`, not merely adds to it.
+
+expression_norm = ... | if_expr | match_expr | block | closure | try_expr ;
+if_expr         = "if" expression block { "else" "if" expression block }
+                  [ "else" block ] ;
+closure         = [ "move" ] "|" [ params_untyped ] "|" ( expression | block ) ;
+try_expr        = "try" block ;
+loop_stmt       = "loop" block ;
+break_value     = "break" [ expression ] ";" ;
+compound_assign = place ( "+=" | "-=" | "*=" | "/=" | "%=" ) expression ";" ;
+bitwise_op      = "|" | "^" | "~" | "<<" | ">>" ;
+cast_expr       = expression "as" type ;
+range_incl      = expression "..=" expression ;
+tuple_expr      = "(" expression { "," expression } [ "," ] ")" ;
+tuple_index     = expression "." integer ;
+
+# Precedence correction (spec N5): `a * -b` must parse. Part A's
+# `multiplication = unary { ( '*' | '/' | '%' ) postfix }` parses its RIGHT
+# operand with `postfix`, so it does not. The normative rule is:
+#   multiplication = unary { ( '*' | '/' | '%' ) unary } ;
+
+# ---- Patterns (spec N6) ------------------------------------------------------
+# Part A has exactly three pattern forms. Spec N6 requires all of these, and
+# requires exhaustiveness for every scrutinee type, not only enums.
+
+pattern_norm    = literal
+                | expression ".." expression
+                | expression "..=" expression
+                | pattern_norm "|" pattern_norm
+                | identifier "@" pattern_norm
+                | "(" pattern_norm { "," pattern_norm } ")"
+                | "[" pattern_norm { "," pattern_norm } [ ".." ] "]"
+                | path "{" identifier [ ":" pattern_norm ] { "," ... } [ ".." ] "}" ;
+match_arm_norm  = pattern_norm [ "if" expression ] "=>" ( block | expression ) [ "," ] ;
+
+# ---- Items and modules (spec N3, N11) ----------------------------------------
+
+const_item      = [ "pub" ] "const" identifier ":" type "=" expression ";" ;
+static_item     = [ "pub" ] "static" [ "mut" ] identifier ":" type "=" expression ";" ;
+module_item     = [ "pub" ] "mod" identifier ( "{" { item } "}" | ";" ) ;
+extern_block    = "extern" string "{" { fn_signature ";" } "}" ;
