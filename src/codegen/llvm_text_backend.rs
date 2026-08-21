@@ -1514,8 +1514,7 @@ impl LLVMTextBackend {
 ///
 /// The granular refusals below cover seven constructs that fail *loudly*. They
 /// are not the whole problem. Auditing the rest of this file turned up seven
-/// more sites that fail *quietly*, producing IR that assembles and runs while
-/// meaning something other than the source:
+/// more sites that fabricate rather than refuse, and say nothing about it:
 ///
 ///   * `compile` skips every non-function `Item`, so struct and enum
 ///     definitions are dropped while expressions still refer to them.
@@ -1535,8 +1534,11 @@ impl LLVMTextBackend {
 ///     outside the program's semantics — measured as a correct-looking run
 ///     that exits 2.
 ///
-/// Verifying the assembly is not a defence against that list, because
-/// field-zero corruption produces *valid* IR with the wrong meaning. Half a
+/// They do not all fail the same way. Dropped definitions and the undefined
+/// `@.str.unknown` produce *invalid* IR, which an assembler rejects. But some
+/// of the rest — field-zero access demonstrably — produce IR that is **valid**
+/// and mean something other than the source, so verifying the assembly is not a
+/// defence against the list. Half a
 /// gate reads as protection while providing none, so the gate is whole: the
 /// flag refuses, and the seven granular refusals stay underneath as the record
 /// of what is missing.
