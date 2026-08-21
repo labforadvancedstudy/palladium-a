@@ -2132,15 +2132,52 @@ impl CodeGenerator {
     /// gave a following `for x in xs` the shadow's length: a `[i64; 4]`
     /// parameter iterated twice.
     fn generate_block(&mut self, stmts: &[Stmt], indent: &str) -> Result<()> {
-        let outer_arrays = self.array_bindings.clone();
-        let outer_variables = self.variables.clone();
+        let outer = self.open_binding_scope();
         for stmt in stmts {
             self.output.push_str(indent);
             self.generate_statement(stmt)?;
         }
-        self.array_bindings = outer_arrays;
-        self.variables = outer_variables;
+        self.close_binding_scope(outer);
         Ok(())
+    }
+
+    /// Record a binding that is *not* an array, shadowing any array of the same
+    /// name.
+    ///
+    /// Inserting into `variables` alone is not shadowing: `array_bindings` kept
+    /// the outer entry, so a loop variable named after an outer array was still
+    /// treated as that array - `for v in ys { print_int(v); }` under an outer
+    /// `let mut v = [1, 2, 3];` was refused as "cannot pass an array to
+    /// print_int". A name means one thing at a time, in every map.
+    fn bind_non_array(&mut self, name: &str, c_type: String) {
+        self.variables.insert(name.to_string(), c_type);
+        self.array_bindings.remove(name);
+    }
+
+    /// Snapshot the bindings a scope may shadow.
+    ///
+    /// Take this **before the scope's first write**, not before its body. A
+    /// `for` variable and a match binding are written into these maps *before*
+    /// the block is generated, so snapshotting inside `generate_block` captured
+    /// the already-overwritten map and the binder outlived its own scope: after
+    /// `for v in xs { }`, an outer `v` still had the loop variable's type.
+    fn open_binding_scope(&self) -> (
+        std::collections::HashMap<String, ArrayBinding>,
+        std::collections::HashMap<String, String>,
+    ) {
+        (self.array_bindings.clone(), self.variables.clone())
+    }
+
+    fn close_binding_scope(
+        &mut self,
+        saved: (
+            std::collections::HashMap<String, ArrayBinding>,
+            std::collections::HashMap<String, String>,
+        ),
+    ) {
+        let (arrays, variables) = saved;
+        self.array_bindings = arrays;
+        self.variables = variables;
     }
 
     /// Generate code for a statement
@@ -2204,7 +2241,11 @@ impl CodeGenerator {
 
                 // A local array is a real object: its length comes from the
                 // annotation when there is one, otherwise from the initializer.
-                if !array_dims.is_empty() {
+                // A non-array `let` must *remove* any array of the same name,
+                // or the outer array keeps answering for the inner binding.
+                if array_dims.is_empty() {
+                    self.array_bindings.remove(name.as_str());
+                } else {
                     let len = match ty {
                         Some(Type::Array(_, size)) => Self::array_len_of_size(size),
                         _ => self
@@ -2332,7 +2373,10 @@ impl CodeGenerator {
                             .push_str(&format!("        for (long long {} = ", var));
                         // Record the loop variable so expressions in the body
                         // can be typed (see try_infer_expr_type/Expr::Ident).
-                        self.variables.insert(var.clone(), "long long".to_string());
+                        // The scope opens *here*, before the binder is written,
+                        // so the binder cannot outlive the loop.
+                        let loop_scope = self.open_binding_scope();
+                        self.bind_non_array(var, "long long".to_string());
                         self.generate_expression(start)?;
                         self.output.push_str(&format!("; {} < ", var));
                         self.generate_expression(end)?;
@@ -2340,6 +2384,7 @@ impl CodeGenerator {
 
                         // Generate body
                         self.generate_block(body, "        ")?;
+                        self.close_binding_scope(loop_scope);
 
                         self.output.push_str("        }\n");
                     }
@@ -2411,12 +2456,14 @@ impl CodeGenerator {
                         // integer, and the body needs to know it.
                         self.output
                             .push_str(&format!("            {} {} = ", elem_type, var));
-                        self.variables.insert(var.clone(), elem_type);
+                        let loop_scope = self.open_binding_scope();
+                        self.bind_non_array(var, elem_type);
                         self.generate_expression(iter)?;
                         self.output.push_str("[_i];\n");
 
                         // Generate body
                         self.generate_block(body, "        ")?;
+                        self.close_binding_scope(loop_scope);
 
                         self.output.push_str("        }\n");
                     }
@@ -2472,9 +2519,11 @@ impl CodeGenerator {
                                 "            long long {} = _match_expr;\n",
                                 name
                             ));
-                            self.variables.insert(name.clone(), "long long".to_string());
+                            let arm_scope = self.open_binding_scope();
+                            self.bind_non_array(name, "long long".to_string());
                             // Continue with body generation below
                             self.generate_block(&arm.body, "        ")?;
+                            self.close_binding_scope(arm_scope);
                             self.output.push_str("        }");
                             continue;
                         }
@@ -2483,6 +2532,9 @@ impl CodeGenerator {
                             variant,
                             data,
                         } => {
+                            // Opened before the variant's data bindings are
+                            // written, so they die with the arm.
+                            let arm_scope = self.open_binding_scope();
                             // Generate enum tag check
                             self.output.push_str(&format!(
                                 "_match_expr.tag == __{}__{})",
@@ -2516,7 +2568,17 @@ impl CodeGenerator {
                                                         // The binding is a real
                                                         // variable; type it for
                                                         // the arm body.
-                                                        self.variables.insert(name.clone(), c_type);
+                                                        // Field-level writes:
+                                                        // `self.enums` is
+                                                        // borrowed here, so
+                                                        // bind_non_array's
+                                                        // `&mut self` would
+                                                        // conflict. Same two
+                                                        // operations.
+                                                        self.variables
+                                                            .insert(name.clone(), c_type);
+                                                        self.array_bindings
+                                                            .remove(name.as_str());
                                                     }
                                                 }
                                             }
@@ -2557,6 +2619,7 @@ impl CodeGenerator {
 
                             // Continue with body generation below
                             self.generate_block(&arm.body, "        ")?;
+                            self.close_binding_scope(arm_scope);
                             self.output.push_str("        }");
                             continue;
                         }
@@ -4002,6 +4065,54 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("cannot establish where the array came from"), "{}", msg);
         assert!(msg.contains("field access"), "{}", msg);
+    }
+
+    // The scope must open before the binder is written, not before the block
+    // body: a `for` variable is recorded first, so snapshotting inside
+    // `generate_block` captured the already-overwritten map and the binder
+    // outlived its loop. And a non-array binder has to *shadow* an outer array
+    // of the same name in every map, or the outer array keeps answering for it.
+    #[test]
+    fn test_for_binder_does_not_outlive_its_loop_in_codegen() {
+        let c = generate(
+            r#"
+        fn main() {
+            let v: [String; 2] = ["a", "b"];
+            let ys = [7, 8];
+            for v in ys {
+                print_int(v);
+            }
+            for s in v {
+                print(s);
+            }
+        }
+        "#,
+        )
+        .unwrap();
+        // The second loop iterates the outer `[String; 2]`, so its element
+        // declaration must be `const char*` and its bound 2 - both of which
+        // come from bindings the loop variable had overwritten.
+        assert!(c.contains("const char* s = v[_i];"), "{}", c);
+        assert!(c.contains("for (long long _i = 0; _i < 2; _i++)"), "{}", c);
+    }
+
+    #[test]
+    fn test_non_array_binder_shadows_an_outer_array() {
+        // `v` names an array outside the loop and an integer inside it; the
+        // inner one must not be refused as "an array" by the capability guard.
+        let c = generate(
+            r#"
+        fn main() {
+            let v = [1, 2, 3];
+            let ys = [7, 8];
+            for v in ys {
+                print_int(v);
+            }
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("__pd_print_int(v)"), "{}", c);
     }
 
     // An *array-valued* element - a row of a nested array - is refused as

@@ -197,7 +197,8 @@ Four builtin macros exist (`src/macros/mod.rs:41-54`), each taking **exactly one
 | `i32`, `u32`, `u64` | ✅ | |
 | `bool`, `String` | ✅ | |
 | `()` | ✅ | unit |
-| `[T; N]` | ✅ | `N` is an integer literal or an identifier |
+| `[T; N]` | ✅ | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
+| `[[T; M]; N]` | ❌ | nested arrays do not work in either position. As a **local**, `type_to_c` builds `T[M][N]` as a *type* and emits `long long[2] grid[2]`, which gcc rejects ("brackets are not allowed here"); as a **parameter** the declarator refuses it by name. Separate unit |
 | `&T`, `&mut T` | ⚠️ | parses, but the typechecker is a **no-op**: `&i64` and `i64` are indistinguishable to it (`src/typeck/mod.rs:2470-2486`). There is no reference type in the checker. |
 | `Name<A, B>` | ⚠️ | see below |
 | `(A, B)` | ⚠️ | becomes `void*` in C (`src/codegen/mod.rs:828`); no tuple expression exists, so no tuple is constructible |
@@ -470,6 +471,17 @@ would happen under the callee's `&mut` binding, where it looks legitimate.
 ("Unsupported array element type in function parameter"), not invalid C: in particular a
 **nested array parameter** (`[[T; M]; N]`) is rejected rather than emitted, and a function type
 never reaches here because §5 records that the parser refuses it ("expected type, found `fn`").
+Nested arrays do not work as locals either — see the `[[T; M]; N]` row in §5; that is a
+declarator defect in `type_to_c`, tracked separately, and it fails before any rule here
+applies.
+
+A `mut` parameter must be given something with storage. `bump(1)`, `retitle(make())` and
+`bump(a + 1)` are refused: a `mut` parameter receives a pointer to the caller's storage, and an
+rvalue has none — codegen emitted `bump(&1)` and gcc rejected the compiler's own output. The
+alternative, materialising a temporary, would require this specification to say what a write
+nobody can observe means; it does not, so the case is refused rather than invented. An argument
+that *is* storage but that the borrow checker cannot model as a place, such as `xs[i]` with a
+non-literal index, is checked against the mutability of the name it is rooted in.
 
 Taking `&mut x` of a binding that was not declared `mut` is a borrow-check error, whatever `x`
 is: array, scalar or `String`. The same check applies to passing a binding to a `mut x: T`
