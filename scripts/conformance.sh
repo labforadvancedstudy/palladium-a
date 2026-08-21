@@ -137,6 +137,29 @@ canon() {
 
 strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
+# grep answers three questions, not two: 0 matched, 1 did not match, 2 COULD NOT
+# LOOK. Collapsing 2 into "did not match" is how an unreadable fixture became a
+# harmless `skip` and a dangling symlink passed as a non-program. Every consumer
+# of grep's status in this file goes through here and must handle 2 explicitly.
+#   rc 0 = matched, 1 = no match, 2 = error (unreadable, missing, bad pattern)
+grep_status() {
+  local mode=$1 pat=$2 file=$3
+  case "$mode" in
+    E) grep -qE -- "$pat" "$file" 2>/dev/null ;;
+    F) grep -qF -- "$pat" "$file" 2>/dev/null ;;
+  esac
+  return $?
+}
+
+# Literal prefix test. `grep -q "^$d/"` interpreted the scope name as a regular
+# expression, so an EMPTY scope named `fooba.` matched a populated `foobar/…` and
+# evaded the fatal empty-scope check. A quoted expansion in a `case` pattern is
+# literal, which is why this form is used throughout instead of grep.
+has_prefix() {   # has_prefix <prefix> <string>
+  case "$2" in "$1"*) return 0 ;; esac
+  return 1
+}
+
 # --------------------------------------------------------------------------
 # Scopes
 # --------------------------------------------------------------------------
@@ -367,30 +390,53 @@ FIND_OUT=$TMPROOT/found
 FIND_ERR=$TMPROOT/found.err
 # No -type f: tests/integration/test.pd is a symlink, and silently dropping a
 # fixture is precisely the failure this manifest exists to prevent.
-find "${SCOPES[@]}" -name '*.pd' >"$FIND_RAW" 2>"$FIND_ERR"
+# -print0, not newline. A filename may legally contain a newline, and a
+# newline-delimited pipeline turns one such file into two paths: measured, a
+# fixture named `a.pd<LF>b.pd` produced `tests/a.pd` twice and `b.pd` once from
+# three real files, so the real fixture was never gated and another was
+# double-counted — verified=4 over 3 files, exit 0.
+find "${SCOPES[@]}" -name '*.pd' -print0 >"$FIND_RAW" 2>"$FIND_ERR"
 find_rc=$?
 if [ "$find_rc" -ne 0 ] || [ -s "$FIND_ERR" ]; then
   echo "error: enumeration failed (find exit $find_rc):" >&2
   sed 's/^/       /' "$FIND_ERR" >&2
   exit 2
 fi
-# Canonicalise once, here, so every later comparison — scope membership, manifest
-# lookup, reconciliation — is against the same form. `find .` emits `./tests/x.pd`
-# for the repo-root scope, which no manifest key would ever match.
+
+# Read NUL-delimited, then reject any newline-bearing path outright. The manifest
+# is a line-based file, so such a fixture could never be declared in it — the only
+# honest answer is to refuse, not to silently drop it.
 : > "$FIND_OUT"
-while IFS= read -r rawline; do
+fixture_count=0
+while IFS= read -r -d '' rawline; do
+  case "$rawline" in *$'\n'*)
+    echo "error: fixture path contains a newline and cannot be declared in a" >&2
+    echo "       line-based manifest: $(printf '%q' "$rawline")" >&2
+    exit 2 ;;
+  esac
   canon "$rawline" >> "$FIND_OUT"
   printf '\n' >> "$FIND_OUT"
+  fixture_count=$((fixture_count+1))
 done < "$FIND_RAW"
+if [ "$fixture_count" -eq 0 ]; then
+  echo "error: no .pd fixtures under: ${SCOPES[*]}" >&2
+  exit 2
+fi
 sort "$FIND_OUT" -o "$FIND_OUT"
+
 # Per scope, not just overall: a valid-but-wrong directory contributing nothing
 # would otherwise ride along invisibly behind a scope that did find something.
+# Literal prefix comparison, never a regex — see has_prefix.
 for d in "${SCOPES[@]}"; do
+  found_here=0
   if [ "$d" = "." ]; then
-    [ -s "$FIND_OUT" ] && continue
+    found_here=1
   else
-    grep -q "^$d/" "$FIND_OUT" && continue
+    while IFS= read -r p; do
+      if has_prefix "$d/" "$p"; then found_here=1; break; fi
+    done < "$FIND_OUT"
   fi
+  [ "$found_here" -eq 1 ] && continue
   echo "error: no .pd fixtures under scope '$d'" >&2
   echo "       an empty corpus is a broken invocation, not a pass." >&2
   exit 2
@@ -437,12 +483,33 @@ while IFS= read -r f; do
   # so they share the mismatch path but must not share its label.
   if [ "$class" = "reject" ]; then MM=REJECT; else MM=XFAIL; fi
 
-  has_main=0
-  if grep -qE '^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+main[[:space:]]*\(' "$f"; then has_main=1; fi
+  # rc 2 here used to become has_main=0, i.e. "this is a library module" — so an
+  # unreadable fixture, or a declared dangling symlink, passed the gate as `skip`.
+  grep_status E '^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+main[[:space:]]*\(' "$f"
+  case $? in
+    0) has_main=1 ;;
+    1) has_main=0 ;;
+    *) printf '%-52s %s\n' "$f" "UNREADABLE"
+       fail "$f [UNREADABLE] could not be scanned for fn main (permissions, or a dangling symlink). A fixture the gate cannot read is a harness failure, not a non-program."
+       continue ;;
+  esac
 
   # The vacuous marker is documentation for the reader; the manifest is what the
   # gate believes. Requiring them to agree keeps either from drifting alone.
-  marker_at=$(grep -nE '^[[:space:]]*//@[[:space:]]*vacuous:' "$f" | head -1 | cut -d: -f1)
+  # The pipeline below discards grep's status, so probe readability first with a
+  # status we actually inspect; unreadable was already caught above, but a file
+  # that becomes unreadable between the two calls must not read as "no marker".
+  grep_status E '^[[:space:]]*//@[[:space:]]*vacuous:' "$f"
+  marker_rc=$?
+  if [ "$marker_rc" -gt 1 ]; then
+    printf '%-52s %s\n' "$f" "UNREADABLE"
+    fail "$f [UNREADABLE] could not be scanned for a vacuous marker"
+    continue
+  fi
+  marker_at=""
+  if [ "$marker_rc" -eq 0 ]; then
+    marker_at=$(grep -nE -- '^[[:space:]]*//@[[:space:]]*vacuous:' "$f" | head -1 | cut -d: -f1)
+  fi
   if [ -n "$marker_at" ] && [ "$marker_at" != "1" ]; then
     printf '%-52s %s\n' "$f" "MARKER_MISPLACED"
     fail "$f [MARKER_MISPLACED] '//@ vacuous:' on line $marker_at; only line 1 is honoured"
@@ -494,7 +561,14 @@ while IFS= read -r f; do
 
   stage_act=""; detail=""
   if [ "$pdc_rc" -ne 0 ]; then
-    if grep -q "gcc compilation failed\|Linking" "$log"; then stage_act="link"; else stage_act="compile"; fi
+    grep_status F 'gcc compilation failed' "$log"; link_a=$?
+    grep_status F 'Linking' "$log";                  link_b=$?
+    if [ "$link_a" -gt 1 ] || [ "$link_b" -gt 1 ]; then
+      printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+      fail "$f [HARNESS_ERROR] could not read the compiler log to classify the failure stage"
+      continue
+    fi
+    if [ "$link_a" -eq 0 ] || [ "$link_b" -eq 0 ]; then stage_act="link"; else stage_act="compile"; fi
     detail=$diag
   elif [ ! -x "$OUT_DIR/$out" ]; then
     # pdc claimed success and produced nothing. Never expectable.
@@ -516,16 +590,38 @@ while IFS= read -r f; do
       cp "$TMPROOT/stdout" "$golden"
       echo "  blessed $golden" >&2
       blessed=$((blessed+1))
-    elif ! diff -u "$golden" "$TMPROOT/stdout" >"$TMPROOT/diff" 2>&1; then
-      out_mismatch=1
-      detail=$(head -20 "$TMPROOT/diff" | tail -12 | tr '\n' '~')
+    else
+      # diff has three outcomes too: 0 identical, 1 differing, >1 could not
+      # compare. A missing or unreadable golden must not read as "differs".
+      diff -u "$golden" "$TMPROOT/stdout" >"$TMPROOT/diff" 2>&1
+      case $? in
+        0) ;;
+        1) out_mismatch=1
+           detail=$(head -20 "$TMPROOT/diff" | tail -12 | tr '\n' '~') ;;
+        *) out_mismatch=2
+           detail=$(head -3 "$TMPROOT/diff" | tr '\n' '~') ;;
+      esac
+    fi
+  fi
+
+  # Fingerprint comparison, computed before the verdict chain so its THIRD
+  # outcome (could not read the log) is distinguishable from "did not match".
+  fp_match=1
+  if [ -n "$stage_act" ] && [ "$stage_act" != "run" ]; then
+    if strip_ansi <"$log" >"$TMPROOT/diag" 2>/dev/null; then
+      grep_status F "$fp" "$TMPROOT/diag"; fp_match=$?
+    else
+      fp_match=2
     fi
   fi
 
   # ---- verdict -------------------------------------------------------------
   if [ -z "$stage_act" ]; then           # it passed
     case "$class" in
-      run)     if [ "$out_mismatch" -eq 1 ]; then
+      run)     if [ "$out_mismatch" -eq 2 ]; then
+                 printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+                 fail "$f [HARNESS_ERROR] could not compare stdout against $golden: $detail"
+               elif [ "$out_mismatch" -eq 1 ]; then
                  printf '%-52s %s\n' "$f" "OUTPUT_MISMATCH"
                  fail "$f [OUTPUT_MISMATCH] ran and exited 0, but stdout differs from $golden: $detail"
                else
@@ -559,7 +655,10 @@ while IFS= read -r f; do
   elif [ "$stage_act" = "run" ] && [ "$detail" != "$fp" ]; then
     printf '%-52s %s\n' "$f" "${MM}_MISMATCH"
     fail "$f [${MM}_MISMATCH] declared '$fp' but got '$detail'"
-  elif [ "$stage_act" != "run" ] && ! strip_ansi <"$log" | grep -qF -- "$fp"; then
+  elif [ "$stage_act" != "run" ] && [ "$fp_match" -gt 1 ]; then
+    printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+    fail "$f [HARNESS_ERROR] could not read the compiler log to check the declared fingerprint"
+  elif [ "$stage_act" != "run" ] && [ "$fp_match" -ne 0 ]; then
     printf '%-52s %s\n' "$f" "${MM}_MISMATCH"
     fail "$f [${MM}_MISMATCH] failed at the declared stage but not with the declared diagnostic; expected fingerprint '$fp', actual: $detail"
   elif [ "$class" = "reject" ]; then

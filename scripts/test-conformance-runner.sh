@@ -288,6 +288,108 @@ manifest "$D" 'tests/a.pd|run|-|expected|-|-'
 run_case "$D" tests
 expect_rc 1 && expect_out "UNDECLARED" && ok
 
+# ===========================================================================
+# CLASS REGRESSIONS. Four rounds of review found the same species of bug five
+# times: bash string/pattern handling silently producing the PERMISSIVE answer.
+# These cases are organised by class rather than by instance, so a new site that
+# reintroduces the class is caught even though its symptom is new.
+# ===========================================================================
+
+# --- CLASS 1: a variable used as a PATTERN where it must be a literal --------
+start "class/pattern: an empty scope named with a regex metacharacter cannot hide"
+# `grep -q "^$d/"` read the scope name as a regex, so empty `fooba.` matched
+# populated `foobar/...` and evaded the fatal empty-scope check.
+D=$(new_repo clspattern)
+mkdir -p "$D/foobar" "$D/fooba."
+fixture "$D" foobar/a.pd "$good_program"
+manifest "$D" 'foobar/a.pd|run|-|expected|-|-'
+run_case "$D" foobar 'fooba.'
+expect_rc 2 && expect_out "no .pd fixtures under scope 'fooba.'" && ok
+
+start "class/pattern: a scope whose literal name holds a metacharacter still works"
+mkdir -p "$D/a+b"
+fixture "$D" 'a+b/x.pd' "$good_program"
+manifest "$D" 'foobar/a.pd|run|-|expected|-|-' 'a+b/x.pd|run|-|expected|-|-'
+run_case "$D" 'a+b'
+expect_rc 0 && expect_out "verified=1" && ok
+
+start "class/pattern: a manifest path holding a metacharacter matches only itself"
+run_case "$D" foobar 'a+b'
+expect_rc 0 && expect_out "verified=2" && ok
+
+# --- CLASS 2: an exit status with a THIRD meaning treated as yes/no ----------
+start "class/status: an unreadable fixture is a harness failure, not a 'skip'"
+# grep rc 2 collapsed into has_main=0, so a file the gate could not read passed
+# as a declared non-program.
+D=$(new_repo clsstatus)
+fixture "$D" tests/a.pd "$good_program"
+fixture "$D" tests/locked.pd "$good_program"
+chmod 000 "$D/tests/locked.pd"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/locked.pd|skip|-|-|-|claims to be a non-program'
+run_case "$D" tests
+chmod 644 "$D/tests/locked.pd"
+expect_rc 1 && expect_out "UNREADABLE" && ok
+
+start "class/status: a declared dangling symlink is a harness failure, not a 'skip'"
+D=$(new_repo clsdangle2)
+fixture "$D" tests/a.pd "$good_program"
+ln -sfn nowhere.pd "$D/tests/dangle.pd"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/dangle.pd|skip|-|-|-|declared non-program'
+run_case "$D" tests
+expect_rc 1 && expect_out "UNREADABLE" && ok
+
+start "class/status: an unreadable transcript is a harness failure, not a mismatch"
+D=$(new_repo clsgolden)
+fixture "$D" tests/a.pd "$good_program"
+chmod 000 "$D/tests/a.expected"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
+run_case "$D" tests
+chmod 644 "$D/tests/a.expected"
+expect_rc 1 && expect_out "HARNESS_ERROR" && ok
+
+# --- CLASS 3: data crossing a newline/whitespace-delimited boundary ---------
+start "class/delimiter: a newline in a fixture name is refused, not split"
+# find|read split `a.pd<LF>b.pd` into two paths; both happened to exist, so the
+# real fixture vanished and another was counted twice (verified=4 over 3 files).
+D=$(new_repo clsdelim)
+fixture "$D" tests/a.pd "$good_program"
+printf 'fn main() {\n    print("ok");\n}\n' > "$D/tests/split.pd"$'\nb.pd'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
+run_case "$D" tests
+expect_rc 2 && expect_out "contains a newline" && ok
+
+start "class/delimiter: a SPACE in a fixture name survives enumeration intact"
+D=$(new_repo clsspace)
+fixture "$D" 'tests/with space.pd' "$good_program"
+manifest "$D" 'tests/with space.pd|run|-|expected|-|-'
+run_case "$D" tests
+expect_rc 0 && expect_out "verified=1" && ok
+
+start "class/delimiter: a TAB in a fixture name is refused (manifest is TSV)"
+D=$(new_repo clstab)
+fixture "$D" tests/a.pd "$good_program"
+printf 'fn main() {\n    print("ok");\n}\n' > "$D/tests/tabbed"$'\t'"x.pd"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
+run_case "$D" tests
+expect_rc 1 && expect_out "UNDECLARED" && ok
+
+# --- COMBINED scope cases (each component was tested; the combinations were not)
+start "combined: a scope plus a symlink pointing at it is an overlap"
+D=$(new_repo combosym)
+fixture "$D" tests/a.pd "$good_program"
+ln -sfn tests "$D/tests_alias"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
+run_case "$D" tests tests_alias
+expect_rc 2 && expect_out "given more than once" && ok
+
+start "combined: absolute 'tests' plus '.' is an overlap"
+OUT=$( cd "$D" && bash scripts/conformance.sh "$D/tests" . 2>&1 ); RC=$?
+expect_rc 2 && expect_out "overlap" && ok
+
+start "combined: a nonexistent scope beside a valid one aborts before find"
+run_case "$D" tests tests/nope
+expect_rc 2 && expect_out "is not a directory" && ok
+
 start "item3: an XPASS is still caught through an alternate spelling"
 D=$(new_repo canonxpass)
 fixture "$D" tests/a.pd "$good_program"

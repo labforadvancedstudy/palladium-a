@@ -429,7 +429,7 @@ Each fixture declares a class:
 
 Because the inventory is closed, a fixture that is deleted, renamed, or added without a declaration
 fails the gate rather than silently shrinking or growing it. The gate's own ability to fail is
-tested by `make test-conformance-runner` (75 cases).
+tested by `make test-conformance-runner` (87 cases).
 
 ## 12. Relationship to the bootstrap subset
 
