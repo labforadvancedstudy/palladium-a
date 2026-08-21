@@ -1,227 +1,93 @@
-READ and RESEPCT './CLAUDE.LOCAL.md'
+# Palladium (palladium-a)
 
----
+Systems language project: Rust로 짠 컴파일러(`pdc`)가 Palladium(.pd)을 C로 트랜스파일 → gcc 링크.
+**현재 목표: 언어 스펙 정리 → 그 스펙대로 진짜 셀프컴파일(자기 소스를 자기가 컴파일) 달성.**
 
-1. 너는 ADHD야. 항상 정신이 들면 첫번째 루틴은 "TODO를 확인"해야해. 
-1.1 어디까지 했고 무엇을 진행하고 있었고 다음에 무엇을 해야할지 항상 확인해.
-1.2 모르겠다면 당장 중단해. 소리쳐! "나 뭘해야할지 모르겠어요!" 그리고 사용자에게 도움을 요청해.
-2. 루트 폴더에 파일과 디렉토리가 20개가 넘으면 유저에게 파일 정리 계획을 이야기해주고 정리 제안을 해줘.
-3. User special commands. 명령을 받으면 "얍!" 소리치고 명령 받았다는 말을 해줘. 항상 Ultrathink what to do.
-3.1 "1" or "t": build, lint, test, e2e test 하고 성공 확인. warning까지 모두 수정해.
-3.2 "2" or "c": TODO를 확인하고 이어서 해주고, TODO가 없으면 해야할 일을 TODO에 넣어서 진행해.
-3.3 "3" or "r": STATUS REPORT COMMAND
-3.4 "4" or "m": 버드아이로 프로젝틀르 바라고보 마일스톤 기준으로 무엇을 해야할지 분석해주고 다음 마일스톤을 제안해줘.
-3.4 "5" or "p": changeset을 확인하고 commits을 만들고 push 해줘.
+## User special commands
 
----
+명령 받으면 "얍!" 하고 시작. Ultrathink what to do.
+
+- `1`/`t`: build, lint, test 돌리고 성공 확인. warning까지 수정.
+- `2`/`c`: TODO 확인하고 이어서 진행. 없으면 만들어서 진행.
+- `3`/`r`: status report.
+- `4`/`m`: 버드아이로 마일스톤 분석 + 다음 마일스톤 제안.
+- `5`/`p`: changeset 확인, 커밋 만들고 push.
+
+## Layout (verified 2026-08-21)
+
+```
+src/                # Rust 구현 컴파일러 (pdc/pdm/pls) — 현재 유일한 동작 컴파일러
+docs/specification/ # 스펙 SSOT: language_specification.md, grammar.ebnf, semantics.md
+docs/reference/     # LANGUAGE_REFERENCE.md 등 (스펙과 중복/드리프트 있음)
+bootstrap/
+  v1_archive/       # 초기 시도 아카이브 (역사 자료, 건드리지 않음)
+  v2_full_compiler/ # .pd로 짠 "풀" 컴파일러 1,540줄 (lexer/parser/ast/codegen/pdc)
+  v3_incremental/   # tiny_v1~v16 증분 컴파일러 50여 개 (대부분 실험 잔해)
+stdlib/             # prelude.pd + std/
+examples/           # tutorial/01_variables.pd ~ 06_arrays.pd, practical/
+tests/              # Rust 테스트 + .pd 테스트
+```
+
+## Build & smoke
+
+```bash
+cargo build --release          # green (2026-08-21 실측, 29s)
+./target/release/pdc compile examples/tutorial/01_variables.pd -o vars
+```
+
+## Current real status (2026-08-21 실측)
+
+게이트: `make conformance` (언어 표면) · `make selfhost` (셀프호스팅 fixed point) · `make test-honest`.
+
+현재 수치 (2026-08-21, 원본 커밋 f323cf1과 대조):
+
+| 게이트 | 원본 | 현재 |
+|---|---|---|
+| selfhost | 불가 (링크조차 안 됨) | **green** (fixed point) |
+| conformance | 실행 가능 0건 | 39 pass / 3 fail / 2 skip |
+| lib 테스트 | 377 pass · 2 fail | 398 pass · 2 fail |
+| 통합 테스트 (tests/*.rs) | 57 fail | 41 fail |
+
+**게이트 맹점 주의**: `make test-rust`는 `cargo test --lib --bins`라 `tests/*.rs`를 **아예 실행하지 않는다**.
+그래서 통합 테스트 41건 실패가 1년간 안 보였다. 진짜 상태는 `make test-honest`(`--no-fail-fast`)로만 보인다.
+남은 41건은 전부 기존 결함 — 미구현 기능(closures·const generics·async) 테스트이거나,
+`target/build/` vs 드라이버의 `build_output/` 경로 불일치다. 이번 세션 회귀는 0건.
+
+**셀프호스팅 달성 (2026-08-21).** `bootstrap/pdc.pd`(~760줄, PBS-1)가 자기 소스를 컴파일하고
+stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fixed point다.
+서브셋 스펙 = `docs/specification/bootstrap-subset.md`.
+
+**고쳐진 것 (이 세션):**
+- D1 링킹 — `runtime/palladium_runtime.c`가 레포에 **한 번도 존재한 적 없었다**(git 전 이력 확인).
+  근본 원인은 `.gitignore`의 무차별 `*.c`. 런타임 작성 + negation 추가 → .pd가 처음으로 실행파일이 됨.
+- D2 빌트인 드리프트 — typeck 36개 vs borrow checker 25개. `src/builtins.rs`를 SSOT로 만들고
+  두 패스가 파생하도록 변경(중복 등록 400줄 삭제 + 드리프트 테스트).
+- D3 tail return — `fn add(a,b) -> i64 { a + b }`가 **에러 없이 쓰레기값 반환**(생성 C에 return 누락).
+  파서에서 `Stmt::Return`으로 lowering. stdlib 전체가 그동안 조용히 miscompile되고 있었다.
+
+**남은 결함 (열림):**
+- D4 `for`가 배열 **파라미터**를 순회할 때 decay된 포인터에 `sizeof` 사용 (`src/codegen/mod.rs:1553`).
+- D5 `?` / `.await` — 정의되지 않은 C 타입/멤버를 참조하는 코드 생성 (에러 아님).
+- D6 호출 인자 대여가 해제되지 않음 (`Lifetime::Named("fn")` vs `exit_scope`의 `Scope(n)`) →
+  같은 값을 두 번 넘길 수 없고, 필드를 빌트인에 넘기면 이후 uninitialized 오판.
+
+**허위였던 문서 주장 (교정 완료):** README "Bootstrap 100% Complete", FEATURES "Self-Hosting 100%",
+`bootstrap/v3_incremental/BOOTSTRAP_ACHIEVED.md`. 어떤 Palladium 컴파일러도 자기 자신을 컴파일한
+적이 없다. `v2_full_compiler/pdc.pd`는 자기 파서가 구현하지 않는 방언(if-expression·`matches!`·
+`if let`)으로 쓰여 있어 원리적으로 불가능하다 (`parser.pd:178`).
+`tests/07_traits_basic.pd`·`08_generics_basic.pd`는 "미구현"을 print만 하고 PASS하므로,
+컨포먼스 green은 traits/generics의 증거가 **아니다**.
+
+## Working rules
+
+- 모든 상태 주장은 실행 증거(명령 출력, file:line)와 함께. 문서의 과거 주장을 근거로 쓰지 않는다.
+- 스펙 SSOT는 `docs/specification/` — 구현과 충돌하면 스펙을 고치든 구현을 고치든 한쪽으로
+  결정하고 기록한다. reference 문서는 스펙에서 파생.
+- 셀프컴파일 게이트(순서대로): ① Rust pdc가 .pd→실행파일 end-to-end 복구
+  ② 스펙의 "bootstrap subset" 확정 ③ 그 subset으로 짠 컴파일러가 Rust pdc로 컴파일됨
+  ④ 그 산출물이 자기 소스를 다시 컴파일 (fixed point).
+- 루트에 파일/디렉토리 20개 초과하면 정리 제안.
 
 # TESTING
-- Always test your code before showing results to the user
-- Run make --dry-run for Makefiles, cargo check for Rust, syntax validation for configs
 
----
-
-# Palladium Project Structure & Analysis
-
-## Project Overview
-
-Palladium is a systems programming language with the goal of combining Turing's correctness with von Neumann's performance. The project has achieved 100% bootstrap capability as of June 17, 2025.
-
-## Directory Structure
-
-```
-palladium-a/
-├── src/                    # Rust implementation of the compiler
-│   ├── ast/               # Abstract Syntax Tree definitions
-│   ├── codegen/           # Code generation (C backend)
-│   ├── driver/            # Compiler driver/main entry
-│   ├── errors/            # Error handling and reporting
-│   ├── lexer/             # Lexical analysis/tokenization
-│   ├── parser/            # Syntax parsing
-│   ├── resolver/          # Module resolution
-│   ├── runtime/           # Runtime library functions
-│   ├── tests/             # Compiler tests
-│   └── typeck/            # Type checking
-│
-├── bootstrap/             # First bootstrap attempt (archived)
-│   ├── archive/          # Old bootstrap attempts
-│   ├── core/             # Core bootstrap files
-│   ├── demos/            # Demo programs
-│   └── utilities/        # Helper utilities
-│
-├── bootstrap2/            # Second bootstrap attempt (successful)
-│   ├── pdc.pd            # Full compiler (1,220 lines)
-│   └── various .pd files # Bootstrap components
-│
-├── bootstrap3/            # Third bootstrap (incremental approach)
-│   ├── tiny_v1-v16.pd    # Incremental tiny compilers
-│   ├── tiny_self.pd      # Self-hosting test
-│   ├── BOOTSTRAP_ACHIEVED.md
-│   └── build_output/     # Generated C files
-│
-├── stdlib/                # Standard library
-│   ├── std/
-│   │   ├── collections/
-│   │   ├── io/
-│   │   ├── math.pd
-│   │   └── string.pd
-│   └── prelude.pd
-│
-├── examples/              # Example programs
-│   ├── algorithms/       # Algorithm implementations
-│   ├── basic/            # Basic language features
-│   ├── bootstrap/        # Bootstrap examples
-│   ├── data_structures/  # Data structure examples
-│   └── testing/          # Test programs
-│
-├── docs/                  # Documentation
-│   ├── design/           # Language design docs
-│   ├── marketing/        # Marketing materials
-│   ├── planning/         # Project planning
-│   └── release/          # Release notes
-│
-├── reports/               # Status reports
-├── scripts/               # Build/utility scripts
-├── archive/               # Archived materials
-└── build_output/          # Compiler output files
-```
-
-## Key Files
-
-### Rust Compiler (src/)
-- `main.rs` - Entry point
-- `lexer/scanner.rs` - Tokenizer using logos
-- `parser/parser.rs` - Recursive descent parser
-- `typeck/mod.rs` - Type checker
-- `codegen/c_backend.rs` - C code generator
-
-### Bootstrap Compilers
-- `bootstrap2/pdc.pd` - Full-featured compiler (1,220 lines)
-- `bootstrap3/tiny_v16.pd` - Final tiny compiler with arrays (760 lines)
-- `bootstrap3/BOOTSTRAP_ACHIEVED.md` - Bootstrap documentation
-
-### Standard Library
-- `stdlib/prelude.pd` - Core types and functions
-- `stdlib/std/string.pd` - String utilities
-- `stdlib/std/math.pd` - Math functions
-
-## Architecture Analysis
-
-### Strengths ✅
-
-1. **Clear Separation of Concerns**
-   - Rust implementation separate from Palladium bootstrap
-   - Incremental bootstrap approach in bootstrap3/
-   - Well-organized standard library
-
-2. **Multiple Bootstrap Paths**
-   - bootstrap2/ has full compiler
-   - bootstrap3/ has incremental tiny compilers
-   - Demonstrates different approaches to self-hosting
-
-3. **Comprehensive Examples**
-   - Examples cover all language features
-   - Good test coverage
-   - Bootstrap demos included
-
-### Weaknesses ❌
-
-1. **Scattered Bootstrap Attempts**
-   - Three bootstrap directories (bootstrap/, bootstrap2/, bootstrap3/)
-   - Could be consolidated or better documented
-   - Some duplicate/abandoned code
-
-2. **Build System**
-   - No unified build system (Makefile, build.pd, etc.)
-   - Manual compilation steps required
-   - Output files mixed with source in some directories
-
-3. **Documentation Gaps**
-   - No top-level architecture document
-   - Bootstrap process not clearly documented
-   - Missing user guide for the language
-
-4. **Testing Infrastructure**
-   - Tests scattered across directories
-   - No automated test runner
-   - No CI/CD setup
-
-5. **Module System**
-   - Resolver implementation incomplete
-   - Import paths inconsistent
-   - No clear module naming convention
-
-## Recommendations
-
-### Immediate Actions
-
-1. **Consolidate Bootstrap**
-   ```
-   bootstrap/
-   ├── v1_archived/     # Move old attempts here
-   ├── v2_full/         # Full compiler approach
-   ├── v3_incremental/  # Tiny compiler approach
-   └── README.md        # Explain each approach
-   ```
-
-2. **Create Build System**
-   ```palladium
-   // build.pd - Palladium build script
-   fn build_compiler() {
-       compile("bootstrap/v3_incremental/tiny_v16.pd");
-       compile("src/main.pd"); // Future: Palladium version
-   }
-   ```
-
-3. **Standardize Project Layout**
-   ```
-   src/          # Palladium source (future)
-   rust_src/     # Current Rust implementation
-   bootstrap/    # Bootstrap compilers
-   stdlib/       # Standard library
-   tests/        # All tests
-   docs/         # All documentation
-   ```
-
-### Long-term Improvements
-
-1. **Self-hosting Transition**
-   - Port Rust compiler to Palladium
-   - Use tiny_v16 as starting point
-   - Gradually expand features
-
-2. **Testing Framework**
-   - Create test runner in Palladium
-   - Automated regression tests
-   - Performance benchmarks
-
-3. **Documentation**
-   - Language specification
-   - User guide
-   - Contributor guide
-   - Architecture document
-
-## Project Health Score: 85/100
-
-### Positive Factors (+)
-- ✅ 100% bootstrap achieved (+30)
-- ✅ Working compilers (+20)
-- ✅ Good code organization (+10)
-- ✅ Comprehensive examples (+10)
-- ✅ Active development (+10)
-- ✅ Clear vision/philosophy (+5)
-
-### Negative Factors (-)
-- ❌ Scattered bootstrap code (-5)
-- ❌ No build automation (-5)
-- ❌ Documentation gaps (-5)
-
-## Conclusion
-
-The Palladium project has achieved its primary goal of bootstrap capability. The code is well-written and the language design is solid. The main areas for improvement are:
-
-1. **Organization** - Consolidate bootstrap attempts
-2. **Automation** - Build system and testing
-3. **Documentation** - User and developer guides
-
-The project is ready for the next phase: transitioning from Rust implementation to full self-hosting using the bootstrap compilers.
+- 결과 보여주기 전에 항상 테스트: `cargo check` / `cargo test`, Makefile은 `make --dry-run`.

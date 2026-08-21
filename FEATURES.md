@@ -8,7 +8,7 @@ Palladium is a systems programming language that refuses to compromise. We belie
 ## 📊 Implementation Status
 - **Overall Progress**: ~60% complete
 - **Core Language**: 85% ✅
-- **Self-Hosting**: 100% ✅
+- **Self-Hosting**: ✅ fixed point reached — `make selfhost` (see docs/specification/bootstrap-subset.md §9)
 - **Advanced Features**: 25% ⏳
 
 ## 🚀 Key Features for v1.0
@@ -40,7 +40,7 @@ Palladium is a systems programming language that refuses to compromise. We belie
 
 ### 5. Developer Experience
 - ✅ **Clean Syntax** - Less noise than Rust/C++
-- ✅ **Self-Hosting Compiler** - Written in Palladium itself
+- ✅ **Self-Hosting Compiler** - `bootstrap/pdc.pd`, written in the subset it implements
 - ⏳ **Excellent Error Messages** - With fix suggestions
 - ⏳ **Fast Compilation** - Incremental + parallel
 
@@ -155,7 +155,6 @@ fn factorial(n: u64) -> u64 {
 
 ### Completed ✅
 - Core language design
-- Self-hosting compiler
 - Basic type system
 - Memory model
 - Pattern matching

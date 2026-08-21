@@ -21,11 +21,33 @@ Palladium is a systems programming language that combines Turing's correctness w
 
 ## 🚀 Features
 
-- **Memory Safety**: Ownership system inspired by Rust
-- **Type Safety**: Strong static typing with inference
-- **Performance**: Compiles to optimized native code via C
+- **Memory Safety**: Ownership and borrow checking at compile time
+- **Type Safety**: Strong static typing
+- **Performance**: Compiles to C, then to native code
 - **Simplicity**: Clean, readable syntax
-- **Self-Hosting**: 100% bootstrap capability achieved
+
+- **Self-Hosting**: achieved as a fixed point (see below)
+
+### Self-hosting
+
+`bootstrap/pdc.pd` is a Palladium compiler written in Palladium. It is verified as a **fixed
+point**, not a demo — the C emitted by the stage-1 compiler and by the stage-2 compiler are
+byte-identical:
+
+```
+$ make selfhost
+== stage0: Rust pdc compiles bootstrap/pdc.pd ==
+== stage1: pdc1 compiles bootstrap/pdc.pd ==   -> c1.c (972 lines) -> pdc2
+== stage2: pdc2 compiles bootstrap/pdc.pd ==   -> c2.c (972 lines)
+✅ SELF-HOSTING ACHIEVED — fixed point reached.
+   9b0cf24e640eb689a1744ffdf589a44428ef5649  c1.c
+   9b0cf24e640eb689a1744ffdf589a44428ef5649  c2.c
+```
+
+Earlier versions of this README claimed "100% bootstrap" while no Palladium-written compiler
+had ever compiled itself; that claim was false and the compilers it pointed at could not have
+worked. The language subset the bootstrap compiler is written in — and implements — is
+specified in [`docs/specification/bootstrap-subset.md`](docs/specification/bootstrap-subset.md).
 
 ## 📦 Installation
 
@@ -245,40 +267,42 @@ When you compile, you'll see detailed progress:
 
 ## 📊 Current Status
 
-### ✅ Implemented
+### ✅ Works end-to-end
 
-- Core language features (variables, functions, control flow)
-- Basic type system (integers, booleans, strings, arrays)
-- Structs and enums
-- Pattern matching (basic)
-- Ownership and borrowing
-- Effects system
-- C code generation backend
+- Functions, `let`/assignment, `if`/`else`, `while`, `for`-over-range
+- `i32`/`i64`/`u32`/`u64`, `bool`, `String`, fixed-size arrays
+- Structs; enums with unit/tuple/struct variants; `match` on enums
+- Ownership and borrow checking
+- C code generation and linking
 
-### 🚧 In Progress
+### ⚠️ Parses but is broken downstream
 
-- Standard library (Vec, HashMap, etc.)
-- LLVM backend optimization
-- Package manager (pdm)
-- Language server (pls)
+- `?` operator — emits C referencing a `struct Result` layout codegen never defines
+- `async` / `.await` — emits a call to a `poll` member that is never generated
+- Tuples — become `void*`; no tuple expression exists, so none can be constructed
+- Generics — generic arguments that are all-uppercase are misparsed as const generics
+- `for` over an array *parameter* — uses `sizeof` on a decayed pointer
 
-### 📋 Planned
+### ❌ Not implemented
 
-- Generics
-- Traits
-- Async/await
-- Closures
-- Module system
-- Macro system
+- Traits (parse, then emit nothing — no dispatch mechanism exists)
+- Closures, method call syntax `obj.method()`, `else if`, `loop`
+- Floats, chars, bitwise operators, compound assignment (`+=`), `as` casts
+- Literal/range/or patterns and match guards
+- String interpolation
 
 ### ⚠️ Known Limitations
 
-- No implicit returns (use explicit `return`)
-- No `else if` (use nested `if`)
-- No method syntax (`obj.method()`)
-- Limited pattern matching
+- No implicit returns — use explicit `return`
+- No `else if` — nest an `if` inside the `else` block
+- No method syntax — call `Type::method(receiver, ...)`
+- `match` cannot dispatch on integers (no literal patterns) — use `if`/`else` chains
 - `print` and `print_int` output on separate lines
-- UTF-8 handling in error messages needs work
+- `pdc` must be run from the repository root: it links `runtime/palladium_runtime.c` by
+  relative path
+
+Feature-by-feature status with evidence: [`docs/specification/language-spec.md`](docs/specification/language-spec.md).
+Run `scripts/conformance.sh` to reproduce the current numbers.
 
 ## 🏗️ Building from Source
 
@@ -300,7 +324,8 @@ cargo install --path .
 ## 📖 Documentation
 
 - [Getting Started Guide](docs/user-guide/getting-started.md)
-- [Language Reference](docs/specification/language_specification.md)
+- [Language Specification](docs/specification/language-spec.md) — what the compiler actually implements
+- [Bootstrap Subset (PBS-1)](docs/specification/bootstrap-subset.md) — the self-hosting target
 - [User Guide](docs/user-guide/)
 - [Examples](examples/)
 
@@ -313,8 +338,8 @@ Check out the `examples/` directory:
 
 ```bash
 # Run an example
-pdc compile examples/tutorial/01_hello_world.pd -o hello
-./build_output/hello
+pdc compile examples/tutorial/01_variables.pd -o vars
+./build_output/vars
 ```
 
 ## 🤝 Contributing
@@ -355,12 +380,12 @@ Choose whichever license works best for you.
 
 Special thanks to:
 
-- All contributors who helped achieve 100% bootstrap capability
+- All contributors to the compiler and standard library
 - The Rust community for inspiration
 - Alan Turing and John von Neumann for their legendary contributions to computing
 
 ---
 
-**Project Status**: Alpha (v0.1.1) | **First Release**: June 2025 | **Bootstrap**: 100% Complete
+**Project Status**: Alpha (v0.1.1) | **Self-hosting**: not achieved — see `docs/specification/bootstrap-subset.md`
 
 *"Combining Turing's correctness with von Neumann's performance"*
