@@ -1,186 +1,132 @@
 name: Release
 
+# Stable channel. Tagging v* publishes a release whose artifacts contain the
+# compiler AND its C runtime. A pdc without runtime/ cannot link anything, so
+# shipping the bare binary — which this workflow used to do, under a binary name
+# (`palladium`) that does not exist — produces an install that fails on the
+# user's first compile.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish'
+        required: true
 
 permissions:
   contents: write
 
 jobs:
-  # Create release binaries for multiple platforms
-  build-release:
-    name: Build Release
+  build:
+    name: ${{ matrix.artifact }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact_name: palladium-linux-amd64
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            artifact_name: palladium-macos-amd64
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact_name: palladium-macos-arm64
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            artifact_name: palladium-windows-amd64.exe
+            artifact: pdc-macos-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            artifact: pdc-macos-x86_64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: pdc-linux-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: ${{ matrix.target }}
-    - uses: Swatinem/rust-cache@v2
-    
-    - name: Build release binary
-      run: cargo build --release --target ${{ matrix.target }}
-    
-    - name: Package binary (Unix)
-      if: matrix.os != 'windows-latest'
-      run: |
-        cd target/${{ matrix.target }}/release
-        tar czf ../../../${{ matrix.artifact_name }}.tar.gz palladium
-        cd ../../..
-        shasum -a 256 ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256
-    
-    - name: Package binary (Windows)
-      if: matrix.os == 'windows-latest'
-      shell: bash
-      run: |
-        cd target/${{ matrix.target }}/release
-        7z a ../../../${{ matrix.artifact_name }}.zip palladium.exe
-        cd ../../..
-        sha256sum ${{ matrix.artifact_name }}.zip > ${{ matrix.artifact_name }}.zip.sha256
-    
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: binaries-${{ matrix.target }}
-        path: |
-          *.tar.gz
-          *.tar.gz.sha256
-          *.zip
-          *.zip.sha256
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
-  # Create bootstrap compiler package
-  bootstrap-package:
-    name: Bootstrap Package
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --bin pdc
+
+      - name: Stage install layout
+        run: |
+          set -euo pipefail
+          stage="${{ matrix.artifact }}"
+          mkdir -p "$stage/bin" "$stage/share/palladium"
+          cp "target/${{ matrix.target }}/release/pdc" "$stage/bin/pdc"
+          cp -R runtime "$stage/share/palladium/runtime"
+          cp README.md LICENSE "$stage/"
+          tar czf "$stage.tar.gz" "$stage"
+          shasum -a 256 "$stage.tar.gz" | tee "$stage.tar.gz.sha256"
+
+      - name: Smoke test the staged layout
+        run: |
+          set -euo pipefail
+          stage="$PWD/${{ matrix.artifact }}"
+          host="$(rustc -vV | sed -n 's/host: //p')"
+          if [ "${{ matrix.target }}" != "$host" ]; then
+            echo "smoke: skipped (artifact is cross-compiled for ${{ matrix.target }})"
+            exit 0
+          fi
+          # The binary must find its runtime from its own install location,
+          # with no help from the repository or the working directory.
+          work=$(mktemp -d); cd "$work"
+          printf 'fn main() { print("release-smoke-ok"); }\n' > s.pd
+          "$stage/bin/pdc" --print-runtime
+          "$stage/bin/pdc" compile s.pd -o s
+          ./build_output/s | grep -q release-smoke-ok
+          echo "smoke: OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.tar.gz.sha256
+
+  publish:
+    needs: build
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Create bootstrap package
-      run: |
-        mkdir -p palladium-bootstrap
-        cp -r bootstrap palladium-bootstrap/
-        cp -r examples palladium-bootstrap/
-        cp -r docs palladium-bootstrap/
-        cp README.md LICENSE Makefile palladium-bootstrap/
-        tar czf palladium-bootstrap.tar.gz palladium-bootstrap
-        shasum -a 256 palladium-bootstrap.tar.gz > palladium-bootstrap.tar.gz.sha256
-    - name: Upload bootstrap package
-      uses: actions/upload-artifact@v3
-      with:
-        name: bootstrap-package
-        path: |
-          palladium-bootstrap.tar.gz
-          palladium-bootstrap.tar.gz.sha256
+      - uses: actions/checkout@v4
 
-  # Create GitHub release
-  create-release:
-    name: Create Release
-    needs: [build-release, bootstrap-package]
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Download all artifacts
-      uses: actions/download-artifact@v3
-      with:
-        path: artifacts
-    
-    - name: Gather release files
-      run: |
-        mkdir release
-        mv artifacts/*/* release/
-        ls -la release/
-    
-    - name: Extract version
-      id: version
-      run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-    
-    - name: Generate release notes
-      run: |
-        cat > release-notes.md << EOF
-        # Palladium ${{ steps.version.outputs.version }}
-        
-        ## Release Highlights
-        
-        - 100% self-hosting compiler
-        - Cross-platform support (Linux, macOS, Windows)
-        - Comprehensive standard library
-        - Full language documentation
-        
-        ## Installation
-        
-        ### Pre-built Binaries
-        
-        Download the appropriate binary for your platform:
-        - Linux (x86_64): \`palladium-linux-amd64.tar.gz\`
-        - macOS (Intel): \`palladium-macos-amd64.tar.gz\`
-        - macOS (Apple Silicon): \`palladium-macos-arm64.tar.gz\`
-        - Windows: \`palladium-windows-amd64.exe.zip\`
-        
-        ### Bootstrap Compiler
-        
-        For building from source or contributing:
-        - Bootstrap package: \`palladium-bootstrap.tar.gz\`
-        
-        ## Checksums
-        
-        Verify your download with the provided \`.sha256\` files.
-        
-        ## What's Changed
-        
-        See the [full changelog](https://github.com/palladium-lang/palladium/compare/v0.1.0...${{ steps.version.outputs.version }})
-        EOF
-    
-    - name: Create release
-      uses: softprops/action-gh-release@v1
-      with:
-        body_path: release-notes.md
-        files: release/*
-        draft: false
-        prerelease: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
-  # Build and publish Docker image
-  docker:
-    name: Docker Image
-    needs: create-release
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    
-    - name: Log in to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
-    
-    - name: Extract version
-      id: version
-      run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-    
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: |
-          palladium/palladium:latest
-          palladium/palladium:${{ steps.version.outputs.version }}
+      - name: Collect
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec mv {} release/ \;
+          ls -la release
+
+      - name: Release notes
+        run: |
+          {
+            echo "## Install"
+            echo
+            echo '```bash'
+            echo 'brew tap 2lab-ai/tap'
+            echo 'brew install pdc'
+            echo '```'
+            echo
+            echo "## Artifacts"
+            echo
+            echo 'Each archive contains `bin/pdc` and `share/palladium/runtime`.'
+            echo 'The runtime is required: pdc emits C and links it at compile time.'
+            echo
+            echo "## Verify an install"
+            echo
+            echo '```bash'
+            echo 'pdc --print-runtime'
+            echo 'cd /tmp && printf "fn main() { print(\"ok\"); }\n" > ok.pd'
+            echo 'pdc compile ok.pd -o ok && ./build_output/ok'
+            echo '```'
+          } > notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          body_path: notes.md
+          files: release/*

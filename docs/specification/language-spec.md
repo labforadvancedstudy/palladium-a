@@ -1,7 +1,7 @@
 # The Palladium Language Specification
 
 **Version**: 0.2 (reality-based)
-**Date**: 2026-08-21
+**Date**: 2026-08-22
 **Supersedes**: `language_specification.md` v1.0.0-alpha (2025-01-19), which described an
 intended language rather than the implemented one.
 
@@ -39,8 +39,9 @@ The C backend is the real backend. An LLVM text backend exists
 construction, `?`, and `await` are all unimplemented there (`:914`, `:921`, `:933`, `:1379`).
 
 Generated C is linked against `runtime/palladium_runtime.c`, which supplies 16 file/path
-symbols. **The path is relative**, so `pdc` currently only links when invoked from the
-repository root (`src/driver/mod.rs:261`).
+symbols. `pdc` resolves that runtime relative to its own install location — `pdc --print-runtime`
+shows which copy it found, and `$PALLADIUM_RUNTIME` overrides it. (Until 2026-08-22 the path was
+hardcoded relative to the working directory, so an installed compiler could not link anything.)
 
 ## 2. Lexical structure
 
@@ -288,11 +289,12 @@ Neither is an error at any earlier stage. Both are excluded from the bootstrap s
 `fn add(a: i64, b: i64) -> i64 { a + b }` — a function body ending in an expression rather than
 a `return`.
 
-This is in the grammar (`grammar.ebnf:302`) and it previously **compiled cleanly and returned
+This is in the grammar (`grammar.ebnf`) and it previously **compiled cleanly and returned
 garbage**: the generated C was `long long add(...) { (a + b); }` with no `return`, and
-`add(2,3)` printed `6162934856`. That is the project's most dangerous defect class — no error,
-no warning, wrong answer. It is tracked as D3 in
-[`bootstrap-subset.md`](bootstrap-subset.md) §7.
+`add(2,3)` printed `6162934856`. No error, no warning, wrong answer — the project's most
+dangerous defect class, and every function in `stdlib/` that ended in an expression was affected.
+It is fixed: the parser now lowers a function body's tail expression to a return when a return
+type is declared. A tail expression in a *nested* block still does not become a return.
 
 Regardless of that fix, **write explicit `return` in every value-returning function.** The
 bootstrap compiler does.
@@ -393,7 +395,8 @@ Execution starts at `fn main`. Arguments are evaluated left to right. The driver
 ## 11. Conformance
 
 `scripts/conformance.sh` compiles, links, and runs every `.pd` under `tests/` and `examples/`.
-Current status: **37 pass, 4 fail, 2 skipped** (2026-08-21).
+Current status: **39 pass, 3 fail, 2 skipped** (2026-08-22). `scripts/check-docs.sh` does the
+same for documentation snippets, and `scripts/selfhost.sh` checks the self-hosting fixed point.
 
 ⚠️ Note that several files in `tests/` named after a feature do not exercise it —
 `tests/07_traits_basic.pd` and `tests/08_generics_basic.pd` only `print` a message saying the

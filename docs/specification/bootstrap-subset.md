@@ -82,9 +82,10 @@ These are not preferences. Each one exists because the alternative is broken or
 unimplementable in a single-pass translator.
 
 1. **Every `let` carries an explicit type.** `let mut i: i64 = 0;`
-   The bootstrap compiler emits C, and C declarations need a type. Requiring the annotation
-   removes the entire type-inference subsystem from the bootstrap compiler — it is the single
-   largest simplification in PBS-1.
+   This is a requirement of PBS-1 itself, not a workaround: the bootstrap compiler emits C, C
+   declarations need a type, and requiring the annotation removes the entire type-inference
+   subsystem from it. That is the single largest simplification in PBS-1. (The Rust compiler
+   infers `let` types since D7 was fixed; the bootstrap compiler does not, and does not need to.)
 
 2. **Always put spaces around binary `-`.** Write `i - 1`, never `i-1`.
    The lexer's integer rule is `-?[0-9]+` (`src/lexer/token.rs:26`), so the minus sign binds
@@ -197,7 +198,7 @@ These are tracked because PBS-1 code cannot be written safely without them.
 | D8 | codegen emitted no C prototypes, so calling a function defined later in the file produced C that gcc rejects — and mutual recursion was inexpressible | `src/codegen/mod.rs` | **fixed** — prototypes emitted for every user function |
 | D4 | `for` over an array *parameter* uses `sizeof` on a decayed pointer | `src/codegen/mod.rs:1553` | open — PBS-1 avoids it by rule (§4) |
 | D5 | `?` and `.await` emit uncompilable or incorrect C instead of erroring | `src/codegen/mod.rs:2160`, `:2208` | open — PBS-1 excludes both |
-| D7 | a `let` with **no type annotation** is emitted as `long long` regardless of the initializer's real type: `let n = Node::Add(1,2)` gives `long long n = Node_Add__new(...)`, and `let a: String = "x"; let b = a;` gives `long long b = a;`. Both produce C that does not compile | codegen let-inference | open — PBS-1 requires an explicit type on every `let` (§3.1 rule 1), which avoids the class. **Top next fix**: codegen should take the let type from the typechecker, which already has it |
+| D7 | a `let` with no type annotation was emitted as `long long` whatever the initializer was, so references, enum values and string copies silently became integers | codegen let-inference | **fixed** — inference now covers literals, calls, struct/enum values, references, deref, field and index expressions; an initializer with no rule is a compile error naming the variable, never a guess |
 | D9 | reference-to-array parameter types (`&[T; N]`, `&mut [T; N]`) are rejected by codegen | `src/codegen/mod.rs:1372` | open — PBS-1 passes arrays directly, without `&` |
 
 ## 8. Builtin surface available to PBS-1

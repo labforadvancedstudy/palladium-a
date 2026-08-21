@@ -33,6 +33,14 @@ pub struct CodeGenerator {
     temp_counter: usize,
     /// Map of enum names to their definitions
     enums: std::collections::HashMap<String, EnumDef>,
+    /// Map of struct names to their declared fields, for typing field access.
+    /// Filled by generate_struct, so it covers imported, local and
+    /// monomorphized structs alike.
+    structs: std::collections::HashMap<String, Vec<(String, Type)>>,
+    /// Return types of `impl` block methods, keyed by their call syntax
+    /// (`Type::method`). Kept out of `functions` so that only type inference
+    /// sees them and argument passing is unaffected.
+    impl_methods: std::collections::HashMap<String, Option<Type>>,
     /// Map from original generic struct name to list of instantiations
     /// e.g., "Box" -> [("i64", "Box_i64"), ("bool", "Box_bool")]
     generic_struct_instantiation_map: std::collections::HashMap<String, Vec<(Vec<String>, String)>>,
@@ -61,6 +69,8 @@ impl CodeGenerator {
             type_aliases: std::collections::HashMap::new(),
             temp_counter: 0,
             enums: std::collections::HashMap::new(),
+            structs: std::collections::HashMap::new(),
+            impl_methods: std::collections::HashMap::new(),
             generic_struct_instantiation_map: std::collections::HashMap::new(),
             async_functions: std::collections::HashSet::new(),
             defined_structs: std::collections::HashSet::new(),
@@ -91,12 +101,33 @@ impl CodeGenerator {
         self.generic_struct_instantiations = instantiations;
     }
 
-    /// Infer the C type of an expression
+    /// Infer the C type of an expression, defaulting to `long long` when this
+    /// pass has no rule for it.
+    ///
+    /// Only callers for which a wrong guess is harmless (picking between the
+    /// string-concat and the arithmetic form of `+`, deciding whether a match
+    /// scrutinee is an enum, …) may use this. A caller that *declares* a C
+    /// variable with the result must use [`CodeGenerator::try_infer_expr_type`]
+    /// and turn `None` into a diagnostic: defaulting a declaration to
+    /// `long long` emits silently wrong C (a pointer or a struct stored in an
+    /// integer), which only surfaces as a gcc error against generated code the
+    /// user never wrote.
     fn infer_expr_type(&self, expr: &Expr) -> String {
+        self.try_infer_expr_type(expr)
+            .unwrap_or_else(|| "long long".to_string())
+    }
+
+    /// Infer the C type of an expression, or `None` when codegen has no rule
+    /// for that expression kind.
+    ///
+    /// The returned string may carry array dimensions (`"long long[3]"`), which
+    /// is the same encoding `self.variables` uses; split it with
+    /// [`CodeGenerator::split_array_dims`] before emitting a declaration.
+    fn try_infer_expr_type(&self, expr: &Expr) -> Option<String> {
         match expr {
-            Expr::Integer(_) => "long long".to_string(),
-            Expr::String(_) => "const char*".to_string(),
-            Expr::Bool(_) => "int".to_string(),
+            Expr::Integer(_) => Some("long long".to_string()),
+            Expr::String(_) => Some("const char*".to_string()),
+            Expr::Bool(_) => Some("int".to_string()),
             Expr::StructLiteral { name, fields, .. } => {
                 // Check if this is a generic struct instantiation
                 if let Some(instantiations) = self.generic_struct_instantiation_map.get(name) {
@@ -118,72 +149,264 @@ impl CodeGenerator {
                                     || (type_arg == "bool" && field_type == "int")
                                     || (type_arg == "String" && field_type.contains("char*"))
                                 {
-                                    return format!("struct {}", mangled_name);
+                                    return Some(format!("struct {}", mangled_name));
                                 }
                             }
                         }
                     }
-                    format!("struct {}", name)
+                    Some(format!("struct {}", name))
                 } else {
-                    format!("struct {}", name)
+                    Some(format!("struct {}", name))
                 }
             }
-            Expr::Ident(name) => {
-                // Look up variable type
-                self.variables
-                    .get(name)
-                    .cloned()
-                    .unwrap_or_else(|| "long long".to_string())
-            }
-            Expr::Call { func, .. } => {
-                // Look up function return type
-                if let Expr::Ident(func_name) = func.as_ref() {
-                    // Check built-in functions that return strings
-                    match func_name.as_str() {
-                        "string_concat" | "string_substring" | "string_from_char"
-                        | "int_to_string" | "file_read_all" | "file_read_line" | "trim"
-                        | "trim_start" | "trim_end" => return "const char*".to_string(),
-                        _ => {}
-                    }
+            // Every binder (let, parameter, for-loop variable, match binding)
+            // records its C type in `self.variables`, so a name we cannot find
+            // means codegen genuinely does not know the type.
+            Expr::Ident(name) => self.variables.get(name).cloned(),
+            Expr::Call { func, args, .. } => {
+                let Expr::Ident(func_name) = func.as_ref() else {
+                    // Indirect calls are rejected by generate_expression anyway.
+                    return None;
+                };
 
-                    // Look up user-defined function return type
-                    if let Some((_params, ret_type)) = self.functions.get(func_name) {
-                        // Check if this is an async function
-                        if self.async_functions.contains(func_name) {
-                            return format!("{}_Future", func_name);
-                        }
-
-                        match ret_type {
-                            Some(Type::String) => return "const char*".to_string(),
-                            Some(Type::Bool) => return "int".to_string(),
-                            Some(Type::Custom(name)) => return name.to_string(),
-                            Some(Type::Reference { inner: _, .. }) => {
-                                return format!(
-                                    "{}*",
-                                    self.infer_expr_type(&Expr::Ident("dummy".to_string()))
-                                );
-                            }
-                            _ => return "long long".to_string(),
-                        }
+                // The program's own signatures are the most specific answer, so
+                // they are consulted before the built-in table.
+                if let Some((params, ret_type)) = self.functions.get(func_name) {
+                    // Check if this is an async function
+                    if self.async_functions.contains(func_name) {
+                        return Some(format!("{}_Future", func_name));
                     }
+                    // `fn id<T>(x: T) -> T` returns whatever it was handed:
+                    // monomorphization has not happened yet at this point, so
+                    // recover the type argument from the matching argument.
+                    if let Some(Type::TypeParam(param_name)) = ret_type.as_ref() {
+                        let position = params
+                            .iter()
+                            .position(|p| matches!(&p.ty, Type::TypeParam(n) if n == param_name));
+                        let arg = position.and_then(|i| args.get(i))?;
+                        return self.try_infer_expr_type(arg);
+                    }
+                    return self.return_type_to_c(ret_type.as_ref());
                 }
-                "long long".to_string()
+
+                // Methods declared in `impl` blocks are called as `Type::method`.
+                if let Some(ret_type) = self.impl_methods.get(func_name) {
+                    return self.return_type_to_c(ret_type.as_ref());
+                }
+
+                // Built-ins come from the single source of truth in crate::builtins
+                // so this cannot drift from the type checker.
+                if let Some(builtin) = crate::builtins::lookup(func_name) {
+                    return Some(
+                        match builtin.ret {
+                            crate::builtins::BuiltinType::I64 => "long long",
+                            crate::builtins::BuiltinType::Str => "const char*",
+                            crate::builtins::BuiltinType::Bool => "int",
+                            crate::builtins::BuiltinType::Unit => "void",
+                        }
+                        .to_string(),
+                    );
+                }
+
+                None
             }
             Expr::Binary {
                 left, op, right, ..
             } => {
-                // String concatenation returns a string
-                if matches!(op, BinOp::Add) {
-                    let left_type = self.infer_expr_type(left);
-                    let right_type = self.infer_expr_type(right);
-                    if left_type == "const char*" && right_type == "const char*" {
-                        return "const char*".to_string();
+                match op {
+                    // Comparisons and the logical connectives produce a bool,
+                    // which is `int` in C - never the operand type.
+                    BinOp::Eq
+                    | BinOp::Ne
+                    | BinOp::Lt
+                    | BinOp::Gt
+                    | BinOp::Le
+                    | BinOp::Ge
+                    | BinOp::And
+                    | BinOp::Or => Some("int".to_string()),
+                    BinOp::Add => {
+                        // String concatenation returns a string
+                        let left_type = self.infer_expr_type(left);
+                        let right_type = self.infer_expr_type(right);
+                        if left_type == "const char*" && right_type == "const char*" {
+                            Some("const char*".to_string())
+                        } else {
+                            Some("long long".to_string())
+                        }
                     }
+                    _ => Some("long long".to_string()),
                 }
-                "long long".to_string()
             }
-            Expr::EnumConstructor { enum_name, .. } => enum_name.to_string(),
-            _ => "long long".to_string(), // fallback
+            Expr::Unary { op, operand, .. } => match op {
+                UnaryOp::Not => Some("int".to_string()),
+                UnaryOp::Neg => self.try_infer_expr_type(operand),
+            },
+            Expr::EnumConstructor { enum_name, .. } => {
+                // generate_enum emits `typedef struct <Enum> { ... } <Enum>;`,
+                // so `struct <Enum>` names the same type type_to_c() produces
+                // for an explicit annotation.
+                Some(format!("struct {}", enum_name))
+            }
+            Expr::Reference { expr, .. } => {
+                let inner = self.try_infer_expr_type(expr)?;
+                // A reference to an array needs C's pointer-to-array declarator
+                // (`T (*p)[n]`), which the `let` printer cannot spell; refuse
+                // instead of emitting a wrong one.
+                if inner.contains('[') {
+                    return None;
+                }
+                Some(format!("{}*", inner))
+            }
+            Expr::Deref { expr, .. } => {
+                let inner = self.try_infer_expr_type(expr)?;
+                // Strip one pointer level. A non-pointer operand means the
+                // operand is a reference *parameter*, which Expr::Ident already
+                // auto-dereferences, so the value type is the operand type.
+                Some(match inner.strip_suffix('*') {
+                    Some(pointee) => pointee.trim_end().to_string(),
+                    None => inner,
+                })
+            }
+            Expr::FieldAccess { object, field, .. } => {
+                let object_type = self.try_infer_expr_type(object)?;
+                let struct_name = Self::struct_name_of(&object_type)?;
+                let fields = self.structs.get(struct_name)?;
+                let (_, field_type) = fields.iter().find(|(name, _)| name == field)?;
+                Some(self.type_to_c(field_type))
+            }
+            Expr::Index { array, .. } => {
+                let array_type = self.try_infer_expr_type(array)?;
+                // `T[n]` -> `T`, `T*` -> `T`, `const char*` -> `char`.
+                if let Some(open) = array_type.find('[') {
+                    let base = array_type[..open].trim_end();
+                    let rest = &array_type[open..];
+                    // Drop the outermost dimension, keeping any inner ones.
+                    let close = rest.find(']')?;
+                    return Some(format!("{}{}", base, &rest[close + 1..]));
+                }
+                if array_type == "const char*" {
+                    return Some("char".to_string());
+                }
+                let pointee = array_type.strip_suffix('*')?;
+                Some(pointee.trim_end().to_string())
+            }
+            Expr::ArrayLiteral { elements, .. } => {
+                let elem_type = match elements.first() {
+                    Some(first) => self.try_infer_expr_type(first)?,
+                    None => "long long".to_string(),
+                };
+                Some(Self::array_of(&elem_type, elements.len()))
+            }
+            Expr::ArrayRepeat { value, count, .. } => {
+                let elem_type = self.try_infer_expr_type(value)?;
+                let size = match count.as_ref() {
+                    Expr::Integer(n) => *n as usize,
+                    // Non-literal counts are rejected by the type checker.
+                    _ => 0,
+                };
+                Some(Self::array_of(&elem_type, size))
+            }
+            // No rule yet: ranges are only meaningful inside `for`, `?` and
+            // macros are lowered elsewhere, and await/async is unimplemented.
+            Expr::Range { .. }
+            | Expr::Question { .. }
+            | Expr::MacroInvocation { .. }
+            | Expr::Await { .. } => None,
+        }
+    }
+
+    /// Record the return type of every method in an `impl` block under the name
+    /// its call sites use (`Type::method`), resolving `Self` to the impl type.
+    ///
+    /// Takes the map rather than `&mut self` so it can be called while another
+    /// field of the generator (the imported-module list) is borrowed.
+    fn collect_impl_method_types(
+        impl_methods: &mut std::collections::HashMap<String, Option<Type>>,
+        impl_block: &ImplBlock,
+    ) {
+        if !impl_block.type_params.is_empty() {
+            // Generic impls are monomorphized elsewhere; their return types are
+            // not knowable from the template.
+            return;
+        }
+        let for_type = impl_block.for_type.to_string();
+        for method in &impl_block.methods {
+            if !method.type_params.is_empty() {
+                continue;
+            }
+            let ret = method.return_type.clone().map(|ty| match ty {
+                Type::Custom(name) if name == "Self" => impl_block.for_type.clone(),
+                other => other,
+            });
+            impl_methods.insert(format!("{}::{}", for_type, method.name), ret);
+        }
+    }
+
+    /// C type of a function's declared return type, `void` for no return type.
+    fn return_type_to_c(&self, ret_type: Option<&Type>) -> Option<String> {
+        match ret_type {
+            None | Some(Type::Unit) => Some("void".to_string()),
+            // A generic return type is only known after monomorphization, which
+            // this pass does not track per call site.
+            Some(Type::TypeParam(_)) | Some(Type::Generic { .. }) => None,
+            Some(ty) => Some(self.type_to_c(ty)),
+        }
+    }
+
+    /// The struct/enum tag named by a C type string, if it names one:
+    /// `"struct Point"` / `"struct Point*"` / `"Point"` -> `"Point"`.
+    fn struct_name_of(c_type: &str) -> Option<&str> {
+        let name = c_type.trim_end_matches(['*', ' ']);
+        let name = name.strip_prefix("struct ").unwrap_or(name);
+        if name.is_empty() || name.contains('[') {
+            None
+        } else {
+            Some(name)
+        }
+    }
+
+    /// Add an outermost array dimension to a (possibly already array) type:
+    /// `("long long", 3)` -> `"long long[3]"`, `("long long[2]", 3)` ->
+    /// `"long long[3][2]"`.
+    fn array_of(elem_type: &str, size: usize) -> String {
+        let (base, inner_dims) = Self::split_array_dims(elem_type);
+        format!("{}[{}]{}", base, size, inner_dims)
+    }
+
+    /// Split an inferred C type into its base type and its array dimensions:
+    /// `"long long[3][2]"` -> `("long long", "[3][2]")`.
+    fn split_array_dims(c_type: &str) -> (String, String) {
+        match c_type.find('[') {
+            Some(i) => (
+                c_type[..i].trim_end().to_string(),
+                c_type[i..].replace(' ', ""),
+            ),
+            None => (c_type.to_string(), String::new()),
+        }
+    }
+
+    /// Human-readable name of an expression kind, for diagnostics.
+    fn expr_kind_name(expr: &Expr) -> &'static str {
+        match expr {
+            Expr::String(_) => "string literal",
+            Expr::Integer(_) => "integer literal",
+            Expr::Bool(_) => "boolean literal",
+            Expr::Ident(_) => "variable reference",
+            Expr::ArrayLiteral { .. } => "array literal",
+            Expr::ArrayRepeat { .. } => "array repeat",
+            Expr::Index { .. } => "array index",
+            Expr::Call { .. } => "function call",
+            Expr::Binary { .. } => "binary operation",
+            Expr::Unary { .. } => "unary operation",
+            Expr::StructLiteral { .. } => "struct literal",
+            Expr::FieldAccess { .. } => "field access",
+            Expr::EnumConstructor { .. } => "enum constructor",
+            Expr::Range { .. } => "range",
+            Expr::Reference { .. } => "reference",
+            Expr::Deref { .. } => "dereference",
+            Expr::Question { .. } => "`?` operator",
+            Expr::MacroInvocation { .. } => "macro invocation",
+            Expr::Await { .. } => "await",
         }
     }
 
@@ -623,6 +846,9 @@ impl CodeGenerator {
                             self.enums.insert(enum_def.name.clone(), enum_def.clone());
                         }
                     }
+                    Item::Impl(impl_block) => {
+                        Self::collect_impl_method_types(&mut self.impl_methods, impl_block);
+                    }
                     Item::Macro(_) => {
                         // Macros are expanded before codegen, skip here
                     }
@@ -655,6 +881,9 @@ impl CodeGenerator {
                     if enum_def.type_params.is_empty() && enum_def.lifetime_params.is_empty() {
                         self.enums.insert(enum_def.name.clone(), enum_def.clone());
                     }
+                }
+                Item::Impl(impl_block) => {
+                    Self::collect_impl_method_types(&mut self.impl_methods, impl_block);
                 }
                 Item::Macro(_) => {
                     // Macros are expanded before codegen, skip here
@@ -1096,6 +1325,10 @@ impl CodeGenerator {
     /// Generate code for a struct definition
     fn generate_struct(&mut self, struct_def: &StructDef) -> Result<()> {
         self.defined_structs.insert(struct_def.name.clone());
+        // Remember the layout so field access can be typed without re-deriving
+        // it from the AST (the borrow checker keeps the same map).
+        self.structs
+            .insert(struct_def.name.clone(), struct_def.fields.clone());
         self.output
             .push_str(&format!("typedef struct {} {{\n", struct_def.name));
 
@@ -1513,8 +1746,9 @@ impl CodeGenerator {
             } => {
                 self.output.push_str("    ");
 
-                // Determine C type
-                let (c_type, is_array, array_size) = match ty {
+                // Determine C type. `array_dims` is the (possibly empty)
+                // bracket suffix of the declarator, e.g. "[3]".
+                let (c_type, array_dims) = match ty {
                     Some(t) => match t {
                         Type::Array(elem_type, size) => {
                             let size_val = match size {
@@ -1522,75 +1756,38 @@ impl CodeGenerator {
                                 ArraySize::ConstParam(_) => 0, // TODO: resolve const param
                                 ArraySize::Expr(_) => 0,       // TODO: evaluate expression
                             };
-                            (self.type_to_c(elem_type), true, Some(size_val))
+                            (self.type_to_c(elem_type), format!("[{}]", size_val))
                         }
-                        _ => (self.type_to_c(t), false, None),
+                        _ => (self.type_to_c(t), String::new()),
                     },
                     None => {
-                        // Infer type from value using our helper
-                        let inferred_type = self.infer_expr_type(value);
-                        match value {
-                            Expr::Integer(_) => ("long long".to_string(), false, None),
-                            Expr::String(_) => ("const char*".to_string(), false, None),
-                            Expr::Bool(_) => ("int".to_string(), false, None),
-                            Expr::Binary { .. } => (inferred_type, false, None),
-                            Expr::ArrayLiteral { elements, .. } => {
-                                // Infer array element type from first element
-                                let elem_type = if !elements.is_empty() {
-                                    self.infer_expr_type(&elements[0])
-                                } else {
-                                    "long long".to_string()
-                                };
-                                (elem_type, true, Some(elements.len()))
+                        // No annotation: the inferred type IS the declared type,
+                        // so a guess here is a silently miscompiled program.
+                        // Refuse instead of defaulting to an integer.
+                        let inferred_type = self.try_infer_expr_type(value).ok_or_else(|| {
+                            CompileError::CodegenError {
+                                message: format!(
+                                    "cannot infer the type of `{}`: no type rule for this {} \
+                                     expression. Add an explicit type annotation, \
+                                     e.g. `let {}: i64 = ...;`",
+                                    name,
+                                    Self::expr_kind_name(value),
+                                    name
+                                ),
                             }
-                            Expr::ArrayRepeat { value, count, .. } => {
-                                // Infer array element type from value
-                                let elem_type = self.infer_expr_type(value);
-                                let size = if let Expr::Integer(n) = count.as_ref() {
-                                    *n as usize
-                                } else {
-                                    0 // This should have been caught by type checker
-                                };
-                                (elem_type, true, Some(size))
-                            }
-                            Expr::StructLiteral { .. } => {
-                                (self.infer_expr_type(value), false, None)
-                            }
-                            Expr::Call { .. } => {
-                                // Use our unified type inference
-                                (inferred_type, false, None)
-                            }
-                            _ => ("long long".to_string(), false, None), // Default to int for now
-                        }
+                        })?;
+                        Self::split_array_dims(&inferred_type)
                     }
                 };
+                // Track variable type for future inference. Arrays keep their
+                // dimensions in the recorded type.
+                self.variables
+                    .insert(name.clone(), format!("{}{}", c_type, array_dims));
 
-                // Track variable type for future inference
-                if is_array {
-                    // For arrays, store the full array type including brackets
-                    self.variables.insert(
-                        name.clone(),
-                        format!("{}[{}]", c_type, array_size.unwrap_or(0)),
-                    );
-                } else {
-                    self.variables.insert(name.clone(), c_type.clone());
-                }
-
-                if is_array {
-                    // Array declaration
-                    self.output.push_str(&format!("{} {}", c_type, name));
-                    if let Some(size) = array_size {
-                        self.output.push_str(&format!("[{}]", size));
-                    }
-                    self.output.push_str(" = ");
-                    self.generate_expression(value)?;
-                    self.output.push_str(";\n");
-                } else {
-                    // Regular variable declaration
-                    self.output.push_str(&format!("{} {} = ", c_type, name));
-                    self.generate_expression(value)?;
-                    self.output.push_str(";\n");
-                }
+                self.output
+                    .push_str(&format!("{} {}{} = ", c_type, name, array_dims));
+                self.generate_expression(value)?;
+                self.output.push_str(";\n");
             }
             Stmt::Assign { target, value, .. } => {
                 self.output.push_str("    ");
@@ -1700,6 +1897,9 @@ impl CodeGenerator {
                         self.output.push_str("        // For loop with range\n");
                         self.output
                             .push_str(&format!("        for (long long {} = ", var));
+                        // Record the loop variable so expressions in the body
+                        // can be typed (see try_infer_expr_type/Expr::Ident).
+                        self.variables.insert(var.clone(), "long long".to_string());
                         self.generate_expression(start)?;
                         self.output.push_str(&format!("; {} < ", var));
                         self.generate_expression(end)?;
@@ -1723,9 +1923,13 @@ impl CodeGenerator {
                         self.generate_expression(iter)?;
                         self.output.push_str("[0]); _i++) {\n");
 
-                        // Declare loop variable and assign current element
+                        // Declare loop variable and assign current element.
+                        // Its type is the array's element type, not always an
+                        // integer, and the body needs to know it.
+                        let elem_type = Self::split_array_dims(&self.infer_expr_type(iter)).0;
                         self.output
-                            .push_str(&format!("            long long {} = ", var));
+                            .push_str(&format!("            {} {} = ", elem_type, var));
+                        self.variables.insert(var.clone(), elem_type);
                         self.generate_expression(iter)?;
                         self.output.push_str("[_i];\n");
 
@@ -1789,6 +1993,7 @@ impl CodeGenerator {
                                 "            long long {} = _match_expr;\n",
                                 name
                             ));
+                            self.variables.insert(name.clone(), "long long".to_string());
                             // Continue with body generation below
                             for stmt in &arm.body {
                                 self.output.push_str("        ");
@@ -1832,6 +2037,10 @@ impl CodeGenerator {
                                                             "            {} {} = _match_expr.data.{}.field{};\n",
                                                             c_type, name, variant.to_lowercase(), i
                                                         ));
+                                                        // The binding is a real
+                                                        // variable; type it for
+                                                        // the arm body.
+                                                        self.variables.insert(name.clone(), c_type);
                                                     }
                                                 }
                                             }
@@ -1852,6 +2061,8 @@ impl CodeGenerator {
                                                                 "            {} {} = _match_expr.data.{}.{};\n",
                                                                 c_type, name, variant.to_lowercase(), field_name
                                                             ));
+                                                            self.variables
+                                                                .insert(name.clone(), c_type);
                                                         }
                                                     }
                                                 }
@@ -2871,7 +3082,8 @@ mod tests {
 
         // Check generated code contains expected elements
         assert!(codegen.output.contains("int main(int argc, char** argv)"));
-        assert!(codegen.output.contains("long long result = (a < b);"));
+        // A comparison yields a bool, which is `int` in C - not the operand type.
+        assert!(codegen.output.contains("int result = (a < b);"));
         assert!(codegen.output.contains("return result;"));
     }
 
@@ -2926,5 +3138,146 @@ mod tests {
         // Check generated code contains break and continue
         assert!(codegen.output.contains("break;"));
         assert!(codegen.output.contains("continue;"));
+    }
+
+    /// Compile a program and return the generated C, for the inference tests.
+    fn generate(source: &str) -> Result<String> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+
+        let mut codegen = CodeGenerator::new("test").unwrap();
+        codegen.compile(&ast)?;
+        Ok(codegen.output)
+    }
+
+    // An un-annotated `let` used to run its own ad-hoc inference and fall back
+    // to `long long` for every expression kind it did not enumerate, so a
+    // reference, an enum value or a string was declared as an integer and the
+    // program only failed later, inside gcc, against C the user never wrote.
+
+    #[test]
+    fn test_infer_let_reference() {
+        let c = generate(
+            r#"
+        fn main() {
+            let x = 42;
+            let y = &x;
+            print_int(*y);
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("long long* y ="), "{}", c);
+    }
+
+    #[test]
+    fn test_infer_let_enum_constructor() {
+        let c = generate(
+            r#"
+        enum N { A(i64), B }
+        fn main() {
+            let n = N::A(5);
+            match n {
+                N::A(v) => { print_int(v); }
+                N::B => { print("b"); }
+            }
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("struct N n = N_A__new(5);"), "{}", c);
+    }
+
+    #[test]
+    fn test_infer_let_string_copy() {
+        let c = generate(
+            r#"
+        fn main() {
+            let a: String = "hello";
+            let b = a;
+            print(b);
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("const char* b = a;"), "{}", c);
+    }
+
+    #[test]
+    fn test_infer_let_field_access_and_index() {
+        let c = generate(
+            r#"
+        struct P { name: String, age: i64 }
+        fn main() {
+            let p = P { name: "z", age: 3 };
+            let n = p.name;
+            let arr = ["a", "b"];
+            let first = arr[0];
+            print(n);
+            print(first);
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("const char* n = "), "{}", c);
+        assert!(c.contains("const char* arr[2] = "), "{}", c);
+        assert!(c.contains("const char* first = "), "{}", c);
+    }
+
+    #[test]
+    fn test_infer_let_comparison_is_bool() {
+        let c = generate(
+            r#"
+        fn main() {
+            let a = 1;
+            let b = 2;
+            let c = a < b;
+            let d = !c;
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("int c = (a < b);"), "{}", c);
+        assert!(c.contains("int d = "), "{}", c);
+    }
+
+    #[test]
+    fn test_infer_let_call_return_types() {
+        let c = generate(
+            r#"
+        struct P { age: i64 }
+        fn make() -> P { return P { age: 1 }; }
+        fn main() {
+            let p = make();
+            let n = string_len("hi");
+            let s = int_to_string(7);
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("struct P p = make();"), "{}", c);
+        assert!(c.contains("long long n = "), "{}", c);
+        assert!(c.contains("const char* s = "), "{}", c);
+    }
+
+    #[test]
+    fn test_uninferable_let_is_a_compile_error_not_bad_c() {
+        // `await` has no code generation rule; the old catch-all declared the
+        // binding as `long long` and emitted C that gcc rejected.
+        let err = generate(
+            r#"
+        async fn work() -> i64 { return 1; }
+        fn main() {
+            let v = work().await;
+        }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot infer the type of `v`"), "{}", msg);
+        assert!(msg.contains("await"), "{}", msg);
+        assert!(msg.contains("explicit type annotation"), "{}", msg);
     }
 }

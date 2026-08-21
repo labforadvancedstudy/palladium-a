@@ -108,21 +108,18 @@ If that works, the install is sound.
 The runtime was not found. `pdc --print-runtime` lists every path it tried. Point
 `PALLADIUM_RUNTIME` at the directory holding `palladium_runtime.c`.
 
-**An error about C you never wrote** — `incompatible pointer to integer conversion`, or
-`member reference base type 'long long' is not a structure`.
-Almost always a `let` with no type annotation. Code generation defaults initializers it does not
-recognise to a 64-bit integer, so references, enum values and string copies come out as
-integers. Add the type:
+**`cannot infer the type of ...: no type rule for this <kind> expression`**
+Code generation has no inference rule for that initializer. Add the type:
 
 ```palladium
 fn main() {
-    let x: i64 = 42;
-    let y: &i64 = &x;     // not `let y = &x;`
-    print_int(*y);
+    let n: i64 = 3;
+    print_int(n);
 }
 ```
 
-Tracked as D7 in the [bootstrap subset](../specification/bootstrap-subset.md) §7.
+This message replaced a silent default to a 64-bit integer, which used to emit broken C for
+references, enum values and string copies instead of saying anything.
 
 **`Expected '{' after else`**
 There is no `else if` — nest the `if` inside the `else` block.

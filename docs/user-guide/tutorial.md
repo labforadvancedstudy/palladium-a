@@ -45,11 +45,17 @@ fn main() {
 }
 ```
 
-**Annotate every `let`.** The compiler will accept `let x = 42;`, but its type inference in code
-generation defaults anything it does not recognise to a 64-bit integer, which silently produces
-broken C for references, enums, and string copies. Until that is fixed (tracked as D7 in the
-[bootstrap subset](../specification/bootstrap-subset.md) §7), an explicit type is the difference
-between a program that works and one that fails in the C compiler with a confusing message.
+Type annotations on `let` are optional; the compiler infers literals, calls, struct and enum
+values, references, field and index expressions. Where it has no rule it now says so:
+
+```
+error: cannot infer the type of `r`: no type rule for this range expression.
+       Add an explicit type annotation, e.g. `let r: i64 = ...;`
+```
+
+That used to be a silent default to a 64-bit integer, which produced broken C for references,
+enum values and string copies. Annotating is still good practice in code you intend to keep —
+the bootstrap compiler annotates everywhere — but it is no longer load-bearing.
 
 The primitive types are `i64` (also spelled `int`), `i32`, `u32`, `u64`, `bool`, and `String`.
 There are no floating-point types and no `char`.
@@ -257,8 +263,8 @@ fn main() {
 `match` works on enums only. There are no literal patterns, so you cannot match on an integer or
 a string — use an `if`/`else` chain for those. There are no match guards and no or-patterns.
 
-Note the explicit type on `let c: Shape = ...`. Without it, code generation emits a 64-bit
-integer and the resulting C does not compile.
+The annotations on `let c: Shape = ...` are optional — enum construction is inferred — but they
+document the intent, and `match` reads better when the scrutinee's type is stated nearby.
 
 ## 8. Strings
 
@@ -345,29 +351,21 @@ fn main() {
 
 ## 10. References
 
-References work, but only with an explicit type annotation:
-
 ```palladium
 fn main() {
     let x: i64 = 42;
     let y: &i64 = &x;
     print_int(*y);
+
+    let inferred = &x;      // the annotation is optional
+    print_int(*inferred);
 }
 ```
 
-Without the annotation the compiler emits a 64-bit integer where a pointer is required, and the
-generated C fails to build:
-
-```palladium no-compile
-fn main() {
-    let x: i64 = 42;
-    let y = &x;          // emits `long long y = &x;` — broken C
-    print_int(*y);
-}
-```
-
-Note also that the type checker does not distinguish `&T` from `T`. Borrow checking happens, but
-references are not a real part of the type system yet.
+Note that the type checker does not distinguish `&T` from `T` — there is no reference type in it
+at all. Borrow checking happens, and code generation emits real pointers, but references are not
+yet part of the type system. One consequence: dereferencing a reference *parameter* emits a
+double dereference and fails in C, so pass values or arrays rather than `&T` parameters for now.
 
 ## 11. A whole program
 

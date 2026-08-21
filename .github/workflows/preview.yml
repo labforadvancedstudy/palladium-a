@@ -1,0 +1,140 @@
+name: Preview
+
+# Preview channel. Every push to main publishes a prerelease so `pdc-preview`
+# users can get unreleased fixes without waiting for a version tag.
+#
+# The tag carries the source commit, so a preview install is always traceable
+# to an exact tree: preview-YYYYMMDD-HHMMSS-<short sha>.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: preview
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: Gates
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.id.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      # A preview that cannot compile itself is not worth publishing.
+      - name: Self-hosting fixed point
+        run: bash scripts/selfhost.sh
+
+      - name: Language conformance
+        run: bash scripts/conformance.sh tests examples
+
+      - name: Documentation snippets
+        run: bash scripts/check-docs.sh docs README.md
+
+      - id: id
+        run: echo "tag=preview-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: gates
+    name: ${{ matrix.artifact }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: pdc-preview-macos-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            artifact: pdc-preview-macos-x86_64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: pdc-preview-linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --bin pdc
+
+      - name: Stage install layout
+        run: |
+          set -euo pipefail
+          stage="${{ matrix.artifact }}"
+          mkdir -p "$stage/bin" "$stage/share/palladium"
+          # The preview binary is named pdc-preview so it can be installed
+          # alongside a stable pdc.
+          cp "target/${{ matrix.target }}/release/pdc" "$stage/bin/pdc-preview"
+          cp -R runtime "$stage/share/palladium/runtime"
+          cp README.md LICENSE "$stage/"
+          tar czf "$stage.tar.gz" "$stage"
+          shasum -a 256 "$stage.tar.gz" | tee "$stage.tar.gz.sha256"
+
+      - name: Smoke test the staged layout
+        run: |
+          set -euo pipefail
+          stage="$PWD/${{ matrix.artifact }}"
+          host="$(rustc -vV | sed -n 's/host: //p')"
+          if [ "${{ matrix.target }}" != "$host" ]; then
+            echo "smoke: skipped (cross-compiled)"; exit 0
+          fi
+          work=$(mktemp -d); cd "$work"
+          printf 'fn main() { print("preview-smoke-ok"); }\n' > s.pd
+          "$stage/bin/pdc-preview" --print-runtime
+          "$stage/bin/pdc-preview" compile s.pd -o s
+          ./build_output/s | grep -q preview-smoke-ok
+          echo "smoke: OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.tar.gz.sha256
+
+  publish:
+    needs: [gates, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec mv {} release/ \;
+          ls -la release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.gates.outputs.tag }}
+          prerelease: true
+          body: |
+            Preview build from `main` at ${{ github.sha }}.
+
+            Published only after the self-hosting fixed point, language
+            conformance, and documentation snippet gates all passed.
+
+            ```bash
+            brew tap 2lab-ai/tap
+            brew install pdc-preview
+            ```
+
+            Installs as `pdc-preview`, so it coexists with a stable `pdc`.
+          files: release/*
