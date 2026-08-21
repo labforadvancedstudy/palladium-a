@@ -38,8 +38,16 @@ fn compile_with_pdc(module: &str, source: &str) -> std::process::Output {
 }
 
 /// The same, but with `-o`, which makes the driver hand the generated C to gcc.
-/// This is the only assertion in the suite that the emitted C is *valid C* —
-/// everything else greps its text, which cannot tell valid C from invalid.
+///
+/// Two other helpers do compile the emitted C and reject a failure —
+/// `advanced_e2e_test.rs`'s and `advanced_features_test.rs`'s `compile_and_run`
+/// both shell out to `cc`. But every test in both files is XFAIL and dies at
+/// parse or type-check, so none of them ever reaches `cc`: today they provide
+/// no positive evidence that ordinary emitted C compiles. Everything else in
+/// the suite greps the C for substrings, which proves a fragment was emitted,
+/// not that the file is valid C. So this path is currently the suite's only
+/// *executed* check of that, and it is why the C-keyword defect below could sit
+/// under a "passing" test.
 fn compile_and_link_with_pdc(module: &str, source: &str) -> std::process::Output {
     let test_dir = Path::new("target/e2e_tests");
     fs::create_dir_all(test_dir).unwrap();

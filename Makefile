@@ -295,4 +295,4 @@ gates: conformance test-conformance-runner check-docs selfhost ## Run every lang
 
 .PHONY: test-xfail
 test-xfail: ## Run the #[ignore]d tests and fail if a declared failure now passes
-	@bash scripts/test-xfail.sh
+	@python3 scripts/test-xfail.py

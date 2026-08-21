@@ -280,7 +280,7 @@ fn test_result_error_handling() {
 }
 
 #[test]
-#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:103 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
+#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:102-103 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
 fn test_iterator_trait() {
     let source = r#"
     trait Iterator {
@@ -325,7 +325,7 @@ fn test_iterator_trait() {
 }
 
 #[test]
-#[ignore = "XFAIL: closures — grammar.ebnf:224 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: closures — grammar.ebnf:223 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closure_capture() {
     let source = r#"
     fn main() {
@@ -416,7 +416,7 @@ fn test_async_await() {
 }
 
 #[test]
-#[ignore = "XFAIL: effect declarations — grammar.ebnf:87 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:86 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_effects_system() {
     let source = r#"
     effect IO {
@@ -456,7 +456,7 @@ fn test_effects_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: struct-variant patterns with field shorthand and `if` guards — grammar.ebnf:234 'No literal patterns, ranges, or-patterns, guards, tuple/slice patterns, ref/mut bindings, @ bindings, field shorthand' (owned by M2, item 4)"]
+#[ignore = "XFAIL: struct-variant patterns with field shorthand and `if` guards — grammar.ebnf:239 'No literal patterns, ranges, or-patterns, guards, tuple/slice patterns, ref/mut bindings, @ bindings, field shorthand' (owned by M2, item 4)"]
 fn test_pattern_matching_guards() {
     let source = r#"
     enum Message {
@@ -568,7 +568,7 @@ fn test_const_generics_arrays() {
 }
 
 #[test]
-#[ignore = "XFAIL: tuple expressions — grammar.ebnf:224 'no tuple expressions'; tuple *types* parse but lower to void* and cannot be constructed (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: tuple expressions — grammar.ebnf:223 'no tuple expressions'; tuple *types* parse but lower to void* and cannot be constructed (owned by M2, surface syntax)"]
 fn test_type_aliases_complex() {
     let source = r#"
     type NodeId = int;

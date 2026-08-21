@@ -331,11 +331,13 @@ mod tests {
                         ]),
                         span: Span::dummy(),
                     },
-                    // Dead: BOTH arms of the if above diverge (break / continue),
-                    // so control cannot reach this statement. See the rule in
-                    // `can_continue_after` (src/optimizer/dead_code.rs:50-58):
-                    // with an else branch present, control continues past the
-                    // `if` only when both branches can continue.
+                    // Dead: control continues past an if/else when EITHER arm
+                    // falls through (`can_continue_after`,
+                    // src/optimizer/dead_code.rs:35-70), and here neither does
+                    // — the then arm breaks and the else arm continues. This
+                    // fixture cannot tell `||` from `&&`, which is why
+                    // test_statement_after_if_with_one_falling_arm_is_kept
+                    // exists; do not read the rule off this test.
                     Stmt::Expr(Expr::Integer(3)),
                 ],
                 span: Span::dummy(),
@@ -521,6 +523,80 @@ mod tests {
                     func.body.len(),
                     1,
                     "with a constant-false condition only the else arm runs, and it returns"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// Constant true, no else: the then arm always runs, so if it diverges
+    /// nothing after the `if` is reachable. This is the one case the pass has
+    /// always special-cased; it is pinned here directly rather than left to
+    /// rest on `test_nested_blocks_dead_code` exercising it incidentally.
+    #[test]
+    fn test_constant_true_if_without_else_takes_the_then_arm() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Bool(true),
+                then_branch: vec![Stmt::Return(Some(Expr::Integer(1)))],
+                else_branch: None,
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    1,
+                    "a constant-true if with no else always runs its then arm, which returns"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// Constant false, no else: *nothing* runs, so whatever follows is live.
+    /// This is the combination where getting the rule wrong deletes reachable
+    /// code rather than merely retaining dead code, so it is asserted with a
+    /// statement that must survive.
+    #[test]
+    fn test_constant_false_if_without_else_keeps_the_next_statement() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Bool(false),
+                // Never runs — and, crucially, it diverges. A rule that read
+                // the then arm here would delete the live call below.
+                then_branch: vec![Stmt::Return(Some(Expr::Integer(1)))],
+                else_branch: None,
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    2,
+                    "a constant-false if with no else executes nothing, so the call after it is live"
                 );
             }
             _ => panic!("Expected Function item"),

@@ -123,7 +123,7 @@ fn test_all_keywords() {
 }
 
 #[test]
-#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:234 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
+#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:239 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
 fn test_match_on_integer_literal() {
     compile_and_verify("fn main() { match 1 { 1 => {}, _ => {} } }", &["switch"]);
 }
@@ -135,7 +135,7 @@ fn test_trait_declaration_emits_code() {
 }
 
 #[test]
-#[ignore = "XFAIL: top-level `const` items — grammar.ebnf:70 lists no const item, so the parser reports \"Expected function, struct, enum, trait, type, impl, or macro declaration\" (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: top-level `const` items — grammar.ebnf:69-70 lists no const item, so the parser reports \"Expected function, struct, enum, trait, type, impl, or macro declaration\" (owned by M2, surface syntax)"]
 fn test_top_level_const() {
     compile_and_verify(
         "const X: int = 5;\nfn main() { }",
@@ -144,7 +144,7 @@ fn test_top_level_const() {
 }
 
 #[test]
-#[ignore = "XFAIL: top-level `static` items — grammar.ebnf:70 lists no static item, same parse error as `const` (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: top-level `static` items — grammar.ebnf:69-70 lists no static item, same parse error as `const` (owned by M2, surface syntax)"]
 fn test_top_level_static() {
     compile_and_verify(
         "static Y: int = 10;\nfn main() { }",
@@ -172,7 +172,7 @@ fn test_loop_keyword() {
 }
 
 #[test]
-#[ignore = "XFAIL: `as` casts — grammar.ebnf:224 'no `as` casts'; the parser stops at 'as' (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: `as` casts — grammar.ebnf:223 'no `as` casts'; the parser stops at 'as' (owned by M2, surface syntax)"]
 fn test_as_cast() {
     compile_and_verify("fn main() { let x = 5 as int; }", &["(long long)5"]);
 }
@@ -234,7 +234,7 @@ fn test_logical_operators() {
 }
 
 #[test]
-#[ignore = "XFAIL: bitwise operators — the expression grammar (grammar.ebnf:187-194) has no `&`/`|`/`^`/`<<`/`>>` level and the lexer has no '^' token at all (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: bitwise operators — the expression grammar (grammar.ebnf:187-195) has no `&`/`|`/`^`/`<<`/`>>` level and the lexer has no '^' token at all (owned by M2, surface syntax)"]
 fn test_bitwise_operators() {
     for (op, expected) in [
         ("&", "(a & b)"),
@@ -336,7 +336,7 @@ fn test_control_flow() {
 }
 
 #[test]
-#[ignore = "XFAIL: `else if` — grammar.ebnf:156 'There is NO `else if`: after `else` the parser requires \\'{\\'' (owned by M2, item 2)"]
+#[ignore = "XFAIL: `else if` — grammar.ebnf:157 'There is NO `else if`: after `else` the parser requires \\'{\\'' (owned by M2, item 2)"]
 fn test_else_if_chain() {
     compile_and_verify(
         "fn main() {

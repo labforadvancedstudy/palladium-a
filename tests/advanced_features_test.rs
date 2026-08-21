@@ -97,7 +97,7 @@ fn test_async_await_multiple() {
 }
 
 #[test]
-#[ignore = "XFAIL: effect declarations — grammar.ebnf:87 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:86 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_effects_system() {
     let source = r#"
     effect IO {
@@ -166,7 +166,7 @@ fn test_trait_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: `self` as an assignment target — grammar.ebnf:152 `place = identifier | place '[' … | place '.' … | '*' identifier` and `self` is a keyword (line 42), not an identifier, so `self.data[0] = item` does not parse (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: `self` as an assignment target — grammar.ebnf:154 `place = identifier | place '[' … | place '.' … | '*' identifier` and `self` is a keyword (line 42), not an identifier, so `self.data[0] = item` does not parse (owned by M2, surface syntax)"]
 fn test_generic_collections() {
     let source = r#"
     struct Vec<T> {
@@ -252,7 +252,7 @@ fn test_pattern_matching_advanced() {
 }
 
 #[test]
-#[ignore = "XFAIL: closures — grammar.ebnf:224 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: closures — grammar.ebnf:223 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closures() {
     let source = r#"
     fn main() {
@@ -306,7 +306,7 @@ fn test_lifetime_annotations() {
 }
 
 #[test]
-#[ignore = "XFAIL: raw pointer types and `as` casts — grammar.ebnf:224 'no `as` casts'; there is no `*mut T` type either (owned by M4, 'A real reference type')"]
+#[ignore = "XFAIL: raw pointer types and `as` casts — grammar.ebnf:223 'no `as` casts'; there is no `*mut T` type either (owned by M4, 'A real reference type')"]
 fn test_unsafe_operations() {
     let source = r#"
     fn main() {
@@ -408,7 +408,7 @@ fn test_const_generics() {
 }
 
 #[test]
-#[ignore = "XFAIL: inline `mod` blocks — grammar.ebnf:70 lists no module item, so `mod math { … }` is not an item (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: inline `mod` blocks — grammar.ebnf:69-70 lists no module item, so `mod math { … }` is not an item (owned by M2, surface syntax)"]
 fn test_module_system() {
     let source = r#"
     mod math {
@@ -450,7 +450,7 @@ fn test_module_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:103 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
+#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:102-103 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
 fn test_iterator_protocol() {
     let source = r#"
     trait Iterator {
@@ -495,7 +495,7 @@ fn test_iterator_protocol() {
 }
 
 #[test]
-#[ignore = "XFAIL: the `?` operator against a real Result — grammar.ebnf:225 '`?` and `.await` parse and then generate C that does not compile'; the enum's second type argument is dropped before it gets that far (owned by M4, exit criterion)"]
+#[ignore = "XFAIL: the `?` operator against a real Result — grammar.ebnf:224 '`?` and `.await` parse and then generate C that does not compile'; the enum's second type argument is dropped before it gets that far (owned by M4, exit criterion)"]
 fn test_error_handling_sugar() {
     let source = r#"
     enum Result<T, E> {
