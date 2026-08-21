@@ -93,7 +93,7 @@ unimplementable in a single-pass translator.
    into the literal when it is adjacent to digits: `i-1` lexes as `i` followed by `-1`, two
    adjacent expressions, and misparses. With a space, `-` lexes as the operator.
 
-3. **Struct and array parameters are always declared `mut`.**
+3. **Struct and array parameters that are written are declared `mut`.**
    A `mut` parameter of struct type becomes `struct S*` in C, so mutations propagate to the
    caller — verified: `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` struct or
    array parameter is classified as a *move* by the borrow checker
@@ -140,10 +140,11 @@ Hard constraints, each verified by running `pdc`:
 - **No `loop`.** Use `while true { … }`.
 - **No compound assignment.** Write `i = i + 1;`.
 - **No bare nested block** as a statement.
-- **`for` iterates a range or an array only.** Iterating an array *parameter* miscompiles:
-  codegen emits `sizeof(arr)/sizeof(arr[0])` (`src/codegen/mod.rs:1553-1571`), which is wrong
-  for a decayed pointer. **PBS-1 rule: inside a function, iterate arrays with an explicit
-  `while` and an index.** Use `for` only over a literal range.
+- **`for` iterates a range or an array only.** Iterating an array *parameter* used to
+  miscompile — codegen emitted `sizeof(arr)/sizeof(arr[0])`, which is wrong for a decayed
+  pointer — and is now correct: the bound comes from the declared length (D4, fixed). The
+  PBS-1 rule to iterate with an explicit `while` and an index is therefore no longer forced,
+  though PBS-1 code that already does so needs no change.
 - **`break`/`continue` are unlabeled** and carry no value.
 
 ## 5. Expressions
@@ -197,10 +198,10 @@ These are tracked because PBS-1 code cannot be written safely without them.
 | D3 | a tail expression in a value-returning function emitted no `return`, so `fn add(a,b) -> i64 { a + b }` compiled clean and returned garbage. All of `stdlib/` was affected | `src/parser/mod.rs:1263`, `src/codegen/mod.rs:1336` | **fixed** — lowered to `Stmt::Return` in the parser |
 | D6 | call-argument borrows were registered with `Lifetime::Named("fn")` while `exit_scope` releases only `Lifetime::Scope(n)`, so every argument stayed borrowed forever; and `String`/array parameters were classified `Move` although codegen passes pointers and never frees | `src/ownership/borrow_checker.rs:179-185`, `:470-515`; `src/ownership/mod.rs:107-118` | **fixed** — borrows end with the call; `String` is Copy (language-spec §9.1); array params are borrows |
 | D8 | codegen emitted no C prototypes, so calling a function defined later in the file produced C that gcc rejects — and mutual recursion was inexpressible | `src/codegen/mod.rs` | **fixed** — prototypes emitted for every user function |
-| D4 | `for` over an array *parameter* uses `sizeof` on a decayed pointer | `src/codegen/mod.rs:1553` | open — PBS-1 avoids it by rule (§4) |
+| D4 | `for` over an array *parameter* used `sizeof` on a decayed pointer, so the loop ran once for `i64` and twice for `i32` | `src/codegen/mod.rs` for-in arm | **fixed** — the bound comes from the declared length; a length codegen cannot resolve is a compile error on a parameter, not a wrong bound |
 | D5 | `?` emitted C for a `struct Result` layout codegen never defines, and `.await` emitted a call to a `poll` member no generated struct has. Neither was an error: both programs died inside gcc, against C the user never wrote. The LLVM backend was worse — its catch-all returns the constant `0` for both | `src/codegen/mod.rs:2160`, `:2208` (pre-fix); `src/codegen/llvm_text_backend.rs:1378` | **fixed** — both rejected with "is not implemented" plus consequence and a workaround that is compiled and run by `tests/d5_unimplemented_constructs.rs` (`src/typeck/mod.rs:2356`, `:2363`; backstop at `src/codegen/mod.rs:2537`, `:2549`). Old lowerings deleted, not flagged off. PBS-1 still excludes both |
 | D7 | a `let` with no type annotation was emitted as `long long` whatever the initializer was, so references, enum values and string copies silently became integers | codegen let-inference | **fixed** — inference now covers literals, calls, struct/enum values, references, deref, field and index expressions; an initializer with no rule is a compile error naming the variable, never a guess |
-| D9 | reference-to-array parameter types (`&[T; N]`, `&mut [T; N]`) are rejected by codegen | `src/codegen/mod.rs:1372` | open — PBS-1 passes arrays directly, without `&` |
+| D9 | reference-to-array parameter types (`&[T; N]`, `&mut [T; N]`) were rejected by codegen: "Unsupported type in reference parameter" | `src/codegen/mod.rs` reference-parameter arm | **fixed** — both lower to the decayed pointer C gives an array parameter, `&` const-qualifying the element slot. Writing through a shared or a bare array parameter, or passing one on to a parameter that may write, is a compile error (language-spec §9.2) |
 
 ## 8. Builtin surface available to PBS-1
 

@@ -240,13 +240,15 @@ The v1.0 spec's prelude (`type Option<T> = enum { Some(T), None };`) does not ex
 - ❌ bare nested blocks as statements.
 - ✅ `break` / `continue`, unlabeled, valueless.
 
-### 6.2 `for` loops ✅ over ranges, ⚠️ over arrays
+### 6.2 `for` loops ✅ over ranges, ✅ over arrays
 
 `for i in 0..n { }` ✅.
-⚠️ `for x in arr { }` where `arr` is a **function parameter** miscompiles: codegen emits
-`sizeof(arr)/sizeof(arr[0])` (`src/codegen/mod.rs:1553-1571`), which is the pointer size after
-array-to-pointer decay, and it hardcodes the element type as `long long`. Iterate parameters
-with an explicit index and `while`.
+✅ `for x in arr { }`, including where `arr` is a **function parameter**. Codegen used to emit
+`sizeof(arr)/sizeof(arr[0])`, which is the pointer size after array-to-pointer decay, so the
+loop silently visited 1 element (`i64`) or 2 (`i32`); the bound now comes from the declared
+length and the element type from the declared element type. A length codegen cannot resolve —
+a const generic, which §5 records as dropped — is a compile error on a parameter rather than a
+wrong bound, because a decayed pointer cannot supply the length at run time either.
 
 ### 6.3 Expression forms
 
@@ -439,6 +441,39 @@ nothing is invalidated.
 > deallocation, and a real reference type in the checker — none of which exist. Until they do,
 > the specification describes the implementation rather than the intent. Struct types
 > (`Type::Custom`) remain move-only.
+
+### 9.2 Array parameters: interim write rule (2026-08-22)
+
+Every array parameter — `[T; N]`, `&[T; N]` and `&mut [T; N]` alike — is passed as a pointer
+into the **caller's** array, because that is what C does to an array parameter. Nothing is
+copied, at any of the three spellings, so a write through any of them is visible to the caller.
+
+Whether `[T; N]` parameters *should* copy or alias is **not decided**: §9 defines the memory
+model without mentioning array parameters, and §5 records that the typechecker cannot tell
+`&T` from `T`. Until that decision is made, code generation refuses the writes it cannot
+justify rather than picking one silently:
+
+| spelling | may write through it | why |
+|---|---|---|
+| `&mut [T; N]` | ✅ | the declaration says so |
+| `mut xs: [T; N]` | ✅ | the bootstrap subset's spelling for a mutable array parameter (bootstrap-subset.md §4) |
+| `&[T; N]` | ❌ compile error | a shared reference does not permit mutation; the C declarator also const-qualifies the element slot |
+| `[T; N]` | ❌ compile error | the write would reach the caller's array, which is the undecided semantics above |
+
+The rule is enforced on **calls** as well as assignments: a function may not pass an array it
+only holds shared, or by value, to a parameter that may write to it. Without that, the
+permission could be laundered one hop — `fn f(xs: &[i64; 3]) { mutate(xs); }` — and the write
+would happen under the callee's `&mut` binding, where it looks legitimate.
+
+**Supported element types** for an array parameter are exactly `i32`, `i64`, `u32`, `u64`,
+`bool`, `String` and a struct/enum name. Anything else is a compile error naming the type
+("Unsupported array element type in function parameter"), not invalid C: in particular a
+**nested array parameter** (`[[T; M]; N]`) is rejected rather than emitted, and a function type
+never reaches here because §5 records that the parser refuses it ("expected type, found `fn`").
+
+Taking `&mut x` of a binding that was not declared `mut` is a borrow-check error, for arrays
+and scalars alike. This was previously unchecked, so `let v = [1, 2, 3]; set(&mut v);` compiled
+and modified an immutable binding.
 
 ## 10. Execution model
 

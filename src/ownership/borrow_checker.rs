@@ -21,6 +21,10 @@ pub struct BorrowChecker {
     /// Field types of every struct in the program, so that the type of a
     /// projection like `v.data[0]` can be resolved when deciding Copy vs move.
     struct_fields: HashMap<String, Vec<(String, Type)>>,
+    /// Which in-scope bindings were declared mutable (`let mut x`, `mut x: T`,
+    /// or a `&mut T` parameter). A binding missing from this map is one whose
+    /// mutability this pass does not know, and is never rejected on that basis.
+    mutable_bindings: HashMap<String, bool>,
     /// Lifetime of the call expression whose arguments are being checked, if any.
     /// Every borrow created while evaluating those arguments — including the
     /// temporary `&x` / `&mut x` references written in argument position — gets
@@ -114,6 +118,7 @@ impl Default for BorrowChecker {
             functions,
             current_function: None,
             local_types: HashMap::new(),
+            mutable_bindings: HashMap::new(),
             unsafe_depth: 0,
             struct_fields: HashMap::new(),
             call_lifetime: None,
@@ -253,6 +258,7 @@ impl BorrowChecker {
         self.current_function = Some(func.name.clone());
         self.context.enter_scope();
         self.local_types.clear();
+        self.mutable_bindings.clear();
 
         // Initialize parameters and their types
         for param in &func.params {
@@ -260,6 +266,12 @@ impl BorrowChecker {
             self.context.init_owned(place);
             self.local_types
                 .insert(param.name.clone(), param.ty.clone());
+            // `mut x: T` and `x: &mut T` are the two ways a parameter arrives
+            // writable; anything else may not be mutably re-borrowed.
+            let writable = param.mutable
+                || matches!(&param.ty, Type::Reference { mutable: true, .. });
+            self.mutable_bindings
+                .insert(param.name.clone(), writable);
         }
 
         // Check function body
@@ -276,10 +288,18 @@ impl BorrowChecker {
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
             Stmt::Let {
-                name, value, ty, ..
+                name,
+                value,
+                ty,
+                mutable,
+                ..
             } => {
                 // Check the value expression
                 self.check_expr(value)?;
+
+                // Remember whether this binding may be mutated, so that
+                // `&mut name` can be rejected when it may not.
+                self.mutable_bindings.insert(name.clone(), *mutable);
 
                 // Store the type if provided
                 if let Some(ty) = ty {
@@ -590,6 +610,14 @@ impl BorrowChecker {
 
                 // If we can get a place for the expression, create a borrow
                 if let Some(place) = expr_to_place(expr) {
+                    // A mutable reference is the permission to write, so the
+                    // binding underneath has to be one that may be written.
+                    // This was unchecked: `let v = [1, 2, 3]; set(&mut v);`
+                    // compiled, ran, and left 42 in an immutable binding.
+                    if *mutable {
+                        self.check_mutable_borrow_allowed(&place, *span)?;
+                    }
+
                     // In argument position (`f(&mut v)`) the reference is a
                     // temporary that dies with the call, so it joins that
                     // call's lifetime and is released with it. Anywhere else
@@ -640,6 +668,39 @@ impl BorrowChecker {
         }
 
         Ok(())
+    }
+
+    /// Reject `&mut place` when the binding underneath was not declared mutable.
+    ///
+    /// Only a binding this pass has actually seen declared is judged; an
+    /// unknown name (a pattern binding, say) is left alone rather than
+    /// rejected on a guess.
+    fn check_mutable_borrow_allowed(
+        &self,
+        place: &Place,
+        span: crate::errors::Span,
+    ) -> Result<()> {
+        let mut root = place;
+        loop {
+            match root {
+                Place::Local(name) => {
+                    if self.mutable_bindings.get(name) == Some(&false) {
+                        return Err(CompileError::BorrowChecker {
+                            message: format!(
+                                "cannot borrow `{}` as mutable: it is not declared mutable. \
+                                 Declare it `let mut {}` (or take the parameter as \
+                                 `&mut`) if it is meant to be modified.",
+                                name, name
+                            ),
+                            span: Some(span),
+                        });
+                    }
+                    return Ok(());
+                }
+                Place::Field { base, .. } | Place::Index { base, .. } => root = base,
+                Place::Temp(_) => return Ok(()),
+            }
+        }
     }
 
     /// Check a call's arguments and apply the callee's ownership requirements.
@@ -1166,5 +1227,90 @@ mod tests {
             eprintln!("Error in test_copy_type_no_move: {:?}", e);
         }
         assert!(result.is_ok());
+    }
+
+    /// GENUINE ERROR, newly rejected: a mutable reference to a binding that was
+    /// never declared mutable.
+    ///
+    /// Creating the reference was unchecked, so `&mut v` on an immutable `let`
+    /// compiled, linked and wrote through: the program below printed 42 for a
+    /// binding the author did not mark `mut`. The write itself is legal C - the
+    /// parameter decays to a pointer - so nothing downstream caught it either.
+    #[test]
+    fn test_mutable_borrow_of_immutable_binding_is_rejected() {
+        let result = borrow_check(
+            r#"
+            fn set(xs: &mut [i64; 3]) { xs[0] = 42; }
+            fn main() {
+                let v = [1, 2, 3];
+                set(&mut v);
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            "a mutable borrow of an immutable binding was accepted: {:?}",
+            result
+        );
+    }
+
+    /// The same shape on a scalar, which has no array decay to blame.
+    #[test]
+    fn test_mutable_borrow_of_immutable_scalar_is_rejected() {
+        let result = borrow_check(
+            r#"
+            fn bump(x: &mut i64) { }
+            fn main() {
+                let n = 1;
+                bump(&mut n);
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            "a mutable borrow of an immutable scalar was accepted: {:?}",
+            result
+        );
+    }
+
+    /// NOT AN ERROR: the same program with the binding declared mutable. The
+    /// check must cost nothing to code that says what it means.
+    #[test]
+    fn test_mutable_borrow_of_mutable_binding_is_accepted() {
+        let result = borrow_check(
+            r#"
+            fn set(xs: &mut [i64; 3]) { xs[0] = 42; }
+            fn main() {
+                let mut v = [1, 2, 3];
+                set(&mut v);
+            }
+            "#,
+        );
+        assert!(
+            result.is_ok(),
+            "a mutable borrow of a `let mut` binding was rejected: {:?}",
+            result
+        );
+    }
+
+    /// NOT AN ERROR: a `&mut` *parameter* re-borrowed mutably. The permission
+    /// arrived with the parameter, so it is not invented here.
+    #[test]
+    fn test_mutable_reborrow_of_mutable_parameter_is_accepted() {
+        let result = borrow_check(
+            r#"
+            fn set(xs: &mut [i64; 3]) { xs[0] = 42; }
+            fn outer(xs: &mut [i64; 3]) { set(&mut xs[0]); }
+            fn main() {
+                let mut v = [1, 2, 3];
+                outer(&mut v);
+            }
+            "#,
+        );
+        assert!(
+            result.is_ok(),
+            "a mutable re-borrow of a `&mut` parameter was rejected: {:?}",
+            result
+        );
     }
 }

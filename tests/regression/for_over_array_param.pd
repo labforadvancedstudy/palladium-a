@@ -65,16 +65,18 @@ fn sum_points(ps: &[Point; 6]) -> i64 {
     return total;
 }
 
-// Declared, never called: the type checker rejects the empty array literal
-// ("Empty array literals are not supported"), so no `[T; 0]` value can be
-// constructed and this function is not callable from Palladium. It is here so
-// that the zero-length declarator has to be valid C. The bound itself - which
-// used to be 1, reading element 0 of an empty array - is asserted against the
-// generated C by test_for_over_zero_length_parameter_does_not_iterate.
-fn never_runs(xs: [i64; 0]) {
+// Zero is a length, and it is reachable at run time. The empty array literal
+// `[]` is rejected by the type checker ("Empty array literals are not
+// supported"), but the repeat form `[0; 0]` is accepted and constructs a
+// `[i64; 0]`, so this function is called below with a real value. The bound
+// used to be `sizeof(xs)/sizeof(xs[0])` = 1, which read element 0 of an empty
+// array and panicked here.
+fn count_empty(xs: [i64; 0]) -> i64 {
+    let mut visited = 0;
     for x in xs {
-        panic("iterated a zero-length array");
+        visited = visited + 1;
     }
+    return visited;
 }
 
 fn main() {
@@ -123,5 +125,13 @@ fn main() {
     print_int(point_total);
     if point_total != 21 {
         panic("for over a [Point; 6] parameter did not visit every element");
+    }
+
+    let empty = [0; 0];
+    let visited = count_empty(empty);
+    print("empty visits:");
+    print_int(visited);
+    if visited != 0 {
+        panic("for over a [i64; 0] parameter iterated an empty array");
     }
 }

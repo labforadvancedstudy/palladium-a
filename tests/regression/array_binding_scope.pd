@@ -1,0 +1,61 @@
+// Regression test: an inner block that shadows an array parameter must not
+// leak its length - or its writability - out of the block.
+//
+// Code generation tracked array bindings in one flat, function-wide map, so a
+// `let xs` inside a block overwrote the parameter's entry and never restored
+// it. Two things went wrong after the block closed, both measured:
+//
+//   * the length came from the shadow, so `for x in xs` over a `[i64; 4]`
+//     parameter ran twice and this function returned 11 instead of 13;
+//   * the storage class came from the shadow too, so the shadow's owned local
+//     made `xs[0] = 99` legal on a *by-value* parameter - it compiled, ran,
+//     and left 99 in the caller's array.
+//
+// The second case cannot be written here, because it is now a compile error;
+// it is pinned by test_shadowing_does_not_launder_write_permission in the
+// codegen unit tests. This file pins the first, plus the same shape in a
+// `while` block, at run time.
+
+fn count_after_if_shadow(xs: [i64; 4]) -> i64 {
+    let mut c = 0;
+    if true {
+        let xs: [i64; 2] = [9, 9];
+        c = c + xs[0];
+    }
+    for x in xs {
+        c = c + 1;
+    }
+    return c;
+}
+
+fn count_after_while_shadow(xs: [i64; 4]) -> i64 {
+    let mut c = 0;
+    let mut once = 0;
+    while once < 1 {
+        let xs: [i64; 2] = [5, 5];
+        c = c + xs[1];
+        once = once + 1;
+    }
+    for x in xs {
+        c = c + 1;
+    }
+    return c;
+}
+
+fn main() {
+    let v = [1, 2, 3, 4];
+
+    let after_if = count_after_if_shadow(v);
+    print("after if-shadow:");
+    print_int(after_if);
+    if after_if != 13 {
+        panic("an if-block shadow leaked its length onto the parameter");
+    }
+
+    let after_while = count_after_while_shadow(v);
+    print("after while-shadow:");
+    print_int(after_while);
+    if after_while != 9 {
+        panic("a while-block shadow leaked its length onto the parameter");
+    }
+}

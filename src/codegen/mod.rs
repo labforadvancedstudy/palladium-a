@@ -517,6 +517,75 @@ impl CodeGenerator {
         }
     }
 
+    /// Whether a parameter may write into the caller's array through the
+    /// pointer it receives: `&mut [T; N]`, or `mut xs: [T; N]`.
+    fn param_grants_array_write(param: &Param) -> bool {
+        match &param.ty {
+            Type::Array(_, _) => param.mutable,
+            Type::Reference { inner, mutable, .. } => {
+                *mutable && matches!(inner.as_ref(), Type::Array(_, _))
+            }
+            _ => false,
+        }
+    }
+
+    /// Reject a call that hands a callee more write capability over an array
+    /// than the caller itself holds.
+    ///
+    /// Refusing the *assignment* is not enough on its own: nothing between the
+    /// front end and here re-checks a reference's mutability - the typechecker
+    /// drops it (`src/typeck/mod.rs:2321`, `mutable: _`) and the borrow checker
+    /// gives every parameter a plain owned place
+    /// (`src/ownership/borrow_checker.rs:253`). So `fn f(xs: &[i64; 3])` could
+    /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
+    /// the callee's mutable binding, where it is legitimate. Measured, before
+    /// this check: the caller's `v[0]` came back 99 through both a shared and a
+    /// bare array parameter. Capability has to be checked where it is passed,
+    /// not only where it is used.
+    fn check_call_array_capabilities(&self, func_name: &str, args: &[Expr]) -> Result<()> {
+        let Some((params, _)) = self.functions.get(func_name) else {
+            // Built-ins and methods take no array references.
+            return Ok(());
+        };
+        for (i, param) in params.iter().enumerate() {
+            let Some(arg) = args.get(i) else { break };
+            if !Self::param_grants_array_write(param) {
+                continue;
+            }
+            // `&mut xs` and a bare `xs` reach the callee identically, so both
+            // are judged by what the referent is.
+            let place = match arg {
+                Expr::Reference { expr, .. } => expr.as_ref(),
+                other => other,
+            };
+            let Some(root) = Self::expr_root_ident(place) else {
+                continue;
+            };
+            let Some(binding) = self.array_bindings.get(root) else {
+                // A local array object: the caller owns it, so it may lend it.
+                continue;
+            };
+            let ArrayStorage::Parameter(form) = binding.storage else {
+                continue;
+            };
+            let held = match form {
+                ArrayParamForm::Mutable | ArrayParamForm::MutByValue => continue,
+                ArrayParamForm::Shared => "a shared reference parameter, `&[T; N]`",
+                ArrayParamForm::ByValue => "a by-value array parameter, `[T; N]`",
+            };
+            return Err(CompileError::CodegenError {
+                message: format!(
+                    "cannot pass `{}` to `{}`: the parameter `{}` may write to the \
+                     caller's array, but `{}` is {} here, which does not carry that \
+                     permission. Passing it on would let `{}` perform a write that \
+                     `{}` is not allowed to perform itself. Declare `{}: &mut [T; N]`.",
+                    root, func_name, param.name, root, held, func_name, root, root
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// The length of the array an expression denotes, or `None` when the
     /// expression is not a known array binding.
     fn array_len_of_expr(&self, expr: &Expr) -> Option<ArrayLen> {
@@ -1969,6 +2038,33 @@ impl CodeGenerator {
         Ok(())
     }
 
+    /// Generate the statements of a nested block, with their own array-binding
+    /// scope. `indent` is prepended to each statement.
+    ///
+    /// The scope is the point. `array_bindings` records what may be written and
+    /// how long each array is, and a flat function-wide map let an inner
+    /// binding overwrite an outer one and never give it back:
+    ///
+    /// ```text
+    /// fn f(xs: [i64; 3]) {
+    ///     if true { let xs: [i64; 2] = [1, 2]; }
+    ///     xs[0] = 99;          // guard saw the *shadow*, an owned local
+    /// }
+    /// ```
+    ///
+    /// which compiled, ran, and left 99 in the caller's array. The same leak
+    /// gave a following `for x in xs` the shadow's length: a `[i64; 4]`
+    /// parameter iterated twice.
+    fn generate_block(&mut self, stmts: &[Stmt], indent: &str) -> Result<()> {
+        let outer = self.array_bindings.clone();
+        for stmt in stmts {
+            self.output.push_str(indent);
+            self.generate_statement(stmt)?;
+        }
+        self.array_bindings = outer;
+        Ok(())
+    }
+
     /// Generate code for a statement
     fn generate_statement(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
@@ -2119,18 +2215,14 @@ impl CodeGenerator {
                 self.output.push_str(") {\n");
 
                 // Generate then branch
-                for stmt in then_branch {
-                    self.generate_statement(stmt)?;
-                }
+                self.generate_block(then_branch, "")?;
 
                 self.output.push_str("    }");
 
                 // Generate else branch if present
                 if let Some(else_stmts) = else_branch {
                     self.output.push_str(" else {\n");
-                    for stmt in else_stmts {
-                        self.generate_statement(stmt)?;
-                    }
+                    self.generate_block(else_stmts, "")?;
                     self.output.push_str("    }");
                 }
 
@@ -2144,9 +2236,7 @@ impl CodeGenerator {
                 self.output.push_str(") {\n");
 
                 // Generate body
-                for stmt in body {
-                    self.generate_statement(stmt)?;
-                }
+                self.generate_block(body, "")?;
 
                 self.output.push_str("    }\n");
             }
@@ -2171,10 +2261,7 @@ impl CodeGenerator {
                         self.output.push_str(&format!("; {}++) {{\n", var));
 
                         // Generate body
-                        for stmt in body {
-                            self.output.push_str("        "); // Extra indentation
-                            self.generate_statement(stmt)?;
-                        }
+                        self.generate_block(body, "        ")?;
 
                         self.output.push_str("        }\n");
                     }
@@ -2251,10 +2338,7 @@ impl CodeGenerator {
                         self.output.push_str("[_i];\n");
 
                         // Generate body
-                        for stmt in body {
-                            self.output.push_str("        "); // Extra indentation
-                            self.generate_statement(stmt)?;
-                        }
+                        self.generate_block(body, "        ")?;
 
                         self.output.push_str("        }\n");
                     }
@@ -2312,10 +2396,7 @@ impl CodeGenerator {
                             ));
                             self.variables.insert(name.clone(), "long long".to_string());
                             // Continue with body generation below
-                            for stmt in &arm.body {
-                                self.output.push_str("        ");
-                                self.generate_statement(stmt)?;
-                            }
+                            self.generate_block(&arm.body, "        ")?;
                             self.output.push_str("        }");
                             continue;
                         }
@@ -2397,10 +2478,7 @@ impl CodeGenerator {
                             }
 
                             // Continue with body generation below
-                            for stmt in &arm.body {
-                                self.output.push_str("        ");
-                                self.generate_statement(stmt)?;
-                            }
+                            self.generate_block(&arm.body, "        ")?;
                             self.output.push_str("        }");
                             continue;
                         }
@@ -2409,10 +2487,7 @@ impl CodeGenerator {
                     self.output.push_str(") {\n");
 
                     // Generate arm body
-                    for stmt in &arm.body {
-                        self.output.push_str("        ");
-                        self.generate_statement(stmt)?;
-                    }
+                    self.generate_block(&arm.body, "        ")?;
 
                     self.output.push_str("        }");
                 }
@@ -2429,10 +2504,7 @@ impl CodeGenerator {
                 self.output.push_str("    {\n");
 
                 // Generate body
-                for stmt in body {
-                    self.output.push_str("    "); // Extra indentation
-                    self.generate_statement(stmt)?;
-                }
+                self.generate_block(body, "    ")?;
 
                 self.output.push_str("    }\n");
             }
@@ -2491,6 +2563,12 @@ impl CodeGenerator {
                 }
             }
             Expr::Call { func, args, .. } => {
+                // A call is the other way to write into an array parameter, so
+                // it is checked before anything is emitted.
+                if let Expr::Ident(name) = func.as_ref() {
+                    self.check_call_array_capabilities(name, args)?;
+                }
+
                 // Generate function name
                 match func.as_ref() {
                     Expr::Ident(name) => {
@@ -2846,6 +2924,12 @@ impl CodeGenerator {
     /// Create a monomorphized version of a generic struct
     /// Generate code for an async function
     fn generate_async_function_with_name(&mut self, func: &Function, name: &str) -> Result<()> {
+        // This path never reaches the parameter loop in
+        // generate_function_with_name, so nothing else drops the *previous*
+        // function's array bindings; a stale one here would answer questions
+        // about a different function's parameters.
+        self.array_bindings.clear();
+
         // For now, we'll generate a simple Future struct
         let future_name = format!("{}_Future", name);
         let output_type = func
@@ -3723,6 +3807,138 @@ mod tests {
         // The caller used to observe 99 through a parameter that never said it
         // could be written; the diagnostic has to name the undecided semantics.
         assert!(msg.contains("not decided by the language"), "{}", msg);
+    }
+
+    // Refusing the assignment is not enough while a call can hand the write on:
+    // nothing re-checks reference mutability after the parser, so the callee's
+    // `&mut` binding made the write legitimate at the point it happened. Both
+    // forwardings put 99 in the caller's array before this check existed.
+    #[test]
+    fn test_shared_array_parameter_cannot_be_forwarded_as_mutable() {
+        let err = generate(
+            r#"
+        fn mutate(xs: &mut [i64; 3]) { xs[0] = 99; }
+        fn f(xs: &[i64; 3]) { mutate(xs); }
+        fn main() { let mut v = [1, 2, 3]; f(&v); print_int(v[0]); }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot pass `xs` to `mutate`"), "{}", msg);
+        assert!(msg.contains("shared reference parameter"), "{}", msg);
+    }
+
+    #[test]
+    fn test_by_value_array_parameter_cannot_be_forwarded_as_mutable() {
+        let err = generate(
+            r#"
+        fn mutate(xs: &mut [i64; 3]) { xs[0] = 99; }
+        fn g(xs: [i64; 3]) { mutate(xs); }
+        fn main() { let mut v = [1, 2, 3]; g(v); print_int(v[0]); }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot pass `xs` to `mutate`"), "{}", msg);
+        assert!(msg.contains("by-value array parameter"), "{}", msg);
+    }
+
+    #[test]
+    fn test_forwarding_a_mutable_array_parameter_is_still_allowed() {
+        // The permission exists here, so passing it on is not laundering.
+        let c = generate(
+            r#"
+        fn mutate(xs: &mut [i64; 3]) { xs[0] = 99; }
+        fn f(xs: &mut [i64; 3]) { mutate(xs); }
+        fn main() { let mut v = [1, 2, 3]; f(&mut v); print_int(v[0]); }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("void f(long long xs[3])"), "{}", c);
+        assert!(c.contains("mutate(xs)"), "{}", c);
+    }
+
+    // A flat, function-wide binding map let a block-local `xs` stand in for the
+    // parameter after the block closed: the write guard saw an owned local and
+    // allowed a write straight into the caller's array.
+    #[test]
+    fn test_shadowing_does_not_launder_write_permission() {
+        let err = generate(
+            r#"
+        fn f(xs: [i64; 3]) {
+            if true {
+                let xs: [i64; 2] = [1, 2];
+                print_int(xs[0]);
+            }
+            xs[0] = 99;
+        }
+        fn main() { let mut v = [1, 2, 3]; f(v); print_int(v[0]); }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot write to `xs`"), "{}", msg);
+        assert!(msg.contains("by-value array parameter"), "{}", msg);
+    }
+
+    #[test]
+    fn test_shadowing_does_not_leak_its_length_to_the_parameter() {
+        let c = generate(
+            r#"
+        fn f(xs: [i64; 4]) {
+            if true {
+                let xs: [i64; 2] = [9, 9];
+                print_int(xs[0]);
+            }
+            for x in xs {
+                print_int(x);
+            }
+        }
+        fn main() { let v = [1, 2, 3, 4]; f(v); }
+        "#,
+        )
+        .unwrap();
+        // The inner loop-free block keeps its own length; the parameter keeps 4.
+        assert!(c.contains("for (long long _i = 0; _i < 4; _i++)"), "{}", c);
+        assert!(!c.contains("_i < 2;"), "{}", c);
+    }
+
+    // The prototype and the definition are built by one helper, so they cannot
+    // disagree - but "cannot" is worth one assertion that checks both places.
+    #[test]
+    fn test_unresolved_length_decays_in_prototype_and_definition_alike() {
+        let c = generate(
+            r#"
+        fn head(xs: [i64; N]) -> i64 { return xs[0]; }
+        fn other() -> i64 { return 1; }
+        fn main() { print_int(other()); }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("long long head(long long xs[]);"), "{}", c);
+        assert!(c.contains("long long head(long long xs[]) {"), "{}", c);
+        assert_eq!(c.matches("long long head(long long xs[]").count(), 2, "{}", c);
+    }
+
+    // The supported element types are exactly what the declarator enumerates.
+    // A nested array is rejected by name rather than emitted as invalid C, and
+    // function types do not reach here at all - the parser refuses them
+    // ("expected type, found 'fn'", language-spec.md §5).
+    #[test]
+    fn test_nested_array_parameter_is_rejected_by_name() {
+        let err = generate(
+            r#"
+        fn f(g: [[i64; 2]; 3]) -> i64 { return 0; }
+        fn main() { print("ok"); }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Unsupported array element type in function parameter"),
+            "{}",
+            msg
+        );
     }
 
     #[test]
