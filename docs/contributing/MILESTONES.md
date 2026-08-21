@@ -23,8 +23,7 @@ opinion.
 | Integration tests | 43 fail, all pre-existing — `make test-honest` |
 | Traits | parse, emit nothing |
 | Generics | partial monomorphisation; `Foo<T>` is misparsed |
-| Standard library | none — 38 builtins, fixed-size arrays, no `Vec`. `stdlib/` is a sketch: 0 of its 21 files compile and the compiler never loads it — `make stdlib-gate`, [`stdlib/STATUS.md`](../../stdlib/STATUS.md) |
-| Builtins | 38 registered, 32 usable — 6 fail in gcc on a table/runtime type mismatch |
+| Standard library | none — 38 builtins, fixed-size arrays, no `Vec` |
 
 ## M1 — The compiler stops lying (v0.3)
 
@@ -35,7 +34,6 @@ emit wrong code. This milestone converts silent wrongness into diagnostics.
 |---|---|
 | D5 | ~~`?` emits C referencing a `struct Result` layout codegen never defines; `.await` calls a `poll` member that is never generated. Neither reports an error~~ — **fixed**: both are rejected with "is not implemented", the consequence, and a workaround that `tests/d5_unimplemented_constructs.rs` compiles and runs. Old lowerings deleted. Diagnostics deliberately name no milestone |
 | D4 | `for` over an array *parameter* uses `sizeof` on a pointer that has already decayed |
-| D3b | **D3 is only half fixed.** The parser lowers a tail *expression* to a return but never a tail `if`, so `fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n-1)+fib(n-2) } }` compiles clean and returns garbage — `fib(10)` printed `8261746944` instead of `55`, exit 0. Pinned by `tests/stdlib/stdlib_tail_if_defect.pd`; the parser fix is a separate work unit |
 | D9 | `&[T; N]` / `&mut [T; N]` parameters are rejected in codegen — `examples/practical/simple_sort.pd` still fails on exactly this, and is the one M1-owned entry in `tests/conformance-manifest.txt` |
 
 Closed:
@@ -47,60 +45,16 @@ Closed:
 
 Two structural gaps belong here too, because both are gates that cannot see their own failures:
 
-- **`stdlib/` had no coverage at all — because there is nothing there to cover.** ✅ *Done, and the
-  premise was wrong; see below.*
+- **`stdlib/` has no conformance coverage at all** — ✅ *done, and the premise was wrong.*
+  The original text continued "That is precisely why the tail-return defect lived there, silently
+  miscompiling every function that ended in an expression, for a year." That is false. Measured
+  with `make stdlib-gate`: **0 of the 21 `.pd` files under `stdlib/` compile** — every one is
+  rejected at lex or parse time, so none ever reaches codegen where D3 lived — and no default
+  configuration loads them. Nothing there was miscompiled because nothing there was ever compiled.
+  Only the counterfactual holds. Full measurement: [`stdlib/STATUS.md`](../../stdlib/STATUS.md).
 - **Three hand-written builtin tables still exist outside the canonical registry** — in the
   effects checker and in two LSP files. The "one table" invariant currently holds only for the
-  type checker and the borrow checker. Measurement has since found a fourth gap of the same class:
-  six builtins (`file_flush`, `file_seek`, `file_open_ex`, `file_close_ex`, `file_read_ex`,
-  `file_write_ex`) are declared over `I64` in `src/builtins.rs` and over `FileHandle` (`void*`) in
-  `runtime/pd_prelude.h`, so calling any of them passes both checkers and then fails in gcc.
-  Nothing checks the canonical table against the C runtime's signatures.
-
-### Correction: the tail-return defect never lived in `stdlib/`
-
-This file previously stated that `stdlib/`'s lack of coverage "is precisely why the tail-return
-defect lived there, silently miscompiling every function that ended in an expression, for a year."
-That is false, and the same claim appears in `docs/CHANGELOG.md`,
-`docs/specification/language-spec.md`, `docs/specification/bootstrap-subset.md` and in commit
-`191f8c1`.
-
-Measured 2026-08-22 (`make stdlib-gate`): **0 of the 21 `.pd` files under `stdlib/` compile** — all
-21 are rejected at lex or parse time, so none ever reaches codegen, where D3 lived — and **no
-default configuration loads `stdlib/`**: `grep -rn stdlib src/` returns zero hits, the resolver
-searches `.`, `examples`, `<exe_dir>/std` and `$PALLADIUM_PATH` and never `stdlib/`
-(`src/resolver/mod.rs:37-52`), `Cargo.toml:34` excludes it from the crate, the release workflows
-stage only `runtime`, and both Homebrew formulae install only `runtime`. The resolver *is* live
-(via `import`, not `use`) and `$PALLADIUM_PATH` *is* configurable — but forcing `stdlib/std` onto
-it still fails, with the same parse blockers. Nothing there was miscompiled because nothing there
-was ever compiled. What is true is only the counterfactual: `stdlib/` contains ~437 functions
-ending in a tail expression, so it *would* have been affected had it ever compiled. D3's real
-victims were ordinary user programs.
-
-The correction changes the work. "Gate `stdlib/`" would have produced a gate over 21 files that
-cannot compile — one that can only report what it already knows. What M1 actually needed was
-coverage of the *language surface a standard library rests on*. That is `tests/stdlib/`, and it
-exposed a second thing the old framing would have missed: **no runtime observation can catch D3
-reliably.** The missing `return` is undefined behaviour, and with the fix reverted the value is
-garbage with exit 0 at `-O0` *and* `-O2` (`8264595040` / `8261746944`). An exit-code gate is blind
-to it, and pinning an optimisation level does not help. Even a transcript diff is not a guarantee
-in principle — on another libc the garbage could equal the expected value. So the durable check is
-**structural**: `gate_probe.py generated-c` requires every non-void function in the emitted C to
-return **on every path**, via two independent nets (its own terminator analysis, and
-`-Werror=return-type`), without running anything.
-
-Phrasing matters, and it was tested. An earlier version asked "does the function contain a
-`return`?" — a question about the source construct the parser already handles. That version passed
-a function with an early `return` followed by a bare tail `if`, which returns 0 instead of 10. The
-current phrasing is about the *emitted body*, so it catches a tail `if`, a tail `match`, and
-anything else lowering forgets. Demonstrated: appending an unrelated tail-`if` function to an
-existing clean driver turns the gate red with no manifest change and no new test — which is the
-entire argument for a structural check over a transcript diff.
-
-The status row for `stdlib/` is therefore not "no coverage" but **"none — and pinned as none"**:
-`stdlib/MANIFEST.tsv` records the per-file verdict and blocker, and the gate fails if a file that
-compiled stops compiling, if a file recorded as uncompilable starts compiling, or if one starts
-failing for a different reason. Full measurement: [`stdlib/STATUS.md`](../../stdlib/STATUS.md).
+  type checker and the borrow checker.
 
 **Exit** — every criterion is a command, not a reading of prose:
 
@@ -112,8 +66,10 @@ failing for a different reason. Full measurement: [`stdlib/STATUS.md`](../../std
 3. `make test-conformance-runner` exits 0 — the gate is still able to fail.
 4. Nothing in the language specification is marked ⚠️ "parses, then breaks" without also being
    reported as an error.
-5. `make stdlib-gate` exits 0 — `stdlib/` measured and pinned, every builtin accounted for, and
-   the generated C checked structurally. ✅ done.
+5. `make stdlib-gate` exits 0 — `stdlib/` measured and pinned per file, every builtin accounted
+   for, and the emitted C checked structurally. ✅ done.
+6. `make test-gate-probe` exits 0 — every process the gate reads as evidence is fault-injected,
+   including a producer signaled *after* printing the diagnostic the gate looks for.
 
 `42/42` was the old exit criterion and it was the wrong target twice over.
 
@@ -128,10 +84,9 @@ through M1. Sixteen per cent of the corpus proves nothing, which is the honest n
 
 It also counted a *green exit code* as a correct program. A missing C `return` is undefined
 behaviour: measured here at both `-O0` and `-O2`, `long long f(a,b){ (a+b); }` returns
-`8261746944` and exits 0. That is defect D3's exact signature. (D3 did *not* miscompile `stdlib/`:
-0 of its 21 files compile, so nothing there ever reached codegen — see
-[`stdlib/STATUS.md`](../../stdlib/STATUS.md). It miscompiled ordinary user programs
-underneath a green gate, which is the same lesson about the gate.) The runner now diffs each fixture's stdout against a
+`8261746944` and exits 0. That is defect D3's exact signature. (It did *not* miscompile
+`stdlib/` — 0 of those 21 files compile — it miscompiled ordinary user programs, which is the
+same lesson about the gate.) The runner now diffs each fixture's stdout against a
 recorded transcript. There is no exit-code-only class: a fixture that genuinely cannot be
 transcribed must be declared `untranscribed` with an owner and a `why:` reason, and is reported as
 a debt on every run. That count is currently zero.
@@ -237,8 +192,7 @@ roadmap's ordering, not about the language.
 Every claim above is reproducible:
 
 ```bash
-make gates          # conformance + documentation + self-hosting + stdlib
-make stdlib-gate    # recomputes every stdlib/ number quoted above
+make gates          # conformance + documentation + self-hosting
 make test-honest    # every test binary, integration tests included
 ```
 

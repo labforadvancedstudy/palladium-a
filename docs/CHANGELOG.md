@@ -40,17 +40,6 @@ was false — no Palladium-written compiler had ever compiled itself.
   function in `stdlib/` that ended in an expression was affected." Retracted: 0 of 21 `.pd` files
   under `stdlib/` compile at all, so nothing there was ever compiled and the defect cannot have
   lived there.)*
-- **Tail expressions were silently discarded.** `fn add(a, b) -> i64 { a + b }` compiled cleanly
-  and returned garbage — the generated C had no `return`. Ordinary user programs were the
-  victims.
-
-  > **Correction (2026-08-22).** This entry originally read "Every function in `stdlib/` that
-  > ended in an expression was affected." That is false. Measured with `make stdlib-gate`: 0 of
-  > the 21 files under `stdlib/` compile — all are rejected at lex or parse time and never reach
-  > codegen, where this defect lived — and no default configuration loads them. Nothing there was
-  > miscompiled because nothing there was ever compiled. Only the counterfactual holds: `stdlib/`
-  > contains 437 functions ending in a tail expression, so it *would* have been affected had it
-  > ever compiled. See [`stdlib/STATUS.md`](../stdlib/STATUS.md).
 - **`let` without a type annotation was emitted as `long long`** whatever the initializer was, so
   references, enum values and string copies became integers and failed in gcc. Inference now
   covers the common cases; an initializer with no rule is a compile error naming the variable,
