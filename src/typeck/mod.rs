@@ -33,6 +33,17 @@ pub enum CheckerType {
     Tuple(Vec<CheckerType>),
 }
 
+/// Map a built-in's type (from the canonical registry) to a checker type.
+fn builtin_type(ty: crate::builtins::BuiltinType) -> CheckerType {
+    use crate::builtins::BuiltinType;
+    match ty {
+        BuiltinType::I64 => CheckerType::Int,
+        BuiltinType::Str => CheckerType::String,
+        BuiltinType::Bool => CheckerType::Bool,
+        BuiltinType::Unit => CheckerType::Unit,
+    }
+}
+
 /// Array size value for type checking
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArraySizeValue {
@@ -348,189 +359,19 @@ impl Default for TypeChecker {
 
 impl TypeChecker {
     pub fn new() -> Self {
-        let mut functions = HashMap::new();
-
-        // Built-in functions
-        functions.insert(
-            "print".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Unit)),
-        );
-
-        // print_int built-in function
-        functions.insert(
-            "print_int".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Unit)),
-        );
-
-        // panic built-in function
-        functions.insert(
-            "panic".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Unit)),
-        );
-
-        // String manipulation functions
-        functions.insert(
-            "string_len".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "string_concat".to_string(),
-            CheckerType::Function(
-                vec![CheckerType::String, CheckerType::String],
-                Box::new(CheckerType::String),
-            ),
-        );
-        functions.insert(
-            "string_eq".to_string(),
-            CheckerType::Function(
-                vec![CheckerType::String, CheckerType::String],
-                Box::new(CheckerType::Bool),
-            ),
-        );
-        functions.insert(
-            "string_char_at".to_string(),
-            CheckerType::Function(
-                vec![CheckerType::String, CheckerType::Int],
-                Box::new(CheckerType::Int),
-            ),
-        );
-        functions.insert(
-            "string_substring".to_string(),
-            CheckerType::Function(
-                vec![CheckerType::String, CheckerType::Int, CheckerType::Int],
-                Box::new(CheckerType::String),
-            ),
-        );
-        functions.insert(
-            "string_from_char".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::String)),
-        );
-        functions.insert(
-            "char_is_digit".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Bool)),
-        );
-        functions.insert(
-            "char_is_alpha".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Bool)),
-        );
-        functions.insert(
-            "char_is_whitespace".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Bool)),
-        );
-        functions.insert(
-            "string_to_int".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
-        );
-
-        // File I/O functions
-        functions.insert(
-            "file_open".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "file_read_all".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::String)),
-        );
-        functions.insert(
-            "file_read_line".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::String)),
-        );
-        functions.insert(
-            "file_write".to_string(),
-            CheckerType::Function(
-                vec![CheckerType::Int, CheckerType::String],
-                Box::new(CheckerType::Bool),
-            ),
-        );
-        functions.insert(
-            "file_close".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Bool)),
-        );
-        functions.insert(
-            "file_exists".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Bool)),
-        );
-        
-        // Enhanced I/O functions
-        functions.insert(
-            "path_exists".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Bool)),
-        );
-        functions.insert(
-            "path_is_file".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Bool)),
-        );
-        functions.insert(
-            "path_is_dir".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Bool)),
-        );
-        functions.insert(
-            "create_dir".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "create_dir_all".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "remove_file".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "remove_dir".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "remove_dir_all".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "read_file_to_string".to_string(),
-            CheckerType::Function(vec![CheckerType::String], Box::new(CheckerType::String)),
-        );
-        functions.insert(
-            "write_string_to_file".to_string(),
-            CheckerType::Function(vec![CheckerType::String, CheckerType::String], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "file_flush".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "file_seek".to_string(),
-            CheckerType::Function(vec![CheckerType::Int, CheckerType::Int, CheckerType::Int], Box::new(CheckerType::Int)),
-        );
-        
-        // Enhanced file operations with mode support
-        functions.insert(
-            "file_open_ex".to_string(),
-            CheckerType::Function(vec![CheckerType::String, CheckerType::Int], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "file_close_ex".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "file_read_ex".to_string(),
-            CheckerType::Function(vec![CheckerType::Int, CheckerType::String, CheckerType::Int], Box::new(CheckerType::Int)),
-        );
-        functions.insert(
-            "file_write_ex".to_string(),
-            CheckerType::Function(vec![CheckerType::Int, CheckerType::String, CheckerType::Int], Box::new(CheckerType::Int)),
-        );
-
-        // String operations
-        functions.insert(
-            "string_concat".to_string(),
-            CheckerType::Function(
-                vec![CheckerType::String, CheckerType::String],
-                Box::new(CheckerType::String),
-            ),
-        );
-        functions.insert(
-            "int_to_string".to_string(),
-            CheckerType::Function(vec![CheckerType::Int], Box::new(CheckerType::String)),
-        );
+        // Built-in functions come from the single source of truth in
+        // src/builtins.rs so that this pass and the borrow checker can never
+        // drift apart (see crate::builtins for the regression this prevents).
+        let functions: HashMap<String, CheckerType> = crate::builtins::BUILTINS
+            .iter()
+            .map(|b| {
+                let params = b.params.iter().map(|p| builtin_type(p.ty)).collect();
+                (
+                    b.name.to_string(),
+                    CheckerType::Function(params, Box::new(builtin_type(b.ret))),
+                )
+            })
+            .collect();
 
         Self {
             functions,
@@ -552,6 +393,15 @@ impl TypeChecker {
             unsafe_depth: 0,
             current_impl_type: None,
         }
+    }
+
+    /// Names of every function signature this pass knows.
+    ///
+    /// On a freshly constructed checker this is exactly the built-in set, which is
+    /// what the drift test in `crate::builtins` asserts against.
+    #[allow(dead_code)] // used by the drift tests in crate::builtins
+    pub(crate) fn registered_function_names(&self) -> std::collections::BTreeSet<String> {
+        self.functions.keys().cloned().collect()
     }
 
     /// Set imported modules for type checking

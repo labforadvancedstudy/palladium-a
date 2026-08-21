@@ -38,6 +38,11 @@ pub struct CodeGenerator {
     generic_struct_instantiation_map: std::collections::HashMap<String, Vec<(Vec<String>, String)>>,
     /// Set of async function names
     async_functions: std::collections::HashSet<String>,
+    /// Names of struct tags actually emitted (structs + enums, both are
+    /// `typedef struct Name {...} Name;`). Used to keep forward declarations
+    /// from naming an incomplete tag, which would make the tag local to the
+    /// prototype's parameter list and conflict with the definition.
+    defined_structs: std::collections::HashSet<String>,
 }
 
 impl CodeGenerator {
@@ -58,6 +63,7 @@ impl CodeGenerator {
             enums: std::collections::HashMap::new(),
             generic_struct_instantiation_map: std::collections::HashMap::new(),
             async_functions: std::collections::HashSet::new(),
+            defined_structs: std::collections::HashSet::new(),
         })
     }
 
@@ -245,6 +251,23 @@ impl CodeGenerator {
             .push_str("static void __pd_init() __attribute__((constructor));\n");
         self.output.push_str("static void __pd_init() {\n");
         self.output.push_str("    atexit(__pd_cleanup_strings);\n");
+        self.output.push_str("}\n\n");
+
+        // Command-line arguments, captured by main() on entry
+        self.output.push_str("static int __pd_argc = 0;\n");
+        self.output.push_str("static char** __pd_argv = 0;\n\n");
+
+        // arg_count
+        self.output.push_str("long long __pd_arg_count(void) {\n");
+        self.output.push_str("    return (long long)__pd_argc;\n");
+        self.output.push_str("}\n\n");
+
+        // arg_at
+        self.output
+            .push_str("const char* __pd_arg_at(long long i) {\n");
+        self.output
+            .push_str("    if (i < 0 || i >= (long long)__pd_argc) return \"\";\n");
+        self.output.push_str("    return __pd_argv[i];\n");
         self.output.push_str("}\n\n");
 
         // Generate print function wrapper
@@ -708,6 +731,11 @@ impl CodeGenerator {
             self.output.push('\n');
         }
 
+        // Forward-declare every user function before any body is emitted, so that
+        // a call to a function defined later in the file (and mutual recursion,
+        // which no ordering can satisfy) compiles under C99.
+        self.generate_function_prototypes(program)?;
+
         // Generate monomorphized versions of generic functions AFTER structs
         if !self.generic_instantiations.is_empty() {
             self.output.push_str("// Monomorphized generic functions\n");
@@ -833,6 +861,7 @@ impl CodeGenerator {
 
     /// Generate code for an enum definition
     fn generate_enum(&mut self, enum_def: &EnumDef) -> Result<()> {
+        self.defined_structs.insert(enum_def.name.clone());
         // Generate a tagged union for the enum
         self.output.push_str(&format!(
             "// Enum {}
@@ -1066,6 +1095,7 @@ impl CodeGenerator {
 
     /// Generate code for a struct definition
     fn generate_struct(&mut self, struct_def: &StructDef) -> Result<()> {
+        self.defined_structs.insert(struct_def.name.clone());
         self.output
             .push_str(&format!("typedef struct {} {{\n", struct_def.name));
 
@@ -1135,13 +1165,121 @@ impl CodeGenerator {
         self.generate_function_with_name(func, &func.name)
     }
 
-    fn generate_function_with_name(&mut self, func: &Function, name: &str) -> Result<()> {
-        // For async functions, generate a Future-returning wrapper
-        if func.is_async {
-            self.generate_async_function_with_name(func, name)?;
-            return Ok(());
+    /// True when every `struct X` named in a C signature refers to a tag we emitted.
+    fn signature_tags_are_defined(
+        sig: &str,
+        defined_structs: &std::collections::HashSet<String>,
+    ) -> bool {
+        for after in sig.split("struct ").skip(1) {
+            let tag: String = after
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !defined_structs.contains(&tag) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Emit a C forward declaration for every user-defined function.
+    ///
+    /// Placed after all type definitions and before the first function body, so
+    /// call sites never depend on definition order. `main` is skipped: it is
+    /// emitted as the C entry point (`int main(int argc, char** argv)`) and is
+    /// never called from Palladium code. `__pd_*` builtins are already defined
+    /// in the runtime prelude above.
+    fn generate_function_prototypes(&mut self, program: &Program) -> Result<()> {
+        let mut prototypes: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let defined_structs = self.defined_structs.clone();
+
+        let mut push = |prototypes: &mut Vec<String>, name: &str, sig: String| {
+            // A prototype that names a struct tag we never defined would declare
+            // that tag inside the parameter list, making it a distinct type from
+            // the one in the definition ("conflicting types"). Such a program is
+            // already broken without us; stay silent instead of making it worse.
+            if !Self::signature_tags_are_defined(&sig, &defined_structs) {
+                return;
+            }
+            if seen.insert(name.to_string()) {
+                prototypes.push(format!("{};\n", sig));
+            }
+        };
+
+        // Imported modules: public, non-generic functions get a body emitted below.
+        let imported_modules = self.imported_modules.clone();
+        for module_info in imported_modules.values() {
+            for item in &module_info.ast.items {
+                if let Item::Function(func) = item {
+                    if matches!(func.visibility, crate::ast::Visibility::Public)
+                        && func.type_params.is_empty()
+                        && !func.is_async
+                        && func.name != "main"
+                    {
+                        let sig = self.function_signature(func, &func.name)?;
+                        push(&mut prototypes, &func.name, sig);
+                    }
+                }
+            }
         }
 
+        // Monomorphized generic instantiations are emitted as ordinary functions.
+        for (func_name, type_args, generic_func) in &self.generic_instantiations.clone() {
+            let concrete_func = self.monomorphize_function(func_name, type_args, generic_func)?;
+            if concrete_func.is_async {
+                continue;
+            }
+            let sig = self.function_signature(&concrete_func, &concrete_func.name)?;
+            let name = concrete_func.name.clone();
+            push(&mut prototypes, &name, sig);
+        }
+
+        // Main program: free functions and impl methods.
+        for item in &program.items {
+            match item {
+                Item::Function(func) => {
+                    if !func.type_params.is_empty() || func.is_async || func.name == "main" {
+                        continue;
+                    }
+                    let sig = self.function_signature(func, &func.name)?;
+                    push(&mut prototypes, &func.name, sig);
+                }
+                Item::Impl(impl_block) => {
+                    for method in &impl_block.methods {
+                        if !method.type_params.is_empty() || method.is_async {
+                            continue;
+                        }
+                        let mangled_name = format!(
+                            "__pd_{}_{}",
+                            impl_block.for_type.to_string().replace("::", "_"),
+                            method.name
+                        );
+                        let sig = self.function_signature(method, &mangled_name)?;
+                        push(&mut prototypes, &mangled_name, sig);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !prototypes.is_empty() {
+            self.output.push_str("// Forward declarations\n");
+            for prototype in prototypes {
+                self.output.push_str(&prototype);
+            }
+            self.output.push('\n');
+        }
+
+        Ok(())
+    }
+
+    /// Build the C signature line for a function, without a trailing `{` or `;`.
+    ///
+    /// Single source of truth: both the definition (`generate_function_with_name`)
+    /// and the forward declaration (`generate_function_prototypes`) call this, so
+    /// the two can never disagree.
+    fn function_signature(&self, func: &Function, name: &str) -> Result<String> {
         // Function signature with return type
         let return_type_string = match &func.return_type {
             Some(Type::Array(_, _)) => {
@@ -1163,13 +1301,21 @@ impl CodeGenerator {
             return_type
         };
 
+        // The C entry point takes (argc, argv) so that arg_count()/arg_at() can
+        // reach the command line. Only applies to a parameterless Palladium main.
+        let is_c_entry = name == "main" && func.params.is_empty();
+
         // Generate function parameters
-        self.output
-            .push_str(&format!("{} {}(", actual_return_type, name));
+        let mut sig = String::new();
+        sig.push_str(&format!("{} {}(", actual_return_type, name));
+
+        if is_c_entry {
+            sig.push_str("int argc, char** argv");
+        }
 
         for (i, param) in func.params.iter().enumerate() {
             if i > 0 {
-                self.output.push_str(", ");
+                sig.push_str(", ");
             }
 
             match &param.ty {
@@ -1197,64 +1343,57 @@ impl CodeGenerator {
                         ArraySize::ConstParam(name) => name.clone(),
                         ArraySize::Expr(_) => "".to_string(), // Arrays as params don't need size
                     };
-                    self.output
-                        .push_str(&format!("{} {}[{}]", elem_c_type, param.name, size_str));
+                    sig.push_str(&format!("{} {}[{}]", elem_c_type, param.name, size_str));
                 }
                 Type::Custom(_) => {
                     // Use type_to_c to resolve type aliases
                     let c_type = self.type_to_c(&param.ty);
                     if param.mutable {
                         // Pass by pointer for mutable parameters
-                        self.output.push_str(&format!("{}* {}", c_type, param.name));
+                        sig.push_str(&format!("{}* {}", c_type, param.name));
                     } else {
                         // Pass by value for immutable parameters
-                        self.output.push_str(&format!("{} {}", c_type, param.name));
+                        sig.push_str(&format!("{} {}", c_type, param.name));
                     }
                 }
                 Type::Reference { inner, mutable, .. } => {
                     // Handle reference parameters
                     match inner.as_ref() {
                         Type::I32 => {
-                            self.output
-                                .push_str(if *mutable { "int* " } else { "const int* " });
+                            sig.push_str(if *mutable { "int* " } else { "const int* " });
                         }
                         Type::I64 => {
-                            self.output.push_str(if *mutable {
+                            sig.push_str(if *mutable {
                                 "long long* "
                             } else {
                                 "const long long* "
                             });
                         }
                         Type::U32 => {
-                            self.output.push_str(if *mutable {
+                            sig.push_str(if *mutable {
                                 "unsigned int* "
                             } else {
                                 "const unsigned int* "
                             });
                         }
                         Type::U64 => {
-                            self.output.push_str(if *mutable {
+                            sig.push_str(if *mutable {
                                 "unsigned long long* "
                             } else {
                                 "const unsigned long long* "
                             });
                         }
                         Type::Bool => {
-                            self.output
-                                .push_str(if *mutable { "int* " } else { "const int* " });
+                            sig.push_str(if *mutable { "int* " } else { "const int* " });
                         }
                         Type::String => {
-                            self.output.push_str(if *mutable {
-                                "char** "
-                            } else {
-                                "const char** "
-                            });
+                            sig.push_str(if *mutable { "char** " } else { "const char** " });
                         }
                         Type::Custom(name) => {
                             if *mutable {
-                                self.output.push_str(&format!("struct {}* ", name));
+                                sig.push_str(&format!("struct {}* ", name));
                             } else {
-                                self.output.push_str(&format!("const struct {}* ", name));
+                                sig.push_str(&format!("const struct {}* ", name));
                             }
                         }
                         _ => {
@@ -1263,7 +1402,7 @@ impl CodeGenerator {
                             ));
                         }
                     }
-                    self.output.push_str(&param.name);
+                    sig.push_str(&param.name);
                 }
                 _ => {
                     // For other types
@@ -1271,16 +1410,39 @@ impl CodeGenerator {
 
                     if param.mutable {
                         // Pass by pointer for mutable parameters
-                        self.output.push_str(&format!("{}* {}", c_type, param.name));
+                        sig.push_str(&format!("{}* {}", c_type, param.name));
                     } else {
                         // Pass by value for immutable parameters
-                        self.output.push_str(&format!("{} {}", c_type, param.name));
+                        sig.push_str(&format!("{} {}", c_type, param.name));
                     }
                 }
             }
         }
 
-        self.output.push_str(") {\n");
+        sig.push(')');
+
+        Ok(sig)
+    }
+
+    fn generate_function_with_name(&mut self, func: &Function, name: &str) -> Result<()> {
+        // For async functions, generate a Future-returning wrapper
+        if func.is_async {
+            self.generate_async_function_with_name(func, name)?;
+            return Ok(());
+        }
+
+        // The C entry point takes (argc, argv) so that arg_count()/arg_at() can
+        // reach the command line. Only applies to a parameterless Palladium main.
+        let is_c_entry = name == "main" && func.params.is_empty();
+
+        let signature = self.function_signature(func, name)?;
+        self.output.push_str(&signature);
+        self.output.push_str(" {\n");
+
+        if is_c_entry {
+            self.output.push_str("    __pd_argc = argc;\n");
+            self.output.push_str("    __pd_argv = argv;\n");
+        }
 
         // Clear mutable_params from previous function and populate with current function's params
         self.mutable_params.clear();
@@ -1824,6 +1986,9 @@ impl CodeGenerator {
                             "char_is_whitespace" => self.output.push_str("__pd_char_is_whitespace"),
                             "string_to_int" => self.output.push_str("__pd_string_to_int"),
                             "int_to_string" => self.output.push_str("__pd_int_to_string"),
+                            // Command-line arguments
+                            "arg_count" => self.output.push_str("__pd_arg_count"),
+                            "arg_at" => self.output.push_str("__pd_arg_at"),
                             "file_open" => self.output.push_str("__pd_file_open"),
                             "file_read_all" => self.output.push_str("__pd_file_read_all"),
                             "file_read_line" => self.output.push_str("__pd_file_read_line"),
@@ -2628,7 +2793,8 @@ mod tests {
         assert!(codegen.compile(&ast).is_ok());
 
         // Check generated code contains expected elements
-        assert!(codegen.output.contains("int main()"));
+        assert!(codegen.output.contains("int main(int argc, char** argv)"));
+        assert!(codegen.output.contains("__pd_argc = argc;"));
         assert!(codegen.output.contains("__pd_print(\"Hello, World!\")"));
     }
 
@@ -2704,7 +2870,7 @@ mod tests {
         assert!(codegen.compile(&ast).is_ok());
 
         // Check generated code contains expected elements
-        assert!(codegen.output.contains("int main()"));
+        assert!(codegen.output.contains("int main(int argc, char** argv)"));
         assert!(codegen.output.contains("long long result = (a < b);"));
         assert!(codegen.output.contains("return result;"));
     }

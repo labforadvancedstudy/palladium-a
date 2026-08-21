@@ -523,7 +523,23 @@ impl Parser {
 
         self.consume(Token::LeftBrace, "Expected '{'")?;
 
-        let body = self.parse_block_with_implicit_return()?;
+        let (mut body, has_tail_expr) = self.parse_block_with_implicit_return()?;
+
+        // Grammar: `block = '{' { statement } [ expression ] '}'` — a trailing
+        // expression in a function body is the function's value. Lower it to an
+        // explicit return so codegen emits `return <expr>;` instead of dropping
+        // it as a bare expression statement (which returned garbage).
+        // Only the *function body* tail is lowered; tails of nested blocks
+        // (if/else branches) are deliberately left alone.
+        // A unit function (`return_type == None`) keeps the plain expression
+        // statement: its tail value is simply discarded.
+        if return_type.is_some() && has_tail_expr {
+            if matches!(body.last(), Some(Stmt::Expr(_))) {
+                if let Some(Stmt::Expr(expr)) = body.pop() {
+                    body.push(Stmt::Return(Some(expr)));
+                }
+            }
+        }
 
         let end_span = self.consume(Token::RightBrace, "Expected '}'")?;
 
@@ -1260,19 +1276,27 @@ impl Parser {
     }
 
     /// Parse a block of statements that may have an implicit return
-    fn parse_block_with_implicit_return(&mut self) -> Result<Vec<Stmt>> {
+    ///
+    /// Returns the statements plus a flag telling the caller whether the block
+    /// ended in **tail position** — i.e. a trailing expression with no `;`.
+    /// The flag is what lets `parse_function` lower a function-body tail into
+    /// `Stmt::Return`; without it a tail expression is indistinguishable from a
+    /// plain expression statement and silently generates no `return` in C.
+    fn parse_block_with_implicit_return(&mut self) -> Result<(Vec<Stmt>, bool)> {
         let mut stmts = Vec::new();
-        
+        let mut has_tail_expr = false;
+
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
             // Check if this could be the last expression (implicit return)
             let checkpoint = self.current;
-            
+
             // Try to parse as expression first
             if let Ok(expr) = self.parse_expression() {
                 // Check if this is followed by a closing brace (implicit return)
                 if self.check(&Token::RightBrace) {
                     // This is an implicit return
                     stmts.push(Stmt::Expr(expr));
+                    has_tail_expr = true;
                     break;
                 } else if self.check(&Token::Semicolon) {
                     // Normal expression statement
@@ -1289,8 +1313,8 @@ impl Parser {
                 stmts.push(self.parse_statement()?);
             }
         }
-        
-        Ok(stmts)
+
+        Ok((stmts, has_tail_expr))
     }
 
     /// Parse a statement
@@ -1434,7 +1458,9 @@ impl Parser {
 
         self.consume(Token::LeftBrace, "Expected '{' after if condition")?;
 
-        let then_branch = self.parse_block_with_implicit_return()?;
+        // Tail expressions inside if/else branches stay plain expression
+        // statements — only a function-body tail is a return (see parse_function).
+        let (then_branch, _) = self.parse_block_with_implicit_return()?;
 
         self.consume(Token::RightBrace, "Expected '}' after if body")?;
 
@@ -1442,7 +1468,7 @@ impl Parser {
             self.advance()?; // consume 'else'
             self.consume(Token::LeftBrace, "Expected '{' after else")?;
 
-            let else_stmts = self.parse_block_with_implicit_return()?;
+            let (else_stmts, _) = self.parse_block_with_implicit_return()?;
 
             let _end_span = self.consume(Token::RightBrace, "Expected '}' after else body")?;
             Some(else_stmts)

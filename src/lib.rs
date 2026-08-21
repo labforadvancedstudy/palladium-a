@@ -4,6 +4,7 @@
 pub mod ast;
 pub mod async_runtime;
 pub mod bootstrap;
+pub mod builtins;
 pub mod codegen;
 pub mod driver;
 pub mod effects;
