@@ -472,8 +472,39 @@ would happen under the callee's `&mut` binding, where it looks legitimate.
 never reaches here because §5 records that the parser refuses it ("expected type, found `fn`").
 
 Taking `&mut x` of a binding that was not declared `mut` is a borrow-check error, for arrays
-and scalars alike. This was previously unchecked, so `let v = [1, 2, 3]; set(&mut v);` compiled
-and modified an immutable binding.
+and scalars alike, and the same check applies to passing a binding to a `mut x: T` parameter,
+which writes through its pointer identically. This was previously unchecked, so
+`let v = [1, 2, 3]; set(&mut v);` compiled and modified an immutable binding.
+
+#### What the rule actually covers
+
+This is a *bounded* enforcement, not a reference-safety model, and the boundary is worth
+stating exactly, because a guard that reads as protection while having quiet gaps is worse than
+no guard.
+
+Enforced, in code generation, for a call whose callee is a plain `fn` this compilation knows:
+
+- the argument is a name bound to an array in the current function — a local, or a parameter
+  whose declared form is one of the four in the table above.
+
+Refused, rather than assumed safe, because the capability cannot be established:
+
+- the callee's parameter list is unknown to this pass (any callee not in the function table),
+  and an array is being passed;
+- the array argument is not a name this pass tracks — a struct field, an element, a call
+  result — and the parameter may write to it.
+
+Not covered by this rule at all, and not claimed to be:
+
+- **aliasing** between two array arguments beyond what the borrow checker already rejects;
+- **references to anything other than arrays**: `&T` and `&mut T` are the same type to the
+  type checker (§5), so a scalar reference carries no capability information here;
+- any guarantee that survives a construct the front end has not implemented.
+
+The reason the rule lives in code generation, and is shaped as a refusal, is that there is no
+reference type in the type checker to carry the permission (§5). A complete model needs one —
+that is M4's work, not this rule's. Until then this rule buys exactly one property: an array
+write that reaches the caller can only come from a spelling that declared it.
 
 ## 10. Execution model
 

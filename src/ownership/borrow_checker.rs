@@ -412,16 +412,12 @@ impl BorrowChecker {
                 self.check_expr(condition)?;
 
                 self.context.enter_scope();
-                for stmt in then_branch {
-                    self.check_stmt(stmt)?;
-                }
+                self.check_block_stmts(then_branch)?;
                 self.context.exit_scope();
 
                 if let Some(else_stmts) = else_branch {
                     self.context.enter_scope();
-                    for stmt in else_stmts {
-                        self.check_stmt(stmt)?;
-                    }
+                    self.check_block_stmts(else_stmts)?;
                     self.context.exit_scope();
                 }
             }
@@ -432,9 +428,7 @@ impl BorrowChecker {
                 self.check_expr(condition)?;
 
                 self.context.enter_scope();
-                for stmt in body {
-                    self.check_stmt(stmt)?;
-                }
+                self.check_block_stmts(body)?;
                 self.context.exit_scope();
             }
 
@@ -448,9 +442,7 @@ impl BorrowChecker {
                 let place = Place::Local(var.clone());
                 self.context.init_owned(place);
 
-                for stmt in body {
-                    self.check_stmt(stmt)?;
-                }
+                self.check_block_stmts(body)?;
                 self.context.exit_scope();
             }
 
@@ -463,9 +455,7 @@ impl BorrowChecker {
                     // Bind pattern variables
                     self.bind_pattern(&arm.pattern)?;
 
-                    for stmt in &arm.body {
-                        self.check_stmt(stmt)?;
-                    }
+                    self.check_block_stmts(&arm.body)?;
 
                     self.context.exit_scope();
                 }
@@ -478,9 +468,7 @@ impl BorrowChecker {
                 // but allow certain operations that would normally be forbidden
                 self.unsafe_depth += 1;
                 self.context.enter_scope();
-                for stmt in body {
-                    self.check_stmt(stmt)?;
-                }
+                self.check_block_stmts(body)?;
                 self.context.exit_scope();
                 self.unsafe_depth -= 1;
             }
@@ -670,6 +658,23 @@ impl BorrowChecker {
         Ok(())
     }
 
+    /// Check the statements of a nested block, with their own mutability scope.
+    ///
+    /// `mutable_bindings` is the record of what may be written, and a flat
+    /// function-wide map leaks in both directions: an inner `let mut x` leaves
+    /// an outer immutable `x` marked writable for the rest of the function, and
+    /// an inner immutable `x` makes a legitimate outer `&mut x` be rejected.
+    /// This is the same defect that was fixed for codegen's array bindings -
+    /// and it was reintroduced here by the fix for that one.
+    fn check_block_stmts(&mut self, stmts: &[Stmt]) -> Result<()> {
+        let outer = self.mutable_bindings.clone();
+        for stmt in stmts {
+            self.check_stmt(stmt)?;
+        }
+        self.mutable_bindings = outer;
+        Ok(())
+    }
+
     /// Reject `&mut place` when the binding underneath was not declared mutable.
     ///
     /// Only a binding this pass has actually seen declared is judged; an
@@ -753,6 +758,12 @@ impl BorrowChecker {
                         .borrow(place, RefKind::Shared, call_lifetime.clone(), span)?;
                 }
                 ParamOwnership::BorrowMut => {
+                    // A `mut x: T` parameter writes through the pointer it is
+                    // given, exactly as `&mut x` does, so it needs the same
+                    // permission. Without this the explicit-reference check was
+                    // one spelling away from being bypassed: passing an
+                    // immutable local to a `mut` parameter still mutated it.
+                    self.check_mutable_borrow_allowed(&place, span)?;
                     // Borrow mutably for the duration of the call
                     self.context
                         .borrow(place, RefKind::Mutable, call_lifetime.clone(), span)?;
@@ -1295,21 +1306,125 @@ mod tests {
 
     /// NOT AN ERROR: a `&mut` *parameter* re-borrowed mutably. The permission
     /// arrived with the parameter, so it is not invented here.
+    ///
+    /// The element type matters: this used to pass `&mut xs[0]` (a `&mut i64`)
+    /// to a `&mut [i64; 3]` parameter, which is a type error, and `borrow_check`
+    /// never runs the type checker - so the test proved only that the borrow
+    /// checker accepted a program nothing else would. The callee now takes the
+    /// element type the argument actually has, and
+    /// test_reborrow_program_compiles_end_to_end puts the same source through
+    /// the whole pipeline.
     #[test]
     fn test_mutable_reborrow_of_mutable_parameter_is_accepted() {
-        let result = borrow_check(
-            r#"
-            fn set(xs: &mut [i64; 3]) { xs[0] = 42; }
-            fn outer(xs: &mut [i64; 3]) { set(&mut xs[0]); }
+        let result = borrow_check(REBORROW_PROGRAM);
+        assert!(
+            result.is_ok(),
+            "a mutable re-borrow of a `&mut` parameter was rejected: {:?}",
+            result
+        );
+    }
+
+    /// The program above, through lexer, parser, macros, type checker, borrow
+    /// checker and code generation - so "accepted" means accepted by the
+    /// compiler, not by one pass of it.
+    const REBORROW_PROGRAM: &str = r#"
+            fn bump(x: &mut i64) { }
+            fn outer(xs: &mut [i64; 3]) { bump(&mut xs[0]); }
             fn main() {
                 let mut v = [1, 2, 3];
                 outer(&mut v);
+                print_int(v[0]);
+            }
+            "#;
+
+    #[test]
+    fn test_reborrow_program_compiles_end_to_end() {
+        let mut lexer = crate::lexer::Lexer::new(REBORROW_PROGRAM);
+        let tokens = lexer.collect_tokens().expect("lexing");
+        let mut program = crate::parser::Parser::new(tokens).parse().expect("parsing");
+        crate::macros::MacroExpander::new()
+            .expand_program(&mut program)
+            .expect("macro expansion");
+        crate::typeck::TypeChecker::new()
+            .check(&program)
+            .expect("type checking");
+        BorrowChecker::new()
+            .check_program(&program)
+            .expect("borrow checking");
+        let mut codegen = crate::codegen::CodeGenerator::new("reborrow").expect("codegen setup");
+        codegen.compile(&program).expect("code generation");
+    }
+
+    /// GENUINE ERROR, newly rejected: an immutable local passed to a `mut`
+    /// parameter. `mut xs: T` writes through the pointer it is handed exactly
+    /// as `&mut xs` does, so the explicit-reference check was one spelling away
+    /// from being bypassed - this program used to compile and write 42 into an
+    /// immutable binding.
+    #[test]
+    fn test_immutable_local_passed_to_a_mut_parameter_is_rejected() {
+        let result = borrow_check(
+            r#"
+            fn bump(mut xs: [i64; 3]) { xs[0] = 42; }
+            fn main() {
+                let v = [1, 2, 3];
+                bump(v);
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            "an immutable local passed to a `mut` parameter was accepted: {:?}",
+            result
+        );
+    }
+
+    /// The mutability record is per scope. A flat map leaked forward: an inner
+    /// `let mut v` left the *outer*, immutable `v` marked writable for the rest
+    /// of the function. This is the defect that was fixed for codegen's array
+    /// bindings and then reintroduced here.
+    #[test]
+    fn test_inner_mutable_shadow_does_not_make_the_outer_binding_writable() {
+        let result = borrow_check(
+            r#"
+            fn set(xs: &mut [i64; 3]) { xs[0] = 9; }
+            fn main() {
+                let v = [1, 2, 3];
+                if true {
+                    let mut v = [7, 7, 7];
+                    print_int(v[0]);
+                }
+                set(&mut v);
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            "an inner `let mut` shadow made an immutable outer binding writable: {:?}",
+            result
+        );
+    }
+
+    /// And backward: an inner immutable shadow must not make a legitimate outer
+    /// `let mut` be rejected. A scope that only ever over-rejects is not scoped,
+    /// it is broken in the other direction.
+    #[test]
+    fn test_inner_immutable_shadow_does_not_reject_the_outer_mutable_binding() {
+        let result = borrow_check(
+            r#"
+            fn set(xs: &mut [i64; 3]) { xs[0] = 9; }
+            fn main() {
+                let mut v = [1, 2, 3];
+                if true {
+                    let v = [7, 7, 7];
+                    print_int(v[0]);
+                }
+                set(&mut v);
             }
             "#,
         );
         assert!(
             result.is_ok(),
-            "a mutable re-borrow of a `&mut` parameter was rejected: {:?}",
+            "an inner immutable shadow rejected a legitimate outer `let mut`: {:?}",
             result
         );
     }

@@ -517,6 +517,29 @@ impl CodeGenerator {
         }
     }
 
+    /// Whether an argument denotes an array, as far as this pass can tell.
+    ///
+    /// Deliberately generous: a name with an array binding, or any expression
+    /// whose inferred C type carries dimensions (a struct field of array type,
+    /// for instance). Over-answering `true` costs a refusal, which is
+    /// recoverable; under-answering it costs a silent capability leak.
+    fn is_array_argument(&self, expr: &Expr) -> bool {
+        let place = match expr {
+            Expr::Reference { expr, .. } => expr.as_ref(),
+            other => other,
+        };
+        // Only the name itself is the array. Its *root* is not a usable test:
+        // `arr[0]` roots to `arr` but is an element, and treating it as an
+        // array refused `print_int(arr[0])` across the corpus.
+        if let Expr::Ident(name) = place {
+            if self.array_bindings.contains_key(name.as_str()) {
+                return true;
+            }
+        }
+        self.try_infer_expr_type(place)
+            .is_some_and(|ty| ty.contains('['))
+    }
+
     /// Whether a parameter may write into the caller's array through the
     /// pointer it receives: `&mut [T; N]`, or `mut xs: [T; N]`.
     fn param_grants_array_write(param: &Param) -> bool {
@@ -544,7 +567,28 @@ impl CodeGenerator {
     /// not only where it is used.
     fn check_call_array_capabilities(&self, func_name: &str, args: &[Expr]) -> Result<()> {
         let Some((params, _)) = self.functions.get(func_name) else {
-            // Built-ins and methods take no array references.
+            // No signature for this callee, so there is no way to tell whether
+            // it writes through an array it is handed. `impl` methods are the
+            // reachable case: they are called as `Type::method` and are kept
+            // out of `functions` deliberately, so the guard used to skip them
+            // entirely and a shared array could be lent to a method that
+            // mutates it. Unknown capability is refused rather than allowed.
+            for arg in args {
+                if self.is_array_argument(arg) {
+                    return Err(CompileError::CodegenError {
+                        message: format!(
+                            "cannot pass an array to `{}`: this compiler does not know that \
+                             callee's parameter list, so it cannot tell whether `{}` writes \
+                             through the array - and every array is passed as a pointer into \
+                             the caller's storage. Allowing it would make the array write rule \
+                             (docs/specification/language-spec.md §9.2) unenforceable for this \
+                             call. Call a plain `fn` with a declared array parameter instead; \
+                             `impl` methods and imported callees cannot take arrays yet.",
+                            func_name, func_name
+                        ),
+                    });
+                }
+            }
             return Ok(());
         };
         for (i, param) in params.iter().enumerate() {
@@ -558,12 +602,32 @@ impl CodeGenerator {
                 Expr::Reference { expr, .. } => expr.as_ref(),
                 other => other,
             };
-            let Some(root) = Self::expr_root_ident(place) else {
-                continue;
-            };
-            let Some(binding) = self.array_bindings.get(root) else {
-                // A local array object: the caller owns it, so it may lend it.
-                continue;
+            // The argument's own provenance decides. A name this pass tracks
+            // answers it; anything else - a struct field, an element, a call
+            // result - does not, and "cannot tell" must not read as "may".
+            // `mutate(s.array)` used to root to `s`, find no binding, and be
+            // waved through even when `s` was a shared parameter.
+            let root = Self::expr_root_ident(place);
+            let binding = root.and_then(|r| self.array_bindings.get(r));
+            let Some(binding) = binding else {
+                if !self.is_array_argument(arg) {
+                    // Not an array at all: nothing to lend.
+                    continue;
+                }
+                return Err(CompileError::CodegenError {
+                    message: format!(
+                        "cannot pass this argument to `{}`: the parameter `{}` may write to \
+                         the caller's array, and this compiler cannot establish where the \
+                         array came from ({}), so it cannot tell whether the write is \
+                         permitted. Every array is passed as a pointer into the caller's \
+                         storage, so guessing would silently break the array write rule \
+                         (docs/specification/language-spec.md §9.2). Bind the array to a \
+                         local or a parameter first and pass that name.",
+                        func_name,
+                        param.name,
+                        Self::expr_kind_name(place)
+                    ),
+                });
             };
             let ArrayStorage::Parameter(form) = binding.storage else {
                 continue;
@@ -573,6 +637,8 @@ impl CodeGenerator {
                 ArrayParamForm::Shared => "a shared reference parameter, `&[T; N]`",
                 ArrayParamForm::ByValue => "a by-value array parameter, `[T; N]`",
             };
+            // A binding was found, so the argument had a root name.
+            let root = root.unwrap_or("this argument");
             return Err(CompileError::CodegenError {
                 message: format!(
                     "cannot pass `{}` to `{}`: the parameter `{}` may write to the \
@@ -2056,12 +2122,14 @@ impl CodeGenerator {
     /// gave a following `for x in xs` the shadow's length: a `[i64; 4]`
     /// parameter iterated twice.
     fn generate_block(&mut self, stmts: &[Stmt], indent: &str) -> Result<()> {
-        let outer = self.array_bindings.clone();
+        let outer_arrays = self.array_bindings.clone();
+        let outer_variables = self.variables.clone();
         for stmt in stmts {
             self.output.push_str(indent);
             self.generate_statement(stmt)?;
         }
-        self.array_bindings = outer;
+        self.array_bindings = outer_arrays;
+        self.variables = outer_variables;
         Ok(())
     }
 
@@ -3879,6 +3947,95 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("cannot write to `xs`"), "{}", msg);
         assert!(msg.contains("by-value array parameter"), "{}", msg);
+    }
+
+    // Unknown capability must not read as permitted: with no signature for the
+    // callee there is no way to tell whether it writes through the array, and
+    // every array is passed as a pointer into the caller's storage.
+    //
+    // A builtin is the reachable callee that `functions` does not contain.
+    // `impl` methods were the case the review named, but `Type::method(x)` does
+    // not reach this guard at all: the parser builds an `EnumConstructor`, not
+    // a `Call` (it emits `Holder_mutate__new(xs)` and the type checker rejects
+    // it with "Undefined enum type: Holder"), so that hole is latent rather
+    // than live. The refusal covers it if `::` calls are ever routed here.
+    #[test]
+    fn test_array_passed_to_an_unknown_callee_is_refused() {
+        let err = generate(
+            r#"
+        fn main() {
+            let arr = [1, 2, 3];
+            print_int(arr);
+        }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot pass an array to `print_int`"), "{}", msg);
+        assert!(msg.contains("does not know that callee"), "{}", msg);
+    }
+
+    // Same rule for an argument whose provenance is unknown: `b.items` roots to
+    // `b`, which has no array binding, so the guard used to wave it through
+    // even when `b` was a shared parameter.
+    #[test]
+    fn test_array_argument_with_unknown_provenance_is_refused() {
+        let err = generate(
+            r#"
+        struct Bag { items: [i64; 3] }
+        fn mutate(xs: &mut [i64; 3]) { xs[0] = 99; }
+        fn f(mut b: Bag) { mutate(b.items); }
+        fn main() { let mut bag = Bag { items: [1, 2, 3] }; f(bag); }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot establish where the array came from"), "{}", msg);
+        assert!(msg.contains("field access"), "{}", msg);
+    }
+
+    // The refusal must not swallow ordinary code: an array *element* is not an
+    // array, and reading `arr[0]` into a builtin is the commonest line there
+    // is. Rooting the test at the array name refused five corpus files.
+    #[test]
+    fn test_passing_an_array_element_to_a_builtin_is_not_refused() {
+        let c = generate(
+            r#"
+        fn main() {
+            let arr = [1, 2, 3];
+            print_int(arr[0]);
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("__pd_print_int(arr[0])"), "{}", c);
+    }
+
+    // `generate_block` restored the array bindings but not `variables`, from
+    // which the loop's element declaration is taken, so a shadow of a different
+    // element type made the *outer* array iterate with the wrong C type.
+    #[test]
+    fn test_shadowing_does_not_leak_its_element_type_to_the_parameter() {
+        let c = generate(
+            r#"
+        fn show(names: &[String; 3]) {
+            if true {
+                let names: [i64; 2] = [1, 2];
+                print_int(names[0]);
+            }
+            for n in names {
+                print(n);
+            }
+        }
+        fn main() {
+            let ns: [String; 3] = ["a", "b", "c"];
+            show(&ns);
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("const char* n = names[_i];"), "{}", c);
+        assert!(!c.contains("long long n = names[_i];"), "{}", c);
     }
 
     #[test]
