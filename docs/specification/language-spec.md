@@ -686,7 +686,8 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 | `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:2062-2070` (corrected from line 2037–2043 of the pre-cleanup revision) |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
-| `[T; N]` | implemented | `N` is an integer literal or an identifier |
+| `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
+| `[[T; M]; N]` | unimplemented | nested arrays do not work in either position. As a **local**, `type_to_c` builds `T[M][N]` as a *type* and emits `long long[2] grid[2]`, which gcc rejects ("brackets are not allowed here"); as a **parameter** the declarator refuses it by name. Separate unit |
 | `&T`, `&mut T` | partial | parses, but the typechecker is a **no-op**: `Type::Reference` maps to its inner type — "For now, treat references as the inner type / TODO: Proper reference type handling" (`src/typeck/mod.rs:121-125`, corrected from line 2470–2486 of the pre-cleanup revision). `&i64` and `i64` are indistinguishable to it. |
 | `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
 | `Name<A, B>` | partial | see below |
@@ -749,11 +750,13 @@ and `unsafe fn` do not exist, so [N12](#n12-memory-model)'s restricted-unsafe is
 
 ### A6.2 `for` loops
 
-`for i in 0..n { }` — implemented.
-**partial**: `for x in arr { }` where `arr` is a **function parameter** miscompiles: codegen emits
-`sizeof(arr)/sizeof(arr[0])` (`src/codegen/mod.rs:1922-1924`, corrected from line 1553–1571 of the pre-cleanup revision), which
-is the pointer size after array-to-pointer decay, and it hardcodes the element type as
-`long long`. Iterate parameters with an explicit index and `while`.
+`for i in 0..n { }` — implemented. `for x in arr { }` — implemented, including where `arr` is a
+**function parameter**. Codegen used to emit `sizeof(arr)/sizeof(arr[0])`, the pointer size after
+array-to-pointer decay, so the loop silently visited 1 element (`i64`) or 2 (`i32`), and it
+hardcoded the element type as `long long`. The bound now comes from the declared length and the
+element type from the declared element type. A length codegen cannot resolve — a const generic,
+which [N4](#n4-types) records as dropped — is a compile error on a parameter rather than a wrong
+bound, because a decayed pointer cannot supply the length at run time either.
 
 ### A6.3 Expression forms
 
@@ -1076,6 +1079,93 @@ duplicated and nothing is invalidated. Struct types (`Type::Custom`) remain move
 > it is now recorded as a divergence instead.
 
 ### A9.2 Array parameters
+
+Every array parameter — `[T; N]`, `&[T; N]` and `&mut [T; N]` alike — is passed as a pointer
+into the **caller's** array, because that is what C does to an array parameter. Nothing is
+copied, at any of the three spellings, so a write through any of them is visible to the caller.
+
+Whether `[T; N]` parameters *should* copy or alias is **not decided**: §9 defines the memory
+model without mentioning array parameters, and §5 records that the typechecker cannot tell
+`&T` from `T`. Until that decision is made, code generation refuses the writes it cannot
+justify rather than picking one silently:
+
+| spelling | may write through it | why |
+|---|---|---|
+| `&mut [T; N]` | ✅ | the declaration says so |
+| `mut xs: [T; N]` | ✅ | the bootstrap subset's spelling for a mutable array parameter (bootstrap-subset.md §4) |
+| `&[T; N]` | ❌ compile error | a shared reference does not permit mutation; the C declarator also const-qualifies the element slot |
+| `[T; N]` | ❌ compile error | the write would reach the caller's array, which is the undecided semantics above |
+
+The rule is enforced on **calls** as well as assignments: a function may not pass an array it
+only holds shared, or by value, to a parameter that may write to it. Without that, the
+permission could be laundered one hop — `fn f(xs: &[i64; 3]) { mutate(xs); }` — and the write
+would happen under the callee's `&mut` binding, where it looks legitimate.
+
+**Supported element types** for an array parameter are exactly `i32`, `i64`, `u32`, `u64`,
+`bool`, `String` and a struct/enum name. Anything else is a compile error naming the type
+("Unsupported array element type in function parameter"), not invalid C: in particular a
+**nested array parameter** (`[[T; M]; N]`) is rejected rather than emitted, and a function type
+never reaches here because §5 records that the parser refuses it ("expected type, found `fn`").
+Nested arrays do not work as locals either — see the `[[T; M]; N]` row in §5; that is a
+declarator defect in `type_to_c`, tracked separately, and it fails before any rule here
+applies.
+
+A `mut` parameter must be given something with storage. `bump(1)`, `retitle(make())` and
+`bump(a + 1)` are refused: a `mut` parameter receives a pointer to the caller's storage, and an
+rvalue has none — codegen emitted `bump(&1)` and gcc rejected the compiler's own output. The
+alternative, materialising a temporary, would require this specification to say what a write
+nobody can observe means; it does not, so the case is refused rather than invented. An argument
+that *is* storage but that the borrow checker cannot model as a place, such as `xs[i]` with a
+non-literal index, is checked against the mutability of the name it is rooted in.
+
+Taking `&mut x` of a binding that was not declared `mut` is a borrow-check error, whatever `x`
+is: array, scalar or `String`. The same check applies to passing a binding to a `mut x: T`
+parameter, which writes through its pointer identically — codegen emits *every* `mut`
+parameter as a pointer to the caller's storage, so `fn bump(mut x: i64)` mutates its caller's
+variable exactly as `&mut i64` does. Both were previously unchecked:
+`let v = [1, 2, 3]; set(&mut v);` compiled and modified an immutable binding, and
+`fn bump(mut x: i64) { x = 42; }` called with an immutable `let n = 1;` printed 42.
+
+The bindings this covers are every binder the grammar has — parameters, `let`, the `for`
+variable, and match patterns. `for` and match bindings are immutable (there is no `mut` form of
+either), and a name that reaches the check without having been registered by any binder is
+**refused**, not permitted: an invariant with a permissive default stops being an invariant the
+first time a binder is added and forgotten, which is precisely how `for` variables and match
+bindings slipped through.
+
+#### What the rule actually covers
+
+This is a *bounded* enforcement, not a reference-safety model, and the boundary is worth
+stating exactly, because a guard that reads as protection while having quiet gaps is worse than
+no guard.
+
+Enforced, in code generation, for a call whose callee is a plain `fn` this compilation knows:
+
+- the argument is a name bound to an array in the current function — a local, or a parameter
+  whose declared form is one of the four in the table above.
+
+Refused, rather than assumed safe, because the capability cannot be established:
+
+- the callee's parameter list is unknown to this pass (any callee not in the function table),
+  and an array is being passed;
+- the array argument is not a plain name this pass tracks — a struct field, an **element of an
+  array** (`grid[0]`), a call result — and the parameter may write to it. An element is refused
+  even when its array is a local the caller owns: letting it inherit the array's capability
+  would be a more permissive rule than this one, and the rule stated here is the contract.
+
+Not covered by this rule at all, and not claimed to be:
+
+- **aliasing** between two array arguments beyond what the borrow checker already rejects;
+- **references to anything other than arrays**: `&T` and `&mut T` are the same type to the
+  type checker (§5), so a scalar reference carries no capability information here;
+- any guarantee that survives a construct the front end has not implemented.
+
+The reason the rule lives in code generation, and is shaped as a refusal, is that there is no
+reference type in the type checker to carry the permission (§5). A complete model needs one —
+that is M4's work, not this rule's. Until then this rule buys exactly one property: an array
+write that reaches the caller can only come from a spelling that declared it.
+
+## 10. Execution model
 
 The normative question is open ([N12.1](#n121-array-parameters-open-decision)). What the
 implementation does is not open, and it is the same for all three spellings.

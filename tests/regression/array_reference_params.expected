@@ -1,0 +1,16 @@
+indexed:
+6
+shared for-in:
+6
+after fill:
+24
+mut for-in:
+24
+after double:
+16
+string read: ok
+string write: ok
+string slot:
+changed
+struct field:
+42

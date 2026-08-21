@@ -1,0 +1,152 @@
+// Regression test for D9: `&[T; N]` and `&mut [T; N]` parameters.
+//
+// The reference-parameter arm of the C signature builder had no case for an
+// array referent, so any program with such a parameter was rejected outright
+// with "Unsupported type in reference parameter" - examples/practical/
+// simple_sort.pd could not be compiled at all.
+//
+// Both directions are exercised for each element class the signature arm
+// claims to support (integer, String, struct): the shared reference reads
+// through the pointer, and the mutable reference writes through it so the
+// *caller* observes the mutation. `for x in xs` is exercised over a shared and
+// over a mutable reference parameter, because indexing a range and iterating
+// the array are different code paths. Wrong answers panic (abort -> non-zero
+// exit) rather than printing quietly.
+
+struct Point {
+    x: i64,
+}
+
+// --- integers ---------------------------------------------------------------
+
+fn sum_indexed(xs: &[i64; 3]) -> i64 {
+    let mut total = 0;
+    for i in 0..3 {
+        total = total + xs[i];
+    }
+    return total;
+}
+
+fn sum_shared_for_in(xs: &[i64; 3]) -> i64 {
+    let mut total = 0;
+    for x in xs {
+        total = total + x;
+    }
+    return total;
+}
+
+fn sum_mut_for_in(xs: &mut [i64; 3]) -> i64 {
+    let mut total = 0;
+    for x in xs {
+        total = total + x;
+    }
+    return total;
+}
+
+fn fill(xs: &mut [i64; 3]) {
+    xs[0] = 7;
+    xs[1] = 8;
+    xs[2] = 9;
+}
+
+fn double_each(xs: &mut [i64; 3]) {
+    for i in 0..3 {
+        xs[i] = xs[i] * 2;
+    }
+}
+
+// --- strings ----------------------------------------------------------------
+// A String element is `const char*`, so the shared form has to const-qualify
+// the *slot* (`const char* const xs[N]`) and not merely the characters.
+
+fn first_name(names: &[String; 2]) -> String {
+    return names[0];
+}
+
+fn rename_first(names: &mut [String; 2]) {
+    names[0] = "changed";
+}
+
+// --- structs ----------------------------------------------------------------
+
+fn first_x(ps: &[Point; 2]) -> i64 {
+    return ps[0].x;
+}
+
+fn bump_first(ps: &mut [Point; 2]) {
+    ps[0].x = 42;
+}
+
+fn main() {
+    let mut values = [1, 2, 3];
+
+    let before = sum_indexed(&values);
+    print("indexed:");
+    print_int(before);
+    if before != 6 {
+        panic("shared array reference read the wrong elements");
+    }
+
+    let before_for_in = sum_shared_for_in(&values);
+    print("shared for-in:");
+    print_int(before_for_in);
+    if before_for_in != 6 {
+        panic("for-in over a shared array reference read the wrong elements");
+    }
+
+    fill(&mut values);
+    let after = sum_indexed(&values);
+    print("after fill:");
+    print_int(after);
+    if after != 24 {
+        panic("mutable array reference did not write through to the caller");
+    }
+    if values[0] != 7 {
+        panic("caller does not observe the mutation at index 0");
+    }
+    if values[2] != 9 {
+        panic("caller does not observe the mutation at index 2");
+    }
+
+    let mut_for_in = sum_mut_for_in(&mut values);
+    print("mut for-in:");
+    print_int(mut_for_in);
+    if mut_for_in != 24 {
+        panic("for-in over a mutable array reference read the wrong elements");
+    }
+
+    double_each(&mut values);
+    print("after double:");
+    print_int(values[1]);
+    if values[1] != 16 {
+        panic("read-modify-write through a mutable array reference is wrong");
+    }
+
+    let mut names: [String; 2] = ["first", "second"];
+    let read_ok = string_eq(first_name(&names), "first");
+    if read_ok {
+        print("string read: ok");
+    } else {
+        panic("shared String array reference read the wrong element");
+    }
+    rename_first(&mut names);
+    let write_ok = string_eq(names[0], "changed");
+    if write_ok {
+        print("string write: ok");
+    } else {
+        panic("caller does not observe a write through &mut [String; 2]");
+    }
+    print("string slot:");
+    print(names[0]);
+
+    let mut points: [Point; 2] = [Point { x: 1 }, Point { x: 2 }];
+    if first_x(&points) != 1 {
+        panic("shared struct array reference read the wrong element");
+    }
+    bump_first(&mut points);
+    if points[0].x != 42 {
+        panic("caller does not observe a write through &mut [Point; 2]");
+    }
+    print("struct field:");
+    print_int(points[0].x);
+}
