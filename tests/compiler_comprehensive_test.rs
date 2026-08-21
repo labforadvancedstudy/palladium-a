@@ -629,11 +629,14 @@ fn test_complex_programs() {
     );
 
     // Bubble sort. `let temp: i64` is required, not decoration: indexing an
-    // array-typed *parameter* has no inference rule, and the compiler says so
+    // array-typed *parameter* has no inference rule, and the compiler says so.
+    // `mut` is required to write through it: a bare `[T; N]` parameter decays to a
+    // pointer into the caller's array, and whether that is a copy or an alias is an
+    // open question in the specification (§A9.2), so codegen refuses rather than guess.
     // rather than guessing.
     compile_and_verify(
         r#"
-        fn bubble_sort(arr: [int; 10], n: int) {
+        fn bubble_sort(mut arr: [int; 10], n: int) {
             for i in 0..n {
                 for j in 0..(n - i - 1) {
                     if arr[j] > arr[j + 1] {
