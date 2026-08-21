@@ -2181,49 +2181,16 @@ impl CodeGenerator {
                 // Generate function name
                 match func.as_ref() {
                     Expr::Ident(name) => {
-                        // Map built-in functions
+                        // Map built-in functions. The C symbol is mechanically
+                        // __pd_<name> for every built-in, so this derives from the
+                        // registry (crate::builtins) instead of restating the table:
+                        // a 38-arm match here was a hand-maintained copy that would
+                        // silently miss a newly registered built-in, emitting a bare
+                        // call to an undeclared C function.
                         match name.as_str() {
-                            "print" => self.output.push_str("__pd_print"),
-                            "print_int" => self.output.push_str("__pd_print_int"),
-                            "panic" => self.output.push_str("__pd_panic"),
-                            "string_len" => self.output.push_str("__pd_string_len"),
-                            "string_concat" => self.output.push_str("__pd_string_concat"),
-                            "string_eq" => self.output.push_str("__pd_string_eq"),
-                            "string_char_at" => self.output.push_str("__pd_string_char_at"),
-                            "string_substring" => self.output.push_str("__pd_string_substring"),
-                            "string_from_char" => self.output.push_str("__pd_string_from_char"),
-                            "char_is_digit" => self.output.push_str("__pd_char_is_digit"),
-                            "char_is_alpha" => self.output.push_str("__pd_char_is_alpha"),
-                            "char_is_whitespace" => self.output.push_str("__pd_char_is_whitespace"),
-                            "string_to_int" => self.output.push_str("__pd_string_to_int"),
-                            "int_to_string" => self.output.push_str("__pd_int_to_string"),
-                            // Command-line arguments
-                            "arg_count" => self.output.push_str("__pd_arg_count"),
-                            "arg_at" => self.output.push_str("__pd_arg_at"),
-                            "file_open" => self.output.push_str("__pd_file_open"),
-                            "file_read_all" => self.output.push_str("__pd_file_read_all"),
-                            "file_read_line" => self.output.push_str("__pd_file_read_line"),
-                            "file_write" => self.output.push_str("__pd_file_write"),
-                            "file_close" => self.output.push_str("__pd_file_close"),
-                            "file_exists" => self.output.push_str("__pd_file_exists"),
-                            // Enhanced I/O functions
-                            "path_exists" => self.output.push_str("__pd_path_exists"),
-                            "path_is_file" => self.output.push_str("__pd_path_is_file"),
-                            "path_is_dir" => self.output.push_str("__pd_path_is_dir"),
-                            "create_dir" => self.output.push_str("__pd_create_dir"),
-                            "create_dir_all" => self.output.push_str("__pd_create_dir_all"),
-                            "remove_file" => self.output.push_str("__pd_remove_file"),
-                            "remove_dir" => self.output.push_str("__pd_remove_dir"),
-                            "remove_dir_all" => self.output.push_str("__pd_remove_dir_all"),
-                            "read_file_to_string" => self.output.push_str("__pd_read_file_to_string"),
-                            "write_string_to_file" => self.output.push_str("__pd_write_string_to_file"),
-                            "file_flush" => self.output.push_str("__pd_file_flush"),
-                            "file_seek" => self.output.push_str("__pd_file_seek"),
-                            // Enhanced file operations with mode support
-                            "file_open_ex" => self.output.push_str("__pd_file_open_ex"),
-                            "file_close_ex" => self.output.push_str("__pd_file_close_ex"),
-                            "file_read_ex" => self.output.push_str("__pd_file_read_ex"),
-                            "file_write_ex" => self.output.push_str("__pd_file_write_ex"),
+                            name if crate::builtins::is_builtin(name) => {
+                                self.output.push_str(&format!("__pd_{}", name));
+                            }
                             _ => {
                                 // Check if this is a method call (contains ::)
                                 if name.contains("::") {
@@ -2955,6 +2922,15 @@ impl CodeGenerator {
         // In a full implementation, we'd need to walk the AST and substitute types
         // This is a simplified version that works for basic cases
         stmts.to_vec()
+    }
+
+    /// The C source generated so far.
+    ///
+    /// Exists so that the registry-to-runtime seam test in `crate::builtins` can
+    /// read the C prelude this compiler actually emits, rather than a copy of it.
+    #[allow(dead_code)] // used by the drift tests in crate::builtins
+    pub(crate) fn generated_c(&self) -> &str {
+        &self.output
     }
 
     /// Write the generated code to a file

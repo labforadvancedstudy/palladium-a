@@ -6,11 +6,20 @@ use crate::errors::Result;
 use std::collections::HashSet;
 
 /// Represents different kinds of effects a function can have
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// `Ord` follows declaration order and exists only so that an effect set can be
+/// rendered deterministically: the set is a `HashSet`, whose iteration order is
+/// arbitrary, so printing it directly made compiler output vary from run to run for
+/// any function carrying more than one effect (`panic` is the first built-in that
+/// does). Use `EffectSet::sorted` for anything user-visible.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Effect {
     /// IO operations (file, network, console)
     IO,
     /// Memory allocation/deallocation
+    ///
+    /// Carried by the built-ins that allocate the value they return — see the
+    /// effect rows in `crate::builtins`.
     Memory,
     /// Can panic or throw exceptions
     Panic,
@@ -70,6 +79,16 @@ impl EffectSet {
     /// Get all effects
     pub fn effects(&self) -> &HashSet<Effect> {
         &self.effects
+    }
+
+    /// The effects in a stable order, for anything a user reads.
+    ///
+    /// `effects()` hands back a `HashSet`; rendering that directly makes the
+    /// compiler's own output non-deterministic once a function has two effects.
+    pub fn sorted(&self) -> Vec<&Effect> {
+        let mut effects: Vec<&Effect> = self.effects.iter().collect();
+        effects.sort();
+        effects
     }
 }
 
