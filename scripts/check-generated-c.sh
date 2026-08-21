@@ -44,6 +44,18 @@
 # the language properly but only exists while the compiler cooperates. A defect
 # has to get past both.
 #
+# EXIT TAXONOMY — a finding and a malfunction must not share an exit code.
+#   0  every file analysed, invariant holds
+#   1  at least one genuine FINDING, and nothing malfunctioned
+#   2  a HARNESS error: input missing/unreadable, an analyser that raised, or a
+#      C compiler that failed for a reason unrelated to return types. Harness
+#      errors DOMINATE, because a partial analysis cannot support a verdict.
+#
+# The distinction is load-bearing for callers: scripts/stdlib-gate.sh uses this
+# script as a negative control, and "it exited non-zero" is not evidence that it
+# rejected anything. Measured before this taxonomy existed: a Python
+# RecursionError was printed as "FAIL Net A (falls off the end)".
+#
 # Usage: scripts/check-generated-c.sh <file.c> [file.c ...]
 
 set -uo pipefail
@@ -63,7 +75,8 @@ if ! command -v "$CC" >/dev/null 2>&1; then
   exit 2
 fi
 
-failures=0
+violations=0
+harness=0
 checked=0
 
 # --- Net A ------------------------------------------------------------------
@@ -88,22 +101,37 @@ net_a() { python3 "$NET_A" "$1" 2>&1; }
 
 for c in "$@"; do
   if [ ! -f "$c" ]; then
-    printf '  %sFAIL%s %s does not exist\n' "$RED" "$NC" "$c"
-    failures=$((failures+1))
+    printf '  %sHARNESS%s %s does not exist — nothing was analysed\n' "$RED" "$NC" "$c"
+    harness=$((harness+1))
+    continue
+  fi
+  if [ ! -r "$c" ]; then
+    printf '  %sHARNESS%s %s is not readable — nothing was analysed\n' "$RED" "$NC" "$c"
+    harness=$((harness+1))
     continue
   fi
   checked=$((checked+1))
-  file_bad=0
+  file_violation=0
+  file_harness=0
 
   a_out=$(net_a "$c"); a_rc=$?
   if [ "$a_rc" -eq 1 ]; then
-    printf '  %sFAIL%s Net A (falls off the end) in %s\n' "$RED" "$NC" "$c"
-    printf '%s\n' "$a_out" | sed 's/^/        /'
-    file_bad=1
+    # Exit 1 must be corroborated by a well-formed FINDING line. Trusting the
+    # code alone would let arbitrary output (a traceback, a usage message) be
+    # presented as a structural defect.
+    if printf '%s\n' "$a_out" | grep -q '^FINDING '; then
+      printf '  %sFAIL%s Net A (falls off the end) in %s\n' "$RED" "$NC" "$c"
+      printf '%s\n' "$a_out" | sed 's/^/        /'
+      file_violation=1
+    else
+      printf '  %sHARNESS%s Net A exited 1 on %s with no well-formed FINDING — treating as a malfunction, not a defect\n' "$RED" "$NC" "$c"
+      printf '%s\n' "$a_out" | sed 's/^/        /'
+      file_harness=1
+    fi
   elif [ "$a_rc" -ne 0 ]; then
-    printf '  %sFAIL%s Net A HARNESS ERROR (exit %d) on %s — the net did not run\n' "$RED" "$NC" "$a_rc" "$c"
+    printf '  %sHARNESS%s Net A exit %d on %s — the net did not run\n' "$RED" "$NC" "$a_rc" "$c"
     printf '%s\n' "$a_out" | sed 's/^/        /'
-    file_bad=1
+    file_harness=1
   fi
 
   # Net B. Redirect to a file rather than piping: a `| head` here would SIGPIPE
@@ -118,25 +146,35 @@ for c in "$@"; do
     if grep -qa -e '-Wreturn-type' -e 'does not return a value' -e 'no return statement' "$b_log"; then
       printf '  %sFAIL%s Net B (%s -Werror=return-type) in %s\n' "$RED" "$NC" "$CC" "$c"
       grep -a "error:" "$b_log" | head -5 | sed 's/^/        /'
+      file_violation=1
     else
-      printf '  %sFAIL%s Net B could not run on %s — %s failed for an UNRELATED reason, so it proves nothing here\n' \
+      printf '  %sHARNESS%s Net B could not run on %s — %s failed for an UNRELATED reason, so it proves nothing here\n' \
         "$RED" "$NC" "$c" "$CC"
       grep -a -e "error:" -e "fatal error:" "$b_log" | head -3 | sed 's/^/        /'
+      file_harness=1
     fi
-    file_bad=1
   fi
   rm -f "$b_log"
 
-  if [ "$file_bad" -eq 0 ]; then
-    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$c"
+  if [ "$file_harness" -ne 0 ]; then
+    harness=$((harness+1))
+  elif [ "$file_violation" -ne 0 ]; then
+    violations=$((violations+1))
   else
-    failures=$((failures+1))
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$c"
   fi
 done
 
-if [ "$failures" -gt 0 ]; then
+# Harness errors dominate: a run that malfunctioned cannot assert "these are the
+# defects", nor can it assert that there are none.
+if [ "$harness" -gt 0 ]; then
+  printf '%s✗ generated-C check MALFUNCTIONED on %d input(s) (%d genuine finding(s) also seen)%s\n' \
+    "$RED" "$harness" "$violations" "$NC"
+  exit 2
+fi
+if [ "$violations" -gt 0 ]; then
   printf '%s✗ generated C failed the structural invariant in %d of %d file(s)%s\n' \
-    "$RED" "$failures" "$checked" "$NC"
+    "$RED" "$violations" "$checked" "$NC"
   exit 1
 fi
 exit 0

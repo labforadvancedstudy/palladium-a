@@ -202,11 +202,21 @@ what `tests/stdlib/` does.
 
 `make stdlib-gate` (`scripts/stdlib-gate.sh`) has four phases:
 
-- **Phase 0 — negative control.** Proves the harness can fail before any later "ok" is believed:
-  a planted transcript mismatch must be detected, `panic()` must exit non-zero, and the
-  generated-C checker must reject a function that never returns. Each control must *reach* its
-  comparison — compile and run successfully — and only then is the comparison required to fail.
-  Treating a broken control as a passing one is how a control stops controlling anything.
+- **Phase 0 — negative control.** Proves the harness can fail before any later "ok" is believed.
+  Each control must *reach* its comparison — compile and run successfully — and only then is the
+  comparison required to fail; and each requires the *specific* failure, never merely "something
+  went wrong":
+  - a planted transcript mismatch must be detected;
+  - `panic()` must die from **SIGABRT specifically** (exit 134 = 128 + signal 6) *and* its
+    caller-supplied message must reach stderr. A generic non-zero exit is rejected: a missing
+    binary exits 127, and that used to count as proof. The message check is against the payload
+    this gate supplies, not fixed wording, so a handler that returns and lets `abort()` re-raise
+    does not neutralise it;
+  - the generated-C checker must exit **1 with a well-formed `FINDING` line** — not merely
+    non-zero. Exit 2 means the checker itself malfunctioned, which proves nothing.
+
+  The signal number is hard-coded because it is verified on this project's targets. It must not be
+  relaxed to "non-zero": that is the defect this control exists to prevent.
 - **Phase 1 — pin this page.** Recompiles all 21 files and diffs verdict *and* blocker against
   `stdlib/MANIFEST.tsv`. Fails on REGRESSION, XPASS, VERDICT_CHANGED, BLOCKER_CHANGED, file-set
   drift, or a new symlink. Also runs the forced-`import` reachability probe described above.
@@ -248,6 +258,19 @@ of them — neither is a proof on its own:
   A non-zero exit is only accepted as a Net B finding if the diagnostic is actually the return-type
   one; an unrelated failure (a missing header, say) is reported as "could not run", not as a defect.
 
+Both nets share one exit taxonomy, because a finding and a malfunction must not look alike:
+
+| exit | meaning |
+|---|---|
+| 0 | analysed, invariant holds |
+| 1 | at least one genuine `FINDING`, nothing malfunctioned |
+| 2 | **harness error** — input missing or unreadable, the analyser raised, or the C compiler failed for an unrelated reason |
+
+Harness errors *dominate*: a run that malfunctioned cannot assert what the defects are, nor that
+there are none. This was not academic — before the taxonomy existed, a Python `RecursionError`
+traceback was printed as `FAIL Net A (falls off the end)`, i.e. the checker reporting a defect it
+had never looked for.
+
 **Net A is not independently sound**, and is not documented as though it were. It reads the shape
 pdc happens to emit line by line, so unusual formatting, `switch`, or `goto` could defeat it — Net B
 covers those. Conversely Net B only exists while the C compiler cooperates. This is
@@ -264,10 +287,12 @@ defence-in-depth: a defect has to get past both.
 
 ### Seam with `make conformance`
 
-Transcript verification of `tests/stdlib/` belongs to **`make conformance`**, not here. Those five
-files are driver programs with `fn main` — ordinary conformance fixtures — and the conformance
-runner has an expected-output verdict class plus its own closed inventory over `tests/`. Running
-and diffing them in both gates would ship two semantic standards for one question.
+Transcript verification of `tests/stdlib/` belongs to **`make conformance`**, not here. All six
+drivers listed in `tests/stdlib/DRIVERS.tsv` are programs with `fn main` — ordinary conformance
+fixtures — and the conformance runner has an expected-output verdict class plus its own closed
+inventory over `tests/`. Running and diffing them in both gates would ship two semantic standards
+for one question. (Five of the six exercise builtins or the language surface; the sixth,
+`stdlib_tail_if_defect`, is a codegen fixture whose `main` prints a constant.)
 
 `stdlib/` itself stays in this gate: those are library modules with no `main`, where the only
 pinnable thing is a compile verdict and its blocker. Different question, different gate.

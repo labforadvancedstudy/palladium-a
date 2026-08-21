@@ -37,11 +37,26 @@ because this is legitimate and must NOT be flagged:
 Its last line is `}`. So the analysis recurses: an if/else terminates iff both
 branches terminate; an if without an else never does.
 
-Usage: check-c-returns.py <file.c> [...]   (exit 1 if any function may fall off)
+EXIT TAXONOMY — a finding and a malfunction must not share an exit code.
+    0  every function analysed, none can fall off its end
+    1  at least one genuine FINDING, and nothing malfunctioned
+    2  a HARNESS error: input missing, unreadable, or the analyser itself
+       raised. Harness errors DOMINATE: if anything malfunctioned the answer is
+       2 even when findings were also produced, because a partial analysis
+       cannot support "these are the defects".
+
+This matters because an uncaught exception exits 1 by default, which made a
+crashed analyser indistinguishable from a defect — the caller printed
+"FAIL Net A (falls off the end)" over a Python traceback. Every line of output
+is now tagged FINDING or HARNESS so the caller can verify that an exit 1 really
+carried a well-formed finding rather than arbitrary output.
+
+Usage: check-c-returns.py <file.c> [...]
 """
 
 import re
 import sys
+import traceback
 
 # A top-level definition: starts at column 0, has a parameter list, opens a
 # brace on the same line. Prototypes end in `);` and are skipped.
@@ -141,12 +156,15 @@ def terminates(items):
 
 
 def check_file(path):
+    """Return (violations, harness_errors) for one file."""
     try:
         with open(path, "r", errors="replace") as fh:
             lines = fh.read().splitlines()
     except OSError as exc:
-        print(f"{path}: cannot read: {exc}")
-        return 1
+        # NOT a finding: we never got to look. Previously this returned 1 and
+        # was reported as a structural defect in a file that could not be read.
+        print(f"HARNESS {path}: cannot read: {exc}")
+        return (0, 1)
 
     violations = 0
     i = 0
@@ -156,22 +174,37 @@ def check_file(path):
             body, close = parse_block(lines, i + 1)
             if not VOID_RE.match(line.strip()) and not terminates(body):
                 print(
-                    f"{path}:{i + 1}: non-void function may fall off its end "
+                    f"FINDING {path}:{i + 1}: non-void function may fall off its end "
                     f"(no return on every path): {line.strip()}"
                 )
                 violations += 1
             i = close + 1
             continue
         i += 1
-    return violations
+    return (violations, 0)
 
 
 def main(argv):
     if len(argv) < 2:
-        print("usage: check-c-returns.py <file.c> [...]", file=sys.stderr)
+        print("HARNESS: usage: check-c-returns.py <file.c> [...]")
         return 2
-    total = sum(check_file(p) for p in argv[1:])
-    return 1 if total else 0
+    violations = 0
+    harness = 0
+    for path in argv[1:]:
+        try:
+            v, h = check_file(path)
+        except Exception:  # noqa: BLE001 - any analyser bug is a HARNESS error
+            # Without this, an uncaught exception exits 1 and is indistinguishable
+            # from a finding. A crashed analyser has not proved anything.
+            print(f"HARNESS {path}: analyser raised:")
+            for line in traceback.format_exc().rstrip().splitlines():
+                print(f"HARNESS   {line}")
+            v, h = 0, 1
+        violations += v
+        harness += h
+    if harness:
+        return 2
+    return 1 if violations else 0
 
 
 if __name__ == "__main__":

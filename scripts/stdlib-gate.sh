@@ -196,9 +196,16 @@ bash scripts/check-generated-c.sh "$SCRATCH/negc.c" >"$SCRATCH/negc.log" 2>&1
 negc_rc=$?
 if [ "$negc_rc" -eq 0 ]; then
   note "the generated-C checker ACCEPTED a function with no return — Phase 2 is vacuous"
+elif [ "$negc_rc" -eq 2 ]; then
+  note "the generated-C checker MALFUNCTIONED (exit 2) instead of rejecting — Phase 2 proves nothing"
+  sed 's/^/        /' "$SCRATCH/negc.log" | head -4
 elif [ "$negc_rc" -ne 1 ]; then
-  note "the generated-C checker exited $negc_rc (harness failure, not a rejection) — Phase 2 proves nothing"
-  sed 's/^/        /' "$SCRATCH/negc.log" | head -3
+  note "the generated-C checker exited $negc_rc, which is not a rejection — Phase 2 proves nothing"
+  sed 's/^/        /' "$SCRATCH/negc.log" | head -4
+elif ! grep -qa 'FINDING ' "$SCRATCH/negc.log"; then
+  # Exit 1 alone is not proof: it must be corroborated by a well-formed finding.
+  note "the generated-C checker exited 1 but produced no well-formed FINDING — cannot tell a rejection from arbitrary output"
+  sed 's/^/        /' "$SCRATCH/negc.log" | head -4
 else
   ok "generated-C checker rejects a non-void function that never returns"
 fi
@@ -335,7 +342,10 @@ while IFS=$'\t' read -r base golden cverdict purpose; do
   case "$cverdict" in
     clean)
       clean_n=$((clean_n+1))
-      if [ "$cc_rc" -ne 0 ]; then
+      if [ "$cc_rc" -eq 2 ]; then
+        note "$drv: the generated-C check MALFUNCTIONED — this is not evidence the C is bad OR good"
+        strip_ansi <"$cc_log" | sed 's/^/      /'
+      elif [ "$cc_rc" -ne 0 ]; then
         note "$drv: generated C violates the structural invariant (declared 'clean')"
         strip_ansi <"$cc_log" | sed 's/^/      /'
       fi
@@ -343,12 +353,17 @@ while IFS=$'\t' read -r base golden cverdict purpose; do
     known_violation:*)
       known_n=$((known_n+1))
       want_fns=${cverdict#known_violation:}
+      if [ "$cc_rc" -eq 2 ]; then
+        note "$drv: the generated-C check MALFUNCTIONED — the pinned violation could not be confirmed"
+        strip_ansi <"$cc_log" | sed 's/^/      /'
+        continue
+      fi
       if [ "$cc_rc" -eq 0 ]; then
         note "XPASS: $drv is recorded known_violation:$want_fns but its C is now CLEAN — the compiler defect is fixed; promote it to 'clean' in $DRIVER_MANIFEST"
         continue
       fi
       # Every declared function must be flagged, and nothing else may be.
-      got_fns=$(strip_ansi <"$cc_log" | grep -a 'may fall off its end' \
+      got_fns=$(strip_ansi <"$cc_log" | grep -a '^ *FINDING .*may fall off its end' \
                 | sed -E 's/.*: ([A-Za-z_][A-Za-z_0-9 *]*[ *])([A-Za-z_][A-Za-z_0-9]*)\(.*/\2/' | sort -u | paste -sd, -)
       want_sorted=$(printf '%s' "$want_fns" | tr ',' '\n' | sort -u | paste -sd, -)
       if [ "$got_fns" != "$want_sorted" ]; then
@@ -380,15 +395,17 @@ else
   ok "all $(printf '%s\n' "$canonical" | wc -l | tr -d ' ') builtins are recorded"
 fi
 
+# Counters record entries that VERIFIED, not entries that were merely declared.
+# Incrementing before the checks made "31 exercised" true by construction.
+phase3_before=$failures
 covered=0; partial=0; unusable=0
+declared=0
 while IFS=$'\t' read -r name status stage fp detail note; do
   case "$name" in ''|\#*) continue;; esac
+  declared=$((declared+1))
+  entry_before=$failures
   case "$status" in
     COVERED|PARTIAL|COVERED_BY_EFFECT)
-      case "$status" in
-        PARTIAL) partial=$((partial+1)) ;;
-        *)       covered=$((covered+1)) ;;
-      esac
       # The manifest NAMES the driver. Both pieces of evidence must come from
       # THAT driver, not from anywhere in the directory: searching all sources
       # for the call and all goldens for the marker independently let a call in
@@ -417,10 +434,8 @@ while IFS=$'\t' read -r name status stage fp detail note; do
       fi
       ;;
     NEGATIVE_CONTROL)
-      covered=$((covered+1))   # proved in Phase 0
-      ;;
+      : ;;   # proved in Phase 0
     UNUSABLE)
-      unusable=$((unusable+1))
       probe="$SCRATCH/probe_$name.pd"
       plog="$SCRATCH/probe_$name.log"
       printf 'fn main() { %s }\n' "$detail" >"$probe"
@@ -442,8 +457,44 @@ while IFS=$'\t' read -r name status stage fp detail note; do
       ;;
     *) note "builtin '$name' has unknown status '$status' in $BUILTIN_MANIFEST" ;;
   esac
+  # Count it only if nothing was recorded against it.
+  if [ "$failures" -eq "$entry_before" ]; then
+    case "$status" in
+      PARTIAL)  partial=$((partial+1)) ;;
+      UNUSABLE) unusable=$((unusable+1)) ;;
+      *)        covered=$((covered+1)) ;;
+    esac
+  fi
 done < "$BUILTIN_MANIFEST"
-ok "$covered exercised, $partial partial, $unusable unusable and re-proved at a pinned stage+diagnostic"
+# MERGE-TIME RECONCILIATION.
+# fix/m1-builtin-registry enumerates the C-seam defects per DIMENSION in
+# PRELUDE_TYPE_MISMATCHES; this file can only say UNUSABLE or not. While that
+# constant does not exist, nothing to reconcile. Once it lands, every builtin it
+# names must still be recorded UNUSABLE here — otherwise one of the two tables
+# has been promoted without the other, which is precisely the drift both exist
+# to stop. This check arms itself automatically on merge rather than resting on
+# anyone remembering.
+if grep -q 'PRELUDE_TYPE_MISMATCHES' src/builtins.rs 2>/dev/null; then
+  recon_missing=0
+  while IFS= read -r bname; do
+    [ -n "$bname" ] || continue
+    if ! grep -qE "^${bname}\tUNUSABLE\t" "$BUILTIN_MANIFEST"; then
+      note "RECONCILE: src/builtins.rs PRELUDE_TYPE_MISMATCHES names '$bname' as C-seam broken, but $BUILTIN_MANIFEST does not record it UNUSABLE — resolve both tables together"
+      recon_missing=$((recon_missing+1))
+    fi
+  done < <(sed -n '/PRELUDE_TYPE_MISMATCHES/,/\];/p' src/builtins.rs \
+             | grep -oE '"[a-z_0-9]+ (param|return)' | sed -E 's/"([a-z_0-9]+).*/\1/' | sort -u)
+  [ "$recon_missing" -eq 0 ] && ok "reconciled with PRELUDE_TYPE_MISMATCHES in src/builtins.rs"
+else
+  printf '  %s..%s   PRELUDE_TYPE_MISMATCHES not present yet; reconciliation arms itself when fix/m1-builtin-registry lands\n' "$GREEN" "$NC"
+fi
+
+if [ "$failures" -eq "$phase3_before" ]; then
+  ok "$covered exercised, $partial partial, $unusable unusable and re-proved at a pinned stage+diagnostic"
+else
+  printf '  %s--%s   %d of %d builtin entries verified — see failures above\n' \
+    "$RED" "$NC" "$((covered+partial+unusable))" "$declared"
+fi
 
 # ---------------------------------------------------------------------------
 echo
