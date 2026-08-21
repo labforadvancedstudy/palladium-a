@@ -289,8 +289,19 @@ check-docs: build check-doc-evidence ## Compile every ```palladium block in the 
 check-doc-evidence: ## Pin doc citations, the no-compile allowlist and the evidence tags
 	@bash scripts/check-doc-evidence.sh
 
+# stdlib/ = library modules with no `fn main`; the only pinnable thing is a
+# compile verdict plus its blocker. tests/stdlib/*.pd are ordinary conformance
+# fixtures and are run + transcript-diffed by `make conformance`, NOT here.
+.PHONY: stdlib-gate
+stdlib-gate: build ## Pin the stdlib/ measurement, account builtins, check generated C
+	@bash scripts/stdlib-gate.sh
+
+.PHONY: test-gate-probe
+test-gate-probe: build ## Fault-inject every producer the stdlib gate reads as evidence
+	@bash scripts/test-gate-probe.sh
+
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs selfhost ## Run every language-level gate
+gates: conformance test-conformance-runner check-docs selfhost stdlib-gate test-gate-probe ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------

@@ -1,0 +1,34 @@
+# Driver inventory for tests/stdlib/. CLOSED INVENTORY.
+#
+# WHY THIS FILE EXISTS
+# Review found that the gate validated `.pd -> golden` and never `golden -> .pd`
+# or `manifest -> disk`. Deleting tests/stdlib/stdlib_tail_return.pd — the single
+# driver this whole gate exists for — left an orphaned golden and a GREEN run.
+# A gate that gets weaker when you delete its most important fixture is not a
+# gate. Phase 2 enforces three-way set equality between:
+#     this file  ==  *.pd on disk  ==  *.expected on disk
+# so deletion, renaming, an orphaned golden and an undeclared driver are all red.
+#
+# SEAM: transcript verification of these drivers belongs to `make conformance`,
+# whose runner has an expected-output verdict class and its own closed inventory
+# over tests/. This file does NOT re-diff transcripts; it pins the inventory and
+# the expected verdict of the GENERATED-C structural check.
+#
+# Columns (tab-separated): basename  golden  cverdict  purpose
+#
+# cverdict — what `gate_probe.py generated-c` must say about this file's C:
+#   clean                       the invariant holds; a violation is a REGRESSION
+#   known_violation:<fn>[,<fn>] the invariant is EXPECTED to be violated, in
+#                               exactly these functions, because of an open
+#                               compiler defect. Fewer, more, or different
+#                               functions all fail the gate — an expectation
+#                               that cannot go stale. If the violation vanishes
+#                               the gate reports XPASS and this entry must be
+#                               promoted to `clean`.
+#
+stdlib_tail_return	stdlib_tail_return.expected	clean	D3 regression: every shape of tail-expression return, plus explicit return and the unit tail that must NOT be lowered. The reason this directory exists.
+stdlib_tail_if_defect	stdlib_tail_if_defect.expected	known_violation:fib,classify	D3 IS ONLY HALF FIXED. A tail `if` is never lowered to a return, so a function ending in if/else still miscompiles silently. Pins the open defect; promote to `clean` when the parser lowers tail `if`.
+stdlib_builtins_string	stdlib_builtins_string.expected	clean	the 8 string builtins plus print and print_int
+stdlib_builtins_char_args	stdlib_builtins_char_args.expected	clean	char_is_digit/alpha/whitespace, arg_count, arg_at
+stdlib_builtins_file	stdlib_builtins_file.expected	clean	the 16 usable file and path builtins
+stdlib_vec_i64	stdlib_vec_i64.expected	clean	working port of stdlib/std/collections/vec_i64.pd, the one stdlib file a single construct away from compiling

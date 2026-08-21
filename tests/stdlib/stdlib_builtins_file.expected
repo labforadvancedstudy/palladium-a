@@ -1,0 +1,105 @@
+@builtin create_dir -> 0
+create_dir_root
+0
+@builtin create_dir_all -> 0
+create_dir_all_nested
+0
+@builtin path_exists -> true
+path_exists_root
+true
+@builtin path_is_dir -> true
+path_is_dir_root
+true
+@builtin path_is_file -> false
+path_is_file_root
+false
+path_is_dir_nested
+true
+path_exists_absent
+false
+path_is_file_absent
+false
+path_is_dir_absent
+false
+@builtin write_string_to_file -> 0
+write_string_to_file
+0
+path_is_file_data
+true
+path_is_dir_data
+false
+read_file_to_string
+hello
+world
+
+@builtin read_file_to_string -> 12
+read_file_len
+12
+rewrite
+0
+read_after_rewrite
+xy
+file_exists_before
+false
+@builtin file_open -> true
+file_open_handle
+true
+@builtin file_write -> true
+file_write
+true
+@builtin file_close -> true
+file_close
+true
+@builtin file_exists -> true
+file_exists_after
+true
+file_exists_absent
+false
+file_open_reread
+true
+@builtin file_read_all -> 12
+file_read_all
+line1
+line2
+
+file_close_h2b
+true
+file_close_reread
+true
+@builtin file_read_line -> line1
+file_read_line_1
+line1
+file_read_line_2
+line2
+file_read_line_eof
+
+file_close_lines
+true
+file_write_bad_handle
+false
+file_close_bad_handle
+false
+file_read_all_bad_handle
+
+file_read_line_bad_handle
+
+@builtin remove_file -> 0
+remove_file_data
+0
+path_exists_after_remove
+false
+remove_file_absent
+-1
+@builtin remove_dir -> 0
+remove_dir_nested
+0
+nested_gone
+false
+remove_dir_non_empty
+-1
+@builtin remove_dir_all -> 0
+remove_dir_all_root
+0
+root_gone
+false
+builtins_file_ok

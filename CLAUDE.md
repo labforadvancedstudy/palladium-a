@@ -63,7 +63,9 @@ stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fi
 - D2 빌트인 드리프트 — typeck 36개 vs borrow checker 25개. `src/builtins.rs`를 SSOT로 만들고
   두 패스가 파생하도록 변경(중복 등록 400줄 삭제 + 드리프트 테스트).
 - D3 tail return — `fn add(a,b) -> i64 { a + b }`가 **에러 없이 쓰레기값 반환**(생성 C에 return 누락).
-  파서에서 `Stmt::Return`으로 lowering. stdlib 전체가 그동안 조용히 miscompile되고 있었다.
+  파서에서 `Stmt::Return`으로 lowering. 피해자는 일반 사용자 프로그램이었다 — `stdlib/`가 아니다
+  (21개 중 0개만 컴파일되므로 애초에 컴파일된 적이 없다). **tail `if`는 아직 미수정**:
+  `fib(10)`이 55 대신 8261746944 반환. 고정 = `make stdlib-gate`의 생성-C 구조 불변식.
 
 **남은 결함 (열림):**
 - D4 `for`가 배열 **파라미터**를 순회할 때 decay된 포인터에 `sizeof` 사용 (`src/codegen/mod.rs:1553`).

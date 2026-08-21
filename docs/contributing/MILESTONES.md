@@ -45,8 +45,13 @@ Closed:
 
 Two structural gaps belong here too, because both are gates that cannot see their own failures:
 
-- **`stdlib/` has no conformance coverage at all.** That is precisely why the tail-return defect
-  lived there, silently miscompiling every function that ended in an expression, for a year.
+- **`stdlib/` has no conformance coverage at all** — ✅ *done, and the premise was wrong.*
+  The original text continued "That is precisely why the tail-return defect lived there, silently
+  miscompiling every function that ended in an expression, for a year." That is false. Measured
+  with `make stdlib-gate`: **0 of the 21 `.pd` files under `stdlib/` compile** — every one is
+  rejected at lex or parse time, so none ever reaches codegen where D3 lived — and no default
+  configuration loads them. Nothing there was miscompiled because nothing there was ever compiled.
+  Only the counterfactual holds. Full measurement: [`stdlib/STATUS.md`](../../stdlib/STATUS.md).
 - **Three hand-written builtin tables still exist outside the canonical registry** — in the
   effects checker and in two LSP files. The "one table" invariant currently holds only for the
   type checker and the borrow checker.
@@ -61,7 +66,10 @@ Two structural gaps belong here too, because both are gates that cannot see thei
 3. `make test-conformance-runner` exits 0 — the gate is still able to fail.
 4. Nothing in the language specification is marked ⚠️ "parses, then breaks" without also being
    reported as an error.
-5. `stdlib/` behind a gate.
+5. `make stdlib-gate` exits 0 — `stdlib/` measured and pinned per file, every builtin accounted
+   for, and the emitted C checked structurally. ✅ done.
+6. `make test-gate-probe` exits 0 — every process the gate reads as evidence is fault-injected,
+   including a producer signaled *after* printing the diagnostic the gate looks for.
 
 `42/42` was the old exit criterion and it was the wrong target twice over.
 
@@ -76,8 +84,9 @@ through M1. Sixteen per cent of the corpus proves nothing, which is the honest n
 
 It also counted a *green exit code* as a correct program. A missing C `return` is undefined
 behaviour: measured here at both `-O0` and `-O2`, `long long f(a,b){ (a+b); }` returns
-`8261746944` and exits 0. That is defect D3's exact signature, which is how D3 miscompiled
-`stdlib/` for a year underneath a green gate. The runner now diffs each fixture's stdout against a
+`8261746944` and exits 0. That is defect D3's exact signature. (It did *not* miscompile
+`stdlib/` — 0 of those 21 files compile — it miscompiled ordinary user programs, which is the
+same lesson about the gate.) The runner now diffs each fixture's stdout against a
 recorded transcript. There is no exit-code-only class: a fixture that genuinely cannot be
 transcribed must be declared `untranscribed` with an owner and a `why:` reason, and is reported as
 a debt on every run. That count is currently zero.

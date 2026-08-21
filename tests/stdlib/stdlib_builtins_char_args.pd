@@ -1,0 +1,112 @@
+// Coverage for the character-classification and command-line builtins.
+//
+//   runtime/pd_prelude.h:114 __pd_char_is_digit      -> isdigit
+//   runtime/pd_prelude.h:118 __pd_char_is_alpha      -> isalpha
+//   runtime/pd_prelude.h:122 __pd_char_is_whitespace -> isspace
+//   runtime/pd_prelude.h:51  __pd_arg_count          -> argc
+//   runtime/pd_prelude.h:55  __pd_arg_at             -> "" when out of range
+//
+// The argv checks deliberately avoid printing argv[0]: its value is the path
+// the harness happened to use, so asserting on it would make the golden
+// transcript depend on the caller rather than on the compiler.
+
+
+// COVERAGE MARKERS. `covers_*` prints `@builtin <name> -> <observed result>`,
+// where the result is COMPUTED BY CALLING THE BUILTIN, not written as a literal.
+// The line therefore cannot be produced without the call running and returning
+// that value: delete the call and the golden loses the line; change the result
+// and the golden changes. scripts/stdlib-gate.sh Phase 3 requires the marker to
+// appear in THIS driver's own golden, so a marker in one file can no longer
+// vouch for a call in another.
+fn covers_i64(name: String, value: i64) {
+    print(string_concat(string_concat("@builtin ", name), string_concat(" -> ", int_to_string(value))));
+}
+
+fn covers_str(name: String, value: String) {
+    print(string_concat(string_concat("@builtin ", name), string_concat(" -> ", value)));
+}
+
+fn covers_bool(name: String, value: bool) {
+    if value {
+        print(string_concat(string_concat("@builtin ", name), " -> true"));
+    } else {
+        print(string_concat(string_concat("@builtin ", name), " -> false"));
+    }
+}
+
+fn expect_true(label: String, actual: bool) {
+    print(label);
+    if actual {
+        print("true");
+        return;
+    }
+    print("false");
+    panic("char/args builtin: expected true");
+}
+
+fn expect_false(label: String, actual: bool) {
+    print(label);
+    if actual {
+        print("true");
+        panic("char/args builtin: expected false");
+    }
+    print("false");
+}
+
+fn expect_str(label: String, actual: String, expected: String) {
+    print(label);
+    print(actual);
+    if string_eq(actual, expected) {
+        return;
+    }
+    panic("char/args builtin: string mismatch");
+}
+
+fn main() {
+    // ---- char_is_digit ----
+    // Provenance: runtime/pd_prelude.h:114 -> isdigit. 48='0', 57='9' ASCII.
+    covers_bool("char_is_digit", char_is_digit(48));
+    expect_true("digit_0", char_is_digit(48));
+    expect_true("digit_9", char_is_digit(57));
+    expect_false("digit_a", char_is_digit(97));
+    expect_false("digit_space", char_is_digit(32));
+
+    // ---- char_is_alpha ----
+    // Provenance: runtime/pd_prelude.h:118 -> isalpha. 65='A', 122='z' ASCII.
+    covers_bool("char_is_alpha", char_is_alpha(65));
+    expect_true("alpha_A", char_is_alpha(65));
+    expect_true("alpha_z", char_is_alpha(122));
+    expect_false("alpha_0", char_is_alpha(48));
+    expect_false("alpha_space", char_is_alpha(32));
+
+    // ---- char_is_whitespace ----
+    // Provenance: runtime/pd_prelude.h:122 -> isspace. 32=SP, 9=TAB, 10=LF.
+    covers_bool("char_is_whitespace", char_is_whitespace(32));
+    expect_true("ws_space", char_is_whitespace(32));
+    expect_true("ws_tab", char_is_whitespace(9));
+    expect_true("ws_newline", char_is_whitespace(10));
+    expect_false("ws_a", char_is_whitespace(97));
+    expect_false("ws_0", char_is_whitespace(48));
+
+    // Classification driven off string_char_at, the way a real lexer would.
+    expect_true("scan_digit", char_is_digit(string_char_at("7", 0)));
+    expect_true("scan_alpha", char_is_alpha(string_char_at("q", 0)));
+    expect_true("scan_ws", char_is_whitespace(string_char_at(" ", 0)));
+
+    // ---- arg_count / arg_at ----
+    // Provenance: runtime/pd_prelude.h:51 -> argc; :55 returns "" (never NULL)
+    // outside [0,argc), which every string builtin depends on.
+    covers_bool("arg_count", arg_count() >= 1);
+    covers_i64("arg_at", string_len(arg_at(9999)));
+    // argv[0] always exists, so argc >= 1 under every harness.
+    expect_true("arg_count_at_least_1", arg_count() >= 1);
+    expect_true("argv0_non_empty", string_len(arg_at(0)) > 0);
+    // Out-of-range indices return "" rather than NULL, which every string
+    // builtin depends on.
+    expect_str("arg_at_out_of_range", arg_at(arg_count()), "");
+    expect_str("arg_at_negative", arg_at(-1), "");
+    expect_str("arg_at_far", arg_at(9999), "");
+    expect_true("arg_at_oob_is_len_0", string_len(arg_at(9999)) == 0);
+
+    print("builtins_char_args_ok");
+}

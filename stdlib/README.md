@@ -1,205 +1,83 @@
-# Palladium Standard Library
+# Palladium Standard Library — does not exist yet
 
-The Palladium standard library provides essential functionality for Palladium programs. It includes core types, collections, I/O operations, and utility functions.
+> **Read [`STATUS.md`](STATUS.md) first.** It is the measurement; this file is the summary.
 
-## Structure
+**0 of the 21 `.pd` files in this directory compile, and no default configuration loads any of
+them.**
+Everything here is a sketch of a standard library written in a dialect Palladium does not
+implement. A program compiled today gets the 38 builtins in `src/builtins.rs` and nothing else.
 
-```
-stdlib/
-├── prelude.pd          # Automatically imported items
-└── std/
-    ├── mod.pd          # Main module file
-    ├── option.pd       # Option type for nullable values
-    ├── result.pd       # Result type for error handling
-    ├── collections/    # Data structures
-    │   ├── mod.pd
-    │   ├── vec.pd      # Dynamic arrays
-    │   └── hashmap.pd  # Hash tables
-    ├── string.pd       # String utilities
-    ├── io.pd          # Input/output operations
-    ├── math.pd        # Mathematical functions
-    ├── mem.pd         # Memory management
-    └── traits.pd      # Core traits/interfaces
-```
+Verify with `make stdlib-gate`.
 
-## Core Types
+## What this file used to say
 
-### Option<T>
-Represents an optional value - either `Some(T)` or `None`.
+The previous version of this README carried an "Implementation Status" section claiming ✅ for
+core types, collections, string utilities, math functions, basic I/O, memory utilities, trait
+definitions and the prelude, and it documented an API — `use std::option::…`, `Vec::new()`,
+`map.insert(…)`, `s.trim()`, `Box::new(42)` — with worked examples.
 
-```palladium
-use std::option::{Option, Some, None};
+None of it was true. Not one of those items exists, because not one of the files defining them
+compiles, and because nothing in `src/` ever reads this directory. The examples used module
+syntax, method-call syntax and generics that the compiler does not implement. It has been deleted
+rather than corrected, because a "status" table whose every row is wrong is worse than no table.
 
-let x: Option<i64> = Some(42);
-let y: Option<i64> = None;
+## Why nothing here compiles
 
-// Pattern matching
-match x {
-    Some(value) => print_int(value),
-    None => print("No value"),
-}
-```
+Grouped by the first feature each file demands (full table in [`STATUS.md`](STATUS.md)):
 
-### Result<T, E>
-Represents either success (`Ok(T)`) or failure (`Err(E)`).
+| Missing feature | Files |
+|---|---|
+| `use` declarations (module system) | 8 |
+| `#[...]` attributes | 3 |
+| `pub` on a method inside `impl` | 3 |
+| `mod` declarations (module system) | 2 |
+| float literals | 1 |
+| escapes in char literals | 1 |
+| associated types in traits | 1 |
+| generic parameter defaults | 1 |
+| `let` without an initialiser | 1 |
 
-```palladium
-use std::result::{Result, Ok, Err};
+The module system alone accounts for at least 10 of the 21 files. Note that this is the *first*
+blocker per file, not the whole bill — lexing is a whole-file pass, so a lexer-level blocker masks
+the parser-level blockers behind it.
 
-fn divide(a: i64, b: i64) -> Result<i64, String> {
-    if b == 0 {
-        Err("Division by zero")
-    } else {
-        Ok(a / b)
-    }
-}
-```
+`std/collections/vec_i64.pd` is the sole exception: it is ordinary Palladium and fails on one
+construct, `let mut v: VecI64;`. A working port of it is exercised by the gate at
+`tests/stdlib/stdlib_vec_i64.pd`.
 
-## Collections
+## Is this directory loaded?
 
-### Vec<T>
-A growable array type with heap allocation.
+Not by default, and not usefully at all. `grep -rn stdlib src/` returns zero hits. The resolver
+searches `.`, `examples`, `<exe_dir>/std` and `$PALLADIUM_PATH` (`src/resolver/mod.rs:37-52`) —
+`stdlib/` is on none of them by default. It IS reachable in principle: the resolver runs via the
+`import` keyword (not `use`), and `$PALLADIUM_PATH` is user-configurable. But forcing it on does
+not help — measured, `PALLADIUM_PATH=…/stdlib/std` with `import option;` still dies on
+`Expected 'fn' for method, but found 'pub'`. Nothing packages it either: `Cargo.toml:34` excludes
+`stdlib/*`, the release and preview workflows stage only `runtime`, and both Homebrew formulae
+install only `runtime`. `stdlib/prelude.pd` is not injected into anything; the only prelude the
+compiler knows is `runtime/pd_prelude.h`, which is C.
 
-```palladium
-use std::collections::vec::Vec;
+## Where the real coverage lives
 
-let mut v = Vec::new();
-v.push(1);
-v.push(2);
-v.push(3);
+Because these files cannot run, they cannot be tested. What *can* be tested is the language
+surface and the builtins a standard library would be built from, and that is what `tests/stdlib/`
+does — including the tail-expression return that miscompiled unnoticed.
 
-for i in 0..v.len() {
-    print_int(v[i]);
-}
-```
+Those five drivers are ordinary conformance fixtures: **`make conformance`** runs them and diffs
+their transcripts. **`make stdlib-gate`** owns this directory's compile-verdict pinning, the
+builtin accounting, and a structural check on the generated C. See [`STATUS.md`](STATUS.md).
 
-### HashMap<K, V>
-A hash table implementation for key-value storage.
+## What would make this directory real
 
-```palladium
-use std::collections::hashmap::HashMap;
+In dependency order, and each one is a milestone, not a patch:
 
-let mut map = HashMap::new();
-map.insert("hello", 42);
-map.insert("world", 100);
+1. A module system (`mod` + `use`) — unblocks 10 files and is the precondition for the rest.
+2. `pub` on methods, and method-call syntax so an `impl` block is reachable at all
+   (`docs/contributing/MILESTONES.md`, M2).
+3. Traits with real dispatch and working generics (M4) — without them `Option<T>`, `Result<T, E>`
+   and `Vec<T>` cannot be expressed.
+4. Float literals, char escapes, attributes — small lexer work, but only worth doing once
+   something above depends on them.
 
-match map.get(&"hello") {
-    Some(value) => print_int(*value),
-    None => print("Not found"),
-}
-```
-
-## String Utilities
-
-Enhanced string manipulation functions:
-
-```palladium
-use std::string::String;
-
-let s = "  hello world  ";
-let trimmed = s.trim();
-let upper = s.to_uppercase();
-let parts = s.split(" ");
-```
-
-## I/O Operations
-
-File and console I/O:
-
-```palladium
-use std::io::{File, Path, println};
-
-// Console output
-println(&"Hello, world!");
-
-// File operations (when runtime support is available)
-let path = Path::new(&"/tmp/test.txt");
-let mut file = File::create(&path.to_string())?;
-file.write_string(&"Hello, file!")?;
-```
-
-## Math Functions
-
-Common mathematical operations:
-
-```palladium
-use std::math::{abs, pow, gcd, factorial, is_prime};
-
-let x = abs(-42);        // 42
-let y = pow(2, 10);      // 1024
-let z = gcd(48, 18);     // 6
-let f = factorial(5);    // 120
-let p = is_prime(17);    // true
-```
-
-## Memory Management
-
-Low-level memory operations:
-
-```palladium
-use std::mem::{size_of, Box, Rc};
-
-// Smart pointers
-let boxed = Box::new(42);
-let shared = Rc::new("shared string");
-
-// Size information
-let size = size_of::<i64>(); // 8
-```
-
-## Traits
-
-Core traits define common behavior:
-
-```palladium
-use std::traits::{Clone, Display, Iterator};
-
-// Implement Display for custom type
-impl Display for MyType {
-    fn fmt(self: &MyType) -> String {
-        "MyType instance"
-    }
-}
-```
-
-## The Prelude
-
-The prelude module is automatically imported into every Palladium program. It includes:
-
-- Core types: `Option`, `Result`
-- Common traits: `Clone`, `Copy`, `Debug`, `Display`
-- Collections: `Vec`, `HashMap`
-- I/O functions: `print`, `println`
-- Math functions: `abs`, `min`, `max`
-- Assertions: `assert`, `assert_eq`
-
-## Usage
-
-In your Palladium programs:
-
-```palladium
-// Prelude items are automatically available
-let v = Vec::new();
-let opt = Some(42);
-
-// Import specific items
-use std::io::File;
-use std::math::PI;
-
-// Import entire modules
-use std::collections::hashmap;
-```
-
-## Implementation Status
-
-Current implementation provides:
-- ✅ Core types (Option, Result)
-- ✅ Collections (Vec, HashMap)
-- ✅ String utilities
-- ✅ Math functions
-- ✅ Basic I/O structure
-- ✅ Memory utilities
-- ✅ Trait definitions
-- ✅ Prelude
-
-Note: Some I/O and memory operations require runtime support that may not be fully implemented in the current compiler version.
+Until (1)-(3) land, the honest thing is to leave these files as the design sketch they are, and
+keep the gate pinning the fact that they do not compile.

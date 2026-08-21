@@ -1,0 +1,208 @@
+// A port of stdlib/std/collections/vec_i64.pd — the ONLY file under stdlib/
+// that is not written in an unimplemented dialect.
+//
+// The original fails to compile on exactly one construct, at
+// stdlib/std/collections/vec_i64.pd:12:
+//
+//     let mut v: VecI64;      // declaration without an initialiser
+//
+// The parser requires `=` after a variable name (src/parser/mod.rs, "Expected
+// '=' after variable name"), so the file dies there. Everything else in it —
+// the struct, the fixed-size backing array, `for`, `while`, indexing, field
+// assignment through `&mut` — is accepted by the current compiler. Replacing
+// that one line with a struct literal is the entire diff.
+//
+// This driver exists so the claim "vec_i64.pd is one construct away" is a
+// measurement rather than an opinion: if the port stops working, the gate goes
+// red, and if the language ever grows uninitialised `let`, the manifest entry
+// for the original file goes XPASS and must be updated.
+
+struct VecI64 {
+    data: [i64; 64],
+    len: i64,
+    capacity: i64,
+}
+
+fn vec_i64_new() -> VecI64 {
+    // The one changed line: the original is `let mut v: VecI64;`
+    let mut v = VecI64 { data: [0; 64], len: 0, capacity: 64 };
+    v.len = 0;
+    v.capacity = 64;
+    return v;
+}
+
+fn vec_i64_len(v: &VecI64) -> i64 {
+    return v.len;
+}
+
+fn vec_i64_is_empty(v: &VecI64) -> bool {
+    return v.len == 0;
+}
+
+fn vec_i64_push(v: &mut VecI64, value: i64) {
+    if v.len >= v.capacity {
+        print("VecI64: capacity exceeded!");
+        return;
+    }
+    v.data[v.len] = value;
+    v.len = v.len + 1;
+}
+
+fn vec_i64_pop(v: &mut VecI64) -> i64 {
+    if v.len == 0 {
+        print("VecI64: pop from empty vector!");
+        return 0;
+    }
+    v.len = v.len - 1;
+    return v.data[v.len];
+}
+
+fn vec_i64_get(v: &VecI64, index: i64) -> i64 {
+    if index >= v.len {
+        print("VecI64: index out of bounds!");
+        return 0;
+    }
+    return v.data[index];
+}
+
+fn vec_i64_set(v: &mut VecI64, index: i64, value: i64) {
+    if index >= v.len {
+        print("VecI64: index out of bounds!");
+        return;
+    }
+    v.data[index] = value;
+}
+
+fn vec_i64_clear(v: &mut VecI64) {
+    v.len = 0;
+}
+
+fn vec_i64_sum(v: &VecI64) -> i64 {
+    let mut sum = 0;
+    for i in 0..v.len {
+        sum = sum + v.data[i];
+    }
+    return sum;
+}
+
+fn vec_i64_max(v: &VecI64) -> i64 {
+    if v.len == 0 {
+        print("VecI64: max of empty vector!");
+        return 0;
+    }
+    let mut max = v.data[0];
+    for i in 1..v.len {
+        if v.data[i] > max {
+            max = v.data[i];
+        }
+    }
+    return max;
+}
+
+fn vec_i64_min(v: &VecI64) -> i64 {
+    if v.len == 0 {
+        print("VecI64: min of empty vector!");
+        return 0;
+    }
+    let mut min = v.data[0];
+    for i in 1..v.len {
+        if v.data[i] < min {
+            min = v.data[i];
+        }
+    }
+    return min;
+}
+
+fn vec_i64_reverse(v: &mut VecI64) {
+    let mut i = 0;
+    let mut j = v.len - 1;
+    while i < j {
+        let temp = v.data[i];
+        v.data[i] = v.data[j];
+        v.data[j] = temp;
+        i = i + 1;
+        j = j - 1;
+    }
+}
+
+fn expect_i64(label: String, actual: i64, expected: i64) {
+    print(label);
+    print_int(actual);
+    if actual != expected {
+        panic("vec_i64: value mismatch");
+    }
+}
+
+fn expect_true(label: String, actual: bool) {
+    print(label);
+    if actual {
+        print("true");
+        return;
+    }
+    print("false");
+    panic("vec_i64: expected true");
+}
+
+fn expect_false(label: String, actual: bool) {
+    print(label);
+    if actual {
+        print("true");
+        panic("vec_i64: expected false");
+    }
+    print("false");
+}
+
+fn main() {
+    let mut v = vec_i64_new();
+    expect_i64("new_len", vec_i64_len(&v), 0);
+    expect_true("new_is_empty", vec_i64_is_empty(&v));
+    expect_i64("new_capacity", v.capacity, 64);
+
+    vec_i64_push(&mut v, 30);
+    vec_i64_push(&mut v, 10);
+    vec_i64_push(&mut v, 20);
+    expect_i64("len_after_push", vec_i64_len(&v), 3);
+    expect_false("not_empty", vec_i64_is_empty(&v));
+
+    expect_i64("get_0", vec_i64_get(&v, 0), 30);
+    expect_i64("get_1", vec_i64_get(&v, 1), 10);
+    expect_i64("get_2", vec_i64_get(&v, 2), 20);
+    expect_i64("get_oob", vec_i64_get(&v, 3), 0);
+
+    expect_i64("sum", vec_i64_sum(&v), 60);
+    expect_i64("max", vec_i64_max(&v), 30);
+    expect_i64("min", vec_i64_min(&v), 10);
+
+    vec_i64_set(&mut v, 1, 99);
+    expect_i64("after_set", vec_i64_get(&v, 1), 99);
+    expect_i64("sum_after_set", vec_i64_sum(&v), 149);
+    expect_i64("max_after_set", vec_i64_max(&v), 99);
+
+    vec_i64_reverse(&mut v);
+    expect_i64("rev_0", vec_i64_get(&v, 0), 20);
+    expect_i64("rev_1", vec_i64_get(&v, 1), 99);
+    expect_i64("rev_2", vec_i64_get(&v, 2), 30);
+
+    expect_i64("pop", vec_i64_pop(&mut v), 30);
+    expect_i64("len_after_pop", vec_i64_len(&v), 2);
+    expect_i64("sum_after_pop", vec_i64_sum(&v), 119);
+
+    vec_i64_clear(&mut v);
+    expect_i64("len_after_clear", vec_i64_len(&v), 0);
+    expect_true("empty_after_clear", vec_i64_is_empty(&v));
+    expect_i64("sum_empty", vec_i64_sum(&v), 0);
+
+    // Fill to capacity to exercise the bound check.
+    let mut w = vec_i64_new();
+    let mut k = 0;
+    while k < 64 {
+        vec_i64_push(&mut w, k);
+        k = k + 1;
+    }
+    expect_i64("full_len", vec_i64_len(&w), 64);
+    expect_i64("full_sum", vec_i64_sum(&w), 2016);
+    expect_i64("full_max", vec_i64_max(&w), 63);
+    expect_i64("full_min", vec_i64_min(&w), 0);
+
+    print("vec_i64_ok");
+}

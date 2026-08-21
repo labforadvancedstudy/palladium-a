@@ -117,3 +117,4 @@ Thumbs.db
 # Python bytecode from scripts/
 __pycache__/
 *.pyc
+scripts/__pycache__/
