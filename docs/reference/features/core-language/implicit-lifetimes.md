@@ -96,6 +96,8 @@ func (p *Parser) ParseWord() string {
 ```
 
 ### Palladium (Implicit Lifetimes)
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Lifetimes inferred automatically
 fn longest(x: ref str, y: ref str) -> ref str {
@@ -147,6 +149,8 @@ spends the programmer's attention on bookkeeping rather than on the program.
 The block below is compiler-internal pseudocode rather than a Palladium program.
 
 ### Inference Algorithm
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Compiler's internal lifetime inference
 fn infer_lifetimes(ast: AST) -> Result<LifetimeMap> {
@@ -167,6 +171,8 @@ fn infer_lifetimes(ast: AST) -> Result<LifetimeMap> {
 4. **Struct Fields**: Infer from usage patterns
 
 ### When Explicit Annotation Is Needed
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Ambiguous case - needs annotation
 fn unclear(x: ref<'a> str, y: ref str) -> ref<'a> str {
@@ -232,18 +238,22 @@ The intent that survives:
 - Safety is not traded for ergonomics: the checker rejects what Rust's borrow checker rejects, and
   reports ambiguity rather than guessing.
 
-## Migration Guide
+## Translating Rust lifetimes into Palladium
 
-### From Rust
+A syntax correspondence, not a usage guide: the right-hand side is target syntax that `pdc`
+does not accept today.
+
+### Rust source
 ```rust
-// Before (Rust)
+// Rust source
 fn process<'a, 'b>(data: &'a mut Data, config: &'b Config) -> &'a str {
     data.process_with_config(config)
 }
 ```
 
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
-// After (Palladium)  
+// Palladium equivalent (target syntax)
 fn process(data: ref mut Data, config: ref Config) -> ref str {
     data.process_with_config(config)
 }
@@ -261,5 +271,5 @@ fn process(data: ref mut Data, config: ref Config) -> ref str {
 - [Palladium v1.0 feature definition](../PALLADIUM_V1_FEATURES.md) — where this sits among the rest
 - [Async as effect](../async-system/async-as-effect.md)
 - [Totality checking](../advanced/totality-checking.md)
-- [Feature index](../status.yaml)
+- [Feature index](../feature-index.yaml)
 - [Language specification](../../../specification/language-spec.md)

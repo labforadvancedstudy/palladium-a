@@ -43,13 +43,15 @@ pre-cleanup revision `f323cf1` and were off by 16 to 380 lines; several named un
 Those are corrected below and the corrections are noted where the difference changes the claim.
 
 Per-feature index with the same evidence, organised by feature rather than by section:
-[`docs/reference/features/status.yaml`](../reference/features/status.yaml).
+[`docs/reference/features/feature-index.yaml`](../reference/features/feature-index.yaml).
 
 ---
 
 # Part I: Normative specification
 
 ## N1. Overview and design commitments
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A1 — partial: the C backend works, the LLVM backend is skeletal](#a1-pipeline-and-backends)**</sub>
 
 Palladium is a statement-oriented systems language, compiled ahead of time, with no garbage
 collector and no runtime type information. It exists to make three claims true at once, and those
@@ -67,6 +69,8 @@ implementation strategy, not a language property: nothing in Part I depends on t
 and an LLVM backend is a second implementation of the same definition.
 
 ## N2. Lexical structure
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A2 — partial: no floats, chars, hex, and attributes do not lex](#a2-lexical-structure)**</sub>
 
 Source is UTF-8.
 
@@ -86,6 +90,8 @@ a compilation unit. They carry totality obligations ([N8](#n8-totality)) and are
 point for future annotations.
 
 ## N3. Program structure and items
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A3, A4 — partial](#a3-program-structure)**</sub>
 
 A compilation unit is a sequence of imports followed by items.
 
@@ -107,6 +113,8 @@ Full feature list: [`PALLADIUM_V1_FEATURES.md`](../reference/features/PALLADIUM_
 
 ## N4. Types
 
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A5 — partial: no floats, slices or fn types; Option and Result are not built in](#a5-types)**</sub>
+
 Primitives: `i32`, `i64`, `u32`, `u64`, `f32`, `f64`, `bool`, `char`, `String`, `()`.
 `int` is an alias for `i64`.
 
@@ -122,6 +130,8 @@ expressions. Const generics (`struct Buffer<const N: usize>`) are generic parame
 compile time.
 
 ## N5. Statements and expressions
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A6 — partial: if and match are statements; no closures, loop, else-if or compound assignment](#a6-statements-and-expressions)**</sub>
 
 Statements: `let`, assignment, `return`, `break`, `continue`, `unsafe { }`, and expression
 statements.
@@ -140,6 +150,8 @@ Unary minus binds tighter than multiplication, so `a * -b` is `a * (-b)`.
 
 ## N6. Patterns
 
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A7 — partial: three pattern forms; exhaustiveness for enums only](#a7-patterns)**</sub>
+
 Patterns appear in `match` arms, `let` bindings and parameters:
 
 ```ebnf
@@ -154,6 +166,8 @@ Arms may carry guards (`if cond`). `match` is exhaustive: a non-exhaustive match
 error, not a silent fall-through, and this applies to every scrutinee type, not only enums.
 
 ## N7. Effects and asynchrony
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A6.5 — unimplemented: the compiler has async and .await, which this section removes](#a65-question-mark-async-and-await)**</sub>
 
 Full definition: [`async-as-effect.md`](../reference/features/async-system/async-as-effect.md).
 
@@ -179,6 +193,8 @@ the same footing, which is what makes "this function is pure" a statement the co
 
 ## N8. Totality
 
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A2 — unimplemented: attributes do not lex, so no totality syntax reaches the parser](#a2-lexical-structure)**</sub>
+
 Full definition: [`totality-checking.md`](../reference/features/advanced/totality-checking.md).
 
 Palladium can prove that a function terminates.
@@ -196,6 +212,8 @@ is proven automatically. Failure to discharge an obligation is a compile error; 
 in which an unproven `#[total]` function is accepted.
 
 ## N9. References and lifetimes
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A9 — unimplemented: ref is not a keyword and there is no region inference](#a9-memory-model)**</sub>
 
 Full definition: [`implicit-lifetimes.md`](../reference/features/core-language/implicit-lifetimes.md).
 
@@ -215,6 +233,8 @@ a guess.
 
 ## N10. Traits and generics
 
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A4.4, A5 — unimplemented: traits emit no code; generic struct fields are rejected in codegen](#a44-traits)**</sub>
+
 Generics are monomorphised: a generic function or type is instantiated per concrete argument, so
 abstraction costs nothing at runtime. Type parameters may carry bounds (`<T: Display>`) and
 `where` clauses.
@@ -227,11 +247,16 @@ These two are defined in detail by design documents rather than restated here:
 - [`docs/design/trait_system_design.md`](../design/trait_system_design.md)
 - [`docs/design/generics.md`](../design/generics.md)
 
-Those documents carry a PROPOSAL banner reflecting their status against the current compiler. As
-of this version they are read as **normative for the language and unimplemented in `pdc`** — the
-same relationship every other section here has to Part II.
+Those three documents carry a **dual-axis banner**: *normative language definition, compiler status
+unimplemented*. That is the same relationship every section of Part I has to Part II, and it
+replaces the older single-axis "PROPOSAL — not implemented" banner, which was accurate about the
+compiler and wrong about the language. Material in them that is genuinely still undecided sits
+under an explicitly non-normative open-design heading in each file, so that "not yet built" and
+"not yet decided" cannot be confused again.
 
 ## N11. Modules
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A3 — partial: import works, there is no mod item](#a3-program-structure)**</sub>
 
 Modules are file-based, with nested paths and public/private visibility. Imports:
 
@@ -247,6 +272,8 @@ as [N10](#n10-traits-and-generics).
 
 ## N12. Memory model
 
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A9 — partial: checked but not typed; String is Copy in the implementation](#a9-memory-model)**</sub>
+
 Ownership and borrowing are Rust's: each value has one owner, moves are the default, borrows are
 checked at compile time, and there is no garbage collector.
 
@@ -257,19 +284,108 @@ UTF-8 value with move semantics.
 is restricted rather than unrestricted: it is auditable, isolated, and forbidden inside a
 `#![total(strict)]` crate.
 
+A `&mut T` may be taken only of a binding declared `mut`. Taking `&mut` of an immutable binding is
+a compile error.
+
+### N12.1 Array parameters — OPEN DECISION
+
+**This subsection is not yet decided. It is written as two options because the choice is the
+owner's, and choosing silently would be worse than leaving it visibly open.** Everything else in
+Part I is settled; this is not, and no reader should treat either option below as the rule.
+
+The question: **does a `[T; N]` parameter copy the caller's array, or alias it?**
+
+Nothing in this specification has ever answered that. §N12 defines moves, borrow-checking and
+destructors and says nothing about array parameters. It matters because `[T; N]` has a
+compile-time size, so a copy is a coherent option in a way it is not for a slice, and because
+without a rule the callee's `a[0] = x` is either a local edit or a caller-visible mutation, with
+no way for a reader to tell which.
+
+The two options are not symmetric — they differ in what they cost and in what they make of the
+other two questions below.
+
+**Option A — value semantics.** `[T; N]` is a value type. Passing one copies `N * sizeof(T)`
+bytes; the callee's writes are invisible to the caller. Then `&[T; N]` and `&mut [T; N]` have the
+job every reference has: avoiding the copy, and opting into caller-visible mutation respectively.
+This is coherent with `[T; N]` being sized and with §N12's "moves are the default" — and it is the
+only option under which the three spellings mean three different things.
+*Cost:* every array argument is a memcpy unless the author remembers `&`. For a compiler written
+in this language that is a real cost, and the bootstrap subset has been avoiding it by convention
+already.
+
+**Option B — reference semantics.** `[T; N]` always aliases the caller's storage, matching C's
+array-to-pointer decay. Then `&[T; N]` and `&mut [T; N]` are **redundant spellings**, and the
+specification should say so and pick one: either they are forbidden, or `&mut` becomes the *only*
+permitted spelling for a parameter the callee writes through, with bare `[T; N]` read-only.
+*Cost:* the language inherits a C wart, and "moves are the default" acquires an exception that has
+to be stated everywhere arrays are discussed.
+
+Two dependent questions, which cannot be answered before the choice above:
+
+1. **What do `&[T; N]` and `&mut [T; N]` mean?** Under A they are the no-copy and mutable-alias
+   forms. Under B they are noise unless promoted to the mutation marker.
+2. **Is `mut` on a parameter part of the type, or a binding mode?**
+   [`bootstrap-subset.md`](bootstrap-subset.md) currently requires `mut` on every struct and array
+   parameter, and `benchmarks/palladium/bubble_sort.pd:11` follows it
+   (`fn bubble_sort(mut arr: [i64; 45000], n: i64)`). If `mut` is a binding mode — a statement about
+   the callee's local name — it cannot also be what makes a mutation caller-visible. If it is part
+   of the type, then `mut arr: [T; N]` is a third reference spelling and Option B's redundancy
+   problem gets worse, not better.
+
+Until this is decided, the bootstrap subset's convention governs by default, because it is written
+down and followed: struct and array parameters are declared `mut`, and a write through a parameter
+not declared `mut` is refused. That is a placeholder with an owner, not a rule with a rationale.
+
+Measured consequences of each choice are recorded in [A9.2](#a92-array-parameters).
+
 ## N13. Execution model
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A10 — implemented](#a10-execution-model)**</sub>
 
 Execution begins at `fn main`. Arguments are evaluated left to right. A compilation unit without
 a `main` is a library.
 
 ## N14. Builtins and the standard library
 
-Builtins are the operations the compiler knows intrinsically — printing, string and character
-operations, file and path I/O. The authoritative list is generated from the compiler's own table:
-[`docs/reference/builtins.md`](../reference/builtins.md).
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A8 — partial: 36 builtins work, stdlib/ does not parse](#a8-builtins)**</sub>
 
-Above them sits a standard library: core types and traits, collections (`Vec<T>`, `HashMap<K, V>`,
-`String`, `Option<T>`), math, I/O, and process/environment access.
+A **builtin** is an operation the compiler knows intrinsically: it is in scope without an import,
+its name is reserved, and it has no Palladium definition a program could read or replace. The
+normative content of this section is the *surface* — which capabilities are builtin, what their
+signatures look like, and what distinguishes them from library code — not a name list.
+
+> An earlier draft of this section delegated the normative list to
+> `docs/reference/builtins.md`, which `scripts/gen-builtin-docs.py` generates from
+> `src/builtins.rs`. That was a mistake and contradicted this document's own premise: it made the
+> language definition change whenever the compiler's table changed, so `pdc` could have *redefined
+> Palladium* by adding a row. The generated table is evidence about the implementation and lives in
+> [A8](#a8-builtins). Part I defines the surface; Part II reports what is built.
+
+Builtins are required in five groups, and a conforming implementation provides at least these:
+
+| Group | Required capability | Signature shape |
+|---|---|---|
+| Output | write a string, write an integer, abort with a message | `(String) -> ()`, `(i64) -> ()`, `(String) -> !` |
+| String | length, concatenation, equality, indexed character, substring | `(String, …) -> String \| i64 \| bool` |
+| Character classification | digit, alphabetic, whitespace | `(char) -> bool` |
+| Conversion | string to integer, integer to string, character to string | total or `Option`-returning |
+| Filesystem | open, read, write, close, exists, remove, directory create and remove | `Result`-returning |
+
+Three normative constraints on the set, which are properties of the language rather than of any
+table:
+
+1. **Builtins are closed.** A program cannot define a new builtin, and the set does not vary by
+   target. A capability that varies by target belongs in the standard library.
+2. **Builtins are not privileged in the type system.** They take and return ordinary types; there
+   is no builtin-only type and no builtin-only calling convention.
+3. **Filesystem builtins are effectful** in the sense of [N7](#n7-effects-and-asynchrony), and
+   their effects propagate to callers. Output builtins are effectful. String, character and
+   conversion builtins are pure.
+
+Above the builtins sits a **standard library**, written in Palladium and read like any other
+module: core types and traits, collections (`Vec<T>`, `HashMap<K, V>`, `String`, `Option<T>`),
+math, buffered and networked I/O, and process/environment access. The dividing line is constraint
+1: if it can be written in Palladium, it is library, not builtin.
 
 ---
 
@@ -291,9 +407,9 @@ command that was run.
 | [N9 References and lifetimes](#n9-references-and-lifetimes) | unimplemented | [A9](#a9-memory-model) — `ref` is not a keyword; no region inference |
 | [N10 Traits and generics](#n10-traits-and-generics) | unimplemented | [A4.4](#a44-traits), [A5](#a5-types) |
 | [N11 Modules](#n11-modules) | partial | [A3](#a3-program-structure) — `import` works; no `mod` item |
-| [N12 Memory model](#n12-memory-model) | partial | [A9](#a9-memory-model) — checked but not typed; `String` is Copy |
+| [N12 Memory model](#n12-memory-model) | partial | [A9](#a9-memory-model) — checked but not typed; `String` is Copy; array parameters [A9.2](#a92-array-parameters); `&mut` of an immutable local accepted [A9.3](#a93-mut-of-an-immutable-local-is-accepted) |
 | [N13 Execution model](#n13-execution-model) | implemented | [A10](#a10-execution-model) |
-| [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtin-functions-36) — 36 builtins work; `stdlib/` does not parse |
+| [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtins) — 36 builtins exist; `stdlib/` does not parse |
 
 ## A1. Pipeline and backends
 
@@ -694,9 +810,20 @@ arm matches and no wildcard arm was written, control simply falls through — th
 
 Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else` chains.
 
-## A8. Builtin functions (36)
+## A8. Builtins
 
-**implemented.** Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
+**partial.** 36 builtins exist and work. They are evidence about the implementation, not the
+definition of the builtin surface — that is [N14](#n14-builtins-and-the-standard-library).
+The generated table [`docs/reference/builtins.md`](../reference/builtins.md) is produced by
+`scripts/gen-builtin-docs.py` from `src/builtins.rs` and is the authoritative record of *what
+`pdc` provides today*.
+
+Measured against N14's five required groups: output, string, character classification and
+conversion are present; **filesystem builtins return `i64`/`bool` handles rather than
+`Result`**, because `Result` is not built in ([A5.1](#a51-option-and-result)); and **N14's
+effect classification is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
+
+Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:365`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
 (`src/codegen/mod.rs:2186-2226`, corrected from `:1813-1851`) and emits their C bodies inline into
@@ -788,6 +915,62 @@ duplicated and nothing is invalidated. Struct types (`Type::Custom`) remain move
 > annex records the deviation rather than the specification adopting it. This is the one place in
 > the document where an implementation decision was previously allowed to rewrite the definition;
 > it is now recorded as a divergence instead.
+
+### A9.2 Array parameters
+
+The normative question is open ([N12.1](#n121-array-parameters-open-decision)). What the
+implementation does is not open, and it is the same for all three spellings.
+
+A `[T; N]` parameter is lowered to a C array declarator (`src/codegen/mod.rs:1555`), which decays
+to a pointer. **No spelling copies.** Measured at `abeb665`:
+
+| Spelling | Result |
+|---|---|
+| `mut a: [i64; 3]` | compiles; generated C is `void bump(long long a[3]);` — a write is caller-visible. Program prints `99`. |
+| `a: [i64; 3]` (no `mut`) | compiles; a write is caller-visible; **no diagnostic**. Program prints `99`. |
+| `a: &mut [i64; 3]` | does not compile: "Unsupported type in reference parameter" (`src/codegen/mod.rs:1634`). |
+
+So today the reference spellings are not an alternative to the bare one — one of them is rejected
+outright, and the other two behave identically.
+
+Consequence for whichever ruling lands:
+
+- **Option A (value semantics)** would make this row **unimplemented**, and the gap is exactly
+  `src/codegen/mod.rs:1555`: it emits a decayed declarator where a copy is required.
+- **Option B (reference semantics)** would make this row **implemented**, and would turn the
+  codegen refusal of writes through a non-`mut` parameter into a permanent rule rather than a
+  placeholder.
+
+The interim behaviour on the codegen branch — refusing writes except through `&mut [T; N]` and
+`mut xs: [T; N]` — enforces [`bootstrap-subset.md`](bootstrap-subset.md)'s existing convention
+("Struct and array parameters are always declared `mut`"), which
+`benchmarks/palladium/bubble_sort.pd:11` already follows. That is the right placeholder: it invents
+nothing.
+
+> Note on a citation inherited from `bootstrap-subset.md`: that file attributes the move
+> classification to `src/ownership/borrow_checker.rs:179-185`. At `abeb665` those lines are
+> `fn collect_function_sig`. The same `f323cf1` drift described in §0 affects that file too; it was
+> not in this change's scope to repair.
+
+### A9.3 `&mut` of an immutable local is accepted
+
+[N12](#n12-memory-model) requires that `&mut` be takeable only of a `mut` binding. The
+implementation does not enforce it for struct types. Measured at `abeb665`:
+
+```
+struct S { x: i64 }
+fn bump(s: &mut S) { s.x = 77; }
+fn main() { let v: S = S { x: 1 }; bump(&mut v); print_int(v.x); }
+```
+
+compiles, links, and prints `77` — an immutable local mutated, with no diagnostic from the borrow
+checker (`src/ownership/borrow_checker.rs:48`, where `ParamMode::Move` and the borrow modes are
+defined; there is no mutability check on the referent).
+
+Scope of the defect, measured: it reproduces for **struct** referents. It does not reproduce for
+arrays (`&mut [T; N]` is rejected earlier, [A9.2](#a92-array-parameters)) and not for `i64`
+(`&mut i64` produces C that gcc rejects). A brief handed to this unit reported the array case as
+reproducing; it does not at `abeb665`, and the struct case does.
 
 ## A10. Execution model
 

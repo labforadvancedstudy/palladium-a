@@ -2,7 +2,7 @@
 > `pdc` implements today. What is implemented, partial, or unimplemented is recorded per
 > specification section in the
 > [implementation status annex](../../specification/language-spec.md#part-ii-implementation-status-annex),
-> and per feature in [`status.yaml`](status.yaml). Palladium blocks below are fenced `no-compile`:
+> and per feature in [`feature-index.yaml`](feature-index.yaml). Palladium blocks below are fenced `no-compile`:
 > the syntax is normative, the compiler does not accept all of it yet, and
 > `scripts/check-docs.sh` counts each fence rather than hiding it.
 
@@ -24,7 +24,7 @@ came from a measurement. They are deleted, not adjusted.
 
 Status lives in exactly two places, both of which cite the compiler:
 
-- [`status.yaml`](status.yaml) — one row per feature: the spec section that defines it, and the
+- [`feature-index.yaml`](feature-index.yaml) — one row per feature: the spec section that defines it, and the
   evidence for what `pdc` does with it (a conformance test, a source location, or `unimplemented`).
 - [The implementation status annex](../../specification/language-spec.md#part-ii-implementation-status-annex)
   — the same information organised by specification section, with the failure mode of each partial
@@ -218,9 +218,16 @@ Definition: [async-as-effect.md](async-system/async-as-effect.md).
 - Machine-checkable correctness proofs
 
 #### Side-Channel Safety
-- Constant-time guarantees
-- No timing attacks possible
-- Cryptography-safe operations
+- Constant-time execution for code marked as such: control flow and memory access patterns do not
+  depend on values the threat model designates secret
+- **Threat model** (required, because "no timing attacks possible" is not a specifiable property —
+  it quantifies over attacks nobody has invented yet): a local attacker who can time the process
+  and observe its data-cache and instruction-cache access patterns, but cannot read its memory,
+  induce faults, or observe power or EM. Speculative-execution and microarchitectural channels
+  below the ISA are **out of scope**, because the compiler does not control them.
+- **Criterion**: for a function marked constant-time, the emitted machine code contains no branch
+  and no memory address derived from a secret operand. That is checkable on the emitted code, so
+  it can fail.
 
 ### 4.2 Metaprogramming
 
@@ -362,12 +369,16 @@ Definition: [async-as-effect.md](async-system/async-as-effect.md).
 ### 9.1 Syntax Improvements
 
 #### Cleaner Error Propagation
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Natural ? operator usage
 let root = self.root.take()?;
 ```
 
 #### Simplified References
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // ref keyword instead of & and &mut
 fn process(data: ref Data) -> ref str {
@@ -376,6 +387,8 @@ fn process(data: ref Data) -> ref str {
 ```
 
 #### Direct Pattern Matching
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // No need to import enum variants
 match result {
@@ -412,6 +425,8 @@ match result {
 
 ## 10. Philosophy & Design Principles
 
+<sub>Non-normative: goals and judgement criteria, not language semantics.</sub>
+
 ### Core Principles
 
 1. **No Compromise**: Safety, speed, and elegance coexist
@@ -424,9 +439,21 @@ match result {
 
 - **Memory Safety**: Without garbage collection
 - **Type Safety**: Strong static typing with inference
-- **Performance**: Match or exceed C performance
+- **Performance**: on scalar and array code, generated machine code equivalent to what a C
+  compiler produces from the same algorithm at the same optimisation level. Measured by
+  `benchmarks/run_benchmarks.sh` against `benchmarks/c/`, reported in
+  [`palladium_vs_rust_comparison.md`](../../contributing/palladium_vs_rust_comparison.md).
+  *This replaces "match or exceed C performance", which named no workload, no compiler, no
+  optimisation level and no measurement, and so could not be failed.*
 - **Ergonomics**: Reduce boilerplate and cognitive load
 - **Correctness**: Optional formal verification
+
+> **These are goals, not semantics.** Nothing in this list is a rule a program can violate or a
+> compiler can implement incorrectly; they are the criteria by which the design is judged. The
+> normative content of the language is in
+> [`language-spec.md` Part I](../../specification/language-spec.md#part-i-normative-specification).
+> Two of them previously had no criterion at all and are rewritten above so that a measurement
+> could contradict them.
 
 ---
 
@@ -455,7 +482,7 @@ Three sections are gone. Each asserted progress rather than defining a feature, 
 when it was written:
 
 - **"Feature Status Legend"**, and the per-heading ✅/⏳/🔲 marks and percentages that used it.
-  Superseded by [`status.yaml`](status.yaml) and the annex, which carry evidence.
+  Superseded by [`feature-index.yaml`](feature-index.yaml) and the annex, which carry evidence.
 - **"Implementation Roadmap"** ("Phase 1: Core Language (✅ Complete)", "Phase 2: Self-Hosting
   (✅ Complete)", …). Sequencing belongs in
   [`MILESTONES.md`](../../contributing/MILESTONES.md), where each milestone's exit criterion is a

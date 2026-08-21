@@ -112,6 +112,8 @@ func riskyGoroutine(ch chan int) {
 ```
 
 ### Palladium (Proven Termination)
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Compiler proves this terminates
 #[total]
@@ -205,6 +207,8 @@ the size of the win is unmeasured — see [Design intent, not measurements](#des
 The block below is compiler-internal pseudocode rather than a Palladium program.
 
 ### Termination Checking Algorithm
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Compiler's termination checker
 fn check_termination(func: Function) -> Result<Proof, Error> {
@@ -229,6 +233,8 @@ fn prove_structural_recursion(rec: Recursion) -> Result<Proof> {
 ```
 
 ### Termination Measures
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Different ways to prove termination
 
@@ -267,6 +273,8 @@ fn tree_fold<T, U>(tree: Tree<T>, init: U, f: Fn(T, U, U) -> U) -> U {
 ```
 
 ### Fuel-Based Termination
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // For cases where we can't prove termination statically
 #[total(fuel = F)]
@@ -329,6 +337,8 @@ binary, and licenses optimisations a partial function cannot receive. Whether th
 ## Common Patterns
 
 ### List Processing
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 #[total]
 fn map<T, U>(list: List<T>, f: Fn(T) -> U) -> List<U> {
@@ -340,6 +350,8 @@ fn map<T, U>(list: List<T>, f: Fn(T) -> U) -> List<U> {
 ```
 
 ### Tree Algorithms
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 #[total]
 fn tree_height<T>(tree: Tree<T>) -> u64 {
@@ -351,6 +363,8 @@ fn tree_height<T>(tree: Tree<T>) -> u64 {
 ```
 
 ### Number Theory
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 #[decreases(b)]
 fn gcd(a: u64, b: u64) -> u64 {
@@ -365,22 +379,38 @@ fn gcd(a: u64, b: u64) -> u64 {
 3. **Dependent Types**: More precise termination proofs
 4. **SMT Integration**: Use external solvers for complex cases
 
-## Tensions
+## Resolved: the relationship between `#[total]` and `#[decreases]`
 
-The measure attribute has two spellings in this repository. `docs/marketing/avp_marketing.md:17-20`
-and `docs/marketing/Turing.md:67` use `#![total(strict)]` with a separate `#[decreases(expr)]`; the
-pre-2026-08 version of this document used `#[total(decreases = expr)]`. The first is normative here
-and the examples above have been rewritten to it. The second is recorded rather than erased,
-because the two carry a real design difference: whether the measure is an argument of totality, or
-an independent obligation that also applies outside `#[total]`. That question is open.
+Two spellings existed in this repository. `docs/marketing/avp_marketing.md:17-20` and
+`docs/marketing/Turing.md:67` used `#![total(strict)]` with a separate `#[decreases(expr)]`; the
+pre-2026-08 version of this document used `#[total(decreases = expr)]`, making the measure an
+argument of totality.
 
-`#[total(fuel = N)]` and `#[total(wf_relation = f)]` keep the argument form because no alternative
-spelling has been proposed for them. The inconsistency is deliberate and unresolved.
+**Decided: they are independent.** `#[total]` states the *obligation* — this function must be
+proven to terminate. `#[decreases(expr)]` supplies the *evidence* — this expression is the
+well-founded measure. They are separate because the two are separately useful:
+
+- `#[total]` alone is the common case. Structural recursion needs no measure, so demanding one
+  would be noise on the majority of total functions.
+- `#[decreases(expr)]` alone is meaningful **outside** `#[total]`: it is a checked assertion about
+  a function the author is not asking to be proven total, and inside a `#![total(strict)]` crate
+  every function carries the obligation implicitly, so there is no `#[total]` left to hang the
+  measure on. Under the argument form, `#![total(strict)]` would have had no way to express a
+  measure at all — which is what settles it.
+- A `#[decreases]` that fails to decrease is an error whether or not `#[total]` is present.
+
+Consequently `#[total(decreases = expr)]` is **not** valid syntax, and the examples above use the
+independent form throughout.
+
+`#[total(fuel = N)]` and `#[total(wf_relation = f)]` keep the argument form, and that is
+deliberate rather than residue: both modify *how the obligation is discharged* rather than
+supplying evidence for it. `fuel` weakens the obligation to a bounded one; `wf_relation` names the
+order in which a measure is compared. Neither is a measure, so neither belongs in `#[decreases]`.
 
 ## Related
 
 - [Palladium v1.0 feature definition](../PALLADIUM_V1_FEATURES.md) — where this sits among the rest
 - [Async as effect](../async-system/async-as-effect.md)
 - [Implicit lifetimes](../core-language/implicit-lifetimes.md)
-- [Feature index](../status.yaml)
+- [Feature index](../feature-index.yaml)
 - [Language specification](../../../specification/language-spec.md)

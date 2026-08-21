@@ -282,8 +282,12 @@ test-honest: ## Run EVERY test binary, including integration tests (no fail-fast
 	$(CARGO) test --release --no-fail-fast
 
 .PHONY: check-docs
-check-docs: build ## Compile every ```palladium block in the documentation
+check-docs: build check-doc-evidence ## Compile every ```palladium block in the documentation
 	@bash scripts/check-docs.sh docs README.md
+
+.PHONY: check-doc-evidence
+check-doc-evidence: ## Pin doc citations, the no-compile allowlist and the evidence tags
+	@bash scripts/check-doc-evidence.sh
 
 .PHONY: gates
 gates: conformance test-conformance-runner check-docs selfhost ## Run every language-level gate

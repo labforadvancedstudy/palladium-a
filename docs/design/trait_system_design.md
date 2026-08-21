@@ -1,8 +1,12 @@
-> **PROPOSAL — not implemented.** This document describes a design that has not been
-> built. Nothing in it is a description of how the compiler behaves today; for that see
-> [`docs/specification/language-spec.md`](../specification/language-spec.md), where every
-> claim carries a source location. Code in this file is not compiled by
-> `scripts/check-docs.sh` and is not expected to work.
+> **NORMATIVE LANGUAGE DEFINITION — compiler status: unimplemented.**
+> Two axes, deliberately separated. On the *language* axis this document is normative: it defines
+> part of Palladium, and [`language-spec.md` §N10](../specification/language-spec.md#n10-traits-and-generics)
+> incorporates it by reference. On the *compiler* axis nothing here is built; what `pdc` does is
+> recorded in the
+> [implementation status annex](../specification/language-spec.md#part-ii-implementation-status-annex),
+> with a source location for every row. Code in this file is not compiled by
+> `scripts/check-docs.sh` and is not expected to work. Material that is genuinely still undecided
+> is under "Open design questions" below and is explicitly **not** normative.
 
 # Palladium Trait System Design
 *Version 1.0 - January 19, 2025*
@@ -367,3 +371,14 @@ help: disambiguate with:
 ## Conclusion
 
 The trait system provides Palladium with powerful abstraction capabilities while maintaining zero-cost guarantees. Starting with a simple implementation and gradually adding features ensures a solid foundation for the type system.
+
+## Open design questions
+
+<sub>**Non-normative.** Everything above defines the language; everything in this section is
+undecided and defines nothing. The distinction matters because "not yet built" and "not yet
+decided" were previously carried by the same PROPOSAL banner, which made every open question look
+like settled design awaiting an implementer.</sub>
+
+No question in this document has been escalated as open yet. When one is, it moves here rather
+than being silently resolved in place, and [`language-spec.md` §N10](../specification/language-spec.md#n10-traits-and-generics)
+links to it.

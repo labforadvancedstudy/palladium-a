@@ -104,6 +104,8 @@ func processUsers(ids []uint64) ([]*User, error) {
 ```
 
 ### Palladium (Async as Effect)
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // No async keyword needed - effect is inferred
 fn fetch_user(id: u64) -> Result<User> {
@@ -115,7 +117,7 @@ fn fetch_user(id: u64) -> Result<User> {
 
 // Can call from anywhere - no coloring
 fn get_user_sync(id: u64) -> Result<User> {
-    fetch_user(id)  // Just works
+    fetch_user(id)  // no wrapper needed: no colour to cross
 }
 
 // Automatic parallelization with effects
@@ -127,8 +129,10 @@ fn process_users(ids: Vec<u64>) -> Result<Vec<User>> {
 // Explicit sequencing when needed
 fn process_users_sequential(ids: Vec<u64>) -> Result<Vec<User>> {
     let users = vec![];
-    for id in ids {
-        users.push(fetch_user(id)?);  // seq keyword forces order
+    effect::sync {
+        for id in ids {
+            users.push(fetch_user(id)?);  // ordered: effect::sync forbids reordering
+        }
     }
     Ok(users)
 }
@@ -167,6 +171,7 @@ async fn compose() {
 }
 ```
 
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Palladium - natural composition
 fn compose() {
@@ -184,6 +189,8 @@ programs — they sketch the algorithm, and are fenced `no-compile` for the same
 everything else here.
 
 ### Effect System Design
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Internal representation
 type Effect = Async | Pure | IO | Exception
@@ -207,6 +214,8 @@ fn infer_effects(ast: AST) -> EffectMap {
 ```
 
 ### Automatic Parallelization
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Compiler transform
 fn parallelize(expr: Expr) -> Expr {
@@ -225,6 +234,8 @@ fn parallelize(expr: Expr) -> Expr {
 ```
 
 ### Effect Contexts
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Effects can be controlled in scope
 effect async_scope {
@@ -319,11 +330,14 @@ become checkable once it exists:
 
 None of these are performance results. They become results when a benchmark times them.
 
-## Migration Guide
+## Translating Rust async into Palladium
 
-### From Rust Async
+These are syntax correspondences, not a usage guide: the right-hand side is target syntax that
+`pdc` does not accept today.
+
+### Rust source
 ```rust
-// Before (Rust)
+// Rust source
 async fn complex_operation() -> Result<Data> {
     let auth = authenticate().await?;
     let token = auth.get_token().await?;
@@ -333,8 +347,9 @@ async fn complex_operation() -> Result<Data> {
 }
 ```
 
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
-// After (Palladium)
+// Palladium equivalent (target syntax)
 fn complex_operation() -> Result<Data> {
     let auth = authenticate()?;
     let token = auth.get_token()?;
@@ -343,7 +358,9 @@ fn complex_operation() -> Result<Data> {
 }
 ```
 
-### Effect Annotations (When Needed)
+### Effect annotations, where the design requires them
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Force synchronous execution
 fn must_be_sync() -> Data {
@@ -366,12 +383,16 @@ that the absence of `.await` never becomes an absence of control.
 ## Common Patterns
 
 ### Parallel Map
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 // Automatically parallel
 let results = items.map(|item| expensive_operation(item));
 ```
 
 ### Timeout with Fallback
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 fn fetch_with_fallback(id: u64) -> User {
     with_timeout(1.second) {
@@ -381,6 +402,8 @@ fn fetch_with_fallback(id: u64) -> User {
 ```
 
 ### Retry Logic
+
+<sub>Normative syntax. `pdc` does not accept this today.</sub>
 ```palladium no-compile
 fn reliable_fetch(id: u64) -> Result<User> {
     with_retry(3, exponential_backoff) {
@@ -401,5 +424,5 @@ fn reliable_fetch(id: u64) -> Result<User> {
 - [Palladium v1.0 feature definition](../PALLADIUM_V1_FEATURES.md) — where this sits among the rest
 - [Totality checking](../advanced/totality-checking.md)
 - [Implicit lifetimes](../core-language/implicit-lifetimes.md)
-- [Feature index](../status.yaml)
+- [Feature index](../feature-index.yaml)
 - [Language specification](../../../specification/language-spec.md)
