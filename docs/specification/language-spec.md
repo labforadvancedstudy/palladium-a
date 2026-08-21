@@ -217,9 +217,9 @@ the type branch.
 ### 5.1 Option and Result ❌ (as built-ins)
 
 There is no built-in `Option` or `Result` — no prelude, no declaration, no lexer or parser
-support. They are ordinary user enums if you declare them, with no methods and no `?`: the
-operator is rejected outright (see §6.5), because there is no Result for it to destructure.
-M4 is where `Result<T, E>` becomes a real type.
+support. They are ordinary user enums if you declare them, with no methods and no `?`. Declaring
+one does not make `?` work: the operator is rejected outright (see §6.5), because nothing lowers
+it onto the representation your enum is compiled to. Use `match`.
 
 The v1.0 spec's prelude (`type Option<T> = enum { Some(T), None };`) does not exist.
 
@@ -282,32 +282,45 @@ error: the `?` operator is not implemented
   --> prog.pd:11:28
 11 |     let v: i64 = might_fail(x)?;
    |                            ^~~~
-  = note: there is no Result type to lower `?` onto, so code generation would emit C
-          referring to a `struct Result` layout the compiler never defines
-  = help: return the Result value and inspect it with `match` instead; `?` becomes
-          available when M4 gives Result<T, E> real methods
+  = note: code generation has no lowering of `?` onto the enum representation it emits,
+          and would instead produce C for a `struct Result { int is_ok; union … }` layout
+          that no enum is ever generated as
+  = help: match on the returned enum and handle each variant explicitly, e.g.
+          `match might_fail(x) { Result::Ok(v) => …, Result::Err(e) => … }`
 ```
 
-The refusal is raised by the type checker (`src/typeck/mod.rs:2354`, `:2361`) and again by code
-generation (`src/codegen/mod.rs:2540`, `:2552`), which is reachable on its own.
+Note what is *not* claimed: the `Result` type is not missing. A program only reaches this
+diagnostic by declaring one — that is how it satisfies the type rules. What is missing is the
+lowering onto the representation enums actually get.
 
-What they used to do, and what M4 has to replace:
+The refusal is raised by the type checker (`src/typeck/mod.rs:2356`, `:2363`) and again by code
+generation (`src/codegen/mod.rs:2537`, `:2549`), which is callable on its own.
+
+What they used to do:
 
 - `?` emitted C referencing a `struct Result { int is_ok; union {…} data; }` layout that **no
-  other part of codegen emits** — user enums are generated with a `.tag` field and
-  `__Enum__Variant` constants instead. gcc reported `variable has incomplete type 'struct
-  Result'`. The lowering is preserved, unreachable, at `src/codegen/mod.rs:2566`.
+  other part of codegen emits** — enums are generated with a `.tag` field and `__Enum__Variant`
+  constants instead. gcc reported `variable has incomplete type 'struct Result'`.
 - `.await` emitted `while (!f.poll(&f)) {}`. C has no member function calls, and the poll
   routine that *is* generated is the free function `<name>_poll`
-  (`src/codegen/mod.rs:2689`), which that call never names. There is no async runtime.
-  Preserved, unreachable, at `src/codegen/mod.rs:2618`.
+  (`src/codegen/mod.rs:2590`), which that call never names. There is no async runtime.
+
+Both lowerings are deleted rather than kept behind a flag: they encoded a representation a real
+implementation must not reuse, and version control holds them.
+
+The LLVM backend is a sharper case and is only safe by ordering. Its expression lowering has no
+arm for either node — the catch-all at `src/codegen/llvm_text_backend.rs:1378` returns the
+constant `0` for `Question`, `Await`, `EnumConstructor` and `MacroInvocation` alike, which
+compiles and is wrong. The type checker refuses before a backend is chosen, which is what
+`tests/d5_unimplemented_constructs.rs` pins.
 
 `async fn` still *declares* fine; only `.await` is rejected. A call to an `async fn` is typed as
 its bare return type, so awaiting one never type checked in the first place — the shape that
-used to reach code generation was a plain function declared `-> Future<T>`.
+used to reach code generation was a plain function declared `-> Future<T>`. Note the corollary
+for the workaround: deleting `.await` alone leaves a `Future<T>` where a `T` is required, so the
+signature has to change too.
 
-Both are excluded from the bootstrap subset. `?` returns when M4 makes `Result<T, E>` a real
-type; `async`/`await` is not scheduled (see `docs/contributing/MILESTONES.md`).
+Both are excluded from the bootstrap subset.
 
 ### 6.6 Tail expressions
 

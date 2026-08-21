@@ -29,8 +29,6 @@ pub struct CodeGenerator {
     generic_struct_instantiations: Vec<(String, Vec<String>, crate::typeck::GenericStruct)>,
     /// Type aliases for resolving custom types
     type_aliases: std::collections::HashMap<String, Type>,
-    /// Counter for generating unique temporary variable names
-    temp_counter: usize,
     /// Map of enum names to their definitions
     enums: std::collections::HashMap<String, EnumDef>,
     /// Map of struct names to their declared fields, for typing field access.
@@ -67,7 +65,6 @@ impl CodeGenerator {
             generic_instantiations: Vec::new(),
             generic_struct_instantiations: Vec::new(),
             type_aliases: std::collections::HashMap::new(),
-            temp_counter: 0,
             enums: std::collections::HashMap::new(),
             structs: std::collections::HashMap::new(),
             impl_methods: std::collections::HashMap::new(),
@@ -2534,9 +2531,9 @@ impl CodeGenerator {
                 self.output.push_str("))");
             }
             Expr::Question { expr: _, span } => {
-                // D5. The type checker refuses this first, but code generation
-                // is what actually fabricated the `struct Result`, and it is
-                // reachable on its own, so the refusal also lives at the defect.
+                // D5. The type checker refuses this first, but this backend is
+                // what emitted the undefined `struct Result`, and it is callable
+                // on its own, so the refusal also lives at the defect.
                 return Err(CompileError::question_unimplemented(*span));
             }
             Expr::MacroInvocation { .. } => {
@@ -2546,108 +2543,12 @@ impl CodeGenerator {
                 ));
             }
             Expr::Await { expr: _, span } => {
-                // D5. Same shape as `?` above: the emitter below calls
-                // `future.poll(&future)`, which is not C, and the poll routine
+                // D5. Same shape as `?` above: this arm emitted
+                // `future.poll(&future)`, which is not C, while the poll routine
                 // that is generated is the free function `<name>_poll`.
                 return Err(CompileError::await_unimplemented(*span));
             }
         }
-        Ok(())
-    }
-
-    /// The pre-M1 lowering of `?`, kept verbatim and unreachable.
-    ///
-    /// It fabricates `struct Result { int is_ok; union { T ok; E err; } data; }`
-    /// — a layout no other part of the compiler emits — so every program that
-    /// reached it died inside gcc. M4 ("Abstraction") owns the real
-    /// `Result<T, E>`; this is the sketch to rewrite against it, not to revive
-    /// as-is. See `docs/contributing/MILESTONES.md`.
-    #[allow(dead_code)]
-    fn generate_question_fabricated_result(&mut self, expr: &Expr) -> Result<()> {
-        // The ? operator is syntactic sugar for:
-        // match expr {
-        //     Ok(value) => value,
-        //     Err(e) => return Err(e),
-        // }
-
-        // Generate a temporary variable name
-        self.temp_counter += 1;
-        let temp_var = format!("__question_result_{}", self.temp_counter);
-
-        // For now, we'll generate code that assumes Result is a struct with:
-        // - an 'is_ok' field (0 for Err, 1 for Ok)
-        // - a union containing 'ok' and 'err' fields
-        // This is a simplified representation until proper enum support is added
-
-        self.output.push_str("({\n");
-        self.output
-            .push_str(&format!("        struct Result {} = ", temp_var));
-        self.generate_expression(expr)?;
-        self.output.push_str(";\n");
-        self.output
-            .push_str(&format!("        if (!{}.is_ok) {{\n", temp_var));
-        self.output.push_str(&format!(
-            "            return (struct Result){{.is_ok = 0, .data.err = {}.data.err}};\n",
-            temp_var
-        ));
-        self.output.push_str("        }\n");
-        self.output
-            .push_str(&format!("        {}.data.ok;\n", temp_var));
-        self.output.push_str("    })");
-
-        // Note: This implementation assumes:
-        // 1. Result is represented as: struct Result { int is_ok; union { T ok; E err; } data; }
-        // 2. The containing function returns a Result type
-        // 3. Error types are compatible between the expression and function return
-
-        // TODO: Once enum support is properly implemented:
-        // - Generate proper enum variant checking
-        // - Handle generic Result<T,E> types correctly
-        // - Ensure type safety for error propagation
-        Ok(())
-    }
-
-    /// The pre-M1 lowering of `.await`, kept verbatim and unreachable.
-    ///
-    /// It busy-waits on `future.poll(&future)`, which is not C: there are no
-    /// member function calls, and the poll routine that *is* generated is the
-    /// free function `<name>_poll`. Reviving this needs a real future
-    /// representation and a runtime to drive it — both post-M4 work, see
-    /// `docs/contributing/MILESTONES.md` ("Not scheduled, and why").
-    #[allow(dead_code)]
-    fn generate_await_fabricated_poll(&mut self, expr: &Expr) -> Result<()> {
-        // For now, generate a simple blocking wait
-        // In a real implementation, this would integrate with an async runtime
-        self.output.push_str("({\n");
-        self.output
-            .push_str("        // Await expression - simplified blocking implementation\n");
-
-        // Generate temporary for the future
-        self.temp_counter += 1;
-        let future_var = format!("__await_future_{}", self.temp_counter);
-
-        // Get the future
-        self.output.push_str(&format!(
-            "        {} {} = ",
-            self.infer_expr_type(expr),
-            future_var
-        ));
-        self.generate_expression(expr)?;
-        self.output.push_str(";\n");
-
-        // Poll until ready (simplified - assumes poll function exists)
-        self.output.push_str(&format!(
-            "        while (!{}.poll(&{})) {{\n",
-            future_var, future_var
-        ));
-        self.output
-            .push_str("            // In real async runtime, would yield here\n");
-        self.output.push_str("        }\n");
-
-        // Return the result
-        self.output
-            .push_str(&format!("        {}.result;\n", future_var));
-        self.output.push_str("    })");
         Ok(())
     }
 
@@ -3315,8 +3216,12 @@ mod tests {
 
     // D5. The type checker now refuses `?` and `.await` before code generation
     // runs, but this backend is reachable on its own (this very harness skips
-    // the type checker) and it is what fabricated the C. The refusal is
-    // therefore asserted at both ends.
+    // the type checker) and it is what emitted the bad C. The refusal is
+    // therefore asserted at both ends. `generate` returns the emitted C on
+    // success, so `unwrap_err` is the whole contract here: an Ok of any kind,
+    // empty or not, fails these tests. (An earlier version asserted that the
+    // output did *not* contain "struct Result" via `unwrap_or_default`, which
+    // an error satisfies vacuously — it could not tell refusal from success.)
 
     #[test]
     fn test_question_codegen_refuses_instead_of_fabricating_struct_result() {
@@ -3347,33 +3252,5 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("`.await`"), "{}", msg);
         assert!(msg.contains("not implemented"), "{}", msg);
-    }
-
-    #[test]
-    fn test_no_generated_c_ever_mentions_the_fabricated_result_layout() {
-        // The failure mode was not "an error came out late" but "C came out
-        // that gcc could not compile". Assert on the artifact, not the message.
-        let out = generate(
-            r#"
-        fn helper(x: i64) -> Result<i64, i64> {
-            let v: i64 = might_fail(x)?;
-            return might_fail(v);
-        }
-        "#,
-        );
-        let emitted = out.unwrap_or_default();
-        assert!(!emitted.contains("struct Result"), "{}", emitted);
-        assert!(!emitted.contains("__question_result_"), "{}", emitted);
-
-        let emitted = generate(
-            r#"
-        fn main() {
-            let v: i64 = work(3).await;
-        }
-        "#,
-        )
-        .unwrap_or_default();
-        assert!(!emitted.contains(".poll("), "{}", emitted);
-        assert!(!emitted.contains("__await_future_"), "{}", emitted);
     }
 }

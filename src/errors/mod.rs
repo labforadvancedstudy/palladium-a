@@ -172,30 +172,43 @@ impl Span {
 }
 
 impl CompileError {
-    /// D5: `?` parses and type-checks, but nothing can lower it.
+    /// D5: `?` parses and type-checks, but nothing lowers it.
     ///
-    /// The compiler has no real `Result<T, E>` — M4 owns that — and the C
-    /// emitter used to invent a `struct Result` layout it never defined, so
-    /// every program that used `?` died inside generated C instead of here.
+    /// Note what is and is not missing. A program only reaches this diagnostic
+    /// by *declaring* a `Result` enum, so the type is not the problem — the
+    /// absent piece is a lowering of `?` onto the enum representation the
+    /// compiler actually emits (`.tag` plus `__Enum__Variant` constants). Code
+    /// generation instead emitted a `struct Result { int is_ok; union … }`
+    /// layout that nothing else produces, so the program died inside gcc.
+    ///
+    /// The workaround is receipted by `test_question_workaround_compiles`: the
+    /// suggested `match` replacement is compiled and run, not asserted.
     pub fn question_unimplemented(span: Span) -> Self {
         CompileError::Unimplemented {
             construct: "the `?` operator".to_string(),
             consequence:
-                "there is no Result type to lower `?` onto, so code generation would emit C \
-                 referring to a `struct Result` layout the compiler never defines"
+                "code generation has no lowering of `?` onto the enum representation it emits, \
+                 and would instead produce C for a `struct Result { int is_ok; union … }` layout \
+                 that no enum is ever generated as"
                     .to_string(),
-            workaround: "return the Result value and inspect it with `match` instead; `?` becomes \
-                 available when M4 gives Result<T, E> real methods"
+            workaround: "match on the returned enum and handle each variant explicitly, e.g. \
+                 `match might_fail(x) { Result::Ok(v) => …, Result::Err(e) => … }`"
                 .to_string(),
             span: Some(span),
         }
     }
 
-    /// D5: `.await` parses and type-checks, but nothing can lower it.
+    /// D5: `.await` parses and type-checks, but nothing lowers it.
     ///
-    /// There is no async runtime, and the C emitter used to call a `poll`
-    /// member that no generated struct has — C has no member function calls,
-    /// and the poll routine that *is* generated is a free function.
+    /// The workaround has to change the *signature*, not just delete the
+    /// `.await`. The only shape that reaches this diagnostic is a plain
+    /// function declared `-> Future<T>` (a call to an `async fn` is typed as
+    /// its bare return type, so awaiting one never type checked), and dropping
+    /// `.await` there leaves a `Future<T>` where a `T` is required —
+    /// "Type mismatch: expected Int, found Future<Int>". Suggesting that would
+    /// repeat the defect this diagnostic exists to remove.
+    ///
+    /// Receipted by `test_await_workaround_compiles`.
     pub fn await_unimplemented(span: Span) -> Self {
         CompileError::Unimplemented {
             construct: "`.await`".to_string(),
@@ -204,8 +217,9 @@ impl CompileError {
                  member that no generated C struct has"
                     .to_string(),
             workaround:
-                "call the function without `.await` and treat it as synchronous; async/await is \
-                 not scheduled before M4 (docs/contributing/MILESTONES.md)"
+                "declare the function to return its value directly (`-> T`, not `-> Future<T>`) \
+                 and call it; deleting `.await` on its own leaves a Future where a value is \
+                 required"
                     .to_string(),
             span: Some(span),
         }

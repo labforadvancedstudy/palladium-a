@@ -32,7 +32,7 @@ emit wrong code. This milestone converts silent wrongness into diagnostics.
 | Defect | What happens today |
 |---|---|
 | D7 | an un-annotated `let` is emitted as `long long` whatever the initializer was, so references, enum values and string copies silently become integers |
-| D5 | ~~`?` emits C referencing a `struct Result` layout codegen never defines; `.await` calls a `poll` member that is never generated. Neither reports an error~~ — **fixed**: both are rejected with "is not implemented", the consequence, and a workaround. The lowerings are preserved unreachable for M4 |
+| D5 | ~~`?` emits C referencing a `struct Result` layout codegen never defines; `.await` calls a `poll` member that is never generated. Neither reports an error~~ — **fixed**: both are rejected with "is not implemented", the consequence, and a workaround that `tests/d5_unimplemented_constructs.rs` compiles and runs. Old lowerings deleted. Diagnostics deliberately name no milestone |
 | D4 | `for` over an array *parameter* uses `sizeof` on a pointer that has already decayed |
 | D9 | `&[T; N]` / `&mut [T; N]` parameters are rejected in codegen — `examples/practical/simple_sort.pd` still fails on exactly this |
 

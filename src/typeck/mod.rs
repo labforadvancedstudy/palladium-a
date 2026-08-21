@@ -2336,21 +2336,23 @@ impl TypeChecker {
                 // TODO: Proper reference type handling - should check that expr_type is a reference
                 Ok(expr_type)
             }
-            // D5 (M1). `?` and `.await` parse and have type rules, but no
-            // backend can lower either: code generation fabricated a `struct
-            // Result` it never defines, and an `await` that calls a `poll`
-            // member no generated struct has. A program that satisfied the type
-            // rules therefore failed inside gcc — against C the user never
-            // wrote — rather than here. Refuse at the construct's own span.
+            // D5. `?` and `.await` parse, but no backend lowers either: the C
+            // emitter produced a `struct Result` layout nothing else emits, and
+            // an await that calls a `poll` member no generated struct has, so a
+            // program that satisfied the old type rules failed inside gcc —
+            // against C the user never wrote. The LLVM backend is worse: its
+            // catch-all returns the constant `0` for both nodes
+            // (`src/codegen/llvm_text_backend.rs:1378`), which compiles and is
+            // wrong. Refuse here, at the construct's own span, so no backend
+            // gets the chance.
             //
-            // Refusing in this phase (not only in codegen) is deliberate: it
-            // lands before the codegen `let`-inference error (D7), which would
-            // otherwise suggest a type annotation that cannot help.
+            // Refusing in this phase rather than only in codegen is deliberate:
+            // it lands before the codegen `let`-inference error (D7), which
+            // would otherwise suggest a type annotation that cannot help.
             //
-            // The type rules themselves are preserved verbatim below, in
-            // `check_question_against_fabricated_result` and
-            // `check_await_against_fabricated_future`, for M4 to rewrite
-            // against a real Result<T, E>.
+            // The old type rules are deleted, not preserved: they encoded a
+            // `Result` shape that a real implementation must not reuse, and git
+            // holds them if they are ever wanted.
             Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
             Expr::MacroInvocation { .. } => {
                 // Macros should have been expanded before type checking
@@ -2359,125 +2361,6 @@ impl TypeChecker {
                 ))
             }
             Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-        }
-    }
-
-    /// The pre-M1 type rules for `?`, kept verbatim and unreachable.
-    ///
-    /// They check against a `Result<T, E>` the compiler does not really have —
-    /// nothing constructs one, and code generation invented a C layout for it.
-    /// M4 ("Abstraction") makes `Result<T, E>` an ordinary library type; these
-    /// rules are the starting sketch for that work, not something to re-enable
-    /// as-is. See `docs/contributing/MILESTONES.md`.
-    #[allow(dead_code)]
-    fn check_question_against_fabricated_result(&mut self, expr: &Expr) -> Result<CheckerType> {
-        // Type check the expression
-        let expr_type = self.check_expression(expr)?;
-
-        // The expression must be a Result<T, E> type
-        match &expr_type {
-            CheckerType::Generic { name, args } if name == "Result" && args.len() == 2 => {
-                // Extract the Ok type (T) and Error type (E) from Result<T, E>
-                let ok_type = &args[0];
-                let err_type = &args[1];
-
-                // Check that the current function returns a Result type
-                if let Some(return_type) = &self.current_function_return {
-                    match return_type {
-                        CheckerType::Generic {
-                            name: ret_name,
-                            args: ret_args,
-                        } if ret_name == "Result" && ret_args.len() == 2 => {
-                            // Check that error types match
-                            let ret_err_type = &ret_args[1];
-                            if err_type != ret_err_type {
-                                let ret_err_str = match ret_err_type {
-                                    GenericArgValue::Type(t) => self.checker_type_to_string(t),
-                                    GenericArgValue::Const(c) => match c {
-                                        ConstValueResolved::Integer(n) => n.to_string(),
-                                        ConstValueResolved::ConstParam(name) => name.clone(),
-                                    },
-                                };
-                                let err_str = match err_type {
-                                    GenericArgValue::Type(t) => self.checker_type_to_string(t),
-                                    GenericArgValue::Const(c) => match c {
-                                        ConstValueResolved::Integer(n) => n.to_string(),
-                                        ConstValueResolved::ConstParam(name) => name.clone(),
-                                    },
-                                };
-                                let ok_str = match ok_type {
-                                    GenericArgValue::Type(t) => self.checker_type_to_string(t),
-                                    GenericArgValue::Const(c) => match c {
-                                        ConstValueResolved::Integer(n) => n.to_string(),
-                                        ConstValueResolved::ConstParam(name) => name.clone(),
-                                    },
-                                };
-                                return Err(CompileError::TypeMismatch {
-                                    expected: format!("Result<_, {}>", ret_err_str),
-                                    found: format!("Result<{}, {}>", ok_str, err_str),
-                                    span: None,
-                                });
-                            }
-
-                            // Return the Ok type
-                            match ok_type {
-                                GenericArgValue::Type(t) => Ok(t.clone()),
-                                _ => Err(CompileError::Generic(
-                                    "Expected type in Result".to_string(),
-                                )),
-                            }
-                        }
-                        _ => Err(CompileError::Generic(
-                            "The ? operator can only be used in functions that return Result"
-                                .to_string(),
-                        )),
-                    }
-                } else {
-                    Err(CompileError::Generic(
-                        "The ? operator can only be used inside a function".to_string(),
-                    ))
-                }
-            }
-            CheckerType::Enum(name) if name == "Result" => {
-                // Handle non-generic Result (shouldn't happen in practice)
-                Err(CompileError::Generic(
-                    "Result type must have generic parameters".to_string(),
-                ))
-            }
-            _ => Err(CompileError::TypeMismatch {
-                expected: "Result<T, E>".to_string(),
-                found: expr_type.to_string(),
-                span: None,
-            }),
-        }
-    }
-
-    /// The pre-M1 type rules for `.await`, kept verbatim and unreachable.
-    ///
-    /// The only thing that ever produces a `Future<T>` here is the implicit
-    /// wrapping of an `async fn`'s *declared* return type, which the function's
-    /// own signature does not carry — so awaiting a real `async fn` never type
-    /// checked in the first place. Reviving this needs a future representation
-    /// and a runtime to drive it; see `docs/contributing/MILESTONES.md`
-    /// ("Not scheduled, and why").
-    #[allow(dead_code)]
-    fn check_await_against_fabricated_future(&mut self, expr: &Expr) -> Result<CheckerType> {
-        // Check that the expression is a Future type
-        let expr_type = self.check_expression(expr)?;
-        match &expr_type {
-            CheckerType::Generic { name, args } if name == "Future" && args.len() == 1 => {
-                // Extract the output type from Future<T>
-                if let GenericArgValue::Type(output_type) = &args[0] {
-                    Ok(output_type.clone())
-                } else {
-                    Err(CompileError::Generic("Invalid Future type".to_string()))
-                }
-            }
-            _ => Err(CompileError::TypeMismatch {
-                expected: "Future<T>".to_string(),
-                found: self.checker_type_to_string(&expr_type),
-                span: None,
-            }),
         }
     }
 
@@ -3153,7 +3036,13 @@ mod tests {
             } => {
                 assert!(construct.contains('?'), "{}", construct);
                 // The diagnostic must point at the operator, not at the file.
-                assert_eq!(span.expect("span").line, 12);
+                // The span is the *postfix suffix*, so it underlines `(x)?`
+                // rather than the `?` alone — a parser-wide convention
+                // (`src/parser/mod.rs:2604`), pinned here so a change to it is
+                // a deliberate decision rather than a silent drift.
+                let span = span.expect("span");
+                assert_eq!((span.line, span.column), (12, 36));
+                assert_eq!(span.end - span.start, 4, "underlines `(x)?`");
             }
             other => panic!("expected an Unimplemented error, got: {}", other),
         }
@@ -3187,7 +3076,41 @@ mod tests {
                 ..
             } => {
                 assert!(construct.contains("await"), "{}", construct);
-                assert_eq!(span.expect("span").line, 7);
+                let span = span.expect("span");
+                assert_eq!((span.line, span.column), (7, 30));
+                assert_eq!(span.end - span.start, 9, "underlines `(3).await`");
+            }
+            other => panic!("expected an Unimplemented error, got: {}", other),
+        }
+    }
+
+    #[test]
+    fn test_await_span_survives_a_multiline_postfix_chain() {
+        // A span is only useful if it still lands on the construct when the
+        // postfix chain is broken across lines.
+        let err = check(
+            r#"
+        fn work(x: i64) -> Future<i64> {
+            return work(x);
+        }
+
+        fn main() {
+            let v: i64 = work(
+                3
+            ).await;
+            print_int(v);
+        }
+        "#,
+        )
+        .unwrap_err();
+
+        match err {
+            CompileError::Unimplemented { span, .. } => {
+                let span = span.expect("span");
+                // Reported at the head of the postfix chain, and wide enough to
+                // cover the `.await` three lines later.
+                assert_eq!((span.line, span.column), (7, 30));
+                assert!(span.end - span.start > 9, "{:?}", span);
             }
             other => panic!("expected an Unimplemented error, got: {}", other),
         }
@@ -3198,18 +3121,69 @@ mod tests {
         // "Not implemented" on its own sends the reader back to the source. The
         // house style (see the let-inference error) states what would otherwise
         // happen and what to do today.
-        let err = CompileError::question_unimplemented(Span::new(0, 1, 1, 1));
-        let diag = err.to_diagnostic();
+        //
+        // The note must describe the missing *lowering*. Saying "there is no
+        // Result type" would contradict the program that triggers it, which
+        // reaches this diagnostic precisely by declaring one.
+        let diag = CompileError::question_unimplemented(Span::new(0, 1, 1, 1)).to_diagnostic();
         assert!(diag.span.is_some());
+        let note = diag.notes.join(" ");
+        assert!(note.contains("no lowering of `?`"), "{}", note);
         assert!(
-            diag.notes.iter().any(|n| n.contains("struct Result")),
-            "{:?}",
-            diag.notes
+            !note.contains("there is no Result type"),
+            "the note must not deny a type the triggering program declares: {}",
+            note
         );
         assert!(
             diag.suggestions.iter().any(|s| s.message.contains("match")),
             "{:?}",
             diag.suggestions
+        );
+
+        // No diagnostic may promise a release. The roadmap changes; the binary
+        // that was already shipped does not.
+        for text in [
+            CompileError::question_unimplemented(Span::new(0, 1, 1, 1)),
+            CompileError::await_unimplemented(Span::new(0, 1, 1, 1)),
+        ]
+        .iter()
+        .flat_map(|e| {
+            let d = e.to_diagnostic();
+            let mut v = d.notes.clone();
+            v.push(d.message.clone());
+            v.extend(d.suggestions.iter().map(|s| s.message.clone()));
+            v
+        }) {
+            for promise in ["M1", "M2", "M3", "M4", "M5", "MILESTONES", "scheduled"] {
+                assert!(
+                    !text.contains(promise),
+                    "diagnostic promises a roadmap item ({}): {}",
+                    promise,
+                    text
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_await_diagnostic_does_not_suggest_merely_deleting_the_await() {
+        // Measured: on the only shape that reaches this diagnostic, deleting
+        // `.await` yields "Type mismatch: expected Int, found Future<Int>".
+        // A suggestion that trades one error for another is the defect this
+        // whole change exists to remove, so it is asserted against by name.
+        let diag = CompileError::await_unimplemented(Span::new(0, 1, 1, 1)).to_diagnostic();
+        let help = diag
+            .suggestions
+            .iter()
+            .map(|s| s.message.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(help.contains("-> T"), "{}", help);
+        assert!(help.contains("not `-> Future<T>`"), "{}", help);
+        assert!(
+            !help.contains("call the function without `.await`"),
+            "that suggestion does not compile: {}",
+            help
         );
     }
 
