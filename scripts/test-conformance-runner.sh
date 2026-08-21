@@ -291,8 +291,13 @@ expect_rc 1 && expect_out "UNDECLARED" && ok
 # ===========================================================================
 # CLASS REGRESSIONS. Four rounds of review found the same species of bug five
 # times: bash string/pattern handling silently producing the PERMISSIVE answer.
-# These cases are organised by class rather than by instance, so a new site that
-# reintroduces the class is caught even though its symptom is new.
+# These cases are grouped by class rather than by symptom.
+#
+# Be accurate about what that buys. These are REPRESENTATIVE BEHAVIOURAL
+# REGRESSIONS, not a mechanism that catches any future member of a class: a
+# status collapse on a different artifact, or a pattern use on a different
+# input, need not encounter these stimuli and would pass. They pin the
+# behaviours below; they do not prove the class is empty.
 # ===========================================================================
 
 # --- CLASS 1: a variable used as a PATTERN where it must be a literal --------
@@ -325,7 +330,7 @@ D=$(new_repo clsstatus)
 fixture "$D" tests/a.pd "$good_program"
 fixture "$D" tests/locked.pd "$good_program"
 chmod 000 "$D/tests/locked.pd"
-manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/locked.pd|skip|-|-|-|claims to be a non-program'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/locked.pd|skip|compile|No main function found|-|claims to be a non-program'
 run_case "$D" tests
 chmod 644 "$D/tests/locked.pd"
 expect_rc 1 && expect_out "UNREADABLE" && ok
@@ -334,7 +339,7 @@ start "class/status: a declared dangling symlink is a harness failure, not a 'sk
 D=$(new_repo clsdangle2)
 fixture "$D" tests/a.pd "$good_program"
 ln -sfn nowhere.pd "$D/tests/dangle.pd"
-manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/dangle.pd|skip|-|-|-|declared non-program'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/dangle.pd|skip|compile|No main function found|-|declared non-program'
 run_case "$D" tests
 expect_rc 1 && expect_out "UNREADABLE" && ok
 
@@ -372,6 +377,83 @@ printf 'fn main() {\n    print("ok");\n}\n' > "$D/tests/tabbed"$'\t'"x.pd"
 manifest "$D" 'tests/a.pd|run|-|expected|-|-'
 run_case "$D" tests
 expect_rc 1 && expect_out "UNDECLARED" && ok
+
+# --- CLASS 4: filesystem indirection (grep and pdc both dereference) --------
+start "class/symlink: a fixture symlinked OUTSIDE the repo is refused"
+D=$(new_repo clsescape)
+fixture "$D" tests/a.pd "$good_program"
+mkdir -p "$TMPROOT/outside"
+printf 'fn main() {\n    print("unversioned");\n}\n' > "$TMPROOT/outside/evil.pd"
+ln -sfn "$TMPROOT/outside/evil.pd" "$D/tests/escape.pd"
+printf 'ok\n' > "$D/tests/escape.expected"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/escape.pd|run|-|expected|-|-'
+run_case "$D" tests
+expect_rc 1 && expect_out "ESCAPES_REPO" && ok
+
+start "class/symlink: an INTERNAL symlink fixture is still allowed"
+rm -f "$D/tests/escape.pd" "$D/tests/escape.expected"
+ln -sfn a.pd "$D/tests/alias.pd"
+printf 'ok\n' > "$D/tests/alias.expected"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/alias.pd|run|-|expected|-|-'
+run_case "$D" tests
+expect_rc 0 && expect_out "verified=2" && ok
+
+start "class/symlink: a chain that ends outside the repo is refused"
+rm -f "$D/tests/alias.pd" "$D/tests/alias.expected"
+ln -sfn "$TMPROOT/outside/evil.pd" "$TMPROOT/outside/hop.pd"
+ln -sfn "$TMPROOT/outside/hop.pd" "$D/tests/chain.pd"
+printf 'ok\n' > "$D/tests/chain.expected"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/chain.pd|run|-|expected|-|-'
+run_case "$D" tests
+expect_rc 1 && expect_out "ESCAPES_REPO" && ok
+
+# --- class=skip is decided by the COMPILER, not by an `fn main` regex -------
+# Measured: `fn /* c */ main()`, `fn // c<LF> main()` and plain `fn<LF> main()`
+# all compile and run, and all three evaded the old regex — a real program could
+# be declared skip and never gated.
+start "skip: 'fn /* c */ main()' cannot masquerade as a non-program"
+D=$(new_repo skipevade)
+fixture "$D" tests/a.pd "$good_program"
+fixture "$D" tests/evade.pd 'fn /* c */ main() {
+    print("evaded");
+}'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/evade.pd|skip|compile|No main function found|-|claims not to be a program'
+run_case "$D" tests
+expect_rc 1 && expect_out "SKIP_IS_A_PROGRAM" && ok
+
+start "skip: 'fn // c<LF> main()' cannot either"
+fixture "$D" tests/evade.pd 'fn // c
+ main() {
+    print("evaded");
+}'
+run_case "$D" tests
+expect_rc 1 && expect_out "SKIP_IS_A_PROGRAM" && ok
+
+start "skip: plain 'fn<LF> main()' cannot either (no comment needed)"
+fixture "$D" tests/evade.pd 'fn
+ main() {
+    print("evaded");
+}'
+run_case "$D" tests
+expect_rc 1 && expect_out "SKIP_IS_A_PROGRAM" && ok
+
+start "skip: a genuine library module is proven skip by the compiler"
+D=$(new_repo skiplib)
+fixture "$D" tests/a.pd "$good_program"
+fixture "$D" tests/lib.pd "$library_module"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/lib.pd|skip|compile|No main function found|-|library module'
+run_case "$D" tests
+expect_rc 0 && expect_out "skip=1" && ok
+
+start "skip: a wrong diagnostic on a skip row fails the gate"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/lib.pd|skip|compile|Unsupported type in reference parameter|-|wrong reason'
+run_case "$D" tests
+expect_rc 1 && expect_out "SKIP_MISMATCH" && ok
+
+start "skip: a row with no fingerprint is a manifest error"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/lib.pd|skip|-|-|-|no proof offered'
+run_case "$D" tests
+expect_rc 2 && expect_out "needs the diagnostic" && ok
 
 # --- COMBINED scope cases (each component was tested; the combinations were not)
 start "combined: a scope plus a symlink pointing at it is an overlap"
@@ -719,19 +801,20 @@ run_case "$D"
 expect_rc 2 && expect_out "unknown class" && ok
 
 start "manifest: class=skip on a file that has fn main is rejected"
-manifest "$D" 'tests/a.pd|skip|-|-|-|claims not to be a program'
+manifest "$D" 'tests/a.pd|skip|compile|No main function found|-|claims not to be a program'
 run_case "$D"
-expect_rc 1 && expect_out "CLASS_MISMATCH" && ok
+expect_rc 1 && expect_out "SKIP_IS_A_PROGRAM" && ok
 
 start "manifest: class=run on a library module with no fn main is rejected"
 D=$(new_repo libclass)
 fixture "$D" tests/lib.pd "$library_module"
 manifest "$D" 'tests/lib.pd|run|-|expected|-|-'
 run_case "$D"
-expect_rc 1 && expect_out "CLASS_MISMATCH" && ok
+# The compiler reports this now, not a regex: "No main function found".
+expect_rc 1 && expect_out "COMPILE_FAIL" && ok
 
 start "manifest: declaring it skip is the correct, explicit resolution"
-manifest "$D" 'tests/lib.pd|skip|-|-|-|library module, no fn main by design'
+manifest "$D" 'tests/lib.pd|skip|compile|No main function found|-|library module, no fn main by design'
 run_case "$D"
 expect_rc 0 && expect_out "skip=1" && ok
 

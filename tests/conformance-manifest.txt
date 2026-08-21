@@ -27,7 +27,10 @@
 #        xfail          known failure, pinned to a stage AND a diagnostic.
 #        reject         MUST fail, and that is correct — a negative test. Real
 #                       coverage, owed to nobody, so owner is `-`.
-#        skip           not a program (no fn main).
+#        skip           not a program - and it must prove it, by the compiler
+#                       refusing it at a declared stage with a declared
+#                       diagnostic (e.g. "No main function found"). An `fn main`
+#                       regex was evaded by three compiler-valid spellings.
 #
 # PAYING OFF AN xfail IS A TRANSITION, NOT A DELETION. The fixture stays on disk,
 # so removing its row makes it UNDECLARED and the gate stays red. Change the row
@@ -82,8 +85,8 @@ tests/misc/test1.pd	run	-	expected	-	-
 tests/misc/test_llvm_example.pd	run	-	expected	-	-
 tests/misc/test_vec_i64.pd	run	-	expected	-	-
 tests/misc/test_vec_simple.pd	run	-	expected	-	-
-tests/projects/hello_pdm/package.pd	skip	-	-	-	package manifest, not a program
+tests/projects/hello_pdm/package.pd	skip	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	package manifest; not Palladium source at all, so the parser rejects it outright
 tests/projects/hello_pdm/src/main.pd	run	-	expected	-	-
-tests/projects/hello_pdm/src/math.pd	skip	-	-	-	library module providing add()/factorial(); has no fn main by design
+tests/projects/hello_pdm/src/math.pd	skip	compile	No main function found	-	library module providing add()/factorial(); the compiler itself confirms it has no entry point
 tests/projects/hello_pdm/tests/test_math.pd	xfail	compile	Undefined function: add	M3	calls add()/factorial() from src/math.pd; needs cross-file module imports (no use/mod in the language)
 tests/projects/hello_pdm/tests/test_simple.pd	run	-	expected	-	-

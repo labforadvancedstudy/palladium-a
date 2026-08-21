@@ -17,7 +17,7 @@ opinion.
 |---|---|
 | Self-hosting | ✅ fixed point — `make selfhost` |
 | Language conformance | 33 of 44 fixtures run with a transcript diffed byte-for-byte; 7 are vacuous placeholders, 2 declared-failing, 2 non-programs — `make conformance` |
-| Conformance gate itself | 87 regression cases, each proving it still goes RED — `make test-conformance-runner` |
+| Conformance gate itself | 96 representative regression cases, each pinning a way it must still go RED — `make test-conformance-runner` |
 | Documentation | every snippet compiles — `make check-docs` |
 | Unit tests | 404 pass, 2 pre-existing failures |
 | Integration tests | 43 fail, all pre-existing — `make test-honest` |

@@ -425,11 +425,15 @@ Each fixture declares a class:
 - **reject** — a negative test: the compiler *must* refuse it with the declared diagnostic. This is
   real coverage, and it is how "the compiler rejects `.await`" gets tested instead of a program
   that prints prose about async being unimplemented.
-- **skip** — declared non-program (no `fn main`).
+- **skip** — a declared non-program, and it must PROVE that: the compiler has to refuse it at a
+  declared stage with a declared diagnostic, exactly like an `xfail`. This replaced an `fn main`
+  regex, which `fn /* c */ main()`, `fn // c` + newline + `main()`, and plain `fn` + newline +
+  `main()` all evaded while compiling and running fine — a real program could be declared `skip`
+  and never gated.
 
 Because the inventory is closed, a fixture that is deleted, renamed, or added without a declaration
 fails the gate rather than silently shrinking or growing it. The gate's own ability to fail is
-tested by `make test-conformance-runner` (87 cases).
+tested by `make test-conformance-runner` (96 cases).
 
 ## 12. Relationship to the bootstrap subset
 

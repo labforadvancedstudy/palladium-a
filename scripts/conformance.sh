@@ -160,6 +160,19 @@ has_prefix() {   # has_prefix <prefix> <string>
   return 1
 }
 
+# Resolve a FILE to its physical path, following a chain of symlinks. Portable:
+# no readlink -f (absent on older macOS), bounded so a cycle cannot hang.
+resolve_file() {
+  local p=$1 d b i=0
+  while [ -L "$p" ] && [ "$i" -lt 32 ]; do
+    d=$(dirname "$p"); b=$(readlink "$p")
+    case "$b" in /*) p=$b ;; *) p="$d/$b" ;; esac
+    i=$((i+1))
+  done
+  d=$(cd "$(dirname "$p")" 2>/dev/null && pwd -P) || return 1
+  printf '%s/%s' "$d" "$(basename "$p")"
+}
+
 # --------------------------------------------------------------------------
 # Scopes
 # --------------------------------------------------------------------------
@@ -348,8 +361,14 @@ while IFS= read -r raw || [ -n "$raw" ]; do
       [ "$mn" != "-" ] || merr "$lineno" "class=reject needs a note"
       ;;
     skip)
-      [ "$ms" = "-" ] || merr "$lineno" "class=skip must have stage '-', got '$ms'"
-      [ "$mf" = "-" ] || merr "$lineno" "class=skip must have fingerprint '-', got '$mf'"
+      # A non-program must prove it is one, the same way an xfail does: by the
+      # compiler refusing it, at a declared stage, with a declared diagnostic.
+      # This replaced an `fn main` REGEX, which three compiler-valid spellings
+      # evaded — `fn /* c */ main()`, `fn // c<LF> main()` and plain `fn<LF>
+      # main()` all compile and run, and all three would have passed as `skip`:
+      # never compiled, never gated.
+      case "$ms" in compile|link|run) ;; *) merr "$lineno" "class=skip needs stage compile|link|run, got '$ms'" ;; esac
+      [ "$mf" != "-" ] || merr "$lineno" "class=skip needs the diagnostic proving it is not a program (e.g. 'No main function found')"
       [ "$mo" = "-" ] || merr "$lineno" "class=skip must have owner '-', got '$mo'"
       [ "$mn" != "-" ] || merr "$lineno" "class=skip needs a note"
       ;;
@@ -481,18 +500,39 @@ while IFS= read -r f; do
   owner=${M_OWNER[$idx]}; note=${M_NOTE[$idx]}
   # xfail and reject share the fingerprint machinery and differ only in meaning,
   # so they share the mismatch path but must not share its label.
-  if [ "$class" = "reject" ]; then MM=REJECT; else MM=XFAIL; fi
-
-  # rc 2 here used to become has_main=0, i.e. "this is a library module" — so an
-  # unreadable fixture, or a declared dangling symlink, passed the gate as `skip`.
-  grep_status E '^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+main[[:space:]]*\(' "$f"
-  case $? in
-    0) has_main=1 ;;
-    1) has_main=0 ;;
-    *) printf '%-52s %s\n' "$f" "UNREADABLE"
-       fail "$f [UNREADABLE] could not be scanned for fn main (permissions, or a dangling symlink). A fixture the gate cannot read is a harness failure, not a non-program."
-       continue ;;
+  case "$class" in
+    reject) MM=REJECT ;;
+    skip)   MM=SKIP ;;
+    *)      MM=XFAIL ;;
   esac
+
+  # Readability is still checked here (an unreadable fixture is a harness
+  # failure, not a silent pass), but nothing infers "is this a program" from the
+  # text any more — the compiler decides that below.
+  grep_status E '.' "$f"
+  if [ $? -gt 1 ]; then
+    printf '%-52s %s\n' "$f" "UNREADABLE"
+    fail "$f [UNREADABLE] could not be read (permissions, or a dangling symlink). A fixture the gate cannot read is a harness failure, not a non-program."
+    continue
+  fi
+
+  # A symlink fixture is followed by grep and by pdc alike, so a link pointing
+  # outside the repository would put the gate over mutable, unversioned content
+  # and still report green. The corpus legitimately contains one internal
+  # symlink; external targets are refused.
+  if [ -L "$f" ]; then
+    tgt=$(resolve_file "$f") || tgt=""
+    if [ -z "$tgt" ]; then
+      printf '%-52s %s\n' "$f" "UNREADABLE"
+      fail "$f [UNREADABLE] symlink target could not be resolved"
+      continue
+    fi
+    if ! has_prefix "$REPO_ROOT/" "$tgt"; then
+      printf '%-52s %s\n' "$f" "ESCAPES_REPO"
+      fail "$f [ESCAPES_REPO] symlink resolves to $tgt, outside $REPO_ROOT. The gate would be measuring unversioned content."
+      continue
+    fi
+  fi
 
   # The vacuous marker is documentation for the reader; the manifest is what the
   # gate believes. Requiring them to agree keeps either from drifting alone.
@@ -523,22 +563,6 @@ while IFS= read -r f; do
   if [ "$class" != "vacuous" ] && [ -n "$marker_at" ]; then
     printf '%-52s %s\n' "$f" "MARKER_UNDECLARED"
     fail "$f [MARKER_UNDECLARED] carries a '//@ vacuous:' marker but is declared class=$class"
-    continue
-  fi
-
-  if [ "$class" = "skip" ]; then
-    if [ "$has_main" -eq 1 ]; then
-      printf '%-52s %s\n' "$f" "CLASS_MISMATCH"
-      fail "$f [CLASS_MISMATCH] declared skip but defines fn main — it is a program and must be gated"
-      continue
-    fi
-    printf '%-52s %s\n' "$f" "SKIP"
-    skip=$((skip+1))
-    continue
-  fi
-  if [ "$has_main" -eq 0 ]; then
-    printf '%-52s %s\n' "$f" "CLASS_MISMATCH"
-    fail "$f [CLASS_MISMATCH] declared $class but defines no fn main"
     continue
   fi
 
@@ -640,8 +664,10 @@ while IFS= read -r f; do
                fail "$f [XPASS] declared to fail at $stage_exp but now passes. Do NOT delete the row (the fixture still exists, so that would make it UNDECLARED). In $MANIFEST change its row to:  $f<TAB>run<TAB>-<TAB>expected<TAB>-<TAB>-  and add the transcript ${f%.pd}.expected. Bootstrap it in this order, because declaring 'expected' while the file is absent is a manifest error and bless would never get to run:  (1) create it empty: : > ${f%.pd}.expected  (2) CONFORMANCE_BLESS=1 bash scripts/conformance.sh  (3) READ the generated transcript and confirm the values are right before committing. Was: $note" ;;
       reject)  printf '%-52s %s\n' "$f" "REJECT_ACCEPTED"
                fail "$f [REJECT_ACCEPTED] the compiler must refuse this program at $stage_exp ('$fp') but accepted it: $note" ;;
+      skip)    printf '%-52s %s\n' "$f" "SKIP_IS_A_PROGRAM"
+               fail "$f [SKIP_IS_A_PROGRAM] declared a non-program, but the compiler accepted and built it. It is a program and must be gated — change its class from skip to run and add a transcript." ;;
     esac
-  elif [ "$class" != "xfail" ] && [ "$class" != "reject" ]; then
+  elif [ "$class" != "xfail" ] && [ "$class" != "reject" ] && [ "$class" != "skip" ]; then
     case "$stage_act" in
       compile) v=COMPILE_FAIL ;;
       link)    v=LINK_FAIL ;;
@@ -665,6 +691,9 @@ while IFS= read -r f; do
     printf '%-52s %s\n' "$f" "REJECTED"
     reject=$((reject+1))
     REJECT_NOTES+=("$f [refused at $stage_exp: $fp] $note")
+  elif [ "$class" = "skip" ]; then
+    printf '%-52s %s\n' "$f" "SKIP"
+    skip=$((skip+1))
   else
     printf '%-52s %s\n' "$f" "XFAIL"
     xfail=$((xfail+1))
@@ -717,7 +746,8 @@ echo "  xfail      = declared failing at a specific stage with a specific"
 echo "               diagnostic, and still failing in exactly that way"
 echo "  reject     = negative test: the compiler correctly refused it with the"
 echo "               declared diagnostic. This IS coverage."
-echo "  skip       = declared non-program (no fn main): library module or manifest"
+echo "  skip       = declared non-program, PROVEN so by the compiler refusing it"
+echo "               with the declared diagnostic — not by pattern-matching the text"
 if [ "$out_of_scope" -gt 0 ]; then
   echo "  note: $out_of_scope declared fixture(s) lie outside ${SCOPES[*]} and were not checked"
 fi
