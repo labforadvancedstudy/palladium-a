@@ -256,11 +256,14 @@ impl Driver {
 
         // Compile C code with gcc
         println!("🔗 Linking with gcc...");
-        
-        // Get the runtime library path
-        let runtime_path = PathBuf::from("runtime/palladium_runtime.c");
-        
+
+        // Locate the runtime wherever this pdc is installed, not relative to cwd.
+        let runtime_dir = crate::runtime_paths::runtime_dir()?;
+        let runtime_path = runtime_dir.join(crate::runtime_paths::RUNTIME_C_FILE);
+
         let gcc_output = Command::new("gcc")
+            .arg("-I")
+            .arg(&runtime_dir)
             .arg(&c_path)
             .arg(&runtime_path)
             .arg("-o")

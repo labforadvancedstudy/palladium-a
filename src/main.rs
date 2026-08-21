@@ -2,7 +2,7 @@
 // "Where Legends Begin to Compile"
 
 use clap::Parser;
-use palladium::{driver::Driver, package::PackageManager};
+use palladium::{driver::Driver, package::PackageManager, runtime_paths};
 use std::path::Path;
 use std::process;
 
@@ -10,11 +10,32 @@ mod cli;
 use cli::{BootstrapCommands, Cli, Commands};
 
 fn main() {
-    print_banner();
-
     let cli = Cli::parse();
 
-    let result = match cli.command {
+    // Machine-readable and banner-free: this is what a package build greps.
+    if cli.print_runtime {
+        match runtime_paths::runtime_dir() {
+            Ok(dir) => {
+                println!("{}", dir.display());
+                process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("\x1b[1;31merror:\x1b[0m {}", e);
+                process::exit(1);
+            }
+        }
+    }
+
+    print_banner();
+
+    let Some(command) = cli.command else {
+        // Unreachable in practice: clap's arg_required_else_help covers the
+        // no-argument case before we get here.
+        eprintln!("\x1b[1;31merror:\x1b[0m no command given (try: pdc --help)");
+        process::exit(2);
+    };
+
+    let result = match command {
         Commands::Compile {
             file,
             output,
@@ -92,13 +113,16 @@ fn compile_file(
                 let output_path = build_dir.join(name);
 
                 println!("🔗 Linking with gcc...");
-                
-                // Get the runtime library path
-                let runtime_path = Path::new("runtime/palladium_runtime.c");
-                
+
+                // Locate the runtime wherever this pdc is installed, not relative to cwd.
+                let runtime_dir = runtime_paths::runtime_dir().map_err(|e| e.to_string())?;
+                let runtime_path = runtime_dir.join(runtime_paths::RUNTIME_C_FILE);
+
                 let gcc_output = Command::new("gcc")
+                    .arg("-I")
+                    .arg(&runtime_dir)
                     .arg(&c_path)
-                    .arg(runtime_path)
+                    .arg(&runtime_path)
                     .arg("-o")
                     .arg(&output_path)
                     .output()

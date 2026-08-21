@@ -710,11 +710,14 @@ fn main() {
 
         // Compile C to executable
         println!("🔗 Linking executable...");
-        
-        // Get the runtime library path
-        let runtime_path = PathBuf::from("runtime/palladium_runtime.c");
-        
+
+        // Locate the runtime wherever this pdc is installed, not relative to cwd.
+        let runtime_dir = crate::runtime_paths::runtime_dir()?;
+        let runtime_path = runtime_dir.join(crate::runtime_paths::RUNTIME_C_FILE);
+
         let gcc_output = std::process::Command::new("gcc")
+            .arg("-I")
+            .arg(&runtime_dir)
             .arg(&c_file)
             .arg(&runtime_path)
             .arg("-o")

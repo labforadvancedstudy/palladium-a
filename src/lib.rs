@@ -18,6 +18,7 @@ pub mod package;
 pub mod parser;
 pub mod resolver;
 pub mod runtime;
+pub mod runtime_paths;
 pub mod typeck;
 pub mod unsafe_ops;
 

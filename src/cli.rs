@@ -16,9 +16,17 @@ Alan von Palladium Compiler
 A systems programming language that combines formal verification 
 with high performance, inspired by the legendary minds of computing.
 "#)]
+#[command(arg_required_else_help = true)]
 pub struct Cli {
+    /// Print the resolved Palladium runtime directory and exit
+    ///
+    /// Packaging check: verifies an installed pdc can find its runtime
+    /// without compiling anything.
+    #[arg(long)]
+    pub print_runtime: bool,
+
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]

@@ -48,13 +48,16 @@ impl BootstrapCompiler {
 
         // Compile C to executable
         println!("🔗 Compiling bootstrap compiler to native code...");
-        
-        // Get the runtime library path
-        let runtime_path = Path::new("runtime/palladium_runtime.c");
-        
+
+        // Locate the runtime wherever this pdc is installed, not relative to cwd.
+        let runtime_dir = crate::runtime_paths::runtime_dir()?;
+        let runtime_path = runtime_dir.join(crate::runtime_paths::RUNTIME_C_FILE);
+
         let gcc_output = Command::new("gcc")
+            .arg("-I")
+            .arg(&runtime_dir)
             .arg(output_c)
-            .arg(runtime_path)
+            .arg(&runtime_path)
             .arg("-o")
             .arg(output_exe)
             .output()
