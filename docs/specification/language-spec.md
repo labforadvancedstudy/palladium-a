@@ -471,10 +471,20 @@ would happen under the callee's `&mut` binding, where it looks legitimate.
 **nested array parameter** (`[[T; M]; N]`) is rejected rather than emitted, and a function type
 never reaches here because §5 records that the parser refuses it ("expected type, found `fn`").
 
-Taking `&mut x` of a binding that was not declared `mut` is a borrow-check error, for arrays
-and scalars alike, and the same check applies to passing a binding to a `mut x: T` parameter,
-which writes through its pointer identically. This was previously unchecked, so
-`let v = [1, 2, 3]; set(&mut v);` compiled and modified an immutable binding.
+Taking `&mut x` of a binding that was not declared `mut` is a borrow-check error, whatever `x`
+is: array, scalar or `String`. The same check applies to passing a binding to a `mut x: T`
+parameter, which writes through its pointer identically — codegen emits *every* `mut`
+parameter as a pointer to the caller's storage, so `fn bump(mut x: i64)` mutates its caller's
+variable exactly as `&mut i64` does. Both were previously unchecked:
+`let v = [1, 2, 3]; set(&mut v);` compiled and modified an immutable binding, and
+`fn bump(mut x: i64) { x = 42; }` called with an immutable `let n = 1;` printed 42.
+
+The bindings this covers are every binder the grammar has — parameters, `let`, the `for`
+variable, and match patterns. `for` and match bindings are immutable (there is no `mut` form of
+either), and a name that reaches the check without having been registered by any binder is
+**refused**, not permitted: an invariant with a permissive default stops being an invariant the
+first time a binder is added and forgotten, which is precisely how `for` variables and match
+bindings slipped through.
 
 #### What the rule actually covers
 
@@ -491,8 +501,10 @@ Refused, rather than assumed safe, because the capability cannot be established:
 
 - the callee's parameter list is unknown to this pass (any callee not in the function table),
   and an array is being passed;
-- the array argument is not a name this pass tracks — a struct field, an element, a call
-  result — and the parameter may write to it.
+- the array argument is not a plain name this pass tracks — a struct field, an **element of an
+  array** (`grid[0]`), a call result — and the parameter may write to it. An element is refused
+  even when its array is a local the caller owns: letting it inherit the array's capability
+  would be a more permissive rule than this one, and the rule stated here is the contract.
 
 Not covered by this rule at all, and not claimed to be:
 

@@ -602,12 +602,22 @@ impl CodeGenerator {
                 Expr::Reference { expr, .. } => expr.as_ref(),
                 other => other,
             };
-            // The argument's own provenance decides. A name this pass tracks
-            // answers it; anything else - a struct field, an element, a call
-            // result - does not, and "cannot tell" must not read as "may".
-            // `mutate(s.array)` used to root to `s`, find no binding, and be
-            // waved through even when `s` was a shared parameter.
-            let root = Self::expr_root_ident(place);
+            // The argument's own provenance decides, and only a *name* has one
+            // this pass can state. Anything else - a struct field, an element,
+            // a call result - does not, and "cannot tell" must not read as
+            // "may". `mutate(s.array)` used to root to `s`, find no binding,
+            // and be waved through even when `s` was a shared parameter.
+            //
+            // Deliberately not `expr_root_ident`: rooting an *element* at its
+            // array (`grid[0]` -> `grid`) would let the element inherit the
+            // array's capability, which is a different, more permissive rule
+            // than the one §9.2 states. Inheriting is defensible, but it is not
+            // what the specification promises a reader, and the specification
+            // is the contract.
+            let root = match place {
+                Expr::Ident(name) => Some(name.as_str()),
+                _ => None,
+            };
             let binding = root.and_then(|r| self.array_bindings.get(r));
             let Some(binding) = binding else {
                 if !self.is_array_argument(arg) {
@@ -3992,6 +4002,28 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("cannot establish where the array came from"), "{}", msg);
         assert!(msg.contains("field access"), "{}", msg);
+    }
+
+    // An *array-valued* element - a row of a nested array - is refused as
+    // unknown provenance, which is what §9.2 promises. Rooting it at its array
+    // (`grid[0]` -> `grid`) would let it inherit that array's capability: a
+    // defensible rule, but not the documented one, and the code used to do it
+    // while the specification said otherwise.
+    #[test]
+    fn test_array_valued_element_is_refused_as_unknown_provenance() {
+        let err = generate(
+            r#"
+        fn mutate(row: &mut [i64; 2]) { row[0] = 99; }
+        fn main() {
+            let mut grid: [[i64; 2]; 2] = [[1, 2], [3, 4]];
+            mutate(&mut grid[0]);
+        }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot establish where the array came from"), "{}", msg);
+        assert!(msg.contains("array index"), "{}", msg);
     }
 
     // The refusal must not swallow ordinary code: an array *element* is not an

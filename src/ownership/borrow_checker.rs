@@ -201,6 +201,18 @@ impl BorrowChecker {
         let mut params = Vec::new();
 
         for param in &func.params {
+            // `mut` is decided before the type, because codegen emits *every*
+            // mutable parameter as a pointer to the caller's storage
+            // (src/codegen/mod.rs, "Pass by pointer for mutable parameters"),
+            // whatever the type is. Classifying `mut x: i64` or
+            // `mut s: String` as Copy - which the type-first order did, via the
+            // `String` and primitive arms below - meant the write permission
+            // was never checked for them: `fn bump(mut x: i64) { x = 42; }`
+            // called with an immutable `let n = 1;` compiled and printed 42.
+            if param.mutable {
+                params.push(ParamOwnership::BorrowMut);
+                continue;
+            }
             let ownership = match &param.ty {
                 Type::Array(_, _) => {
                     // An array parameter is a *reference*, not a move. The C
@@ -211,24 +223,14 @@ impl BorrowChecker {
                     // are passed as pointers"). Codegen is the ground truth
                     // here, so this pass models it as a borrow either way and
                     // only the mutability of the binding picks the kind.
-                    if param.mutable {
-                        ParamOwnership::BorrowMut
-                    } else {
-                        ParamOwnership::Borrow
-                    }
+                    ParamOwnership::Borrow
                 }
                 // `String` is Copy (see `is_copy_type`): it lowers to
                 // `const char*` and nothing frees it per value, so passing one
                 // neither transfers nor invalidates anything.
                 Type::String => ParamOwnership::Copy,
-                Type::Custom(_) => {
-                    // Non-copy types
-                    if param.mutable {
-                        ParamOwnership::BorrowMut
-                    } else {
-                        ParamOwnership::Move
-                    }
-                }
+                // Non-copy types
+                Type::Custom(_) => ParamOwnership::Move,
                 Type::Reference { mutable, .. } => {
                     if *mutable {
                         ParamOwnership::BorrowMut
@@ -438,9 +440,13 @@ impl BorrowChecker {
                 self.check_expr(iter)?;
 
                 self.context.enter_scope();
-                // Initialize loop variable
+                // Initialize loop variable. `for x in xs` binds `x`
+                // immutably - there is no `for mut x` in the grammar - and the
+                // binding has to be recorded, because an unregistered name is
+                // now a refusal, not a free pass.
                 let place = Place::Local(var.clone());
                 self.context.init_owned(place);
+                self.mutable_bindings.insert(var.clone(), false);
 
                 self.check_block_stmts(body)?;
                 self.context.exit_scope();
@@ -677,9 +683,15 @@ impl BorrowChecker {
 
     /// Reject `&mut place` when the binding underneath was not declared mutable.
     ///
-    /// Only a binding this pass has actually seen declared is judged; an
-    /// unknown name (a pattern binding, say) is left alone rather than
-    /// rejected on a guess.
+    /// An unregistered name is **refused**, not permitted. While the map held
+    /// only `let` bindings, treating unknown as allowed was a reasonable
+    /// default; now that the map is the invariant, that default is a hole that
+    /// grows every time a binder is added and forgotten - `for` variables and
+    /// match bindings were exactly that, and passed straight through. Every
+    /// binder in the grammar registers here: parameters, `let`, the `for`
+    /// variable, and pattern bindings. Anything else that reaches this point
+    /// is a binder nobody taught the invariant about, and failing loudly is
+    /// the whole point of the rule.
     fn check_mutable_borrow_allowed(
         &self,
         place: &Place,
@@ -689,7 +701,7 @@ impl BorrowChecker {
         loop {
             match root {
                 Place::Local(name) => {
-                    if self.mutable_bindings.get(name) == Some(&false) {
+                    if self.mutable_bindings.get(name) != Some(&true) {
                         return Err(CompileError::BorrowChecker {
                             message: format!(
                                 "cannot borrow `{}` as mutable: it is not declared mutable. \
@@ -783,6 +795,9 @@ impl BorrowChecker {
             Pattern::Ident(name) => {
                 let place = Place::Local(name.clone());
                 self.context.init_owned(place);
+                // A match binding is immutable: the grammar has no `mut`
+                // pattern. Recording it keeps the map total over binders.
+                self.mutable_bindings.insert(name.clone(), false);
             }
             Pattern::EnumPattern { data, .. } => {
                 if let Some(pattern_data) = data {
@@ -1425,6 +1440,118 @@ mod tests {
         assert!(
             result.is_ok(),
             "an inner immutable shadow rejected a legitimate outer `let mut`: {:?}",
+            result
+        );
+    }
+
+    /// GENUINE ERROR, newly rejected: an immutable *scalar* passed to a `mut`
+    /// parameter. Codegen emits every `mut` parameter as a pointer into the
+    /// caller's storage, but the signature collector checked the type before
+    /// the mutability, so a primitive was classified Copy and never reached the
+    /// permission check. Measured before the fix: this program printed 42.
+    #[test]
+    fn test_immutable_scalar_passed_to_a_mut_parameter_is_rejected() {
+        let result = borrow_check(
+            r#"
+            fn bump(mut x: i64) { x = 42; }
+            fn main() {
+                let n = 1;
+                bump(n);
+                print_int(n);
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            "an immutable scalar passed to a `mut` parameter was accepted: {:?}",
+            result
+        );
+    }
+
+    /// The same for `String`, which had its own Copy arm ahead of the
+    /// mutability test. Measured before the fix: the caller's string printed as
+    /// "changed".
+    #[test]
+    fn test_immutable_string_passed_to_a_mut_parameter_is_rejected() {
+        let result = borrow_check(
+            r#"
+            fn retitle(mut s: String) { s = "changed"; }
+            fn main() {
+                let t: String = "orig";
+                retitle(t);
+                print(t);
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            "an immutable String passed to a `mut` parameter was accepted: {:?}",
+            result
+        );
+    }
+
+    /// A `mut` parameter of primitive type is still usable - the fix must
+    /// reject the immutable *argument*, not the declaration.
+    #[test]
+    fn test_mutable_local_passed_to_a_mut_scalar_parameter_is_accepted() {
+        let result = borrow_check(
+            r#"
+            fn bump(mut x: i64) { x = 42; }
+            fn main() {
+                let mut n = 1;
+                bump(n);
+                print_int(n);
+            }
+            "#,
+        );
+        assert!(
+            result.is_ok(),
+            "a `let mut` scalar passed to a `mut` parameter was rejected: {:?}",
+            result
+        );
+    }
+
+    /// GENUINE ERROR, newly rejected: a `for` variable borrowed mutably. Loop
+    /// variables entered the ownership context but never the mutability map,
+    /// and an unregistered name used to be permitted, so they bypassed the
+    /// invariant entirely.
+    #[test]
+    fn test_mutable_borrow_of_a_for_variable_is_rejected() {
+        let result = borrow_check(
+            r#"
+            fn bump(x: &mut i64) { }
+            fn main() {
+                let xs = [1, 2, 3];
+                for v in xs {
+                    bump(&mut v);
+                }
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            "a mutable borrow of a `for` variable was accepted: {:?}",
+            result
+        );
+    }
+
+    /// And a match binding, which `bind_pattern` also left unregistered.
+    #[test]
+    fn test_mutable_borrow_of_a_match_binding_is_rejected() {
+        let result = borrow_check(
+            r#"
+            fn bump(x: &mut i64) { }
+            fn main() {
+                let n = 5;
+                match n {
+                    other => { bump(&mut other); }
+                }
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            "a mutable borrow of a match binding was accepted: {:?}",
             result
         );
     }
