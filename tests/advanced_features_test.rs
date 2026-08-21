@@ -495,7 +495,7 @@ fn test_iterator_protocol() {
 }
 
 #[test]
-#[ignore = "XFAIL: the `?` operator against a real Result — grammar.ebnf:224 '`?` and `.await` parse and then generate C that does not compile'; the enum's second type argument is dropped before it gets that far (owned by M4, exit criterion)"]
+#[ignore = "XFAIL: the `?` operator — grammar.ebnf:224-225 '`?` and `.await` appear here because they parse. Nothing lowers them'; since 439b241 it is refused outright with 'the `?` operator is not implemented' rather than emitting undefined C, so this now blocks on the missing lowering (owned by M4, exit criterion: `?` works against the real Result)"]
 fn test_error_handling_sugar() {
     let source = r#"
     enum Result<T, E> {

@@ -456,7 +456,7 @@ fn test_effects_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: struct-variant patterns with field shorthand and `if` guards — grammar.ebnf:239 'No literal patterns, ranges, or-patterns, guards, tuple/slice patterns, ref/mut bindings, @ bindings, field shorthand' (owned by M2, item 4)"]
+#[ignore = "XFAIL: struct-variant patterns with field shorthand and `if` guards — grammar.ebnf:241 'No literal patterns, ranges, or-patterns, guards, tuple/slice patterns, ref/mut bindings, @ bindings, field shorthand' (owned by M2, item 4)"]
 fn test_pattern_matching_guards() {
     let source = r#"
     enum Message {

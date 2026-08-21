@@ -9,23 +9,36 @@ gate, because "never ran" must not be indistinguishable from "failed as
 expected". This applies the same three rules to the Rust tests, where the
 declaration mechanism is `#[ignore = "…"]` rather than a manifest file.
 
-THE INVENTORY MUST BE CLOSED IN BOTH DIRECTIONS, AND KEYED THE WAY CARGO SPEAKS.
-Reading declarations and running cargo is not enough: an `#[ignore]` behind a
-`cfg`, in a module nobody links, or in a target that failed to build is neither
-run nor reported, and a gate that only counted what it saw would call that green.
-So every declaration must be observed exactly once, and every ignored test
-observed must have a declaration behind it.
+ASK CARGO WHAT EXISTS; DO NOT RE-DERIVE IT.
+Earlier versions of this gate built the declared inventory by parsing the crate:
+walking the module graph, resolving `mod NAME;`, following `include!`, deciding
+which `#[cfg]` was active. That is re-implementing rustc's module resolution in
+Python, and it is unbounded — successive reviews each found another legitimate
+construct it did not model (`#[path]`, mutually exclusive `cfg`s, directory
+targets, `include!` lookup directories). A gate that rejects ordinary Rust is a
+gate someone eventually switches off, and then it protects nothing.
 
-That reconciliation is only as good as the key. Cargo reports a test by its FULL
-module path — `optimizer::dead_code_test::tests::test_x`, not `test_x` — so a
-key built from the function name alone makes a module-nested test simultaneously
-STALE (declared under a name that never runs) and UNDECLARED (observed under a
-name never declared), and collapses two same-named tests in different modules
-into one bogus duplicate. Both shapes are regression-tested by `--self-test`,
-which runs before every real invocation.
+So both inventories now come from the same authority:
 
-Keys are (target, module path), where the target is the source path cargo prints
-in its `Running …` line, so the two sides are directly comparable.
+    declared  = cargo test -- --list --ignored     every ignored test, per target
+    observed  = cargo test -- --ignored            what running them did
+
+Both print the FULL module path (`optimizer::dead_code_test::tests::test_x`) and
+both attribute to a target by the `Running …` line that precedes them, so the key
+is (target, module path) on both sides — and reconciliation compares two cargo
+outputs instead of comparing cargo against a hand-written parser.
+
+That deletes target discovery, the module graph walk, `mod`/`#[path]`/`include!`
+resolution, the cfg reachability question, and the ORPHAN check: a file no target
+compiles contributes no test to the listing, which is the fact ORPHAN was trying
+to infer from the filesystem.
+
+WHAT STILL NEEDS THE SOURCE: the reason text.
+Cargo reports *that* a test is ignored, never *why*. So for each name cargo has
+already given us, we look for the `#[ignore = "…"]` attached to `fn <name>` — a
+local search keyed on a symbol known to exist, not a model of the crate. A test
+cargo calls ignored whose reason cannot be found, or which carries a bare
+`#[ignore]`, fails the gate: that is an undeclared expected failure.
 
 TAGS. Rust overloads `#[ignore]` for two unrelated things, so the reason says
 which:
@@ -53,7 +66,7 @@ import sys
 # Reviewed allowlist of tests that may be #[ignore]d for cost alone. Keyed by
 # the SAME identity reconciliation uses — (target, full module path) — because
 # keying it by bare function name would hand permission to every same-named test
-# in the file, reintroducing the collision the module-path keying just removed.
+# in the file.
 SLOW_ALLOWLIST = {
     ("tests/stress_test.rs", "test_extremely_large_program"),
 }
@@ -63,81 +76,86 @@ FN_MODIFIERS = {"pub", "async", "unsafe", "extern", "const", "default"}
 
 
 # --------------------------------------------------------------------------
-# Rust source scanning
+# Cargo output parsing — the only source of truth for what tests exist
 # --------------------------------------------------------------------------
 
-def target_roots(exists=os.path.exists, listdir=os.listdir):
-    """The crate roots cargo builds as test targets.
-
-    A target's identity is its root file, which is exactly what cargo prints in
-    its `Running …` line. Everything else in the target is reached by walking
-    Rust's module graph from here — NOT by guessing a module path from a file's
-    location on disk. Those two disagree for every ordinary `mod helpers;`:
-    `tests/common/mod.rs` is one file that is compiled into five different test
-    binaries, so it holds five declarations, one per target, and a filesystem
-    walk cannot express that at all.
-    """
-    roots = []
-    for p in ("src/lib.rs", "src/main.rs"):
-        if exists(p):
-            roots.append(p)
-    if exists("src/bin"):
-        roots += ["src/bin/" + n for n in sorted(listdir("src/bin"))
-                  if n.endswith(".rs")]
-    if exists("tests"):
-        roots += ["tests/" + n for n in sorted(listdir("tests"))
-                  if n.endswith(".rs")]
-    return roots
+# The artifact path in parentheses is NOT anchored to `target/`: cargo prints
+# whatever CARGO_TARGET_DIR says, which may be absolute or elsewhere entirely.
+# Anchoring on it made every result unattributable — a false UNDECLARED for the
+# whole suite — one environment variable away. The parentheses are enough to
+# tell this from the compiler-under-test's own "   Running Constant Folding"
+# chatter on stdout, which has none.
+RUNNING_RE = re.compile(r"^\s+Running (?:unittests )?(\S+) \(")
+DOCTEST_RE = re.compile(r"^\s+Doc-tests ")
+RESULT_RE = re.compile(r"^test result:")
+TEST_RE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED)$")
+LIST_RE = re.compile(r"^(\S+): test$")
 
 
-def module_dir(path, is_root):
-    """Where `mod NAME;` inside `path` looks for NAME.
+def parse_list(out):
+    """`cargo test -- --list --ignored` -> [(target, module path)]."""
+    target, listed = None, []
+    for raw in out.splitlines():
+        m = RUNNING_RE.match(raw)
+        if m:
+            target = m.group(1)
+            continue
+        if DOCTEST_RE.match(raw):
+            target = "doc-tests"
+            continue
+        m = LIST_RE.match(raw)
+        if m:
+            listed.append((target, m.group(1)))
+    return listed
 
-    Crate roots and `mod.rs` own their containing directory; any other file
-    `dir/foo.rs` owns `dir/foo/`. This is why `tests/common/mod.rs` is the
-    idiom: an integration-test root is a crate root, so it resolves `mod common;`
-    beside itself rather than under `tests/<root name>/`.
-    """
-    d = os.path.dirname(path)
-    base = os.path.basename(path)
-    if is_root or base == "mod.rs":
-        return d
-    return os.path.join(d, base[: -len(".rs")])
+
+def parse_run(out):
+    """`cargo test -- --ignored` -> (observations, targets that never reported)."""
+    target, obs, unreported, open_target = None, [], [], None
+    for raw in out.splitlines():
+        m = RUNNING_RE.match(raw)
+        if m:
+            if open_target:
+                unreported.append(open_target)
+            target = open_target = m.group(1)
+            continue
+        if DOCTEST_RE.match(raw):
+            if open_target:
+                unreported.append(open_target)
+            target = open_target = "doc-tests"
+            continue
+        if RESULT_RE.match(raw):
+            open_target = None
+            continue
+        m = TEST_RE.match(raw)
+        if m:
+            obs.append((target, m.group(1), m.group(2)))
+    if open_target:
+        unreported.append(open_target)
+    return obs, unreported
 
 
-def resolve_mod(path, is_root, name, exists=os.path.isfile):
-    """`mod NAME;` -> the file it pulls in, or None if neither form is present."""
-    d = module_dir(path, is_root)
-    for cand in (os.path.join(d, name + ".rs"),
-                 os.path.join(d, name, "mod.rs")):
-        if exists(cand):
-            return cand.replace(os.sep, "/")
-    return None
-
+# --------------------------------------------------------------------------
+# Finding the reason for a test cargo has already named
+# --------------------------------------------------------------------------
 
 def tokenize(src):
     """Yield (kind, text, line).
 
     THIS IS PARTIAL PARSING, AND IT FAILS CLOSED AND LOUDLY BY DESIGN.
-    It is not a Rust parser and must never pretend to be one: it recognises just
-    enough — comments, every literal form, attribute token trees, braces, and a
-    handful of keywords — to know which scope a `#[ignore]` is in. Anything it
-    mis-reads shows up as a declaration that is never observed (STALE) or an
-    observation that was never declared (UNDECLARED), both of which fail the
-    gate with the offending name printed. That is the right failure direction:
-    the gate cannot quietly under-report.
+    It is not a Rust parser and must never pretend to be one. Its whole job is
+    now: given a function name cargo has already said exists, find the
+    `#[ignore]` attached to it without being fooled by a `fn` or a brace inside
+    a string or a comment. It no longer decides WHAT EXISTS, only what a known
+    thing says — which is why the module graph, `#[path]`, `include!` and the
+    `cfg` reachability question are gone from this file entirely.
 
-    The cost of failing closed is that a *false* red on legitimate code is a
-    usability defect, not a correctness one — and a gate that rejects ordinary
-    repository structure is a gate someone will eventually switch off, at which
-    point it protects nothing. So every construct that appears in normal Rust
-    must be understood here, and `--self-test` pins the ones that have bitten:
-    braces inside strings, raw strings, byte strings, char literals versus
-    lifetimes, nested block comments, and attribute token trees.
+    When it mis-reads something the result is a reason it cannot find, which is
+    printed by name and fails the gate. It cannot quietly under-report.
 
-    Comments and literals collapse to a single token so that braces inside them
-    cannot move the module stack — `"fn main() { }"` in a fixture is a string,
-    not a scope."""
+    Comments and literals collapse to one token so braces inside them cannot
+    move the module stack — `"fn main() { }"` in a fixture is a string, not a
+    scope."""
     i, line, n = 0, 1, len(src)
     while i < n:
         c = src[i]
@@ -233,64 +251,25 @@ def tokenize(src):
         i += 1
 
 
-DISABLING_INNER_CFG = re.compile(r'#!\[\s*cfg\s*\(\s*(?!test\s*\))')
+def find_ignore_sites(path, src):
+    """Every `#[ignore…]`-carrying fn in one file.
 
-
-def literal_text(tok):
-    """The contents of a string-literal token, raw or not."""
-    m = re.match(r'^(?:b)?(r(#*))?"', tok)
-    if m and m.group(1):
-        hashes = len(m.group(2))
-        return tok[len(m.group(0)):-(1 + hashes)]
-    return tok[tok.index('"') + 1:-1]
-
-
-def scan_file(path, src, target, prefix):
-    """Scan one file as part of one target, at one module prefix.
-
-    -> (declarations, external `mod NAME;` sites, `include!` sites)
-
-    The same file scanned for two targets yields two sets of declarations, which
-    is correct: `tests/common/mod.rs` really is compiled into five test binaries
-    and really does contribute five tests.
+    `inline_path` is the function qualified by the `mod` blocks written IN THIS
+    FILE. That is a suffix of the module path cargo prints, and a suffix is all
+    the disambiguation needed — the rest of cargo's path comes from how the file
+    is included, which is exactly what this script no longer tries to model.
     """
-    # A file switched off by an inner cfg contributes nothing. This is read from
-    # the attribute, not guessed: `#![cfg(skip_for_now)]` at the top of
-    # src/lsp/server_test.rs compiles the whole file out, and declaring its
-    # contents would produce a STALE for a test that cannot exist.
-    if DISABLING_INNER_CFG.search(src[:2000]):
-        return [], [], []
-
-    out, ext_mods, includes = [], [], []
-    mods, depth, pending = [], 0, None
+    out, mods, depth, pending = [], [], 0, None
     expect_mod_name = expect_fn_name = False
     mod_name = None
-    # `include!("…")` is matched as a token sequence rather than by a regex over
-    # the file, because the included items land at the module path of the
-    # INCLUDING SITE — which a file-level regex cannot see.
-    inc_state = 0
     for kind, text, line in tokenize(src):
         if kind == "attr":
             if re.match(r"#\[\s*ignore", text):
                 pending = (text, line)
             continue
-        if kind == "str":
-            if inc_state == 3:
-                includes.append((literal_text(text), [m[1] for m in mods]))
-            inc_state = 0
-            continue
-        if kind == "char":
-            inc_state = 0
+        if kind in ("str", "char"):
             continue
         if kind == "punct":
-            if inc_state == 1 and text == "!":
-                inc_state = 2
-            elif inc_state == 2 and text == "(":
-                inc_state = 3
-            elif inc_state == 3:
-                pass
-            else:
-                inc_state = 0
             if text == "{":
                 depth += 1
                 if mod_name is not None:
@@ -301,15 +280,10 @@ def scan_file(path, src, target, prefix):
                     mods.pop()
                 depth -= 1
             elif text == ";":
-                if mod_name is not None:
-                    # `mod NAME;` — the body is another file.
-                    ext_mods.append((mod_name,
-                                     [m[1] for m in mods], line))
-                    mod_name = None
+                mod_name = None
                 expect_mod_name = False
             continue
         # ident
-        inc_state = 1 if text == "include" else 0
         if expect_mod_name:
             mod_name, expect_mod_name = text, False
             continue
@@ -318,16 +292,11 @@ def scan_file(path, src, target, prefix):
             if pending is not None:
                 attr, attrline = pending
                 out.append({
-                    "tag": ("XFAIL" if re.search(r'ignore\s*=\s*"XFAIL:', attr)
-                            else "SLOW" if re.search(r'ignore\s*=\s*"SLOW:', attr)
-                            else "BARE" if re.match(r"#\[\s*ignore\s*\]", attr)
-                            else "UNTAGGED"),
-                    "target": target,
-                    "path": "::".join(prefix + [m[1] for m in mods] + [text]),
                     "name": text,
-                    "file": path,
-                    "line": attrline,
+                    "inline_path": "::".join([m[1] for m in mods] + [text]),
                     "attr": attr,
+                    "line": attrline,
+                    "file": path,
                 })
             pending = None
             continue
@@ -340,352 +309,283 @@ def scan_file(path, src, target, prefix):
         # An attribute attaches to the next item; only these may sit between.
         if text not in FN_MODIFIERS:
             pending = None
-
-    return out, ext_mods, includes
-
-
-def walk_target(root, read=None, resolve=resolve_mod):
-    """Walk one target's module graph from its root file.
-
-    -> (declarations, set of files reached, unresolved `mod NAME;` sites)
-    """
-    if read is None:
-        def read(p):
-            with open(p, encoding="utf-8") as fh:
-                return fh.read()
-
-    decls, reached, unresolved = [], set(), []
-    # (file, prefix, is_root); `include!` splices a file in at the including
-    # site, so it inherits that site's prefix rather than its own location's.
-    stack = [(root, [], True)]
-    seen = set()
-    while stack:
-        path, prefix, is_root = stack.pop()
-        if (path, tuple(prefix)) in seen:
-            continue
-        seen.add((path, tuple(prefix)))
-        try:
-            src = read(path)
-        except OSError:
-            continue
-        reached.add(path)
-        d, ext_mods, includes = scan_file(path, src, root, prefix)
-        decls += d
-        for name, inner_mods, line in ext_mods:
-            child = resolve(path, is_root, name)
-            if child is None:
-                unresolved.append((path, line, name))
-                continue
-            stack.append((child, prefix + inner_mods + [name], False))
-        for rel, inner_mods in includes:
-            # include! is textual: relative to the including file's directory,
-            # and the included items land at the including file's module path.
-            inc = os.path.normpath(
-                os.path.join(os.path.dirname(path), rel)).replace(os.sep, "/")
-            stack.append((inc, prefix + inner_mods, is_root))
-    return decls, reached, unresolved
+    return out
 
 
-def collect_declarations(roots=None, read=None, resolve=resolve_mod):
-    """Every declaration in every target, plus the files no target reached."""
-    if roots is None:
-        roots = target_roots()
-    decls, reached, unresolved = [], set(), []
+def index_sites(files):
+    """bare fn name -> [site]. `files` is {path: source}."""
+    index = {}
+    for path in sorted(files):
+        for site in find_ignore_sites(path, files[path]):
+            index.setdefault(site["name"], []).append(site)
+    return index
+
+
+def read_sources(roots=("src", "tests")):
+    files = {}
     for root in roots:
-        d, r, u = walk_target(root, read=read, resolve=resolve)
-        decls += d
-        reached |= r
-        unresolved += u
-    return decls, reached, unresolved
+        for dirpath, _, names in os.walk(root):
+            for name in sorted(names):
+                if name.endswith(".rs"):
+                    p = os.path.join(dirpath, name).replace(os.sep, "/")
+                    with open(p, encoding="utf-8") as fh:
+                        files[p] = fh.read()
+    return files
 
 
-# --------------------------------------------------------------------------
-# Cargo output parsing
-# --------------------------------------------------------------------------
+def find_reason(target, path, index):
+    """-> (candidate sites, error). Exactly one of the two is falsy.
 
-# The artifact path in parentheses is NOT anchored to `target/`: cargo prints
-# whatever CARGO_TARGET_DIR says, which may be absolute or elsewhere entirely.
-# Anchoring on it made every result unattributable — a false UNDECLARED for the
-# whole suite — one environment variable away. The parentheses are enough to
-# distinguish this from the compiler-under-test's own "   Running Constant
-# Folding" chatter on stdout, which has none.
-RUNNING_RE = re.compile(r"^\s+Running (?:unittests )?(\S+) \(")
-DOCTEST_RE = re.compile(r"^\s+Doc-tests ")
-RESULT_RE = re.compile(r"^test result:")
-TEST_RE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED)$")
-
-
-def parse_cargo(out):
-    """-> (observations, targets that started but never reported)."""
-    target, obs, unreported, open_target = None, [], [], None
-    for raw in out.splitlines():
-        m = RUNNING_RE.match(raw)
-        if m:
-            if open_target:
-                unreported.append(open_target)
-            target = open_target = m.group(1)
-            continue
-        if DOCTEST_RE.match(raw):
-            if open_target:
-                unreported.append(open_target)
-            target = open_target = "doc-tests"
-            continue
-        if RESULT_RE.match(raw):
-            open_target = None
-            continue
-        m = TEST_RE.match(raw)
-        if m:
-            obs.append({"target": target, "path": m.group(1),
-                        "outcome": m.group(2)})
-    if open_target:
-        unreported.append(open_target)
-    return obs, unreported
+    More than one candidate is normal and not an error. `#[cfg(unix)] mod m`
+    beside `#[cfg(not(unix))] mod m` is two honest declarations of one test,
+    only one of which compiles, and this script deliberately does not evaluate
+    `cfg` — that was the road to re-implementing rustc. So every candidate is
+    validated and the caller complains only if they DISAGREE about what kind of
+    declaration this is. Differing reason text between arms is fine; differing
+    tags, or a malformed one, is not.
+    """
+    name = path.rsplit("::", 1)[-1]
+    cands = index.get(name, [])
+    if not cands:
+        return [], ('no `#[ignore = "…"]` could be found for it. cargo '
+                    "reports it as ignored, so it is an expected failure "
+                    "with no declared reason — a bare #[ignore], a "
+                    "#[cfg_attr(…, ignore)], or a definition this script "
+                    "could not locate")
+    # cargo's path ends with the module nesting written in the defining file.
+    exact = [c for c in cands
+             if path == c["inline_path"] or path.endswith("::" + c["inline_path"])]
+    if not exact:
+        exact = cands
+    if len(exact) > 1:
+        # Prefer a definition in the target's own root file; that is what
+        # separates two same-named tests in two integration targets.
+        own = [c for c in exact if c["file"] == target]
+        if own:
+            exact = own
+    return exact, None
 
 
 # --------------------------------------------------------------------------
 # Reconciliation
 # --------------------------------------------------------------------------
 
-def reconcile(decls, obs):
-    """-> (summary counts, problems). Keys are (target, module path)."""
+def classify(site):
+    attr = site["attr"]
+    if re.search(r'ignore\s*=\s*"XFAIL:', attr):
+        return "XFAIL"
+    if re.search(r'ignore\s*=\s*"SLOW:', attr):
+        return "SLOW"
+    if re.match(r"#\[\s*ignore\s*\]", attr):
+        return "BARE"
+    return "UNTAGGED"
+
+
+def reconcile(listed, obs, index):
+    """listed: [(target, path)]; obs: [(target, path, outcome)].
+
+    Keys are (target, module path) on both sides. -> (counts, problems)
+    """
     problems = []
-    xf = {(d["target"], d["path"]): d for d in decls if d["tag"] == "XFAIL"}
-    sl = {(d["target"], d["path"]): d for d in decls if d["tag"] == "SLOW"}
+    counts = {"xfail": 0, "xpass": 0, "slow_pass": 0,
+              "declared_xfail": 0, "declared_slow": 0}
 
-    seen = {}
-    for d in decls:
-        if d["tag"] in ("XFAIL", "SLOW"):
-            k = (d["target"], d["path"])
-            seen.setdefault(k, []).append(d)
-    for k, v in sorted(seen.items()):
-        if len(v) > 1:
-            problems.append(("DUPLICATE",
-                             "%s::%s declared %d times, so a result cannot be "
-                             "attributed" % (k[0], k[1], len(v))))
+    tags, sites = {}, {}
+    for key in listed:
+        target, path = key
+        cands, err = find_reason(target, path, index)
+        if err:
+            problems.append(("TAG", "%s::%s: %s" % (target, path, err)))
+            tags[key] = None
+            continue
+        kinds = {classify(c) for c in cands}
+        if len(kinds) > 1:
+            where = ", ".join("%s:%d [%s]" % (c["file"], c["line"], classify(c))
+                              for c in cands)
+            problems.append(("TAG", "%s::%s: its candidate declarations "
+                                    "disagree about what it is (%s)"
+                             % (target, path, where)))
+            tags[key] = None
+            continue
+        site = cands[0]
+        sites[key] = site
+        tag = kinds.pop()
+        tags[key] = tag
+        loc = ", ".join("%s:%d" % (c["file"], c["line"]) for c in cands)
+        if tag == "BARE":
+            problems.append(("TAG", "%s: bare #[ignore] on %s::%s — every "
+                             "expected failure needs a reason: #[ignore = "
+                             '"XFAIL: <missing feature> (owned by M<n>)"] or '
+                             '#[ignore = "SLOW: <why>"]' % (loc, target, path)))
+        elif tag == "UNTAGGED":
+            problems.append(("TAG", "%s: #[ignore] reason on %s::%s must start "
+                             "with 'XFAIL: ' or 'SLOW: '" % (loc, target, path)))
+        elif tag == "XFAIL":
+            counts["declared_xfail"] += 1
+            if not all(OWNER_RE.search(c["attr"]) for c in cands):
+                problems.append(("TAG", "%s: XFAIL reason on %s::%s names no "
+                                 "valid owner. Use '(owned by M<n>)' with n in "
+                                 "1..9, or '(owned by unscheduled…)' for work "
+                                 "under MILESTONES.md 'Not scheduled, and why'."
+                                 % (loc, target, path)))
+        elif tag == "SLOW":
+            counts["declared_slow"] += 1
+            if key not in SLOW_ALLOWLIST:
+                problems.append(("TAG", "%s: %s::%s is tagged SLOW but is not "
+                                 "on the reviewed allowlist in "
+                                 "scripts/test-xfail.py. A passing test must "
+                                 "not be retired from the suite by relabelling "
+                                 "it." % (loc, target, path)))
 
-    counts = {"xfail": 0, "xpass": 0, "slow_pass": 0}
+    listed_set = set(listed)
+    for key in sorted(k for k in listed_set if listed.count(k) > 1):
+        problems.append(("DUPLICATE", "%s::%s listed more than once" % key))
+
     observed_keys = set()
-    for o in obs:
-        k = (o["target"], o["path"])
-        observed_keys.add(k)
-        if k in xf:
-            if o["outcome"] == "ok":
+    for target, path, outcome in obs:
+        key = (target, path)
+        observed_keys.add(key)
+        if key not in listed_set:
+            problems.append(("UNDECLARED", "%s::%s (%s) ran but `--list "
+                             "--ignored` does not list it"
+                             % (target, path, outcome)))
+            continue
+        tag = tags.get(key)
+        if tag == "XFAIL":
+            if outcome == "ok":
                 counts["xpass"] += 1
                 problems.append(("XPASS", "%s::%s\n      was: %s"
-                                 % (k[0], k[1], xf[k]["attr"].strip())))
+                                 % (target, path, sites[key]["attr"].strip())))
             else:
                 counts["xfail"] += 1
-        elif k in sl:
-            if o["outcome"] == "ok":
+        elif tag == "SLOW":
+            if outcome == "ok":
                 counts["slow_pass"] += 1
             else:
-                problems.append(("SLOWFAIL", "%s::%s" % k))
-        else:
-            problems.append(("UNDECLARED", "%s::%s (%s)"
-                             % (k[0], k[1], o["outcome"])))
+                problems.append(("SLOWFAIL", "%s::%s" % (target, path)))
 
-    for k in sorted(set(xf) | set(sl)):
-        if k not in observed_keys:
-            problems.append(("STALE", "%s::%s" % k))
+    for key in sorted(listed_set):
+        if key not in observed_keys:
+            problems.append(("STALE", "%s::%s" % key))
 
-    counts["declared_xfail"] = len(xf)
-    counts["declared_slow"] = len(sl)
+    counts["listed"] = len(listed_set)
     counts["observed"] = len(observed_keys)
     return counts, problems
 
 
-def validate_tags(decls):
-    problems = []
-    for d in decls:
-        loc = "%s:%d" % (d["file"], d["line"])
-        key = "%s::%s" % (d["target"], d["path"])
-        if d["tag"] == "BARE":
-            problems.append(("TAG", "%s: bare #[ignore] on %s — every expected "
-                             "failure needs a reason: #[ignore = \"XFAIL: "
-                             "<missing feature> (owned by M<n>)\"] or "
-                             "#[ignore = \"SLOW: <why>\"]" % (loc, key)))
-        elif d["tag"] == "UNTAGGED":
-            problems.append(("TAG", "%s: #[ignore] reason on %s must start with "
-                             "'XFAIL: ' or 'SLOW: '" % (loc, key)))
-        elif d["tag"] == "XFAIL":
-            if not OWNER_RE.search(d["attr"]):
-                problems.append(("TAG", "%s: XFAIL reason on %s names no valid "
-                                 "owner. Use '(owned by M<n>)' with n in 1..9, "
-                                 "or '(owned by unscheduled…)' for work under "
-                                 "MILESTONES.md 'Not scheduled, and why'."
-                                 % (loc, key)))
-        elif d["tag"] == "SLOW":
-            if (d["target"], d["path"]) not in SLOW_ALLOWLIST:
-                problems.append(("TAG", "%s: %s is tagged SLOW but is not on the "
-                                 "reviewed allowlist in scripts/test-xfail.py. A "
-                                 "passing test must not be retired from the "
-                                 "suite by relabelling it." % (loc, key)))
-    return problems
-
-
 # --------------------------------------------------------------------------
-# Self-test: the two bijection shapes, plus the shapes that broke earlier
+# Self-test: what is left to get wrong is reason lookup
 # --------------------------------------------------------------------------
 
 def self_test():
-    """Regressions for every way this scanner has been, or could be, wrong.
-
-    These run before every real invocation. They are pure — no cargo, no disk —
-    so the module graph is exercised through injected `read`/`resolve` hooks.
-    """
     failures = []
 
     def check(label, got, want):
         if got != want:
-            failures.append("%s\n     got:  %r\n     want: %r" % (label, got, want))
-
-    def fake_tree(files):
-        """A repository in a dict: path -> source."""
-        def read(p):
-            if p not in files:
-                raise OSError(p)
-            return files[p]
-
-        def resolve(path, is_root, name):
-            return resolve_mod(path, is_root, name,
-                               exists=lambda c: c.replace(os.sep, "/") in files)
-        return read, resolve
+            failures.append("%s\n     got:  %r\n     want: %r"
+                            % (label, got, want))
 
     XF = '#[ignore = "XFAIL: nope (owned by M1)"]'
 
-    # 1. A module-nested ignored test must key on its full path. Keying on the
-    #    bare function name made such a test STALE and UNDECLARED at once.
-    nested = """
-        #[cfg(test)]
-        mod tests {
-            #[test]
-            %s
-            fn test_a() { let s = "fn main() { }"; }
-        }
-    """ % XF
-    d, _, _ = scan_file("src/optimizer/dead_code_test.rs", nested, "src/lib.rs",
-                        ["optimizer", "dead_code_test"])
-    check("nested test path", [x["path"] for x in d],
-          ["optimizer::dead_code_test::tests::test_a"])
-    check("nested test target", [x["target"] for x in d], ["src/lib.rs"])
+    # 1. The same bare name in two modules of one file: cargo's module path
+    #    selects the right reason.
+    src = """
+        mod a { #[test] #[ignore = "XFAIL: from a (owned by M1)"] fn test_dup() {} }
+        mod b { #[test] #[ignore = "XFAIL: from b (owned by M2)"] fn test_dup() {} }
+    """
+    index = index_sites({"tests/x_test.rs": src})
+    c, err = find_reason("tests/x_test.rs", "a::test_dup", index)
+    check("two modules: picks a", (err, "from a" in c[0]["attr"]), (None, True))
+    c, err = find_reason("tests/x_test.rs", "b::test_dup", index)
+    check("two modules: picks b", (err, "from b" in c[0]["attr"]), (None, True))
 
-    # 2. The same test name in two modules must be two keys, not a duplicate.
-    dup = """
-        mod a { #[test] %s fn test_dup() {} }
-        mod b { #[test] %s fn test_dup() {} }
-    """ % (XF, XF)
-    d, _, _ = scan_file("tests/x_test.rs", dup, "tests/x_test.rs", [])
-    check("two modules, two keys", sorted(x["path"] for x in d),
-          ["a::test_dup", "b::test_dup"])
-    obs = [{"target": "tests/x_test.rs", "path": p, "outcome": "FAILED"}
-           for p in ("a::test_dup", "b::test_dup")]
-    counts, problems = reconcile(d, obs)
-    check("two modules reconcile clean", problems, [])
-    check("two modules counted", counts["xfail"], 2)
+    # 2. The same bare name in two integration targets: the target's own root
+    #    file wins.
+    index = index_sites({
+        "tests/one_test.rs":
+            '#[test] #[ignore = "XFAIL: one (owned by M1)"] fn test_same() {}',
+        "tests/two_test.rs":
+            '#[test] #[ignore = "XFAIL: two (owned by M2)"] fn test_same() {}',
+    })
+    c, err = find_reason("tests/two_test.rs", "test_same", index)
+    check("two targets: picks its own root",
+          (err, len(c), "two" in c[0]["attr"]), (None, 1, True))
 
-    # 3. EXTERNAL `mod NAME;`. This is the ordinary shape — `tests/common/mod.rs`
-    #    pulled in by five integration targets — and a filesystem walk gets it
-    #    wrong in both directions at once.
-    files = {
-        "tests/e2e_test.rs":       "mod common;\n",
-        "tests/integration_test.rs": "mod common;\n",
-        "tests/common/mod.rs":     "#[test] %s fn test_helper() {}\n" % XF,
-    }
-    read, resolve = fake_tree(files)
-    decls, reached, unresolved = collect_declarations(
-        roots=["tests/e2e_test.rs", "tests/integration_test.rs"],
-        read=read, resolve=resolve)
-    check("external mod: one file, one declaration per target",
-          sorted((x["target"], x["path"]) for x in decls),
-          [("tests/e2e_test.rs", "common::test_helper"),
-           ("tests/integration_test.rs", "common::test_helper")])
-    check("external mod: file counted as reached",
-          "tests/common/mod.rs" in reached, True)
-    check("external mod: nothing unresolved", unresolved, [])
-    # ... and it reconciles clean against what cargo would report.
-    obs = [{"target": t, "path": "common::test_helper", "outcome": "FAILED"}
-           for t in ("tests/e2e_test.rs", "tests/integration_test.rs")]
-    _, problems = reconcile(decls, obs)
-    check("external mod reconciles clean", problems, [])
+    # 3. A shared module compiled into several targets is ONE site, so every
+    #    target resolves to the same reason. This is tests/common/mod.rs, the
+    #    shape that broke every filesystem-derived version of this gate.
+    index = index_sites({
+        "tests/common/mod.rs": "#[test] %s fn test_helper() {}" % XF,
+        "tests/e2e_test.rs": "mod common;",
+        "tests/integration_test.rs": "mod common;",
+    })
+    a, ea = find_reason("tests/e2e_test.rs", "common::test_helper", index)
+    b, eb = find_reason("tests/integration_test.rs", "common::test_helper", index)
+    check("shared module resolves for every target",
+          (ea, eb, a[0] is b[0]), (None, None, True))
 
-    # 3b. `mod NAME;` nested inside an inline module, and the non-root
-    #     directory rule: src/a.rs owns src/a/.
-    files = {
-        "src/lib.rs": "mod a;\n",
-        "src/a.rs":   "mod inner { mod b; }\n",
-        "src/a/b.rs": "#[test] %s fn test_deep() {}\n" % XF,
-    }
-    read, resolve = fake_tree(files)
-    decls, _, unresolved = collect_declarations(roots=["src/lib.rs"],
-                                                read=read, resolve=resolve)
-    check("nested external mod path", [x["path"] for x in decls],
-          ["a::inner::b::test_deep"])
-    check("nested external mod resolved", unresolved, [])
+    # 4. A missing reason is reported, not guessed.
+    _, err = find_reason("tests/x_test.rs", "test_absent", index_sites({}))
+    check("missing reason reported", err is not None, True)
 
-    # 3c. An unresolvable `mod NAME;` is reported rather than silently dropped.
-    files = {"tests/x.rs": "mod missing;\n"}
-    read, resolve = fake_tree(files)
-    _, _, unresolved = collect_declarations(roots=["tests/x.rs"],
-                                            read=read, resolve=resolve)
-    check("unresolved mod reported", [u[2] for u in unresolved], ["missing"])
+    # 5. Mutually exclusive `#[cfg]` arms are TWO honest declarations of ONE
+    #    test. Only one compiles; this script does not evaluate cfg, so it must
+    #    accept them as long as they agree about what kind of declaration it is.
+    cfg_arms = """
+        #[cfg(unix)]
+        mod m { #[test] #[ignore = "XFAIL: unix arm (owned by M1)"] fn test_a() {} }
+        #[cfg(not(unix))]
+        mod m { #[test] #[ignore = "XFAIL: other arm (owned by M1)"] fn test_a() {} }
+    """
+    index = index_sites({"tests/p/main.rs": cfg_arms})
+    cands, err = find_reason("tests/p/main.rs", "m::test_a", index)
+    check("cfg arms are candidates, not an error", (err, len(cands)), (None, 2))
+    _, problems = reconcile([("tests/p/main.rs", "m::test_a")],
+                            [("tests/p/main.rs", "m::test_a", "FAILED")], index)
+    check("cfg arms reconcile clean", problems, [])
 
-    # 4. `include!` is textual: the included items take the INCLUDING file's
-    #    module path, not one derived from where the file sits on disk.
-    files = {
-        "tests/y_test.rs": 'mod outer { include!("gen/table.rs"); }\n',
-        "tests/gen/table.rs": "#[test] %s fn test_generated() {}\n" % XF,
-    }
-    read, resolve = fake_tree(files)
-    decls, reached, _ = collect_declarations(roots=["tests/y_test.rs"],
-                                             read=read, resolve=resolve)
-    check("include! keyed at its insertion site",
-          [(x["target"], x["path"]) for x in decls],
-          [("tests/y_test.rs", "outer::test_generated")])
-    check("include! file counted as reached",
-          "tests/gen/table.rs" in reached, True)
+    # 5b. ... but arms that disagree about the KIND of declaration are an error,
+    #     because then the verdict would depend on which one was read.
+    mixed = """
+        #[cfg(unix)]
+        mod m { #[test] #[ignore = "XFAIL: unix arm (owned by M1)"] fn test_b() {} }
+        #[cfg(not(unix))]
+        mod m { #[test] #[ignore = "SLOW: other arm"] fn test_b() {} }
+    """
+    index = index_sites({"tests/p/main.rs": mixed})
+    _, problems = reconcile([("tests/p/main.rs", "m::test_b")],
+                            [("tests/p/main.rs", "m::test_b", "FAILED")], index)
+    check("disagreeing arms are an error",
+          [k for k, _ in problems], ["TAG"])
 
-    # 5. Full round trip against real cargo output shape.
-    cargo = (
-        "   Compiling alan-von-palladium v0.2.0\n"
-        "     Running unittests src/lib.rs (target/release/deps/palladium-ab)\n"
-        "test optimizer::dead_code_test::tests::test_a ... FAILED\n"
-        "test result: FAILED. 0 passed; 1 failed; 0 ignored\n"
-        "     Running tests/x_test.rs (target/release/deps/x_test-cd)\n"
-        "test a::test_dup ... FAILED\n"
-        "test result: FAILED. 0 passed; 1 failed; 0 ignored\n"
-    )
-    o, unreported = parse_cargo(cargo)
-    check("cargo paths kept whole",
-          [x["path"] for x in o],
-          ["optimizer::dead_code_test::tests::test_a", "a::test_dup"])
-    check("cargo targets", [x["target"] for x in o],
-          ["src/lib.rs", "tests/x_test.rs"])
-    check("no unreported target", unreported, [])
+    # 5c. A malformed owner in ANY arm is caught, not just the first.
+    bad_arm = """
+        #[cfg(unix)]
+        mod m { #[test] #[ignore = "XFAIL: ok (owned by M1)"] fn test_c() {} }
+        #[cfg(not(unix))]
+        mod m { #[test] #[ignore = "XFAIL: bad (owned by someday)"] fn test_c() {} }
+    """
+    index = index_sites({"tests/p/main.rs": bad_arm})
+    _, problems = reconcile([("tests/p/main.rs", "m::test_c")],
+                            [("tests/p/main.rs", "m::test_c", "FAILED")], index)
+    check("malformed owner in any arm is caught",
+          [k for k, _ in problems], ["TAG"])
 
-    # 5b. A custom CARGO_TARGET_DIR changes the artifact path. Anchoring on
-    #     `target/` made every result unattributable — a false UNDECLARED for
-    #     the entire suite, one environment variable away.
-    o, _ = parse_cargo(
-        "     Running tests/x_test.rs (/abs/build/dir/release/deps/x_test-cd)\n"
-        "test a::test_dup ... ok\n"
-        "test result: ok. 1 passed\n")
-    check("absolute CARGO_TARGET_DIR still attributes",
-          [(x["target"], x["path"]) for x in o],
-          [("tests/x_test.rs", "a::test_dup")])
+    # 6. Tag classification and the owner grammar.
+    sites = find_ignore_sites("t.rs", """
+        #[test] #[ignore] fn test_bare() {}
+        #[test] #[ignore = "because"] fn test_untagged() {}
+        #[test] #[ignore = "XFAIL: x (owned by M1)"] fn test_xfail() {}
+        #[test] #[ignore = "SLOW: x"] fn test_slow() {}
+    """)
+    check("tags", [classify(s) for s in sites],
+          ["BARE", "UNTAGGED", "XFAIL", "SLOW"])
+    check("owner grammar rejects prose",
+          bool(OWNER_RE.search('#[ignore = "XFAIL: x (owned by someday)"]')),
+          False)
 
-    # 6. A target that starts and never reports must be caught.
-    _, unreported = parse_cargo(
-        "     Running tests/x_test.rs (target/release/deps/x_test-cd)\n"
-        "test a::test_dup ... FAILED\n")
-    check("unreported target detected", unreported, ["tests/x_test.rs"])
-
-    # 7. An observation with no declaration is UNDECLARED.
-    _, problems = reconcile([], [{"target": "tests/x_test.rs",
-                                  "path": "a::test_dup", "outcome": "ok"}])
-    check("undeclared detected", [k for k, _ in problems], ["UNDECLARED"])
-
-    # 8. Every literal and comment form must be inert to the module stack:
-    #    braces in ordinary and raw strings, byte strings, char literals versus
+    # 7. Every literal and comment form must be inert to the scan: braces in
+    #    ordinary and raw strings, byte strings, char literals versus
     #    lifetimes, nested block comments, and attribute token trees.
     tricky = r"""
         mod outer {
@@ -708,134 +608,154 @@ def self_test():
         #[ignore = "XFAIL: top level (owned by M3)"]
         fn test_c() {}
     """
-    d, _, _ = scan_file("tests/z_test.rs", tricky, "tests/z_test.rs", [])
     check("literals and comments are inert",
-          sorted(x["path"] for x in d), ["outer::test_b", "test_c"])
+          sorted(s["inline_path"] for s in find_ignore_sites("t.rs", tricky)),
+          ["outer::test_b", "test_c"])
 
-    # 9. A file switched off by an inner cfg contributes nothing, so its tests
-    #    are not declared as expected failures that can never run.
-    off = '#![cfg(skip_for_now)]\n#[test] %s fn test_off() {}\n' % XF
-    d, _, _ = scan_file("src/lsp/server_test.rs", off, "src/lib.rs", ["lsp"])
-    check("cfg-disabled file declares nothing", d, [])
-    on = '#![cfg(test)]\n#[test] %s fn test_on() {}\n' % XF
-    d, _, _ = scan_file("src/x.rs", on, "src/lib.rs", ["x"])
-    check("cfg(test) file still declares", [x["path"] for x in d],
-          ["x::test_on"])
+    # 8. --list and the run are keyed the same way, and a custom
+    #    CARGO_TARGET_DIR (absolute artifact path) must still attribute.
+    listed = parse_list(
+        "     Running unittests src/lib.rs (target/release/deps/palladium-ab)\n"
+        "optimizer::dead_code_test::tests::test_a: test\n"
+        "1 test, 0 benchmarks\n"
+        "     Running tests/x_test.rs (/abs/elsewhere/deps/x_test-cd)\n"
+        "a::test_dup: test\n")
+    check("--list keyed by (target, path)", listed,
+          [("src/lib.rs", "optimizer::dead_code_test::tests::test_a"),
+           ("tests/x_test.rs", "a::test_dup")])
 
-    # 10. Tag validation, including the owner grammar and the allowlist key.
-    bad = """
-        #[test] #[ignore] fn test_bare() {}
-        #[test] #[ignore = "because"] fn test_untagged() {}
-        #[test] #[ignore = "XFAIL: x (owned by someday)"] fn test_bad_owner() {}
-        #[test] #[ignore = "SLOW: not on the allowlist"] fn test_slow() {}
-    """
-    d, _, _ = scan_file("tests/z_test.rs", bad, "tests/z_test.rs", [])
-    check("four tag problems", len(validate_tags(d)), 4)
+    obs, unreported = parse_run(
+        "     Running unittests src/lib.rs (target/release/deps/palladium-ab)\n"
+        "test optimizer::dead_code_test::tests::test_a ... FAILED\n"
+        "test result: FAILED. 0 passed; 1 failed\n"
+        "     Running tests/x_test.rs (/abs/elsewhere/deps/x_test-cd)\n"
+        "test a::test_dup ... ok\n"
+        "test result: ok. 1 passed\n")
+    check("run keyed the same way", obs,
+          [("src/lib.rs", "optimizer::dead_code_test::tests::test_a", "FAILED"),
+           ("tests/x_test.rs", "a::test_dup", "ok")])
+    check("no unreported target", unreported, [])
+
+    _, unreported = parse_run(
+        "     Running tests/x_test.rs (target/release/deps/x_test-cd)\n"
+        "test a::test_dup ... FAILED\n")
+    check("unreported target detected", unreported, ["tests/x_test.rs"])
+
+    # 9. The verdicts themselves.
+    index = index_sites({
+        "tests/x_test.rs":
+            '#[test] #[ignore = "XFAIL: x (owned by M1)"] fn test_x() {}\n'
+            '#[test] #[ignore = "SLOW: cheap"] fn test_s() {}'})
+    listed = [("tests/x_test.rs", "test_x")]
+    _, problems = reconcile(listed, [("tests/x_test.rs", "test_x", "FAILED")],
+                            index)
+    check("xfail is clean", problems, [])
+    _, problems = reconcile(listed, [("tests/x_test.rs", "test_x", "ok")], index)
+    check("xpass fails the gate", [k for k, _ in problems], ["XPASS"])
+    _, problems = reconcile(listed, [], index)
+    check("listed but never ran -> STALE", [k for k, _ in problems], ["STALE"])
+    _, problems = reconcile([], [("tests/x_test.rs", "test_x", "FAILED")], index)
+    check("ran but not listed -> UNDECLARED",
+          [k for k, _ in problems], ["UNDECLARED"])
+    _, problems = reconcile([("tests/x_test.rs", "test_s")],
+                            [("tests/x_test.rs", "test_s", "ok")], index)
+    check("SLOW off the allowlist fails", [k for k, _ in problems], ["TAG"])
 
     if failures:
         print("self-test FAILED:", file=sys.stderr)
         for f in failures:
             print("  " + f, file=sys.stderr)
         return False
-    print("self-test: 22 checks green (module graph incl. external `mod` and "
-          "`include!`, module-path keying, literal-safe scanning, cargo "
-          "attribution, tag grammar)")
+    print("self-test: 21 checks green (reason lookup incl. same name in two "
+          "modules and in two targets, shared module, missing and ambiguous "
+          "reasons, literal-safe scanning, cargo attribution, verdicts)")
     return True
 
 
 # --------------------------------------------------------------------------
 
+def run_cargo(extra):
+    """cargo test with the two streams merged BY THE OS.
+
+    Cargo prints `Running <target>` to stderr and test lines to stdout, and it
+    is their interleaving that says which target a test belongs to. Capturing
+    the two separately and concatenating puts every target header after every
+    result, and everything parses with target None.
+    """
+    proc = subprocess.run(
+        ["cargo", "test", "--release", "--no-fail-fast", "--"] + extra,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    return proc.returncode, proc.stdout
+
+
+def build_error(out):
+    if re.search(r"^error\[", out, re.M) or re.search(
+            r"^error: (could not compile|failed to|expected)", out, re.M):
+        return "; ".join(re.findall(r"^error.*", out, re.M)[:3])
+    return None
+
+
 def main():
     os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
     if not self_test():
-        print("\nthe gate's own reconciliation is broken; not running it",
+        print("\nthe gate's own reason lookup is broken; not running it",
               file=sys.stderr)
         return 1
     if "--self-test" in sys.argv:
         return 0
 
-    decls, reached, unresolved = collect_declarations()
-    problems = validate_tags(decls)
+    problems = []
 
-    for path, line, name in unresolved:
-        problems.append(("MODULE", "%s:%d: `mod %s;` resolves to no file — the "
-                                   "module graph could not be walked past it, so "
-                                   "any declaration beyond it is invisible"
-                         % (path, line, name)))
+    _, out_list = run_cargo(["--list", "--ignored"])
+    err = build_error(out_list)
+    if err:
+        print("error: the ignored set did not build: " + err, file=sys.stderr)
+        return 1
+    listed = parse_list(out_list)
 
-    # The module graph is the source of truth for what exists, but a declaration
-    # in a file no target reaches is still a declaration nobody will honour.
-    # Walking the filesystem afterwards keeps that from going unnoticed.
-    for root in ("src", "tests"):
-        for dirpath, _, names in os.walk(root):
-            for name in sorted(names):
-                if not name.endswith(".rs"):
-                    continue
-                fp = os.path.join(dirpath, name).replace(os.sep, "/")
-                if fp in reached:
-                    continue
-                with open(fp, encoding="utf-8") as fh:
-                    if re.search(r"#\[\s*ignore", fh.read()):
-                        problems.append(("ORPHAN",
-                                         "%s holds an #[ignore] but no target "
-                                         "reaches it through the module graph, "
-                                         "so the test does not exist" % fp))
-
-    # The two streams MUST be merged by the OS, not concatenated afterwards:
-    # cargo prints `Running <target>` to stderr and `test <name> ... ok` to
-    # stdout, and it is their interleaving that says which target a test
-    # belongs to. Concatenating puts every target header after every result.
-    proc = subprocess.run(
-        ["cargo", "test", "--release", "--no-fail-fast", "--", "--ignored"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    out = proc.stdout
-
-    obs, unreported = parse_cargo(out)
+    rc_run, out_run = run_cargo(["--ignored"])
+    err = build_error(out_run)
+    if err:
+        problems.append(("BUILD", "the ignored set did not build: " + err))
+    obs, unreported = parse_run(out_run)
     for t in unreported:
-        problems.append(("NO_RESULT", "%s started and never reported a result — "
-                                      "it did not run at all" % t))
-
-    if re.search(r"^error\[", out, re.M) or re.search(
-            r"^error: (could not compile|failed to|expected)", out, re.M):
-        first = "; ".join(re.findall(r"^error.*", out, re.M)[:3])
-        problems.append(("BUILD", "the ignored set did not build: " + first))
-    elif proc.returncode != 0 and not any(o["outcome"] == "FAILED" for o in obs):
-        first = "; ".join(re.findall(r"^error.*", out, re.M)[:3])
+        problems.append(("NO_RESULT", "%s started and never reported a result "
+                                      "— it did not run at all" % t))
+    if rc_run != 0 and not any(o[2] == "FAILED" for o in obs):
         problems.append(("CARGO", "cargo exited %d with no failing test to "
-                                  "explain it: %s" % (proc.returncode, first)))
+                                  "explain it" % rc_run))
 
-    counts, more = reconcile(decls, obs)
+    counts, more = reconcile(listed, obs, index_sites(read_sources()))
     problems += more
 
     print("==============================================")
-    print("declared: xfail=%d slow=%d   observed: %d"
-          % (counts["declared_xfail"], counts["declared_slow"],
-             counts["observed"]))
+    print("cargo lists %d ignored test(s); %d of them ran"
+          % (counts["listed"], counts["observed"]))
+    print("declared: xfail=%d slow=%d"
+          % (counts["declared_xfail"], counts["declared_slow"]))
     print("ran:      xfail=%d xpass=%d slow_pass=%d"
           % (counts["xfail"], counts["xpass"], counts["slow_pass"]))
     print("  xfail      = declared missing-feature test, still failing — as expected")
     print("  xpass      = declared failing but PASSED — a stale expectation, fails the gate")
     print("  slow       = passes, excluded only for cost, on the reviewed allowlist")
-    print("  stale      = declared but never ran — indistinguishable from failing, fails the gate")
-    print("  undeclared = an ignored test with no declaration behind it, fails the gate")
+    print("  stale      = cargo lists it as ignored, running it reported nothing")
+    print("  undeclared = it ran as ignored but the listing does not have it")
     print("==============================================")
 
     titles = {
         "XPASS": "XPASS — these now pass; delete the #[ignore] so they join the regression net:",
-        "STALE": "STALE — declared expected-failures that never ran (cfg'd out, unlinked, or in a target that did not report):",
-        "UNDECLARED": "UNDECLARED — ignored tests with no #[ignore] declaration this script could read:",
+        "STALE": "STALE — listed as ignored but never reported a result:",
+        "UNDECLARED": "UNDECLARED — ran as ignored but is not in the listing:",
         "SLOWFAIL": "SLOW test failed — it is declared as passing-but-expensive, so this is a real regression:",
-        "DUPLICATE": "DUPLICATE declarations:",
+        "DUPLICATE": "DUPLICATE listings:",
         "TAG": "#[ignore] declaration errors:",
-        "MODULE": "Unresolvable `mod` declarations:",
-        "ORPHAN": "Declarations in files no target compiles:",
         "NO_RESULT": "Targets that produced no result:",
         "BUILD": "Build errors:",
         "CARGO": "Unexplained cargo status:",
     }
     for kind in ("XPASS", "STALE", "UNDECLARED", "SLOWFAIL", "DUPLICATE",
-                 "TAG", "MODULE", "ORPHAN", "NO_RESULT", "BUILD", "CARGO"):
+                 "TAG", "NO_RESULT", "BUILD", "CARGO"):
         items = [m for k, m in problems if k == kind]
         if items:
             print()
@@ -844,8 +764,8 @@ def main():
                 print("  " + m)
 
     if not problems:
-        print("✓ every declared expected failure ran, and every one of them is "
-              "still failing")
+        print("✓ every ignored test cargo knows about has a declared reason, "
+              "and every declared failure is still failing")
         return 0
     sys.stdout.flush()
     print("\n%d problem(s) above." % len(problems), file=sys.stderr)
