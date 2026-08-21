@@ -62,55 +62,17 @@ strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 # justified by the WHOLE diagnostic set, not merely by one line appearing in it.
 error_set() { strip_ansi <"$1" | grep -a 'error' | sed 's/^[[:space:]]*//' | sort -u; }
 
-# Classify WHY a file was rejected, from the diagnostic plus the source line the
-# compiler pointed at. The manifest pins the CATEGORY, not the wording, so
-# rephrasing a diagnostic does not fail the gate but failing for a genuinely
-# different reason does.
-classify_blocker() {
-  local file="$1" log="$2" msg loc line src
-  msg=$(strip_ansi <"$log" | grep -m1 -a 'error' || true)
-  loc=$(strip_ansi <"$log" | grep -m1 -aoE -- '--> [^ ]+:[0-9]+:[0-9]+' || true)
-  line=$(printf '%s' "$loc" | sed -E 's/.*:([0-9]+):[0-9]+$/\1/')
-  src=""
-  if [ -n "$line" ] && [ "$line" -eq "$line" ] 2>/dev/null; then
-    src=$(sed -n "${line}p" "$file" 2>/dev/null || true)
-  fi
-  local hash_pat="Unexpected character '#'"
-  local esc_pat="Unexpected character '\\'"
-  case "$msg" in
-    *"$hash_pat"*) echo "ATTRIBUTE";   return;;
-    *"$esc_pat"*)  echo "CHAR_ESCAPE"; return;;
-  esac
-  printf '%s' "$src" | grep -qE '[0-9]+\.[0-9]+'                                 && { echo "FLOAT_LITERAL";   return; }
-  printf '%s' "$src" | grep -qE '^[[:space:]]*(pub[[:space:]]+)?use[[:space:]]'  && { echo "USE_DECL";        return; }
-  printf '%s' "$src" | grep -qE '^[[:space:]]*(pub[[:space:]]+)?mod[[:space:]]'  && { echo "MOD_DECL";        return; }
-  printf '%s' "$src" | grep -qE '^[[:space:]]*pub[[:space:]]+fn'                 && { echo "PUB_FN_IN_IMPL";  return; }
-  case "$msg" in *"found 'type'"*) echo "ASSOC_TYPE"; return;; esac
-  printf '%s' "$src" | grep -qE '<[A-Za-z_]+[[:space:]]*='                       && { echo "GENERIC_DEFAULT"; return; }
-  case "$msg" in *"Expected '=' after variable name"*) echo "UNINIT_LET"; return;; esac
-  echo "OTHER"
-}
+# EVERY producer goes through scripts/gate_probe.py, which is the ONLY place
+# allowed to decide that a process finished its experiment. It returns
+#   0 = ran, normal conclusion (fields on stdout)   1 = a reportable FINDING
+#   2 = MALFUNCTION, nothing established
+# so each call site below has exactly ONE decision. Text classification —
+# verdicts, blockers, diagnostics — happens inside the boundary, after the exit
+# code has proved the process actually finished. That ordering is the whole
+# lesson of four review rounds and it is no longer expressible in reverse here.
+PROBE="python3 scripts/gate_probe.py"
 
-# ACCEPTED_NO_MAIN is load-bearing: `pdc compile` refuses any file without a
-# `fn main`, and every stdlib file is a library module, so COMPILE_OK is
-# unreachable for all of them and an XPASS check against it would be dead code.
-#
-# Requiring the no-main diagnostic to be the ONLY distinct error matters. Merely
-# grepping for its presence would let a file that ALSO fails to parse be filed as
-# "the language accepts this", which is the opposite of the truth.
-verdict_of() {
-  local file="$1" log="$2" base others
-  base="stdlibgate_$(echo "$file" | tr '/.' '__')"
-  if "$PDC" compile "$file" -o "$base" >"$log" 2>&1; then
-    echo "COMPILE_OK"; return
-  fi
-  if grep -qa "No main function found" "$log"; then
-    others=$(error_set "$log" | grep -cva 'No main function found')
-    if [ "$others" -eq 0 ]; then echo "ACCEPTED_NO_MAIN"; else echo "COMPILE_FAIL"; fi
-    return
-  fi
-  if grep -qa "gcc compilation failed" "$log"; then echo "LINK_FAIL"; else echo "COMPILE_FAIL"; fi
-}
+field() { awk -v k="$1" '$1==k{$1="";sub(/^ /,"");print;exit}' "$2"; }
 
 is_accepted() { [ "$1" = "COMPILE_OK" ] || [ "$1" = "ACCEPTED_NO_MAIN" ]; }
 
@@ -128,9 +90,10 @@ fn main() {
 }
 EOF
 printf 'expected_line\n42\n' >"$SCRATCH/negctl.expected"
-if ! "$PDC" compile "$SCRATCH/negctl.pd" -o stdlibgate_negctl >"$SCRATCH/negctl.log" 2>&1; then
+$PROBE pdc-verdict "$SCRATCH/negctl.pd" --pdc "$PDC" --out stdlibgate_negctl >"$SCRATCH/negctl.log" 2>&1
+if [ $? -ne 0 ] || [ "$(field VERDICT "$SCRATCH/negctl.log")" != "COMPILE_OK" ]; then
   note "negative control did NOT COMPILE — the control is broken, not passing"
-  strip_ansi <"$SCRATCH/negctl.log" | grep -m1 -a 'error' | sed 's/^/        /'
+  sed 's/^/        /' "$SCRATCH/negctl.log" | head -4
 elif [ ! -x "$OUT_DIR/stdlibgate_negctl" ]; then
   note "negative control compiled but produced no executable — the control is broken"
 elif ! "$OUT_DIR/stdlibgate_negctl" >"$SCRATCH/negctl.actual" 2>/dev/null; then
@@ -160,9 +123,10 @@ PANIC_MSG="negative control panic reached the runtime"
 cat >"$SCRATCH/negpanic.pd" <<EOF
 fn main() { if 1 != 2 { panic("$PANIC_MSG"); } }
 EOF
-if ! "$PDC" compile "$SCRATCH/negpanic.pd" -o stdlibgate_negpanic >"$SCRATCH/negpanic.log" 2>&1; then
+$PROBE pdc-verdict "$SCRATCH/negpanic.pd" --pdc "$PDC" --out stdlibgate_negpanic >"$SCRATCH/negpanic.log" 2>&1
+if [ $? -ne 0 ] || [ "$(field VERDICT "$SCRATCH/negpanic.log")" != "COMPILE_OK" ]; then
   note "negative control for panic() failed to compile — the control is broken, not passing"
-  strip_ansi <"$SCRATCH/negpanic.log" | grep -m1 -a 'error' | sed 's/^/        /'
+  sed 's/^/        /' "$SCRATCH/negpanic.log" | head -4
 elif [ ! -x "$OUT_DIR/stdlibgate_negpanic" ]; then
   note "negative control for panic() produced no executable — the control is broken, not passing"
 else
@@ -192,7 +156,7 @@ EOF
 # C compiler — and accepting that as "rejection works" would report success
 # precisely when the checker was checking nothing. Verified: deleting
 # scripts/check-c-returns.py made the old form print "ok".
-bash scripts/check-generated-c.sh "$SCRATCH/negc.c" >"$SCRATCH/negc.log" 2>&1
+$PROBE generated-c "$SCRATCH/negc.c" >"$SCRATCH/negc.log" 2>&1
 negc_rc=$?
 if [ "$negc_rc" -eq 0 ]; then
   note "the generated-C checker ACCEPTED a function with no return — Phase 2 is vacuous"
@@ -240,26 +204,31 @@ while IFS=$'\t' read -r path want_verdict want_blocker; do
   case "$path" in ''|\#*) continue;; esac
   if [ ! -f "$path" ]; then note "$path is in the manifest but missing on disk"; continue; fi
   log="$SCRATCH/$(echo "$path" | tr '/.' '__').log"
-  got_verdict=$(verdict_of "$path" "$log")
-  if is_accepted "$got_verdict"; then
-    got_blocker="-"; accepted=$((accepted+1))
-  else
-    got_blocker=$(classify_blocker "$path" "$log"); rejected=$((rejected+1))
-  fi
+  $PROBE pdc-verdict "$path" --pdc "$PDC" \
+      --out "stdlibgate_$(echo "$path" | tr '/.' '__')" >"$log" 2>&1
+  case $? in
+    0) ;;
+    *) note "$path: pdc MALFUNCTIONED — no verdict can be inferred"
+       sed 's/^/        /' "$log" | head -4
+       continue ;;
+  esac
+  got_verdict=$(field VERDICT "$log")
+  got_blocker=$(field BLOCKER "$log")
+  if is_accepted "$got_verdict"; then accepted=$((accepted+1)); else rejected=$((rejected+1)); fi
   printf '  %-42s %-16s %s\n' "$path" "$got_verdict" "$got_blocker"
   if [ "$got_verdict" != "$want_verdict" ]; then
     if is_accepted "$want_verdict"; then
       note "REGRESSION: $path was $want_verdict, now $got_verdict"
-      strip_ansi <"$log" | grep -m1 -a 'error' | sed 's/^/        /'
+      field DIAG "$log" | sed 's/^/        /'
     elif is_accepted "$got_verdict"; then
       note "XPASS: $path is recorded $want_verdict but the language now accepts it ($got_verdict) — update $MANIFEST"
     else
       note "VERDICT_CHANGED: $path was $want_verdict, now $got_verdict — update $MANIFEST"
-      strip_ansi <"$log" | grep -m1 -a 'error' | sed 's/^/        /'
+      field DIAG "$log" | sed 's/^/        /'
     fi
   elif ! is_accepted "$got_verdict" && [ "$got_blocker" != "$want_blocker" ]; then
     note "BLOCKER_CHANGED: $path was blocked on $want_blocker, now $got_blocker — update $MANIFEST"
-    strip_ansi <"$log" | grep -m1 -a 'error' | sed 's/^/        /'
+    field DIAG "$log" | sed 's/^/        /'
   fi
 done < "$MANIFEST"
 printf '\n  stdlib/: %d accepted by the language, %d rejected\n' "$accepted" "$rejected"
@@ -273,17 +242,23 @@ mkdir -p "$SCRATCH/reach"
 printf 'import option;\nfn main() { print_int(1); }\n' >"$SCRATCH/reach/reach.pd"
 reach_log="$SCRATCH/reach.log"
 REPO_ROOT=$PWD
-( cd "$SCRATCH/reach" && PALLADIUM_PATH="$REPO_ROOT/stdlib/std" \
-    "$REPO_ROOT/$PDC" compile reach.pd -o stdlibgate_reach ) >"$reach_log" 2>&1
-reach_rc=$?
-if [ "$reach_rc" -eq 0 ]; then
-  note "XPASS: 'import option' with PALLADIUM_PATH=stdlib/std now SUCCEEDS — stdlib is reachable; update stdlib/STATUS.md"
-elif grep -qa "Expected 'fn' for method, but found 'pub'" "$reach_log"; then
-  ok "forced onto PALLADIUM_PATH, stdlib/std/option.pd still fails with its recorded blocker"
-else
-  note "forced-import probe failed for an UNRECORDED reason — the reachability claim in stdlib/STATUS.md is unverified:"
-  strip_ansi <"$reach_log" | grep -m1 -a 'error' | sed 's/^/        /'
-fi
+$PROBE pdc-reject "reach.pd" --pdc "$REPO_ROOT/$PDC" --out stdlibgate_reach \
+    --cwd "$SCRATCH/reach" --env "PALLADIUM_PATH=$REPO_ROOT/stdlib/std" \
+    --expect-stage compile --require "Expected 'fn' for method, but found 'pub'" \
+    >"$reach_log" 2>&1
+case $? in
+  0) case "$(field OUTCOME "$reach_log")" in
+       rejected-as-expected)
+         ok "forced onto PALLADIUM_PATH, stdlib/std/option.pd still fails with its recorded blocker" ;;
+       accepted)
+         note "XPASS: 'import option' with PALLADIUM_PATH=stdlib/std now SUCCEEDS — stdlib is reachable; update stdlib/STATUS.md" ;;
+       *)
+         note "forced-import probe failed for an UNRECORDED reason — the reachability claim in stdlib/STATUS.md is unverified"
+         field DIAG "$reach_log" | sed 's/^/        /' ;;
+     esac ;;
+  *) note "forced-import probe MALFUNCTIONED — the reachability claim is unverified"
+     sed 's/^/        /' "$reach_log" | head -4 ;;
+esac
 
 # ---------------------------------------------------------------------------
 echo
@@ -324,9 +299,15 @@ while IFS=$'\t' read -r base golden cverdict purpose; do
   drv="$DRIVER_DIR/$base.pd"
   [ -f "$drv" ] || continue          # set-equality check above already reported it
   log="$SCRATCH/$base.log"
-  if ! "$PDC" compile "$drv" -o "$base" >"$log" 2>&1; then
-    note "$drv failed to compile"
-    strip_ansi <"$log" | grep -m1 -a 'error' | sed 's/^/        /'
+  $PROBE pdc-verdict "$drv" --pdc "$PDC" --out "$base" >"$log" 2>&1
+  case $? in
+    0) ;;
+    *) note "$drv: pdc MALFUNCTIONED while compiling the driver"
+       sed 's/^/        /' "$log" | head -4; continue ;;
+  esac
+  if [ "$(field VERDICT "$log")" != "COMPILE_OK" ]; then
+    note "$drv failed to compile ($(field VERDICT "$log"))"
+    field DIAG "$log" | sed 's/^/        /'
     continue
   fi
   cfile="$OUT_DIR/$base.c"
@@ -336,7 +317,7 @@ while IFS=$'\t' read -r base golden cverdict purpose; do
   fi
 
   cc_log="$SCRATCH/$base.cc.log"
-  bash scripts/check-generated-c.sh "$cfile" >"$cc_log" 2>&1
+  $PROBE generated-c "$cfile" >"$cc_log" 2>&1
   cc_rc=$?
 
   case "$cverdict" in
@@ -370,7 +351,7 @@ while IFS=$'\t' read -r base golden cverdict purpose; do
         continue
       fi
       # Every declared function must be flagged, and nothing else may be.
-      got_fns=$(strip_ansi <"$cc_log" | grep -a '^ *FINDING .*may fall off its end' \
+      got_fns=$(grep -a '^FINDING .*may fall off its end' "$cc_log" \
                 | sed -E 's/.*: ([A-Za-z_][A-Za-z_0-9 *]*[ *])([A-Za-z_][A-Za-z_0-9]*)\(.*/\2/' | sort -u | paste -sd, -)
       want_sorted=$(printf '%s' "$want_fns" | tr ',' '\n' | sort -u | paste -sd, -)
       if [ "$got_fns" != "$want_sorted" ]; then
@@ -430,6 +411,16 @@ while IFS=$'\t' read -r name status stage fp detail note; do
         if ! grep -qE "(^|[^a-z_0-9])${name}\(" "$src"; then
           note "builtin '$name' is $status but $detail does not call it"
         fi
+        # Restricted allowlist for the same reason: COVERED_BY_EFFECT accepts a
+        # marker with no observed result, so an unrestricted category would let
+        # any builtin drop its value evidence by relabelling. Only builtins that
+        # RETURN NOTHING qualify.
+        if [ "$status" = "COVERED_BY_EFFECT" ]; then
+          case "$name" in
+            print|print_int) : ;;
+            *) note "builtin '$name' is COVERED_BY_EFFECT, which is reserved for builtins with no return value (allowlist: print, print_int)" ;;
+          esac
+        fi
         if [ "$status" = "COVERED_BY_EFFECT" ]; then
           # No return value to observe; the marker is a plain name. Justified
           # per-builtin in BUILTINS.tsv.
@@ -444,26 +435,33 @@ while IFS=$'\t' read -r name status stage fp detail note; do
       fi
       ;;
     NEGATIVE_CONTROL)
-      : ;;   # proved in Phase 0
+      # Restricted allowlist. Without this, ANY builtin could be relabelled
+      # NEGATIVE_CONTROL and opt out of value-bearing coverage by a manifest
+      # edit alone. Only a builtin that cannot appear in a passing program
+      # qualifies, and `panic` is the only one: it aborts.
+      case "$name" in
+        panic) : ;;   # proved in Phase 0
+        *) note "builtin '$name' is NEGATIVE_CONTROL, which is reserved for builtins that cannot appear in a passing program (allowlist: panic)" ;;
+      esac
+      ;;
     UNUSABLE)
       probe="$SCRATCH/probe_$name.pd"
       plog="$SCRATCH/probe_$name.log"
       printf 'fn main() { %s }\n' "$detail" >"$probe"
-      if "$PDC" compile "$probe" -o "stdlibgate_probe_$name" >"$plog" 2>&1; then
-        note "XPASS: builtin '$name' is recorded UNUSABLE but now compiles — update $BUILTIN_MANIFEST"
-      else
-        # Pin the STAGE and the DIAGNOSTIC. Without this, a future parser or
-        # typechecker regression would "re-prove" a gcc signature mismatch while
-        # actually failing for an entirely unrelated reason.
-        if grep -qa "gcc compilation failed" "$plog"; then act_stage=link; else act_stage=compile; fi
-        if [ "$act_stage" != "$stage" ]; then
-          note "STAGE_CHANGED: '$name' is recorded failing at '$stage' but failed at '$act_stage' — that is not the recorded defect"
-          strip_ansi <"$plog" | grep -m1 -a 'error' | sed 's/^/        /'
-        elif ! strip_ansi <"$plog" | grep -qaF -- "$fp"; then
-          note "FINGERPRINT_CHANGED: '$name' failed at '$stage' but not with '$fp' — that is not the recorded defect"
-          strip_ansi <"$plog" | grep -m1 -a 'error:' | sed 's/^/        /'
-        fi
-      fi
+      $PROBE pdc-reject "$probe" --pdc "$PDC" --out "stdlibgate_probe_$name" \
+          --expect-stage "$stage" --require "$fp" >"$plog" 2>&1
+      case $? in
+        0) case "$(field OUTCOME "$plog")" in
+             rejected-as-expected) ;;
+             accepted)
+               note "XPASS: builtin '$name' is recorded UNUSABLE but now compiles — update $BUILTIN_MANIFEST" ;;
+             *)
+               note "NOT THE RECORDED DEFECT: '$name' — $(field REASON "$plog")"
+               field DIAG "$plog" | sed 's/^/        /' ;;
+           esac ;;
+        *) note "builtin '$name': the UNUSABLE probe MALFUNCTIONED — the recorded defect could not be re-proved"
+           sed 's/^/        /' "$plog" | head -4 ;;
+      esac
       ;;
     *) note "builtin '$name' has unknown status '$status' in $BUILTIN_MANIFEST" ;;
   esac
@@ -476,63 +474,75 @@ while IFS=$'\t' read -r name status stage fp detail note; do
     esac
   fi
 done < "$BUILTIN_MANIFEST"
-# MERGE-TIME RECONCILIATION.
-# fix/m1-builtin-registry enumerates the C-seam defects per DIMENSION; this file
-# can only say UNUSABLE or not. Once that branch lands, every builtin it marks
-# unsupported must still be recorded UNUSABLE here — otherwise one table has been
-# promoted without the other, which is the drift both exist to stop.
+# MERGE-TIME RECONCILIATION with fix/m1-builtin-registry.
 #
-# Keyed on `Support::Unsupported`, a structured field on each Builtin in that
-# branch, rather than on the prose of the PRELUDE_TYPE_MISMATCHES string array:
-# an enum variant survives reformatting, and the array's wording does not.
-# `PRELUDE_TYPE_MISMATCHES` is accepted as a second activation marker only.
+# That branch records the C-seam defects per DIMENSION on each Builtin as
+# `support: Support::Unsupported("...")`; this file can only say UNUSABLE or not.
+# Once it lands, every builtin it marks unsupported must still be recorded
+# UNUSABLE here, or one table has been promoted without the other.
 #
-# FAILS CLOSED. Earlier this silently disarmed itself if the constant were
-# renamed or reformatted: extraction returned zero names and it still printed
-# "reconciled". Now, once ANY marker is present, an empty extraction is a
-# failure, because "I found nothing to reconcile" and "I could not read it" must
-# not look the same.
-if grep -q -e 'Support::Unsupported' -e 'PRELUDE_TYPE_MISMATCHES' src/builtins.rs 2>/dev/null; then
-  recon_names=$(python3 - src/builtins.rs <<'RECON'
+# ACTIVATION IS INFERRED FROM THE `Support` TYPE, not from one spelling: the
+# earlier version keyed on two tokens and silently returned to a dormant GREEN
+# path if either were renamed. Now the presence of `Support` ANYWHERE in
+# src/builtins.rs means the sibling has landed, and from that point an empty
+# extraction is a HARD FAILURE rather than a dormant pass.
+#
+# NOTE FOR THE SIBLING BRANCH: this still parses Rust source, which is a fragile
+# contract in both directions. The durable fix is for the registry to emit a
+# machine-readable list (a generated file, or `pdc --dump-builtins`) that both
+# gates read. Proposed, not assumed.
+recon_out="$SCRATCH/recon.log"
+python3 - src/builtins.rs "$BUILTIN_MANIFEST" >"$recon_out" 2>&1 <<'RECON'
 import re, sys
-src = open(sys.argv[1], errors="replace").read()
+src_path, manifest_path = sys.argv[1], sys.argv[2]
+try:
+    src = open(src_path, errors="replace").read()
+except OSError as e:
+    print(f"HARDFAIL cannot read {src_path}: {e}"); sys.exit(2)
+
+landed = "Support" in src
+if not landed:
+    print("DORMANT no Support type in src/builtins.rs; the sibling has not landed")
+    sys.exit(0)
+
 names = set()
-# Each `Builtin { ... }` block that carries Support::Unsupported.
 for block in re.findall(r"Builtin\s*\{.*?\n    \}", src, re.S):
     if "Support::Unsupported" in block:
         m = re.search(r'name:\s*"([a-z_0-9]+)"', block)
         if m:
             names.add(m.group(1))
-# Fallback: the PRELUDE_TYPE_MISMATCHES array, if that is all that exists.
 if not names:
     arr = re.search(r"PRELUDE_TYPE_MISMATCHES[^=]*=\s*&\[(.*?)\];", src, re.S)
     if arr:
         names.update(re.findall(r'"([a-z_0-9]+) (?:param|return)', arr.group(1)))
-print("\n".join(sorted(names)))
+if not names:
+    print("HARDFAIL src/builtins.rs has the Support type but no unsupported builtin "
+          "could be extracted — the parsing contract broke; refusing to report 'reconciled'")
+    sys.exit(2)
+
+recorded = {}
+for line in open(manifest_path):
+    if line.strip() and not line.startswith("#"):
+        c = line.split("\t")
+        recorded[c[0]] = c[1]
+missing = sorted(n for n in names if recorded.get(n) != "UNUSABLE")
+for n in missing:
+    print(f"MISSING {n} is marked unsupported in src/builtins.rs but recorded "
+          f"'{recorded.get(n, '<absent>')}' in {manifest_path}")
+print(f"ACTIVE {len(names)} unsupported builtin(s) checked")
+sys.exit(1 if missing else 0)
 RECON
-)
-  recon_rc=$?
-  recon_count=$(printf '%s' "$recon_names" | grep -c . || true)
-  if [ "$recon_rc" -ne 0 ]; then
-    note "RECONCILE: could not parse src/builtins.rs for unsupported builtins (extractor exit $recon_rc) — failing closed rather than reporting 'reconciled'"
-  elif [ "$recon_count" -eq 0 ]; then
-    note "RECONCILE: src/builtins.rs carries a seam marker but zero builtin names could be extracted — the parsing contract broke; failing closed"
-  else
-    recon_missing=0
-    while IFS= read -r bname; do
-      [ -n "$bname" ] || continue
-      if ! grep -qE "^${bname}\tUNUSABLE\t" "$BUILTIN_MANIFEST"; then
-        note "RECONCILE: src/builtins.rs marks '$bname' unsupported at the C seam, but $BUILTIN_MANIFEST does not record it UNUSABLE — resolve both tables together"
-        recon_missing=$((recon_missing+1))
-      fi
-    done <<RECONEOF
-$recon_names
-RECONEOF
-    [ "$recon_missing" -eq 0 ] && ok "reconciled with src/builtins.rs ($recon_count unsupported builtin(s))"
-  fi
-else
-  printf '  %s..%s   no C-seam marker in src/builtins.rs yet; reconciliation arms itself when fix/m1-builtin-registry lands\n' "$GREEN" "$NC"
-fi
+case $? in
+  0) if grep -q '^DORMANT' "$recon_out"; then
+       printf '  %s..%s   %s\n' "$GREEN" "$NC" "$(sed -n 's/^DORMANT //p' "$recon_out")"
+     else
+       ok "reconciled with src/builtins.rs — $(sed -n 's/^ACTIVE //p' "$recon_out")"
+     fi ;;
+  1) while IFS= read -r m; do
+       note "RECONCILE: ${m#MISSING }"
+     done < <(grep '^MISSING' "$recon_out") ;;
+  *) note "RECONCILE: $(grep -m1 '^HARDFAIL' "$recon_out" | sed 's/^HARDFAIL //')" ;;
+esac
 
 if [ "$failures" -eq "$phase3_before" ]; then
   ok "$covered exercised, $partial partial, $unusable unusable and re-proved at a pinned stage+diagnostic"

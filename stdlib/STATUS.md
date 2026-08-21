@@ -258,43 +258,37 @@ of them — neither is a proof on its own:
   A non-zero exit is only accepted as a Net B finding if the diagnostic is actually the return-type
   one; an unrelated failure (a missing header, say) is reported as "could not run", not as a defect.
 
-Both nets share one exit taxonomy, because a finding and a malfunction must not look alike:
+Both nets share one exit taxonomy with **every other process this gate reads as evidence** —
+`pdc` included — because they share one boundary, `scripts/gate_probe.py`:
 
 | exit | meaning |
 |---|---|
-| 0 | analysed, invariant holds |
-| 1 | at least one genuine `FINDING`, nothing malfunctioned |
-| 2 | **harness error** — input missing or unreadable, the analyser raised, zero functions were recognised, or the C compiler failed for an unrelated reason |
+| 0 | the experiment ran and reached a normal conclusion |
+| 1 | a reportable `FINDING` |
+| 2 | **malfunction** — a signal, an unpinned exit code, a missing producer, an unreadable input, an analyser that raised, or a compiler that failed for an unrelated reason |
 
-Harness errors *dominate*: a run that malfunctioned cannot assert what the defects are, nor that
-there are none. Three measured cases drove this, each of which had reported a defect or a pass it
-never established:
+The rule the boundary enforces, which four review rounds converged on:
 
-- a Python `RecursionError` traceback printed as `FAIL Net A (falls off the end)`;
-- `#error no return statement` — an unrelated defect — classified as a Net B return-type finding,
-  because the classifier looked for that wording *anywhere* in the log. Net B now requires the
-  compiler to have exited 1 (not a signal), to have emitted at least one `error:`, and for **every**
-  error to be a return-type diagnostic; one unrelated error makes the whole file a harness case;
-- a checker killed with signal 9 (exit 137) reported as `generated C violates the structural
-  invariant`. Consumers now require **exactly** exit 1 before reading findings.
+> **Diagnostic text is never sufficient evidence of a verdict.** The exit code says whether the
+> experiment ran; the text only says what it found, and may be read only afterwards.
 
-Both nets emit structured `FINDING` lines, so a non-zero exit is only believed when corroborated by
-a well-formed finding, and Net A reports how many function definitions it recognised — "ok" over
-zero analysed functions is refused outright rather than counted as clean.
+It is enforced structurally rather than by discipline: `classify()` returns `None` for the text
+unless the process reached a pinned rejection code, so a caller *cannot* grep the output of a
+process that did not finish. Sub-classification — verdict, blocker category, diagnostic — happens
+inside the boundary, after that check.
 
-**Net A is not independently sound**, and is not documented as though it were. It reads the shape
-pdc happens to emit line by line, so unusual formatting, `switch`, or `goto` could defeat it — Net B
-covers those. Conversely Net B only exists while the C compiler cooperates. This is
-defence-in-depth: a defect has to get past both.
+This was not theoretical. Measured:
 
-> **Interim gap, measured 2026-08-22.** The transcript-diffing conformance runner is on
-> `fix/m1-conformance-fixtures` and is **not merged**. On this branch
-> `grep -c expected scripts/conformance.sh` returns **0**: the runner here checks exit status only.
-> So today the goldens in `tests/stdlib/` are *inventory-checked* (every driver has one, every
-> golden has a driver) but their **contents are verified by nothing**. Editing a golden to disagree
-> with its program is currently caught by neither gate. This is not fixed here on purpose —
-> duplicating the diff would ship the second semantic standard the consolidation ruling exists to
-> prevent — and it closes when that branch merges.
+```
+$ sh -c 'echo "error: No main function found" >&2; kill -9 $$'
+exit 137, expected diagnostic already on stderr
+```
+
+The old shell code classified that `ACCEPTED_NO_MAIN` — a green verdict from a killed process — and
+the same shape was reachable in the forced-import probe, the UNUSABLE probes, and both nets.
+`make test-gate-probe` fault-injects exactly that case against **every** producer (17 cases),
+including both signal conventions: `subprocess` reports `-9`, a POSIX shell reports `137`, and a
+check written for one silently never fires on the other.
 
 ### Seam with `make conformance`
 

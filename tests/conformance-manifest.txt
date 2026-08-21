@@ -93,3 +93,18 @@ tests/projects/hello_pdm/tests/test_simple.pd	run	-	expected	-	-
 tests/regression/array_binding_scope.pd	run	-	expected	-	-
 tests/regression/array_reference_params.pd	run	-	expected	-	-
 tests/regression/for_over_array_param.pd	run	-	expected	-	-
+
+# tests/stdlib/ — drivers for the language surface and the builtins a standard
+# library would rest on. stdlib/ itself has no rows here: 0 of its 21 files
+# compile, none defines `fn main`, and its compile verdicts are pinned by
+# `make stdlib-gate` against stdlib/MANIFEST.tsv instead.
+# stdlib_tail_if_defect is a CODEGEN fixture: its main prints a constant and
+# deliberately does not call the two functions the compiler miscompiles, because
+# recording their garbage in a transcript would bless the miscompile. What is
+# asserted about it lives in tests/stdlib/DRIVERS.tsv as known_violation:fib,classify.
+tests/stdlib/stdlib_tail_return.pd	run	-	expected	-	-
+tests/stdlib/stdlib_tail_if_defect.pd	run	-	expected	-	-
+tests/stdlib/stdlib_builtins_string.pd	run	-	expected	-	-
+tests/stdlib/stdlib_builtins_char_args.pd	run	-	expected	-	-
+tests/stdlib/stdlib_builtins_file.pd	run	-	expected	-	-
+tests/stdlib/stdlib_vec_i64.pd	run	-	expected	-	-
