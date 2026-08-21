@@ -109,7 +109,7 @@ Performance is the flattering half. This is the other half.
 | Generics | partial monomorphisation; `Foo<T>` is misparsed as a const argument | complete |
 | Closures | none | complete |
 | Method syntax `x.f()` | rejected — call `Type::f(x)` | complete |
-| `Option` / `Result` | not built in; `?` emits C that does not compile | core to the language |
+| `Option` / `Result` | not built in; `?` rejected as unimplemented | core to the language |
 | Collections | fixed-size arrays only; no `Vec` | full standard library |
 | Floats, `char` | none | complete |
 | Pattern matching | three pattern forms; cannot match an integer literal | exhaustive, with guards |

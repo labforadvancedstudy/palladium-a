@@ -32,7 +32,7 @@ emit wrong code. This milestone converts silent wrongness into diagnostics.
 
 | Defect | What happens today |
 |---|---|
-| D5 | `?` emits C referencing a `struct Result` layout codegen never defines; `.await` calls a `poll` member that is never generated. Neither reports an error |
+| D5 | ~~`?` emits C referencing a `struct Result` layout codegen never defines; `.await` calls a `poll` member that is never generated. Neither reports an error~~ — **fixed**: both are rejected with "is not implemented", the consequence, and a workaround that `tests/d5_unimplemented_constructs.rs` compiles and runs. Old lowerings deleted. Diagnostics deliberately name no milestone |
 | D4 | `for` over an array *parameter* uses `sizeof` on a pointer that has already decayed |
 | D9 | `&[T; N]` / `&mut [T; N]` parameters are rejected in codegen — `examples/practical/simple_sort.pd` still fails on exactly this, and is the one M1-owned entry in `tests/conformance-manifest.txt` |
 

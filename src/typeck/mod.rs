@@ -2336,107 +2336,31 @@ impl TypeChecker {
                 // TODO: Proper reference type handling - should check that expr_type is a reference
                 Ok(expr_type)
             }
-            Expr::Question { expr, .. } => {
-                // Type check the expression
-                let expr_type = self.check_expression(expr)?;
-
-                // The expression must be a Result<T, E> type
-                match &expr_type {
-                    CheckerType::Generic { name, args } if name == "Result" && args.len() == 2 => {
-                        // Extract the Ok type (T) and Error type (E) from Result<T, E>
-                        let ok_type = &args[0];
-                        let err_type = &args[1];
-
-                        // Check that the current function returns a Result type
-                        if let Some(return_type) = &self.current_function_return {
-                            match return_type {
-                                CheckerType::Generic { name: ret_name, args: ret_args }
-                                    if ret_name == "Result" && ret_args.len() == 2 => {
-                                    // Check that error types match
-                                    let ret_err_type = &ret_args[1];
-                                    if err_type != ret_err_type {
-                                        let ret_err_str = match ret_err_type {
-                                            GenericArgValue::Type(t) => self.checker_type_to_string(t),
-                                            GenericArgValue::Const(c) => match c {
-                                                ConstValueResolved::Integer(n) => n.to_string(),
-                                                ConstValueResolved::ConstParam(name) => name.clone(),
-                                            }
-                                        };
-                                        let err_str = match err_type {
-                                            GenericArgValue::Type(t) => self.checker_type_to_string(t),
-                                            GenericArgValue::Const(c) => match c {
-                                                ConstValueResolved::Integer(n) => n.to_string(),
-                                                ConstValueResolved::ConstParam(name) => name.clone(),
-                                            }
-                                        };
-                                        let ok_str = match ok_type {
-                                            GenericArgValue::Type(t) => self.checker_type_to_string(t),
-                                            GenericArgValue::Const(c) => match c {
-                                                ConstValueResolved::Integer(n) => n.to_string(),
-                                                ConstValueResolved::ConstParam(name) => name.clone(),
-                                            }
-                                        };
-                                        return Err(CompileError::TypeMismatch {
-                                            expected: format!("Result<_, {}>", ret_err_str),
-                                            found: format!("Result<{}, {}>", ok_str, err_str),
-                                            span: None,
-                                        });
-                                    }
-
-                                    // Return the Ok type
-                                    match ok_type {
-                                        GenericArgValue::Type(t) => Ok(t.clone()),
-                                        _ => Err(CompileError::Generic("Expected type in Result".to_string()))
-                                    }
-                                }
-                                _ => Err(CompileError::Generic(
-                                    "The ? operator can only be used in functions that return Result".to_string()
-                                ))
-                            }
-                        } else {
-                            Err(CompileError::Generic(
-                                "The ? operator can only be used inside a function".to_string(),
-                            ))
-                        }
-                    }
-                    CheckerType::Enum(name) if name == "Result" => {
-                        // Handle non-generic Result (shouldn't happen in practice)
-                        Err(CompileError::Generic(
-                            "Result type must have generic parameters".to_string(),
-                        ))
-                    }
-                    _ => Err(CompileError::TypeMismatch {
-                        expected: "Result<T, E>".to_string(),
-                        found: expr_type.to_string(),
-                        span: None,
-                    }),
-                }
-            }
+            // D5. `?` and `.await` parse, but no backend lowers either: the C
+            // emitter produced a `struct Result` layout nothing else emits, and
+            // an await that calls a `poll` member no generated struct has, so a
+            // program that satisfied the old type rules failed inside gcc —
+            // against C the user never wrote. The LLVM backend is worse: its
+            // catch-all returns the constant `0` for both nodes
+            // (`src/codegen/llvm_text_backend.rs:1378`), which compiles and is
+            // wrong. Refuse here, at the construct's own span, so no backend
+            // gets the chance.
+            //
+            // Refusing in this phase rather than only in codegen is deliberate:
+            // it lands before the codegen `let`-inference error (D7), which
+            // would otherwise suggest a type annotation that cannot help.
+            //
+            // The old type rules are deleted, not preserved: they encoded a
+            // `Result` shape that a real implementation must not reuse, and git
+            // holds them if they are ever wanted.
+            Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
             Expr::MacroInvocation { .. } => {
                 // Macros should have been expanded before type checking
                 Err(CompileError::Generic(
                     "Unexpected macro invocation in type checking - macros should be expanded before this phase".to_string()
                 ))
             }
-            Expr::Await { expr, .. } => {
-                // Check that the expression is a Future type
-                let expr_type = self.check_expression(expr)?;
-                match &expr_type {
-                    CheckerType::Generic { name, args } if name == "Future" && args.len() == 1 => {
-                        // Extract the output type from Future<T>
-                        if let GenericArgValue::Type(output_type) = &args[0] {
-                            Ok(output_type.clone())
-                        } else {
-                            Err(CompileError::Generic("Invalid Future type".to_string()))
-                        }
-                    }
-                    _ => Err(CompileError::TypeMismatch {
-                        expected: "Future<T>".to_string(),
-                        found: self.checker_type_to_string(&expr_type),
-                        span: None,
-                    }),
-                }
-            }
+            Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
         }
     }
 
@@ -3056,8 +2980,245 @@ impl TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errors::Span;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
+
+    fn check(source: &str) -> Result<()> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        TypeChecker::new().check(&ast)
+    }
+
+    // D5. Both programs below used to type check, and then code generation
+    // emitted C against a `struct Result` and a `poll` member that no part of
+    // the compiler ever defines. They are kept as the measured repros — the
+    // shapes that reached the backend back when type rules gated these
+    // operators. The refusal no longer depends on that: it fires on any
+    // operand, which `both_constructs_are_rejected_whatever_the_operand_is` in
+    // tests/d5_unimplemented_constructs.rs covers.
+
+    /// The measured `?` repro, kept verbatim as a source constant so the tests
+    /// can slice it with the reported span instead of asserting magic numbers.
+    const SOURCE_WITH_QUESTION: &str = r#"
+        enum Result<T, E> {
+            Ok(T),
+            Err(E),
+        }
+
+        fn might_fail(x: i64) -> Result<i64, i64> {
+            return might_fail(x);
+        }
+
+        fn helper(x: i64) -> Result<i64, i64> {
+            let v: i64 = might_fail(x)?;
+            print_int(v);
+            return might_fail(v);
+        }
+
+        fn main() {
+            helper(3);
+        }
+        "#;
+
+    const SOURCE_WITH_AWAIT: &str = r#"
+        fn work(x: i64) -> Future<i64> {
+            return work(x);
+        }
+
+        fn main() {
+            let v: i64 = work(3).await;
+            print_int(v);
+        }
+        "#;
+
+    const SOURCE_WITH_MULTILINE_AWAIT: &str = r#"
+        fn work(x: i64) -> Future<i64> {
+            return work(x);
+        }
+
+        fn main() {
+            let v: i64 = work(
+                3
+            ).await;
+            print_int(v);
+        }
+        "#;
+
+    fn unimplemented_span(source: &str) -> Span {
+        match check(source).unwrap_err() {
+            CompileError::Unimplemented { span, .. } => span.expect("span"),
+            other => panic!("expected an Unimplemented error, got: {}", other),
+        }
+    }
+
+    #[test]
+    fn test_question_operator_is_reported_as_unimplemented() {
+        let err = check(SOURCE_WITH_QUESTION).unwrap_err();
+        let construct = match &err {
+            CompileError::Unimplemented { construct, .. } => construct.clone(),
+            other => panic!("expected an Unimplemented error, got: {}", other),
+        };
+        assert!(construct.contains('?'), "{}", construct);
+
+        // Two properties that must survive any later narrowing of the span:
+        // it is on the operator's line, and it *ends* at the operator. Width is
+        // asserted separately, in the known-quirk test, so that fixing the
+        // start position does not require editing a test which would then read
+        // as though the wide span had been correct.
+        let span = unimplemented_span(SOURCE_WITH_QUESTION);
+        assert_eq!(span.line, 12);
+        let text = &SOURCE_WITH_QUESTION[span.start..span.end];
+        assert!(
+            text.ends_with('?'),
+            "span must end at the operator: {:?}",
+            text
+        );
+        assert!(
+            SOURCE_WITH_QUESTION[..span.end].ends_with("might_fail(x)?"),
+            "span must end where the operator ends"
+        );
+    }
+
+    #[test]
+    fn test_await_is_reported_as_unimplemented() {
+        let err = check(SOURCE_WITH_AWAIT).unwrap_err();
+        let construct = match &err {
+            CompileError::Unimplemented { construct, .. } => construct.clone(),
+            other => panic!("expected an Unimplemented error, got: {}", other),
+        };
+        assert!(construct.contains("await"), "{}", construct);
+
+        let span = unimplemented_span(SOURCE_WITH_AWAIT);
+        assert_eq!(span.line, 7);
+        let text = &SOURCE_WITH_AWAIT[span.start..span.end];
+        assert!(
+            text.ends_with(".await"),
+            "span must end at the operator: {:?}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_await_span_survives_a_multiline_postfix_chain() {
+        // A span is only useful if it still covers the construct when the
+        // postfix chain is broken across lines.
+        let span = unimplemented_span(SOURCE_WITH_MULTILINE_AWAIT);
+        let text = &SOURCE_WITH_MULTILINE_AWAIT[span.start..span.end];
+        assert!(text.ends_with(".await"), "{:?}", text);
+        assert!(text.contains('\n'), "the chain spans lines: {:?}", text);
+        // The end is what a reader follows; it lands on the `.await` itself,
+        // two lines below where the span starts.
+        assert!(
+            SOURCE_WITH_MULTILINE_AWAIT[..span.end].ends_with(").await"),
+            "span must end where the operator ends"
+        );
+    }
+
+    /// Known imprecision, pinned deliberately and separately.
+    ///
+    /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
+    /// `.await` over `(3).await` rather than over the operator alone
+    /// (`src/parser/mod.rs:2459`, `:2606`). That is not what these diagnostics
+    /// *should* point at — it is what they currently point at. Narrowing the
+    /// span to the operator is a welcome change: it will fail exactly this
+    /// test, and no other, which is the point of keeping it apart from the
+    /// assertions above.
+    #[test]
+    fn known_quirk_postfix_spans_cover_the_operand_too() {
+        let q = unimplemented_span(SOURCE_WITH_QUESTION);
+        assert_eq!(&SOURCE_WITH_QUESTION[q.start..q.end], "(x)?");
+
+        let a = unimplemented_span(SOURCE_WITH_AWAIT);
+        assert_eq!(&SOURCE_WITH_AWAIT[a.start..a.end], "(3).await");
+    }
+
+    #[test]
+    fn test_unimplemented_diagnostic_names_the_consequence_and_a_workaround() {
+        // "Not implemented" on its own sends the reader back to the source. The
+        // house style (see the let-inference error) states what would otherwise
+        // happen and what to do today.
+        //
+        // The note must describe the missing *lowering*. Saying "there is no
+        // Result type" would contradict the program that triggers it, which
+        // reaches this diagnostic precisely by declaring one.
+        let diag = CompileError::question_unimplemented(Span::new(0, 1, 1, 1)).to_diagnostic();
+        assert!(diag.span.is_some());
+        let note = diag.notes.join(" ");
+        assert!(note.contains("no lowering of `?`"), "{}", note);
+        assert!(
+            !note.contains("there is no Result type"),
+            "the note must not deny a type the triggering program declares: {}",
+            note
+        );
+        let help = diag
+            .suggestions
+            .iter()
+            .map(|s| s.message.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(help.contains("match"), "{}", help);
+        // …and it must name its own limit rather than imply the `match`
+        // replacement generalises to a generic Result, which does not compile.
+        assert!(help.contains("Result<T, E>` will not compile"), "{}", help);
+
+        // No diagnostic may promise a release. The roadmap changes; the binary
+        // that was already shipped does not.
+        for text in [
+            CompileError::question_unimplemented(Span::new(0, 1, 1, 1)),
+            CompileError::await_unimplemented(Span::new(0, 1, 1, 1)),
+        ]
+        .iter()
+        .flat_map(|e| {
+            let d = e.to_diagnostic();
+            let mut v = d.notes.clone();
+            v.push(d.message.clone());
+            v.extend(d.suggestions.iter().map(|s| s.message.clone()));
+            v
+        }) {
+            for promise in ["M1", "M2", "M3", "M4", "M5", "MILESTONES", "scheduled"] {
+                assert!(
+                    !text.contains(promise),
+                    "diagnostic promises a roadmap item ({}): {}",
+                    promise,
+                    text
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_await_diagnostic_does_not_suggest_merely_deleting_the_await() {
+        // Measured on a `-> Future<T>` function, the case the advice is for:
+        // deleting `.await` yields "Type mismatch: expected Int, found
+        // Future<Int>". A suggestion that trades one error for another is the
+        // defect this whole change exists to remove, so it is asserted against
+        // by name. The phrasing must also stay conditional, because the operand
+        // is never inspected and may not involve a function at all.
+        let diag = CompileError::await_unimplemented(Span::new(0, 1, 1, 1)).to_diagnostic();
+        let help = diag
+            .suggestions
+            .iter()
+            .map(|s| s.message.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(help.contains("change it to `-> T`"), "{}", help);
+        assert!(
+            !help.contains("call the function without `.await`"),
+            "that suggestion does not compile: {}",
+            help
+        );
+        // Phrased conditionally, because the operand is never inspected: a
+        // `some_variable.await` has no function whose signature could change.
+        assert!(help.contains("If a function is declared"), "{}", help);
+        assert!(
+            !help.starts_with("declare the function"),
+            "unconditional phrasing presumes an operand shape: {}",
+            help
+        );
+    }
 
     #[test]
     fn test_type_check_hello_world() {

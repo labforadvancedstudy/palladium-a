@@ -455,8 +455,8 @@ several of them fail *without an error message* — see the
 | closures | top-level functions |
 | `Vec`, `HashMap` | fixed-size arrays with a count |
 | `Option`, `Result` | your own `enum` |
-| `?` operator | explicit checks — `?` emits C that does not compile |
-| `async` / `.await` | nothing — emits a call to a function that is never generated |
+| `?` operator | explicit checks — `?` is rejected: "the `?` operator is not implemented" |
+| `async` / `.await` | nothing — `.await` is rejected: "`.await` is not implemented" |
 | tuples | a struct |
 | floats, `char` | `i64` |
 | bitwise `& \| ^ << >>` | nothing — the lexer has no such tokens |

@@ -217,9 +217,9 @@ the type branch.
 ### 5.1 Option and Result ❌ (as built-ins)
 
 There is no built-in `Option` or `Result` — no prelude, no declaration, no lexer or parser
-support. They are ordinary user enums if you declare them. The only special-casing is that `?`
-typechecks against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2495`) — and then
-generates C for a `struct Result` layout that codegen never emits (see §6.5).
+support. They are ordinary user enums if you declare them, with no methods and no `?`. Declaring
+one does not make `?` work: the operator is rejected outright (see §6.5), because nothing lowers
+it onto the representation your enum is compiled to. Use `match`.
 
 The v1.0 spec's prelude (`type Option<T> = enum { Some(T), None };`) does not exist.
 
@@ -273,16 +273,69 @@ that: **"Indirect function calls not yet supported"** (`src/typeck/mod.rs:1712`;
 
 Call associated functions as `Type::method(receiver, …)`.
 
-### 6.5 `?` and `async`/`await` ⚠️ — silent breakage
+### 6.5 `?` and `async`/`await` ❌ — rejected, not lowered
 
-- `?` generates C that references a `struct Result { int is_ok; union {…} data; }` layout
-  which **no other part of codegen emits** — user enums are generated with a `.tag` field and
-  `__Enum__Variant` constants instead (`src/codegen/mod.rs:2160-2201`, `:1644`). The result is
-  C that does not compile.
-- `.await` emits `while (!f.poll(&f)) {}`, calling a `poll` member that is never generated
-  (`src/codegen/mod.rs:2208-2237`).
+Both parse. Neither can be compiled, and since D5 the compiler says so instead of emitting C:
 
-Neither is an error at any earlier stage. Both are excluded from the bootstrap subset.
+```
+error: the `?` operator is not implemented
+  --> prog.pd:11:28
+11 |     let v: i64 = might_fail(x)?;
+   |                            ^~~~
+  = note: code generation has no lowering of `?` onto the enum representation it emits,
+          and would instead produce C for a `struct Result { int is_ok; union … }` layout
+          that no enum is ever generated as
+  = help: there is no error-propagation operator; return the value and dispatch on it
+          with `match`. Only non-generic enums are compiled, so declare a concrete one
+          such as `enum Result { Ok(i64), Err(i64) }` — `Result<T, E>` will not compile
+```
+
+Note what is *not* claimed: `Result` is not a missing type — you can declare one, and before
+this refusal existed that is how a program reached code generation. What is missing is the
+lowering onto the representation enums actually get.
+
+The refusal fires on the operator itself, before the operand is examined, so `3?` and
+`unknown()?` reach it too. The wording is therefore phrased for any operand: it does not assert
+that what precedes `?` is a Result, because in those programs it is not.
+
+The `match` alternative is bounded, and the help says where it stops rather than leaving it to be
+discovered. Measured: dispatch works, propagation out of a helper works, payload types other than
+`i64` work — but a generic `Result<T, E>` does **not** compile, because code generation skips
+generic enum definitions (`src/codegen/mod.rs:841`, `:909`, `:929`) and generic enum construction
+infers only the parameters a variant mentions, so `Result::Err(e)` yields `Result<(), E>`. One
+syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
+and propagation needs block arms because `return` is not an expression.
+
+The refusal is raised by the type checker (`src/typeck/mod.rs:2356`, `:2363`) and again by code
+generation (`src/codegen/mod.rs:2537`, `:2549`), which is callable on its own.
+
+What they used to do:
+
+- `?` emitted C referencing a `struct Result { int is_ok; union {…} data; }` layout that **no
+  other part of codegen emits** — enums are generated with a `.tag` field and `__Enum__Variant`
+  constants instead. gcc reported `variable has incomplete type 'struct Result'`.
+- `.await` emitted `while (!f.poll(&f)) {}`. C has no member function calls, and the poll
+  routine that *is* generated is the free function `<name>_poll`
+  (`src/codegen/mod.rs:2590`), which that call never names. There is no async runtime.
+
+Both lowerings are deleted rather than kept behind a flag: they encoded a representation a real
+implementation must not reuse, and version control holds them.
+
+The LLVM backend is a sharper case and is only safe by ordering. Its expression lowering has no
+arm for either node — the catch-all at `src/codegen/llvm_text_backend.rs:1378` returns the
+constant `0` for `Question`, `Await`, `EnumConstructor` and `MacroInvocation` alike, which
+compiles and is wrong. The type checker refuses before a backend is chosen, which is what
+`tests/d5_unimplemented_constructs.rs` pins.
+
+`async fn` still *declares* fine; only `.await` is rejected, and it is rejected on any operand —
+`some_variable.await` as much as a call. Historically the only shape that reached code generation
+was a plain function declared `-> Future<T>`, because a call to an `async fn` is typed as its bare
+return type and so awaiting one never type checked; that is a fact about the old type rules, which
+no longer gate anything. The workaround is phrased conditionally for the same reason. Where a
+`-> Future<T>` signature *is* involved, note that deleting `.await` alone leaves a `Future<T>`
+where a `T` is required, so the signature has to change too.
+
+Both are excluded from the bootstrap subset.
 
 ### 6.6 Tail expressions
 
