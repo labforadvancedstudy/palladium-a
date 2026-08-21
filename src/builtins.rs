@@ -1565,13 +1565,11 @@ mod tests {
         use std::process::Command;
 
         let root = env!("CARGO_MANIFEST_DIR");
-        if Command::new("gcc").arg("--version").output().is_err() {
-            // Every language-level gate in this repo already needs gcc; if it is
-            // missing those fail loudly, and this check has nothing to add.
-            eprintln!("skipping: gcc not available");
-            return;
-        }
 
+        // No skip. Every language-level gate in this repo already requires gcc, so
+        // skipping could not buy portability — it could only report success for a
+        // check that never ran, which is the failure mode this milestone exists to
+        // remove.
         let output = Command::new("gcc")
             .arg("-fsyntax-only")
             .arg("-I")
@@ -1580,7 +1578,7 @@ mod tests {
             .arg(format!("{}/runtime/pd_prelude.h", root))
             .arg(format!("{}/runtime/palladium_runtime.c", root))
             .output()
-            .expect("run gcc");
+            .expect("gcc must be available: every gate in this repo compiles C");
 
         assert!(
             output.status.success(),
@@ -1591,11 +1589,60 @@ mod tests {
         );
     }
 
+    /// A C expression with pointer casts and whitespace removed: `(char*)0`
+    /// becomes `0`. An inner `(a + b)` is left alone — stripping it would change
+    /// what the expression says.
+    fn strip_casts(expr: &str) -> String {
+        let mut s: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
+        while s.starts_with('(') {
+            let Some(close) = s.find(')') else { break };
+            let inside = &s[1..close];
+            let is_pointer_cast = inside.ends_with('*')
+                && inside
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '*');
+            if !is_pointer_cast {
+                break;
+            }
+            s = s[close + 1..].to_string();
+        }
+        s
+    }
+
+    /// Every value returned by `body`, normalised by `strip_casts`.
+    fn returned_values(body: &str) -> Vec<String> {
+        let mut values = Vec::new();
+        let mut rest = body;
+        while let Some(at) = rest.find("return") {
+            rest = &rest[at + "return".len()..];
+            // `returns_x` is not a return statement.
+            if rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+                continue;
+            }
+            let Some(semi) = rest.find(';') else { break };
+            values.push(strip_casts(&rest[..semi]));
+            rest = &rest[semi..];
+        }
+        values
+    }
+
     /// A Palladium String is a non-NULL `const char*` and the string built-ins
-    /// dereference it immediately, so no wrapper may hand back NULL.
-    /// `read_file_to_string` used to, which turned a missing file into SIGSEGV.
+    /// dereference it immediately (`string_len` is `strlen`), so no wrapper may
+    /// hand back a null pointer. `read_file_to_string` used to, which turned a
+    /// missing file into SIGSEGV.
+    ///
+    /// SCOPE, stated precisely because the name of the first version of this test
+    /// claimed more than it checked: this rejects a returned null *constant* in any
+    /// spelling — `NULL`, `0`, `(char*)0`, `(void*)0`. It does **not** prove a
+    /// wrapper never returns null at run time. `char* p = NULL; ...; return p;`
+    /// returns a variable, and nothing here evaluates it — which is not
+    /// hypothetical: `__pd_read_file_to_string` has exactly that shape, returning
+    /// `out_str`, which the callee fills in only on success. This is a guard
+    /// against the constant coming back, not a proof of non-nullness.
     #[test]
-    fn test_no_builtin_wrapper_returns_null() {
+    fn test_no_builtin_wrapper_returns_a_null_constant() {
+        const NULL_CONSTANTS: &[&str] = &["NULL", "0", "nullptr"];
+
         let prelude = emitted_prelude();
         for b in BUILTINS.iter().filter(|b| b.ret == BuiltinType::Str) {
             let needle = format!(" __pd_{}(", b.name);
@@ -1608,13 +1655,43 @@ mod tests {
                     .find("\n}")
                     .expect("wrapper body ends");
             let body = &prelude[body_start..end];
-            assert!(
-                !body.contains("return NULL"),
-                "__pd_{} can return NULL, but its Palladium type is a non-NULL String:\n{}",
-                b.name,
-                body
+
+            for value in returned_values(body) {
+                assert!(
+                    !NULL_CONSTANTS.contains(&value.as_str()),
+                    "__pd_{} returns the null constant `{}`, but its Palladium type \
+                     is a non-NULL String:\n{}",
+                    b.name,
+                    value,
+                    body
+                );
+            }
+        }
+    }
+
+    /// The null-constant scan must recognise the spellings it claims to, including
+    /// the ones the exact-match version of it missed.
+    #[test]
+    fn test_null_constant_scan_recognises_every_spelling() {
+        for spelling in ["NULL", "0", "(char*)0", "(void*)0", " ( char * ) 0 "] {
+            let body = format!("{{\n    return {};\n}}", spelling);
+            let expected = if spelling.contains("NULL") { "NULL" } else { "0" };
+            assert_eq!(
+                returned_values(&body),
+                vec![expected.to_string()],
+                "null spelling not normalised: {}",
+                spelling
             );
         }
+        // And it must not mistake ordinary returns for null.
+        assert_eq!(
+            returned_values("{\n    return result;\n    return \"\";\n}"),
+            vec!["result".to_string(), "\"\"".to_string()]
+        );
+        assert_eq!(
+            returned_values("{\n    return (a + b);\n}"),
+            vec!["(a+b)".to_string()]
+        );
     }
 
     /// Every built-in with a pinned mismatch must also be marked unsupported, and
