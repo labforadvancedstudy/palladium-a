@@ -2,7 +2,7 @@
 // "Native code generation without dependencies"
 
 use crate::ast::{ArraySize, AssignTarget, BinOp, Expr, Function, Item, Pattern, Program, Stmt, Type, UnaryOp};
-use crate::errors::{CompileError, Result};
+use crate::errors::{CompileError, Result, Span};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -908,21 +908,19 @@ impl LLVMTextBackend {
                 }
             }
 
-            Stmt::Break { .. } => {
-                // Generate jump to the end of the current loop
-                // For now, we'll use a placeholder since we need loop context
-                ir.push_str("  ; TODO: Implement break with proper loop context\n");
-                ir.push_str("  br label %loop_end_placeholder\n");
+            Stmt::Break { span } => {
+                return Err(unimplemented_loop_jump("break", "loop_end", *span));
             }
-            
-            Stmt::Continue { .. } => {
-                // Generate jump to the increment part of the current loop
-                // For now, we'll use a placeholder since we need loop context
-                ir.push_str("  ; TODO: Implement continue with proper loop context\n");
-                ir.push_str("  br label %loop_inc_placeholder\n");
+
+            Stmt::Continue { span } => {
+                return Err(unimplemented_loop_jump("continue", "loop_inc", *span));
             }
-            
-            Stmt::Match { expr, arms, .. } => {
+
+            Stmt::Match {
+                expr,
+                arms,
+                span: match_span,
+            } => {
                 // Generate switch-like control flow for match
                 let (expr_ir, _expr_var) = self.generate_expression(expr)?;
                 ir.push_str(&expr_ir);
@@ -933,13 +931,20 @@ impl LLVMTextBackend {
                 // TODO: Implement proper pattern matching
                 for (i, arm) in arms.iter().enumerate() {
                     let arm_label = self.fresh_label(&format!("match_arm{}", i));
-                    let next_label = if i + 1 < arms.len() {
+                    // Only the enum-pattern arm ever branched here, and that
+                    // arm now refuses, so nothing reads this. The label is
+                    // still allocated because `fresh_label` bumps the shared
+                    // counter, and dropping the call would renumber every
+                    // label in every other `match` this backend emits.
+                    let _next_label = if i + 1 < arms.len() {
                         self.fresh_label(&format!("match_arm{}", i + 1))
                     } else {
                         end_label.clone()
                     };
-                    
-                    // Simple pattern matching for now
+
+                    // Simple pattern matching for now. Exhaustive on purpose:
+                    // a new `Pattern` variant must be decided on here, not
+                    // swallowed by a wildcard.
                     match &arm.pattern {
                         Pattern::Wildcard => {
                             // Always matches
@@ -949,10 +954,14 @@ impl LLVMTextBackend {
                             // Bind the value and match
                             ir.push_str(&format!("  br label %{}\n", arm_label));
                         }
-                        _ => {
-                            // TODO: Implement enum pattern matching
-                            ir.push_str("  ; TODO: Complex pattern matching\n");
-                            ir.push_str(&format!("  br label %{}\n", next_label));
+                        Pattern::EnumPattern {
+                            enum_name, variant, ..
+                        } => {
+                            return Err(unimplemented_enum_pattern(
+                                enum_name,
+                                variant,
+                                *match_span,
+                            ));
                         }
                     }
                     
@@ -1375,10 +1384,25 @@ impl LLVMTextBackend {
                 Ok((ir, result_var))
             }
             
-            _ => {
-                // TODO: Implement EnumConstructor, Question, MacroInvocation, Await
-                Ok((String::new(), "0".to_string()))
+            // The four expression kinds this backend cannot lower. They are
+            // listed one by one rather than swept into a `_` arm: with no
+            // wildcard here, adding a variant to `Expr` stops compiling until
+            // somebody decides what this backend does with it. A wildcard is
+            // what let these four silently become `0` in the first place.
+            Expr::EnumConstructor {
+                enum_name,
+                variant,
+                span,
+                ..
+            } => Err(unimplemented_enum_constructor(enum_name, variant, *span)),
+
+            Expr::Question { span, .. } => Err(unimplemented_question(*span)),
+
+            Expr::MacroInvocation { name, span, .. } => {
+                Err(unimplemented_macro_invocation(name, *span))
             }
+
+            Expr::Await { span, .. } => Err(unimplemented_await(*span)),
         }
     }
 
@@ -1438,5 +1462,170 @@ impl LLVMTextBackend {
         std::fs::write(&output_path, ir)?;
 
         Ok(output_path)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Refusals
+//
+// Every construct this backend cannot lower gets one of these instead of
+// approximate IR. They live in this file rather than next to the shared
+// constructors in `src/errors/mod.rs` because each one describes what *this*
+// backend would otherwise emit — a claim that can only be checked against the
+// code a few hundred lines above — and because they are used nowhere else.
+// The error variant itself is the shared `CompileError::Unimplemented`, so
+// there is still only one way for the compiler to say "not implemented".
+//
+// Two rules hold for every message below:
+//   * the `consequence` describes IR that was actually observed, not IR that
+//     was imagined;
+//   * the `workaround` is compiled and run by `tests/d10_llvm_refuses.rs`.
+//     A suggestion nobody has executed is a claim, and this milestone is about
+//     the compiler not making claims it cannot back.
+// ---------------------------------------------------------------------------
+
+/// Enum construction, e.g. `Color::Green`.
+///
+/// This is the sharpest of the four expression refusals, because it is the
+/// only one whose fabricated value used to *link and run*. The old catch-all
+/// returned `("", "0")`, so `Color::Red` and `Color::Green` compiled to
+/// byte-identical IR (`store i64 0`) and the arguments of a data-carrying
+/// variant — `Wrapper::Val(loud(99))` — vanished with the call inside them.
+///
+/// The workaround points at the C backend because the C backend really does
+/// lower enum construction and `match`; that is receipted by
+/// `enum_workaround_on_the_c_backend_compiles_and_runs`.
+fn unimplemented_enum_constructor(
+    enum_name: &str,
+    variant: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::Unimplemented {
+        construct: format!("enum construction (`{}::{}`)", enum_name, variant),
+        consequence: "the LLVM backend has no lowering for enum constructors, and would emit \
+             the constant 0 for every variant of every enum — so distinct variants become the \
+             same value — while dropping the constructor's arguments and any effects they have"
+            .to_string(),
+        workaround: "build with the default C backend by dropping `--llvm`; it lowers enum \
+             construction and `match` on enums"
+            .to_string(),
+        span: Some(span),
+    }
+}
+
+/// `expr?`.
+///
+/// Measured before the fix: `let v: i64 = might_fail(x)?;` produced
+/// `store i64 0` with no call to `might_fail` anywhere in the function, so the
+/// operand was not merely mis-propagated, it was never evaluated.
+///
+/// The workaround cannot say "use the C backend" on its own — the C backend
+/// emits C for a `struct Result` layout it never defines, and gcc rejects it.
+/// The rewrite has to remove the `?` as well, which is what
+/// `question_workaround_on_the_c_backend_compiles_and_runs` executes.
+fn unimplemented_question(span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: "the `?` operator".to_string(),
+        consequence: "the LLVM backend has no lowering for `?`, and would emit the constant 0 \
+             in place of the whole expression without evaluating the operand at all"
+            .to_string(),
+        workaround: "match on the enum the operand returns and handle each variant explicitly, \
+             and build with the default C backend by dropping `--llvm`; neither backend lowers \
+             `?` itself"
+            .to_string(),
+        span: Some(span),
+    }
+}
+
+/// A macro invocation that survived macro expansion.
+///
+/// Reaching this is a phase-ordering fault rather than a missing feature:
+/// expansion runs in `src/macros/mod.rs` before code generation, and the type
+/// checker already refuses a stray invocation at `src/typeck/mod.rs:2415`, so
+/// no source program measured here gets this far. It is spelled out anyway
+/// because the wildcard that used to cover it is gone, and because "currently
+/// unreachable" is not "safe to fabricate".
+fn unimplemented_macro_invocation(name: &str, span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: format!("the macro invocation `{}!`", name),
+        consequence: "macro expansion runs before code generation, so an invocation that \
+             reaches the LLVM backend was never expanded; the backend would emit the constant 0 \
+             in its place"
+            .to_string(),
+        workaround: "declare the macro before the code that invokes it, or write out the code \
+             the macro expands to"
+            .to_string(),
+        span: Some(span),
+    }
+}
+
+/// `expr.await`.
+///
+/// Measured before the fix: `let v: i64 = work(3).await;` produced
+/// `store i64 0` and printed `0`, with no call to `work`.
+///
+/// The workaround has to change the *signature*, not just delete the `.await`.
+/// The only shape that reaches this arm is a plain function declared
+/// `-> Future<T>` (a call to an `async fn` is typed as its bare return type, so
+/// awaiting one never type checked), and dropping `.await` there leaves a
+/// `Future<T>` where a `T` is required. Receipted by
+/// `await_workaround_compiles_and_runs_under_llvm` and, for the suggestion this
+/// message must never make, `deleting_the_await_alone_does_not_compile`.
+fn unimplemented_await(span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: "`.await`".to_string(),
+        consequence: "there is no async runtime, and the LLVM backend would emit the constant 0 \
+             in place of the awaited value without evaluating the operand at all"
+            .to_string(),
+        workaround: "declare the function to return its value directly (`-> T`, not \
+             `-> Future<T>`) and call it; deleting `.await` on its own leaves a Future where a \
+             value is required"
+            .to_string(),
+        span: Some(span),
+    }
+}
+
+/// `break` and `continue`.
+///
+/// Statement lowering carries no loop context, so these used to emit
+/// `br label %loop_end_placeholder` / `%loop_inc_placeholder` — branches to
+/// labels this backend never defines. The module was invalid, but `pdc compile
+/// --llvm` still exited 0 and still printed "Compilation successful", which is
+/// the lie M1 is about.
+fn unimplemented_loop_jump(keyword: &str, placeholder: &str, span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: format!("`{}`", keyword),
+        consequence: format!(
+            "the LLVM backend does not track loop context, and would emit a branch to \
+             `%{}_placeholder`, a label it never defines; the module would be rejected by the \
+             assembler",
+            placeholder
+        ),
+        workaround: format!(
+            "build with the default C backend by dropping `--llvm`; it lowers `{}`",
+            keyword
+        ),
+        span: Some(span),
+    }
+}
+
+/// An enum pattern in a `match` arm, e.g. `Color::Green => …`.
+///
+/// The scrutinee was never compared against anything: the arm emitted
+/// `br label %match_arm12` where `%match_arm12` is a label allocated for a
+/// later arm and never defined, so the assembler answered `use of undefined
+/// value '%match_arm12'`. `Pattern` has no span of its own, so the diagnostic
+/// points at the `match` statement.
+fn unimplemented_enum_pattern(enum_name: &str, variant: &str, span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: format!("matching the enum pattern `{}::{}`", enum_name, variant),
+        consequence: "the LLVM backend never compares the scrutinee against an enum pattern, \
+             and would emit a branch to a label it does not define; the module would be \
+             rejected by the assembler"
+            .to_string(),
+        workaround: "build with the default C backend by dropping `--llvm`; it lowers `match` \
+             on enums"
+            .to_string(),
+        span: Some(span),
     }
 }
