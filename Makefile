@@ -256,3 +256,19 @@ uninstall: ## Uninstall pdc
 	@echo "$(YELLOW)Uninstalling pdc...$(NC)"
 	$(CARGO) uninstall alan-von-palladium
 	@echo "$(GREEN)✓ pdc uninstalled$(NC)"
+# --- Language conformance and self-hosting gates ---------------------------
+
+.PHONY: conformance
+conformance: build ## Compile+link+run every .pd under tests/ and examples/
+	@bash scripts/conformance.sh tests examples
+
+.PHONY: selfhost
+selfhost: build ## Run the self-hosting fixed-point gate (bootstrap/pdc.pd)
+	@bash scripts/selfhost.sh
+
+.PHONY: test-honest
+test-honest: ## Run EVERY test binary, including integration tests (no fail-fast)
+	@echo "$(YELLOW)Running all test binaries (integration included)...$(NC)"
+	@echo "$(YELLOW)Note: 'make test-rust' uses --lib --bins and never runs tests/*.rs,$(NC)"
+	@echo "$(YELLOW)which is why the integration failures below went unnoticed.$(NC)"
+	$(CARGO) test --release --no-fail-fast

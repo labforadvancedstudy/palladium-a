@@ -1,0 +1,49 @@
+// Smallest PBS-1 program that exercises every construct the bootstrap compiler
+// must translate: struct definition, struct parameter (C pointer), struct local
+// (C value, passed with &), array field, String field, while, if/else, explicit
+// return, builtin calls, and an integer helper function.
+
+struct Box {
+    items: [i64; 8],
+    label: String,
+    n: i64,
+}
+
+fn add_item(mut b: Box, v: i64) {
+    b.items[b.n] = v;
+    b.n = b.n + 1;
+}
+
+fn total(mut b: Box) -> i64 {
+    let mut sum: i64 = 0;
+    let mut i: i64 = 0;
+    while i < b.n {
+        sum = sum + b.items[i];
+        i = i + 1;
+    }
+    return sum;
+}
+
+fn classify(x: i64) -> String {
+    if x > 100 {
+        return "big";
+    } else {
+        return "small";
+    }
+}
+
+fn main() {
+    let mut b: Box = Box { items: [0; 8], label: "demo", n: 0 };
+
+    add_item(b, 10);
+    add_item(b, 20);
+    add_item(b, 30);
+
+    print(b.label);
+    print_int(b.n);
+
+    let t: i64 = total(b);
+    print_int(t);
+    print(classify(t));
+    print(classify(1000));
+}

@@ -1,0 +1,106 @@
+// Bootstrap capability probe.
+//
+// Exercises exactly the constructs a self-hosting Palladium compiler needs:
+// token tables (arrays of structs), a scanner loop over string characters,
+// recursive-descent style mutual recursion, enum tags for node kinds, and
+// string building for C output. If this program compiles and runs, the
+// bootstrap subset defined in docs/specification/bootstrap-subset.md is
+// implementable in Palladium.
+
+struct Token {
+    kind: i64,
+    value: i64,
+}
+
+enum Node {
+    Num(i64),
+    Add(i64, i64),
+}
+
+// --- token kinds (no const support in the subset; use functions) ---
+fn tk_num() -> i64 { return 1; }
+fn tk_plus() -> i64 { return 2; }
+fn tk_eof() -> i64 { return 0; }
+
+// Scanner: turn a digit/plus string into a token count, writing into arrays.
+fn scan(src: String, kinds: [i64; 64], values: [i64; 64]) -> i64 {
+    let mut n: i64 = 0;
+    let mut i: i64 = 0;
+    let len: i64 = string_len(src);
+    while i < len {
+        let c: i64 = string_char_at(src, i);
+        if c == 32 {
+            i = i + 1;
+            continue;
+        }
+        if c == 43 {
+            kinds[n] = tk_plus();
+            values[n] = 0;
+            n = n + 1;
+            i = i + 1;
+            continue;
+        }
+        if char_is_digit(c) {
+            let mut v: i64 = 0;
+            while i < len && char_is_digit(string_char_at(src, i)) {
+                v = v * 10 + (string_char_at(src, i) - 48);
+                i = i + 1;
+            }
+            kinds[n] = tk_num();
+            values[n] = v;
+            n = n + 1;
+            continue;
+        }
+        i = i + 1;
+    }
+    kinds[n] = tk_eof();
+    values[n] = 0;
+    return n;
+}
+
+// Recursion: the shape every recursive-descent parser needs.
+fn sum_from(kinds: [i64; 64], values: [i64; 64], idx: i64, count: i64) -> i64 {
+    if idx >= count {
+        return 0;
+    }
+    if kinds[idx] == tk_num() {
+        return values[idx] + sum_from(kinds, values, idx + 1, count);
+    }
+    return sum_from(kinds, values, idx + 1, count);
+}
+
+// String building: the shape the C emitter needs.
+fn emit_expr(total: i64) -> String {
+    let mut out: String = "int main() { return ";
+    out = out + int_to_string(total);
+    out = out + "; }";
+    return out;
+}
+
+fn main() {
+    let mut kinds: [i64; 64] = [0; 64];
+    let mut values: [i64; 64] = [0; 64];
+
+    let src: String = "12 + 30 + 5";
+    let count: i64 = scan(src, kinds, values);
+
+    print("tokens scanned:");
+    print_int(count);
+
+    let total: i64 = sum_from(kinds, values, 0, count);
+    print("sum:");
+    print_int(total);
+
+    let n: Node = Node::Add(1, 2);
+    match n {
+        Node::Num(v) => {
+            print_int(v);
+        }
+        Node::Add(a, b) => {
+            print("add node:");
+            print_int(a + b);
+        }
+    }
+
+    print(emit_expr(total));
+}

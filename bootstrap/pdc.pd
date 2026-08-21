@@ -1,0 +1,991 @@
+// pdc.pd — the Palladium bootstrap compiler, written in Palladium (PBS-1).
+//
+// It translates PBS-1 source to C. PBS-1 is specified in
+// docs/specification/bootstrap-subset.md; the short version is: explicit types on
+// every `let`, explicit `return`, no `else if`, no `for`, no `match`, no enums, no
+// method syntax, struct and array parameters always `mut`.
+//
+// This file is written in exactly the subset it implements. That is the whole
+// point: the fixed point checked by scripts/selfhost.sh is only reachable if the
+// two sets are the same set.
+//
+// Usage:  pdc <input.pd> <output.c>
+
+// ---------------------------------------------------------------------------
+// Token kinds
+// ---------------------------------------------------------------------------
+
+fn TK_EOF() -> i64 { return 0; }
+fn TK_IDENT() -> i64 { return 1; }
+fn TK_INT() -> i64 { return 2; }
+fn TK_STR() -> i64 { return 3; }
+fn TK_PUNCT() -> i64 { return 4; }
+
+// Symbol kinds in the local scope table
+fn SYM_PLAIN() -> i64 { return 0; }   // scalar, String, or array
+fn SYM_SPTR() -> i64 { return 1; }    // struct parameter: already a C pointer
+fn SYM_SVAL() -> i64 { return 2; }    // struct local: a C value, needs & when passed
+
+fn MAXTOK() -> i64 { return 60000; }
+fn MAXSYM() -> i64 { return 512; }
+
+// ---------------------------------------------------------------------------
+// Compiler state
+// ---------------------------------------------------------------------------
+
+struct C {
+    src: String,
+    kind: [i64; 60000],
+    text: [String; 60000],
+    ntok: i64,
+    out: i64,
+    // local symbol table, reset per function
+    sname: [String; 512],
+    skind: [i64; 512],
+    nsym: i64,
+    errors: i64,
+}
+
+fn emit(mut c: C, s: String) {
+    file_write(c.out, s);
+}
+
+fn fail(mut c: C, msg: String) {
+    print(string_concat("pdc: error: ", msg));
+    c.errors = c.errors + 1;
+}
+
+// ---------------------------------------------------------------------------
+// Lexer
+// ---------------------------------------------------------------------------
+
+fn is_ident_start(ch: i64) -> bool {
+    if char_is_alpha(ch) {
+        return true;
+    }
+    if ch == 95 {
+        return true;
+    }
+    return false;
+}
+
+fn is_ident_char(ch: i64) -> bool {
+    if is_ident_start(ch) {
+        return true;
+    }
+    if char_is_digit(ch) {
+        return true;
+    }
+    return false;
+}
+
+fn push_tok(mut c: C, k: i64, t: String) {
+    c.kind[c.ntok] = k;
+    c.text[c.ntok] = t;
+    c.ntok = c.ntok + 1;
+}
+
+// Scan the two-character operators. Returns the operator text, or "" if the
+// pair at position i is not one of them.
+fn two_char_op(src: String, i: i64, len: i64) -> String {
+    if i + 1 >= len {
+        return "";
+    }
+    let a: i64 = string_char_at(src, i);
+    let b: i64 = string_char_at(src, i + 1);
+    if a == 61 {
+        if b == 61 {
+            return "==";
+        }
+    }
+    if a == 33 {
+        if b == 61 {
+            return "!=";
+        }
+    }
+    if a == 60 {
+        if b == 61 {
+            return "<=";
+        }
+    }
+    if a == 62 {
+        if b == 61 {
+            return ">=";
+        }
+    }
+    if a == 38 {
+        if b == 38 {
+            return "&&";
+        }
+    }
+    if a == 124 {
+        if b == 124 {
+            return "||";
+        }
+    }
+    if a == 45 {
+        if b == 62 {
+            return "->";
+        }
+    }
+    if a == 58 {
+        if b == 58 {
+            return "::";
+        }
+    }
+    return "";
+}
+
+fn lex(mut c: C) {
+    let len: i64 = string_len(c.src);
+    let mut i: i64 = 0;
+    while i < len {
+        let ch: i64 = string_char_at(c.src, i);
+
+        // whitespace
+        if char_is_whitespace(ch) {
+            i = i + 1;
+            continue;
+        }
+
+        // comments
+        if ch == 47 {
+            if i + 1 < len {
+                let n: i64 = string_char_at(c.src, i + 1);
+                if n == 47 {
+                    while i < len {
+                        if string_char_at(c.src, i) == 10 {
+                            break;
+                        }
+                        i = i + 1;
+                    }
+                    continue;
+                }
+                if n == 42 {
+                    i = i + 2;
+                    while i + 1 < len {
+                        if string_char_at(c.src, i) == 42 {
+                            if string_char_at(c.src, i + 1) == 47 {
+                                i = i + 2;
+                                break;
+                            }
+                        }
+                        i = i + 1;
+                    }
+                    continue;
+                }
+            }
+        }
+
+        // identifiers and keywords
+        if is_ident_start(ch) {
+            let start: i64 = i;
+            while i < len {
+                if is_ident_char(string_char_at(c.src, i)) {
+                    i = i + 1;
+                } else {
+                    break;
+                }
+            }
+            push_tok(c, TK_IDENT(), string_substring(c.src, start, i));
+            continue;
+        }
+
+        // integers
+        if char_is_digit(ch) {
+            let start: i64 = i;
+            while i < len {
+                if char_is_digit(string_char_at(c.src, i)) {
+                    i = i + 1;
+                } else {
+                    break;
+                }
+            }
+            push_tok(c, TK_INT(), string_substring(c.src, start, i));
+            continue;
+        }
+
+        // string literals, kept verbatim (quotes and escapes included) so that
+        // emission is an identity transform
+        if ch == 34 {
+            let start: i64 = i;
+            i = i + 1;
+            while i < len {
+                let s: i64 = string_char_at(c.src, i);
+                if s == 92 {
+                    i = i + 2;
+                    continue;
+                }
+                if s == 34 {
+                    i = i + 1;
+                    break;
+                }
+                i = i + 1;
+            }
+            push_tok(c, TK_STR(), string_substring(c.src, start, i));
+            continue;
+        }
+
+        // two-character operators
+        let two: String = two_char_op(c.src, i, len);
+        if string_len(two) > 0 {
+            push_tok(c, TK_PUNCT(), two);
+            i = i + 2;
+            continue;
+        }
+
+        // single-character punctuation
+        push_tok(c, TK_PUNCT(), string_from_char(ch));
+        i = i + 1;
+    }
+    push_tok(c, TK_EOF(), "");
+}
+
+// ---------------------------------------------------------------------------
+// Token helpers
+// ---------------------------------------------------------------------------
+
+fn tok_is(mut c: C, i: i64, s: String) -> bool {
+    if i >= c.ntok {
+        return false;
+    }
+    return string_eq(c.text[i], s);
+}
+
+fn tok_kind_is(mut c: C, i: i64, k: i64) -> bool {
+    if i >= c.ntok {
+        return false;
+    }
+    if c.kind[i] == k {
+        return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Symbol table (per function)
+// ---------------------------------------------------------------------------
+
+fn sym_reset(mut c: C) {
+    c.nsym = 0;
+}
+
+fn sym_add(mut c: C, name: String, k: i64) {
+    if c.nsym >= MAXSYM() {
+        fail(c, "too many locals in one function");
+        return;
+    }
+    c.sname[c.nsym] = name;
+    c.skind[c.nsym] = k;
+    c.nsym = c.nsym + 1;
+}
+
+fn sym_kind(mut c: C, name: String) -> i64 {
+    let mut i: i64 = 0;
+    while i < c.nsym {
+        if string_eq(c.sname[i], name) {
+            return c.skind[i];
+        }
+        i = i + 1;
+    }
+    return SYM_PLAIN();
+}
+
+// ---------------------------------------------------------------------------
+// Builtin name mapping
+// ---------------------------------------------------------------------------
+
+fn builtin_c_name(n: String) -> String {
+    if string_eq(n, "print") { return "__pd_print"; }
+    if string_eq(n, "print_int") { return "__pd_print_int"; }
+    if string_eq(n, "panic") { return "__pd_panic"; }
+    if string_eq(n, "string_len") { return "__pd_string_len"; }
+    if string_eq(n, "string_concat") { return "__pd_string_concat"; }
+    if string_eq(n, "string_eq") { return "__pd_string_eq"; }
+    if string_eq(n, "string_char_at") { return "__pd_string_char_at"; }
+    if string_eq(n, "string_substring") { return "__pd_string_substring"; }
+    if string_eq(n, "string_from_char") { return "__pd_string_from_char"; }
+    if string_eq(n, "string_to_int") { return "__pd_string_to_int"; }
+    if string_eq(n, "int_to_string") { return "__pd_int_to_string"; }
+    if string_eq(n, "char_is_digit") { return "__pd_char_is_digit"; }
+    if string_eq(n, "char_is_alpha") { return "__pd_char_is_alpha"; }
+    if string_eq(n, "char_is_whitespace") { return "__pd_char_is_whitespace"; }
+    if string_eq(n, "file_open") { return "__pd_file_open"; }
+    if string_eq(n, "file_read_all") { return "__pd_file_read_all"; }
+    if string_eq(n, "file_read_line") { return "__pd_file_read_line"; }
+    if string_eq(n, "file_write") { return "__pd_file_write"; }
+    if string_eq(n, "file_close") { return "__pd_file_close"; }
+    if string_eq(n, "file_exists") { return "__pd_file_exists"; }
+    if string_eq(n, "read_file_to_string") { return "__pd_read_file_to_string"; }
+    if string_eq(n, "write_string_to_file") { return "__pd_write_string_to_file"; }
+    if string_eq(n, "arg_count") { return "__pd_arg_count"; }
+    if string_eq(n, "arg_at") { return "__pd_arg_at"; }
+    return "";
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+fn base_ctype(t: String) -> String {
+    if string_eq(t, "i64") { return "long long"; }
+    if string_eq(t, "int") { return "long long"; }
+    if string_eq(t, "i32") { return "int"; }
+    if string_eq(t, "u32") { return "unsigned int"; }
+    if string_eq(t, "u64") { return "unsigned long long"; }
+    if string_eq(t, "bool") { return "int"; }
+    if string_eq(t, "String") { return "const char*"; }
+    return "";
+}
+
+fn is_struct_type_name(t: String) -> bool {
+    if string_len(base_ctype(t)) > 0 {
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Expression emission
+//
+// PBS-1 expression syntax is a subset of C expression syntax, so emission is a
+// token copy with three rewrites:
+//   1. builtin call names are mapped to their __pd_ C names
+//   2. a struct *parameter* is a C pointer, so `p.f` becomes `p->f`
+//   3. a struct *local* is a C value, so passing it needs `&`
+// ---------------------------------------------------------------------------
+
+fn emit_ident(mut c: C, i: i64) {
+    let name: String = c.text[i];
+
+    // `bool` maps to C `int`, so the literals must map too: the emitted C does
+    // not include <stdbool.h>.
+    if string_eq(name, "true") {
+        emit(c, "1");
+        return;
+    }
+    if string_eq(name, "false") {
+        emit(c, "0");
+        return;
+    }
+
+    let k: i64 = sym_kind(c, name);
+    let next_is_dot: bool = tok_is(c, i + 1, ".");
+    let next_is_paren: bool = tok_is(c, i + 1, "(");
+
+    if next_is_paren {
+        let b: String = builtin_c_name(name);
+        if string_len(b) > 0 {
+            emit(c, b);
+            return;
+        }
+        emit(c, name);
+        return;
+    }
+
+    if k == SYM_SPTR() {
+        emit(c, name);
+        return;
+    }
+
+    if k == SYM_SVAL() {
+        if next_is_dot {
+            emit(c, name);
+            return;
+        }
+        emit(c, "&");
+        emit(c, name);
+        return;
+    }
+
+    emit(c, name);
+}
+
+// Emit the punctuation token at i, rewriting `.` to `->` when the root of the
+// access is a struct parameter.
+fn emit_dot(mut c: C, i: i64) {
+    if i > 0 {
+        if tok_kind_is(c, i - 1, TK_IDENT()) {
+            if sym_kind(c, c.text[i - 1]) == SYM_SPTR() {
+                emit(c, "->");
+                return;
+            }
+        }
+    }
+    emit(c, ".");
+}
+
+// Emit tokens from `start` until the terminator token, which is not emitted.
+// Returns the index of the terminator.
+fn emit_expr_until(mut c: C, start: i64, term: String) -> i64 {
+    let mut i: i64 = start;
+    let mut depth: i64 = 0;
+    while i < c.ntok {
+        let t: String = c.text[i];
+        if depth == 0 {
+            if string_eq(t, term) {
+                return i;
+            }
+        }
+        if string_eq(t, "(") {
+            depth = depth + 1;
+        }
+        if string_eq(t, "[") {
+            depth = depth + 1;
+        }
+        if string_eq(t, ")") {
+            depth = depth - 1;
+        }
+        if string_eq(t, "]") {
+            depth = depth - 1;
+        }
+
+        if c.kind[i] == TK_IDENT() {
+            emit_ident(c, i);
+        } else {
+            if string_eq(t, ".") {
+                emit_dot(c, i);
+            } else {
+                emit(c, t);
+            }
+        }
+        emit(c, " ");
+        i = i + 1;
+    }
+    return i;
+}
+
+// ---------------------------------------------------------------------------
+// Type parsing
+//
+// A type is either `Name` or `[Name; INT]`. These helpers return the position
+// after the type; the pieces are written into the state slots below.
+// ---------------------------------------------------------------------------
+
+struct T {
+    base: String,
+    arrlen: String,
+    is_array: bool,
+    is_struct: bool,
+}
+
+fn parse_type(mut c: C, mut ty: T, i: i64) -> i64 {
+    ty.is_array = false;
+    ty.arrlen = "";
+    if tok_is(c, i, "[") {
+        ty.is_array = true;
+        ty.base = c.text[i + 1];
+        ty.arrlen = c.text[i + 3];
+        ty.is_struct = is_struct_type_name(ty.base);
+        return i + 5;
+    }
+    ty.base = c.text[i];
+    ty.is_struct = is_struct_type_name(ty.base);
+    return i + 1;
+}
+
+fn emit_base_ctype(mut c: C, mut ty: T) {
+    if ty.is_struct {
+        emit(c, "struct ");
+        emit(c, ty.base);
+    } else {
+        emit(c, base_ctype(ty.base));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pass A — struct definitions
+// ---------------------------------------------------------------------------
+
+fn emit_structs(mut c: C) {
+    let mut ty: T = T { base: "", arrlen: "", is_array: false, is_struct: false };
+    let mut i: i64 = 0;
+    while i < c.ntok {
+        if tok_is(c, i, "struct") {
+            if tok_kind_is(c, i + 1, TK_IDENT()) {
+                let name: String = c.text[i + 1];
+                emit(c, "typedef struct ");
+                emit(c, name);
+                emit(c, " {\n");
+                let mut j: i64 = i + 3;
+                while j < c.ntok {
+                    if tok_is(c, j, "}") {
+                        break;
+                    }
+                    let fname: String = c.text[j];
+                    j = parse_type(c, ty, j + 2);
+                    emit(c, "    ");
+                    emit_base_ctype(c, ty);
+                    emit(c, " ");
+                    emit(c, fname);
+                    if ty.is_array {
+                        emit(c, "[");
+                        emit(c, ty.arrlen);
+                        emit(c, "]");
+                    }
+                    emit(c, ";\n");
+                    if tok_is(c, j, ",") {
+                        j = j + 1;
+                    }
+                }
+                emit(c, "} ");
+                emit(c, name);
+                emit(c, ";\n\n");
+                i = j;
+            }
+        }
+        i = i + 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Function signatures (shared by the prototype pass and the body pass)
+//
+// Emits `ret name(params)` and, when `record` is true, registers each parameter
+// in the local symbol table.
+// Returns the index of the `{` that opens the body.
+// ---------------------------------------------------------------------------
+
+fn find_body_brace(mut c: C, from: i64) -> i64 {
+    let mut b: i64 = from;
+    while b < c.ntok {
+        if tok_is(c, b, "{") {
+            return b;
+        }
+        b = b + 1;
+    }
+    return b;
+}
+
+fn emit_signature(mut c: C, i: i64, record: bool) -> i64 {
+    let mut ty: T = T { base: "", arrlen: "", is_array: false, is_struct: false };
+    let name: String = c.text[i + 1];
+
+    // `main` is the C entry point: it must have C's signature so that the
+    // program can read argv, which the compiler itself needs.
+    if string_eq(name, "main") {
+        emit(c, "int main(int argc, char** argv)");
+        return find_body_brace(c, i + 2);
+    }
+
+    // find the closing paren of the parameter list
+    let mut p: i64 = i + 3;
+    let mut close: i64 = p;
+    let mut depth: i64 = 1;
+    while close < c.ntok {
+        if tok_is(c, close, "(") {
+            depth = depth + 1;
+        }
+        if tok_is(c, close, ")") {
+            depth = depth - 1;
+            if depth == 0 {
+                break;
+            }
+        }
+        close = close + 1;
+    }
+
+    // return type
+    if tok_is(c, close + 1, "->") {
+        let after: i64 = parse_type(c, ty, close + 2);
+        emit_base_ctype(c, ty);
+    } else {
+        emit(c, "void");
+    }
+    emit(c, " ");
+    emit(c, name);
+    emit(c, "(");
+
+    let mut first: bool = true;
+    while p < close {
+        if tok_is(c, p, ",") {
+            p = p + 1;
+            continue;
+        }
+        let mut is_mut: bool = false;
+        if tok_is(c, p, "mut") {
+            is_mut = true;
+            p = p + 1;
+        }
+        let pname: String = c.text[p];
+        p = parse_type(c, ty, p + 2);
+
+        if first {
+            first = false;
+        } else {
+            emit(c, ", ");
+        }
+
+        emit_base_ctype(c, ty);
+        if ty.is_struct {
+            emit(c, "*");
+            if record {
+                sym_add(c, pname, SYM_SPTR());
+            }
+        } else {
+            if record {
+                sym_add(c, pname, SYM_PLAIN());
+            }
+        }
+        emit(c, " ");
+        emit(c, pname);
+        if ty.is_array {
+            emit(c, "[");
+            emit(c, ty.arrlen);
+            emit(c, "]");
+        }
+    }
+    if first {
+        emit(c, "void");
+    }
+    emit(c, ")");
+
+    // index of the body's `{`
+    let mut b: i64 = close + 1;
+    while b < c.ntok {
+        if tok_is(c, b, "{") {
+            return b;
+        }
+        b = b + 1;
+    }
+    return b;
+}
+
+fn emit_prototypes(mut c: C) {
+    let mut i: i64 = 0;
+    while i < c.ntok {
+        if tok_is(c, i, "fn") {
+            // C's entry point needs no prototype.
+            if string_eq(c.text[i + 1], "main") {
+                i = i + 1;
+                continue;
+            }
+            emit_signature(c, i, false);
+            emit(c, ";\n");
+        }
+        i = i + 1;
+    }
+    emit(c, "\n");
+}
+
+// ---------------------------------------------------------------------------
+// Pass C — function bodies
+// ---------------------------------------------------------------------------
+
+fn emit_indent(mut c: C, depth: i64) {
+    let mut d: i64 = 0;
+    while d < depth {
+        emit(c, "    ");
+        d = d + 1;
+    }
+}
+
+// `let [mut] name : TYPE = init ;`
+// Returns the index just past the terminating `;`.
+fn emit_let(mut c: C, start: i64, depth: i64) -> i64 {
+    let mut ty: T = T { base: "", arrlen: "", is_array: false, is_struct: false };
+    let mut i: i64 = start + 1;
+    if tok_is(c, i, "mut") {
+        i = i + 1;
+    }
+    let name: String = c.text[i];
+    i = parse_type(c, ty, i + 2);
+
+    emit_indent(c, depth);
+    emit_base_ctype(c, ty);
+    emit(c, " ");
+    emit(c, name);
+    if ty.is_array {
+        emit(c, "[");
+        emit(c, ty.arrlen);
+        emit(c, "]");
+    }
+
+    if ty.is_struct {
+        sym_add(c, name, SYM_SVAL());
+    } else {
+        sym_add(c, name, SYM_PLAIN());
+    }
+
+    // `= init`
+    if tok_is(c, i, "=") {
+        i = i + 1;
+        emit(c, " = ");
+        if ty.is_array {
+            // PBS-1 array initializers are `[v; n]`, which is `{0}` in C: the
+            // bootstrap compiler always writes every slot before reading it.
+            emit(c, "{0}");
+            i = emit_skip_to_semi(c, i);
+        } else {
+            if ty.is_struct {
+                i = emit_struct_literal(c, i);
+            } else {
+                i = emit_expr_until(c, i, ";");
+            }
+        }
+    } else {
+        if ty.is_struct {
+            emit(c, " = {0}");
+        }
+    }
+    emit(c, ";\n");
+    return i + 1;
+}
+
+fn emit_skip_to_semi(mut c: C, start: i64) -> i64 {
+    let mut i: i64 = start;
+    while i < c.ntok {
+        if tok_is(c, i, ";") {
+            return i;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+// `S { f: expr, g: expr }` -> `(struct S){ .f = expr, .g = expr }`
+fn emit_struct_literal(mut c: C, start: i64) -> i64 {
+    let sname: String = c.text[start];
+    emit(c, "(struct ");
+    emit(c, sname);
+    emit(c, "){ ");
+    let mut i: i64 = start + 2;
+    let mut first: bool = true;
+    while i < c.ntok {
+        if tok_is(c, i, "}") {
+            i = i + 1;
+            break;
+        }
+        if tok_is(c, i, ",") {
+            i = i + 1;
+            continue;
+        }
+        let fname: String = c.text[i];
+        if first {
+            first = false;
+        } else {
+            emit(c, ", ");
+        }
+        emit(c, ".");
+        emit(c, fname);
+        emit(c, " = ");
+        i = i + 2;
+        if tok_is(c, i, "[") {
+            emit(c, "{0}");
+            i = skip_bracket(c, i);
+        } else {
+            i = emit_field_value(c, i);
+        }
+    }
+    emit(c, " }");
+    return emit_skip_to_semi(c, i);
+}
+
+fn skip_bracket(mut c: C, start: i64) -> i64 {
+    let mut i: i64 = start;
+    let mut depth: i64 = 0;
+    while i < c.ntok {
+        if tok_is(c, i, "[") {
+            depth = depth + 1;
+        }
+        if tok_is(c, i, "]") {
+            depth = depth - 1;
+            if depth == 0 {
+                return i + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+// A struct-literal field value ends at `,` or the closing `}` at depth 0.
+fn emit_field_value(mut c: C, start: i64) -> i64 {
+    let mut i: i64 = start;
+    let mut depth: i64 = 0;
+    while i < c.ntok {
+        let t: String = c.text[i];
+        if depth == 0 {
+            if string_eq(t, ",") {
+                return i;
+            }
+            if string_eq(t, "}") {
+                return i;
+            }
+        }
+        if string_eq(t, "(") {
+            depth = depth + 1;
+        }
+        if string_eq(t, ")") {
+            depth = depth - 1;
+        }
+        if c.kind[i] == TK_IDENT() {
+            emit_ident(c, i);
+        } else {
+            emit(c, t);
+        }
+        emit(c, " ");
+        i = i + 1;
+    }
+    return i;
+}
+
+// Emit one statement. Returns the index just past it.
+fn emit_stmt(mut c: C, start: i64, depth: i64) -> i64 {
+    let mut i: i64 = start;
+
+    if tok_is(c, i, "let") {
+        return emit_let(c, i, depth);
+    }
+
+    if tok_is(c, i, "if") {
+        emit_indent(c, depth);
+        emit(c, "if (");
+        let open: i64 = emit_expr_until(c, i + 1, "{");
+        emit(c, ") {\n");
+        let after: i64 = emit_block(c, open + 1, depth + 1);
+        emit_indent(c, depth);
+        emit(c, "}");
+        if tok_is(c, after, "else") {
+            emit(c, " else {\n");
+            let after2: i64 = emit_block(c, after + 2, depth + 1);
+            emit_indent(c, depth);
+            emit(c, "}\n");
+            return after2;
+        }
+        emit(c, "\n");
+        return after;
+    }
+
+    if tok_is(c, i, "while") {
+        emit_indent(c, depth);
+        emit(c, "while (");
+        let open: i64 = emit_expr_until(c, i + 1, "{");
+        emit(c, ") {\n");
+        let after: i64 = emit_block(c, open + 1, depth + 1);
+        emit_indent(c, depth);
+        emit(c, "}\n");
+        return after;
+    }
+
+    if tok_is(c, i, "return") {
+        emit_indent(c, depth);
+        emit(c, "return ");
+        let semi: i64 = emit_expr_until(c, i + 1, ";");
+        emit(c, ";\n");
+        return semi + 1;
+    }
+
+    if tok_is(c, i, "break") {
+        emit_indent(c, depth);
+        emit(c, "break;\n");
+        return i + 2;
+    }
+
+    if tok_is(c, i, "continue") {
+        emit_indent(c, depth);
+        emit(c, "continue;\n");
+        return i + 2;
+    }
+
+    // expression statement or assignment — both are a token copy to `;`
+    emit_indent(c, depth);
+    let semi: i64 = emit_expr_until(c, i, ";");
+    emit(c, ";\n");
+    return semi + 1;
+}
+
+// Emit statements until the matching `}`. Returns the index just past it.
+fn emit_block(mut c: C, start: i64, depth: i64) -> i64 {
+    let mut i: i64 = start;
+    while i < c.ntok {
+        if tok_is(c, i, "}") {
+            return i + 1;
+        }
+        if tok_kind_is(c, i, TK_EOF()) {
+            return i;
+        }
+        i = emit_stmt(c, i, depth);
+    }
+    return i;
+}
+
+fn emit_bodies(mut c: C) {
+    let mut i: i64 = 0;
+    while i < c.ntok {
+        if tok_is(c, i, "fn") {
+            sym_reset(c);
+            let is_main: bool = string_eq(c.text[i + 1], "main");
+            let brace: i64 = emit_signature(c, i, true);
+            emit(c, " {\n");
+            if is_main {
+                emit(c, "    __pd_argc = argc;\n");
+                emit(c, "    __pd_argv = argv;\n");
+            }
+            let after: i64 = emit_block(c, brace + 1, 1);
+            if is_main {
+                emit(c, "    return 0;\n");
+            }
+            emit(c, "}\n\n");
+            i = after;
+        } else {
+            i = i + 1;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Driver
+// ---------------------------------------------------------------------------
+
+fn compile_file(mut c: C, inpath: String, outpath: String) {
+    c.src = read_file_to_string(inpath);
+    if string_len(c.src) == 0 {
+        fail(c, string_concat("cannot read input file: ", inpath));
+        return;
+    }
+
+    lex(c);
+
+    c.out = file_open(outpath);
+    if c.out < 0 {
+        fail(c, string_concat("cannot open output file: ", outpath));
+        return;
+    }
+
+    emit(c, "// generated by pdc.pd (Palladium bootstrap compiler)\n");
+    emit(c, "#include \"pd_prelude.h\"\n\n");
+    emit_structs(c);
+    emit_prototypes(c);
+    emit_bodies(c);
+
+    file_close(c.out);
+}
+
+fn main() {
+    let mut c: C = C {
+        src: "",
+        kind: [0; 60000],
+        text: [""; 60000],
+        ntok: 0,
+        out: 0,
+        sname: [""; 512],
+        skind: [0; 512],
+        nsym: 0,
+        errors: 0,
+    };
+
+    // Note: do not name a local `argc` or `argv` — codegen emits
+    // `int main(int argc, char** argv)` and a local of that name collides.
+    let nargs: i64 = arg_count();
+    if nargs < 3 {
+        print("usage: pdc <input.pd> <output.c>");
+    } else {
+        let inpath: String = arg_at(1);
+        let outpath: String = arg_at(2);
+        compile_file(c, inpath, outpath);
+        if c.errors > 0 {
+            print("pdc: compilation failed");
+        }
+    }
+}
