@@ -2,36 +2,126 @@
 //
 // Codegen bounded the loop with `sizeof(xs)/sizeof(xs[0])`, which is the
 // element count only when `xs` names an array object. A parameter has already
-// decayed to a pointer, so on a 64-bit target that division is 8/8 = 1 and the
-// loop silently ran exactly once.
+// decayed to a pointer, so that division is a pointer-size ratio: 8/8 = 1 for
+// `i64` and 8/4 = 2 for `i32`. The loop silently visited that many elements.
 //
-// The program panics (abort -> non-zero exit) instead of printing a wrong
-// answer, so the conformance runner reports the defect as a failure rather
-// than a PASS with bad output.
+// The lengths below are all different, so a hardcoded bound fails too, and the
+// element types have different widths, so a return to the pointer-size ratio
+// fails on `i32`/`bool` even where it would have passed on `i64`.
+//
+// Every check panics (abort -> non-zero exit) on a wrong answer, so the
+// conformance runner reports the defect as a failure rather than a PASS with
+// bad output.
 
-fn sum_elements(xs: [i64; 4]) -> i64 {
+struct Point {
+    x: i64,
+}
+
+fn count_i64(xs: [i64; 4]) -> i64 {
     let mut count = 0;
     let mut total = 0;
     for x in xs {
         count = count + 1;
         total = total + x;
     }
-    print("iterations:");
-    print_int(count);
-    print("sum:");
-    print_int(total);
-    if count != 4 {
-        panic("for over an array parameter did not visit every element");
-    }
     if total != 100 {
-        panic("for over an array parameter summed the wrong elements");
+        panic("for over [i64; 4] summed the wrong elements");
+    }
+    return count;
+}
+
+// sizeof(pointer)/sizeof(int) is 2 here, not 5.
+fn count_i32(xs: &[i32; 5]) -> i64 {
+    let mut count = 0;
+    for x in xs {
+        count = count + 1;
+    }
+    return count;
+}
+
+fn count_true(flags: &[bool; 3]) -> i64 {
+    let mut trues = 0;
+    for f in flags {
+        if f {
+            trues = trues + 1;
+        }
+    }
+    return trues;
+}
+
+fn total_length(names: &[String; 2]) -> i64 {
+    let mut total = 0;
+    for n in names {
+        total = total + string_len(n);
     }
     return total;
 }
 
+fn sum_points(ps: &[Point; 6]) -> i64 {
+    let mut total = 0;
+    for p in ps {
+        total = total + p.x;
+    }
+    return total;
+}
+
+// Declared, never called: the type checker rejects the empty array literal
+// ("Empty array literals are not supported"), so no `[T; 0]` value can be
+// constructed and this function is not callable from Palladium. It is here so
+// that the zero-length declarator has to be valid C. The bound itself - which
+// used to be 1, reading element 0 of an empty array - is asserted against the
+// generated C by test_for_over_zero_length_parameter_does_not_iterate.
+fn never_runs(xs: [i64; 0]) {
+    for x in xs {
+        panic("iterated a zero-length array");
+    }
+}
+
 fn main() {
-    let nums = [10, 20, 30, 40];
-    let total = sum_elements(nums);
-    print("total:");
-    print_int(total);
+    let numbers = [10, 20, 30, 40];
+    let count = count_i64(numbers);
+    print("i64 count:");
+    print_int(count);
+    if count != 4 {
+        panic("for over a [i64; 4] parameter did not visit every element");
+    }
+
+    let smalls: [i32; 5] = [1, 2, 3, 4, 5];
+    let small_count = count_i32(&smalls);
+    print("i32 count:");
+    print_int(small_count);
+    if small_count != 5 {
+        panic("for over a [i32; 5] parameter used the pointer/element size ratio");
+    }
+
+    let flags: [bool; 3] = [true, false, true];
+    let trues = count_true(&flags);
+    print("trues:");
+    print_int(trues);
+    if trues != 2 {
+        panic("for over a [bool; 3] parameter did not visit every element");
+    }
+
+    let names: [String; 2] = ["abc", "de"];
+    let length = total_length(&names);
+    print("total string length:");
+    print_int(length);
+    if length != 5 {
+        panic("for over a [String; 2] parameter did not visit every element");
+    }
+
+    let points: [Point; 6] = [
+        Point { x: 1 },
+        Point { x: 2 },
+        Point { x: 3 },
+        Point { x: 4 },
+        Point { x: 5 },
+        Point { x: 6 },
+    ];
+    let point_total = sum_points(&points);
+    print("point total:");
+    print_int(point_total);
+    if point_total != 21 {
+        panic("for over a [Point; 6] parameter did not visit every element");
+    }
 }

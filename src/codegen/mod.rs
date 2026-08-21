@@ -12,6 +12,58 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// What code generation can *prove* about an array's outermost length.
+///
+/// The C type strings in `variables` cannot carry this: `[T; N]` with a const
+/// generic `N` and `[T; <expr>]` both print as `[0]` (`type_to_c`), which is
+/// indistinguishable from a genuine `[T; 0]`. Deciding a loop bound from that
+/// string is how a length that was never resolved silently became a wrong
+/// number, so lengths travel as this type instead.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ArrayLen {
+    /// A literal length from the declaration. Zero is a real length here, not
+    /// a missing one.
+    Proven(usize),
+    /// The declaration named a length this pass cannot evaluate: a const
+    /// generic parameter, or an unevaluated size expression. The string is how
+    /// the source spelled it, so a diagnostic can quote it.
+    Unproven(String),
+}
+
+/// The three spellings an array parameter can have. C decays all of them to a
+/// pointer into the caller's storage, so this is the only surviving record of
+/// what the author declared, and therefore of what may be written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArrayParamForm {
+    /// `xs: [T; N]` - no declared intent to mutate anything.
+    ByValue,
+    /// `mut xs: [T; N]` - the bootstrap subset's spelling for a mutable array
+    /// parameter (docs/specification/bootstrap-subset.md:95).
+    MutByValue,
+    /// `xs: &[T; N]`.
+    Shared,
+    /// `xs: &mut [T; N]`.
+    Mutable,
+}
+
+/// Where an array binding's storage lives, which decides whether `sizeof` can
+/// count its elements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArrayStorage {
+    /// A local array object: `sizeof(x)/sizeof(x[0])` really is its length.
+    Object,
+    /// A parameter: it decayed to a pointer before the callee saw it, so
+    /// `sizeof` measures the pointer and the length must come from the type.
+    Parameter(ArrayParamForm),
+}
+
+/// An in-scope array binding, with the two facts C throws away.
+#[derive(Clone, Debug)]
+struct ArrayBinding {
+    len: ArrayLen,
+    storage: ArrayStorage,
+}
+
 pub struct CodeGenerator {
     module_name: String,
     output: String,
@@ -19,6 +71,10 @@ pub struct CodeGenerator {
     functions: std::collections::HashMap<String, (Vec<Param>, Option<Type>)>,
     /// Map of variable names to their C types (for type inference)
     variables: std::collections::HashMap<String, String>,
+    /// Array bindings in the function being generated, with the length and the
+    /// storage class that the C type string cannot express. Cleared with
+    /// `variables` at every function boundary.
+    array_bindings: std::collections::HashMap<String, ArrayBinding>,
     /// Map of parameter names to their mutability (for current function)
     mutable_params: std::collections::HashMap<String, bool>,
     /// Imported modules
@@ -60,6 +116,7 @@ impl CodeGenerator {
             output: String::with_capacity(initial_capacity),
             functions: std::collections::HashMap::new(),
             variables: std::collections::HashMap::new(),
+            array_bindings: std::collections::HashMap::new(),
             mutable_params: std::collections::HashMap::new(),
             imported_modules: std::collections::HashMap::new(),
             generic_instantiations: Vec::new(),
@@ -382,15 +439,95 @@ impl CodeGenerator {
         }
     }
 
-    /// The outermost dimension of an array-dimension suffix, when it is a
-    /// literal length: `"[3][2]"` -> `Some(3)`, `"[N]"` / `""` / `"[0]"` ->
-    /// `None` (a const-parameter or unevaluated length is not a number here).
-    fn outer_array_len(dims: &str) -> Option<usize> {
-        let inner = dims.strip_prefix('[')?;
-        let end = inner.find(']')?;
-        match inner[..end].parse::<usize>() {
-            Ok(0) | Err(_) => None,
-            Ok(len) => Some(len),
+    /// The length a declared array size states, keeping the distinction between
+    /// "the author wrote 0" and "this pass could not work the length out".
+    fn array_len_of_size(size: &ArraySize) -> ArrayLen {
+        match size {
+            ArraySize::Literal(n) => ArrayLen::Proven(*n),
+            // Const generics parse but are dropped (language-spec.md §5), so
+            // the name is all that is left of the length.
+            ArraySize::ConstParam(name) => ArrayLen::Unproven(name.clone()),
+            ArraySize::Expr(_) => ArrayLen::Unproven("<size expression>".to_string()),
+        }
+    }
+
+    /// The variable an assignment ultimately writes into: `xs[i].f` -> `xs`.
+    fn assign_target_root(target: &AssignTarget) -> Option<&str> {
+        match target {
+            AssignTarget::Ident(name) => Some(name),
+            AssignTarget::Index { array, .. } => Self::expr_root_ident(array),
+            AssignTarget::FieldAccess { object, .. } => Self::expr_root_ident(object),
+            AssignTarget::Deref { expr } => Self::expr_root_ident(expr),
+        }
+    }
+
+    /// The variable at the base of a place expression, if it has one.
+    fn expr_root_ident(expr: &Expr) -> Option<&str> {
+        match expr {
+            Expr::Ident(name) => Some(name),
+            Expr::Index { array, .. } => Self::expr_root_ident(array),
+            Expr::FieldAccess { object, .. } => Self::expr_root_ident(object),
+            Expr::Deref { expr, .. } => Self::expr_root_ident(expr),
+            _ => None,
+        }
+    }
+
+    /// Reject a write into an array parameter that did not declare that it may
+    /// be written.
+    ///
+    /// Every array parameter decays to a pointer into the *caller's* array, so
+    /// a write is visible to the caller whatever the parameter was spelled.
+    /// `&mut [T; N]` and `mut xs: [T; N]` say that is intended. A bare
+    /// `[T; N]` does not, and the language has not decided whether it copies or
+    /// aliases: docs/specification/language-spec.md §9 defines the memory model
+    /// without mentioning array parameters, and §5 records that the typechecker
+    /// cannot tell `&T` from `T` at all. Emitting the aliasing write would
+    /// silently pick one of the two answers, so it is refused until the
+    /// specification picks.
+    fn check_array_write(&self, name: &str) -> Result<()> {
+        let Some(binding) = self.array_bindings.get(name) else {
+            return Ok(());
+        };
+        let ArrayStorage::Parameter(form) = binding.storage else {
+            return Ok(());
+        };
+        match form {
+            ArrayParamForm::Mutable | ArrayParamForm::MutByValue => Ok(()),
+            ArrayParamForm::Shared => Err(CompileError::CodegenError {
+                message: format!(
+                    "cannot write to `{}`: it is a shared reference parameter, \
+                     `&[T; N]`, and a shared reference does not permit mutation. \
+                     Declare it `&mut [T; N]` if this function is meant to modify \
+                     the caller's array.",
+                    name
+                ),
+            }),
+            ArrayParamForm::ByValue => Err(CompileError::CodegenError {
+                message: format!(
+                    "cannot write to `{}`: it is a by-value array parameter, but C \
+                     decays every array parameter to a pointer, so the write would \
+                     reach the caller's array rather than a copy. Whether `[T; N]` \
+                     parameters copy or alias is not decided by the language \
+                     specification, so this is refused instead of guessing. Declare \
+                     `{}: &mut [T; N]` (or `mut {}: [T; N]`) to modify the caller's \
+                     array.",
+                    name, name, name
+                ),
+            }),
+        }
+    }
+
+    /// The length of the array an expression denotes, or `None` when the
+    /// expression is not a known array binding.
+    fn array_len_of_expr(&self, expr: &Expr) -> Option<ArrayLen> {
+        match expr {
+            Expr::Ident(name) => self.array_bindings.get(name).map(|b| b.len.clone()),
+            Expr::ArrayLiteral { elements, .. } => Some(ArrayLen::Proven(elements.len())),
+            Expr::ArrayRepeat { count, .. } => Some(match count.as_ref() {
+                Expr::Integer(n) if *n >= 0 => ArrayLen::Proven(*n as usize),
+                other => ArrayLen::Unproven(Self::expr_kind_name(other).to_string()),
+            }),
+            _ => None,
         }
     }
 
@@ -1528,6 +1665,13 @@ impl CodeGenerator {
     /// that distinguishes a shared reference from a mutable one. Keeping the
     /// `[N]` suffix (rather than writing `T*`) documents the length at the call
     /// site and lets indexing and element assignment read naturally.
+    ///
+    /// `is_const` has to qualify the *element slot*, which for a pointer
+    /// element is not the same place as qualifying what it points at:
+    /// `String` is `const char*`, so a shared `&[String; N]` is
+    /// `const char* const xs[N]` (the slot cannot be reassigned) and not
+    /// `const char* xs[N]` (only the characters are read-only, `xs[i] = other`
+    /// still compiles).
     fn array_param_declarator(
         elem_type: &Type,
         size: &ArraySize,
@@ -1540,7 +1684,12 @@ impl CodeGenerator {
             Type::U32 => "unsigned int",
             Type::U64 => "unsigned long long",
             Type::Bool => "int",
-            Type::String => "char*", // String arrays are arrays of char pointers
+            // Same spelling `type_to_c` gives a `String` local, so a caller's
+            // `const char* xs[3]` and this parameter are the same pointer type.
+            // Writing `char*` here made `&mut [String; N]` a `char**` against
+            // the caller's `const char**`: an incompatible pointer type that
+            // also discards a qualifier.
+            Type::String => "const char*",
             Type::Custom(name) => name.as_str(), // Support struct arrays
             _ => {
                 return Err(CompileError::Generic(format!(
@@ -1549,18 +1698,23 @@ impl CodeGenerator {
                 )))
             }
         };
-        let size_str = match size {
-            ArraySize::Literal(n) => n.to_string(),
-            ArraySize::ConstParam(name) => name.clone(),
-            ArraySize::Expr(_) => String::new(), // Arrays as params don't need size
+        // A trailing `*` means the qualifier belongs after it: `const char*
+        // const`, not `const const char*`.
+        let elem_decl = match (is_const, elem_c_type.ends_with('*')) {
+            (false, _) => elem_c_type.to_string(),
+            (true, true) => format!("{} const", elem_c_type),
+            (true, false) => format!("const {}", elem_c_type),
         };
-        Ok(format!(
-            "{}{} {}[{}]",
-            if is_const { "const " } else { "" },
-            elem_c_type,
-            param_name,
-            size_str
-        ))
+        // Only a proven length may be printed. A const generic prints as its
+        // own name, which is not in scope in the generated C - `[i64; N]` used
+        // to emit `long long xs[N]` and gcc rejected it with "use of undeclared
+        // identifier 'N'". An unproven length decays to `[]`, which is exactly
+        // what C does to the parameter anyway.
+        let size_str = match Self::array_len_of_size(size) {
+            ArrayLen::Proven(n) => n.to_string(),
+            ArrayLen::Unproven(_) => String::new(),
+        };
+        Ok(format!("{} {}[{}]", elem_decl, param_name, size_str))
     }
 
     /// Build the C signature line for a function, without a trailing `{` or `;`.
@@ -1728,11 +1882,46 @@ impl CodeGenerator {
         // Clear mutable_params from previous function and populate with current function's params
         self.mutable_params.clear();
         self.variables.clear(); // Clear variables from previous function
+        self.array_bindings.clear();
 
         for param in &func.params {
             // Track if parameter is a pointer (either mutable or reference)
             let is_pointer = param.mutable || matches!(&param.ty, Type::Reference { .. });
             self.mutable_params.insert(param.name.clone(), is_pointer);
+
+            // Record the length and the declared form of array parameters. C
+            // keeps neither: every one of them arrives as a bare pointer.
+            let array_param = match &param.ty {
+                Type::Array(_, size) => Some((
+                    size,
+                    if param.mutable {
+                        ArrayParamForm::MutByValue
+                    } else {
+                        ArrayParamForm::ByValue
+                    },
+                )),
+                Type::Reference { inner, mutable, .. } => match inner.as_ref() {
+                    Type::Array(_, size) => Some((
+                        size,
+                        if *mutable {
+                            ArrayParamForm::Mutable
+                        } else {
+                            ArrayParamForm::Shared
+                        },
+                    )),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some((size, form)) = array_param {
+                self.array_bindings.insert(
+                    param.name.clone(),
+                    ArrayBinding {
+                        len: Self::array_len_of_size(size),
+                        storage: ArrayStorage::Parameter(form),
+                    },
+                );
+            }
 
             // Also track parameter types for type inference
             let c_type = match &param.ty {
@@ -1839,12 +2028,33 @@ impl CodeGenerator {
                 self.variables
                     .insert(name.clone(), format!("{}{}", c_type, array_dims));
 
+                // A local array is a real object: its length comes from the
+                // annotation when there is one, otherwise from the initializer.
+                if !array_dims.is_empty() {
+                    let len = match ty {
+                        Some(Type::Array(_, size)) => Self::array_len_of_size(size),
+                        _ => self
+                            .array_len_of_expr(value)
+                            .unwrap_or_else(|| ArrayLen::Unproven("initializer".to_string())),
+                    };
+                    self.array_bindings.insert(
+                        name.clone(),
+                        ArrayBinding {
+                            len,
+                            storage: ArrayStorage::Object,
+                        },
+                    );
+                }
+
                 self.output
                     .push_str(&format!("{} {}{} = ", c_type, name, array_dims));
                 self.generate_expression(value)?;
                 self.output.push_str(";\n");
             }
             Stmt::Assign { target, value, .. } => {
+                if let Some(root) = Self::assign_target_root(target) {
+                    self.check_array_write(root)?;
+                }
                 self.output.push_str("    ");
                 match target {
                     AssignTarget::Ident(name) => {
@@ -1972,21 +2182,56 @@ impl CodeGenerator {
                         // For arrays and other iterables
                         self.output.push_str("        // For-in loop\n");
 
-                        // The element count comes from the *declared* type
-                        // whenever it is statically known. `sizeof(x)/sizeof(x[0])`
-                        // only counts elements when `x` is an array object: a
-                        // parameter has already decayed to a pointer, so for
-                        // `[i64; N]` that division is 8/8 = 1 and the loop ran
-                        // exactly once, silently. The sizeof form is kept only
-                        // for iterables whose length codegen cannot name.
-                        let (elem_type, dims) =
-                            Self::split_array_dims(&self.infer_expr_type(iter));
-                        let static_len = Self::outer_array_len(&dims);
+                        // The bound is decided from typed provenance, never
+                        // from the printed C type: `[T; N]` with an unresolved
+                        // `N` also prints as `[0]`, so a string cannot tell a
+                        // real zero from a length nobody worked out.
+                        //
+                        // - a proven length is emitted, `0` included;
+                        // - an unproven length on a *parameter* is a hard error:
+                        //   the parameter decayed to a pointer, so
+                        //   `sizeof(x)/sizeof(x[0])` is a pointer-size ratio
+                        //   (8/8 = 1 for `i64`), which is how this loop used to
+                        //   visit one element and stop without saying anything;
+                        // - `sizeof` survives only where it is actually
+                        //   correct: a local array object, whose size C knows.
+                        let (elem_type, _) = Self::split_array_dims(&self.infer_expr_type(iter));
+                        let len = self.array_len_of_expr(iter);
+                        let storage = match iter {
+                            Expr::Ident(name) => {
+                                self.array_bindings.get(name).map(|b| b.storage)
+                            }
+                            _ => None,
+                        };
 
                         self.output.push_str("        for (long long _i = 0; _i < ");
-                        match static_len {
-                            Some(len) => self.output.push_str(&len.to_string()),
-                            None => {
+                        match (&len, storage) {
+                            (Some(ArrayLen::Proven(n)), _) => {
+                                self.output.push_str(&n.to_string());
+                            }
+                            (
+                                Some(ArrayLen::Unproven(spelling)),
+                                Some(ArrayStorage::Parameter(_)),
+                            ) => {
+                                let name = match iter {
+                                    Expr::Ident(name) => name.as_str(),
+                                    _ => "<expression>",
+                                };
+                                return Err(CompileError::CodegenError {
+                                    message: format!(
+                                        "cannot iterate `{}`: its length is declared as `{}`, \
+                                         which this compiler does not resolve (const generic \
+                                         array lengths are dropped - see \
+                                         docs/specification/language-spec.md §5). `{}` is a \
+                                         parameter, so it has decayed to a pointer and its \
+                                         length cannot be recovered at run time either. Give \
+                                         the parameter a literal length, e.g. \
+                                         `{}: [T; 4]`, or iterate an explicit range.",
+                                        name, spelling, name, name
+                                    ),
+                                });
+                            }
+                            _ => {
                                 self.output.push_str("sizeof(");
                                 self.generate_expression(iter)?;
                                 self.output.push_str(")/sizeof(");
@@ -3359,5 +3604,140 @@ mod tests {
         .unwrap();
         assert!(c.contains("for (long long _i = 0; _i < 4; _i++)"), "{}", c);
         assert!(!c.contains("sizeof(xs)"), "{}", c);
+    }
+
+    // Zero is a length, not a missing length. Routing it through the printed C
+    // type collapsed it onto "unknown" and fell back to the sizeof ratio, so
+    // the loop ran once and read element 0 of an empty array.
+    #[test]
+    fn test_for_over_zero_length_parameter_does_not_iterate() {
+        let c = generate(
+            r#"
+        fn nothing(xs: [i64; 0]) {
+            for x in xs {
+                print_int(x);
+            }
+        }
+        fn main() { print("ok"); }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("for (long long _i = 0; _i < 0; _i++)"), "{}", c);
+        assert!(!c.contains("sizeof(xs)"), "{}", c);
+    }
+
+    // A length the compiler never resolved must not become a number: const
+    // generic lengths are dropped (language-spec.md §5), and the parameter has
+    // decayed, so neither the type nor `sizeof` can supply the count.
+    #[test]
+    fn test_unresolved_parameter_length_is_a_diagnostic_not_a_sizeof() {
+        let err = generate(
+            r#"
+        fn total(xs: [i64; N]) {
+            for x in xs {
+                print_int(x);
+            }
+        }
+        fn main() { print("ok"); }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot iterate `xs`"), "{}", msg);
+        assert!(msg.contains("`N`"), "{}", msg);
+    }
+
+    // An unresolved length must not be *printed* either: `long long xs[N]` put
+    // a Palladium const generic into C, where gcc reported "use of undeclared
+    // identifier 'N'" against code the user never wrote.
+    #[test]
+    fn test_unresolved_parameter_length_decays_instead_of_naming_it() {
+        let c = generate(
+            r#"
+        fn head(xs: [i64; N]) -> i64 { return xs[0]; }
+        fn main() { print("ok"); }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("long long head(long long xs[])"), "{}", c);
+        assert!(!c.contains("xs[N]"), "{}", c);
+    }
+
+    // A `String` element is itself `const char*`, so const-qualifying the
+    // element type only froze the characters: `const char* xs[N]` still allows
+    // `xs[i] = other`, and the mutable form came out as `char**`, which is an
+    // incompatible pointer type against the caller's `const char**`.
+    #[test]
+    fn test_string_array_reference_qualifies_the_slot_not_the_characters() {
+        let c = generate(
+            r#"
+        fn read(names: &[String; 2]) -> String { return names[0]; }
+        fn write(names: &mut [String; 2]) { names[0] = "x"; }
+        fn main() {
+            let mut names: [String; 2] = ["a", "b"];
+            write(&mut names);
+            print(read(&names));
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(
+            c.contains("const char* read(const char* const names[2])"),
+            "{}",
+            c
+        );
+        assert!(c.contains("void write(const char* names[2])"), "{}", c);
+        // The pre-fix spelling: an unqualified `char*` element, which is a
+        // `char**` parameter against the caller's `const char**`.
+        assert!(!c.contains("(char* names"), "{}", c);
+    }
+
+    // Every array parameter decays to a pointer into the caller's array, so a
+    // write through one is visible to the caller no matter how it was spelled.
+    // Only the two spellings that declare the intent may do it.
+    #[test]
+    fn test_write_through_shared_array_reference_is_rejected() {
+        let err = generate(
+            r#"
+        fn f(xs: &[i64; 3]) { xs[0] = 99; }
+        fn main() { let mut v = [1, 2, 3]; f(&v); }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot write to `xs`"), "{}", msg);
+        assert!(msg.contains("shared reference"), "{}", msg);
+    }
+
+    #[test]
+    fn test_write_to_by_value_array_parameter_is_rejected() {
+        let err = generate(
+            r#"
+        fn f(xs: [i64; 3]) { xs[0] = 99; }
+        fn main() { let mut v = [1, 2, 3]; f(v); print_int(v[0]); }
+        "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot write to `xs`"), "{}", msg);
+        // The caller used to observe 99 through a parameter that never said it
+        // could be written; the diagnostic has to name the undecided semantics.
+        assert!(msg.contains("not decided by the language"), "{}", msg);
+    }
+
+    #[test]
+    fn test_declared_mutable_array_parameters_may_be_written() {
+        // `&mut [T; N]`, and `mut xs: [T; N]` - the spelling the bootstrap
+        // subset mandates (bootstrap-subset.md:95) - both stay legal.
+        let c = generate(
+            r#"
+        fn a(xs: &mut [i64; 3]) { xs[0] = 1; }
+        fn b(mut xs: [i64; 3]) { xs[0] = 2; }
+        fn main() { let mut v = [1, 2, 3]; a(&mut v); b(v); }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("void a(long long xs[3])"), "{}", c);
+        assert!(c.contains("void b(long long xs[3])"), "{}", c);
     }
 }
