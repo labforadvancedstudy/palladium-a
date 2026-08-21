@@ -1,0 +1,63 @@
+# Coverage status for every builtin in src/builtins.rs.
+#
+# Enforced by scripts/stdlib-gate.sh (`make stdlib-gate`):
+#   - the name set here must equal the name set in src/builtins.rs, so a
+#     builtin cannot be added to the compiler and quietly left untested;
+#   - every COVERED builtin must actually be called by a driver in tests/stdlib;
+#   - every UNUSABLE builtin is re-probed on each run, so one that starts
+#     working goes XPASS instead of staying silently recorded as broken.
+#
+# Columns (tab-separated):  name  status  detail
+#   COVERED           called and asserted by a tests/stdlib driver
+#   NEGATIVE_CONTROL  cannot appear in a passing program; proved in Phase 0
+#   UNUSABLE          rejected by gcc; `detail` is the probe body that proves it
+#
+# THE SIX UNUSABLE BUILTINS ARE A REAL DEFECT, not a gap in these tests.
+# src/builtins.rs declares the file-handle family as taking/returning I64, but
+# runtime/pd_prelude.h:227-250 declares the same functions over
+# `FileHandle` (aka `void*`). Any program that calls one dies in gcc with
+# "incompatible integer to pointer conversion passing 'int' to parameter of
+# type 'FileHandle'". They type-check and borrow-check cleanly first, so the
+# canonical-table tests in src/builtins.rs do not see it: the "one table"
+# invariant is enforced between typeck and the borrow checker, but nothing
+# checks the table against the C runtime's signatures. This is the D2 drift
+# class one layer down. Reported, not fixed, in this change.
+#
+print	COVERED	stdlib_builtins_string.pd
+print_int	COVERED	stdlib_builtins_string.pd
+panic	NEGATIVE_CONTROL	aborts; proved by Phase 0 of the gate
+string_len	COVERED	stdlib_builtins_string.pd
+string_concat	COVERED	stdlib_builtins_string.pd
+string_eq	COVERED	stdlib_builtins_string.pd
+string_char_at	COVERED	stdlib_builtins_string.pd
+string_substring	COVERED	stdlib_builtins_string.pd
+string_from_char	COVERED	stdlib_builtins_string.pd
+string_to_int	COVERED	stdlib_builtins_string.pd
+int_to_string	COVERED	stdlib_builtins_string.pd
+char_is_digit	COVERED	stdlib_builtins_char_args.pd
+char_is_alpha	COVERED	stdlib_builtins_char_args.pd
+char_is_whitespace	COVERED	stdlib_builtins_char_args.pd
+arg_count	COVERED	stdlib_builtins_char_args.pd
+arg_at	COVERED	stdlib_builtins_char_args.pd
+file_open	COVERED	stdlib_builtins_file.pd
+file_read_all	COVERED	stdlib_builtins_file.pd
+file_read_line	COVERED	stdlib_builtins_file.pd
+file_write	COVERED	stdlib_builtins_file.pd
+file_close	COVERED	stdlib_builtins_file.pd
+file_exists	COVERED	stdlib_builtins_file.pd
+path_exists	COVERED	stdlib_builtins_file.pd
+path_is_file	COVERED	stdlib_builtins_file.pd
+path_is_dir	COVERED	stdlib_builtins_file.pd
+create_dir	COVERED	stdlib_builtins_file.pd
+create_dir_all	COVERED	stdlib_builtins_file.pd
+remove_file	COVERED	stdlib_builtins_file.pd
+remove_dir	COVERED	stdlib_builtins_file.pd
+remove_dir_all	COVERED	stdlib_builtins_file.pd
+read_file_to_string	COVERED	stdlib_builtins_file.pd
+write_string_to_file	COVERED	stdlib_builtins_file.pd
+file_flush	UNUSABLE	let r = file_flush(1); print_int(r);
+file_seek	UNUSABLE	let r = file_seek(1, 0, 0); print_int(r);
+file_open_ex	UNUSABLE	let r = file_open_ex("/tmp/pd", 0); print_int(r);
+file_close_ex	UNUSABLE	let r = file_close_ex(1); print_int(r);
+file_read_ex	UNUSABLE	let r = file_read_ex(1, "buf", 3); print_int(r);
+file_write_ex	UNUSABLE	let r = file_write_ex(1, "buf", 3); print_int(r);

@@ -289,8 +289,12 @@ check-docs: build check-doc-evidence ## Compile every ```palladium block in the 
 check-doc-evidence: ## Pin doc citations, the no-compile allowlist and the evidence tags
 	@bash scripts/check-doc-evidence.sh
 
+.PHONY: stdlib-gate
+stdlib-gate: build ## Pin the stdlib/ measurement and run the tests/stdlib drivers
+	@bash scripts/stdlib-gate.sh
+
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs selfhost ## Run every language-level gate
+gates: conformance test-conformance-runner check-docs selfhost stdlib-gate ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------

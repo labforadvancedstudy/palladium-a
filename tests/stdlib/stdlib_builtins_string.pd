@@ -1,0 +1,99 @@
+// Coverage for the string builtins in src/builtins.rs.
+//
+// Expected semantics are taken from the C runtime, not from documentation:
+//   runtime/pd_prelude.h:73  __pd_string_len       -> strlen
+//   runtime/pd_prelude.h:77  __pd_string_concat
+//   runtime/pd_prelude.h:90  __pd_string_char_at   -> -1 when out of range
+//   runtime/pd_prelude.h:95  __pd_string_substring -> half-open [start, end), clamped
+//   runtime/pd_prelude.h:107 __pd_string_from_char
+//   runtime/pd_prelude.h:126 __pd_string_to_int    -> atoll
+//   runtime/pd_prelude.h:130 __pd_int_to_string    -> "%lld"
+//
+// Every check prints its actual value; the gate diffs the whole transcript
+// against stdlib_builtins_string.expected, so a wrong value fails even if the
+// assertion below is optimised away.
+
+fn expect_i64(label: String, actual: i64, expected: i64) {
+    print(label);
+    print_int(actual);
+    if actual != expected {
+        panic("string builtin: value mismatch");
+    }
+}
+
+fn expect_str(label: String, actual: String, expected: String) {
+    print(label);
+    print(actual);
+    if string_eq(actual, expected) {
+        return;
+    }
+    panic("string builtin: string mismatch");
+}
+
+fn expect_true(label: String, actual: bool) {
+    print(label);
+    if actual {
+        print("true");
+        return;
+    }
+    print("false");
+    panic("string builtin: expected true");
+}
+
+fn expect_false(label: String, actual: bool) {
+    print(label);
+    if actual {
+        print("true");
+        panic("string builtin: expected false");
+    }
+    print("false");
+}
+
+fn main() {
+    // ---- string_len ----
+    expect_i64("string_len_empty", string_len(""), 0);
+    expect_i64("string_len_abcd", string_len("abcd"), 4);
+
+    // ---- string_concat ----
+    expect_str("string_concat", string_concat("foo", "bar"), "foobar");
+    expect_str("string_concat_empty_lhs", string_concat("", "bar"), "bar");
+    expect_str("string_concat_empty_rhs", string_concat("foo", ""), "foo");
+
+    // ---- string_eq ----
+    expect_true("string_eq_same", string_eq("abc", "abc"));
+    expect_false("string_eq_diff", string_eq("abc", "abd"));
+    expect_false("string_eq_prefix", string_eq("abc", "ab"));
+    expect_true("string_eq_empty", string_eq("", ""));
+
+    // ---- string_char_at (byte value; -1 when out of range) ----
+    expect_i64("string_char_at_0", string_char_at("abc", 0), 97);
+    expect_i64("string_char_at_2", string_char_at("abc", 2), 99);
+    expect_i64("string_char_at_oob", string_char_at("abc", 3), -1);
+    expect_i64("string_char_at_neg", string_char_at("abc", -1), -1);
+
+    // ---- string_substring (half-open, clamped) ----
+    expect_str("string_substring_mid", string_substring("hello world", 0, 5), "hello");
+    expect_str("string_substring_tail", string_substring("hello world", 6, 11), "world");
+    expect_str("string_substring_clamp_end", string_substring("abc", 1, 99), "bc");
+    expect_str("string_substring_empty", string_substring("abc", 2, 2), "");
+    expect_str("string_substring_inverted", string_substring("abc", 2, 1), "");
+
+    // ---- string_from_char ----
+    expect_str("string_from_char_A", string_from_char(65), "A");
+    expect_str("string_from_char_z", string_from_char(122), "z");
+
+    // ---- string_to_int (atoll) ----
+    expect_i64("string_to_int_42", string_to_int("42"), 42);
+    expect_i64("string_to_int_neg", string_to_int("-7"), -7);
+    expect_i64("string_to_int_garbage", string_to_int("abc"), 0);
+
+    // ---- int_to_string ----
+    expect_str("int_to_string_0", int_to_string(0), "0");
+    expect_str("int_to_string_neg", int_to_string(-123), "-123");
+    expect_str("int_to_string_big", int_to_string(9007199254740993), "9007199254740993");
+
+    // ---- round trip ----
+    expect_i64("round_trip", string_to_int(int_to_string(31337)), 31337);
+
+    print("builtins_string_ok");
+}

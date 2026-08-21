@@ -1,0 +1,134 @@
+// Coverage for the file and path builtins in src/builtins.rs.
+//
+// Return conventions are taken from the C runtime, not from documentation:
+//   runtime/palladium_runtime.c:325 pd_path_exists       -> 1 / 0
+//   runtime/palladium_runtime.c:358 pd_create_dir        -> 0 ok, -1 fail
+//   runtime/palladium_runtime.c:374 pd_create_dir_all    -> 0 ok
+//   runtime/palladium_runtime.c:390 pd_remove_file       -> 0 ok, -1 fail
+//   runtime/palladium_runtime.c:406 pd_remove_dir        -> 0 ok, -1 fail
+//   runtime/palladium_runtime.c:422 pd_remove_dir_all    -> 0 ok
+//   runtime/palladium_runtime.c:520 pd_write_string_to_file -> 0 ok, -1 fail
+//   runtime/pd_prelude.h:141 __pd_file_open  -> handle >= 1, -1 on failure
+//   runtime/pd_prelude.h:177 __pd_file_read_line -> newline stripped, "" at EOF
+//
+// NOTE: read_file_to_string returns NULL on failure (pd_prelude.h:285), unlike
+// arg_at which returns "". Passing that NULL to any string builtin would
+// segfault, so only the success path is exercised here; the failure path is
+// recorded as a hazard in stdlib/STATUS.md rather than tested.
+//
+// The scratch tree lives under build_output/ so that it shares the lifetime of
+// every other build artefact and `make clean` reclaims it.
+
+fn expect_i64(label: String, actual: i64, expected: i64) {
+    print(label);
+    print_int(actual);
+    if actual != expected {
+        panic("file builtin: value mismatch");
+    }
+}
+
+fn expect_str(label: String, actual: String, expected: String) {
+    print(label);
+    print(actual);
+    if string_eq(actual, expected) {
+        return;
+    }
+    panic("file builtin: string mismatch");
+}
+
+fn expect_true(label: String, actual: bool) {
+    print(label);
+    if actual {
+        print("true");
+        return;
+    }
+    print("false");
+    panic("file builtin: expected true");
+}
+
+fn expect_false(label: String, actual: bool) {
+    print(label);
+    if actual {
+        print("true");
+        panic("file builtin: expected false");
+    }
+    print("false");
+}
+
+fn main() {
+    let root = "build_output/stdlib_gate_tmp";
+    let nested = "build_output/stdlib_gate_tmp/a/b";
+    let data_path = "build_output/stdlib_gate_tmp/data.txt";
+    let handle_path = "build_output/stdlib_gate_tmp/handle.txt";
+    let absent = "build_output/stdlib_gate_tmp/definitely-absent.txt";
+
+    // Leftovers from an earlier run would make the transcript depend on
+    // history, so clear the tree first. The result is deliberately not
+    // asserted: it differs between a first and a repeat run.
+    let _cleanup = remove_dir_all(root);
+
+    // ---- create_dir / create_dir_all ----
+    expect_i64("create_dir_root", create_dir(root), 0);
+    expect_i64("create_dir_all_nested", create_dir_all(nested), 0);
+
+    // ---- path_exists / path_is_dir / path_is_file ----
+    expect_true("path_exists_root", path_exists(root));
+    expect_true("path_is_dir_root", path_is_dir(root));
+    expect_false("path_is_file_root", path_is_file(root));
+    expect_true("path_is_dir_nested", path_is_dir(nested));
+    expect_false("path_exists_absent", path_exists(absent));
+    expect_false("path_is_file_absent", path_is_file(absent));
+    expect_false("path_is_dir_absent", path_is_dir(absent));
+
+    // ---- write_string_to_file / read_file_to_string ----
+    expect_i64("write_string_to_file", write_string_to_file(data_path, "hello\nworld\n"), 0);
+    expect_true("path_is_file_data", path_is_file(data_path));
+    expect_false("path_is_dir_data", path_is_dir(data_path));
+    expect_str("read_file_to_string", read_file_to_string(data_path), "hello\nworld\n");
+    expect_i64("read_file_len", string_len(read_file_to_string(data_path)), 12);
+
+    // Overwrite semantics: "wb" truncates.
+    expect_i64("rewrite", write_string_to_file(data_path, "xy"), 0);
+    expect_str("read_after_rewrite", read_file_to_string(data_path), "xy");
+
+    // ---- file_open / file_write / file_close / file_exists ----
+    expect_false("file_exists_before", file_exists(handle_path));
+    let h = file_open(handle_path);
+    expect_true("file_open_handle", h >= 1);
+    expect_true("file_write", file_write(h, "line1\nline2\n"));
+    expect_true("file_close", file_close(h));
+    expect_true("file_exists_after", file_exists(handle_path));
+    expect_false("file_exists_absent", file_exists(absent));
+
+    // ---- file_read_all ----
+    let h2 = file_open(handle_path);
+    expect_true("file_open_reread", h2 >= 1);
+    expect_str("file_read_all", file_read_all(h2), "line1\nline2\n");
+    expect_true("file_close_reread", file_close(h2));
+
+    // ---- file_read_line (newline stripped, "" at EOF) ----
+    let h3 = file_open(handle_path);
+    expect_str("file_read_line_1", file_read_line(h3), "line1");
+    expect_str("file_read_line_2", file_read_line(h3), "line2");
+    expect_str("file_read_line_eof", file_read_line(h3), "");
+    expect_true("file_close_lines", file_close(h3));
+
+    // Invalid handles are rejected rather than dereferenced.
+    expect_false("file_write_bad_handle", file_write(0, "nope"));
+    expect_false("file_close_bad_handle", file_close(9999));
+    expect_str("file_read_all_bad_handle", file_read_all(0), "");
+    expect_str("file_read_line_bad_handle", file_read_line(-1), "");
+
+    // ---- remove_file / remove_dir / remove_dir_all ----
+    expect_i64("remove_file_data", remove_file(data_path), 0);
+    expect_false("path_exists_after_remove", path_exists(data_path));
+    expect_i64("remove_file_absent", remove_file(absent), -1);
+    expect_i64("remove_dir_nested", remove_dir(nested), 0);
+    expect_false("nested_gone", path_exists(nested));
+    // A non-empty directory cannot be rmdir'd; remove_dir_all can.
+    expect_i64("remove_dir_non_empty", remove_dir(root), -1);
+    expect_i64("remove_dir_all_root", remove_dir_all(root), 0);
+    expect_false("root_gone", path_exists(root));
+
+    print("builtins_file_ok");
+}

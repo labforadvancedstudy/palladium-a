@@ -23,7 +23,8 @@ opinion.
 | Integration tests | 43 fail, all pre-existing — `make test-honest` |
 | Traits | parse, emit nothing |
 | Generics | partial monomorphisation; `Foo<T>` is misparsed |
-| Standard library | none — 38 builtins, fixed-size arrays, no `Vec` |
+| Standard library | none — 38 builtins, fixed-size arrays, no `Vec`. `stdlib/` is a sketch: 0 of its 21 files compile and the compiler never loads it — `make stdlib-gate`, [`stdlib/STATUS.md`](../../stdlib/STATUS.md) |
+| Builtins | 38 registered, 32 usable — 6 fail in gcc on a table/runtime type mismatch |
 
 ## M1 — The compiler stops lying (v0.3)
 
@@ -45,11 +46,46 @@ Closed:
 
 Two structural gaps belong here too, because both are gates that cannot see their own failures:
 
-- **`stdlib/` has no conformance coverage at all.** That is precisely why the tail-return defect
-  lived there, silently miscompiling every function that ended in an expression, for a year.
+- **`stdlib/` had no coverage at all — because there is nothing there to cover.** ✅ *Done, and the
+  premise was wrong; see below.*
 - **Three hand-written builtin tables still exist outside the canonical registry** — in the
   effects checker and in two LSP files. The "one table" invariant currently holds only for the
-  type checker and the borrow checker.
+  type checker and the borrow checker. Measurement has since found a fourth gap of the same class:
+  six builtins (`file_flush`, `file_seek`, `file_open_ex`, `file_close_ex`, `file_read_ex`,
+  `file_write_ex`) are declared over `I64` in `src/builtins.rs` and over `FileHandle` (`void*`) in
+  `runtime/pd_prelude.h`, so calling any of them passes both checkers and then fails in gcc.
+  Nothing checks the canonical table against the C runtime's signatures.
+
+### Correction: the tail-return defect never lived in `stdlib/`
+
+This file previously stated that `stdlib/`'s lack of coverage "is precisely why the tail-return
+defect lived there, silently miscompiling every function that ended in an expression, for a year."
+That is false, and the same claim appears in `docs/CHANGELOG.md`,
+`docs/specification/language-spec.md`, `docs/specification/bootstrap-subset.md` and in commit
+`191f8c1`.
+
+Measured 2026-08-22 (`make stdlib-gate`): **0 of the 21 `.pd` files under `stdlib/` compile** — all
+21 are rejected at lex or parse time, so none of them ever reaches codegen, where D3 lived — and
+**the compiler never loads `stdlib/` at all**: `grep -rn stdlib src/` returns zero hits, the module
+resolver searches `.`, `examples` and `<exe_dir>/std` and never `stdlib/` (`src/resolver/mod.rs:37-44`),
+and `Cargo.toml:34` excludes `stdlib/*` from the crate. Nothing there was miscompiled because
+nothing there was ever compiled. What is true is only the counterfactual: `stdlib/` contains 437
+functions ending in a tail expression, so it *would* have been affected had it ever compiled. D3's
+real victims were ordinary user programs.
+
+The correction changes the work. "Gate `stdlib/`" would have produced a gate over 21 files that
+cannot compile — one that can only report what it already knows. What M1 actually needed was
+coverage of the *language surface a standard library rests on*. That is `tests/stdlib/`, and it
+exposed a second thing the old framing would have missed: **an exit-code gate cannot catch D3 at
+all.** The missing `return` is undefined behaviour, and with the fix reverted gcc at `-O2` deletes
+the very assertion that would catch it — the driver printed `8261746944` instead of `42` and still
+exited 0. `scripts/conformance.sh` judges programs by exit code, so `make stdlib-gate` compares
+full output transcripts instead.
+
+The status row for `stdlib/` is therefore not "no coverage" but **"none — and pinned as none"**:
+`stdlib/MANIFEST.tsv` records the per-file verdict and blocker, and the gate fails if a file that
+compiled stops compiling, if a file recorded as uncompilable starts compiling, or if one starts
+failing for a different reason. Full measurement: [`stdlib/STATUS.md`](../../stdlib/STATUS.md).
 
 **Exit** — every criterion is a command, not a reading of prose:
 
@@ -61,7 +97,8 @@ Two structural gaps belong here too, because both are gates that cannot see thei
 3. `make test-conformance-runner` exits 0 — the gate is still able to fail.
 4. Nothing in the language specification is marked ⚠️ "parses, then breaks" without also being
    reported as an error.
-5. `stdlib/` behind a gate.
+5. `make stdlib-gate` exits 0 — `stdlib/` measured and pinned, every builtin accounted for, and
+   the generated C checked structurally. ✅ done.
 
 `42/42` was the old exit criterion and it was the wrong target twice over.
 
@@ -76,8 +113,10 @@ through M1. Sixteen per cent of the corpus proves nothing, which is the honest n
 
 It also counted a *green exit code* as a correct program. A missing C `return` is undefined
 behaviour: measured here at both `-O0` and `-O2`, `long long f(a,b){ (a+b); }` returns
-`8261746944` and exits 0. That is defect D3's exact signature, which is how D3 miscompiled
-`stdlib/` for a year underneath a green gate. The runner now diffs each fixture's stdout against a
+`8261746944` and exits 0. That is defect D3's exact signature. (D3 did *not* miscompile `stdlib/`:
+0 of its 21 files compile, so nothing there ever reached codegen — see
+[`stdlib/STATUS.md`](../../stdlib/STATUS.md). It miscompiled ordinary user programs
+underneath a green gate, which is the same lesson about the gate.) The runner now diffs each fixture's stdout against a
 recorded transcript. There is no exit-code-only class: a fixture that genuinely cannot be
 transcribed must be declared `untranscribed` with an owner and a `why:` reason, and is reported as
 a debt on every run. That count is currently zero.
@@ -183,7 +222,8 @@ roadmap's ordering, not about the language.
 Every claim above is reproducible:
 
 ```bash
-make gates          # conformance + documentation + self-hosting
+make gates          # conformance + documentation + self-hosting + stdlib
+make stdlib-gate    # recomputes every stdlib/ number quoted above
 make test-honest    # every test binary, integration tests included
 ```
 
