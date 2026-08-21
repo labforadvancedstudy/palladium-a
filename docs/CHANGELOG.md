@@ -33,7 +33,9 @@ was false — no Palladium-written compiler had ever compiled itself.
 ### Fixed
 
 - **Nothing could link.** The C runtime is now shipped and tracked.
-- **Tail expressions were silently discarded.** `fn add(a, b) -> i64 { a + b }` compiled cleanly
+- **Tail expressions were silently discarded** (partly fixed; a tail `if` still is — see
+  [`language-spec.md` A6.6](specification/language-spec.md#a66-tail-expressions)).
+  `fn add(a, b) -> i64 { a + b }` compiled cleanly
   and returned garbage — the generated C had no `return`. Every function in `stdlib/` that ended
   in an expression was affected.
 - **`let` without a type annotation was emitted as `long long`** whatever the initializer was, so

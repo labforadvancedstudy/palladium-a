@@ -79,7 +79,9 @@ fn main() {
 ```
 
 Write `return` explicitly. A trailing expression does work, but being explicit costs nothing and
-this language spent a year silently discarding tail expressions.
+this language spent a year silently discarding tail expressions — and still discards the tail of
+an `if`, so a function whose body is `if … { … } else { … }` returns garbage
+([`language-spec.md` A6.6](../specification/language-spec.md#a66-tail-expressions)).
 
 Functions may be called before they are defined — the compiler emits C prototypes for you.
 Mutual recursion works:

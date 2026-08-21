@@ -97,10 +97,14 @@ feature_index:
           - "cmd: pdc compile 'fn bump(a: [i64;3]) { a[0]=99; } ...' (no mut) -> compiles, links, prints 99, no diagnostic"
           - "src: src/codegen/mod.rs:1634 'Unsupported type in reference parameter' — &mut [T; N] does not compile at all"
         note: >-
-          Marked unimplemented because no spelling copies. If the owner rules value semantics,
-          this stays unimplemented and the codegen line above is the gap; if reference
-          semantics, this becomes implemented and the codegen diagnostic becomes a permanent
-          rule. The specification states both options rather than picking silently.
+          Marked unimplemented because no spelling copies. Under Option A (value semantics) this
+          stays unimplemented and src/codegen/mod.rs:1555 is the gap. Under Option B (reference
+          semantics) it becomes partial AT BEST, never implemented: Option B still needs a rule
+          that does not exist — either the reference spellings are forbidden or &mut [T; N]
+          becomes required for a written-through parameter — and current behaviour satisfies
+          neither, permitting mutation through a bare non-mut array while rejecting &mut [T; N]
+          outright. The specification states both options rather than picking silently; see
+          language-spec.md N12.1 and A9.2.
 
       borrow_checker:
         description: "Rust-compatible ownership: moves, borrows, no GC."

@@ -347,7 +347,7 @@ a `main` is a library.
 
 ## N14. Builtins and the standard library
 
-<sub>Non-normative pointer, not part of the definition: **implementation status → [A8 — partial: 36 builtins work, stdlib/ does not parse](#a8-builtins)**</sub>
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A8 — partial: 38 builtins exist, 4 of them outside the normative set; stdlib/ does not parse](#a8-builtins)**</sub>
 
 A **builtin** is an operation the compiler knows intrinsically: it is in scope without an import,
 its name is reserved, and it has no Palladium definition a program could read or replace. The
@@ -405,13 +405,26 @@ conforming implementation provides all of them with these signatures.
 Thirty-four names. `File`, `OpenMode`, `SeekFrom`, `IoError` and `ParseError` are prelude types
 ([N4](#n4-types)); a `File` is an opaque handle, not an integer.
 
-> The implementation currently provides 38 names, not these 34, and its filesystem builtins return
-> `i64`/`bool` handles rather than `Result`. The four extra (`file_open_ex`, `file_close_ex`,
-> `file_read_ex`, `file_write_ex`) are a parallel handle API that exists because `OpenMode` does
-> not. Divergences are itemised in [A8](#a8-builtins); the generated table there is the record of
-> what `pdc` ships. This table is the definition, and it is written independently of that table on
-> purpose — an earlier draft delegated to it, which would have let `pdc` redefine Palladium by
-> adding a row.
+> **Reconciliation against `src/builtins.rs`, name by name.** The implementation defines **38**
+> names; this table defines **34**. Set arithmetic, computed from the table above and the compiler's
+> own registry:
+>
+> - normative − implemented = **none**. Every one of the 34 names exists in `pdc`.
+> - implemented − normative = **exactly four**: `file_open_ex`, `file_close_ex`, `file_read_ex`,
+>   `file_write_ex`. They are a parallel handle API that exists because `OpenMode` does not, and
+>   they are not part of the language.
+>
+> 34 + 4 = 38, so the accounting closes. What does *not* match is signatures: the filesystem
+> builtins return `i64`/`bool` handles rather than `Result`, and `string_char_at` returns `i64`
+> rather than `char` because `char` is not a type yet. Itemised in [A8](#a8-builtins).
+>
+> *(A previous version of this annex said "36 builtins", inherited from the pre-cleanup
+> specification's section heading. It was never right: `src/builtins.rs` has had 38 since
+> `191f8c1` made it the single table, and the generated `reference/builtins.md` says 38. Corrected
+> at every site.)*
+>
+> This table is the definition, and it is written independently of the generated one on purpose —
+> an earlier draft delegated to it, which would have let `pdc` redefine Palladium by adding a row.
 
 Three normative constraints, which are properties of the language rather than of any table:
 
@@ -451,7 +464,7 @@ command that was run.
 | [N11 Modules](#n11-modules) | partial | [A3](#a3-program-structure) — `import` works; no `mod` item |
 | [N12 Memory model](#n12-memory-model) | partial | [A9](#a9-memory-model) — checked but not typed; `String` is Copy; array parameters [A9.2](#a92-array-parameters); `&mut` of an immutable local accepted [A9.3](#a93-mut-of-an-immutable-local-is-accepted) |
 | [N13 Execution model](#n13-execution-model) | implemented | [A10](#a10-execution-model) |
-| [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtins) — 36 builtins exist; `stdlib/` does not parse |
+| [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtins) — 38 builtins exist against a normative 34; signatures differ; `stdlib/` does not parse |
 
 ## A1. Pipeline and backends
 
@@ -898,16 +911,20 @@ Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else`
 
 ## A8. Builtins
 
-**partial.** 36 builtins exist and work. They are evidence about the implementation, not the
+**partial.** 38 builtins exist and work — the 34 that [N14](#n14-builtins-and-the-standard-library)
+defines, plus `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex`, which are not
+part of the language. They are evidence about the implementation, not the
 definition of the builtin surface — that is [N14](#n14-builtins-and-the-standard-library).
 The generated table [`docs/reference/builtins.md`](../reference/builtins.md) is produced by
 `scripts/gen-builtin-docs.py` from `src/builtins.rs` and is the authoritative record of *what
 `pdc` provides today*.
 
-Measured against N14's five required groups: output, string, character classification and
-conversion are present; **filesystem builtins return `i64`/`bool` handles rather than
-`Result`**, because `Result` is not built in ([A5.1](#a51-option-and-result)); and **N14's
-effect classification is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
+Measured against N14: every normative name is present (`normative − implemented = none`), and
+four extra names are not (`implemented − normative = the four *_ex names`). Two signature-level
+divergences: **filesystem builtins return `i64`/`bool` handles rather than `Result`**, because
+`Result` is not built in ([A5.1](#a51-option-and-result)); and `string_char_at` returns `i64`
+rather than `char`, because `char` is not a type ([A5](#a5-types)). **N14's effect classification
+is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:365`) and so does the borrow
@@ -1116,7 +1133,11 @@ Two rejections do still occur, and both are correct rather than defects:
   (`src/ownership/borrow_checker.rs:219`), so this is move semantics working.
 - `sum2(v, v)` with two `mut [i64; 3]` parameters — `Conflicting borrows`. A `mut` array parameter
   is a mutable borrow (`src/ownership/borrow_checker.rs:205`), so passing the same array as two
-  simultaneous mutable borrows is correctly refused.
+  simultaneous mutable borrows is refused. **This is expected under the current aliasing
+  convention, not unconditionally correct**: it follows from Option B's reading of
+  [N12.1](#n121-array-parameters-open-decision), which is still open. Under Option A a `[T; N]`
+  parameter would be a value, `sum2(v, v)` would pass two independent copies, and refusing it
+  would be a bug. The struct rejection above needs no such qualification — moves are settled.
 
 > **Action outside this repository's documentation:** the project's `CLAUDE.md` lists D6 under
 > "남은 결함 (열림)" — remaining open defects. That is stale by twelve commits and should be moved

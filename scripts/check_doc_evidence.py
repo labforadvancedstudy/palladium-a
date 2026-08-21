@@ -62,8 +62,18 @@ def fingerprint(text: str) -> str:
     return hashlib.sha256(norm(text).encode()).hexdigest()[:12]
 
 
-def excerpt(text: str, width: int = 100) -> str:
-    return norm(text).replace("\t", " ")[:width]
+def excerpt(text: str, width: int = 160) -> str:
+    """A bounded excerpt that shows BOTH ends of a cited range.
+
+    Showing only the first 100 characters made the load-bearing later lines of a range
+    citation invisible, which is how `src/typeck/mod.rs:352-527` looked plausible while
+    naming nothing relevant. A reviewer needs to see where a range starts and where it ends.
+    """
+    t = norm(text).replace("\t", " ")
+    if len(t) <= width:
+        return t
+    head = width // 2 - 3
+    return t[:head] + " ... " + t[-(width - head - 5):]
 
 
 def resolve(path_str: str) -> Path | None:
@@ -181,32 +191,109 @@ def _parse_rows_fallback(text: str):
     return [r for r in rows if "implementation" in r]
 
 
-def load_rows():
-    text = INDEX.read_text(encoding="utf-8")
-    fb = _parse_rows_fallback(text)
-    loose = [(".".join(r["path"]), r.get("implementation"), r.get("spec"), r["evidence"])
-             for r in fb]
+def load_rows(text: str | None = None, strict_only: bool = False):
+    """Parse feature-index rows, and CROSS-CHECK the two parsers semantically.
+
+    Comparing row counts only was not a cross-check: a duplicate `evidence` key makes the
+    fallback keep both lists while PyYAML keeps the last, and `spec: null` is the truthy
+    string "null" to the fallback but None to PyYAML. Either divergence passes a count
+    comparison, so the gate could pass without PyYAML and fail with it. The comparison is
+    now over the full (name, implementation, spec, evidence) tuple of every row.
+    """
+    if text is None:
+        text = INDEX.read_text(encoding="utf-8")
+    # Drop the `feature_index:` root so both parsers name rows identically. The semantic
+    # cross-check caught this the moment it was switched on from counting to comparing.
+    loose = [(".".join(r["path"][1:] if r["path"][:1] == ["feature_index"] else r["path"]),
+              r.get("implementation"), r.get("spec"), tuple(r["evidence"]))
+             for r in _parse_rows_fallback(text)]
     try:
         import yaml
     except ImportError:
+        if strict_only:
+            raise
         return loose, "fallback parser (PyYAML absent)"
-    data = yaml.safe_load(text)["feature_index"]
+    doc = yaml.safe_load(text)
     strict = []
 
     def walk(node, path):
         if isinstance(node, dict):
             if "implementation" in node:
+                ev = node.get("evidence") or []
                 strict.append((".".join(path), node.get("implementation"),
-                               node.get("spec"), node.get("evidence") or []))
+                               node.get("spec"),
+                               tuple(ev) if isinstance(ev, list) else (ev,)))
             else:
                 for k, v in node.items():
                     walk(v, path + [k])
 
-    walk(data, [])
-    if len(strict) != len(loose):
-        raise SystemExit(f"gate bug: fallback parser found {len(loose)} rows, PyYAML found "
-                         f"{len(strict)} — fix _parse_rows_fallback before trusting either")
-    return strict, "PyYAML, cross-checked against the built-in fallback parser"
+    walk(doc.get("feature_index", {}), [])
+    if strict_only:
+        return strict, "PyYAML"
+    if strict != loose:
+        diff = [f"    row {i}: fallback={l!r}\n              PyYAML  ={s!r}"
+                for i, (l, s) in enumerate(zip(loose, strict)) if l != s][:3]
+        extra = ""
+        if len(strict) != len(loose):
+            extra = f"\n    row counts differ: fallback={len(loose)} PyYAML={len(strict)}"
+        raise SystemExit(
+            "the two feature-index parsers disagree, so the gate's verdict would depend on "
+            "whether PyYAML happens to be installed. Fix by writing the file in the supported "
+            "style (block mappings, double-quoted scalars, one `evidence:` key per row) or by "
+            "teaching _parse_rows_fallback the construct.\n"
+            + "\n".join(diff) + extra)
+    return strict, "PyYAML, cross-checked semantically against the built-in fallback parser"
+
+
+SELFTESTS = [
+    ("duplicate evidence key",
+     'feature_index:\n a:\n  b:\n   implementation: partial\n   spec: "x"\n'
+     '   evidence:\n    - "cmd: one -> ok"\n   evidence:\n    - "cmd: two -> ok"\n'),
+    ("null spec",
+     'feature_index:\n a:\n  b:\n   implementation: partial\n   spec: null\n'
+     '   evidence:\n    - "cmd: one -> ok"\n'),
+    ("single-quoted scalar",
+     "feature_index:\n a:\n  b:\n   implementation: partial\n   spec: 'x'\n"
+     '   evidence:\n    - \'cmd: one -> ok\'\n'),
+    ("inline collection",
+     'feature_index:\n a:\n  b:\n   implementation: partial\n   spec: "x"\n'
+     '   evidence: ["cmd: one -> ok"]\n'),
+    ("folded scalar in evidence",
+     'feature_index:\n a:\n  b:\n   implementation: partial\n   spec: "x"\n'
+     '   evidence:\n    - >-\n       cmd: one\n       -> ok\n'),
+]
+
+
+def selftest(quiet: bool = False) -> int:
+    """Differential tests: the fallback must agree with PyYAML, or say it cannot parse.
+
+    Silent disagreement is the failure mode that matters. A fallback that refuses a
+    construct is safe; one that returns a different answer is not.
+    """
+    try:
+        import yaml  # noqa: F401
+    except ImportError:
+        print("selftest: needs PyYAML to differentially compare; skipped")
+        return 0
+    bad = 0
+    for name, doc in SELFTESTS:
+        try:
+            loose, _ = load_rows(doc, strict_only=False)
+        except SystemExit as e:
+            if not quiet:
+                print(f"  {name:28s} DIVERGENCE CAUGHT (gate fails loudly, as intended)")
+                print("      " + str(e).split(chr(10))[0])
+            continue
+        strict, _ = load_rows(doc, strict_only=True)
+        if loose == strict:
+            if not quiet:
+                print(f"  {name:28s} agree -> {strict}")
+        else:
+            print(f"  {name:28s} SILENT DISAGREEMENT  fallback={loose} pyyaml={strict}")
+            bad += 1
+    if not quiet:
+        print("selftest:", "OK" if not bad else f"{bad} silent divergence(s)")
+    return 1 if bad else 0
 
 
 def check_index():
@@ -216,7 +303,7 @@ def check_index():
     problems = []
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     for name, impl, spec, ev in rows:
-        if not isinstance(ev, list) or not ev:
+        if not isinstance(ev, (list, tuple)) or not ev:
             problems.append(f"{name}: evidence must be a non-empty list")
             continue
         for item in ev:
@@ -279,6 +366,8 @@ def read_pins():
 
 
 def main() -> int:
+    if "--selftest" in sys.argv:
+        return selftest()
     update = "--update" in sys.argv
     cites = collect_citations()
     fences = collect_fences()
@@ -358,6 +447,10 @@ def main() -> int:
 
     problems, nrows, how = check_index()
     fail.extend(problems)
+
+    if selftest(quiet=True):
+        fail.append("parser differential selftest found a SILENT disagreement between the "
+                    "fallback and PyYAML (scripts/check-doc-evidence.sh --selftest)")
 
     print("=" * 62)
     print(f"citations pinned:   {len(cites)} (whole cited range fingerprinted)")
