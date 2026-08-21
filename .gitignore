@@ -31,6 +31,12 @@ build_output/
 !examples/*.c
 !src/**/*.c
 !tests/**/*.c
+# The C runtime is SOURCE, not compiler output — it must stay tracked.
+# A blanket *.c is why runtime/palladium_runtime.c was absent from every commit
+# in this repo's history, which made linking (and therefore running any .pd
+# program) impossible. Do not remove these negations.
+!runtime/*.c
+!runtime/*.h
 
 # Compiled binaries from examples
 /array_sum
@@ -96,3 +102,4 @@ Thumbs.db
 *.bak
 *.tmp
 *.temp
+.worktrees
