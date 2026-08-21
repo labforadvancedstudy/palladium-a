@@ -67,11 +67,34 @@ stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fi
   (21개 중 0개만 컴파일되므로 애초에 컴파일된 적이 없다). **tail `if`는 아직 미수정**:
   `fib(10)`이 55 대신 8261746944 반환. 고정 = `make stdlib-gate`의 생성-C 구조 불변식.
 
+- D4 `for`가 배열 **파라미터**를 순회할 때 decay된 포인터에 `sizeof` 사용. 고쳐짐 — 경계가
+  선언된 길이에서 온다. 코드젠이 증명 못 하는 길이는 잘못된 경계가 아니라 컴파일 에러.
+- D5 `?` / `.await`가 정의되지 않은 C 타입/멤버를 참조하는 코드 생성. 고쳐짐 — 둘 다
+  "is not implemented"로 거부되고, 결과와 함께 컴파일·실행되는 workaround를 제시한다.
+  LLVM 백엔드는 더 나빴다(catch-all이 상수 `0` 반환) → `--llvm` 전면 거부.
+- D9 `&[T; N]` / `&mut [T; N]` 파라미터를 코드젠이 거부. 고쳐짐 — 배열 파라미터에 C가 주는
+  decay된 포인터로 lowering, `&`는 원소 슬롯을 const 한정. 공유/맨 배열 파라미터로의 쓰기와
+  그것을 쓸 수 있는 파라미터로 넘기는 것은 컴파일 에러 (`language-spec` §A9.2).
+
 **남은 결함 (열림):**
-- D4 `for`가 배열 **파라미터**를 순회할 때 decay된 포인터에 `sizeof` 사용 (`src/codegen/mod.rs:1553`).
-- D5 `?` / `.await` — 정의되지 않은 C 타입/멤버를 참조하는 코드 생성 (에러 아님).
-- D6 호출 인자 대여가 해제되지 않음 (`Lifetime::Named("fn")` vs `exit_scope`의 `Scope(n)`) →
-  같은 값을 두 번 넘길 수 없고, 필드를 빌트인에 넘기면 이후 uninitialized 오판.
+- **D3b tail `if`** — 파서가 tail *expression*은 `Stmt::Return`으로 낮추지만 tail `if`는 안 한다.
+  `fn fib(n) -> i64 { if n <= 1 { n } else { … } }`가 깨끗이 컴파일되고 `fib(10)`이 55 대신
+  8261746944를 반환. `make stdlib-gate`의 생성-C 구조 불변식이 `known_violation`으로 고정 중.
+- **컴파일 불가능한 빌트인 6개** — `file_flush`·`file_seek`·`file_open_ex`·`file_close_ex`·
+  `file_read_ex`·`file_write_ex`. 핸들 표현이 둘로 갈렸다(레거시=인덱스, 확장=`FileHandle`=`void*`).
+  경계에서 캐스팅하면 `file_seek(file_open(p), 0, 0)`이 컴파일되고 정수 `1`을 `FILE*`로 역참조하므로
+  **gcc 에러가 지금 segfault를 막는 유일한 장치다.** typeck이 `Support::Unsupported`로 먼저 거부 중.
+  결정 필요: 확장 계열을 인덱스 테이블로 재기반할 것인가, `BUILTINS`에서 지울 것인가.
+- C 키워드 식별자(`fn double`)가 유효하지 않은 C를 생성. `self`/제네릭 `impl`이 정의되지 않은 C.
+  `Type::method(args)`가 codegen이 emit한 적 없는 `Type_method__new`로 조용히 lowering.
+- 중첩 배열이 로컬·파라미터 양쪽에서 불가 (`type_to_c`가 선언자가 아니라 타입으로 `T[M][N]` 구성).
+
+**D6은 결함이 아니었다 (철회).** `CLAUDE.md`가 열린 결함으로 올려뒀으나 `191f8c1`에서 이미 고쳐졌고,
+이 파일의 베이스보다 12커밋 앞선다. 명시된 다섯 프로그램 전부 재실행 — 하나도 재현되지 않는다
+(`t(s); t(s)` → `5 5`, `take2(s,s)` → `10`, `bump(&mut p)` 연속 → `2`, 필드→빌트인 후 재사용 → `abc 3 1`).
+호출 경로 `src/ownership/borrow_checker.rs:505-521`이 per-call lifetime을 만들고 인자 검사 후 끝낸다.
+인용됐던 `:236`은 대여된 **반환값**의 소유권 분류이지 인자 lifetime이 아니다 — green 핀이 붙은 채로
+거짓 주장을 뒷받침하고 있었다.
 
 **허위였던 문서 주장 (교정 완료):** README "Bootstrap 100% Complete", FEATURES "Self-Hosting 100%",
 `bootstrap/v3_incremental/BOOTSTRAP_ACHIEVED.md`. 어떤 Palladium 컴파일러도 자기 자신을 컴파일한
