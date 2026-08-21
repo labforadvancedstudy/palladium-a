@@ -13,20 +13,24 @@
 #   * a manifest that does not exist                   -> fatal        (exit 2)
 #
 # Classes (column 2):
-#   run      must compile, link and run with exit 0. Column 4 says how much of
-#            that is actually VERIFIED:
-#              `expected` -> stdout is diffed against the sibling
-#                            <fixture>.expected file. This is the only verdict
-#                            that can see a wrong ANSWER.
-#              `-`        -> exit code only, and NOTHING MORE. That is strictly
-#                            weaker than it sounds: a missing C `return` is
-#                            undefined behaviour, so a tail-return miscompile
-#                            (defect D3) prints garbage and still exits 0.
-#                            Measured: `long long f(a,b){ (a+b); }` returns
-#                            8261746944 with exit 0 at both -O0 and -O2. An
-#                            exit-code verdict cannot distinguish that from a
-#                            correct program, which is how D3 lived for a year.
-#            The two are counted in separate columns for exactly that reason.
+#   run      must compile, link, run with exit 0, AND its stdout must match the
+#            sibling <fixture>.expected transcript byte for byte. Column 4 is
+#            always `expected`; there is no exit-code-only spelling, because that
+#            was a documented bypass of the protection below.
+#   untranscribed
+#            ran and exited 0, but carries NO transcript. This is the reviewed
+#            allowance for a fixture that genuinely cannot have one (nondetermin-
+#            istic output, a timestamp, a machine-dependent value). It is shaped
+#            exactly like an xfail row — owner plus a `why:` reason — and is
+#            reported as a debt on every run. It exists so that "no transcript"
+#            is always a decision somebody signed, never a default.
+#
+#            Why the distinction is load-bearing: a missing C `return` is
+#            undefined behaviour, so a tail-return miscompile (defect D3) prints
+#            garbage and still exits 0. Measured here, `long long f(a,b){(a+b);}`
+#            returns 8261746944 with exit 0 at BOTH -O0 and -O2. An exit-code
+#            verdict cannot tell that from a correct program. That is how D3
+#            miscompiled stdlib/ for a year underneath a green gate.
 #   vacuous  runs, but only prints that its feature is unimplemented. Counted
 #            apart from `pass` so a green run is never mistaken for coverage.
 #            The classification is DECLARED here, not inferred from the file.
@@ -51,25 +55,38 @@
 #
 # Manifest format: 6 TAB-separated columns, every column non-empty, `-` = N/A.
 #   1 path         repo-root-relative. Tabs are the delimiter, so spaces are safe.
-#   2 class        run | vacuous | xfail | reject | skip
+#   2 class        run | untranscribed | vacuous | xfail | reject | skip
 #   3 stage        compile | link | run          (xfail/reject only, else `-`)
 #   4 observable   what must be observed, per class:
 #                    run           `expected` (diff sibling <fixture>.expected)
-#                                  or `-` (exit code only)
 #                    xfail/reject  a substring of the diagnostic, or exit=<N>
 #                                  when stage=run
-#                    vacuous/skip  `-`
-#   5 owner        M1..M9 | unscheduled          (xfail/vacuous only, else `-`)
+#                    others        `-`
+#   5 owner        M1..M9 | unscheduled
+#                                  (untranscribed/vacuous/xfail only, else `-`)
 #   6 note         free text, required except for class=run;
 #                  must begin `claims:` for class=vacuous
+#                  must begin `why:`    for class=untranscribed
+#
+# ON TRANSCRIPTS: a .expected file is a CONTRACT, not a recording. `diff`ing it
+# proves the compiler still does what it did, which is only worth something if
+# what it did was right. A change to a golden is therefore a change to the
+# expected behaviour of the language and must be reviewed SEPARATELY from, and
+# more carefully than, the compiler change that motivated it — a diff that
+# "just updates the goldens" is a silent respecification. Prefer transcripts
+# whose correctness can be checked by reading the fixture (a known factorial, a
+# known Fibonacci) over ones that merely record whatever was printed.
 #
 # Env:
 #   CONFORMANCE_MANIFEST       override the manifest path (used by the runner's
 #                              own regression tests)
-#   CONFORMANCE_FORBID_OWNER   fail if any evaluated xfail/vacuous entry is owned
-#                              by this milestone. This is what turns a milestone
-#                              exit criterion into a command:
+#   CONFORMANCE_FORBID_OWNER   fail if any evaluated untranscribed/vacuous/xfail
+#                              entry is owned by this milestone. This is what
+#                              turns a milestone exit criterion into a command:
 #                                CONFORMANCE_FORBID_OWNER=M1 make conformance
+#   CONFORMANCE_BLESS=1        rewrite every transcript from THIS build's output.
+#                              Never exits 0, and refuses to run under CI, so it
+#                              cannot be mistaken for or automated into a pass.
 #
 # Usage: scripts/conformance.sh [scope ...]     (default: tests examples)
 
@@ -91,12 +108,22 @@ if [ ! -f "$MANIFEST" ]; then
   exit 2
 fi
 
+# Blessing rewrites the definition of "correct" from whatever the compiler just
+# did. That is a human judgement, so it may not happen on a machine whose whole
+# job is to answer yes/no without one.
+if [ "${CONFORMANCE_BLESS:-0}" = "1" ] && [ -n "${CI:-}${GITHUB_ACTIONS:-}" ]; then
+  echo "error: CONFORMANCE_BLESS is not permitted under CI." >&2
+  echo "       A transcript records what the language is supposed to do; it must" >&2
+  echo "       be changed deliberately and reviewed, never regenerated by a bot." >&2
+  exit 2
+fi
+
 TMPROOT=$(mktemp -d) || exit 2
 trap 'rm -rf "$TMPROOT"' EXIT
 
-# Normalise a path so that `./tests/x.pd`, `tests//x.pd` and `tests/x.pd` are the
-# same key. Lexical matching without this let `conformance.sh ./tests` miss every
-# manifest entry while still counting the files.
+# Tidy a path emitted by `find` (leading ./, doubled slashes) into a manifest key.
+# This is only lexical, and is only ever applied to output of a scope that has
+# already been resolved physically below.
 canon() {
   printf '%s' "$1" | sed -e 's|^\./||' -e 's|//*|/|g' -e 's|/\./|/|g' -e 's|/*$||'
 }
@@ -106,18 +133,49 @@ strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 # --------------------------------------------------------------------------
 # Scopes
 # --------------------------------------------------------------------------
+# Scope arguments are resolved PHYSICALLY, not by string cleanup: `cd` + `pwd -P`
+# collapses `..`, absolutises, follows symlinked directories, and on a
+# case-insensitive filesystem reports the true on-disk case. So `tests`,
+# `./tests`, `tests/../tests`, `$PWD/tests`, a symlink to tests, and `TESTS` all
+# produce the same manifest key. Lexical cleanup did not: it left `..` alone, and
+# every such spelling matched no manifest entry.
+#
+# Note this resolves the scope DIRECTORY only. Fixture paths underneath keep the
+# spelling `find` reports, which is what the manifest declares — important
+# because tests/integration/test.pd is itself a symlink and must stay a distinct,
+# declared fixture rather than being folded into its target.
+REPO_ROOT=$(pwd -P)
+resolve_scope() {
+  local raw=$1 phys
+  phys=$(cd "$raw" 2>/dev/null && pwd -P) || return 1
+  case "$phys" in
+    "$REPO_ROOT")   printf '.' ;;
+    "$REPO_ROOT"/*) printf '%s' "${phys#"$REPO_ROOT"/}" ;;
+    *)              return 2 ;;
+  esac
+}
+
 if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
 i=0
 while [ "$i" -lt "${#SCOPES[@]}" ]; do
-  s=$(canon "${SCOPES[$i]}")
-  if [ -z "$s" ]; then echo "error: empty scope argument" >&2; exit 2; fi
-  if [ ! -d "$s" ]; then
-    echo "error: scope '$s' is not a directory. Refusing to report a green run" >&2
+  raw=${SCOPES[$i]}
+  if [ -z "$raw" ]; then echo "error: empty scope argument" >&2; exit 2; fi
+  if [ ! -d "$raw" ]; then
+    echo "error: scope '$raw' is not a directory. Refusing to report a green run" >&2
     echo "       over a scope that does not exist." >&2
     exit 2
   fi
-  if [ ! -r "$s" ] || [ ! -x "$s" ]; then
-    echo "error: scope '$s' is not readable" >&2
+  if [ ! -r "$raw" ] || [ ! -x "$raw" ]; then
+    echo "error: scope '$raw' is not readable" >&2
+    exit 2
+  fi
+  s=$(resolve_scope "$raw"); rs=$?
+  if [ "$rs" -eq 1 ]; then
+    echo "error: scope '$raw' could not be resolved" >&2; exit 2
+  elif [ "$rs" -eq 2 ]; then
+    echo "error: scope '$raw' resolves outside the repository ($REPO_ROOT)." >&2
+    echo "       Fixtures are declared by repo-relative path, so a directory" >&2
+    echo "       outside the repo can never match the manifest." >&2
     exit 2
   fi
   SCOPES[i]=$s
@@ -165,16 +223,29 @@ while IFS= read -r raw || [ -n "$raw" ]; do
     run)
       [ "$ms" = "-" ] || merr "$lineno" "class=run must have stage '-', got '$ms'"
       case "$mf" in
-        -) ;;
         expected)
           # Declared here, but the golden must actually be on disk: a declared
           # transcript that does not exist would otherwise verify nothing.
           if [ ! -f "${mp%.pd}.expected" ]; then
             merr "$lineno" "declares 'expected' but ${mp%.pd}.expected does not exist"
           fi ;;
-        *) merr "$lineno" "class=run observable must be 'expected' or '-', got '$mf'" ;;
+        # `-` used to mean "check the exit code and nothing else", which is the
+        # exact exit-0-wrong-answer hole transcripts exist to close, available as
+        # a silent opt-out. It is now a manifest error: a fixture that genuinely
+        # cannot carry a transcript must say so as class=untranscribed, with an
+        # owner and a reason, and is then reported as a debt on every run.
+        *) merr "$lineno" "class=run observable must be 'expected', got '$mf'. A fixture that cannot have a transcript must be declared class=untranscribed with an owner and a reason." ;;
       esac
       [ "$mo" = "-" ] || merr "$lineno" "class=run must have owner '-', got '$mo'"
+      ;;
+    untranscribed)
+      # The reviewed allowance for "this one really cannot be transcribed".
+      # Deliberately shaped like an xfail row: owned, reasoned, and printed on
+      # every run, so it is a visible debt rather than a quiet exemption.
+      [ "$ms" = "-" ] || merr "$lineno" "class=untranscribed must have stage '-', got '$ms'"
+      [ "$mf" = "-" ] || merr "$lineno" "class=untranscribed must have observable '-', got '$mf'"
+      case "$mo" in M[1-9]|unscheduled) ;; *) merr "$lineno" "class=untranscribed needs an owner M1..M9 or 'unscheduled', got '$mo'" ;; esac
+      case "$mn" in why:*) ;; *) merr "$lineno" "class=untranscribed note must begin 'why:<reason this fixture cannot be transcribed>'; got '$mn'" ;; esac
       ;;
     vacuous)
       [ "$ms" = "-" ] || merr "$lineno" "class=vacuous must have stage '-', got '$ms'"
@@ -209,7 +280,7 @@ while IFS= read -r raw || [ -n "$raw" ]; do
       [ "$mo" = "-" ] || merr "$lineno" "class=skip must have owner '-', got '$mo'"
       [ "$mn" != "-" ] || merr "$lineno" "class=skip needs a note"
       ;;
-    *) merr "$lineno" "unknown class '$mc' (run|vacuous|xfail|reject|skip)" ; continue ;;
+    *) merr "$lineno" "unknown class '$mc' (run|untranscribed|vacuous|xfail|reject|skip)" ; continue ;;
   esac
 
   M_PATH+=("$mp"); M_CLASS+=("$mc"); M_STAGE+=("$ms"); M_FP+=("$mf")
@@ -263,12 +334,13 @@ for d in "${SCOPES[@]}"; do
   fi
 done
 
-verified=0; unverified=0; vacuous=0; xfail=0; reject=0; skip=0
+verified=0; untranscribed=0; vacuous=0; xfail=0; reject=0; skip=0
 hard_fail=0; blessed=0
 declare -a FAILED
 declare -a XFAIL_NOTES
 declare -a VACUOUS_NOTES
 declare -a REJECT_NOTES
+declare -a UNTRANSCRIBED_NOTES
 
 fail() { FAILED+=("$1"); hard_fail=$((hard_fail+1)); }
 
@@ -384,15 +456,20 @@ while IFS= read -r raw_f; do
       run)     if [ "$out_mismatch" -eq 1 ]; then
                  printf '%-52s %s\n' "$f" "OUTPUT_MISMATCH"
                  fail "$f [OUTPUT_MISMATCH] ran and exited 0, but stdout differs from $golden: $detail"
-               elif [ "$fp" = "expected" ]; then
-                 printf '%-52s %s\n' "$f" "PASS_VERIFIED"; verified=$((verified+1))
                else
-                 printf '%-52s %s\n' "$f" "PASS_UNVERIFIED"; unverified=$((unverified+1))
+                 printf '%-52s %s\n' "$f" "PASS_VERIFIED"; verified=$((verified+1))
                fi ;;
+      untranscribed)
+               printf '%-52s %s\n' "$f" "PASS_UNTRANSCRIBED"; untranscribed=$((untranscribed+1))
+               UNTRANSCRIBED_NOTES+=("$f [$owner] $note") ;;
       vacuous) printf '%-52s %s\n' "$f" "PASS_VACUOUS"; vacuous=$((vacuous+1))
                VACUOUS_NOTES+=("$f [$owner] $note") ;;
       xfail)   printf '%-52s %s\n' "$f" "XPASS"
-               fail "$f [XPASS] declared to fail at $stage_exp but passed; remove the entry from $MANIFEST (was: $note)" ;;
+               # NOT "delete the row": the fixture is still on disk, so under the
+               # closed inventory a deleted row is UNDECLARED and the gate stays
+               # red. Paying off an xfail is a TRANSITION, and this text is the
+               # handoff protocol for whoever fixes it.
+               fail "$f [XPASS] declared to fail at $stage_exp but now passes. Do NOT delete the row (the fixture still exists, so that would make it UNDECLARED). In $MANIFEST change its row to:  $f<TAB>run<TAB>-<TAB>expected<TAB>-<TAB>-  and add the transcript ${f%.pd}.expected (generate with CONFORMANCE_BLESS=1, then READ it before committing). Was: $note" ;;
       reject)  printf '%-52s %s\n' "$f" "REJECT_ACCEPTED"
                fail "$f [REJECT_ACCEPTED] the compiler must refuse this program at $stage_exp ('$fp') but accepted it: $note" ;;
     esac
@@ -452,16 +529,17 @@ if [ -n "$FORBID_OWNER" ]; then
   done
 fi
 
-evaluated=$((verified+unverified+vacuous+xfail+reject+skip))
+evaluated=$((verified+untranscribed+vacuous+xfail+reject+skip))
 echo
 echo "=============================================="
 echo "fixtures=$n declared_in_scope=$declared_in_scope evaluated=$evaluated"
-echo "verified=$verified unverified=$unverified vacuous=$vacuous xfail=$xfail reject=$reject skip=$skip failures=$hard_fail"
+echo "verified=$verified untranscribed=$untranscribed vacuous=$vacuous xfail=$xfail reject=$reject skip=$skip failures=$hard_fail"
 echo "  verified   = ran AND its stdout matched the recorded transcript byte for"
 echo "               byte. Only this column can see a wrong answer."
-echo "  unverified = compiled, linked, exited 0 — and nothing more. A tail-return"
-echo "               miscompile (D3) prints garbage and still exits 0, so this"
-echo "               column cannot tell a correct program from a broken one."
+echo "  untranscribed = ran and exited 0, but has NO transcript, so a wrong answer"
+echo "               would be invisible: a tail-return miscompile (D3) prints"
+echo "               garbage and still exits 0. Each one is a declared, owned"
+echo "               debt — there is no silent way into this column."
 echo "  vacuous    = declared placeholder: runs, but only prints that its feature"
 echo "               is unimplemented. NOT evidence the feature works."
 echo "  xfail      = declared failing at a specific stage with a specific"
@@ -483,6 +561,11 @@ if [ ${#REJECT_NOTES[@]} -gt 0 ]; then
   echo
   echo "Negative tests — the compiler correctly refused these:"
   printf '  %s\n' "${REJECT_NOTES[@]}"
+fi
+if [ ${#UNTRANSCRIBED_NOTES[@]} -gt 0 ]; then
+  echo
+  echo "No transcript — ran, but a wrong answer would not be caught:"
+  printf '  %s\n' "${UNTRANSCRIBED_NOTES[@]}"
 fi
 if [ ${#VACUOUS_NOTES[@]} -gt 0 ]; then
   echo

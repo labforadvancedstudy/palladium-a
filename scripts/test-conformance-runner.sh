@@ -41,10 +41,14 @@ new_repo() {
   printf '%s' "$d"
 }
 
-# fixture <repo> <relpath> <body>
+# fixture <repo> <relpath> <body> [expected-stdout]
+# Also writes the sibling .expected transcript, because class=run now requires
+# one. Defaults to what $good_program prints. Harmless for fixtures declared with
+# another class: the golden is simply never consulted.
 fixture() {
   mkdir -p "$(dirname "$1/$2")"
   printf '%s\n' "$3" > "$1/$2"
+  printf '%s\n' "${4-ok}" > "$1/${2%.pd}.expected"
 }
 
 good_program='fn main() {
@@ -115,9 +119,9 @@ start "baseline: fully declared corpus is green"
 D=$(new_repo baseline)
 fixture "$D" tests/a.pd "$good_program"
 fixture "$D" tests/b.pd "$good_program"
-manifest "$D" 'tests/a.pd|run|-|-|-|-' 'tests/b.pd|run|-|-|-|-'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/b.pd|run|-|expected|-|-'
 run_case "$D"
-expect_rc 0 && expect_out "unverified=2" && ok
+expect_rc 0 && expect_out "verified=2" && ok
 
 # ---------------------------------------------------------------------------
 # ITEM 4 — closed inventory. A fixture that vanishes or appears unnoticed is
@@ -127,7 +131,7 @@ start "item4: an UNDECLARED fixture fails the gate"
 D=$(new_repo undeclared)
 fixture "$D" tests/a.pd "$good_program"
 fixture "$D" tests/sneaky.pd "$good_program"
-manifest "$D" 'tests/a.pd|run|-|-|-|-'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
 run_case "$D"
 expect_rc 1 && expect_out "UNDECLARED" && ok
 
@@ -135,13 +139,13 @@ start "item4: a declared fixture deleted from disk fails the gate (was: silent s
 D=$(new_repo missing)
 fixture "$D" tests/a.pd "$good_program"
 fixture "$D" tests/b.pd "$good_program"
-manifest "$D" 'tests/a.pd|run|-|-|-|-' 'tests/b.pd|run|-|-|-|-'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/b.pd|run|-|expected|-|-'
 rm "$D/tests/b.pd"
 run_case "$D"
 expect_rc 1 && expect_out "MISSING" && ok
 
-start "item4: deleting it from the manifest too does NOT make it green"
-manifest "$D" 'tests/a.pd|run|-|-|-|-'
+start "item4: retiring a fixture requires deleting BOTH file and row (a tracked diff)"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
 run_case "$D"
 # Now consistent again: this is the intended way to retire a fixture, and it is
 # visible in the diff of a tracked file rather than invisible in a scan.
@@ -159,7 +163,7 @@ expect_rc 2 && expect_out "closed" && ok
 start "item2: a nonexistent scope is fatal (was: exit 0 with total=0)"
 D=$(new_repo badscope)
 fixture "$D" tests/a.pd "$good_program"
-manifest "$D" 'tests/a.pd|run|-|-|-|-'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
 run_case "$D" tests/does_not_exist
 expect_rc 2 && expect_out "is not a directory" && ok
 
@@ -167,7 +171,7 @@ start "item2: an unreadable scope is fatal"
 D=$(new_repo unreadable)
 fixture "$D" tests/a.pd "$good_program"
 mkdir -p "$D/tests/locked"
-manifest "$D" 'tests/a.pd|run|-|-|-|-'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
 chmod 000 "$D/tests/locked"
 run_case "$D"
 chmod 755 "$D/tests/locked"
@@ -177,7 +181,7 @@ start "item2: a scope with no fixtures is fatal, not a pass"
 D=$(new_repo emptyscope)
 fixture "$D" tests/a.pd "$good_program"
 mkdir -p "$D/empty"
-manifest "$D" 'tests/a.pd|run|-|-|-|-'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
 run_case "$D" empty
 expect_rc 2 && expect_out "no .pd fixtures" && ok
 
@@ -188,7 +192,7 @@ start "item3: './tests' spelling still matches manifest entries (was: xfail=0)"
 D=$(new_repo canon)
 fixture "$D" tests/a.pd "$good_program"
 fixture "$D" tests/vac.pd "$vacuous_program"
-manifest "$D" 'tests/a.pd|run|-|-|-|-' 'tests/vac.pd|vacuous|-|-|M4|claims: traits. Coverage is ZERO.'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/vac.pd|vacuous|-|-|M4|claims: traits. Coverage is ZERO.'
 run_case "$D" ./tests
 expect_rc 0 && expect_out "vacuous=1" && ok
 
@@ -196,7 +200,39 @@ start "item3: 'tests//' spelling behaves identically"
 run_case "$D" 'tests//'
 expect_rc 0 && expect_out "vacuous=1" && ok
 
+start "item3: 'tests/../tests' resolves (was: unresolved '..' matched nothing)"
+run_case "$D" tests/../tests
+expect_rc 0 && expect_out "vacuous=1" && ok
+
+start "item3: an absolute path to the scope resolves"
+OUT=$( cd "$D" && bash scripts/conformance.sh "$D/tests" 2>&1 ); RC=$?
+expect_rc 0 && expect_out "vacuous=1" && ok
+
+start "item3: a symlinked scope directory resolves to its target"
+ln -sfn tests "$D/tests_link"
+run_case "$D" tests_link
+expect_rc 0 && expect_out "vacuous=1" && ok
+
+start "item3: a scope outside the repository is refused, not silently empty"
+OUT=$( cd "$D" && bash scripts/conformance.sh "$TMPROOT" 2>&1 ); RC=$?
+expect_rc 2 && expect_out "outside the repository" && ok
+
+start "item3: a symlinked FIXTURE stays a distinct declared fixture"
+# tests/integration/test.pd in the real repo is a symlink; folding it into its
+# target would silently shrink the corpus by one.
+D=$(new_repo symlinkfixture)
+fixture "$D" tests/real.pd "$good_program"
+printf 'ok\n' > "$D/tests/real.expected"
+ln -sfn real.pd "$D/tests/alias.pd"
+printf 'ok\n' > "$D/tests/alias.expected"
+manifest "$D" 'tests/real.pd|run|-|expected|-|-' 'tests/alias.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 0 && expect_out "verified=2" && ok
+
 start "item3: an XPASS is still caught through an alternate spelling"
+D=$(new_repo canonxpass)
+fixture "$D" tests/a.pd "$good_program"
+fixture "$D" tests/vac.pd "$vacuous_program"
 manifest "$D" 'tests/a.pd|xfail|compile|whatever|M1|declared failing' 'tests/vac.pd|vacuous|-|-|M4|claims: traits. Coverage is ZERO.'
 run_case "$D" ./tests
 expect_rc 1 && expect_out "XPASS" && ok
@@ -239,7 +275,7 @@ expect_rc 1 && expect_out "XFAIL_MISMATCH" && ok
 start "item5: a stale build_output binary cannot turn a compile failure into PASS"
 D=$(new_repo stalebin)
 fixture "$D" tests/broken.pd "$bad_program"
-manifest "$D" 'tests/broken.pd|run|-|-|-|-'
+manifest "$D" 'tests/broken.pd|run|-|expected|-|-'
 # Plant an executable under every name the runner might plausibly use.
 for nm in broken cf_1_tests_broken_pd; do
   printf '#!/bin/sh\nexit 0\n' > "$D/build_output/$nm"; chmod +x "$D/build_output/$nm"
@@ -251,7 +287,7 @@ start "item5: two fixtures with the same basename do not share an output"
 D=$(new_repo basename)
 fixture "$D" tests/one/dup.pd "$good_program"
 fixture "$D" tests/two/dup.pd "$runtime_fail_program"
-manifest "$D" 'tests/one/dup.pd|run|-|-|-|-' 'tests/two/dup.pd|run|-|-|-|-'
+manifest "$D" 'tests/one/dup.pd|run|-|expected|-|-' 'tests/two/dup.pd|run|-|expected|-|-'
 run_case "$D"
 # The second must be reported RUN_FAIL; under basename-only outputs it could be
 # satisfied by the first fixture's binary.
@@ -260,12 +296,14 @@ expect_rc 1 && expect_out "RUN_FAIL" && ok
 # ---------------------------------------------------------------------------
 # ITEM 6 — vacuousness is declared, not inferred from a missing string.
 # ---------------------------------------------------------------------------
-start "item6: deleting a vacuous marker no longer silently upgrades it to a pass"
+start "item6 setup: a correctly-marked vacuous fixture is green"
 D=$(new_repo vacuous)
 fixture "$D" tests/vac.pd "$vacuous_program"
 manifest "$D" 'tests/vac.pd|vacuous|-|-|M4|claims: traits. Coverage is ZERO.'
 run_case "$D"
-expect_rc 0 && expect_out "vacuous=1" || true
+expect_rc 0 && expect_out "vacuous=1" && ok
+
+start "item6: deleting a vacuous marker no longer silently upgrades it to a pass"
 fixture "$D" tests/vac.pd "$good_program"      # marker removed
 run_case "$D"
 expect_rc 1 && expect_out "MARKER_MISSING" && ok
@@ -273,7 +311,7 @@ expect_rc 1 && expect_out "MARKER_MISSING" && ok
 start "item6: a marker on a fixture declared class=run fails the gate"
 D=$(new_repo markerundeclared)
 fixture "$D" tests/vac.pd "$vacuous_program"
-manifest "$D" 'tests/vac.pd|run|-|-|-|-'
+manifest "$D" 'tests/vac.pd|run|-|expected|-|-'
 run_case "$D"
 expect_rc 1 && expect_out "MARKER_UNDECLARED" && ok
 
@@ -315,16 +353,42 @@ fixture "$D" tests/answer.pd "$answer_wrong"
 run_case "$D"
 expect_rc 1 && expect_out "OUTPUT_MISMATCH" && ok
 
-start "transcript: ...and the exit code alone would NOT have caught it"
-# Same broken fixture, declared without a transcript: exit 0, so it passes.
-# This is the whole argument for keeping the two columns apart.
+start "transcript: the exit-code-only opt-out is GONE (class=run demands one)"
+# `run` with observable `-` used to mean "check the exit code and nothing else",
+# a documented bypass of the very protection above. It is now a manifest error.
 manifest "$D" 'tests/answer.pd|run|-|-|-|-'
 run_case "$D"
-expect_rc 0 && expect_out "unverified=1" && ok
+expect_rc 2 && expect_out "must be 'expected'" && ok
+
+start "untranscribed: the allowance still cannot see a wrong answer..."
+# The hole is real, which is why it must be declared rather than defaulted into.
+# Same wrong-answer fixture, exit 0, no transcript -> green.
+manifest "$D" 'tests/answer.pd|untranscribed|-|-|M1|why: output is machine dependent'
+run_case "$D"
+expect_rc 0 && expect_out "untranscribed=1" && ok
+
+start "untranscribed: ...so it is reported as a debt on every run"
+expect_out "No transcript" && ok
+
+start "untranscribed: it requires an owner"
+manifest "$D" 'tests/answer.pd|untranscribed|-|-|-|why: no owner given'
+run_case "$D"
+expect_rc 2 && expect_out "needs an owner" && ok
+
+start "untranscribed: it requires a 'why:' reason"
+manifest "$D" 'tests/answer.pd|untranscribed|-|-|M1|just because'
+run_case "$D"
+expect_rc 2 && expect_out "must begin 'why:" && ok
+
+start "untranscribed: CONFORMANCE_FORBID_OWNER can drive the count to zero"
+manifest "$D" 'tests/answer.pd|untranscribed|-|-|M1|why: output is machine dependent'
+OUT=$( cd "$D" && CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests 2>&1 ); RC=$?
+expect_rc 1 && expect_out "OWED_TO_M1" && ok
 
 start "transcript: declaring 'expected' with no golden on disk is a manifest error"
 D=$(new_repo nogolden)
 fixture "$D" tests/answer.pd "$answer_right"
+rm -f "$D/tests/answer.expected"
 manifest "$D" 'tests/answer.pd|run|-|expected|-|-'
 run_case "$D"
 expect_rc 2 && expect_out "does not exist" && ok
@@ -338,6 +402,32 @@ OUT=$( cd "$D" && CONFORMANCE_BLESS=1 bash scripts/conformance.sh tests 2>&1 ); 
 expect_rc 2 && expect_out "BLESS MODE" && ok
 
 start "transcript: the blessed file is then accepted by a normal run"
+run_case "$D"
+expect_rc 0 && expect_out "verified=1" && ok
+
+# ---------------------------------------------------------------------------
+# The xfail handoff protocol. Under a closed inventory, paying off an xfail is a
+# TRANSITION, not a deletion — the fixture is still on disk, so deleting its row
+# makes it UNDECLARED. This is the exact sequence the D9 branch must follow, so
+# it is tested rather than merely written down.
+# ---------------------------------------------------------------------------
+start "handoff: an xfail whose defect is fixed reports XPASS"
+D=$(new_repo handoff)
+fixture "$D" tests/wasbroken.pd "$good_program"
+manifest "$D" 'tests/wasbroken.pd|xfail|compile|Expected function, struct, enum|M1|defect pending'
+run_case "$D"
+expect_rc 1 && expect_out "XPASS" && ok
+
+start "handoff: the XPASS text forbids deletion and names the replacement row"
+expect_out "Do NOT delete the row" && ok
+
+start "handoff: DELETING the row does not work - it becomes UNDECLARED"
+manifest "$D" '# intentionally empty'
+run_case "$D"
+expect_rc 1 && expect_out "UNDECLARED" && ok
+
+start "handoff: TRANSITIONING the row to run+transcript is what makes it green"
+manifest "$D" 'tests/wasbroken.pd|run|-|expected|-|-'
 run_case "$D"
 expect_rc 0 && expect_out "verified=1" && ok
 
@@ -396,12 +486,14 @@ expect_rc 0 && expect_out "vacuous=1" && ok
 # ---------------------------------------------------------------------------
 # ITEM 7 — milestone ownership is a structured, enforceable field.
 # ---------------------------------------------------------------------------
-start "item7: CONFORMANCE_FORBID_OWNER turns a milestone exit into a command"
+start "item7 setup: an owned xfail is green under a plain run"
 D=$(new_repo owner)
 fixture "$D" tests/broken.pd "$bad_program"
 manifest "$D" 'tests/broken.pd|xfail|compile|Expected function, struct, enum|M1|owed to M1'
 run_case "$D"
-expect_rc 0 || true
+expect_rc 0 && expect_out "xfail=1" && ok
+
+start "item7: CONFORMANCE_FORBID_OWNER turns a milestone exit into a command"
 OUT=$( cd "$D" && CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests 2>&1 ); RC=$?
 expect_rc 1 && expect_out "OWED_TO_M1" && ok
 
@@ -415,7 +507,7 @@ expect_rc 0 && ok
 start "manifest: a duplicate entry is rejected, naming both lines"
 D=$(new_repo dup)
 fixture "$D" tests/a.pd "$good_program"
-manifest "$D" 'tests/a.pd|run|-|-|-|-' 'tests/a.pd|run|-|-|-|second declaration'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/a.pd|run|-|-|-|second declaration'
 run_case "$D"
 expect_rc 2 && expect_out "duplicate entry" && ok
 
@@ -444,7 +536,7 @@ expect_rc 1 && expect_out "CLASS_MISMATCH" && ok
 start "manifest: class=run on a library module with no fn main is rejected"
 D=$(new_repo libclass)
 fixture "$D" tests/lib.pd "$library_module"
-manifest "$D" 'tests/lib.pd|run|-|-|-|-'
+manifest "$D" 'tests/lib.pd|run|-|expected|-|-'
 run_case "$D"
 expect_rc 1 && expect_out "CLASS_MISMATCH" && ok
 
@@ -456,9 +548,9 @@ expect_rc 0 && expect_out "skip=1" && ok
 start "manifest: a path containing spaces round-trips (tab-delimited format)"
 D=$(new_repo spaces)
 fixture "$D" "tests/with space.pd" "$good_program"
-manifest "$D" 'tests/with space.pd|run|-|-|-|-'
+manifest "$D" 'tests/with space.pd|run|-|expected|-|-'
 run_case "$D"
-expect_rc 0 && expect_out "unverified=1" && ok
+expect_rc 0 && expect_out "verified=1" && ok
 
 # ---------------------------------------------------------------------------
 echo

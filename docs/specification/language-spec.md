@@ -398,23 +398,25 @@ Execution starts at `fn main`. Arguments are evaluated left to right. The driver
 against `tests/conformance-manifest.txt`, a **closed inventory** declaring what each fixture is
 expected to do. Current status (2026-08-22):
 
-**verified 35 · vacuous 5 · xfail 2 · skip 2 · failures 0**, over 44 fixtures.
+**verified 33 · untranscribed 0 · vacuous 7 · xfail 2 · skip 2 · failures 0**, over 44 fixtures.
 
 `scripts/check-docs.sh` does the same for documentation snippets, and `scripts/selfhost.sh` checks
 the self-hosting fixed point.
 
 Each fixture declares a class:
 
-- **run** — must compile, link and run. If it declares `expected`, its stdout is diffed
-  byte-for-byte against a sibling `.expected` transcript and it counts as *verified*; otherwise
-  only its exit code is checked and it counts as *unverified*. The distinction is load-bearing: a
-  missing C `return` is undefined behaviour, so a tail-return miscompile (defect D3) prints garbage
-  and still exits 0. An exit-code verdict cannot see a wrong answer.
+- **run** — must compile, link, run, *and* have its stdout diffed byte-for-byte against a sibling
+  `.expected` transcript. There is no exit-code-only spelling: a missing C `return` is undefined
+  behaviour, so a tail-return miscompile (defect D3) prints garbage and still exits 0, and an
+  exit-code verdict cannot see a wrong answer.
+- **untranscribed** — ran, but carries no transcript. The reviewed allowance for a fixture that
+  genuinely cannot have one; it needs an owner and a `why:` reason and is reported as a debt on
+  every run, so "no transcript" is always a signed decision rather than a default. Currently zero.
 - **vacuous** — runs, but only prints that its feature is unimplemented. Its note must name the
-  feature it fails to cover. ⚠️ Five files are in this state: `07_traits_basic`,
-  `08_generics_basic`, `09_effects_system`, `10_async_await` and `12_modules_imports`. A green
-  conformance run is **not** evidence that traits, generics, effects, async or modules work. They
-  do not (§4.4, §5).
+  feature it fails to cover. ⚠️ **Seven** files are in this state: `02_types_enums`,
+  `07_traits_basic`, `08_generics_basic`, `09_effects_system`, `10_async_await`,
+  `11_unsafe_blocks` and `12_modules_imports`. A green conformance run is **not** evidence that
+  enums, traits, generics, effects, async, unsafe or modules work. They do not (§4.4, §5).
 - **xfail** — a known failure pinned to a stage *and* a diagnostic fingerprint. Failing at a
   different stage, or with a different message, fails the gate, so a fresh bug cannot hide behind
   an old excuse. A listed program that starts passing is `XPASS` and fails the gate.
@@ -425,7 +427,7 @@ Each fixture declares a class:
 
 Because the inventory is closed, a fixture that is deleted, renamed, or added without a declaration
 fails the gate rather than silently shrinking or growing it. The gate's own ability to fail is
-tested by `make test-conformance-runner` (45 cases).
+tested by `make test-conformance-runner` (61 cases).
 
 ## 12. Relationship to the bootstrap subset
 

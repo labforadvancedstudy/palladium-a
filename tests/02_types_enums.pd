@@ -1,3 +1,4 @@
+//@ vacuous: prints that enums are partially implemented; declares no enum and matches on nothing — no milestone owns enums yet
 // Test 02: Type System - Enums (Not Yet Fully Implemented)
 // Enums have partial implementation with known issues
 

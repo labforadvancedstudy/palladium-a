@@ -8,21 +8,41 @@
 # year; *.txt nearly hid this file).
 #
 # Columns are TAB-separated. All six are mandatory; use `-` for N/A.
-#   path	class	stage	fingerprint	owner	note
+#   path	class	stage	observable	owner	note
 #
-# class:  run     must compile, link and run with exit 0
-#         vacuous runs, but only prints that its feature is unimplemented
-#         xfail   known failure, pinned to a stage AND a diagnostic
-#         skip    not a program (no fn main)
+# class: run            compiles, links, runs, AND its stdout matches the sibling
+#                       <fixture>.expected transcript. There is no exit-code-only
+#                       spelling: a tail-return miscompile (D3) prints garbage and
+#                       still exits 0, so an exit code proves almost nothing.
+#        untranscribed  ran, but has no transcript. The reviewed allowance for a
+#                       fixture that genuinely cannot have one. Needs an owner and
+#                       a `why:` reason, and is reported as a debt every run.
+#        vacuous        runs, but only prints that its feature is unimplemented.
+#                       Note must begin `claims:` and name the feature it does not
+#                       actually cover.
+#        xfail          known failure, pinned to a stage AND a diagnostic.
+#        reject         MUST fail, and that is correct — a negative test. Real
+#                       coverage, owed to nobody, so owner is `-`.
+#        skip           not a program (no fn main).
 #
-# Adding coverage (e.g. stdlib/): add the root to the make target and add one
-# line per fixture here. An undeclared fixture fails the gate, so new files
+# PAYING OFF AN xfail IS A TRANSITION, NOT A DELETION. The fixture stays on disk,
+# so removing its row makes it UNDECLARED and the gate stays red. Change the row
+# to `<path>	run	-	expected	-	-` and add the .expected transcript in the same
+# commit. The same applies to a vacuous fixture once its feature is implemented:
+# rewrite the fixture to actually exercise it, then transition the row.
+#
+# A .expected file is a CONTRACT, not a recording. Changing one changes the
+# expected behaviour of the language and must be reviewed separately from — and
+# more carefully than — the compiler change that motivated it.
+#
+# Adding coverage (e.g. tests/stdlib/): add the root to the make target and add
+# one line per fixture here. An undeclared fixture fails the gate, so new files
 # cannot arrive unnoticed either.
 
 examples/practical/calculator.pd	run	-	expected	-	-
 examples/practical/fibonacci.pd	run	-	expected	-	-
 examples/practical/prime_checker.pd	run	-	expected	-	-
-examples/practical/simple_sort.pd	xfail	compile	Unsupported type in reference parameter	M1	defect D9: &mut [i64; N] reference parameter rejected by codegen. The branch that fixes D9 must delete this line in the same commit.
+examples/practical/simple_sort.pd	xfail	compile	Unsupported type in reference parameter	M1	defect D9: &mut [i64; N] reference parameter rejected by codegen. HANDOFF: the branch that fixes D9 must not DELETE this row - the fixture still exists, so a deleted row is UNDECLARED and the gate stays red. Change the row to `examples/practical/simple_sort.pd<TAB>run<TAB>-<TAB>expected<TAB>-<TAB>-` and add examples/practical/simple_sort.expected in the same commit.
 examples/tutorial/01_variables.pd	run	-	expected	-	-
 examples/tutorial/02_functions.pd	run	-	expected	-	-
 examples/tutorial/03_ownership.pd	run	-	expected	-	-
@@ -32,7 +52,7 @@ examples/tutorial/06_arrays.pd	run	-	expected	-	-
 tests/01_lexical_comments.pd	run	-	expected	-	-
 tests/01_lexical_literals.pd	run	-	expected	-	-
 tests/02_types_arrays.pd	run	-	expected	-	-
-tests/02_types_enums.pd	run	-	expected	-	-
+tests/02_types_enums.pd	vacuous	-	-	unscheduled	claims: enum types. Declares no enum, constructs no variant, matches on nothing; body is only print calls. Enum conformance is ZERO.
 tests/02_types_primitives.pd	run	-	expected	-	-
 tests/02_types_structs.pd	run	-	expected	-	-
 tests/03_functions_basic.pd	run	-	expected	-	-
@@ -46,7 +66,7 @@ tests/07_traits_basic.pd	vacuous	-	-	M4	claims: traits. Declares no trait and no
 tests/08_generics_basic.pd	vacuous	-	-	M4	claims: generics. Instantiates no generic type or function; body is only print calls. Generic conformance is ZERO.
 tests/09_effects_system.pd	vacuous	-	-	unscheduled	claims: the effect system. No effect annotation appears anywhere; body is only print calls. Effect conformance is ZERO.
 tests/10_async_await.pd	vacuous	-	-	unscheduled	claims: async/await. Contains no async fn and no .await; body is only print calls. Async conformance is ZERO - this is why defect D5 survived.
-tests/11_unsafe_blocks.pd	run	-	expected	-	-
+tests/11_unsafe_blocks.pd	vacuous	-	-	unscheduled	claims: unsafe blocks and raw pointers. Contains no unsafe block and no pointer type; body is only print calls. Unsafe conformance is ZERO.
 tests/12_modules_imports.pd	vacuous	-	-	M3	claims: modules and imports. Exercises no module construct; body is only print calls. Module conformance is ZERO.
 tests/bootstrap_capability_probe.pd	run	-	expected	-	-
 tests/integration/simple_test.pd	run	-	expected	-	-

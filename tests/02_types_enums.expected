@@ -1,8 +1,0 @@
-=== Enum Type Test ===
-
-Enums are partially implemented but have issues:
-- Simple unit enums cause type checking errors
-- Enum variants with data have code generation issues
-- Pattern matching on enums is limited
-
-=== Enum test complete ===
