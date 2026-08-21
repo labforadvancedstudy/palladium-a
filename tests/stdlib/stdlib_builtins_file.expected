@@ -1,7 +1,12 @@
+@builtin create_dir
+@builtin create_dir_all
 create_dir_root
 0
 create_dir_all_nested
 0
+@builtin path_exists
+@builtin path_is_dir
+@builtin path_is_file
 path_exists_root
 true
 path_is_dir_root
@@ -16,6 +21,8 @@ path_is_file_absent
 false
 path_is_dir_absent
 false
+@builtin write_string_to_file
+@builtin read_file_to_string
 write_string_to_file
 0
 path_is_file_data
@@ -32,6 +39,10 @@ rewrite
 0
 read_after_rewrite
 xy
+@builtin file_open
+@builtin file_write
+@builtin file_close
+@builtin file_exists
 file_exists_before
 false
 file_open_handle
@@ -44,6 +55,7 @@ file_exists_after
 true
 file_exists_absent
 false
+@builtin file_read_all
 file_open_reread
 true
 file_read_all
@@ -52,6 +64,7 @@ line2
 
 file_close_reread
 true
+@builtin file_read_line
 file_read_line_1
 line1
 file_read_line_2
@@ -68,6 +81,9 @@ file_read_all_bad_handle
 
 file_read_line_bad_handle
 
+@builtin remove_file
+@builtin remove_dir
+@builtin remove_dir_all
 remove_file_data
 0
 path_exists_after_remove

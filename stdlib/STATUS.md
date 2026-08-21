@@ -4,27 +4,39 @@
 
 ## The short version
 
-**0 of 21 files under `stdlib/` compile, and the compiler never loads any of them.**
-`stdlib/` is not a standard library. It is a sketch of one, written in a dialect this language
-does not implement, and it is not reachable from any program.
+**0 of 21 files under `stdlib/` compile, and no default configuration loads any of them.**
+`stdlib/` is not a standard library. It is a sketch of one, written in a dialect this language does
+not implement. A user *can* force it onto the module search path via `$PALLADIUM_PATH` — and it
+still fails to load, with the same parse blockers listed below.
 
-Reproduce with `make stdlib-gate`, which recomputes every number on this page.
+Reproduce with `make stdlib-gate`, which recomputes every number on this page except the 437
+tail-expression count, which is a one-off heuristic scan and is flagged as such where it appears.
 
 ## Is `stdlib/` live code or dead weight?
 
-Dead weight. Four independent pieces of evidence:
+Dead weight — but the precise claim matters, and an earlier draft of this page overreached. The
+module resolver **is** live and its search path **is** user-configurable, so "the compiler can
+never load `stdlib/`" would have been false. What is true is narrower, and every row was measured:
 
 | Question | Evidence | Answer |
 |---|---|---|
 | Does anything in the compiler reference `stdlib/`? | `grep -rn stdlib src/` → 0 hits (the only match anywhere is `#include <stdlib.h>` at `src/codegen/mod.rs:420`) | No |
-| Is `stdlib/` on the module search path? | `src/resolver/mod.rs:37-38` searches `.` and `examples`; `src/resolver/mod.rs:44` adds `<exe_dir>/std`, which does not exist; `src/resolver/mod.rs:52` adds `$PALLADIUM_PATH`. `stdlib/` appears in none of them | No |
-| Is the prelude injected into user programs? | The only `prelude` in `src/` is `runtime/pd_prelude.h`, the **C** runtime header (`src/runtime_paths.rs:5`). `stdlib/prelude.pd` is never read. Module resolution only runs at all when the program has its own imports (`src/driver/mod.rs:89`) | No |
-| Is `stdlib/` even shipped? | `Cargo.toml:34` lists `stdlib/*` under `exclude` | No |
+| Is `stdlib/` on any **default** search path? | `src/resolver/mod.rs:37-38` searches `.` and `examples`; `:44` adds `<exe_dir>/std`, which no install creates; `:52` adds `$PALLADIUM_PATH`. `stdlib/` is on none of them by default | No |
+| Is the resolver reachable at all? | **Yes** — via the `import` keyword (`src/parser/mod.rs:176`), *not* `use`. Measured: `import mymod;` prints `Resolved 1 modules`. Resolution runs only when a program has imports (`src/driver/mod.rs:89`) | Yes |
+| Can a user put `stdlib/` on the path? | **Yes** — `$PALLADIUM_PATH` is user-configurable | Yes |
+| Does that make it usable? | **No.** Measured: `PALLADIUM_PATH=…/stdlib/std pdc compile` on `import option;` fails with `Expected 'fn' for method, but found 'pub'` — the same blocker recorded for that file below. `import math;` fails on the float literal. Pinned by the gate's forced-import probe | No |
+| Is `stdlib/` shipped or installed? | `Cargo.toml:34` excludes `stdlib/*` from the crate. `.github/workflows/release.yml:58` and `preview.yml:82` stage **only** `runtime` (`grep -rn stdlib .github/` → 0 hits). Both Homebrew formulae in `2lab-ai/homebrew-tap` install only the runtime — `(share/"palladium").install "runtime"` in `pdc.rb`, `(lib/"palladium").install "runtime"` in `pdc-preview.rb`. The Dockerfile copies `bootstrap`, `examples`, `docs` — not `stdlib` | No |
+| Is `prelude.pd` auto-injected? | No. The only `prelude` in `src/` is `runtime/pd_prelude.h`, the **C** runtime header (`src/runtime_paths.rs:5`). `stdlib/prelude.pd` is never read | No |
 
-So a Palladium program today gets the 38 builtins in `src/builtins.rs` and nothing else. That
-matches the status table in `docs/contributing/MILESTONES.md` — "Standard library — none" — and
-contradicts `stdlib/README.md`, which claims ✅ for collections, strings, math, I/O, memory,
-traits and the prelude. None of those are true; see [Correcting the record](#correcting-the-record).
+**The conclusion, stated exactly:** no default configuration loads anything under `stdlib/`;
+nothing packages or installs it; and even when a user deliberately forces it onto the resolver's
+path, every module fails to load with the blocker recorded below. A Palladium program today gets
+the 38 builtins in `src/builtins.rs` and nothing else.
+
+That matches the status table in `docs/contributing/MILESTONES.md` — "Standard library — none" —
+and contradicts the old `stdlib/README.md`, which claimed ✅ for collections, strings, math, I/O,
+memory, traits and the prelude. None of those were true; see
+[Correcting the record](#correcting-the-record).
 
 ## The verdict table
 
@@ -118,9 +130,9 @@ uses no `use`, no `mod`, no `impl`, no generics, no traits, no attributes and no
 on exactly one construct — `let mut v: VecI64;` at line 12 — and replacing that single line with a
 struct literal makes the whole file compile, link and run.
 
-That is measured, not asserted: `tests/stdlib/stdlib_vec_i64.pd` is that port, and the gate runs it
-on every invocation. If the language ever grows uninitialised `let`, the manifest entry for the
-original goes XPASS and must be updated.
+That is measured, not asserted: `tests/stdlib/stdlib_vec_i64.pd` is that port. `make conformance`
+runs it and diffs its transcript; `make stdlib-gate` checks its generated C. If the language ever
+grows uninitialised `let`, the manifest entry for the original goes XPASS and must be updated.
 
 ## Correcting the record
 
@@ -139,18 +151,42 @@ method-call syntax and generics that the compiler does not implement.
 > `stdlib/` has no conformance coverage at all. That is precisely why the tail-return defect
 > lived there, silently miscompiling every function that ended in an expression, for a year.
 
-The first sentence was true. The second is not, and the same claim appears in `docs/CHANGELOG.md`,
-`docs/specification/language-spec.md`, `docs/specification/bootstrap-subset.md` and in the message
-of commit `191f8c1` ("All of `stdlib/` was affected").
+The first sentence was true. The second is not.
 
 Nothing under `stdlib/` was ever miscompiled, because nothing under `stdlib/` was ever compiled.
 All 21 files are rejected at lex or parse time — they never reach the codegen pass where D3 lived —
-and the compiler never loads them in the first place. A file that cannot be parsed cannot be
-miscompiled.
+and no default configuration loads them. A file that cannot be parsed cannot be miscompiled.
 
 What is true is a weaker, counterfactual statement: `stdlib/` contains **437** functions that end
 in a tail expression, so *if* it had ever compiled, D3 would have miscompiled all of them. The
 defect's real victims were ordinary user programs.
+
+> **Two caveats on the 437 figure.**
+>
+> It is **not** recomputed by `make stdlib-gate`, unlike every other number on this page. It comes
+> from a one-off heuristic scan (a non-blank, non-comment line not ending in `;{},` immediately
+> followed by a line containing only `}`), which approximates "function ends in a tail expression"
+> without parsing. Treat it as an order-of-magnitude claim, reproducible with the awk script in
+> the commit that added this file, not as a pinned measurement.
+>
+> It also **understates** the counterfactual. The heuristic requires a bare expression immediately
+> before the closing brace, so a function ending in a tail `if` — whose last line is the `}` of the
+> `else` — is *not* counted. Those functions are miscompiled too, and still are today (see
+> [D3 is only half fixed](#d3-is-only-half-fixed-tail-if-is-never-lowered)). The same scan finds
+> **369** further sites in `stdlib/` where a `}` is preceded by a `}`, an upper bound on the
+> tail-`if` shape. So the true counterfactual blast radius is wider than 437, not narrower.
+
+**Every live occurrence of the false claim has been corrected**, each with the original wording
+preserved and a correction adjacent to it:
+
+| File | Status |
+|---|---|
+| `docs/contributing/MILESTONES.md` | corrected — retraction on the page |
+| `docs/CHANGELOG.md` | corrected — note under the D3 entry |
+| `docs/specification/bootstrap-subset.md` | corrected — note under the defect table |
+| `CLAUDE.md` | corrected — note on the D3 line |
+| `docs/specification/language-spec.md:295` | **NOT corrected — out of reach.** That file is being restructured on `docs/restore-design-corpus`, where the claim has already moved to line 607 and the surrounding text is rewritten. Editing it here would collide. Routed to the coordinator. |
+| commit message `191f8c1` | immutable history; corrected by this commit's message and by the table above |
 
 The distinction matters because the false version misdirects the fix. It says "gate `stdlib/`",
 which would produce a gate over 21 files that cannot compile — a gate that can only ever report
@@ -162,27 +198,109 @@ what `tests/stdlib/` does.
 
 `make stdlib-gate` (`scripts/stdlib-gate.sh`) has four phases:
 
-- **Phase 0 — negative control.** Proves the harness can fail: a deliberately-wrong transcript must
-  be detected, and `panic()` must exit non-zero. If these pass silently, every later "ok" is void.
-- **Phase 1 — pin this page.** Recompiles all 21 files and diffs the result against
-  `stdlib/MANIFEST.tsv`. Fails on REGRESSION, XPASS, VERDICT_CHANGED, BLOCKER_CHANGED, or file-set
-  drift.
-- **Phase 2 — the real coverage.** Compiles, links, runs and **transcript-diffs** the drivers in
-  `tests/stdlib/`.
-- **Phase 3 — builtin accounting.** Every builtin in `src/builtins.rs` must be COVERED (and
-  actually called) or UNUSABLE (and re-proved unusable) in `tests/stdlib/BUILTINS.tsv`.
+- **Phase 0 — negative control.** Proves the harness can fail before any later "ok" is believed:
+  a planted transcript mismatch must be detected, `panic()` must exit non-zero, and the
+  generated-C checker must reject a function that never returns. Each control must *reach* its
+  comparison — compile and run successfully — and only then is the comparison required to fail.
+  Treating a broken control as a passing one is how a control stops controlling anything.
+- **Phase 1 — pin this page.** Recompiles all 21 files and diffs verdict *and* blocker against
+  `stdlib/MANIFEST.tsv`. Fails on REGRESSION, XPASS, VERDICT_CHANGED, BLOCKER_CHANGED, file-set
+  drift, or a new symlink. Also runs the forced-`import` reachability probe described above.
+- **Phase 2 — driver inventory and the generated-C invariant.** Three-way set equality between
+  `tests/stdlib/DRIVERS.tsv`, the `.pd` files and the `.expected` files, then the structural check
+  below.
+- **Phase 3 — builtin accounting.** Every builtin in `src/builtins.rs` must be COVERED/PARTIAL
+  (called by a driver **and** evidenced by an `@builtin <name>` line in that driver's golden) or
+  UNUSABLE (re-proved to still fail at a pinned stage with a pinned diagnostic) in
+  `tests/stdlib/BUILTINS.tsv`.
 
-### Why the drivers compare transcripts and not just exit codes
+### Why the gate checks the generated C, not just the output
 
-D3 makes the generated C undefined, and gcc at `-O2` is entitled to exploit that. Measured with the
-fix reverted, `tests/stdlib/stdlib_tail_return.pd` printed `8261746944` where it should have printed
-`42` — and **still exited 0**, because gcc folded the `if (r != 42)` guard away and deleted the
-`panic` that was supposed to catch it.
+D3 makes the emitted C undefined, and UB has no stable manifestation. Measured with the fix
+reverted, `fn add(a,b) -> i64 { a + b }` returned:
 
-`scripts/conformance.sh` judges a program by its exit code alone. It therefore **cannot** catch D3.
-The stdlib gate compares the whole transcript, which can, and does.
+```
+-O2 -> 8261746944, exit 0
+-O0 -> 8264595040, exit 0
+```
+
+Garbage at both levels, exit 0 at both. So an exit-code gate cannot see D3 — and pinning an
+optimisation level would not help either, because the garbage is garbage everywhere. Worse, a
+transcript diff is not a guarantee in principle: on another libc or another compiler the garbage
+could equal the expected value by accident and the diff would pass.
+
+The only stable statement about D3 is **structural**, so `scripts/check-generated-c.sh` inspects
+`build_output/*.c` and never runs anything. It uses two independent nets:
+
+- **Net A** — every non-void function definition must contain at least one `return`. D3 emits
+  functions with *zero* returns, so this catches it exactly, without needing a C compiler to have
+  an opinion.
+- **Net B** — `-Werror=return-type`, which does real control-flow analysis and also catches a
+  function returning on some paths but falling off others. It is a frontend diagnostic, verified
+  identical at `-O0`, `-O2` and `-O3`.
+
+Neither subsumes the other, and a defect must defeat both.
+
+### Seam with `make conformance`
+
+Transcript verification of `tests/stdlib/` belongs to **`make conformance`**, not here. Those five
+files are driver programs with `fn main` — ordinary conformance fixtures — and the conformance
+runner has an expected-output verdict class plus its own closed inventory over `tests/`. Running
+and diffing them in both gates would ship two semantic standards for one question.
+
+`stdlib/` itself stays in this gate: those are library modules with no `main`, where the only
+pinnable thing is a compile verdict and its blocker. Different question, different gate.
+
+## D3 is only half fixed: tail `if` is never lowered
+
+The retraction above is about *where* D3 struck. This is about whether it is over. It is not.
+
+`src/parser/mod.rs:536` lowers a tail **expression** to `Stmt::Return`. A tail `if` is not an
+`Stmt::Expr`, so it is never lowered, and every function whose body ends in an `if`/`else` — the
+natural shape for a recursive base case — still miscompiles exactly the way the original D3 did.
+
+Measured 2026-08-22 against this tree, with D3 nominally fixed:
+
+```
+fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n - 1) + fib(n - 2) } }
+```
+
+compiles with no diagnostic and emits
+
+```c
+long long fib(long long n) {
+    if ((n <= 1)) {
+    n;                                     // bare expression, no return
+    } else {
+    (fib((n - 1)) + fib((n - 2)));         // bare expression, no return
+    }
+}
+```
+
+`fib(10)` printed **8261746944** instead of 55, exit 0.
+
+This is pinned, not fixed: `tests/stdlib/stdlib_tail_if_defect.pd` carries `fib` plus a second
+shape, `classify`, which has an early `return` *and* a tail `if`. `tests/stdlib/DRIVERS.tsv`
+records it as `known_violation:fib,classify`, so the gate requires exactly those two functions to
+violate the invariant. If the violation spreads, moves, or disappears, the gate goes red. The
+parser fix is a separate work unit on another branch.
+
+### Why `classify` is in the fixture
+
+It is the case that killed the first version of this invariant. The original Net A asked "does the
+function contain at least one `return`?" — a question about the source construct the parser already
+handles. `classify` emits an early `return 0;` and then a bare tail `if`, so that rule **passed**
+it while `classify(5)` returned 0 instead of 10.
+
+The invariant is now phrased over the emitted body — *every non-void function must return on every
+path* — which is what makes it catch constructs nobody has looked at yet. Demonstrated: appending
+an unrelated tail-`if` function to an existing clean driver turns the gate red with no manifest
+change and no new test.
 
 ## Known defects this measurement surfaced (reported, not fixed)
+
+0. **D3 is only half fixed** — see the section above. Pinned by the gate; parser fix not in scope
+   for this branch.
 
 1. **Six builtins are registered but do not compile.** `file_flush`, `file_seek`, `file_open_ex`,
    `file_close_ex`, `file_read_ex` and `file_write_ex` are declared in `src/builtins.rs` as taking
@@ -197,3 +315,14 @@ The stdlib gate compares the whole transcript, which can, and does.
    which deliberately returns `""` so that "every string built-in assumes a non-NULL `const char*`"
    (`src/builtins.rs:180`). Passing that NULL to `string_len` would segfault. Only the success path
    is exercised by the drivers.
+
+3. **Two further silent miscompiles, reported by another agent and not touched by these fixtures.**
+   Checked: none of the six drivers or the six UNUSABLE probes uses a C keyword as an identifier,
+   `self`, or a generic `impl`, so this gate neither exercises nor pins them.
+   - **No C-keyword mangling of identifiers.** `fn double(x: int)` emits
+     `long long double(long long x)`, which is not valid C.
+   - **`self` and generic impls emit undefined C.** `fn area(self)` emits `struct Self self`, a type
+     never defined; `impl<T> V<T>` emits `__pd_V<T>_get`, which is not an identifier.
+
+   Both are codegen-shape defects of the same family as D3, and the generated-C checker is the
+   natural place to pin them once someone owns the fix.

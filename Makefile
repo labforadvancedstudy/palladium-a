@@ -289,8 +289,11 @@ check-docs: build check-doc-evidence ## Compile every ```palladium block in the 
 check-doc-evidence: ## Pin doc citations, the no-compile allowlist and the evidence tags
 	@bash scripts/check-doc-evidence.sh
 
+# stdlib/ = library modules with no `fn main`; the only pinnable thing is a
+# compile verdict plus its blocker. tests/stdlib/*.pd are ordinary conformance
+# fixtures and are run + transcript-diffed by `make conformance`, NOT here.
 .PHONY: stdlib-gate
-stdlib-gate: build ## Pin the stdlib/ measurement and run the tests/stdlib drivers
+stdlib-gate: build ## Pin the stdlib/ measurement, account builtins, check generated C
 	@bash scripts/stdlib-gate.sh
 
 .PHONY: gates

@@ -2,7 +2,8 @@
 
 > **Read [`STATUS.md`](STATUS.md) first.** It is the measurement; this file is the summary.
 
-**0 of the 21 `.pd` files in this directory compile, and the compiler never loads any of them.**
+**0 of the 21 `.pd` files in this directory compile, and no default configuration loads any of
+them.**
 Everything here is a sketch of a standard library written in a dialect Palladium does not
 implement. A program compiled today gets the 38 builtins in `src/builtins.rs` and nothing else.
 
@@ -46,17 +47,25 @@ construct, `let mut v: VecI64;`. A working port of it is exercised by the gate a
 
 ## Is this directory loaded?
 
-No. `grep -rn stdlib src/` returns zero hits. The module resolver searches `.`, `examples` and
-`<exe_dir>/std` (`src/resolver/mod.rs:37-44`) — never `stdlib/` — and `Cargo.toml:34` excludes
-`stdlib/*` from the published crate. `stdlib/prelude.pd` is not injected into anything; the only
-prelude the compiler knows is `runtime/pd_prelude.h`, which is C.
+Not by default, and not usefully at all. `grep -rn stdlib src/` returns zero hits. The resolver
+searches `.`, `examples`, `<exe_dir>/std` and `$PALLADIUM_PATH` (`src/resolver/mod.rs:37-52`) —
+`stdlib/` is on none of them by default. It IS reachable in principle: the resolver runs via the
+`import` keyword (not `use`), and `$PALLADIUM_PATH` is user-configurable. But forcing it on does
+not help — measured, `PALLADIUM_PATH=…/stdlib/std` with `import option;` still dies on
+`Expected 'fn' for method, but found 'pub'`. Nothing packages it either: `Cargo.toml:34` excludes
+`stdlib/*`, the release and preview workflows stage only `runtime`, and both Homebrew formulae
+install only `runtime`. `stdlib/prelude.pd` is not injected into anything; the only prelude the
+compiler knows is `runtime/pd_prelude.h`, which is C.
 
 ## Where the real coverage lives
 
 Because these files cannot run, they cannot be tested. What *can* be tested is the language
-surface and the builtins a standard library would be built from, and that is what
-`tests/stdlib/` does — including the tail-expression return that miscompiled unnoticed. See
-[`STATUS.md`](STATUS.md).
+surface and the builtins a standard library would be built from, and that is what `tests/stdlib/`
+does — including the tail-expression return that miscompiled unnoticed.
+
+Those five drivers are ordinary conformance fixtures: **`make conformance`** runs them and diffs
+their transcripts. **`make stdlib-gate`** owns this directory's compile-verdict pinning, the
+builtin accounting, and a structural check on the generated C. See [`STATUS.md`](STATUS.md).
 
 ## What would make this directory real
 

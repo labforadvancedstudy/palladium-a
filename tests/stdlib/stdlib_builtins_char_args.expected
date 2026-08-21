@@ -1,3 +1,4 @@
+@builtin char_is_digit
 digit_0
 true
 digit_9
@@ -6,6 +7,7 @@ digit_a
 false
 digit_space
 false
+@builtin char_is_alpha
 alpha_A
 true
 alpha_z
@@ -14,6 +16,7 @@ alpha_0
 false
 alpha_space
 false
+@builtin char_is_whitespace
 ws_space
 true
 ws_tab
@@ -30,6 +33,8 @@ scan_alpha
 true
 scan_ws
 true
+@builtin arg_count
+@builtin arg_at
 arg_count_at_least_1
 true
 argv0_non_empty

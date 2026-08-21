@@ -35,6 +35,7 @@ emit wrong code. This milestone converts silent wrongness into diagnostics.
 |---|---|
 | D5 | ~~`?` emits C referencing a `struct Result` layout codegen never defines; `.await` calls a `poll` member that is never generated. Neither reports an error~~ — **fixed**: both are rejected with "is not implemented", the consequence, and a workaround that `tests/d5_unimplemented_constructs.rs` compiles and runs. Old lowerings deleted. Diagnostics deliberately name no milestone |
 | D4 | `for` over an array *parameter* uses `sizeof` on a pointer that has already decayed |
+| D3b | **D3 is only half fixed.** The parser lowers a tail *expression* to a return but never a tail `if`, so `fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n-1)+fib(n-2) } }` compiles clean and returns garbage — `fib(10)` printed `8261746944` instead of `55`, exit 0. Pinned by `tests/stdlib/stdlib_tail_if_defect.pd`; the parser fix is a separate work unit |
 | D9 | `&[T; N]` / `&mut [T; N]` parameters are rejected in codegen — `examples/practical/simple_sort.pd` still fails on exactly this, and is the one M1-owned entry in `tests/conformance-manifest.txt` |
 
 Closed:
@@ -65,22 +66,36 @@ That is false, and the same claim appears in `docs/CHANGELOG.md`,
 `191f8c1`.
 
 Measured 2026-08-22 (`make stdlib-gate`): **0 of the 21 `.pd` files under `stdlib/` compile** — all
-21 are rejected at lex or parse time, so none of them ever reaches codegen, where D3 lived — and
-**the compiler never loads `stdlib/` at all**: `grep -rn stdlib src/` returns zero hits, the module
-resolver searches `.`, `examples` and `<exe_dir>/std` and never `stdlib/` (`src/resolver/mod.rs:37-44`),
-and `Cargo.toml:34` excludes `stdlib/*` from the crate. Nothing there was miscompiled because
-nothing there was ever compiled. What is true is only the counterfactual: `stdlib/` contains 437
-functions ending in a tail expression, so it *would* have been affected had it ever compiled. D3's
-real victims were ordinary user programs.
+21 are rejected at lex or parse time, so none ever reaches codegen, where D3 lived — and **no
+default configuration loads `stdlib/`**: `grep -rn stdlib src/` returns zero hits, the resolver
+searches `.`, `examples`, `<exe_dir>/std` and `$PALLADIUM_PATH` and never `stdlib/`
+(`src/resolver/mod.rs:37-52`), `Cargo.toml:34` excludes it from the crate, the release workflows
+stage only `runtime`, and both Homebrew formulae install only `runtime`. The resolver *is* live
+(via `import`, not `use`) and `$PALLADIUM_PATH` *is* configurable — but forcing `stdlib/std` onto
+it still fails, with the same parse blockers. Nothing there was miscompiled because nothing there
+was ever compiled. What is true is only the counterfactual: `stdlib/` contains ~437 functions
+ending in a tail expression, so it *would* have been affected had it ever compiled. D3's real
+victims were ordinary user programs.
 
 The correction changes the work. "Gate `stdlib/`" would have produced a gate over 21 files that
 cannot compile — one that can only report what it already knows. What M1 actually needed was
 coverage of the *language surface a standard library rests on*. That is `tests/stdlib/`, and it
-exposed a second thing the old framing would have missed: **an exit-code gate cannot catch D3 at
-all.** The missing `return` is undefined behaviour, and with the fix reverted gcc at `-O2` deletes
-the very assertion that would catch it — the driver printed `8261746944` instead of `42` and still
-exited 0. `scripts/conformance.sh` judges programs by exit code, so `make stdlib-gate` compares
-full output transcripts instead.
+exposed a second thing the old framing would have missed: **no runtime observation can catch D3
+reliably.** The missing `return` is undefined behaviour, and with the fix reverted the value is
+garbage with exit 0 at `-O0` *and* `-O2` (`8264595040` / `8261746944`). An exit-code gate is blind
+to it, and pinning an optimisation level does not help. Even a transcript diff is not a guarantee
+in principle — on another libc the garbage could equal the expected value. So the durable check is
+**structural**: `scripts/check-generated-c.sh` requires every non-void function in the emitted C to
+return **on every path**, via two independent nets (its own terminator analysis, and
+`-Werror=return-type`), without running anything.
+
+Phrasing matters, and it was tested. An earlier version asked "does the function contain a
+`return`?" — a question about the source construct the parser already handles. That version passed
+a function with an early `return` followed by a bare tail `if`, which returns 0 instead of 10. The
+current phrasing is about the *emitted body*, so it catches a tail `if`, a tail `match`, and
+anything else lowering forgets. Demonstrated: appending an unrelated tail-`if` function to an
+existing clean driver turns the gate red with no manifest change and no new test — which is the
+entire argument for a structural check over a transcript diff.
 
 The status row for `stdlib/` is therefore not "no coverage" but **"none — and pinned as none"**:
 `stdlib/MANIFEST.tsv` records the per-file verdict and blocker, and the gate fails if a file that

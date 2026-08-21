@@ -63,7 +63,23 @@ stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fi
 - D2 빌트인 드리프트 — typeck 36개 vs borrow checker 25개. `src/builtins.rs`를 SSOT로 만들고
   두 패스가 파생하도록 변경(중복 등록 400줄 삭제 + 드리프트 테스트).
 - D3 tail return — `fn add(a,b) -> i64 { a + b }`가 **에러 없이 쓰레기값 반환**(생성 C에 return 누락).
-  파서에서 `Stmt::Return`으로 lowering. stdlib 전체가 그동안 조용히 miscompile되고 있었다.
+  파서에서 `Stmt::Return`으로 lowering. 피해자는 일반 사용자 프로그램이었다.
+
+  > **정정 1 (2026-08-22) — D3는 "완료"가 아니라 절반만 고쳐졌다.** 파서는 tail *expression*만
+  > lowering하고 tail `if`는 하지 않는다. 실측:
+  > `fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n-1) + fib(n-2) } }` → 진단 없이 컴파일,
+  > `fib(10)`이 55 대신 **8261746944** 반환, exit 0. 재귀 base case의 자연스러운 형태가 전부 해당된다.
+  > 이 줄이 D3를 done으로 기록해 온 것이 이 결함이 숨어 있던 이유다.
+  > 고정 = `tests/stdlib/stdlib_tail_if_defect.pd` + `make stdlib-gate`의 생성-C 구조 불변식
+  > (`scripts/check-generated-c.sh`: 모든 non-void 함수는 **모든 경로에서** return해야 한다).
+  > 파서 수정은 별도 작업 단위 — 이 브랜치는 결함을 고정만 하고 고치지 않는다.
+  >
+  > **정정 2 (2026-08-22)**: 이 줄은 원래 "stdlib 전체가 조용히 miscompile되고 있었다"였다 — 거짓.
+  > `make stdlib-gate` 실측: `stdlib/` 21개 파일 중 **0개**만 컴파일된다(전부 lex/parse에서 거부되어
+  > D3가 살던 codegen까지 도달조차 못 한다). 기본 설정에서 로드되지도 않는다. 컴파일된 적이 없으니
+  > miscompile된 적도 없다. 참인 것은 반사실뿐: tail expression으로 끝나는 함수가 ~437개 있고,
+  > tail `if`로 끝나는 함수는 그 수에 **포함되지 않은** 별도 집합이다 (즉 반사실 피해 범위는 437보다
+  > 넓다). 측정 전문 = [`stdlib/STATUS.md`](stdlib/STATUS.md).
 
 **남은 결함 (열림):**
 - D4 `for`가 배열 **파라미터**를 순회할 때 decay된 포인터에 `sizeof` 사용 (`src/codegen/mod.rs:1553`).
