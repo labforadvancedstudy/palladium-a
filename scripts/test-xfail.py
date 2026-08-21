@@ -50,7 +50,10 @@ import re
 import subprocess
 import sys
 
-# Reviewed allowlist of tests that may be #[ignore]d for cost alone.
+# Reviewed allowlist of tests that may be #[ignore]d for cost alone. Keyed by
+# the SAME identity reconciliation uses — (target, full module path) — because
+# keying it by bare function name would hand permission to every same-named test
+# in the file, reintroducing the collision the module-path keying just removed.
 SLOW_ALLOWLIST = {
     ("tests/stress_test.rs", "test_extremely_large_program"),
 }
@@ -63,40 +66,78 @@ FN_MODIFIERS = {"pub", "async", "unsafe", "extern", "const", "default"}
 # Rust source scanning
 # --------------------------------------------------------------------------
 
-def target_of(path):
-    """The cargo test target a source file belongs to, or None."""
-    path = path.replace(os.sep, "/")
-    if path.startswith("tests/"):
-        rest = path[len("tests/"):]
-        # tests/common/mod.rs and friends are modules of another target, not
-        # targets of their own.
-        return path if "/" not in rest else None
-    if path == "src/main.rs" or path.startswith("src/bin/"):
-        return path
-    if path.startswith("src/"):
-        return "src/lib.rs"
+def target_roots(exists=os.path.exists, listdir=os.listdir):
+    """The crate roots cargo builds as test targets.
+
+    A target's identity is its root file, which is exactly what cargo prints in
+    its `Running …` line. Everything else in the target is reached by walking
+    Rust's module graph from here — NOT by guessing a module path from a file's
+    location on disk. Those two disagree for every ordinary `mod helpers;`:
+    `tests/common/mod.rs` is one file that is compiled into five different test
+    binaries, so it holds five declarations, one per target, and a filesystem
+    walk cannot express that at all.
+    """
+    roots = []
+    for p in ("src/lib.rs", "src/main.rs"):
+        if exists(p):
+            roots.append(p)
+    if exists("src/bin"):
+        roots += ["src/bin/" + n for n in sorted(listdir("src/bin"))
+                  if n.endswith(".rs")]
+    if exists("tests"):
+        roots += ["tests/" + n for n in sorted(listdir("tests"))
+                  if n.endswith(".rs")]
+    return roots
+
+
+def module_dir(path, is_root):
+    """Where `mod NAME;` inside `path` looks for NAME.
+
+    Crate roots and `mod.rs` own their containing directory; any other file
+    `dir/foo.rs` owns `dir/foo/`. This is why `tests/common/mod.rs` is the
+    idiom: an integration-test root is a crate root, so it resolves `mod common;`
+    beside itself rather than under `tests/<root name>/`.
+    """
+    d = os.path.dirname(path)
+    base = os.path.basename(path)
+    if is_root or base == "mod.rs":
+        return d
+    return os.path.join(d, base[: -len(".rs")])
+
+
+def resolve_mod(path, is_root, name, exists=os.path.isfile):
+    """`mod NAME;` -> the file it pulls in, or None if neither form is present."""
+    d = module_dir(path, is_root)
+    for cand in (os.path.join(d, name + ".rs"),
+                 os.path.join(d, name, "mod.rs")):
+        if exists(cand):
+            return cand.replace(os.sep, "/")
     return None
 
 
-def module_prefix_of(path):
-    """The crate-relative module path of a file, as cargo would print it."""
-    path = path.replace(os.sep, "/")
-    if target_of(path) != "src/lib.rs":
-        return []          # a target root: tests/foo.rs, src/main.rs, src/bin/*
-    rest = path[len("src/"):]
-    if rest == "lib.rs":
-        return []
-    if rest.endswith("/mod.rs"):
-        rest = rest[: -len("/mod.rs")]
-    elif rest.endswith(".rs"):
-        rest = rest[: -len(".rs")]
-    return rest.split("/")
-
-
 def tokenize(src):
-    """Yield (kind, text, line). Comments and literals collapse to one token so
-    that braces inside them cannot move the module stack — `"fn main() { }"` in
-    a test fixture is a string, not a scope."""
+    """Yield (kind, text, line).
+
+    THIS IS PARTIAL PARSING, AND IT FAILS CLOSED AND LOUDLY BY DESIGN.
+    It is not a Rust parser and must never pretend to be one: it recognises just
+    enough — comments, every literal form, attribute token trees, braces, and a
+    handful of keywords — to know which scope a `#[ignore]` is in. Anything it
+    mis-reads shows up as a declaration that is never observed (STALE) or an
+    observation that was never declared (UNDECLARED), both of which fail the
+    gate with the offending name printed. That is the right failure direction:
+    the gate cannot quietly under-report.
+
+    The cost of failing closed is that a *false* red on legitimate code is a
+    usability defect, not a correctness one — and a gate that rejects ordinary
+    repository structure is a gate someone will eventually switch off, at which
+    point it protects nothing. So every construct that appears in normal Rust
+    must be understood here, and `--self-test` pins the ones that have bitten:
+    braces inside strings, raw strings, byte strings, char literals versus
+    lifetimes, nested block comments, and attribute token trees.
+
+    Comments and literals collapse to a single token so that braces inside them
+    cannot move the module stack — `"fn main() { }"` in a fixture is a string,
+    not a scope."""
     i, line, n = 0, 1, len(src)
     while i < n:
         c = src[i]
@@ -192,23 +233,64 @@ def tokenize(src):
         i += 1
 
 
-def scan_file(path, src):
-    """-> list of dicts: tag, target, module path, fn name, file, line, attr."""
-    target = target_of(path)
-    if target is None:
-        return []
-    prefix = module_prefix_of(path)
-    out, mods, depth, pending = [], [], 0, None
+DISABLING_INNER_CFG = re.compile(r'#!\[\s*cfg\s*\(\s*(?!test\s*\))')
+
+
+def literal_text(tok):
+    """The contents of a string-literal token, raw or not."""
+    m = re.match(r'^(?:b)?(r(#*))?"', tok)
+    if m and m.group(1):
+        hashes = len(m.group(2))
+        return tok[len(m.group(0)):-(1 + hashes)]
+    return tok[tok.index('"') + 1:-1]
+
+
+def scan_file(path, src, target, prefix):
+    """Scan one file as part of one target, at one module prefix.
+
+    -> (declarations, external `mod NAME;` sites, `include!` sites)
+
+    The same file scanned for two targets yields two sets of declarations, which
+    is correct: `tests/common/mod.rs` really is compiled into five test binaries
+    and really does contribute five tests.
+    """
+    # A file switched off by an inner cfg contributes nothing. This is read from
+    # the attribute, not guessed: `#![cfg(skip_for_now)]` at the top of
+    # src/lsp/server_test.rs compiles the whole file out, and declaring its
+    # contents would produce a STALE for a test that cannot exist.
+    if DISABLING_INNER_CFG.search(src[:2000]):
+        return [], [], []
+
+    out, ext_mods, includes = [], [], []
+    mods, depth, pending = [], 0, None
     expect_mod_name = expect_fn_name = False
     mod_name = None
+    # `include!("…")` is matched as a token sequence rather than by a regex over
+    # the file, because the included items land at the module path of the
+    # INCLUDING SITE — which a file-level regex cannot see.
+    inc_state = 0
     for kind, text, line in tokenize(src):
         if kind == "attr":
             if re.match(r"#\[\s*ignore", text):
                 pending = (text, line)
             continue
-        if kind in ("str", "char"):
+        if kind == "str":
+            if inc_state == 3:
+                includes.append((literal_text(text), [m[1] for m in mods]))
+            inc_state = 0
+            continue
+        if kind == "char":
+            inc_state = 0
             continue
         if kind == "punct":
+            if inc_state == 1 and text == "!":
+                inc_state = 2
+            elif inc_state == 2 and text == "(":
+                inc_state = 3
+            elif inc_state == 3:
+                pass
+            else:
+                inc_state = 0
             if text == "{":
                 depth += 1
                 if mod_name is not None:
@@ -219,10 +301,15 @@ def scan_file(path, src):
                     mods.pop()
                 depth -= 1
             elif text == ";":
-                mod_name = None
+                if mod_name is not None:
+                    # `mod NAME;` — the body is another file.
+                    ext_mods.append((mod_name,
+                                     [m[1] for m in mods], line))
+                    mod_name = None
                 expect_mod_name = False
             continue
         # ident
+        inc_state = 1 if text == "include" else 0
         if expect_mod_name:
             mod_name, expect_mod_name = text, False
             continue
@@ -253,14 +340,76 @@ def scan_file(path, src):
         # An attribute attaches to the next item; only these may sit between.
         if text not in FN_MODIFIERS:
             pending = None
-    return out
+
+    return out, ext_mods, includes
+
+
+def walk_target(root, read=None, resolve=resolve_mod):
+    """Walk one target's module graph from its root file.
+
+    -> (declarations, set of files reached, unresolved `mod NAME;` sites)
+    """
+    if read is None:
+        def read(p):
+            with open(p, encoding="utf-8") as fh:
+                return fh.read()
+
+    decls, reached, unresolved = [], set(), []
+    # (file, prefix, is_root); `include!` splices a file in at the including
+    # site, so it inherits that site's prefix rather than its own location's.
+    stack = [(root, [], True)]
+    seen = set()
+    while stack:
+        path, prefix, is_root = stack.pop()
+        if (path, tuple(prefix)) in seen:
+            continue
+        seen.add((path, tuple(prefix)))
+        try:
+            src = read(path)
+        except OSError:
+            continue
+        reached.add(path)
+        d, ext_mods, includes = scan_file(path, src, root, prefix)
+        decls += d
+        for name, inner_mods, line in ext_mods:
+            child = resolve(path, is_root, name)
+            if child is None:
+                unresolved.append((path, line, name))
+                continue
+            stack.append((child, prefix + inner_mods + [name], False))
+        for rel, inner_mods in includes:
+            # include! is textual: relative to the including file's directory,
+            # and the included items land at the including file's module path.
+            inc = os.path.normpath(
+                os.path.join(os.path.dirname(path), rel)).replace(os.sep, "/")
+            stack.append((inc, prefix + inner_mods, is_root))
+    return decls, reached, unresolved
+
+
+def collect_declarations(roots=None, read=None, resolve=resolve_mod):
+    """Every declaration in every target, plus the files no target reached."""
+    if roots is None:
+        roots = target_roots()
+    decls, reached, unresolved = [], set(), []
+    for root in roots:
+        d, r, u = walk_target(root, read=read, resolve=resolve)
+        decls += d
+        reached |= r
+        unresolved += u
+    return decls, reached, unresolved
 
 
 # --------------------------------------------------------------------------
 # Cargo output parsing
 # --------------------------------------------------------------------------
 
-RUNNING_RE = re.compile(r"^\s+Running (?:unittests )?(\S+) \(target/")
+# The artifact path in parentheses is NOT anchored to `target/`: cargo prints
+# whatever CARGO_TARGET_DIR says, which may be absolute or elsewhere entirely.
+# Anchoring on it made every result unattributable — a false UNDECLARED for the
+# whole suite — one environment variable away. The parentheses are enough to
+# distinguish this from the compiler-under-test's own "   Running Constant
+# Folding" chatter on stdout, which has none.
+RUNNING_RE = re.compile(r"^\s+Running (?:unittests )?(\S+) \(")
 DOCTEST_RE = re.compile(r"^\s+Doc-tests ")
 RESULT_RE = re.compile(r"^test result:")
 TEST_RE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED)$")
@@ -366,7 +515,7 @@ def validate_tags(decls):
                                  "MILESTONES.md 'Not scheduled, and why'."
                                  % (loc, key)))
         elif d["tag"] == "SLOW":
-            if (d["file"], d["name"]) not in SLOW_ALLOWLIST:
+            if (d["target"], d["path"]) not in SLOW_ALLOWLIST:
                 problems.append(("TAG", "%s: %s is tagged SLOW but is not on the "
                                  "reviewed allowlist in scripts/test-xfail.py. A "
                                  "passing test must not be retired from the "
@@ -379,41 +528,53 @@ def validate_tags(decls):
 # --------------------------------------------------------------------------
 
 def self_test():
+    """Regressions for every way this scanner has been, or could be, wrong.
+
+    These run before every real invocation. They are pure — no cargo, no disk —
+    so the module graph is exercised through injected `read`/`resolve` hooks.
+    """
     failures = []
 
     def check(label, got, want):
         if got != want:
             failures.append("%s\n     got:  %r\n     want: %r" % (label, got, want))
 
+    def fake_tree(files):
+        """A repository in a dict: path -> source."""
+        def read(p):
+            if p not in files:
+                raise OSError(p)
+            return files[p]
+
+        def resolve(path, is_root, name):
+            return resolve_mod(path, is_root, name,
+                               exists=lambda c: c.replace(os.sep, "/") in files)
+        return read, resolve
+
+    XF = '#[ignore = "XFAIL: nope (owned by M1)"]'
+
     # 1. A module-nested ignored test must key on its full path. Keying on the
     #    bare function name made such a test STALE and UNDECLARED at once.
-    nested = '''
+    nested = """
         #[cfg(test)]
         mod tests {
             #[test]
-            #[ignore = "XFAIL: nope (owned by M1)"]
+            %s
             fn test_a() { let s = "fn main() { }"; }
         }
-    '''
-    d = scan_file("src/optimizer/dead_code_test.rs", nested)
+    """ % XF
+    d, _, _ = scan_file("src/optimizer/dead_code_test.rs", nested, "src/lib.rs",
+                        ["optimizer", "dead_code_test"])
     check("nested test path", [x["path"] for x in d],
           ["optimizer::dead_code_test::tests::test_a"])
     check("nested test target", [x["target"] for x in d], ["src/lib.rs"])
 
     # 2. The same test name in two modules must be two keys, not a duplicate.
-    dup = '''
-        mod a {
-            #[test]
-            #[ignore = "XFAIL: nope (owned by M2)"]
-            fn test_dup() {}
-        }
-        mod b {
-            #[test]
-            #[ignore = "XFAIL: nope (owned by M2)"]
-            fn test_dup() {}
-        }
-    '''
-    d = scan_file("tests/x_test.rs", dup)
+    dup = """
+        mod a { #[test] %s fn test_dup() {} }
+        mod b { #[test] %s fn test_dup() {} }
+    """ % (XF, XF)
+    d, _, _ = scan_file("tests/x_test.rs", dup, "tests/x_test.rs", [])
     check("two modules, two keys", sorted(x["path"] for x in d),
           ["a::test_dup", "b::test_dup"])
     obs = [{"target": "tests/x_test.rs", "path": p, "outcome": "FAILED"}
@@ -422,7 +583,68 @@ def self_test():
     check("two modules reconcile clean", problems, [])
     check("two modules counted", counts["xfail"], 2)
 
-    # 3. Full round trip against real cargo output shape.
+    # 3. EXTERNAL `mod NAME;`. This is the ordinary shape — `tests/common/mod.rs`
+    #    pulled in by five integration targets — and a filesystem walk gets it
+    #    wrong in both directions at once.
+    files = {
+        "tests/e2e_test.rs":       "mod common;\n",
+        "tests/integration_test.rs": "mod common;\n",
+        "tests/common/mod.rs":     "#[test] %s fn test_helper() {}\n" % XF,
+    }
+    read, resolve = fake_tree(files)
+    decls, reached, unresolved = collect_declarations(
+        roots=["tests/e2e_test.rs", "tests/integration_test.rs"],
+        read=read, resolve=resolve)
+    check("external mod: one file, one declaration per target",
+          sorted((x["target"], x["path"]) for x in decls),
+          [("tests/e2e_test.rs", "common::test_helper"),
+           ("tests/integration_test.rs", "common::test_helper")])
+    check("external mod: file counted as reached",
+          "tests/common/mod.rs" in reached, True)
+    check("external mod: nothing unresolved", unresolved, [])
+    # ... and it reconciles clean against what cargo would report.
+    obs = [{"target": t, "path": "common::test_helper", "outcome": "FAILED"}
+           for t in ("tests/e2e_test.rs", "tests/integration_test.rs")]
+    _, problems = reconcile(decls, obs)
+    check("external mod reconciles clean", problems, [])
+
+    # 3b. `mod NAME;` nested inside an inline module, and the non-root
+    #     directory rule: src/a.rs owns src/a/.
+    files = {
+        "src/lib.rs": "mod a;\n",
+        "src/a.rs":   "mod inner { mod b; }\n",
+        "src/a/b.rs": "#[test] %s fn test_deep() {}\n" % XF,
+    }
+    read, resolve = fake_tree(files)
+    decls, _, unresolved = collect_declarations(roots=["src/lib.rs"],
+                                                read=read, resolve=resolve)
+    check("nested external mod path", [x["path"] for x in decls],
+          ["a::inner::b::test_deep"])
+    check("nested external mod resolved", unresolved, [])
+
+    # 3c. An unresolvable `mod NAME;` is reported rather than silently dropped.
+    files = {"tests/x.rs": "mod missing;\n"}
+    read, resolve = fake_tree(files)
+    _, _, unresolved = collect_declarations(roots=["tests/x.rs"],
+                                            read=read, resolve=resolve)
+    check("unresolved mod reported", [u[2] for u in unresolved], ["missing"])
+
+    # 4. `include!` is textual: the included items take the INCLUDING file's
+    #    module path, not one derived from where the file sits on disk.
+    files = {
+        "tests/y_test.rs": 'mod outer { include!("gen/table.rs"); }\n',
+        "tests/gen/table.rs": "#[test] %s fn test_generated() {}\n" % XF,
+    }
+    read, resolve = fake_tree(files)
+    decls, reached, _ = collect_declarations(roots=["tests/y_test.rs"],
+                                             read=read, resolve=resolve)
+    check("include! keyed at its insertion site",
+          [(x["target"], x["path"]) for x in decls],
+          [("tests/y_test.rs", "outer::test_generated")])
+    check("include! file counted as reached",
+          "tests/gen/table.rs" in reached, True)
+
+    # 5. Full round trip against real cargo output shape.
     cargo = (
         "   Compiling alan-von-palladium v0.2.0\n"
         "     Running unittests src/lib.rs (target/release/deps/palladium-ab)\n"
@@ -440,57 +662,74 @@ def self_test():
           ["src/lib.rs", "tests/x_test.rs"])
     check("no unreported target", unreported, [])
 
-    counts, problems = reconcile(
-        scan_file("src/optimizer/dead_code_test.rs", nested)
-        + scan_file("tests/x_test.rs", dup), o)
-    kinds = sorted(k for k, _ in problems)
-    check("one declared test never ran -> STALE only", kinds, ["STALE"])
+    # 5b. A custom CARGO_TARGET_DIR changes the artifact path. Anchoring on
+    #     `target/` made every result unattributable — a false UNDECLARED for
+    #     the entire suite, one environment variable away.
+    o, _ = parse_cargo(
+        "     Running tests/x_test.rs (/abs/build/dir/release/deps/x_test-cd)\n"
+        "test a::test_dup ... ok\n"
+        "test result: ok. 1 passed\n")
+    check("absolute CARGO_TARGET_DIR still attributes",
+          [(x["target"], x["path"]) for x in o],
+          [("tests/x_test.rs", "a::test_dup")])
 
-    # 4. A target that starts and never reports must be caught.
+    # 6. A target that starts and never reports must be caught.
     _, unreported = parse_cargo(
         "     Running tests/x_test.rs (target/release/deps/x_test-cd)\n"
         "test a::test_dup ... FAILED\n")
     check("unreported target detected", unreported, ["tests/x_test.rs"])
 
-    # 5. An observation with no declaration is UNDECLARED.
-    counts, problems = reconcile([], [{"target": "tests/x_test.rs",
-                                       "path": "a::test_dup",
-                                       "outcome": "ok"}])
+    # 7. An observation with no declaration is UNDECLARED.
+    _, problems = reconcile([], [{"target": "tests/x_test.rs",
+                                  "path": "a::test_dup", "outcome": "ok"}])
     check("undeclared detected", [k for k, _ in problems], ["UNDECLARED"])
 
-    # 6. Braces inside strings and comments must not move the module stack.
-    tricky = '''
+    # 8. Every literal and comment form must be inert to the module stack:
+    #    braces in ordinary and raw strings, byte strings, char literals versus
+    #    lifetimes, nested block comments, and attribute token trees.
+    tricky = r"""
         mod outer {
             // fn fake() { {{{
-            /* } } } */
+            /* outer /* nested } { */ still a comment } */
+            #[doc = "a } brace { in an attribute"]
+            #[cfg_attr(all(), allow(unused))]
             #[test]
             #[ignore = "XFAIL: has } and { in the reason (owned by M3)"]
-            fn test_b() { let s = r#"} } {"#; }
+            fn test_b<'a>(x: &'a str) {
+                let _raw = r#"} } {"#;
+                let _byte = b"} { ";
+                let _braw = br##"} "# {"##;
+                let _ch = '}';
+                let _esc = '\'';
+                let _s = "\" } {";
+            }
         }
         #[test]
         #[ignore = "XFAIL: top level (owned by M3)"]
         fn test_c() {}
-    '''
-    d = scan_file("tests/y_test.rs", tricky)
-    check("braces in literals ignored", sorted(x["path"] for x in d),
-          ["outer::test_b", "test_c"])
+    """
+    d, _, _ = scan_file("tests/z_test.rs", tricky, "tests/z_test.rs", [])
+    check("literals and comments are inert",
+          sorted(x["path"] for x in d), ["outer::test_b", "test_c"])
 
-    # 7. Tag validation, including the owner grammar.
-    bad = '''
-        #[test]
-        #[ignore]
-        fn test_bare() {}
-        #[test]
-        #[ignore = "because"]
-        fn test_untagged() {}
-        #[test]
-        #[ignore = "XFAIL: x (owned by someday)"]
-        fn test_bad_owner() {}
-        #[test]
-        #[ignore = "SLOW: not on the allowlist"]
-        fn test_slow() {}
-    '''
-    d = scan_file("tests/z_test.rs", bad)
+    # 9. A file switched off by an inner cfg contributes nothing, so its tests
+    #    are not declared as expected failures that can never run.
+    off = '#![cfg(skip_for_now)]\n#[test] %s fn test_off() {}\n' % XF
+    d, _, _ = scan_file("src/lsp/server_test.rs", off, "src/lib.rs", ["lsp"])
+    check("cfg-disabled file declares nothing", d, [])
+    on = '#![cfg(test)]\n#[test] %s fn test_on() {}\n' % XF
+    d, _, _ = scan_file("src/x.rs", on, "src/lib.rs", ["x"])
+    check("cfg(test) file still declares", [x["path"] for x in d],
+          ["x::test_on"])
+
+    # 10. Tag validation, including the owner grammar and the allowlist key.
+    bad = """
+        #[test] #[ignore] fn test_bare() {}
+        #[test] #[ignore = "because"] fn test_untagged() {}
+        #[test] #[ignore = "XFAIL: x (owned by someday)"] fn test_bad_owner() {}
+        #[test] #[ignore = "SLOW: not on the allowlist"] fn test_slow() {}
+    """
+    d, _, _ = scan_file("tests/z_test.rs", bad, "tests/z_test.rs", [])
     check("four tag problems", len(validate_tags(d)), 4)
 
     if failures:
@@ -498,8 +737,9 @@ def self_test():
         for f in failures:
             print("  " + f, file=sys.stderr)
         return False
-    print("self-test: %d checks green (module-path keying, both bijection "
-          "shapes, literal-safe scanning, tag grammar)" % 13)
+    print("self-test: 22 checks green (module graph incl. external `mod` and "
+          "`include!`, module-path keying, literal-safe scanning, cargo "
+          "attribution, tag grammar)")
     return True
 
 
@@ -515,17 +755,32 @@ def main():
     if "--self-test" in sys.argv:
         return 0
 
-    decls = []
+    decls, reached, unresolved = collect_declarations()
+    problems = validate_tags(decls)
+
+    for path, line, name in unresolved:
+        problems.append(("MODULE", "%s:%d: `mod %s;` resolves to no file — the "
+                                   "module graph could not be walked past it, so "
+                                   "any declaration beyond it is invisible"
+                         % (path, line, name)))
+
+    # The module graph is the source of truth for what exists, but a declaration
+    # in a file no target reaches is still a declaration nobody will honour.
+    # Walking the filesystem afterwards keeps that from going unnoticed.
     for root in ("src", "tests"):
         for dirpath, _, names in os.walk(root):
             for name in sorted(names):
                 if not name.endswith(".rs"):
                     continue
-                p = os.path.join(dirpath, name).replace(os.sep, "/")
-                with open(p, encoding="utf-8") as fh:
-                    decls += scan_file(p, fh.read())
-
-    problems = validate_tags(decls)
+                fp = os.path.join(dirpath, name).replace(os.sep, "/")
+                if fp in reached:
+                    continue
+                with open(fp, encoding="utf-8") as fh:
+                    if re.search(r"#\[\s*ignore", fh.read()):
+                        problems.append(("ORPHAN",
+                                         "%s holds an #[ignore] but no target "
+                                         "reaches it through the module graph, "
+                                         "so the test does not exist" % fp))
 
     # The two streams MUST be merged by the OS, not concatenated afterwards:
     # cargo prints `Running <target>` to stderr and `test <name> ... ok` to
@@ -573,12 +828,14 @@ def main():
         "SLOWFAIL": "SLOW test failed — it is declared as passing-but-expensive, so this is a real regression:",
         "DUPLICATE": "DUPLICATE declarations:",
         "TAG": "#[ignore] declaration errors:",
+        "MODULE": "Unresolvable `mod` declarations:",
+        "ORPHAN": "Declarations in files no target compiles:",
         "NO_RESULT": "Targets that produced no result:",
         "BUILD": "Build errors:",
         "CARGO": "Unexplained cargo status:",
     }
     for kind in ("XPASS", "STALE", "UNDECLARED", "SLOWFAIL", "DUPLICATE",
-                 "TAG", "NO_RESULT", "BUILD", "CARGO"):
+                 "TAG", "MODULE", "ORPHAN", "NO_RESULT", "BUILD", "CARGO"):
         items = [m for k, m in problems if k == kind]
         if items:
             print()
