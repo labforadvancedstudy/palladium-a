@@ -353,14 +353,22 @@ change and no new test.
 0. **D3 is only half fixed** — see the section above. Pinned by the gate; parser fix not in scope
    for this branch.
 
-1. **Six builtins are registered but do not compile.** `file_flush`, `file_seek`, `file_open_ex`,
-   `file_close_ex`, `file_read_ex` and `file_write_ex` are declared in `src/builtins.rs` as taking
-   an `I64` handle, but `runtime/pd_prelude.h:227-250` declares the same functions over
-   `FileHandle` (`void*`). Calling any of them type-checks and borrow-checks cleanly, then dies in
-   gcc: `incompatible integer to pointer conversion passing 'int' to parameter of type
-   'FileHandle'`. This is the D2 builtin-drift class one layer down — the "one table" invariant is
-   enforced between the type checker and the borrow checker, but nothing checks the canonical table
-   against the C runtime's signatures. Pinned as UNUSABLE in `tests/stdlib/BUILTINS.tsv`.
+1. **Six builtins are registered but cannot be called.** `file_flush`, `file_seek`,
+   `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex` are declared in
+   `src/builtins.rs` over an `I64` handle, while `runtime/pd_prelude.h:229-251` declares the same
+   functions over `FileHandle` (`void*`). `fix/m1-builtin-registry` enumerates **eleven** distinct
+   mismatch dimensions across the six — beyond the handle, `whence` narrows `i64 -> u8` (so 256
+   silently becomes 0), lengths convert to `size_t`, and `file_read_ex` wants a writable `char*`
+   where Palladium can only supply an immutable `String`. All eleven were re-verified against this
+   tree's runtime.
+
+   **Status changed 2026-08-22.** That branch has landed. The type checker now refuses these calls
+   with `Built-in <name> is registered but not callable: …`, so they fail at **compile**, not in
+   gcc. `tests/stdlib/BUILTINS.tsv` pins the new stage and diagnostic; the reconciliation check
+   against `Support::Unsupported` is now **active** rather than dormant. Worth recording how that
+   transition was noticed: the gate went red on the first run after rebasing, with
+   `NOT THE RECORDED DEFECT: expected rejection at link, got compile` for all six. The pin refused
+   to absorb a changed world silently, which is the only reason it is a pin.
 
 2. **`read_file_to_string` returns NULL on failure** (`runtime/pd_prelude.h:285`), unlike `arg_at`,
    which deliberately returns `""` so that "every string built-in assumes a non-NULL `const char*`"

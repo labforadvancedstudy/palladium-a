@@ -39,11 +39,19 @@
 #
 # THE SIX UNUSABLE BUILTINS ARE A REAL DEFECT, not a gap in these tests.
 # src/builtins.rs declares the file-handle family over I64; runtime/pd_prelude.h
-# :227-250 declares the same functions over FileHandle (aka void*). Any program
-# calling one type-checks and borrow-checks cleanly, then dies in the C compiler.
-# The "one table" invariant is enforced between typeck and the borrow checker,
-# but nothing checks the table against the C runtime's signatures — this is the
-# D2 drift class one layer down. Verified still open on fix/m1-builtin-registry
+# :229-251 declares the same functions over FileHandle (aka void*).
+#
+# RECONCILED 2026-08-22, after fix/m1-builtin-registry landed on main. These
+# rows previously pinned `link` + "incompatible integer to pointer conversion":
+# a call type-checked cleanly and then died in the C compiler. That branch added
+# `Support::Unsupported` to the registry, so the TYPE CHECKER now refuses the
+# call with a reason and the program never reaches gcc. The defect is the same;
+# the stage and the diagnostic changed, which is an improvement.
+#
+# This gate found that change rather than absorbing it: all six went red with
+# "NOT THE RECORDED DEFECT: expected rejection at link, got compile" on the
+# first run after the rebase. That is the pinning working as designed — an
+# expectation that cannot go stale in either direction. Verified still open on fix/m1-builtin-registry
 # (same I64 declarations there), so the fingerprints below should agree with
 # whatever test that branch adds; if they diverge, one of us is wrong.
 #
@@ -79,9 +87,9 @@ remove_dir	COVERED	-	-	stdlib_builtins_file.pd	-
 remove_dir_all	COVERED	-	-	stdlib_builtins_file.pd	-
 write_string_to_file	COVERED	-	-	stdlib_builtins_file.pd	-
 read_file_to_string	PARTIAL	-	-	stdlib_builtins_file.pd	SUCCESS PATH ONLY. On failure it returns NULL (pd_prelude.h:285) where arg_at deliberately returns ""; handing that NULL to a string builtin would segfault, so the failure path cannot be exercised without crashing the driver. Contract verified only for files that exist.
-file_flush	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_flush(1); print_int(r);	-
-file_seek	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_seek(1, 256, 0); print_int(r);	256 for whence is deliberate. The declaration is `int64_t pd_file_seek(FileHandle handle, uint8_t whence, int64_t offset)` (runtime/pd_prelude.h:216) — whence is the SECOND argument, so 256 lands in it, and 256 is the smallest value that does not survive the i64 -> u8 narrowing (it becomes 0). If the handle mismatch is repaired alone, this probe XPASSes while whence is still silently corrupted — which is why the merge-time reconciliation against PRELUDE_TYPE_MISMATCHES exists rather than relying on anyone remembering.
-file_open_ex	UNUSABLE	link	incompatible pointer to integer conversion	let r = file_open_ex("/tmp/pd", 0); print_int(r);	-
-file_close_ex	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_close_ex(1); print_int(r);	-
-file_read_ex	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_read_ex(1, "buf", 3); print_int(r);	-
-file_write_ex	UNUSABLE	link	incompatible integer to pointer conversion	let r = file_write_ex(1, "buf", 3); print_int(r);	-
+file_flush	UNUSABLE	compile	is registered but not callable	let r = file_flush(1); print_int(r);	-
+file_seek	UNUSABLE	compile	is registered but not callable	let r = file_seek(1, 256, 0); print_int(r);	256 for whence is deliberate. The declaration is `int64_t pd_file_seek(FileHandle handle, uint8_t whence, int64_t offset)` (runtime/pd_prelude.h:216) — whence is the SECOND argument, so 256 lands in it, and 256 is the smallest value that does not survive the i64 -> u8 narrowing (it becomes 0). If the handle mismatch is repaired alone, this probe XPASSes while whence is still silently corrupted — which is why the merge-time reconciliation against PRELUDE_TYPE_MISMATCHES exists rather than relying on anyone remembering.
+file_open_ex	UNUSABLE	compile	is registered but not callable	let r = file_open_ex("/tmp/pd", 0); print_int(r);	-
+file_close_ex	UNUSABLE	compile	is registered but not callable	let r = file_close_ex(1); print_int(r);	-
+file_read_ex	UNUSABLE	compile	is registered but not callable	let r = file_read_ex(1, "buf", 3); print_int(r);	-
+file_write_ex	UNUSABLE	compile	is registered but not callable	let r = file_write_ex(1, "buf", 3); print_int(r);	-
