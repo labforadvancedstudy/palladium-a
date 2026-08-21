@@ -1,7 +1,7 @@
 # The Palladium Tutorial
 
-Every code block in this file is compiled and run by `scripts/check-docs.sh`. If a snippet is
-here, the compiler accepts it. That is not a courtesy — this repository previously shipped
+Every *unmarked* Palladium block in this file is compiled and run by `scripts/check-docs.sh`. If
+an unmarked snippet is here, the compiler accepts it. That is not a courtesy — this repository previously shipped
 documentation in which 508 of 560 snippets did not compile, describing a language that did not
 exist. The checker is how that stays fixed.
 

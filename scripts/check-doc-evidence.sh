@@ -19,7 +19,7 @@
 #      the same unbounded drain the fences were introduced to prevent. The exact
 #      per-file counts are pinned in docs/no-compile-allowlist.txt.
 #
-#   3. EVIDENCE TAGS. Every row in docs/reference/features/feature-index.yaml must
+#   3. EVIDENCE TAGS. Every row in docs/reference/features/feature-index.toml must
 #      carry checkable evidence: a source location, a command with its result, a
 #      conformance verdict, or a gate outcome. Prose such as "there is no X" is an
 #      assertion, not evidence, and is rejected. An absence must be proved by a

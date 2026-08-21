@@ -274,14 +274,14 @@ document says the language does not have: an `async` marker and an await operato
 **2. Effects are inferred, but the result is print-only — it gates nothing.**
 The parser hardcodes `Function.effects` to `None`, commented "Effects will be inferred during
 analysis" (`src/parser/mod.rs:565`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
-`Effect` enum at `src/parser/mod.rs:10-23`, `analyze_function` at `src/parser/mod.rs:133`) and it does union effects across
-statements and calls (`src/parser/mod.rs:245-268`). But `crate::effects::` is referenced from exactly one place in
+`Effect` enum at `src/effects/mod.rs:16-29`, `analyze_function` at `src/effects/mod.rs:151`) and it does union effects across
+statements and calls (`src/effects/mod.rs:263`). But `crate::effects::` is referenced from exactly one place in
 the compiler — `src/driver/mod.rs:147` — and all the driver does with the result is `println!` it
-(`src/driver/mod.rs:151-157`). No later phase reads it. It cannot reject a program, cannot change
+(`src/driver/mod.rs:151`). No later phase reads it. It cannot reject a program, cannot change
 codegen, and cannot schedule anything.
 
 **3. Propagation to callers is order-dependent, and unknown callees are assumed pure.**
-`src/effects/mod.rs:262-266` looks a callee's effects up in a map populated only as functions are
+`src/effects/mod.rs:280-284` looks a callee's effects up in a map populated only as functions are
 analysed, in source order, with the fallback comment "If function is unknown, we conservatively
 assume it's pure". Assuming purity is the unsound direction: a function defined below its caller
 contributes no effects to that caller. The definition requires propagation to be a fixed point

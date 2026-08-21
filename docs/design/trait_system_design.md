@@ -1,12 +1,14 @@
-> **NORMATIVE LANGUAGE DEFINITION — compiler status: unimplemented.**
-> Two axes, deliberately separated. On the *language* axis this document is normative: it defines
-> part of Palladium, and [`language-spec.md` §N10](../specification/language-spec.md#n10-traits-and-generics)
-> incorporates it by reference. On the *compiler* axis nothing here is built; what `pdc` does is
-> recorded in the
-> [implementation status annex](../specification/language-spec.md#part-ii-implementation-status-annex),
-> with a source location for every row. Code in this file is not compiled by
-> `scripts/check-docs.sh` and is not expected to work. Material that is genuinely still undecided
-> is under "Open design questions" below and is explicitly **not** normative.
+> **NORMATIVE LANGUAGE DEFINITION.** On the *language* axis this document is normative: it
+> defines part of Palladium, and [`language-spec.md` §N10](../specification/language-spec.md#n10-traits-and-generics)
+> incorporates it by reference.
+>
+> **Compiler status: see [annex A4.4](../specification/language-spec.md#a44-traits).** This banner
+> deliberately does not restate the status — an earlier version asserted "nothing here is built"
+> while the annex recorded working `import` parsing, because a status written in two places goes
+> stale in one of them. The annex classifies every feature; this points at it.
+>
+> Code in this file is not compiled by `scripts/check-docs.sh`. Material that is genuinely
+> undecided is under "Open design questions" below and is explicitly **not** normative.
 
 # Palladium Trait System Design
 *Version 1.0 - January 19, 2025*
@@ -29,18 +31,18 @@ Traits in Palladium provide a way to define shared behavior across types. They e
 
 ```palladium
 trait Display {
-    fn fmt(&self) -> String;
+    fn fmt(ref self) -> String;
 }
 
 trait Debug {
-    fn debug(&self) -> String {
+    fn debug(ref self) -> String {
         // Default implementation
         return "<debug>";
     }
 }
 
 trait Clone {
-    fn clone(&self) -> Self;
+    fn clone(ref self) -> Self;
 }
 ```
 
@@ -53,13 +55,13 @@ struct Point {
 }
 
 impl Display for Point {
-    fn fmt(&self) -> String {
+    fn fmt(ref self) -> String {
         return format!("({}, {})", self.x, self.y);
     }
 }
 
 impl Clone for Point {
-    fn clone(&self) -> Self {
+    fn clone(ref self) -> Self {
         return Point { x: self.x, y: self.y };
     }
 }
@@ -69,7 +71,7 @@ impl Clone for Point {
 
 ```palladium
 // Function with trait bounds
-fn print_twice<T: Display + Clone>(x: &T) {
+fn print_twice<T: Display + Clone>(x: ref T) {
     let copy = x.clone();
     print(x.fmt());
     print(copy.fmt());
@@ -87,13 +89,13 @@ fn complex<T: Display + Debug, U: Clone>(x: T, y: U) -> String {
 trait Iterator {
     type Item;
     
-    fn next(&mut self) -> Option<Self::Item>;
+    fn next(ref mut self) -> Option<Self::Item>;
 }
 
 impl Iterator for RangeIter {
     type Item = i64;
     
-    fn next(&mut self) -> Option<i64> {
+    fn next(ref mut self) -> Option<i64> {
         // Implementation
     }
 }
@@ -103,7 +105,7 @@ impl Iterator for RangeIter {
 
 ```palladium
 // Trait object type
-let displayable: &dyn Display = &point;
+let displayable: ref dyn Display = ref point;
 print(displayable.fmt());
 
 // Box for owned trait objects
@@ -204,8 +206,8 @@ typedef struct {
 
 ```palladium
 trait Drawable {
-    fn draw(&self, canvas: &mut Canvas);
-    fn bounding_box(&self) -> Rect;
+    fn draw(ref self, canvas: ref mut Canvas);
+    fn bounding_box(ref self) -> Rect;
 }
 
 struct Circle {
@@ -214,11 +216,11 @@ struct Circle {
 }
 
 impl Drawable for Circle {
-    fn draw(&self, canvas: &mut Canvas) {
+    fn draw(ref self, canvas: ref mut Canvas) {
         canvas.draw_circle(self.center, self.radius);
     }
     
-    fn bounding_box(&self) -> Rect {
+    fn bounding_box(ref self) -> Rect {
         return Rect {
             x: self.center.x - self.radius,
             y: self.center.y - self.radius,
@@ -233,18 +235,18 @@ impl Drawable for Circle {
 
 ```palladium
 trait Container<T> {
-    fn len(&self) -> usize;
-    fn get(&self, index: usize) -> Option<&T>;
+    fn len(ref self) -> usize;
+    fn get(ref self, index: usize) -> Option<ref T>;
 }
 
 impl<T> Container<T> for Vec<T> {
-    fn len(&self) -> usize {
+    fn len(ref self) -> usize {
         return self.length;
     }
     
-    fn get(&self, index: usize) -> Option<&T> {
+    fn get(ref self, index: usize) -> Option<ref T> {
         if index < self.length {
-            return Some(&self.data[index]);
+            return Some(ref self.data[index]);
         }
         return None;
     }
@@ -387,7 +389,7 @@ Implementation status is the annex's job
 <sub>**Non-normative, and the status marks were false.** Three items were marked complete — basic
 trait definitions, simple implementations, method resolution. Measured at `abeb665`: traits parse
 (`src/parser/mod.rs:752`) and then emit nothing. Codegen ignores `Item::Trait`
-(`src/codegen/mod.rs:1011`), the type checker skips trait bodies (`src/typeck/mod.rs:795`), and a
+(`src/codegen/mod.rs:1013`), the type checker skips trait bodies (`src/typeck/mod.rs:795`), and a
 trait method declared with a `self` receiver is a parse error. **Nothing in this list is done.** The
 ordering is kept because the sequencing is still a design argument; the marks are removed because
 they were claims, and false ones.</sub>

@@ -25,11 +25,14 @@ with the memory-safety guarantee unchanged.
 There is no `'a` parameter list on functions, structs or impls. A region name appears only inside
 a `ref<...>`, and only when the compiler has asked for one.
 
-> **Known inconsistency, not yet resolved.** The examples below use `ref str` and `usize`, but
-> [`language-spec.md` §N4](../../../specification/language-spec.md#n4-types) lists neither `str`
-> nor `usize` among the primitives, so under the current definition `ref str` names no type. The
-> two candidate resolutions are stated in N4; the owner picks. Nothing else in this document
-> depends on which way it goes — the feature is `ref` and inference, not the referent type.
+> **The Palladium examples below are ILLUSTRATIVE, not normative.** They use `ref str` and
+> `usize`, and [`language-spec.md` §N4](../../../specification/language-spec.md#n4-types) lists
+> neither `str` nor `usize` among the primitives — so under the current definition `ref str` names
+> no type. A specification may leave a policy question open; it may not call an ill-typed example
+> normative. Until N4 is resolved these blocks are demoted: read them for the *shape* of the
+> feature — `ref` in place of `&`, no `'a` parameter lists, inference failure as an error — and not
+> as well-formed Palladium. **The normative content of this document is the syntax table above and
+> the inference rules, which mention no referent type at all.**
 
 ## Code Comparison
 
@@ -103,7 +106,7 @@ func (p *Parser) ParseWord() string {
 
 ### Palladium (Implicit Lifetimes)
 
-<sub>Normative syntax. `pdc` does not accept this today.</sub>
+<sub>Illustrative, not normative — uses `str`/`usize`, which §N4 does not define. See the note above.</sub>
 ```palladium no-compile
 // Lifetimes inferred automatically
 fn longest(x: ref str, y: ref str) -> ref str {
@@ -178,7 +181,7 @@ fn infer_lifetimes(ast: AST) -> Result<LifetimeMap> {
 
 ### When Explicit Annotation Is Needed
 
-<sub>Normative syntax. `pdc` does not accept this today.</sub>
+<sub>Illustrative, not normative — uses `str`, which §N4 does not define.</sub>
 ```palladium no-compile
 // Ambiguous case - needs annotation
 fn unclear(x: ref<'a> str, y: ref str) -> ref<'a> str {
@@ -207,7 +210,7 @@ error: Unexpected token: expected ')' (Expected ')'), found identifier 'String'
 **2. The implementation uses Rust's syntax, including the `'a` parameters this design removes.**
 `reference = '&' [ "'" identifier ] [ "mut" ] type` (`grammar.ebnf:145`), and generic parameter
 lists accept lifetimes (`generic_param` at `grammar.ebnf:130`, parsed at
-`src/parser/mod.rs:36-98`). Measured: `fn f<'a>(x: &'a String) -> &'a String { return x; }`
+`src/parser/mod.rs:36`). Measured: `fn f<'a>(x: &'a String) -> &'a String { return x; }`
 compiles and links. So the annotation burden the design deletes is currently the only supported
 spelling.
 
@@ -232,8 +235,8 @@ inferred lifetimes.
 *A previous version of this paragraph asserted a live defect here — that a call argument is
 borrowed as `Lifetime::Named("fn")` and never released, so a value cannot be passed twice. That is
 false and is retracted: the defect was real, it is D6, and it was fixed in commit `191f8c1`, before
-this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:514`) and end
-its borrows when the call finishes (`src/ownership/borrow_checker.rs:520`). Five probes are in
+this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:519`) and end
+its borrows when the call finishes (`src/ownership/borrow_checker.rs:525`). Five probes are in
 [`language-spec.md` A9.4](../../../specification/language-spec.md#a94-defect-d6-retracted). The
 defect that IS live is `&mut` of an immutable local, which the borrow checker accepts for struct
 types ([A9.3](../../../specification/language-spec.md#a93-mut-of-an-immutable-local-is-accepted)).*
@@ -266,7 +269,7 @@ fn process<'a, 'b>(data: &'a mut Data, config: &'b Config) -> &'a str {
 }
 ```
 
-<sub>Normative syntax. `pdc` does not accept this today.</sub>
+<sub>Illustrative, not normative — uses `str`, which §N4 does not define.</sub>
 ```palladium no-compile
 // Palladium equivalent (target syntax)
 fn process(data: ref mut Data, config: ref Config) -> ref str {

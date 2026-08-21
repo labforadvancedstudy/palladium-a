@@ -1,12 +1,14 @@
-> **NORMATIVE LANGUAGE DEFINITION — compiler status: unimplemented.**
-> Two axes, deliberately separated. On the *language* axis this document is normative: it defines
-> part of Palladium, and [`language-spec.md` §N11](../specification/language-spec.md#n11-modules)
-> incorporates it by reference. On the *compiler* axis nothing here is built; what `pdc` does is
-> recorded in the
-> [implementation status annex](../specification/language-spec.md#part-ii-implementation-status-annex),
-> with a source location for every row. Code in this file is not compiled by
-> `scripts/check-docs.sh` and is not expected to work. Material that is genuinely still undecided
-> is under "Open design questions" below and is explicitly **not** normative.
+> **NORMATIVE LANGUAGE DEFINITION.** On the *language* axis this document is normative: it
+> defines part of Palladium, and [`language-spec.md` §N11](../specification/language-spec.md#n11-modules)
+> incorporates it by reference.
+>
+> **Compiler status: see [annex A3](../specification/language-spec.md#a3-program-structure).** This banner
+> deliberately does not restate the status — an earlier version asserted "nothing here is built"
+> while the annex recorded working `import` parsing, because a status written in two places goes
+> stale in one of them. The annex classifies every feature; this points at it.
+>
+> Code in this file is not compiled by `scripts/check-docs.sh`. Material that is genuinely
+> undecided is under "Open design questions" below and is explicitly **not** normative.
 
 # Palladium Module System Design
 
@@ -104,7 +106,7 @@ pub fn new<T>() -> List<T> {
     List { head: None }
 }
 
-pub fn push<T>(list: &mut List<T>, value: T) {
+pub fn push<T>(list: ref mut List<T>, value: T) {
     // Implementation
 }
 ```
@@ -137,13 +139,6 @@ long long pd_math_add(long long a, long long b) {
     return a + b;
 }
 ```
-
-## Next Steps
-
-1. Implement lexer changes for `import` and `pub`
-2. Design AST nodes for imports
-3. Create module resolution algorithm
-4. Update code generator for multi-file output
 
 ## Open design questions
 
@@ -184,3 +179,14 @@ the work happened. Implementation status is the annex's job
 1. Organize stdlib into modules
 2. Create std::vec, std::string, std::io modules
 3. Update examples to use modules
+
+### Relocated: Next Steps
+
+<sub>**Non-normative.** An implementation task list, which the banner above would otherwise
+make part of the language definition.</sub>
+
+1. Implement lexer changes for `import` and `pub`
+2. Design AST nodes for imports
+3. Create module resolution algorithm
+4. Update code generator for multi-file output
+

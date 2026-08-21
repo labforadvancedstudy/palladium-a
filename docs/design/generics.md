@@ -1,12 +1,14 @@
-> **NORMATIVE LANGUAGE DEFINITION — compiler status: unimplemented.**
-> Two axes, deliberately separated. On the *language* axis this document is normative: it defines
-> part of Palladium, and [`language-spec.md` §N10](../specification/language-spec.md#n10-traits-and-generics)
-> incorporates it by reference. On the *compiler* axis nothing here is built; what `pdc` does is
-> recorded in the
-> [implementation status annex](../specification/language-spec.md#part-ii-implementation-status-annex),
-> with a source location for every row. Code in this file is not compiled by
-> `scripts/check-docs.sh` and is not expected to work. Material that is genuinely still undecided
-> is under "Open design questions" below and is explicitly **not** normative.
+> **NORMATIVE LANGUAGE DEFINITION.** On the *language* axis this document is normative: it
+> defines part of Palladium, and [`language-spec.md` §N10](../specification/language-spec.md#n10-traits-and-generics)
+> incorporates it by reference.
+>
+> **Compiler status: see [annex A5](../specification/language-spec.md#a5-types).** This banner
+> deliberately does not restate the status — an earlier version asserted "nothing here is built"
+> while the annex recorded working `import` parsing, because a status written in two places goes
+> stale in one of them. The annex classifies every feature; this points at it.
+>
+> Code in this file is not compiled by `scripts/check-docs.sh`. Material that is genuinely
+> undecided is under "Open design questions" below and is explicitly **not** normative.
 
 # Palladium Generics Design
 
@@ -29,7 +31,7 @@ fn identity<T>(value: T) -> T {
     return value;
 }
 
-fn swap<T>(a: &mut T, b: &mut T) {
+fn swap<T>(a: ref mut T, b: ref mut T) {
     let temp = *a;
     *a = *b;
     *b = temp;
@@ -66,7 +68,7 @@ impl<T> Vec<T> {
         }
     }
     
-    fn push(&mut self, value: T) {
+    fn push(ref mut self, value: T) {
         // Implementation
     }
 }
@@ -156,13 +158,6 @@ int main() {
 4. Verify monomorphization works
 5. Check error cases
 
-## Next Steps
-
-1. Add `<` and `>` tokens to lexer
-2. Extend function parsing for type parameters
-3. Create simple type substitution system
-4. Implement monomorphization in codegen
-
 ## Open design questions
 
 <sub>**Non-normative.** Everything above defines the language; everything in this section is
@@ -216,3 +211,14 @@ the work happened. Implementation status is the annex's job
 ### Phase 3: Generic Enums (Following week)
 - Similar to structs but with variants
 - Special handling for Option and Result
+
+### Relocated: Next Steps
+
+<sub>**Non-normative.** An implementation task list, which the banner above would otherwise
+make part of the language definition.</sub>
+
+1. Add `<` and `>` tokens to lexer
+2. Extend function parsing for type parameters
+3. Create simple type substitution system
+4. Implement monomorphization in codegen
+

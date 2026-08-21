@@ -142,7 +142,15 @@ def collect_citations() -> list[tuple[str, str, str, str, str]]:
 
 
 def collect_continuations() -> list[tuple[str, str]]:
-    """Citation shorthands that cannot be pinned. -> (citing-doc, matched-text)"""
+    """Citation shorthands that cannot be pinned. -> (citing-doc, matched-text)
+
+    UNCONDITIONAL. An earlier version required a recognizable filename within a
+    90-character lookbehind, which is a heuristic: a longer continuation, or a different
+    formatting, recreated an unpinnable citation with the gate green. There is now no
+    window and no filename requirement — any `:NNN` backtick shorthand outside a fenced
+    block fails, and the author writes the full path. The corpus was swept to zero first,
+    so this costs nothing and closes the hole rather than narrowing it.
+    """
     out = []
     for doc in sorted(ROOT.glob("docs/**/*.md")) + sorted(ROOT.glob("docs/**/*.toml")):
         text = doc.read_text(encoding="utf-8")
@@ -150,13 +158,66 @@ def collect_continuations() -> list[tuple[str, str]]:
             text = strip_fenced(text)
         rel = str(doc.relative_to(ROOT))
         for m in CONTINUATION.finditer(text):
-            ctx = text[max(0, m.start() - 90):m.end()]
-            # Only a continuation *of a citation* matters: something earlier on the line
-            # named a real file. Line/column numbers in prose about other things do not.
-            if re.search(r"(src|scripts|tests|examples|stdlib|benchmarks|runtime|bootstrap"
-                         r"|docs)/[\w./-]+\.(rs|pd|sh|py|ebnf|md|toml)|Cargo\.toml|Makefile",
-                         ctx):
-                out.append((rel, ctx[-60:].strip()))
+            out.append((rel, text[max(0, m.start() - 60):m.end()].strip()))
+    return out
+
+
+# Spellings the specification has REPLACED. A document carrying the normative banner is
+# defining the language, so it may not use a syntax N-something rules out. This is the
+# mechanical form of a class that was fixed three times by hand and reappeared each time:
+# a normative rule stated in one document and violated in another.
+#   token, replacement, the normative section that decides it
+FORBIDDEN_IN_NORMATIVE = [
+    (re.compile(r"&mut\s+\w"), "`ref mut T`", "N9"),
+    (re.compile(r"(?<![&\w])&(?!mut)(?!&)[A-Za-z_]\w*\s*[,)>;]"), "`ref T`", "N9"),
+    (re.compile(r"\bmacro_rules!"), "the unified macro system", "N3"),
+    (re.compile(r"#\[total\(decreases"), "`#[decreases(expr)]`", "N8"),
+    (re.compile(r"\.await\b"), "nothing — `.await` is not in the language", "N7"),
+    (re.compile(r"\basync\s+fn\b"), "nothing — there is no `async` keyword", "N7"),
+]
+NORMATIVE_BANNER = re.compile(r"^>\s*\*\*NORMATIVE", re.M)
+
+
+def collect_normative_violations() -> list[tuple[str, int, str, str, str]]:
+    """-> (doc, line, matched token, replacement, deciding section)
+
+    USE, not MENTION. Only Palladium code blocks and syntax-defining table rows are
+    scanned. Prose must be able to say "there is no `.await`" without failing its own gate,
+    and a comparison block written in Rust is the whole point of these documents. What is
+    checked is the syntax the document PRESENTS AS PALLADIUM.
+
+    Scanning stops at a heading that marks itself non-normative ("Open design questions",
+    "Relocated:"), because material below it defines nothing.
+    """
+    out = []
+    for doc in sorted(ROOT.glob("docs/**/*.md")):
+        text = doc.read_text(encoding="utf-8")
+        if not NORMATIVE_BANNER.search(text):
+            continue
+        rel = str(doc.relative_to(ROOT))
+        fence_lang = None
+        for n, line in enumerate(text.split("\n"), 1):
+            if FENCE.match(line):
+                info = line.strip().lstrip("`").strip()
+                fence_lang = None if fence_lang is not None else (info or "text")
+                continue
+            if re.match(r"^#+\s+(Open design questions|Relocated:)", line):
+                break
+            in_palladium = bool(fence_lang) and fence_lang.startswith("palladium")
+            # A syntax-defining table row: `| `ref T` | A shared borrow ... |`
+            defines_syntax = (fence_lang is None and line.startswith("|")
+                              and line.count("`") >= 2)
+            if not (in_palladium or defines_syntax):
+                continue
+            # A comment, or a sentence explaining what the spelling REPLACES, is a
+            # mention. "Replaces Rust's `&mut T`" must not fail its own rule.
+            code = line.split("//")[0]
+            if re.search(r"Rust'?s?\b|Replaces|instead of|rather than|not\s+`", line):
+                continue
+            for pat, repl, sec in FORBIDDEN_IN_NORMATIVE:
+                m = pat.search(code)
+                if m:
+                    out.append((rel, n, m.group(0).strip(), repl, sec))
     return out
 
 
@@ -296,6 +357,7 @@ def main() -> int:
     cites = collect_citations()
     fences = collect_fences()
     conts = collect_continuations()
+    violations = collect_normative_violations()
 
     if update:
         old = read_pins() if PINS.exists() else {}
@@ -370,6 +432,11 @@ def main() -> int:
                 fail.append(f"no-compile fences in {p}: allowed {want_f.get(p, 0)}, "
                             f"found {have_f.get(p, 0)} — justify and --update")
 
+    for rel, n, tok, repl, sec in violations:
+        fail.append(f"{rel}:{n} uses {tok!r} in a normative region — §{sec} replaced it with "
+                    f"{repl}. A document carrying the NORMATIVE banner defines the language "
+                    f"and cannot contradict the specification's surface.")
+
     for rel, ctx in conts:
         fail.append(f"unpinnable citation shorthand in {rel}: ...{ctx} — write the full path; "
                     f"a bare `:LINE` gets no pin and no movement check")
@@ -381,6 +448,7 @@ def main() -> int:
     print(f"citations pinned:   {len(cites)} (whole cited range fingerprinted)")
     print(f"no-compile fences:  {sum(n for _, n in fences)} across {len(fences)} file(s)")
     print(f"unpinnable shorthands: {len(conts)}")
+    print(f"normative-surface violations: {len(violations)}")
     print(f"feature-index rows: {nrows} via {how}"
           + (", all evidence tagged and resolved" if not problems
              else f", {len(problems)} evidence problem(s)"))
