@@ -299,49 +299,8 @@ impl LanguageServer {
             }
         }
 
-        // Built-in functions
-        let builtins = vec![
-            ("print", "fn print(s: String)", "Print a string to stdout"),
-            (
-                "print_int",
-                "fn print_int(n: i64)",
-                "Print an integer to stdout",
-            ),
-            (
-                "string_len",
-                "fn string_len(s: String) -> i64",
-                "Get string length",
-            ),
-            (
-                "string_concat",
-                "fn string_concat(a: String, b: String) -> String",
-                "Concatenate strings",
-            ),
-            (
-                "int_to_string",
-                "fn int_to_string(n: i64) -> String",
-                "Convert integer to string",
-            ),
-            (
-                "string_to_int",
-                "fn string_to_int(s: String) -> Option<i64>",
-                "Parse integer from string",
-            ),
-        ];
-
-        for (name, signature, doc) in builtins {
-            if name.starts_with(&context.word) {
-                completions.push(CompletionItem {
-                    label: name.to_string(),
-                    kind: Some(CompletionItemKind::Function),
-                    detail: Some(signature.to_string()),
-                    documentation: Some(doc.to_string()),
-                    insert_text: Some(format!("{}(", name)),
-                    insert_text_format: Some(InsertTextFormat::PlainText),
-                    additional_text_edits: None,
-                });
-            }
-        }
+        // Built-in functions, derived from the single source of truth
+        completions.extend(builtin_completions(&context.word));
 
         completions
     }
@@ -613,4 +572,27 @@ impl LanguageServer {
             }
         }
     }
+}
+
+/// Completions for every built-in function whose name starts with `prefix`.
+///
+/// Derived from `crate::builtins::BUILTINS`, the single source of truth: the
+/// signature comes from the typed parameter/return data and the documentation from
+/// the built-in's `doc`. The hand-written list this replaced knew 6 of 38 built-ins
+/// and claimed `string_to_int` returned `Option<i64>`, which the compiler has never
+/// implemented (`__pd_string_to_int` returns `long long`).
+pub(crate) fn builtin_completions(prefix: &str) -> Vec<CompletionItem> {
+    crate::builtins::BUILTINS
+        .iter()
+        .filter(|b| b.name.starts_with(prefix))
+        .map(|b| CompletionItem {
+            label: b.name.to_string(),
+            kind: Some(CompletionItemKind::Function),
+            detail: Some(b.signature()),
+            documentation: Some(b.doc.to_string()),
+            insert_text: Some(format!("{}(", b.name)),
+            insert_text_format: Some(InsertTextFormat::PlainText),
+            additional_text_edits: None,
+        })
+        .collect()
 }

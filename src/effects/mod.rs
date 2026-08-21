@@ -83,39 +83,21 @@ pub struct EffectAnalyzer {
 
 impl Default for EffectAnalyzer {
     fn default() -> Self {
-        let mut builtin_effects = std::collections::HashMap::new();
-
-        // IO functions
-        builtin_effects.insert("print".to_string(), EffectSet::singleton(Effect::IO));
-        builtin_effects.insert("print_int".to_string(), EffectSet::singleton(Effect::IO));
-        builtin_effects.insert("file_open".to_string(), EffectSet::singleton(Effect::IO));
-        builtin_effects.insert(
-            "file_read_all".to_string(),
-            EffectSet::singleton(Effect::IO),
-        );
-        builtin_effects.insert(
-            "file_read_line".to_string(),
-            EffectSet::singleton(Effect::IO),
-        );
-        builtin_effects.insert("file_write".to_string(), EffectSet::singleton(Effect::IO));
-        builtin_effects.insert("file_close".to_string(), EffectSet::singleton(Effect::IO));
-        builtin_effects.insert("file_exists".to_string(), EffectSet::singleton(Effect::IO));
-
-        // Memory functions
-        // For now, we don't have explicit allocation functions
-
-        // Pure functions
-        builtin_effects.insert("string_len".to_string(), EffectSet::new());
-        builtin_effects.insert("string_concat".to_string(), EffectSet::new());
-        builtin_effects.insert("string_eq".to_string(), EffectSet::new());
-        builtin_effects.insert("string_char_at".to_string(), EffectSet::new());
-        builtin_effects.insert("string_substring".to_string(), EffectSet::new());
-        builtin_effects.insert("string_from_char".to_string(), EffectSet::new());
-        builtin_effects.insert("char_is_digit".to_string(), EffectSet::new());
-        builtin_effects.insert("char_is_alpha".to_string(), EffectSet::new());
-        builtin_effects.insert("char_is_whitespace".to_string(), EffectSet::new());
-        builtin_effects.insert("string_to_int".to_string(), EffectSet::new());
-        builtin_effects.insert("int_to_string".to_string(), EffectSet::new());
+        // Built-in effects come from the single source of truth in src/builtins.rs.
+        // The hand-written table this replaced listed only 19 of the 38 built-ins,
+        // and a built-in with no entry contributes no effect at all (see the
+        // `Expr::Call` arm below) — so 19 built-ins, 18 of them doing real file or
+        // console I/O, were silently invisible to effect analysis.
+        let builtin_effects = crate::builtins::BUILTINS
+            .iter()
+            .map(|b| {
+                let mut set = EffectSet::new();
+                for effect in b.effects {
+                    set.add(effect.clone());
+                }
+                (b.name.to_string(), set)
+            })
+            .collect();
 
         Self {
             function_effects: std::collections::HashMap::new(),
@@ -127,6 +109,23 @@ impl Default for EffectAnalyzer {
 impl EffectAnalyzer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Names of every built-in this analyzer knows.
+    ///
+    /// This is exactly the canonical built-in set, which is what the drift test in
+    /// `crate::builtins` asserts against. Returning *all* keys (not just the ones
+    /// that happen to be in the canonical table) is deliberate: a hand-added
+    /// registration here must show up as a diff.
+    #[allow(dead_code)] // used by the drift tests in crate::builtins
+    pub(crate) fn registered_builtin_names(&self) -> std::collections::BTreeSet<String> {
+        self.builtin_effects.keys().cloned().collect()
+    }
+
+    /// The effect set this analyzer attributes to a built-in call.
+    #[allow(dead_code)] // used by the drift tests in crate::builtins
+    pub(crate) fn builtin_effects_of(&self, name: &str) -> Option<&EffectSet> {
+        self.builtin_effects.get(name)
     }
 
     /// Analyze effects for a function

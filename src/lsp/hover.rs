@@ -113,46 +113,9 @@ impl LanguageServer {
             }
         }
 
-        // Check built-in functions
-        let builtins = vec![
-            ("print", "fn print(s: String)", "Print a string to stdout"),
-            (
-                "print_int",
-                "fn print_int(n: i64)",
-                "Print an integer to stdout",
-            ),
-            (
-                "string_len",
-                "fn string_len(s: String) -> i64",
-                "Get the length of a string",
-            ),
-            (
-                "string_concat",
-                "fn string_concat(a: String, b: String) -> String",
-                "Concatenate two strings",
-            ),
-            (
-                "int_to_string",
-                "fn int_to_string(n: i64) -> String",
-                "Convert an integer to a string",
-            ),
-            (
-                "string_to_int",
-                "fn string_to_int(s: String) -> Option<i64>",
-                "Parse an integer from a string",
-            ),
-        ];
-
-        for (name, sig, doc) in builtins {
-            if name == symbol {
-                return Some(Hover {
-                    contents: MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: format!("```palladium\n{}\n```\n\n{}", sig, doc),
-                    },
-                    range: None,
-                });
-            }
+        // Check built-in functions, derived from the single source of truth
+        if let Some(hover) = builtin_hover(&symbol) {
+            return Some(hover);
         }
 
         // Check built-in types
@@ -183,7 +146,27 @@ impl LanguageServer {
 
         None
     }
-    
+
+}
+
+/// Hover documentation for a built-in function, or `None` if `symbol` is not one.
+///
+/// Derived from `crate::builtins::BUILTINS`, the single source of truth: the
+/// signature comes from the typed parameter/return data and the prose from the
+/// built-in's `doc`. The hand-written list this replaced knew 6 of 38 built-ins.
+pub(crate) fn builtin_hover(symbol: &str) -> Option<Hover> {
+    let builtin = crate::builtins::lookup(symbol)?;
+    Some(Hover {
+        contents: MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: format!(
+                "```palladium\n{}\n```\n\n{}",
+                builtin.signature(),
+                builtin.doc
+            ),
+        },
+        range: None,
+    })
 }
 
 #[cfg(test)]
@@ -494,13 +477,16 @@ mod tests {
     fn test_hover_all_builtin_functions() {
         let mut server = create_test_server();
         
-        // Test each builtin function
+        // Test each builtin function. Signatures now come from crate::builtins,
+        // so they are the ones the type checker and codegen actually implement:
+        // `string_to_int` returns i64 (`long long __pd_string_to_int(const char*)`
+        // in src/codegen/mod.rs), not the `Option<i64>` this list used to claim.
         let builtins = vec![
                 ("print_int", "fn print_int(n: i64)"),
                 ("string_len", "fn string_len(s: String) -> i64"),
                 ("string_concat", "fn string_concat(a: String, b: String) -> String"),
                 ("int_to_string", "fn int_to_string(n: i64) -> String"),
-            ("string_to_int", "fn string_to_int(s: String) -> Option<i64>"),
+            ("string_to_int", "fn string_to_int(s: String) -> i64"),
         ];
 
         for (name, expected_sig) in builtins {
