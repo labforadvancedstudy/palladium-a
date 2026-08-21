@@ -35,7 +35,6 @@ Phase 4: Full Bootstrap  [██████████] 100%
 
 ### Historical Documents
 - [Bootstrap Strategy](BOOTSTRAP_STRATEGY.md) - Original approach
-- [Self-Hosting Complete](SELF_HOSTING_COMPLETE.md) - Achievement announcement
 - [Bootstrap FAQ](BOOTSTRAP_FAQ.md) - Common questions
 
 ## 🚀 Quick Start

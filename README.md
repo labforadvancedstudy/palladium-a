@@ -369,12 +369,11 @@ Palladium aims to be:
 
 ## 📜 License
 
-Palladium is dual-licensed:
+Palladium is released under the MIT License — see [LICENSE](LICENSE).
 
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-- Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-
-Choose whichever license works best for you.
+(Earlier revisions of this section advertised a dual MIT/Apache-2.0 licence and linked to
+`LICENSE-MIT` and `LICENSE-APACHE`. Neither file has ever existed in this repository, and
+`Cargo.toml` declares `MIT`.)
 
 ## 🙏 Acknowledgments
 

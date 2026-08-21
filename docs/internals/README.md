@@ -26,14 +26,10 @@ Executable
 
 ### Core Components
 - **[Architecture Overview](./ARCHITECTURE.md)** - High-level system design
-- **[Lexer Design](./lexer-design.md)** - Tokenization strategy
-- **[Parser Design](./parser-design.md)** - Syntax analysis approach
-- **[Type System](./type-system.md)** - Type checking and inference
-- **[Code Generation](./codegen-strategy.md)** - Backend implementation
 
 ### Language Features
-- **[Generics Design](./GENERICS_DESIGN.md)** - Generic type system
-- **[Module System Design](./MODULE_SYSTEM_DESIGN.md)** - Module resolution
+- **[Generics Design](../design/generics.md)** - Generic type system
+- **[Module System Design](../design/module-system.md)** - Module resolution
 - **[Error Messages](./ERROR_MESSAGES_IMPROVEMENT.md)** - Diagnostic system
 - **[Performance Optimization](./PERFORMANCE_OPTIMIZATION.md)** - Optimization strategies
 
@@ -44,7 +40,6 @@ Complete documentation of Palladium's self-hosting journey:
 - **[Bootstrap Internals](./bootstrap/BOOTSTRAP_INTERNALS.md)** - Technical details
 - **[Bootstrap Tutorial](./bootstrap/BOOTSTRAP_TUTORIAL.md)** - Step-by-step guide
 - **[Bootstrap FAQ](./bootstrap/BOOTSTRAP_FAQ.md)** - Common questions
-- **[Self-Hosting Complete](./bootstrap/SELF_HOSTING_COMPLETE.md)** - Achievement details
 - **[Self-Hosting Guide](./bootstrap/SELF_HOSTING_GUIDE.md)** - How to use bootstrap compilers
 
 ## 🔧 Compiler Architecture
