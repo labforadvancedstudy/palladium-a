@@ -110,29 +110,6 @@ print(displayable.fmt());
 let owned: Box<dyn Display> = Box::new(point);
 ```
 
-## Implementation Plan
-
-### Phase 1: Basic Traits (Week 1)
-1. Trait definitions in AST
-2. Trait implementations
-3. Method resolution
-4. Trait bounds on functions
-5. Static dispatch
-
-### Phase 2: Advanced Features (Week 2)
-1. Associated types
-2. Default implementations
-3. Trait objects (dyn)
-4. Multiple trait bounds
-5. Where clauses
-
-### Phase 3: Standard Traits (Week 3)
-1. Display, Debug
-2. Clone, Copy
-3. Eq, Ord
-4. Iterator
-5. From, Into
-
 ## Technical Design
 
 ### AST Changes
@@ -358,16 +335,6 @@ help: disambiguate with:
 4. **Higher-ranked traits** - For<'a> syntax
 5. **Negative bounds** - T: !Send
 
-## Implementation Priority
-
-1. ✅ Basic trait definitions
-2. ✅ Simple implementations
-3. ✅ Method resolution
-4. ⬜ Trait bounds
-5. ⬜ Associated types
-6. ⬜ Trait objects
-7. ⬜ Standard library traits
-
 ## Conclusion
 
 The trait system provides Palladium with powerful abstraction capabilities while maintaining zero-cost guarantees. Starting with a simple implementation and gradually adding features ensures a solid foundation for the type system.
@@ -379,6 +346,56 @@ undecided and defines nothing. The distinction matters because "not yet built" a
 decided" were previously carried by the same PROPOSAL banner, which made every open question look
 like settled design awaiting an implementer.</sub>
 
-No question in this document has been escalated as open yet. When one is, it moves here rather
-than being silently resolved in place, and [`language-spec.md` §N10](../specification/language-spec.md#n10-traits-and-generics)
-links to it.
+Nothing in this document has been escalated as an open *design* question yet. What is here is
+material that was carried above the fold as though it were definitional and is not: work
+schedules, and status marks that were false. It sits here so that the banner above cannot be read
+as blessing it.
+
+### Relocated: Implementation Plan
+
+<sub>**Non-normative.** This was above the fold when the dual-axis banner landed, which silently
+promoted a work schedule to normative language definition. A schedule is neither a definition nor a
+measurement: these week estimates were written in January 2025 and none of the work happened.
+Implementation status is the annex's job
+([`language-spec.md` Part II](../specification/language-spec.md#part-ii-implementation-status-annex)).</sub>
+
+## Implementation Plan
+
+### Phase 1: Basic Traits (Week 1)
+1. Trait definitions in AST
+2. Trait implementations
+3. Method resolution
+4. Trait bounds on functions
+5. Static dispatch
+
+### Phase 2: Advanced Features (Week 2)
+1. Associated types
+2. Default implementations
+3. Trait objects (dyn)
+4. Multiple trait bounds
+5. Where clauses
+
+### Phase 3: Standard Traits (Week 3)
+1. Display, Debug
+2. Clone, Copy
+3. Eq, Ord
+4. Iterator
+5. From, Into
+
+### Relocated: Implementation Priority
+
+<sub>**Non-normative, and the status marks were false.** Three items were marked complete — basic
+trait definitions, simple implementations, method resolution. Measured at `abeb665`: traits parse
+(`src/parser/mod.rs:752`) and then emit nothing. Codegen ignores `Item::Trait`
+(`src/codegen/mod.rs:1011`), the type checker skips trait bodies (`src/typeck/mod.rs:795`), and a
+trait method declared with a `self` receiver is a parse error. **Nothing in this list is done.** The
+ordering is kept because the sequencing is still a design argument; the marks are removed because
+they were claims, and false ones.</sub>
+
+1. Basic trait definitions
+2. Simple implementations
+3. Method resolution
+4. Trait bounds
+5. Associated types
+6. Trait objects
+7. Standard library traits

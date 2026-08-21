@@ -95,9 +95,27 @@ unimplementable in a single-pass translator.
 
 3. **Struct and array parameters are always declared `mut`.**
    A `mut` parameter of struct type becomes `struct S*` in C, so mutations propagate to the
-   caller — verified: `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` struct or
-   array parameter is classified as a *move* by the borrow checker
-   (`src/ownership/borrow_checker.rs:179-185`) and can never be used again by the caller.
+   caller — verified: `fn bump(mut s: S)` → `void bump(struct S* s)`.
+
+   The reason differs by type, and the previous version of this note got both the reason and the
+   citation wrong. It said a non-`mut` struct **or array** parameter "is classified as a *move* by
+   the borrow checker (`src/ownership/borrow_checker.rs:179-185`)". Re-derived at `abeb665`:
+
+   - **Struct**: correct. A non-`mut` `Type::Custom` parameter is `ParamOwnership::Move`
+     (`src/ownership/borrow_checker.rs:219`), so the caller cannot use the value again —
+     verified: `fn ro(s: S)` then `s.x` → `error: Use of moved value: s`.
+   - **Array**: wrong. A non-`mut` `Type::Array` parameter is `ParamOwnership::Borrow`
+     (`src/ownership/borrow_checker.rs:207`), not a move, and the caller keeps using it —
+     verified: `fn ro(a: [i64;3])` then `v[0]` compiles and prints. The reason to write `mut` on an
+     array parameter is not ownership but mutability: the C backend emits a decayed pointer either
+     way, so a write is caller-visible regardless, and `mut` is what makes that visible in the
+     source. See [`language-spec.md` §N12.1](language-spec.md#n121-array-parameters-open-decision),
+     where the semantics is an open decision.
+   - The old citation `:179-185` now lands on `fn collect_function_sig`, which is the same
+     pre-cleanup `f323cf1` line drift described in
+     [`language-spec.md` §0](language-spec.md#0-how-to-read-this-document). It is repaired above
+     rather than left pinned, because a gate that blesses a citation the documentation itself calls
+     rotten is worse than no gate.
 
 4. **Struct literals appear only as `let` initializers.** They translate to a C99 designated
    initializer, `S { a: 1 }` → `(struct S){ .a = 1 }`.

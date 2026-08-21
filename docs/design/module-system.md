@@ -70,26 +70,6 @@ pub struct Vec<T> {
 import std::vec::Vec;
 ```
 
-## Implementation Plan
-
-### Phase 1: Basic File Imports (1 week)
-1. Add `import` keyword to lexer
-2. Add `pub` keyword for public visibility
-3. Parse import statements
-4. Track module dependencies
-5. Compile modules in dependency order
-
-### Phase 2: Symbol Resolution (1 week)
-1. Build module symbol tables
-2. Resolve imported symbols
-3. Check visibility rules
-4. Generate appropriate C includes
-
-### Phase 3: Standard Library Modules (1 week)
-1. Organize stdlib into modules
-2. Create std::vec, std::string, std::io modules
-3. Update examples to use modules
-
 ## Technical Challenges
 
 1. **C Code Generation**
@@ -172,6 +152,35 @@ undecided and defines nothing. The distinction matters because "not yet built" a
 decided" were previously carried by the same PROPOSAL banner, which made every open question look
 like settled design awaiting an implementer.</sub>
 
-No question in this document has been escalated as open yet. When one is, it moves here rather
-than being silently resolved in place, and [`language-spec.md` §N11](../specification/language-spec.md#n11-modules)
-links to it.
+Nothing in this document has been escalated as an open *design* question yet. What is here is
+material that was carried above the fold as though it were definitional and is not: work
+schedules, and status marks that were false. It sits here so that the banner above cannot be read
+as blessing it.
+
+### Relocated: Implementation Plan
+
+<sub>**Non-normative.** This was above the fold when the dual-axis banner landed, which
+silently promoted a work schedule to normative language definition. A schedule is neither a
+definition nor a measurement: these week estimates were written in January 2025 and none of
+the work happened. Implementation status is the annex's job
+([`language-spec.md` Part II](../specification/language-spec.md#part-ii-implementation-status-annex)).</sub>
+
+## Implementation Plan
+
+### Phase 1: Basic File Imports (1 week)
+1. Add `import` keyword to lexer
+2. Add `pub` keyword for public visibility
+3. Parse import statements
+4. Track module dependencies
+5. Compile modules in dependency order
+
+### Phase 2: Symbol Resolution (1 week)
+1. Build module symbol tables
+2. Resolve imported symbols
+3. Check visibility rules
+4. Generate appropriate C includes
+
+### Phase 3: Standard Library Modules (1 week)
+1. Organize stdlib into modules
+2. Create std::vec, std::string, std::io modules
+3. Update examples to use modules

@@ -110,14 +110,16 @@ feature_index:
           - "conformance: tests/05_ownership_basic.pd PASS"
           - "conformance: tests/05_borrowing_references.pd PASS"
           - "src: src/typeck/mod.rs:121 crate::ast::Type::Reference maps to its inner type — 'TODO: Proper reference type handling'"
-          - "src: src/ownership/borrow_checker.rs:236 ReturnOwnership::Borrowed(Lifetime::Named(\"fn\"))"
-          - "src: src/ownership/mod.rs:109 let scope_lifetime = Lifetime::Scope(self.current_scope)"
+          - "src: src/ownership/borrow_checker.rs:514 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime"
+          - "src: src/ownership/borrow_checker.rs:520 self.context.end_borrows(&call_lifetime) — argument borrows end with the call"
+          - "cmd: pdc compile 'fn t(a: String) -> i64 { return string_len(a); } fn main(){ let s: String = \"hello\"; print_int(t(s)); print_int(t(s)); }' -> accepted, prints 5 5 (defect D6 does not reproduce)"
           - "cmd: pdc compile 'struct S { x: i64 } fn bump(s: &mut S) { s.x = 77; } fn main(){ let v: S = S { x: 1 }; bump(&mut v); print_int(v.x); }' -> compiles, links, prints 77 — an immutable local mutated with no diagnostic"
         note: >-
           Enforces a move/initialization discipline and conflicting-borrow detection, but is not
-          represented in the type system. Two known defects: a call argument is borrowed as
-          Lifetime::Named("fn") and released against Lifetime::Scope(n) so it is never released;
-          and `&mut` of an immutable local is accepted for struct types.
+          represented in the type system. One known defect: `&mut` of an immutable local is
+          accepted for struct types. Defect D6 ("call arguments borrowed forever") was FIXED in
+          commit 191f8c1 and is retracted here — see language-spec.md A9.4 for the
+          re-measurement. CLAUDE.md still lists D6 as open and is stale.
 
       unsafe_blocks:
         description: "Restricted unsafe with side-channel protection; forbidden in #![total(strict)] crates."
@@ -218,6 +220,21 @@ feature_index:
         note: >-
           A tail expression in a function body with a declared return type is lowered to a return.
           A tail expression in a nested block is not.
+
+      tail_returns:
+        description: "A function body's trailing expression is its return value."
+        spec: "../../specification/language-spec.md#n5-statements-and-expressions"
+        implementation: partial
+        evidence:
+          - "cmd: pdc compile 'fn add(a: i64, b: i64) -> i64 { a + b } fn main(){ print_int(add(2,3)); }' -> prints 5 (tail expression is lowered)"
+          - "cmd: pdc compile 'fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n-1)+fib(n-2) } } fn main(){ print_int(fib(10)); }' -> compiles clean, prints 8261746944; the answer is 55"
+          - "src: src/codegen/mod.rs:1954 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return"
+        note: >-
+          Defect D3 is half-fixed: a tail EXPRESSION becomes a return, a tail `if` does not, and
+          the tail-`if` shape is the idiomatic one for a recursive function. CLAUDE.md:66 records
+          D3 as fixed, which holds only for the expression case. The "437 affected sites" figure
+          is an understatement — the heuristic behind it cannot see a function ending in the
+          else block's brace.
 
       closures:
         description: "Anonymous functions with inferred capture; move closures."
@@ -479,8 +496,16 @@ feature_index:
         spec: "PALLADIUM_V1_FEATURES.md#5-standard-library"
         implementation: unimplemented
         evidence:
+          - "cmd: for f in $(find stdlib -name '*.pd'); do pdc compile $f; done -> 0 of 21 compile; every file is rejected at lex or parse time"
           - "cmd: pdc compile stdlib/std/option.pd -> error: Expected 'fn' for method, but found 'pub'"
-          - "src: scripts/conformance.sh:15 DIRS=(\"${@:-tests examples}\") — stdlib/ is never scanned, which is why this never surfaced as a failure"
+          - "cmd: PALLADIUM_PATH=.../stdlib/std pdc compile 'import option; fn main(){}' -> error: Unexpected token: expected 'fn' for method, found 'pub' — forcing it onto the search path does not help"
+          - "src: src/resolver/mod.rs:51 the resolver reads PALLADIUM_PATH, so this is not a dead-resolver problem"
+          - "cmd: grep -rn stdlib .github/ -> exit 1, 0 lines — stdlib is not packaged by any workflow, and neither Homebrew formula installs it"
+          - "src: scripts/conformance.sh:15 DIRS=(\"${@:-tests examples}\") — stdlib/ is never scanned, which is why this was invisible"
+        note: >-
+          Because nothing here has ever compiled, no compiler defect can have "silently
+          miscompiled the standard library"; the D3 claim to that effect is retracted in
+          language-spec.md A6.6.
 
       collections:
         description: "Vec<T>, HashMap<K, V>, String, Option<T>."

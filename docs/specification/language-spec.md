@@ -361,21 +361,63 @@ signatures look like, and what distinguishes them from library code — not a na
 > Palladium* by adding a row. The generated table is evidence about the implementation and lives in
 > [A8](#a8-builtins). Part I defines the surface; Part II reports what is built.
 
-Builtins are required in five groups, and a conforming implementation provides at least these:
+**The normative set, enumerated.** "Closed" is meaningless unless the set can be named, so it is
+named here. These identifiers are reserved: a program may not define or shadow them, and a
+conforming implementation provides all of them with these signatures.
 
-| Group | Required capability | Signature shape |
+| Name | Signature | Effects |
 |---|---|---|
-| Output | write a string, write an integer, abort with a message | `(String) -> ()`, `(i64) -> ()`, `(String) -> !` |
-| String | length, concatenation, equality, indexed character, substring | `(String, …) -> String \| i64 \| bool` |
-| Character classification | digit, alphabetic, whitespace | `(char) -> bool` |
-| Conversion | string to integer, integer to string, character to string | total or `Option`-returning |
-| Filesystem | open, read, write, close, exists, remove, directory create and remove | `Result`-returning |
+| `print` | `(String) -> ()` | io |
+| `print_int` | `(i64) -> ()` | io |
+| `panic` | `(String) -> !` | panic |
+| `string_len` | `(String) -> i64` | pure |
+| `string_concat` | `(String, String) -> String` | pure |
+| `string_eq` | `(String, String) -> bool` | pure |
+| `string_char_at` | `(String, i64) -> char` | pure |
+| `string_substring` | `(String, i64, i64) -> String` | pure |
+| `string_from_char` | `(char) -> String` | pure |
+| `string_to_int` | `(String) -> Result<i64, ParseError>` | pure |
+| `int_to_string` | `(i64) -> String` | pure |
+| `char_is_digit` | `(char) -> bool` | pure |
+| `char_is_alpha` | `(char) -> bool` | pure |
+| `char_is_whitespace` | `(char) -> bool` | pure |
+| `arg_count` | `() -> i64` | io |
+| `arg_at` | `(i64) -> String` | io |
+| `file_open` | `(String, OpenMode) -> Result<File, IoError>` | io |
+| `file_read_all` | `(File) -> Result<String, IoError>` | io |
+| `file_read_line` | `(File) -> Result<Option<String>, IoError>` | io |
+| `file_write` | `(File, String) -> Result<(), IoError>` | io |
+| `file_close` | `(File) -> Result<(), IoError>` | io |
+| `file_flush` | `(File) -> Result<(), IoError>` | io |
+| `file_seek` | `(File, i64, SeekFrom) -> Result<i64, IoError>` | io |
+| `file_exists` | `(String) -> bool` | io |
+| `path_exists` | `(String) -> bool` | io |
+| `path_is_file` | `(String) -> bool` | io |
+| `path_is_dir` | `(String) -> bool` | io |
+| `create_dir` | `(String) -> Result<(), IoError>` | io |
+| `create_dir_all` | `(String) -> Result<(), IoError>` | io |
+| `remove_file` | `(String) -> Result<(), IoError>` | io |
+| `remove_dir` | `(String) -> Result<(), IoError>` | io |
+| `remove_dir_all` | `(String) -> Result<(), IoError>` | io |
+| `read_file_to_string` | `(String) -> Result<String, IoError>` | io |
+| `write_string_to_file` | `(String, String) -> Result<(), IoError>` | io |
 
-Three normative constraints on the set, which are properties of the language rather than of any
-table:
+Thirty-four names. `File`, `OpenMode`, `SeekFrom`, `IoError` and `ParseError` are prelude types
+([N4](#n4-types)); a `File` is an opaque handle, not an integer.
 
-1. **Builtins are closed.** A program cannot define a new builtin, and the set does not vary by
-   target. A capability that varies by target belongs in the standard library.
+> The implementation currently provides 38 names, not these 34, and its filesystem builtins return
+> `i64`/`bool` handles rather than `Result`. The four extra (`file_open_ex`, `file_close_ex`,
+> `file_read_ex`, `file_write_ex`) are a parallel handle API that exists because `OpenMode` does
+> not. Divergences are itemised in [A8](#a8-builtins); the generated table there is the record of
+> what `pdc` ships. This table is the definition, and it is written independently of that table on
+> purpose — an earlier draft delegated to it, which would have let `pdc` redefine Palladium by
+> adding a row.
+
+Three normative constraints, which are properties of the language rather than of any table:
+
+1. **Builtins are closed.** The set is exactly the 34 names above. A program cannot define a new
+   builtin, and the set does not vary by target. A capability that varies by target belongs in the
+   standard library.
 2. **Builtins are not privileged in the type system.** They take and return ordinary types; there
    is no builtin-only type and no builtin-only calling convention.
 3. **Filesystem builtins are effectful** in the sense of [N7](#n7-effects-and-asynchrony), and
@@ -781,12 +823,56 @@ that the features are unimplemented.
 This is in the grammar (`grammar.ebnf`) and it previously **compiled cleanly and returned
 garbage**: the generated C was `long long add(...) { (a + b); }` with no `return`, and `add(2,3)`
 printed `6162934856`. No error, no warning, wrong answer — the project's most dangerous defect
-class, and every function in `stdlib/` that ended in an expression was affected. It is fixed: the
-parser now lowers a function body's tail expression to a return when a return type is declared. A
-tail expression in a *nested* block still does not become a return.
+class.
 
-Regardless of that fix, **write explicit `return` in every value-returning function.** The
-bootstrap compiler does.
+**Two corrections to the previous version of this paragraph.**
+
+*Retracted: the blast radius.* It said "and every function in `stdlib/` that ended in an expression
+was affected." That is false. Measured at `abeb665`, **0 of the 21 `.pd` files under `stdlib/`
+compile** — every one is rejected at lex or parse time, so nothing there was ever compiled and the
+defect cannot have lived there. The affected-`stdlib/` claim was a counterfactual stated as a
+finding. A related over-correction is also retracted: an earlier phrasing that the resolver "never
+loads" the prelude was too strong. The resolver is live and reads `$PALLADIUM_PATH`
+(`src/resolver/mod.rs:51-52`); imports use `import`, not `use`. What holds is narrower and
+measured: `stdlib/` is on no default search path, and forcing it on does not help —
+`PALLADIUM_PATH=…/stdlib/std` with `import option;` gives
+`error: Unexpected token: expected 'fn' for method, found 'pub'`. See [A8](#a8-builtins) for
+packaging.
+
+*Corrected: "It is fixed" was half true.* The parser lowers a tail **expression** to
+`Stmt::Return`, but not a tail `if`. Measured at `abeb665`:
+
+```
+fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n - 1) + fib(n - 2) } }
+fn main() { print_int(fib(10)); }
+```
+
+compiles clean and prints **`8261746944`** where the answer is 55. The generated C is
+
+```c
+long long fib(long long n) {
+    if ((n <= 1)) {
+    n;
+    } else {
+    (fib((n - 1)) + fib((n - 2)));
+    }
+}
+```
+
+— bare expression statements, no `return`, in the single most idiomatic shape a recursive function
+takes. So **D3 is open, not fixed**, for every function whose body is a tail `if`. A tail expression
+in any other nested block is likewise not lowered.
+
+The "437 affected sites" figure quoted elsewhere is an **understatement, not an upper bound**: the
+heuristic that produced it requires a bare expression immediately before the closing brace, and a
+tail-`if` function ends with the `else` block's `}`. A companion scan found **369 further sites** of
+that shape. *(Both counts are the stdlib unit's measurement, reproduced here by reference; this unit
+verified the `fib` reproduction and the generated C above directly.)*
+
+`CLAUDE.md:66` records D3 as fixed. That is accurate only for the tail-expression case.
+
+Regardless, **write explicit `return` in every value-returning function.** The bootstrap compiler
+does, which is why `make selfhost` is unaffected by any of this.
 
 ## A7. Patterns
 
@@ -859,10 +945,24 @@ became the SSOT; it is no longer the mechanism.)*
 > link time by `runtime/palladium_runtime.c`. Before that file existed, every one of these — and
 > in fact every Palladium program — failed to link.
 
-**The standard library above them is unimplemented.** `stdlib/std/*.pd` exists but does not parse:
-`pdc compile stdlib/std/option.pd` fails with "Expected 'fn' for method, but found 'pub'".
-`scripts/conformance.sh` scans only `tests/` and `examples/`, so `stdlib/` has never had a green
-row and its breakage was invisible.
+**The standard library above them is unimplemented, and unshipped.** Measured at `abeb665`:
+
+- **0 of 21** `.pd` files under `stdlib/` compile. Each is rejected at lex or parse time;
+  `pdc compile stdlib/std/option.pd` fails with `Expected 'fn' for method, but found 'pub'`.
+- It is not merely unreachable by default. The resolver is live and honours `$PALLADIUM_PATH`
+  (`src/resolver/mod.rs:51-52`), but pointing it at the tree does not help:
+  `PALLADIUM_PATH=…/stdlib/std` with `import option;` gives
+  `error: Unexpected token: expected 'fn' for method, found 'pub'`.
+- It is not packaged. `grep -rn stdlib .github/` returns **0 hits** (exit 1), and neither Homebrew
+  formula installs it — `pdc.rb` installs `share/palladium/runtime`, `pdc-preview.rb` installs
+  `lib/palladium/runtime`, and neither names `stdlib`. *(Formula paths are the stdlib unit's
+  measurement of the tap; the `.github` grep is this unit's.)*
+- `scripts/conformance.sh:15` scans only `tests/` and `examples/`, so `stdlib/` has never had a
+  green row and its breakage was invisible.
+
+A consequence worth stating plainly: because nothing under `stdlib/` has ever compiled, no defect
+in the compiler can have "silently miscompiled the standard library". See
+[A6.6](#a66-tail-expressions), where exactly that claim is retracted.
 
 ## A9. Memory model
 
@@ -871,17 +971,15 @@ but not *represented* in the type system: the typechecker treats `&T` as `T`
 (`src/typeck/mod.rs:121-125`).
 
 What the borrow checker actually enforces is a move/initialization discipline plus
-conflicting-borrow detection. Known defect: a call argument is borrowed as
-`Lifetime::Named("fn")` (`src/ownership/borrow_checker.rs:236`) and released against
-`Lifetime::Scope(n)` (`src/ownership/mod.rs:109`), so the borrow is never released — the same
-value cannot be passed twice.
+conflicting-borrow detection. **A previous version of this annex asserted a defect here that does
+not exist; it is retracted and re-measured in [A9.4](#a94-defect-d6-retracted).**
 
 *(v0.2 said the checker "is currently stricter than the language needs in at least two measured
 cases (`examples/practical/simple_sort.pd`, `tests/misc/test_vec_i64.pd` both fail with
 "Conflicting borrows"). Re-measured at `abeb665`: `test_vec_i64.pd` now **compiles**, and
 `simple_sort.pd` fails with "Unsupported type in reference parameter", not a borrow error. The
-v0.2 sentence is retracted; the surviving borrow-checker defect is the lifetime-kind mismatch
-above.)*
+v0.2 sentence is retracted; the surviving borrow-checker defect is
+[A9.3](#a93-mut-of-an-immutable-local-is-accepted).)*
 
 **[N9](#n9-references-and-lifetimes) is unimplemented in full.** `ref` is not a keyword; the
 implemented spelling is Rust's `&`/`&mut` **with** `'a` parameter lists — the exact annotation
@@ -937,9 +1035,12 @@ Consequence for whichever ruling lands:
 
 - **Option A (value semantics)** would make this row **unimplemented**, and the gap is exactly
   `src/codegen/mod.rs:1555`: it emits a decayed declarator where a copy is required.
-- **Option B (reference semantics)** would make this row **implemented**, and would turn the
-  codegen refusal of writes through a non-`mut` parameter into a permanent rule rather than a
-  placeholder.
+- **Option B (reference semantics)** would make this row **partial at best — never implemented**,
+  because Option B is not "what the compiler already does". It needs a further rule that does not
+  exist yet: either the reference spellings are forbidden, or `&mut [T; N]` becomes the required
+  spelling for a parameter written through. Current behaviour satisfies neither. It permits
+  mutation through a bare non-`mut` array with no diagnostic, and it rejects `&mut [T; N]`
+  outright, so under Option B the implementation is wrong in both directions at once.
 
 The interim behaviour on the codegen branch — refusing writes except through `&mut [T; N]` and
 `mut xs: [T; N]` — enforces [`bootstrap-subset.md`](bootstrap-subset.md)'s existing convention
@@ -971,6 +1072,55 @@ Scope of the defect, measured: it reproduces for **struct** referents. It does n
 arrays (`&mut [T; N]` is rejected earlier, [A9.2](#a92-array-parameters)) and not for `i64`
 (`&mut i64` produces C that gcc rejects). A brief handed to this unit reported the array case as
 reproducing; it does not at `abeb665`, and the struct case does.
+
+### A9.4 Defect D6, retracted
+
+A previous version of this annex, and of
+[`feature-index.yaml`](../reference/features/feature-index.yaml), stated that a call argument is
+borrowed as `Lifetime::Named("fn")` and released against `Lifetime::Scope(n)`, so the borrow is
+never released and a value cannot be passed twice. That claim cited
+`src/ownership/borrow_checker.rs:236`.
+
+**The claim is false and the citation was wrong.** `:236` is
+`ReturnOwnership::Borrowed(Lifetime::Named("fn"))` — the ownership classification for a function's
+**borrowed return value**, which has nothing to do with argument lifetimes. The citation had a
+green fingerprint the whole time, which is exactly the gate's limit: a pin proves a line has not
+moved, never that it supports the claim.
+
+Re-measured from scratch at `abeb665`:
+
+| Program | Result |
+|---|---|
+| `t(s); t(s);` — same `String` passed to two separate calls | accepted, prints `5 5` |
+| `take2(s, s)` — same `String` twice in one call | accepted, prints `10` |
+| `s1(v); s1(v);` — same array to two separate calls | accepted, prints `1 1` |
+| `bump(&mut p); bump(&mut p);` — successive mutable borrows | accepted, prints `2` |
+| `print(p.name); f(p.name); p.n` — field to a builtin, then reused | accepted, prints `abc 3 1` |
+
+None of D6's symptoms reproduce. The call path creates a per-call lifetime and ends its borrows
+when the call finishes: `src/ownership/borrow_checker.rs:514` (`let call_lifetime =
+self.context.new_lifetime();`) and `:520` (`self.context.end_borrows(&call_lifetime);`), with the
+contract stated at `:43-44` — "the caller-side borrow always lasts exactly for the call
+expression".
+
+D6 was **fixed in commit `191f8c1`** ("fix(compiler): five defects that made the language
+unusable", 2026-08-21), twelve commits before `abeb665`. Its message says so directly: *"D6 call
+arguments were borrowed forever. Argument borrows were tagged `Lifetime::Named("fn")` while release
+only removed `Lifetime::Scope(n)`, so a value could never be passed to two functions. Borrows now
+end with the call."* The description was accurate about the original defect and was carried forward
+into documentation written after the fix landed.
+
+Two rejections do still occur, and both are correct rather than defects:
+
+- `take2(p, p)` where `p` is a **struct** — `Use of moved value: p`. Struct parameters are moves
+  (`src/ownership/borrow_checker.rs:219`), so this is move semantics working.
+- `sum2(v, v)` with two `mut [i64; 3]` parameters — `Conflicting borrows`. A `mut` array parameter
+  is a mutable borrow (`src/ownership/borrow_checker.rs:205`), so passing the same array as two
+  simultaneous mutable borrows is correctly refused.
+
+> **Action outside this repository's documentation:** the project's `CLAUDE.md` lists D6 under
+> "남은 결함 (열림)" — remaining open defects. That is stale by twelve commits and should be moved
+> to the fixed list. This unit did not edit `CLAUDE.md`.
 
 ## A10. Execution model
 

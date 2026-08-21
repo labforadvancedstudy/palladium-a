@@ -93,40 +93,6 @@ fn sum<T: Add>(a: T, b: T) -> T {
 }
 ```
 
-## Implementation Plan
-
-### Phase 1: Basic Generic Functions (This week)
-1. **Lexer/Parser changes**:
-   - Add `<` and `>` for type parameters
-   - Parse generic function signatures
-   - Parse generic type instantiations
-
-2. **AST changes**:
-   ```rust
-   struct Function {
-       type_params: Vec<String>, // ["T", "U"]
-       // ... existing fields
-   }
-   ```
-
-3. **Type checking**:
-   - Track generic parameters in scope
-   - Substitute concrete types during instantiation
-   - Verify type consistency
-
-4. **Code generation**:
-   - Monomorphization: generate specialized versions
-   - Name mangling for different instantiations
-
-### Phase 2: Generic Structs (Next week)
-- Extend parser for struct type parameters
-- Handle generic fields in type checker
-- Generate specialized struct definitions
-
-### Phase 3: Generic Enums (Following week)
-- Similar to structs but with variants
-- Special handling for Option and Result
-
 ## Example: Implementation Steps
 
 Starting with the simplest case:
@@ -204,6 +170,49 @@ undecided and defines nothing. The distinction matters because "not yet built" a
 decided" were previously carried by the same PROPOSAL banner, which made every open question look
 like settled design awaiting an implementer.</sub>
 
-No question in this document has been escalated as open yet. When one is, it moves here rather
-than being silently resolved in place, and [`language-spec.md` §N10](../specification/language-spec.md#n10-traits-and-generics)
-links to it.
+Nothing in this document has been escalated as an open *design* question yet. What is here is
+material that was carried above the fold as though it were definitional and is not: work
+schedules, and status marks that were false. It sits here so that the banner above cannot be read
+as blessing it.
+
+### Relocated: Implementation Plan
+
+<sub>**Non-normative.** This was above the fold when the dual-axis banner landed, which
+silently promoted a work schedule to normative language definition. A schedule is neither a
+definition nor a measurement: these week estimates were written in January 2025 and none of
+the work happened. Implementation status is the annex's job
+([`language-spec.md` Part II](../specification/language-spec.md#part-ii-implementation-status-annex)).</sub>
+
+## Implementation Plan
+
+### Phase 1: Basic Generic Functions (This week)
+1. **Lexer/Parser changes**:
+   - Add `<` and `>` for type parameters
+   - Parse generic function signatures
+   - Parse generic type instantiations
+
+2. **AST changes**:
+   ```rust
+   struct Function {
+       type_params: Vec<String>, // ["T", "U"]
+       // ... existing fields
+   }
+   ```
+
+3. **Type checking**:
+   - Track generic parameters in scope
+   - Substitute concrete types during instantiation
+   - Verify type consistency
+
+4. **Code generation**:
+   - Monomorphization: generate specialized versions
+   - Name mangling for different instantiations
+
+### Phase 2: Generic Structs (Next week)
+- Extend parser for struct type parameters
+- Handle generic fields in type checker
+- Generate specialized struct definitions
+
+### Phase 3: Generic Enums (Following week)
+- Similar to structs but with variants
+- Special handling for Option and Result
