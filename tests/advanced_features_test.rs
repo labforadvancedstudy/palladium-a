@@ -1,14 +1,27 @@
+// End-to-end tests for language features that do not exist yet.
+//
+// Every test here carries an `#[ignore = "XFAIL: …"]` naming the missing
+// feature and the milestone that owns it; `make test-xfail` fails if one of
+// them starts passing. See the header of `tests/advanced_e2e_test.rs`.
+
+mod common;
+
+use common::unique_source_name;
 use palladium::Driver;
 use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// Helper to compile and run a Palladium program
+/// Helper to compile and run a Palladium program.
+///
+/// The source file name is unique because the driver turns it into
+/// `build_output/<stem>.c`, a path shared with every other test binary.
+/// See `tests/common/mod.rs`.
 fn compile_and_run(source: &str) -> Result<String, String> {
     let temp_dir = TempDir::new().unwrap();
-    let source_path = temp_dir.path().join("test.pd");
+    let source_path = temp_dir.path().join(unique_source_name("adv_feat"));
     let output_path = temp_dir.path().join("test");
-    
+
     fs::write(&source_path, source).unwrap();
     
     // Compile
@@ -43,6 +56,7 @@ fn compile_and_run(source: &str) -> Result<String, String> {
 }
 
 #[test]
+#[ignore = "XFAIL: the `await` operator — grammar.ebnf:203 has `.await` as a postfix, never `await expr`; and async emits a call to a function that is never generated (owned by unscheduled, after M4 at the earliest)"]
 fn test_async_await_basic() {
     let source = r#"
     async fn fetch_data() -> int {
@@ -57,11 +71,12 @@ fn test_async_await_basic() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     assert_eq!(result.unwrap().trim(), "42");
 }
 
 #[test]
+#[ignore = "XFAIL: the `await` operator — same as test_async_await_basic (owned by unscheduled, after M4 at the earliest)"]
 fn test_async_await_multiple() {
     let source = r#"
     async fn fetch_a() -> int { 10 }
@@ -77,16 +92,17 @@ fn test_async_await_multiple() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     assert_eq!(result.unwrap().trim(), "60");
 }
 
 #[test]
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:87 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, after M4 at the earliest)"]
 fn test_effects_system() {
     let source = r#"
     effect IO {
-        fn read_line() -> string;
-        fn write_line(s: string);
+        fn read_line() -> String;
+        fn write_line(s: String);
     }
     
     effect Random {
@@ -111,15 +127,16 @@ fn test_effects_system() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     assert_eq!(result.unwrap().trim(), "42");
 }
 
 #[test]
+#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:105 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
 fn test_trait_system() {
     let source = r#"
     trait Display {
-        fn display(&self) -> string;
+        fn display(&self) -> String;
     }
     
     struct Point {
@@ -128,7 +145,7 @@ fn test_trait_system() {
     }
     
     impl Display for Point {
-        fn display(&self) -> string {
+        fn display(&self) -> String {
             "Point(" + self.x + ", " + self.y + ")"
         }
     }
@@ -144,11 +161,12 @@ fn test_trait_system() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     assert!(result.unwrap().contains("Point(10, 20)"));
 }
 
 #[test]
+#[ignore = "XFAIL: `self` as an assignment target — grammar.ebnf:152 `place = identifier | place '[' … | place '.' … | '*' identifier` and `self` is a keyword (line 42), not an identifier, so `self.data[0] = item` does not parse (owned by M2, surface syntax)"]
 fn test_generic_collections() {
     let source = r#"
     struct Vec<T> {
@@ -184,7 +202,7 @@ fn test_generic_collections() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("1"));
     assert!(output.contains("2"));
@@ -192,6 +210,7 @@ fn test_generic_collections() {
 }
 
 #[test]
+#[ignore = "XFAIL: multi-parameter generic enums — `Result<T, E>` loses its second type argument, so `Result::Err(String)` is checked against Int (owned by M4, 'Generics that work')"]
 fn test_pattern_matching_advanced() {
     let source = r#"
     enum Option<T> {
@@ -204,7 +223,7 @@ fn test_pattern_matching_advanced() {
         Err(E)
     }
     
-    fn divide(a: int, b: int) -> Result<int, string> {
+    fn divide(a: int, b: int) -> Result<int, String> {
         if b == 0 {
             Result::Err("Division by zero")
         } else {
@@ -226,13 +245,14 @@ fn test_pattern_matching_advanced() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("5"));
     assert!(output.contains("Division by zero"));
 }
 
 #[test]
+#[ignore = "XFAIL: closures — grammar.ebnf:224 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closures() {
     let source = r#"
     fn main() {
@@ -249,7 +269,7 @@ fn test_closures() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("15"));
     assert!(output.contains("20"));
@@ -257,6 +277,7 @@ fn test_closures() {
 }
 
 #[test]
+#[ignore = "XFAIL: method-call syntax `x.f()` — grammar.ebnf:220 says it parses and is then rejected with 'Indirect function calls not yet supported' (owned by M2, item 1)"]
 fn test_lifetime_annotations() {
     let source = r#"
     struct Ref<'a, T> {
@@ -280,11 +301,12 @@ fn test_lifetime_annotations() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     assert_eq!(result.unwrap().trim(), "world!");
 }
 
 #[test]
+#[ignore = "XFAIL: raw pointer types and `as` casts — grammar.ebnf:224 'no `as` casts'; there is no `*mut T` type either (owned by M4, 'A real reference type')"]
 fn test_unsafe_operations() {
     let source = r#"
     fn main() {
@@ -308,13 +330,14 @@ fn test_unsafe_operations() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("100"));
     assert!(output.contains("123"));
 }
 
 #[test]
+#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:114 defines only `macro name!(pattern) block`, so `macro_rules! vec { … }` is not an item (owned by M5, tooling)"]
 fn test_macros() {
     let source = r#"
     macro_rules! vec {
@@ -346,11 +369,12 @@ fn test_macros() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     assert!(result.unwrap().contains("All assertions passed!"));
 }
 
 #[test]
+#[ignore = "XFAIL: const generic parameters (`const N: int`) — the type-parameter list rejects the `const` keyword (owned by M4, 'Generics that work')"]
 fn test_const_generics() {
     let source = r#"
     struct Array<T, const N: int> {
@@ -377,13 +401,14 @@ fn test_const_generics() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("5"));
     assert!(output.contains("10"));
 }
 
 #[test]
+#[ignore = "XFAIL: inline `mod` blocks — grammar.ebnf:70 lists no module item, so `mod math { … }` is not an item (owned by M2, surface syntax)"]
 fn test_module_system() {
     let source = r#"
     mod math {
@@ -417,7 +442,7 @@ fn test_module_system() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("8"));
     assert!(output.contains("28"));
@@ -425,6 +450,7 @@ fn test_module_system() {
 }
 
 #[test]
+#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:103 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
 fn test_iterator_protocol() {
     let source = r#"
     trait Iterator {
@@ -461,7 +487,7 @@ fn test_iterator_protocol() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     for i in 0..5 {
         assert!(output.contains(&i.to_string()));
@@ -469,6 +495,7 @@ fn test_iterator_protocol() {
 }
 
 #[test]
+#[ignore = "XFAIL: the `?` operator against a real Result — grammar.ebnf:225 '`?` and `.await` parse and then generate C that does not compile'; the enum's second type argument is dropped before it gets that far (owned by M4, exit criterion)"]
 fn test_error_handling_sugar() {
     let source = r#"
     enum Result<T, E> {
@@ -476,7 +503,7 @@ fn test_error_handling_sugar() {
         Err(E)
     }
     
-    fn might_fail(x: int) -> Result<int, string> {
+    fn might_fail(x: int) -> Result<int, String> {
         if x < 0 {
             Result::Err("Negative number")
         } else {
@@ -484,7 +511,7 @@ fn test_error_handling_sugar() {
         }
     }
     
-    fn process() -> Result<int, string> {
+    fn process() -> Result<int, String> {
         let a = might_fail(5)?;
         let b = might_fail(10)?;
         let c = might_fail(-1)?; // This will return early
@@ -500,6 +527,6 @@ fn test_error_handling_sugar() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     assert!(result.unwrap().contains("Negative number"));
 }

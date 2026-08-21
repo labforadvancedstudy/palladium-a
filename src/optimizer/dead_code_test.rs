@@ -331,19 +331,24 @@ mod tests {
                         ]),
                         span: Span::dummy(),
                     },
-                    Stmt::Expr(Expr::Integer(3)), // Reachable (if condition is false and no else)
+                    // Dead: BOTH arms of the if above diverge (break / continue),
+                    // so control cannot reach this statement. See the rule in
+                    // `can_continue_after` (src/optimizer/dead_code.rs:50-58):
+                    // with an else branch present, control continues past the
+                    // `if` only when both branches can continue.
+                    Stmt::Expr(Expr::Integer(3)),
                 ],
                 span: Span::dummy(),
             },
         ]);
-        
+
         pass.optimize_program(&mut program).unwrap();
-        
+
         match &program.items[0] {
             Item::Function(func) => {
                 match &func.body[0] {
                     Stmt::While { body, .. } => {
-                        assert_eq!(body.len(), 2); // If and the expression after
+                        assert_eq!(body.len(), 1); // Only the if; the expression after it is unreachable
                         match &body[0] {
                             Stmt::If { then_branch, else_branch, .. } => {
                                 assert_eq!(then_branch.len(), 1); // Only break
@@ -355,6 +360,50 @@ mod tests {
                     _ => panic!("Expected While statement"),
                 }
             }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// The complement of `test_complex_control_flow`: an `if` with no else
+    /// branch may be skipped entirely, so a statement after it is reachable
+    /// even when the then branch diverges. Without this case, changing the
+    /// rule to "an `if` always terminates" would leave both tests green.
+    #[test]
+    fn test_statement_after_if_without_else_is_kept() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![Stmt::While {
+            condition: Expr::Bool(true),
+            body: vec![
+                Stmt::If {
+                    condition: Expr::Ident("x".to_string()),
+                    then_branch: vec![
+                        Stmt::Break { span: Span::dummy() },
+                        Stmt::Expr(Expr::Integer(1)), // Dead
+                    ],
+                    else_branch: None,
+                    span: Span::dummy(),
+                },
+                Stmt::Expr(Expr::Integer(3)), // Reachable: the if may be skipped
+            ],
+            span: Span::dummy(),
+        }]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => match &func.body[0] {
+                Stmt::While { body, .. } => {
+                    assert_eq!(body.len(), 2); // If and the expression after it
+                    match &body[0] {
+                        Stmt::If { then_branch, .. } => {
+                            assert_eq!(then_branch.len(), 1); // Only break
+                        }
+                        _ => panic!("Expected If statement"),
+                    }
+                }
+                _ => panic!("Expected While statement"),
+            },
             _ => panic!("Expected Function item"),
         }
     }
@@ -439,7 +488,9 @@ mod tests {
                                 ]),
                                 span: Span::dummy(),
                             },
-                            Stmt::Expr(Expr::Integer(3)), // Reachable if inner if takes neither branch
+                            // Dead: an if/else always takes one of its arms, and
+                            // both of the inner ones diverge (return / break).
+                            Stmt::Expr(Expr::Integer(3)),
                         ],
                         else_branch: None,
                         span: Span::dummy(),
@@ -459,7 +510,7 @@ mod tests {
                     Stmt::While { body, .. } => {
                         match &body[0] {
                             Stmt::If { then_branch, .. } => {
-                                assert_eq!(then_branch.len(), 2); // Inner if and expr
+                                assert_eq!(then_branch.len(), 1); // Only the inner if; what follows is unreachable
                                 match &then_branch[0] {
                                     Stmt::If { then_branch: inner_then, else_branch: inner_else, .. } => {
                                         assert_eq!(inner_then.len(), 1); // Dead code removed

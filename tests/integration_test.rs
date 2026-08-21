@@ -1,14 +1,23 @@
 // Integration tests for Alan von Palladium Compiler v0.1
 // Testing the legendary compiler's basic functionality
 
+mod common;
+
+use common::unique_source_name;
 use palladium::{CompileError, Driver};
 use std::fs;
 use std::path::Path;
 
-/// Helper function to compile a source string and check if it succeeds
+/// Helper function to compile a source string and check if it succeeds.
+///
+/// `name` is only a label: the driver derives the output path from it
+/// (`build_output/<stem>.c`), so it is suffixed to stay unique across the
+/// parallel test binaries. See `tests/common/mod.rs`.
 fn compile_source(source: &str, name: &str) -> Result<(), CompileError> {
     let driver = Driver::new();
-    driver.compile_string(source, name).map(|_| ())
+    driver
+        .compile_string(source, &unique_source_name(name))
+        .map(|_| ())
 }
 
 /// Helper function to create a temporary test file
@@ -27,7 +36,7 @@ fn main() {
 }
 "#;
 
-    let result = compile_source(source, "hello.pd");
+    let result = compile_source(source, "hello");
     assert!(
         result.is_ok(),
         "Hello world program should compile successfully"
@@ -45,7 +54,7 @@ fn main() {
 }
 "#;
 
-    let result = compile_source(source, "multi_print.pd");
+    let result = compile_source(source, "multi_print");
     assert!(
         result.is_ok(),
         "Multiple print statements should compile successfully"
@@ -60,7 +69,7 @@ fn main() {
 }
 "#;
 
-    let test_file = create_test_file(source, "test_hello.pd");
+    let test_file = create_test_file(source, &unique_source_name("run_hello"));
     let driver = Driver::new();
 
     let result = driver.compile_and_run(&test_file);
@@ -76,13 +85,19 @@ fn main() {
 
 #[test]
 fn test_syntax_error_missing_semicolon() {
+    // The statement whose semicolon is missing must not be the last thing in
+    // the block. `block = '{' { statement } [ expression ] '}'`
+    // (docs/specification/grammar.ebnf:174), so a call with no semicolon at the
+    // end of a body is a *trailing expression* and compiles — which is why this
+    // test used to fail: it asserted an error for a legal program.
     let source = r#"
 fn main() {
     print("Missing semicolon")  // Missing semicolon
+    print("next statement");
 }
 "#;
 
-    let result = compile_source(source, "syntax_error.pd");
+    let result = compile_source(source, "syntax_error");
     assert!(
         result.is_err(),
         "Missing semicolon should cause compilation error"
@@ -109,7 +124,7 @@ fn main() {
 }
 "#;
 
-    let result = compile_source(source, "unclosed_string.pd");
+    let result = compile_source(source, "unclosed_string");
     assert!(
         result.is_err(),
         "Unclosed string should cause compilation error"
@@ -125,7 +140,7 @@ fn main {
 }
 "#;
 
-    let result = compile_source(source, "invalid_func.pd");
+    let result = compile_source(source, "invalid_func");
     assert!(
         result.is_err(),
         "Invalid function syntax should cause compilation error"
@@ -141,7 +156,7 @@ fn not_main() {
 }
 "#;
 
-    let result = compile_source(source, "no_main.pd");
+    let result = compile_source(source, "no_main");
     assert!(
         result.is_err(),
         "Missing main function should cause compilation error"
@@ -156,7 +171,7 @@ fn main() {
 }
 "#;
 
-    let result = compile_source(source, "undefined_func.pd");
+    let result = compile_source(source, "undefined_func");
     assert!(
         result.is_err(),
         "Calling undefined function should cause compilation error"
@@ -172,7 +187,7 @@ fn main() {
 }
 "#;
 
-    let result = compile_source(source, "empty_main.pd");
+    let result = compile_source(source, "empty_main");
     assert!(
         result.is_ok(),
         "Empty main function should compile successfully"
@@ -190,7 +205,7 @@ fn main() {
 }
 "#;
 
-    let result = compile_source(source, "comments.pd");
+    let result = compile_source(source, "comments");
     assert!(
         result.is_ok(),
         "Program with comments should compile successfully"
@@ -210,7 +225,7 @@ fn main() {
 }
 "#;
 
-    let result = compile_source(source, "multi_func.pd");
+    let result = compile_source(source, "multi_func");
     // This might fail in v0.1 if function calls aren't fully implemented
     match result {
         Ok(_) => println!("Function calls are supported in v0.1"),
@@ -238,7 +253,7 @@ fn test_compile_file_not_found() {
 #[test]
 fn test_empty_source_file() {
     let source = "";
-    let result = compile_source(source, "empty.pd");
+    let result = compile_source(source, "empty");
 
     assert!(
         result.is_err(),
@@ -249,7 +264,7 @@ fn test_empty_source_file() {
 #[test]
 fn test_whitespace_only_file() {
     let source = "   \n\n   \t\t  \n  ";
-    let result = compile_source(source, "whitespace.pd");
+    let result = compile_source(source, "whitespace");
 
     assert!(
         result.is_err(),
@@ -276,7 +291,7 @@ fn main() {
 }
 "#;
 
-    let result = compile_source(source, "longer.pd");
+    let result = compile_source(source, "longer");
     assert!(result.is_ok(), "Longer program should compile successfully");
 }
 
@@ -290,7 +305,7 @@ fn main() {
 "#;
 
     let driver = Driver::new();
-    let result = driver.compile_string(source, "test_output.pd");
+    let result = driver.compile_string(source, &unique_source_name("verify_c_output"));
 
     assert!(result.is_ok(), "Should generate C output successfully");
 

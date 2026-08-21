@@ -1,18 +1,31 @@
 // End-to-end tests for advanced Palladium language features
-// Testing generics, traits, async, effects, and more
+// (generics, traits, async, effects, and more).
+//
+// Every test in this file needs a language feature that does not exist yet, so
+// every one carries an `#[ignore = "XFAIL: …"]` naming the missing feature, the
+// line of `docs/specification/grammar.ebnf` that records its absence, and the
+// milestone that owns it. `make test-xfail` runs them and fails if any starts
+// passing — a stale expectation is the failure mode this repo exists to kill,
+// which is the same rule `scripts/conformance.sh` applies to XPASS.
 
+mod common;
+
+use common::unique_source_name;
 use palladium::Driver;
 use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// Helper to compile source and run the resulting executable
+/// Helper to compile source and run the resulting executable.
+///
+/// The source file name is unique because the driver turns it into
+/// `build_output/<stem>.c`, a path shared with every other test binary.
+/// See `tests/common/mod.rs`.
 fn compile_and_run(source: &str) -> Result<String, String> {
     let temp_dir = TempDir::new().unwrap();
-    let source_path = temp_dir.path().join("test.pd");
-    let _c_path = temp_dir.path().join("test.c");
+    let source_path = temp_dir.path().join(unique_source_name("adv_e2e"));
     let exe_path = temp_dir.path().join("test");
-    
+
     // Write source
     fs::write(&source_path, source).unwrap();
     
@@ -48,6 +61,7 @@ fn compile_and_run(source: &str) -> Result<String, String> {
 }
 
 #[test]
+#[ignore = "XFAIL: generic functions are not monomorphised per call site — `identity(42)` fixes T, then `identity('hello')` is rejected with 'expected String, found Int' (owned by M4, 'Generics that work')"]
 fn test_generic_identity_function() {
     let source = r#"
     fn identity<T>(x: T) -> T {
@@ -62,7 +76,7 @@ fn test_generic_identity_function() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("42"));
     assert!(output.contains("hello"));
@@ -70,6 +84,7 @@ fn test_generic_identity_function() {
 }
 
 #[test]
+#[ignore = "XFAIL: generic structs with an impl block — `Pair::new` is resolved as an enum variant path, so it reports 'Undefined enum type: Pair' (owned by M4, 'Generics that work')"]
 fn test_generic_pair() {
     let source = r#"
     struct Pair<T, U> {
@@ -99,7 +114,7 @@ fn test_generic_pair() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     let lines: Vec<&str> = output.trim().split('\n').collect();
     assert_eq!(lines[0], "10");
@@ -109,6 +124,7 @@ fn test_generic_pair() {
 }
 
 #[test]
+#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:105 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
 fn test_trait_implementation() {
     let source = r#"
     trait Drawable {
@@ -153,7 +169,7 @@ fn test_trait_implementation() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("Drawing circle"));
     assert!(output.contains("5"));
@@ -163,6 +179,7 @@ fn test_trait_implementation() {
 }
 
 #[test]
+#[ignore = "XFAIL: method-call syntax `x.f()` — grammar.ebnf:220 says it parses and is then rejected with 'Indirect function calls not yet supported' (owned by M2, item 1)"]
 fn test_option_enum() {
     let source = r#"
     enum Option<T> {
@@ -210,7 +227,7 @@ fn test_option_enum() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("5"));
     assert!(output.contains("Division by zero"));
@@ -218,6 +235,7 @@ fn test_option_enum() {
 }
 
 #[test]
+#[ignore = "XFAIL: multi-parameter generic enums — `Result<T, E>` loses its second type argument, so `Result::Err(String)` is checked against Int (owned by M4, 'Generics that work')"]
 fn test_result_error_handling() {
     let source = r#"
     enum Result<T, E> {
@@ -225,7 +243,7 @@ fn test_result_error_handling() {
         Err(E)
     }
     
-    fn parse_int(s: string) -> Result<int, string> {
+    fn parse_int(s: String) -> Result<int, String> {
         // Simplified - just check if it's "42"
         if s == "42" {
             Result::Ok(42)
@@ -254,7 +272,7 @@ fn test_result_error_handling() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("Parsed:"));
     assert!(output.contains("42"));
@@ -262,6 +280,7 @@ fn test_result_error_handling() {
 }
 
 #[test]
+#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:103 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
 fn test_iterator_trait() {
     let source = r#"
     trait Iterator {
@@ -298,7 +317,7 @@ fn test_iterator_trait() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     for i in 0..5 {
         assert!(output.contains(&i.to_string()));
@@ -306,6 +325,7 @@ fn test_iterator_trait() {
 }
 
 #[test]
+#[ignore = "XFAIL: closures — grammar.ebnf:224 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closure_capture() {
     let source = r#"
     fn main() {
@@ -324,7 +344,7 @@ fn test_closure_capture() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("15"));  // 10 + 5
     assert!(output.contains("20"));  // 10 + 10
@@ -333,6 +353,7 @@ fn test_closure_capture() {
 }
 
 #[test]
+#[ignore = "XFAIL: function types — grammar.ebnf:137 'No function types'; a parameter declared `f: fn(T) -> U` stops the parser at 'fn' (owned by M4, 'Abstraction')"]
 fn test_higher_order_functions() {
     let source = r#"
     fn map<T, U>(arr: [T; 5], f: fn(T) -> U) -> [U; 5] {
@@ -358,7 +379,7 @@ fn test_higher_order_functions() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("2"));
     assert!(output.contains("4"));
@@ -368,7 +389,7 @@ fn test_higher_order_functions() {
 }
 
 #[test]
-#[ignore] // Async support not yet implemented
+#[ignore = "XFAIL: async/await — MILESTONES.md 'Not scheduled, and why': `async` emits a call to a function that is never generated (owned by unscheduled, after M4 at the earliest)"]
 fn test_async_await() {
     let source = r#"
     async fn fetch_data(id: int) -> int {
@@ -390,17 +411,17 @@ fn test_async_await() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     assert_eq!(result.unwrap().trim(), "30"); // (5*2) + (10*2)
 }
 
 #[test]
-#[ignore] // Effects system not yet implemented
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:87 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, after M4 at the earliest)"]
 fn test_effects_system() {
     let source = r#"
     effect IO {
-        fn read_line() -> string;
-        fn write_line(s: string);
+        fn read_line() -> String;
+        fn write_line(s: String);
     }
     
     effect State<T> {
@@ -427,7 +448,7 @@ fn test_effects_system() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("Starting computation"));
     assert!(output.contains("45")); // 5*7 + 10
@@ -435,6 +456,7 @@ fn test_effects_system() {
 }
 
 #[test]
+#[ignore = "XFAIL: struct-variant patterns with field shorthand and `if` guards — grammar.ebnf:234 'No literal patterns, ranges, or-patterns, guards, tuple/slice patterns, ref/mut bindings, @ bindings, field shorthand' (owned by M2, item 4)"]
 fn test_pattern_matching_guards() {
     let source = r#"
     enum Message {
@@ -483,7 +505,7 @@ fn test_pattern_matching_guards() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("Moving to positive quadrant"));
     assert!(output.contains("Moving to other location"));
@@ -496,6 +518,7 @@ fn test_pattern_matching_guards() {
 }
 
 #[test]
+#[ignore = "XFAIL: const generic parameters (`const ROWS: int`) — the type-parameter list rejects the `const` keyword (owned by M4, 'Generics that work')"]
 fn test_const_generics_arrays() {
     let source = r#"
     struct Matrix<T, const ROWS: int, const COLS: int> {
@@ -537,7 +560,7 @@ fn test_const_generics_arrays() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     for i in 1..=6 {
         assert!(output.contains(&i.to_string()));
@@ -545,6 +568,7 @@ fn test_const_generics_arrays() {
 }
 
 #[test]
+#[ignore = "XFAIL: tuple expressions — grammar.ebnf:224 'no tuple expressions'; tuple *types* parse but lower to void* and cannot be constructed (owned by M2, surface syntax)"]
 fn test_type_aliases_complex() {
     let source = r#"
     type NodeId = int;
@@ -575,7 +599,7 @@ fn test_type_aliases_complex() {
     "#;
     
     let result = compile_and_run(source);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
     assert!(output.contains("0"));
     assert!(output.contains("1"));

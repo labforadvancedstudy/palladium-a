@@ -1,29 +1,85 @@
-// Comprehensive tests for the Palladium compiler core components
-// Testing from a bird's eye view to achieve 80% coverage
+// Comprehensive tests for the Palladium compiler core components.
+//
+// Every expectation here is the C the compiler actually emits, checked against
+// `docs/specification/grammar.ebnf`. Three things had drifted and made all of
+// these fail:
+//
+//   1. `int`/`string` in the expected C. The integer type lowers to
+//      `long long` (`int` is only a source-level alias for `i64`,
+//      `src/parser/mod.rs:2064`) and `print` lowers to `__pd_print`, not
+//      `printf`.
+//   2. Fragments with no `fn main`. The driver rejects a program without one
+//      ("No main function found"), so a declaration-only snippet cannot be
+//      compiled at all.
+//   3. Constant folding. The optimizer runs by default
+//      (`src/driver/mod.rs:173-176`), so `1 + 2` never reaches the C as
+//      `(1 + 2)`. Operator tests therefore use variables, which is what they
+//      meant to test anyway: that the operator survives, not that folding is off.
+//
+// Cases that need a language feature that does not exist are `#[ignore]`d
+// individually with the missing feature named — never folded back into a
+// passing test. See `make test-xfail`.
 
-use palladium::{Driver, CompileError};
+mod common;
 
-/// Helper function to compile source and check success
+use common::unique_source_name;
+use palladium::{CompileError, Driver};
+
+/// Compile source and return the generated C.
+///
+/// The virtual filename is unique per call: it decides the output path
+/// (`build_output/<stem>.c`), and a shared one races under cargo's parallel
+/// test threads. See `tests/common/mod.rs`.
 fn compile_source(source: &str) -> Result<String, CompileError> {
     let driver = Driver::new();
-    driver.compile_string(source, "test.pd").map(|path| {
-        // Read the generated C file
-        std::fs::read_to_string(path).unwrap_or_else(|_| String::new())
-    })
+    driver
+        .compile_string(source, &unique_source_name("cct"))
+        .map(|path| std::fs::read_to_string(path).unwrap_or_else(|_| String::new()))
 }
 
-/// Helper to compile and verify C output contains expected patterns
+/// Compile and verify the C output contains every expected pattern.
 fn compile_and_verify(source: &str, expected_patterns: &[&str]) {
     let result = compile_source(source);
-    assert!(result.is_ok(), "Failed to compile:\n{}", source);
-    
+    assert!(
+        result.is_ok(),
+        "Failed to compile:\n{}\nError: {}",
+        source,
+        result
+            .as_ref()
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+    );
+
     let output = result.unwrap();
     for pattern in expected_patterns {
         assert!(
             output.contains(pattern),
             "Output missing '{}' for source:\n{}\nGenerated:\n{}",
-            pattern, source, output
+            pattern,
+            source,
+            output
         );
+    }
+}
+
+/// Assert that a source fails to compile, and that the message says why.
+fn compile_error_contains(source: &str, needle: &str) {
+    match compile_source(source) {
+        Ok(c) => panic!(
+            "Expected an error for:\n{}\nbut it compiled to:\n{}",
+            source, c
+        ),
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains(needle),
+                "Error for:\n{}\nshould mention '{}', got: {}",
+                source,
+                needle,
+                msg
+            );
+        }
     }
 }
 
@@ -32,27 +88,33 @@ fn test_all_keywords() {
     let test_cases = vec![
         // Core keywords
         ("fn main() { }", vec!["int main("]),
-        ("fn main() { let x = 5; }", vec!["int x = 5;"]),
+        ("fn main() { let x = 5; }", vec!["long long x = 5;"]),
         ("fn main() { if true { } }", vec!["if (1)"]),
         ("fn main() { if true { } else { } }", vec!["if (1)", "else"]),
         ("fn main() { while true { } }", vec!["while (1)"]),
-        ("fn main() { for i in 0..10 { } }", vec!["for", "int i"]),
-        ("fn foo() -> int { return 42; }", vec!["return 42;"]),
-        ("struct Point { x: int, y: int }", vec!["struct Point", "int x;", "int y;"]),
-        ("enum Option { Some, None }", vec!["typedef enum"]),
-        
+        (
+            "fn main() { for i in 0..10 { } }",
+            vec!["for (long long i = 0; i < 10; i++)"],
+        ),
+        (
+            "fn foo() -> int { return 42; }\nfn main() { }",
+            vec!["long long foo()", "return 42;"],
+        ),
+        (
+            "struct Point { x: int, y: int }\nfn main() { }",
+            vec!["struct Point", "long long x;", "long long y;"],
+        ),
+        (
+            "enum Option { Some, None }\nfn main() { }",
+            vec!["typedef enum"],
+        ),
         // Advanced keywords
-        ("fn main() { match 1 { 1 => {}, _ => {} } }", vec!["switch"]),
-        ("trait Display { }", vec!["// Trait:"]),
         ("pub fn main() { }", vec!["int main("]),
-        ("const X: int = 5;", vec!["const int X = 5;"]),
-        ("static Y: int = 10;", vec!["static int Y = 10;"]),
-        ("fn main() { let mut z = 0; }", vec!["int z = 0;"]),
-        ("type Int = int;", vec!["typedef int Int;"]),
-        ("fn main() { loop { break; } }", vec!["while (1)", "break;"]),
-        ("fn main() { loop { continue; } }", vec!["while (1)", "continue;"]),
-        ("fn main() { let x = 5 as int; }", vec!["int x = ((int)5);"]),
-        ("fn main() { let t = true; let f = false; }", vec!["int t = 1;", "int f = 0;"]),
+        ("fn main() { let mut z = 0; }", vec!["long long z = 0;"]),
+        (
+            "fn main() { let t = true; let f = false; }",
+            vec!["int t = 1;", "int f = 0;"],
+        ),
     ];
 
     for (source, patterns) in test_cases {
@@ -61,45 +123,147 @@ fn test_all_keywords() {
 }
 
 #[test]
-fn test_all_operators() {
-    let test_cases = vec![
-        // Arithmetic operators
-        ("fn main() { let x = 1 + 2; }", vec!["(1 + 2)"]),
-        ("fn main() { let x = 3 - 1; }", vec!["(3 - 1)"]),
-        ("fn main() { let x = 2 * 3; }", vec!["(2 * 3)"]),
-        ("fn main() { let x = 6 / 2; }", vec!["(6 / 2)"]),
-        ("fn main() { let x = 5 % 2; }", vec!["(5 % 2)"]),
-        
-        // Comparison operators
-        ("fn main() { let x = 1 == 1; }", vec!["(1 == 1)"]),
-        ("fn main() { let x = 1 != 2; }", vec!["(1 != 2)"]),
-        ("fn main() { let x = 1 < 2; }", vec!["(1 < 2)"]),
-        ("fn main() { let x = 2 > 1; }", vec!["(2 > 1)"]),
-        ("fn main() { let x = 1 <= 2; }", vec!["(1 <= 2)"]),
-        ("fn main() { let x = 2 >= 1; }", vec!["(2 >= 1)"]),
-        
-        // Logical operators
-        ("fn main() { let x = true && false; }", vec!["(1 && 0)"]),
-        ("fn main() { let x = true || false; }", vec!["(1 || 0)"]),
-        ("fn main() { let x = !true; }", vec!["(!1)"]),
-        
-        // Bitwise operators
-        ("fn main() { let x = 1 & 2; }", vec!["(1 & 2)"]),
-        ("fn main() { let x = 1 | 2; }", vec!["(1 | 2)"]),
-        ("fn main() { let x = 1 ^ 2; }", vec!["(1 ^ 2)"]),
-        ("fn main() { let x = 1 << 2; }", vec!["(1 << 2)"]),
-        ("fn main() { let x = 4 >> 1; }", vec!["(4 >> 1)"]),
-        
-        // Assignment operators
-        ("fn main() { let mut x = 0; x += 1; }", vec!["x = x + 1;"]),
-        ("fn main() { let mut x = 2; x -= 1; }", vec!["x = x - 1;"]),
-        ("fn main() { let mut x = 2; x *= 3; }", vec!["x = x * 3;"]),
-        ("fn main() { let mut x = 6; x /= 2; }", vec!["x = x / 2;"]),
-        ("fn main() { let mut x = 5; x %= 2; }", vec!["x = x % 2;"]),
-    ];
+#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:234 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
+fn test_match_on_integer_literal() {
+    compile_and_verify("fn main() { match 1 { 1 => {}, _ => {} } }", &["switch"]);
+}
 
-    for (source, patterns) in test_cases {
-        compile_and_verify(source, &patterns);
+#[test]
+#[ignore = "XFAIL: `trait` emits no C at all — grammar.ebnf:106 'Traits also emit no code'; there is no vtable mechanism anywhere in the compiler (owned by M4, 'Traits with real dispatch')"]
+fn test_trait_declaration_emits_code() {
+    compile_and_verify("trait Display { }\nfn main() { }", &["// Trait:"]);
+}
+
+#[test]
+#[ignore = "XFAIL: top-level `const` items — grammar.ebnf:70 lists no const item, so the parser reports \"Expected function, struct, enum, trait, type, impl, or macro declaration\" (owned by M2, surface syntax)"]
+fn test_top_level_const() {
+    compile_and_verify(
+        "const X: int = 5;\nfn main() { }",
+        &["const long long X = 5;"],
+    );
+}
+
+#[test]
+#[ignore = "XFAIL: top-level `static` items — grammar.ebnf:70 lists no static item, same parse error as `const` (owned by M2, surface syntax)"]
+fn test_top_level_static() {
+    compile_and_verify(
+        "static Y: int = 10;\nfn main() { }",
+        &["static long long Y = 10;"],
+    );
+}
+
+#[test]
+#[ignore = "XFAIL: `type` aliases parse and then emit nothing — no typedef reaches the C (owned by M4, part of making the type system real)"]
+fn test_type_alias_emits_typedef() {
+    compile_and_verify(
+        "type Int = int;\nfn main() { }",
+        &["typedef long long Int;"],
+    );
+}
+
+#[test]
+#[ignore = "XFAIL: `loop` — grammar.ebnf:178 'and no `loop`'; the token does not exist, so the body's '{' is a parse error (owned by M2, item 3)"]
+fn test_loop_keyword() {
+    compile_and_verify("fn main() { loop { break; } }", &["while (1)", "break;"]);
+    compile_and_verify(
+        "fn main() { loop { continue; } }",
+        &["while (1)", "continue;"],
+    );
+}
+
+#[test]
+#[ignore = "XFAIL: `as` casts — grammar.ebnf:224 'no `as` casts'; the parser stops at 'as' (owned by M2, surface syntax)"]
+fn test_as_cast() {
+    compile_and_verify("fn main() { let x = 5 as int; }", &["(long long)5"]);
+}
+
+#[test]
+fn test_arithmetic_operators() {
+    // Variables, not literals: the optimizer folds constant arithmetic away
+    // before codegen, so `1 + 2` would never appear as `(1 + 2)` in the C.
+    compile_and_verify(
+        "fn main() { let a = 1; let b = 2; let x = a + b; }",
+        &["(a + b)"],
+    );
+    compile_and_verify(
+        "fn main() { let a = 3; let b = 1; let x = a - b; }",
+        &["(a - b)"],
+    );
+    compile_and_verify(
+        "fn main() { let a = 2; let b = 3; let x = a * b; }",
+        &["(a * b)"],
+    );
+    compile_and_verify(
+        "fn main() { let a = 6; let b = 2; let x = a / b; }",
+        &["(a / b)"],
+    );
+    compile_and_verify(
+        "fn main() { let a = 5; let b = 2; let x = a % b; }",
+        &["(a % b)"],
+    );
+}
+
+#[test]
+fn test_comparison_operators() {
+    for (op, expected) in [
+        ("==", "(a == b)"),
+        ("!=", "(a != b)"),
+        ("<", "(a < b)"),
+        (">", "(a > b)"),
+        ("<=", "(a <= b)"),
+        (">=", "(a >= b)"),
+    ] {
+        compile_and_verify(
+            &format!("fn main() {{ let a = 1; let b = 2; let x = a {} b; }}", op),
+            &[expected],
+        );
+    }
+}
+
+#[test]
+fn test_logical_operators() {
+    compile_and_verify(
+        "fn main() { let t = true; let f = false; let x = t && f; }",
+        &["(t && f)"],
+    );
+    compile_and_verify(
+        "fn main() { let t = true; let f = false; let x = t || f; }",
+        &["(t || f)"],
+    );
+    compile_and_verify("fn main() { let t = true; let x = !t; }", &["(!(t))"]);
+}
+
+#[test]
+#[ignore = "XFAIL: bitwise operators — the expression grammar (grammar.ebnf:187-194) has no `&`/`|`/`^`/`<<`/`>>` level and the lexer has no '^' token at all (owned by M2, surface syntax)"]
+fn test_bitwise_operators() {
+    for (op, expected) in [
+        ("&", "(a & b)"),
+        ("|", "(a | b)"),
+        ("^", "(a ^ b)"),
+        ("<<", "(a << b)"),
+        (">>", "(a >> b)"),
+    ] {
+        compile_and_verify(
+            &format!("fn main() {{ let a = 1; let b = 2; let x = a {} b; }}", op),
+            &[expected],
+        );
+    }
+}
+
+#[test]
+#[ignore = "XFAIL: compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`) — missing lexer tokens, so `x += 1` parses as `x +` then fails on '=' (owned by M2, item 3)"]
+fn test_compound_assignment_operators() {
+    for (op, expected) in [
+        ("+=", "x = x + 1;"),
+        ("-=", "x = x - 1;"),
+        ("*=", "x = x * 1;"),
+        ("/=", "x = x / 1;"),
+        ("%=", "x = x % 1;"),
+    ] {
+        compile_and_verify(
+            &format!("fn main() {{ let mut x = 6; x {} 1; }}", op),
+            &[expected],
+        );
     }
 }
 
@@ -109,13 +273,20 @@ fn test_literals() {
         // Integer literals
         ("fn main() { let x = 123; }", vec!["123"]),
         ("fn main() { let x = 0; }", vec!["0"]),
-        
         // String literals
         (r#"fn main() { print("hello"); }"#, vec![r#""hello""#]),
-        (r#"fn main() { print("hello world"); }"#, vec![r#""hello world""#]),
-        (r#"fn main() { print("hello\nworld"); }"#, vec![r#""hello\nworld""#]),
-        (r#"fn main() { print("hello\tworld"); }"#, vec![r#""hello\tworld""#]),
-        
+        (
+            r#"fn main() { print("hello world"); }"#,
+            vec![r#""hello world""#],
+        ),
+        (
+            r#"fn main() { print("hello\nworld"); }"#,
+            vec![r#""hello\nworld""#],
+        ),
+        (
+            r#"fn main() { print("hello\tworld"); }"#,
+            vec![r#""hello\tworld""#],
+        ),
         // Boolean literals
         ("fn main() { let x = true; }", vec!["1"]),
         ("fn main() { let x = false; }", vec!["0"]),
@@ -131,56 +302,31 @@ fn test_control_flow() {
     let test_cases = vec![
         // If statements
         (
-            "fn main() { if 5 > 3 { print(\"yes\"); } }",
-            vec!["if ((5 > 3))", "printf"]
+            "fn main() { let a = 5; let b = 3; if a > b { print(\"yes\"); } }",
+            vec!["if ((a > b))", "__pd_print"],
         ),
         (
-            "fn main() { if 1 < 2 { print(\"a\"); } else { print(\"b\"); } }",
-            vec!["if ((1 < 2))", "else", "printf"]
+            "fn main() { let a = 1; let b = 2; if a < b { print(\"a\"); } else { print(\"b\"); } }",
+            vec!["if ((a < b))", "else", "__pd_print"],
         ),
-        (
-            "fn main() { 
-                if 1 > 2 { 
-                    print(\"a\"); 
-                } else if 2 > 1 { 
-                    print(\"b\"); 
-                } else { 
-                    print(\"c\"); 
-                } 
-            }",
-            vec!["if ((1 > 2))", "else if ((2 > 1))", "else"]
-        ),
-        
         // While loops
         (
-            "fn main() { 
-                let mut i = 0; 
-                while i < 10 { 
-                    i = i + 1; 
-                } 
+            "fn main() {
+                let mut i = 0;
+                while i < 10 {
+                    i = i + 1;
+                }
             }",
-            vec!["while ((i < 10))", "i = i + 1;"]
+            vec!["while ((i < 10))", "i = (i + 1);"],
         ),
-        
         // For loops
         (
-            "fn main() { 
-                for i in 0..10 { 
-                    print(i); 
-                } 
+            "fn main() {
+                for i in 0..10 {
+                    print_int(i);
+                }
             }",
-            vec!["for", "int i", "printf"]
-        ),
-        
-        // Loop with break/continue
-        (
-            "fn main() { 
-                loop { 
-                    if true { break; } 
-                    continue; 
-                } 
-            }",
-            vec!["while (1)", "break;", "continue;"]
+            vec!["for (long long i = 0; i < 10; i++)", "__pd_print_int"],
         ),
     ];
 
@@ -190,35 +336,52 @@ fn test_control_flow() {
 }
 
 #[test]
+#[ignore = "XFAIL: `else if` — grammar.ebnf:156 'There is NO `else if`: after `else` the parser requires \\'{\\'' (owned by M2, item 2)"]
+fn test_else_if_chain() {
+    compile_and_verify(
+        "fn main() {
+            let a = 1;
+            let b = 2;
+            if a > b { print(\"a\"); } else if b > a { print(\"b\"); } else { print(\"c\"); }
+        }",
+        &["if ((a > b))", "else if ((b > a))", "else"],
+    );
+}
+
+#[test]
 fn test_functions() {
     let test_cases = vec![
         // Basic functions
         (
-            "fn add(x: int, y: int) -> int { x + y }",
-            vec!["int add(int x, int y)", "return (x + y);"]
+            "fn add(x: int, y: int) -> int { x + y }\nfn main() { }",
+            vec!["long long add(long long x, long long y)", "return (x + y);"],
         ),
         (
-            "fn greet(name: string) { print(name); }",
-            vec!["void greet(char* name)", "printf"]
+            "fn greet(name: String) { print(name); }\nfn main() { }",
+            vec!["void greet(const char* name)", "__pd_print"],
         ),
         (
-            "fn get_value() -> int { 42 }",
-            vec!["int get_value()", "return 42;"]
+            "fn get_value() -> int { 42 }\nfn main() { }",
+            vec!["long long get_value()", "return 42;"],
         ),
-        
         // Function calls
         (
-            "fn double(x: int) -> int { x * 2 }
-             fn main() { let y = double(21); }",
-            vec!["int double(int x)", "int y = double(21);"]
+            "fn triple(x: int) -> int { x * 3 }
+             fn main() { let y = triple(21); }",
+            vec!["long long triple(long long x)", "long long y = triple(21);"],
         ),
-        
         // Recursive functions
         (
             "fn factorial(n: int) -> int {
-                if n <= 1 { 1 } else { n * factorial(n - 1) }
-             }",
-            vec!["int factorial(int n)", "factorial((n - 1))"]
+                if n <= 1 { return 1; }
+                return n * factorial(n - 1);
+             }
+             fn main() { }",
+            vec![
+                "long long factorial(long long n)",
+                "factorial((n - 1))",
+                "return (n * factorial((n - 1)));",
+            ],
         ),
     ];
 
@@ -232,29 +395,31 @@ fn test_structs() {
     let test_cases = vec![
         // Basic struct
         (
-            "struct Point { x: int, y: int }",
-            vec!["struct Point {", "int x;", "int y;"]
+            "struct Point { x: int, y: int }\nfn main() { }",
+            vec!["struct Point {", "long long x;", "long long y;"],
         ),
-        
-        // Struct with methods
+        // Associated function in an impl block
         (
             "struct Point { x: int, y: int }
              impl Point {
                  fn new(x: int, y: int) -> Point {
                      Point { x: x, y: y }
                  }
-             }",
-            vec!["struct Point", "Point new(int x, int y)"]
+             }
+             fn main() { }",
+            vec![
+                "struct Point",
+                "struct Point __pd_Point_new(long long x, long long y)",
+            ],
         ),
-        
         // Using structs
         (
             "struct Point { x: int, y: int }
              fn main() {
                  let p = Point { x: 10, y: 20 };
-                 print(p.x);
+                 print_int(p.x);
              }",
-            vec!["Point p =", "p.x"]
+            vec!["struct Point p =", "p.x"],
         ),
     ];
 
@@ -269,27 +434,25 @@ fn test_arrays() {
         // Array declaration
         (
             "fn main() { let arr = [1, 2, 3, 4, 5]; }",
-            vec!["int arr[5] =", "{1, 2, 3, 4, 5}"]
+            vec!["long long arr[5] =", "{1, 2, 3, 4, 5}"],
         ),
-        
         // Array access
         (
-            "fn main() { 
-                let arr = [10, 20, 30]; 
-                let x = arr[1]; 
+            "fn main() {
+                let arr = [10, 20, 30];
+                let x = arr[1];
             }",
-            vec!["arr[1]"]
+            vec!["arr[1]"],
         ),
-        
         // Array in loops
         (
             "fn main() {
                 let arr = [1, 2, 3, 4, 5];
                 for i in 0..5 {
-                    print(arr[i]);
+                    print_int(arr[i]);
                 }
             }",
-            vec!["for", "arr[i]"]
+            vec!["for (long long i = 0; i < 5; i++)", "arr[i]"],
         ),
     ];
 
@@ -303,17 +466,21 @@ fn test_enums() {
     let test_cases = vec![
         // Basic enum
         (
-            "enum Color { Red, Green, Blue }",
-            vec!["typedef enum", "Red", "Green", "Blue"]
+            "enum Color { Red, Green, Blue }\nfn main() { }",
+            vec![
+                "typedef enum",
+                "__Color__Red",
+                "__Color__Green",
+                "__Color__Blue",
+            ],
         ),
-        
-        // Enum with values
+        // Enum with a payload
         (
-            "enum Option { Some(int), None }",
-            vec!["typedef enum"]
+            "enum Option { Some(int), None }\nfn main() { }",
+            vec!["typedef enum", "Option__Some_Data"],
         ),
-        
-        // Match on enum
+        // Match on enum. The C backend lowers a match to a tag comparison
+        // chain, not to a `switch`.
         (
             "enum Color { Red, Green, Blue }
              fn main() {
@@ -324,7 +491,11 @@ fn test_enums() {
                      Color::Blue => print(\"blue\")
                  }
              }",
-            vec!["switch", "case", "printf"]
+            vec![
+                "_match_expr.tag == __Color__Red",
+                "_match_expr.tag == __Color__Green",
+                "__pd_print",
+            ],
         ),
     ];
 
@@ -333,39 +504,75 @@ fn test_enums() {
     }
 }
 
+/// Each case asserts *why* it fails, not just that it fails. Half of these
+/// used to be declaration-only fragments, so they were all rejected with
+/// "No main function found" and proved nothing about the type checker.
 #[test]
 fn test_error_cases() {
     let error_cases = vec![
         // Type errors
-        "fn main() { let x: int = \"hello\"; }",
-        "fn main() { let x: string = 42; }",
-        "fn main() { let x = 1 + \"hello\"; }",
-        
+        (
+            "fn main() { let x: int = \"hello\"; }",
+            "expected Int, found String",
+        ),
+        (
+            "fn main() { let x: String = 42; }",
+            "expected String, found Int",
+        ),
+        (
+            "fn main() { let x = 1 + \"hello\"; }",
+            "expected Int, found String",
+        ),
         // Undefined variables
-        "fn main() { print(undefined_var); }",
-        
+        (
+            "fn main() { print(undefined_var); }",
+            "Undefined variable or function: 'undefined_var'",
+        ),
         // Undefined functions
-        "fn main() { undefined_func(); }",
-        
+        (
+            "fn main() { undefined_func(); }",
+            "Undefined function: undefined_func",
+        ),
         // Wrong number of arguments
-        "fn add(x: int, y: int) -> int { x + y }
-         fn main() { add(1); }",
-        
-        // Type mismatch in function
-        "fn get_int() -> int { \"not an int\" }",
-        
-        // Missing return
-        "fn get_value() -> int { }",
-        
+        (
+            "fn add(x: int, y: int) -> int { x + y }
+             fn main() { add(1); }",
+            "expects 2 arguments, but 1 were provided",
+        ),
+        // Type mismatch in a function's tail expression
+        (
+            "fn get_int() -> int { \"not an int\" }
+             fn main() { }",
+            "expected Int, found String",
+        ),
         // Invalid control flow
-        "fn main() { if 42 { } }",
-        "fn main() { while \"not bool\" { } }",
+        ("fn main() { if 42 { } }", "expected Bool, found Int"),
+        (
+            "fn main() { while \"not bool\" { } }",
+            "expected Bool, found String",
+        ),
     ];
 
-    for source in error_cases {
-        let result = compile_source(source);
-        assert!(result.is_err(), "Expected error for: {}", source);
+    for (source, reason) in error_cases {
+        compile_error_contains(source, reason);
     }
+}
+
+#[test]
+#[ignore = "XFAIL: no missing-return diagnostic — `fn f() -> int { }` compiles silently and emits a C function with no return statement, so the caller reads garbage. This is M1's own exit criterion ('nothing that parses, then breaks, without also being reported as an error'), and it cannot be fixed in isolation: a tail `if` (`fn f() -> int { if c { 1 } else { 2 } }`) is also emitted with no return today, so the diagnostic and the tail-expression lowering have to land together (owned by M1)"]
+fn test_missing_return_is_an_error() {
+    compile_error_contains(
+        "fn get_value() -> int { }
+         fn main() { }",
+        "return",
+    );
+}
+
+/// A program with no `main` is not a program. This is the reason the
+/// declaration-only fragments above all carry a `fn main() { }`.
+#[test]
+fn test_missing_main_is_an_error() {
+    compile_error_contains("struct Point { x: int, y: int }", "No main function found");
 }
 
 #[test]
@@ -373,22 +580,21 @@ fn test_operator_precedence() {
     let test_cases = vec![
         // Arithmetic precedence
         (
-            "fn main() { let x = 1 + 2 * 3; }",
-            vec!["(1 + (2 * 3))"]
+            "fn main() { let a = 1; let b = 2; let c = 3; let x = a + b * c; }",
+            vec!["(a + (b * c))"],
         ),
         (
-            "fn main() { let x = (1 + 2) * 3; }",
-            vec!["((1 + 2) * 3)"]
+            "fn main() { let a = 1; let b = 2; let c = 3; let x = (a + b) * c; }",
+            vec!["((a + b) * c)"],
         ),
-        
         // Comparison and logical
         (
-            "fn main() { let x = 1 < 2 && 3 < 4; }",
-            vec!["((1 < 2) && (3 < 4))"]
+            "fn main() { let a = 1; let b = 2; let c = 3; let d = 4; let x = a < b && c < d; }",
+            vec!["((a < b) && (c < d))"],
         ),
         (
-            "fn main() { let x = 1 + 2 < 3 * 4; }",
-            vec!["((1 + 2) < (3 * 4))"]
+            "fn main() { let a = 1; let b = 2; let c = 3; let d = 4; let x = a + b < c * d; }",
+            vec!["((a + b) < (c * d))"],
         ),
     ];
 
@@ -404,66 +610,70 @@ fn test_complex_programs() {
         r#"
         fn fib(n: int) -> int {
             if n <= 1 {
-                n
-            } else {
-                fib(n - 1) + fib(n - 2)
+                return n;
             }
+            return fib(n - 1) + fib(n - 2);
         }
-        
+
         fn main() {
             let result = fib(10);
-            print(result);
+            print_int(result);
         }
         "#,
-        &["int fib(int n)", "fib((n - 1))", "fib((n - 2))"]
+        &["long long fib(long long n)", "fib((n - 1))", "fib((n - 2))"],
     );
-    
-    // Bubble sort
+
+    // Bubble sort. `let temp: i64` is required, not decoration: indexing an
+    // array-typed *parameter* has no inference rule, and the compiler says so
+    // rather than guessing.
     compile_and_verify(
         r#"
         fn bubble_sort(arr: [int; 10], n: int) {
             for i in 0..n {
                 for j in 0..(n - i - 1) {
                     if arr[j] > arr[j + 1] {
-                        let temp = arr[j];
+                        let temp: i64 = arr[j];
                         arr[j] = arr[j + 1];
                         arr[j + 1] = temp;
                     }
                 }
             }
         }
+        fn main() { }
         "#,
-        &["void bubble_sort", "for", "if", "temp"]
+        &[
+            "void bubble_sort",
+            "for (long long i = 0;",
+            "long long temp = arr[j];",
+        ],
     );
-    
-    // Struct with multiple methods
+}
+
+#[test]
+#[ignore = "XFAIL: `&self` receivers and method-call syntax — grammar.ebnf:220 'Method-call syntax x.f() parses but the type checker rejects it: \"Indirect function calls not yet supported\"' (owned by M4, 'Traits with real dispatch' / a real reference type)"]
+fn test_struct_with_methods() {
     compile_and_verify(
         r#"
         struct Rectangle {
             width: int,
             height: int
         }
-        
+
         impl Rectangle {
             fn new(w: int, h: int) -> Rectangle {
                 Rectangle { width: w, height: h }
             }
-            
+
             fn area(&self) -> int {
                 self.width * self.height
             }
-            
-            fn perimeter(&self) -> int {
-                2 * (self.width + self.height)
-            }
         }
-        
+
         fn main() {
             let rect = Rectangle::new(10, 20);
-            print(rect.area());
-            print(rect.perimeter());
+            print_int(rect.area());
         }
         "#,
-        &["struct Rectangle", "int area", "int perimeter", "rect.area()", "rect.perimeter()"]
+        &["struct Rectangle", "area", "rect.area()"],
     );
 }

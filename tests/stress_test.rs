@@ -185,8 +185,12 @@ fn test_multiple_functions_same_line() {
     }
 }
 
+// SLOW, not XFAIL: this one passes today (~3s for 10,000 statements) and is
+// excluded for cost, not because anything is missing. `make test-xfail` uses
+// the tag to tell the two apart — a SLOW test that passes is fine, an XFAIL
+// test that passes is a stale expectation and fails the gate.
 #[test]
-#[ignore] // This test might be too intensive for regular test runs
+#[ignore = "SLOW: compiles a 10,000-statement program (~3s); excluded from the default run for cost, not for a missing feature"]
 fn test_extremely_large_program() {
     let driver = Driver::new();
     let mut source = String::from("fn main() {\n");

@@ -288,3 +288,11 @@ check-docs: build ## Compile every ```palladium block in the documentation
 .PHONY: gates
 gates: conformance test-conformance-runner check-docs selfhost ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
+
+# --- Expected failures in the Rust test suite ------------------------------
+# Appended at the end deliberately: the gates section above is being edited in
+# parallel.
+
+.PHONY: test-xfail
+test-xfail: ## Run the #[ignore]d tests and fail if a declared failure now passes
+	@bash scripts/test-xfail.sh
