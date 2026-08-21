@@ -60,6 +60,22 @@ pub enum CompileError {
     #[error("Code generation failed: {message}")]
     CodegenError { message: String },
 
+    // A construct that the parser and the type checker accept but that no
+    // backend can lower. Emitting approximate code for these is how a compiler
+    // starts lying: the program either fails inside generated C the user never
+    // wrote, or — worse — links and runs with the wrong semantics. Refusing at
+    // the construct's own span is the honest answer until the feature lands.
+    #[error("{construct} is not implemented")]
+    Unimplemented {
+        /// How the construct is written in source, e.g. "the `?` operator".
+        construct: String,
+        /// What would happen if the compiler kept pretending.
+        consequence: String,
+        /// What the programmer can do today instead.
+        workaround: String,
+        span: Option<Span>,
+    },
+
     // IO errors
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
@@ -156,6 +172,45 @@ impl Span {
 }
 
 impl CompileError {
+    /// D5: `?` parses and type-checks, but nothing can lower it.
+    ///
+    /// The compiler has no real `Result<T, E>` — M4 owns that — and the C
+    /// emitter used to invent a `struct Result` layout it never defined, so
+    /// every program that used `?` died inside generated C instead of here.
+    pub fn question_unimplemented(span: Span) -> Self {
+        CompileError::Unimplemented {
+            construct: "the `?` operator".to_string(),
+            consequence:
+                "there is no Result type to lower `?` onto, so code generation would emit C \
+                 referring to a `struct Result` layout the compiler never defines"
+                    .to_string(),
+            workaround: "return the Result value and inspect it with `match` instead; `?` becomes \
+                 available when M4 gives Result<T, E> real methods"
+                .to_string(),
+            span: Some(span),
+        }
+    }
+
+    /// D5: `.await` parses and type-checks, but nothing can lower it.
+    ///
+    /// There is no async runtime, and the C emitter used to call a `poll`
+    /// member that no generated struct has — C has no member function calls,
+    /// and the poll routine that *is* generated is a free function.
+    pub fn await_unimplemented(span: Span) -> Self {
+        CompileError::Unimplemented {
+            construct: "`.await`".to_string(),
+            consequence:
+                "there is no async runtime, and code generation would emit a call to a `poll` \
+                 member that no generated C struct has"
+                    .to_string(),
+            workaround:
+                "call the function without `.await` and treat it as synchronous; async/await is \
+                 not scheduled before M4 (docs/contributing/MILESTONES.md)"
+                    .to_string(),
+            span: Some(span),
+        }
+    }
+
     /// Convert this error into a diagnostic with helpful suggestions
     pub fn to_diagnostic(&self) -> Diagnostic {
         match self {
@@ -373,6 +428,17 @@ impl CompileError {
                 "This pattern can never be matched because previous patterns cover all cases",
             )
             .with_suggestion("Remove this pattern or reorder the patterns", None),
+
+            CompileError::Unimplemented {
+                construct,
+                consequence,
+                workaround,
+                span,
+            } => Diagnostic::error(format!("{} is not implemented", construct))
+                .with_span(span.unwrap_or(Span::dummy()))
+                .with_note(consequence.clone())
+                .with_suggestion(workaround.clone(), None)
+                .with_context_lines(1),
 
             _ => {
                 // Default diagnostic for other errors

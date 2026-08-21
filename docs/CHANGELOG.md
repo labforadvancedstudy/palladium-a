@@ -74,7 +74,8 @@ was false — no Palladium-written compiler had ever compiled itself.
 
 Unchanged and documented rather than implied: no traits (they parse and emit no code), no working
 generics, no closures, no method call syntax, no `else if`, no `loop`, no compound assignment, no
-floats or `char`, no `Vec`, no `Option`/`Result`, and `?`/`.await` emit C that does not compile.
+floats or `char`, no `Vec`, no `Option`/`Result`, and `?`/`.await` are rejected as unimplemented
+(they used to emit C that does not compile).
 See [the language specification](specification/language-spec.md).
 
 ## [v1.0-bootstrap] - 2025-01-16

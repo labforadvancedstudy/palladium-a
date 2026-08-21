@@ -2336,107 +2336,148 @@ impl TypeChecker {
                 // TODO: Proper reference type handling - should check that expr_type is a reference
                 Ok(expr_type)
             }
-            Expr::Question { expr, .. } => {
-                // Type check the expression
-                let expr_type = self.check_expression(expr)?;
-
-                // The expression must be a Result<T, E> type
-                match &expr_type {
-                    CheckerType::Generic { name, args } if name == "Result" && args.len() == 2 => {
-                        // Extract the Ok type (T) and Error type (E) from Result<T, E>
-                        let ok_type = &args[0];
-                        let err_type = &args[1];
-
-                        // Check that the current function returns a Result type
-                        if let Some(return_type) = &self.current_function_return {
-                            match return_type {
-                                CheckerType::Generic { name: ret_name, args: ret_args }
-                                    if ret_name == "Result" && ret_args.len() == 2 => {
-                                    // Check that error types match
-                                    let ret_err_type = &ret_args[1];
-                                    if err_type != ret_err_type {
-                                        let ret_err_str = match ret_err_type {
-                                            GenericArgValue::Type(t) => self.checker_type_to_string(t),
-                                            GenericArgValue::Const(c) => match c {
-                                                ConstValueResolved::Integer(n) => n.to_string(),
-                                                ConstValueResolved::ConstParam(name) => name.clone(),
-                                            }
-                                        };
-                                        let err_str = match err_type {
-                                            GenericArgValue::Type(t) => self.checker_type_to_string(t),
-                                            GenericArgValue::Const(c) => match c {
-                                                ConstValueResolved::Integer(n) => n.to_string(),
-                                                ConstValueResolved::ConstParam(name) => name.clone(),
-                                            }
-                                        };
-                                        let ok_str = match ok_type {
-                                            GenericArgValue::Type(t) => self.checker_type_to_string(t),
-                                            GenericArgValue::Const(c) => match c {
-                                                ConstValueResolved::Integer(n) => n.to_string(),
-                                                ConstValueResolved::ConstParam(name) => name.clone(),
-                                            }
-                                        };
-                                        return Err(CompileError::TypeMismatch {
-                                            expected: format!("Result<_, {}>", ret_err_str),
-                                            found: format!("Result<{}, {}>", ok_str, err_str),
-                                            span: None,
-                                        });
-                                    }
-
-                                    // Return the Ok type
-                                    match ok_type {
-                                        GenericArgValue::Type(t) => Ok(t.clone()),
-                                        _ => Err(CompileError::Generic("Expected type in Result".to_string()))
-                                    }
-                                }
-                                _ => Err(CompileError::Generic(
-                                    "The ? operator can only be used in functions that return Result".to_string()
-                                ))
-                            }
-                        } else {
-                            Err(CompileError::Generic(
-                                "The ? operator can only be used inside a function".to_string(),
-                            ))
-                        }
-                    }
-                    CheckerType::Enum(name) if name == "Result" => {
-                        // Handle non-generic Result (shouldn't happen in practice)
-                        Err(CompileError::Generic(
-                            "Result type must have generic parameters".to_string(),
-                        ))
-                    }
-                    _ => Err(CompileError::TypeMismatch {
-                        expected: "Result<T, E>".to_string(),
-                        found: expr_type.to_string(),
-                        span: None,
-                    }),
-                }
-            }
+            // D5 (M1). `?` and `.await` parse and have type rules, but no
+            // backend can lower either: code generation fabricated a `struct
+            // Result` it never defines, and an `await` that calls a `poll`
+            // member no generated struct has. A program that satisfied the type
+            // rules therefore failed inside gcc — against C the user never
+            // wrote — rather than here. Refuse at the construct's own span.
+            //
+            // Refusing in this phase (not only in codegen) is deliberate: it
+            // lands before the codegen `let`-inference error (D7), which would
+            // otherwise suggest a type annotation that cannot help.
+            //
+            // The type rules themselves are preserved verbatim below, in
+            // `check_question_against_fabricated_result` and
+            // `check_await_against_fabricated_future`, for M4 to rewrite
+            // against a real Result<T, E>.
+            Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
             Expr::MacroInvocation { .. } => {
                 // Macros should have been expanded before type checking
                 Err(CompileError::Generic(
                     "Unexpected macro invocation in type checking - macros should be expanded before this phase".to_string()
                 ))
             }
-            Expr::Await { expr, .. } => {
-                // Check that the expression is a Future type
-                let expr_type = self.check_expression(expr)?;
-                match &expr_type {
-                    CheckerType::Generic { name, args } if name == "Future" && args.len() == 1 => {
-                        // Extract the output type from Future<T>
-                        if let GenericArgValue::Type(output_type) = &args[0] {
-                            Ok(output_type.clone())
-                        } else {
-                            Err(CompileError::Generic("Invalid Future type".to_string()))
+            Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+        }
+    }
+
+    /// The pre-M1 type rules for `?`, kept verbatim and unreachable.
+    ///
+    /// They check against a `Result<T, E>` the compiler does not really have —
+    /// nothing constructs one, and code generation invented a C layout for it.
+    /// M4 ("Abstraction") makes `Result<T, E>` an ordinary library type; these
+    /// rules are the starting sketch for that work, not something to re-enable
+    /// as-is. See `docs/contributing/MILESTONES.md`.
+    #[allow(dead_code)]
+    fn check_question_against_fabricated_result(&mut self, expr: &Expr) -> Result<CheckerType> {
+        // Type check the expression
+        let expr_type = self.check_expression(expr)?;
+
+        // The expression must be a Result<T, E> type
+        match &expr_type {
+            CheckerType::Generic { name, args } if name == "Result" && args.len() == 2 => {
+                // Extract the Ok type (T) and Error type (E) from Result<T, E>
+                let ok_type = &args[0];
+                let err_type = &args[1];
+
+                // Check that the current function returns a Result type
+                if let Some(return_type) = &self.current_function_return {
+                    match return_type {
+                        CheckerType::Generic {
+                            name: ret_name,
+                            args: ret_args,
+                        } if ret_name == "Result" && ret_args.len() == 2 => {
+                            // Check that error types match
+                            let ret_err_type = &ret_args[1];
+                            if err_type != ret_err_type {
+                                let ret_err_str = match ret_err_type {
+                                    GenericArgValue::Type(t) => self.checker_type_to_string(t),
+                                    GenericArgValue::Const(c) => match c {
+                                        ConstValueResolved::Integer(n) => n.to_string(),
+                                        ConstValueResolved::ConstParam(name) => name.clone(),
+                                    },
+                                };
+                                let err_str = match err_type {
+                                    GenericArgValue::Type(t) => self.checker_type_to_string(t),
+                                    GenericArgValue::Const(c) => match c {
+                                        ConstValueResolved::Integer(n) => n.to_string(),
+                                        ConstValueResolved::ConstParam(name) => name.clone(),
+                                    },
+                                };
+                                let ok_str = match ok_type {
+                                    GenericArgValue::Type(t) => self.checker_type_to_string(t),
+                                    GenericArgValue::Const(c) => match c {
+                                        ConstValueResolved::Integer(n) => n.to_string(),
+                                        ConstValueResolved::ConstParam(name) => name.clone(),
+                                    },
+                                };
+                                return Err(CompileError::TypeMismatch {
+                                    expected: format!("Result<_, {}>", ret_err_str),
+                                    found: format!("Result<{}, {}>", ok_str, err_str),
+                                    span: None,
+                                });
+                            }
+
+                            // Return the Ok type
+                            match ok_type {
+                                GenericArgValue::Type(t) => Ok(t.clone()),
+                                _ => Err(CompileError::Generic(
+                                    "Expected type in Result".to_string(),
+                                )),
+                            }
                         }
+                        _ => Err(CompileError::Generic(
+                            "The ? operator can only be used in functions that return Result"
+                                .to_string(),
+                        )),
                     }
-                    _ => Err(CompileError::TypeMismatch {
-                        expected: "Future<T>".to_string(),
-                        found: self.checker_type_to_string(&expr_type),
-                        span: None,
-                    }),
+                } else {
+                    Err(CompileError::Generic(
+                        "The ? operator can only be used inside a function".to_string(),
+                    ))
                 }
             }
+            CheckerType::Enum(name) if name == "Result" => {
+                // Handle non-generic Result (shouldn't happen in practice)
+                Err(CompileError::Generic(
+                    "Result type must have generic parameters".to_string(),
+                ))
+            }
+            _ => Err(CompileError::TypeMismatch {
+                expected: "Result<T, E>".to_string(),
+                found: expr_type.to_string(),
+                span: None,
+            }),
+        }
+    }
+
+    /// The pre-M1 type rules for `.await`, kept verbatim and unreachable.
+    ///
+    /// The only thing that ever produces a `Future<T>` here is the implicit
+    /// wrapping of an `async fn`'s *declared* return type, which the function's
+    /// own signature does not carry — so awaiting a real `async fn` never type
+    /// checked in the first place. Reviving this needs a future representation
+    /// and a runtime to drive it; see `docs/contributing/MILESTONES.md`
+    /// ("Not scheduled, and why").
+    #[allow(dead_code)]
+    fn check_await_against_fabricated_future(&mut self, expr: &Expr) -> Result<CheckerType> {
+        // Check that the expression is a Future type
+        let expr_type = self.check_expression(expr)?;
+        match &expr_type {
+            CheckerType::Generic { name, args } if name == "Future" && args.len() == 1 => {
+                // Extract the output type from Future<T>
+                if let GenericArgValue::Type(output_type) = &args[0] {
+                    Ok(output_type.clone())
+                } else {
+                    Err(CompileError::Generic("Invalid Future type".to_string()))
+                }
+            }
+            _ => Err(CompileError::TypeMismatch {
+                expected: "Future<T>".to_string(),
+                found: self.checker_type_to_string(&expr_type),
+                span: None,
+            }),
         }
     }
 
@@ -3056,8 +3097,121 @@ impl TypeChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errors::Span;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
+
+    fn check(source: &str) -> Result<()> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().unwrap();
+        TypeChecker::new().check(&ast)
+    }
+
+    // D5. Both programs below used to type check, and then code generation
+    // emitted C against a `struct Result` and a `poll` member that no part of
+    // the compiler ever defines. The programs are the measured repros: they are
+    // the shapes that get *through* the old type rules, which reject the naive
+    // misuse but not these.
+
+    #[test]
+    fn test_question_operator_is_reported_as_unimplemented() {
+        // `might_fail` is declared to return Result<i64, i64>, which is what the
+        // old rules demanded of `?`; the body recurses so nothing has to build a
+        // Result value. This compiled, and gcc then rejected the generated C:
+        //   error: variable has incomplete type 'struct Result'
+        let err = check(
+            r#"
+        enum Result<T, E> {
+            Ok(T),
+            Err(E),
+        }
+
+        fn might_fail(x: i64) -> Result<i64, i64> {
+            return might_fail(x);
+        }
+
+        fn helper(x: i64) -> Result<i64, i64> {
+            let v: i64 = might_fail(x)?;
+            print_int(v);
+            return might_fail(v);
+        }
+
+        fn main() {
+            helper(3);
+        }
+        "#,
+        )
+        .unwrap_err();
+
+        match err {
+            CompileError::Unimplemented {
+                ref construct,
+                ref span,
+                ..
+            } => {
+                assert!(construct.contains('?'), "{}", construct);
+                // The diagnostic must point at the operator, not at the file.
+                assert_eq!(span.expect("span").line, 12);
+            }
+            other => panic!("expected an Unimplemented error, got: {}", other),
+        }
+    }
+
+    #[test]
+    fn test_await_is_reported_as_unimplemented() {
+        // A function *declared* to return Future<i64> is the only way to hand
+        // `.await` the Future<T> the old rules wanted — an `async fn` call is
+        // typed as its bare return type, so awaiting one never checked. This
+        // compiled, and gcc then rejected the generated C:
+        //   error: member reference base type 'long long' is not a structure
+        let err = check(
+            r#"
+        fn work(x: i64) -> Future<i64> {
+            return work(x);
+        }
+
+        fn main() {
+            let v: i64 = work(3).await;
+            print_int(v);
+        }
+        "#,
+        )
+        .unwrap_err();
+
+        match err {
+            CompileError::Unimplemented {
+                ref construct,
+                ref span,
+                ..
+            } => {
+                assert!(construct.contains("await"), "{}", construct);
+                assert_eq!(span.expect("span").line, 7);
+            }
+            other => panic!("expected an Unimplemented error, got: {}", other),
+        }
+    }
+
+    #[test]
+    fn test_unimplemented_diagnostic_names_the_consequence_and_a_workaround() {
+        // "Not implemented" on its own sends the reader back to the source. The
+        // house style (see the let-inference error) states what would otherwise
+        // happen and what to do today.
+        let err = CompileError::question_unimplemented(Span::new(0, 1, 1, 1));
+        let diag = err.to_diagnostic();
+        assert!(diag.span.is_some());
+        assert!(
+            diag.notes.iter().any(|n| n.contains("struct Result")),
+            "{:?}",
+            diag.notes
+        );
+        assert!(
+            diag.suggestions.iter().any(|s| s.message.contains("match")),
+            "{:?}",
+            diag.suggestions
+        );
+    }
 
     #[test]
     fn test_type_check_hello_world() {

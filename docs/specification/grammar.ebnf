@@ -221,7 +221,9 @@ arguments      = expression { ',' expression } [ ',' ] ;
 # "Indirect function calls not yet supported". Call `Type::f(x)` instead.
 #
 # There are no closures, no tuple expressions, no `.0` indexing, no `as` casts.
-# `?` and `.await` parse and then generate C that does not compile.
+# `?` and `.await` appear here because they parse. Nothing lowers them: both are
+# rejected after parsing with "is not implemented" (type checker, then codegen).
+# See language-spec.md §6.5.
 #
 # Known precedence bug: multiplication parses its RIGHT operand with `postfix`
 # rather than `unary`, so `a * -b` fails to parse. Write `a * (0 - b)`.

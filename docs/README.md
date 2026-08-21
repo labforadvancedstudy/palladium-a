@@ -26,9 +26,9 @@ in them bore a salvageable relationship to the implementation.
 | [Bootstrap subset (PBS-1)](specification/bootstrap-subset.md) | the subset the self-hosting compiler is written in *and* implements; the self-hosting gate; the open-defect table |
 | [Builtins](reference/builtins.md) | all 38, generated from `src/builtins.rs` |
 
-Read the specification's middle category before trusting anything: `?`, `.await`, tuples and
-un-annotated `let` all pass the type checker and then emit C that does not compile — or, worse,
-C that runs and is wrong.
+Read the specification's middle category before trusting anything. `?`, `.await` and
+un-annotated `let` used to pass the type checker and then emit C that does not compile — or,
+worse, C that runs and is wrong; all three are now compile errors that name the construct.
 
 ## Internals
 
