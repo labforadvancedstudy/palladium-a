@@ -56,6 +56,17 @@ pub enum CompileError {
         span: Option<Span>,
     },
 
+    /// A built-in that `crate::builtins` describes but marks
+    /// `Support::Unsupported`: the registry knows its signature, and the runtime
+    /// cannot honour a call to it. Reported here, at type-check time, instead of
+    /// letting the program reach gcc and fail there.
+    #[error("Built-in {name} is registered but not callable: {reason}")]
+    UnsupportedBuiltin {
+        name: String,
+        reason: String,
+        span: Option<Span>,
+    },
+
     // Codegen errors
     #[error("Code generation failed: {message}")]
     CodegenError { message: String },

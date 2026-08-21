@@ -154,15 +154,26 @@ impl LanguageServer {
 /// Derived from `crate::builtins::BUILTINS`, the single source of truth: the
 /// signature comes from the typed parameter/return data and the prose from the
 /// built-in's `doc`. The hand-written list this replaced knew 6 of 38 built-ins.
+///
+/// Unsupported built-ins are *not* omitted here, unlike in completion. Hover
+/// answers a question the user has already asked about a name in front of them —
+/// most likely because the type checker just rejected it — so silence would be the
+/// least useful reply. The hover says, in the first line, that it is not callable
+/// and why.
 pub(crate) fn builtin_hover(symbol: &str) -> Option<Hover> {
     let builtin = crate::builtins::lookup(symbol)?;
+    let status = match builtin.support.reason() {
+        Some(reason) => format!("\n\n**Not callable.** {}", reason),
+        None => String::new(),
+    };
     Some(Hover {
         contents: MarkupContent {
             kind: MarkupKind::Markdown,
             value: format!(
-                "```palladium\n{}\n```\n\n{}",
+                "```palladium\n{}\n```\n\n{}{}",
                 builtin.signature(),
-                builtin.doc
+                builtin.doc,
+                status
             ),
         },
         range: None,

@@ -807,7 +807,12 @@ impl CodeGenerator {
         self.output.push_str("    if (pd_read_file_to_string(path, strlen(path), &out_str, &out_len) == 0) {\n");
         self.output.push_str("        return out_str;\n");
         self.output.push_str("    }\n");
-        self.output.push_str("    return NULL;\n");
+        // Failure returns the empty string, never NULL: a Palladium String is a
+        // non-NULL const char* and every string built-in dereferences it at once
+        // (string_len -> strlen). Returning NULL here made a missing file a
+        // SIGSEGV rather than an error the program could see. This matches
+        // __pd_arg_at, which returns "" out of range for the same reason.
+        self.output.push_str("    return \"\";\n");
         self.output.push_str("}\n\n");
         
         self.output.push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");

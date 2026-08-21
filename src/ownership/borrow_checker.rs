@@ -84,6 +84,11 @@ impl FunctionSig {
 
         let returns = match b.ret_mode {
             ReturnMode::Owned => ReturnOwnership::Owned,
+            // Storage the built-in never allocated and that outlives the program —
+            // `arg_at` handing back a pointer into `argv`. Borrowed for 'static is
+            // the honest signature; Owned would tell this pass that the caller is
+            // free to release memory belonging to the process.
+            ReturnMode::BorrowedStatic => ReturnOwnership::Borrowed(Lifetime::Static),
             ReturnMode::Copy => ReturnOwnership::Copy,
             ReturnMode::Unit => ReturnOwnership::Unit,
         };

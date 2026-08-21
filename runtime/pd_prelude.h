@@ -288,7 +288,7 @@ char* __pd_read_file_to_string(const char* path) {
     if (pd_read_file_to_string(path, strlen(path), &out_str, &out_len) == 0) {
         return out_str;
     }
-    return NULL;
+    return "";
 }
 
 int __pd_write_string_to_file(const char* path, const char* data) {

@@ -581,9 +581,15 @@ impl LanguageServer {
 /// the built-in's `doc`. The hand-written list this replaced knew 6 of 38 built-ins
 /// and claimed `string_to_int` returned `Option<i64>`, which the compiler has never
 /// implemented (`__pd_string_to_int` returns `long long`).
+///
+/// Built-ins marked `Support::Unsupported` are omitted: completion proposes code
+/// for the user to write, and the type checker refuses those calls. Deriving from
+/// the registry without this filter would have advertised six uncallable names that
+/// the old hand-written list never mentioned.
 pub(crate) fn builtin_completions(prefix: &str) -> Vec<CompletionItem> {
     crate::builtins::BUILTINS
         .iter()
+        .filter(|b| b.support.is_callable())
         .filter(|b| b.name.starts_with(prefix))
         .map(|b| CompletionItem {
             label: b.name.to_string(),

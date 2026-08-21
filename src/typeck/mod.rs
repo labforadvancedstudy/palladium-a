@@ -1564,6 +1564,20 @@ impl TypeChecker {
                     }
                 };
 
+                // A built-in the registry describes but marks unsupported is
+                // rejected here, with the reason, rather than being allowed through
+                // to gcc — where it dies in the generated C with a message about a
+                // C type the Palladium programmer has never heard of.
+                if let Some(builtin) = crate::builtins::lookup(func_name) {
+                    if let Some(reason) = builtin.support.reason() {
+                        return Err(CompileError::UnsupportedBuiltin {
+                            name: func_name.clone(),
+                            reason: reason.to_string(),
+                            span: None,
+                        });
+                    }
+                }
+
                 // First check if it's a generic function that needs instantiation
                 if let Some(generic_func) = self.generic_functions.get(func_name).cloned() {
                     // Infer type arguments from the call
