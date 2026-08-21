@@ -37,6 +37,49 @@ fn compile_with_pdc(module: &str, source: &str) -> std::process::Output {
         .expect("Failed to execute pdc")
 }
 
+/// The same, but with `-o`, which makes the driver hand the generated C to gcc.
+/// This is the only assertion in the suite that the emitted C is *valid C* —
+/// everything else greps its text, which cannot tell valid C from invalid.
+fn compile_and_link_with_pdc(module: &str, source: &str) -> std::process::Output {
+    let test_dir = Path::new("target/e2e_tests");
+    fs::create_dir_all(test_dir).unwrap();
+
+    let source_path = test_dir.join(format!("{}.pd", module));
+    fs::write(&source_path, source).unwrap();
+
+    Command::new("./target/release/pdc")
+        .arg("compile")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(module)
+        .output()
+        .expect("Failed to execute pdc")
+}
+
+/// Extract the body of a generated C function, so an assertion can be made
+/// about that function rather than about the whole file (which always contains
+/// the runtime prelude, and therefore always contains the word `return`).
+fn c_function_body<'a>(c_source: &'a str, signature: &str) -> &'a str {
+    let start = c_source
+        .find(&format!("{} {{", signature))
+        .unwrap_or_else(|| panic!("no definition of `{}` in the generated C", signature));
+    let after_brace = start + c_source[start..].find('{').unwrap() + 1;
+    let mut depth = 1usize;
+    for (i, ch) in c_source[after_brace..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &c_source[after_brace..after_brace + i];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unterminated body for `{}`", signature);
+}
+
 #[test]
 fn test_hello_world_compilation() {
     let module = unique_module_name("hello");
@@ -202,5 +245,90 @@ fn main() {
     assert!(
         stderr.contains("unknown_function") || stderr.contains("Undefined"),
         "Error message should mention undefined function"
+    );
+}
+
+// --- M1 defects, pinned -----------------------------------------------------
+// Both of these are silent miscompiles found while repairing this suite. They
+// are #[ignore]d because they do not pass, not because they are unimportant:
+// `make test-xfail` fails the moment either starts passing.
+
+/// `fn double(…)` emits `long long double(long long x)`, which is not valid C —
+/// `double` is a C keyword and the code generator does not mangle identifiers.
+/// Nothing else in the suite can catch this: every other test greps the C text,
+/// and the text is exactly what was asked for. Only handing it to gcc fails.
+#[test]
+#[ignore = "XFAIL: generated identifiers are not mangled against C keywords — `fn double(x: i64)` emits `long long double(long long x)` and gcc rejects it with \"'long long double' is invalid\"; the compiler reports success first, so this is a silent miscompile of exactly the kind M1 exists to remove (owned by M1)"]
+fn test_c_keyword_identifier_still_links() {
+    let module = unique_module_name("ckeyword");
+    let output = compile_and_link_with_pdc(
+        &module,
+        r#"
+fn double(x: i64) -> i64 {
+    return x * 2;
+}
+
+fn main() {
+    print_int(double(21));
+}
+"#,
+    );
+
+    assert!(
+        output.status.success(),
+        "a function named after a C keyword must still produce valid C:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A function whose body ends in a tail `if` emits no `return` at all:
+///
+///     long long fib(long long n) {
+///         if ((n <= 1)) { n; } else { (fib((n - 1)) + fib((n - 2))); }
+///     }
+///
+/// The parser lowers a tail *expression* to `Stmt::Return`, but not a tail
+/// `if`, so the caller reads whatever is in the return register. gcc only
+/// warns, so nothing in the pipeline stops it.
+///
+/// The assertion here is deliberately narrow — one fixture, one function. The
+/// general invariant ("every non-void function's body must definitely return on
+/// every path", as a terminator analysis over the emitted C, which also covers
+/// tail `match` and constructs nobody has hit yet) is being built on
+/// `feat/m1-stdlib-gate` as `scripts/check-c-returns.py`. When that lands, this
+/// test should be deleted in favour of it rather than kept in parallel.
+#[test]
+#[ignore = "XFAIL: a tail `if` is not lowered to a return — `fn fib(n: i64) -> i64 { if n <= 1 { n } else { … } }` emits a body with no `return` statement, so the caller reads garbage while the compiler reports success (owned by M1; superseded by scripts/check-c-returns.py on feat/m1-stdlib-gate)"]
+fn test_tail_if_function_emits_a_return() {
+    let module = unique_module_name("tailif");
+    let output = compile_with_pdc(
+        &module,
+        r#"
+fn fib(n: i64) -> i64 {
+    if n <= 1 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+
+fn main() {
+    print_int(fib(10));
+}
+"#,
+    );
+
+    assert!(
+        output.status.success(),
+        "Compilation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let c_source = fs::read_to_string(generated_c(&module)).unwrap();
+    let body = c_function_body(&c_source, "long long fib(long long n)");
+    assert!(
+        body.contains("return"),
+        "`fib` ends in a tail `if` and emits no return at all:\n{}",
+        body
     );
 }

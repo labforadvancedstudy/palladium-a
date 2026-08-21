@@ -364,7 +364,12 @@ fn test_functions() {
             "fn get_value() -> int { 42 }\nfn main() { }",
             vec!["long long get_value()", "return 42;"],
         ),
-        // Function calls
+        // Function calls. Upstream this case used `double`, which collides with
+        // the C keyword and emits `long long double(long long x)` — not valid C.
+        // Renaming it here is not a fix: that defect is pinned separately by
+        // e2e_test::test_c_keyword_identifier_still_links, which *links* the
+        // output instead of grepping it. This case is about call codegen, so it
+        // uses a name that is not simultaneously a bug report.
         (
             "fn triple(x: int) -> int { x * 3 }
              fn main() { let y = triple(21); }",

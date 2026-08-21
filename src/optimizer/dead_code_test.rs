@@ -364,6 +364,169 @@ mod tests {
         }
     }
 
+    /// Reachability after an `if/else` is a *may* question — "can control get
+    /// to the next statement" — and an if/else runs exactly one arm. So the
+    /// next statement is reachable when EITHER arm falls through, not when both
+    /// do.
+    ///
+    /// `test_complex_control_flow` and `test_nested_control_flow` cannot see
+    /// the difference: both of their arms diverge, where `&&` and `||` agree.
+    /// This is the fixture that separates them. With the `&&` this pass used to
+    /// use, `print_x` below was deleted — live code, removed, silently.
+    #[test]
+    fn test_statement_after_if_with_one_falling_arm_is_kept() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Ident("c".to_string()),
+                // Diverges.
+                then_branch: vec![Stmt::Return(Some(Expr::Integer(1)))],
+                // Falls through — so control reaches the statement after the if
+                // whenever `c` is false.
+                else_branch: Some(vec![Stmt::Let {
+                    name: "x".to_string(),
+                    ty: None,
+                    value: Expr::Integer(2),
+                    mutable: false,
+                    span: Span::dummy(),
+                }]),
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![Expr::Ident("x".to_string())],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    2,
+                    "the call after the if is reachable when the else arm falls through"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// The same rule with the arms swapped: the *then* arm falls through and
+    /// the else arm diverges. Order must not matter.
+    #[test]
+    fn test_statement_after_if_with_falling_then_arm_is_kept() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Ident("c".to_string()),
+                then_branch: vec![Stmt::Let {
+                    name: "x".to_string(),
+                    ty: None,
+                    value: Expr::Integer(2),
+                    mutable: false,
+                    span: Span::dummy(),
+                }],
+                else_branch: Some(vec![Stmt::Return(Some(Expr::Integer(1)))]),
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![Expr::Ident("x".to_string())],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    2,
+                    "the call after the if is reachable when the then arm falls through"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// A constant condition names the arm that runs, so the *other* arm must
+    /// not contribute to reachability. Constant folding runs before this pass,
+    /// so `if 5 > 3` arrives here already folded — which is what makes
+    /// `test_multiple_optimization_passes` correct: its else arm falls through,
+    /// but the condition is `true`, so the else arm never runs and the
+    /// statement after the if really is dead.
+    #[test]
+    fn test_constant_true_if_ignores_its_else_arm() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Bool(true),
+                then_branch: vec![Stmt::Return(Some(Expr::Integer(1)))],
+                // Falls through, but is unreachable: the condition is true.
+                else_branch: Some(vec![Stmt::Expr(Expr::Integer(3))]),
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    1,
+                    "with a constant-true condition only the then arm runs, and it returns"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// The mirror image: a constant-false condition runs only the else arm.
+    #[test]
+    fn test_constant_false_if_ignores_its_then_arm() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Bool(false),
+                // Falls through, but is unreachable: the condition is false.
+                then_branch: vec![Stmt::Expr(Expr::Integer(3))],
+                else_branch: Some(vec![Stmt::Return(Some(Expr::Integer(1)))]),
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    1,
+                    "with a constant-false condition only the else arm runs, and it returns"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
     /// The complement of `test_complex_control_flow`: an `if` with no else
     /// branch may be skipped entirely, so a statement after it is reachable
     /// even when the then branch diverges. Without this case, changing the

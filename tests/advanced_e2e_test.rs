@@ -389,7 +389,7 @@ fn test_higher_order_functions() {
 }
 
 #[test]
-#[ignore = "XFAIL: async/await — MILESTONES.md 'Not scheduled, and why': `async` emits a call to a function that is never generated (owned by unscheduled, after M4 at the earliest)"]
+#[ignore = "XFAIL: an `async fn` body is not wrapped into a Future — with the language's postfix `.await` this reaches the type checker, which reports 'expected Future<Int>, found Int' (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_async_await() {
     let source = r#"
     async fn fetch_data(id: int) -> int {
@@ -398,8 +398,8 @@ fn test_async_await() {
     }
     
     async fn process_data() -> int {
-        let a = await fetch_data(5);
-        let b = await fetch_data(10);
+        let a = fetch_data(5).await;
+        let b = fetch_data(10).await;
         a + b
     }
     
@@ -416,7 +416,7 @@ fn test_async_await() {
 }
 
 #[test]
-#[ignore = "XFAIL: effect declarations — grammar.ebnf:87 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, after M4 at the earliest)"]
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:87 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_effects_system() {
     let source = r#"
     effect IO {
@@ -461,7 +461,7 @@ fn test_pattern_matching_guards() {
     let source = r#"
     enum Message {
         Move { x: int, y: int },
-        Write(string),
+        Write(String),
         ChangeColor(int, int, int),
         Quit
     }
@@ -518,7 +518,7 @@ fn test_pattern_matching_guards() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters (`const ROWS: int`) — the type-parameter list rejects the `const` keyword (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:119 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1004-1013) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics_arrays() {
     let source = r#"
     struct Matrix<T, const ROWS: int, const COLS: int> {

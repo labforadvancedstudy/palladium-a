@@ -56,7 +56,7 @@ fn compile_and_run(source: &str) -> Result<String, String> {
 }
 
 #[test]
-#[ignore = "XFAIL: the `await` operator — grammar.ebnf:203 has `.await` as a postfix, never `await expr`; and async emits a call to a function that is never generated (owned by unscheduled, after M4 at the earliest)"]
+#[ignore = "XFAIL: an `async fn` body is not wrapped into a Future — with the language's postfix `.await` (grammar.ebnf:203) this reaches the type checker, which reports 'expected Future<Int>, found Int'; MILESTONES.md records a second gap behind it, that `.await` emits a call to a poll member codegen never generates (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_async_await_basic() {
     let source = r#"
     async fn fetch_data() -> int {
@@ -65,7 +65,7 @@ fn test_async_await_basic() {
     }
     
     async fn main() {
-        let result = await fetch_data();
+        let result = fetch_data().await;
         print(result);
     }
     "#;
@@ -76,7 +76,7 @@ fn test_async_await_basic() {
 }
 
 #[test]
-#[ignore = "XFAIL: the `await` operator — same as test_async_await_basic (owned by unscheduled, after M4 at the earliest)"]
+#[ignore = "XFAIL: an `async fn` body is not wrapped into a Future — same blocker as test_async_await_basic: 'expected Future<Int>, found Int' (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_async_await_multiple() {
     let source = r#"
     async fn fetch_a() -> int { 10 }
@@ -84,9 +84,9 @@ fn test_async_await_multiple() {
     async fn fetch_c() -> int { 30 }
     
     async fn main() {
-        let a = await fetch_a();
-        let b = await fetch_b();
-        let c = await fetch_c();
+        let a = fetch_a().await;
+        let b = fetch_b().await;
+        let c = fetch_c().await;
         print(a + b + c);
     }
     "#;
@@ -97,7 +97,7 @@ fn test_async_await_multiple() {
 }
 
 #[test]
-#[ignore = "XFAIL: effect declarations — grammar.ebnf:87 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, after M4 at the earliest)"]
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:87 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_effects_system() {
     let source = r#"
     effect IO {
@@ -284,7 +284,7 @@ fn test_lifetime_annotations() {
         data: &'a T
     }
     
-    fn longest<'a>(x: &'a string, y: &'a string) -> &'a string {
+    fn longest<'a>(x: &'a String, y: &'a String) -> &'a String {
         if x.len() > y.len() {
             x
         } else {
@@ -374,7 +374,7 @@ fn test_macros() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters (`const N: int`) — the type-parameter list rejects the `const` keyword (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:119 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1004-1013) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics() {
     let source = r#"
     struct Array<T, const N: int> {
