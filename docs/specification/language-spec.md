@@ -624,7 +624,7 @@ enums.
 
 **partial** — field types that parse and then fail in codegen (all three corrected from v0.2,
 which was ~250 lines low):
-- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1369`)
+- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1663`)
 - reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1374`)
 - tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1384`)
 
@@ -1177,7 +1177,7 @@ to a pointer. **No spelling copies.** Measured at `abeb665`:
 |---|---|
 | `mut a: [i64; 3]` | compiles; generated C is `void bump(long long a[3]);` — a write is caller-visible. Program prints `99`. |
 | `a: [i64; 3]` (no `mut`) | compiles; a write is caller-visible; **no diagnostic**. Program prints `99`. |
-| `a: &mut [i64; 3]` | does not compile: "Unsupported type in reference parameter" (`src/codegen/mod.rs:1636`). |
+| `a: &mut [i64; 3]` | does not compile: "Unsupported type in reference parameter" (`src/codegen/mod.rs:1981`). |
 
 So today the reference spellings are not an alternative to the bare one — one of them is rejected
 outright, and the other two behave identically.
