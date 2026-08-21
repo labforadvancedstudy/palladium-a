@@ -1,6 +1,6 @@
 [package]
 name = "alan-von-palladium"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["z@2lab.ai"]
 description = "The Alan von Palladium Programming Language - A systems programming language combining Turing's correctness with von Neumann's performance"
