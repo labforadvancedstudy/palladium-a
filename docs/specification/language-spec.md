@@ -1,38 +1,504 @@
 # The Palladium Language Specification
 
-**Version**: 0.2 (reality-based)
+**Version**: 0.3
 **Date**: 2026-08-22
-**Supersedes**: `language_specification.md` v1.0.0-alpha (2025-01-19), which described an
-intended language rather than the implemented one.
+**Supersedes**: v0.2 (2026-08-22), which described only the implemented subset and disowned the
+rest; and `language_specification.md` v1.0.0-alpha (2025-01-19), which described an intended
+language as though it were built.
 
 ## 0. How to read this document
 
-Every construct carries a status, and every status is backed by a location in the compiler
-source or by a command that was run against `pdc`:
+This document has two parts, and the separation between them is the whole point.
+
+**[Part I — Normative](#part-i-normative-specification)** says what Palladium *is*. It is the
+definition of the language. It does not change when the compiler changes, and it is not a claim
+about `pdc`. Every real language specification is written this way: ISO C defines C, and no
+sentence in it becomes false because a particular compiler is incomplete.
+
+**[Part II — Implementation status annex](#part-ii-implementation-status-annex)** says what `pdc`
+does today, section by section, with a source location or a command output for every row. It is
+allowed to be embarrassing. It is not allowed to be absent, and it is not allowed to be vague.
+
+Neither part may stand in for the other. A specification that silently shrinks to fit the
+implementation stops being a specification; an implementation status page that inherits the
+specification's confidence stops being a measurement. The failure this project actually suffered
+was the second kind — documentation that read as status while describing a language nobody had
+built — and the repair is the split, not the amputation.
+
+Annex vocabulary:
 
 | Mark | Meaning |
 |---|---|
-| **✅** | Implemented end-to-end: parses, typechecks, generates C, runs. |
-| **⚠️** | Parses, but breaks downstream — a compile error later, or (worse) wrong C. Each entry names the failure. |
-| **❌** | Not implemented. Either unparseable or explicitly rejected. |
+| **implemented** | Works end-to-end: parses, typechecks, generates C, runs. |
+| **partial** | Parses, but breaks downstream — a compile error later, or (worse) wrong C. Each entry names the failure. |
+| **unimplemented** | Not built. Either unparseable or explicitly rejected. |
 
-The previous specification asserted traits, generics with bounds, lifetimes, effects clauses,
-`async`, floats, closures, slices, and `where` clauses as language features. None of those are
-implemented; several are not even lexable. They are marked here rather than deleted, so the
-gap between intent and implementation stays visible.
+A claim in Part II without a `file:line` or a reproducible command is a bug in this document. A
+claim in Part I needs no such citation, because it is a definition; what it needs is to be
+consistent with the rest of Part I and with the feature documents it links to.
 
-A claim in this document without a `file:line` or a reproducible command is a bug in this
-document.
+**Citations in the annex were re-derived against the working tree at commit `abeb665`.** The v0.2
+citations into `src/codegen`, `src/parser`, `src/typeck` and `src/driver` had been taken from the
+pre-cleanup revision `f323cf1` and were off by 16 to 380 lines; several named unrelated code.
+Those are corrected below and the corrections are noted where the difference changes the claim.
 
-## 1. Overview
+Per-feature index with the same evidence, organised by feature rather than by section:
+[`docs/reference/features/feature-index.toml`](../reference/features/feature-index.toml).
 
-Palladium is a statement-oriented systems language that compiles to C. The pipeline
-(`src/driver/mod.rs:38-201`) is:
+---
+
+# Part I: Normative specification
+
+## N1. Overview and design commitments
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A1 — partial: the C backend works, the LLVM backend is skeletal](#a1-pipeline-and-backends)**</sub>
+
+Palladium is a statement-oriented systems language, compiled ahead of time, with no garbage
+collector and no runtime type information. It exists to make three claims true at once, and those
+three are the reason for it to exist rather than to be a Rust dialect:
+
+1. **Asynchrony is an effect, not a colour.** There is no `async` keyword and no `.await`
+   operator. See [N7](#n7-effects-and-asynchrony).
+2. **Termination is provable.** A function or a whole crate can be required to terminate, and the
+   compiler discharges the obligation. See [N8](#n8-totality).
+3. **Lifetimes are inferred.** Memory safety is Rust's, but the `'a` bookkeeping is the
+   compiler's job. See [N9](#n9-references-and-lifetimes).
+
+The reference implementation compiles to C and links with the system C compiler. That is an
+implementation strategy, not a language property: nothing in Part I depends on the target being C,
+and an LLVM backend is a second implementation of the same definition.
+
+## N2. Lexical structure
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A2 — partial: no floats, chars, hex, and attributes do not lex](#a2-lexical-structure)**</sub>
+
+Source is UTF-8.
+
+```ebnf
+identifier      = ( letter | '_' ) { letter | digit | '_' } ;
+integer_literal = [ '-' ] digit { digit } ;
+float_literal   = digit { digit } '.' digit { digit } ;
+char_literal    = "'" ( char | escape ) "'" ;
+string_literal  = '"' { char | escape } '"' ;
+boolean_literal = "true" | "false" ;
+```
+
+Comments are `//` to end of line and `/* … */`, nesting, and are whitespace.
+
+Attributes are lexical: `#[name]`, `#[name(args)]` on an item, and `#![name(args)]` at the top of
+a compilation unit. They carry totality obligations ([N8](#n8-totality)) and are the extension
+point for future annotations.
+
+## N3. Program structure and items
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A3, A4 — partial](#a3-program-structure)**</sub>
+
+A compilation unit is a sequence of imports followed by items.
+
+```ebnf
+item = function | struct_def | enum_def | trait_def | impl_block
+     | type_alias | macro_def | const_item | module ;
+```
+
+**Functions** take typed parameters, may declare a return type, and are expression-oriented: a
+body's trailing expression is its value. There is no `async` modifier ([N7](#n7-effects-and-asynchrony)).
+
+**Structs and enums** are the product and sum types. Enum variants may be unit, tuple or struct
+shaped.
+
+**Macros** are one system — pattern-based, hygienic by default. There is no split between a
+declarative macro language and a procedural one.
+
+Full feature list: [`PALLADIUM_V1_FEATURES.md`](../reference/features/PALLADIUM_V1_FEATURES.md).
+
+## N4. Types
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A5 — partial: no floats, slices or fn types; Option and Result are not built in](#a5-types)**</sub>
+
+Primitives: `i32`, `i64`, `u32`, `u64`, `f32`, `f64`, `bool`, `char`, `String`, `()`.
+`int` is an alias for `i64`.
+
+> **OPEN: `str` and `usize` are used normatively elsewhere and are not in this list.**
+> [`implicit-lifetimes.md`](../reference/features/core-language/implicit-lifetimes.md) writes
+> `ref str` and `position: usize` in normative examples, and
+> [N14](#n14-builtins-and-the-standard-library) gives `string_char_at` a `char` return while
+> `string_len` returns `i64` rather than a size type. Under this list `ref str` names no type.
+> Two ways out, and the choice is the owner's: **add** `str` (a borrowed string slice, the natural
+> referent of `ref`) and `usize` (an index type) to the primitive set, or **rewrite** those
+> examples to `ref String` and `u64`. This is flagged rather than decided because adding two
+> primitives is a language change, and because the page carrying the inconsistency had never been
+> reviewed — it was found by reading it for the first time in four rounds, not by any gate.
+
+Composites: arrays `[T; N]`, slices `[T]`, tuples `(A, B)`, references
+(`ref T` / `ref mut T`, see [N9](#n9-references-and-lifetimes)), function types `fn(A) -> B`,
+and named types with generic arguments `Name<A, B>`.
+
+`Option<T>` and `Result<T, E>` are in the prelude. `?` propagates a `Result`'s error to the
+caller, converting error types where a conversion exists.
+
+Type inference is local and does not require annotations on `let` bindings or on most
+expressions. Const generics (`struct Buffer<const N: usize>`) are generic parameters evaluated at
+compile time.
+
+## N5. Statements and expressions
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A6 — partial: if and match are statements; no closures, loop, else-if or compound assignment](#a6-statements-and-expressions)**</sub>
+
+Statements: `let`, assignment, `return`, `break`, `continue`, `unsafe { }`, and expression
+statements.
+
+`if`, `match`, and blocks are **expressions**. `let x = if c { 1 } else { 2 };` is well-formed, and
+so is `else if`. `loop` is an infinite loop, exited with `break`, which may carry a value.
+
+Closures are expressions: anonymous functions with inferred capture mode, and a `move` form that
+transfers ownership.
+
+`try { … }` scopes error handling, catching and transforming a `Result` locally.
+
+Operators: arithmetic `+ - * / %`, comparison `== != < > <= >=`, logical `&& || !`, bitwise
+`& | ^ ~ << >>`, compound assignment `+= -= *= /= %=`, ranges `..` and `..=`, and `as` casts.
+Unary minus binds tighter than multiplication, so `a * -b` is `a * (-b)`.
+
+## N6. Patterns
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A7 — partial: three pattern forms; exhaustiveness for enums only](#a7-patterns)**</sub>
+
+Patterns appear in `match` arms, `let` bindings and parameters:
+
+```ebnf
+pattern = '_' | identifier | literal | range_pattern
+        | path [ '(' pattern { ',' pattern } ')' | '{' field_patterns '}' ]
+        | tuple_pattern | slice_pattern
+        | pattern '|' pattern
+        | identifier '@' pattern ;
+```
+
+Arms may carry guards (`if cond`). `match` is exhaustive: a non-exhaustive match is a compile
+error, not a silent fall-through, and this applies to every scrutinee type, not only enums.
+
+## N7. Effects and asynchrony
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A6.5 — unimplemented: the compiler has async and .await, which this section removes](#a65-question-mark-async-and-await)**</sub>
+
+Full definition: [`async-as-effect.md`](../reference/features/async-system/async-as-effect.md).
+
+Asynchrony is an **algebraic effect**, not a function colour.
+
+- **There is no `async` keyword and no `.await` operator.** A function that performs an
+  asynchronous operation is written exactly like one that does not.
+- Effects are **inferred** from a function's body and **propagated to callers**, transitively.
+  The propagation is a fixed point over the call graph, not a single pass, and an unresolved
+  callee is not assumed pure.
+- **Independent effectful operations are parallel by default.** Sequencing is requested, not
+  accidental.
+- Effect contexts scope policy over a block rather than threading it through every call:
+  `with_timeout(5.seconds) { with_retry(3) { … } }`.
+- There is **no async runtime and no `Future` boxing**. Effect tracking is entirely static and has
+  no runtime representation.
+
+Two escape hatches, and only two: `effect::sync { … }` forces sequential execution, and an
+explicit `-> async T` return type pins an asynchronous boundary.
+
+The effect vocabulary is not limited to asynchrony: IO, memory, panic and unsafe are effects on
+the same footing, which is what makes "this function is pure" a statement the compiler can check.
+
+## N8. Totality
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A2 — unimplemented: attributes do not lex, so no totality syntax reaches the parser](#a2-lexical-structure)**</sub>
+
+Full definition: [`totality-checking.md`](../reference/features/advanced/totality-checking.md).
+
+Palladium can prove that a function terminates.
+
+| Form | Meaning |
+|---|---|
+| `#![total(strict)]` | Crate-level: every function must be proven total, and `unsafe` is not permitted. |
+| `#[total]` | Per function: the compiler must prove this one terminates. |
+| `#[decreases(expr)]` | The termination measure: `expr` strictly decreases, in a well-founded order, at every recursive call. |
+| `#[total(fuel = N)]` | Bounded termination: at most `N` steps. |
+| `#[partial]` | Explicit opt-out; termination is not being proven here. |
+
+Structural recursion on an inductive type needs no measure — a recursive call on a strict subterm
+is proven automatically. Failure to discharge an obligation is a compile error; there is no mode
+in which an unproven `#[total]` function is accepted.
+
+## N9. References and lifetimes
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A9 — unimplemented: ref is not a keyword and there is no region inference](#a9-memory-model)**</sub>
+
+Full definition: [`implicit-lifetimes.md`](../reference/features/core-language/implicit-lifetimes.md).
+
+| Form | Meaning |
+|---|---|
+| `ref T` | Shared borrow. Replaces Rust's `&T`. |
+| `ref mut T` | Mutable borrow. Replaces Rust's `&mut T`. |
+| `ref<'a> T` | An explicitly named region, for cases inference cannot resolve. |
+
+There are **no `'a` parameter lists** on functions, structs or impls. A region name appears only
+inside a `ref<…>`, and only where the compiler has asked for one.
+
+The safety guarantee is Rust's, unchanged: no use after free, no aliasing `ref mut`, checked at
+compile time with no runtime cost. What is removed is the annotation burden, not the analysis.
+When inference cannot determine a region, that is a **compile error naming the ambiguity**, never
+a guess.
+
+## N10. Traits and generics
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A4.4, A5 — unimplemented: traits emit no code; generic struct fields are rejected in codegen](#a44-traits)**</sub>
+
+Generics are monomorphised: a generic function or type is instantiated per concrete argument, so
+abstraction costs nothing at runtime. Type parameters may carry bounds (`<T: Display>`) and
+`where` clauses.
+
+Traits define shared behaviour: method signatures with optional defaults, associated types, and
+static dispatch through bounds. Trait methods take a `self` receiver.
+
+These two are defined in detail by design documents rather than restated here:
+
+- [`docs/design/trait_system_design.md`](../design/trait_system_design.md)
+- [`docs/design/generics.md`](../design/generics.md)
+
+Those three documents carry a **dual-axis banner**: *normative language definition, compiler status
+unimplemented*. That is the same relationship every section of Part I has to Part II, and it
+replaces the older single-axis "PROPOSAL — not implemented" banner, which was accurate about the
+compiler and wrong about the language. Material in them that is genuinely still undecided sits
+under an explicitly non-normative open-design heading in each file, so that "not yet built" and
+"not yet decided" cannot be confused again.
+
+## N11. Modules
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A3 — partial: import works, there is no mod item](#a3-program-structure)**</sub>
+
+Modules are file-based, with nested paths and public/private visibility. Imports:
 
 ```
-lex → parse → resolve imports → macro expand → typecheck → borrow check
-    → effect analysis (informational only) → optimize → C codegen → gcc
+import std::math;
+import std::io::{read, write};
+import std::collections as col;
+import std::prelude::*;
 ```
+
+Design detail: [`docs/design/module-system.md`](../design/module-system.md), read on the same terms
+as [N10](#n10-traits-and-generics).
+
+## N12. Memory model
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A9 — partial: checked but not typed; String is Copy in the implementation](#a9-memory-model)**</sub>
+
+Ownership and borrowing are Rust's: each value has one owner, moves are the default, borrows are
+checked at compile time, and there is no garbage collector.
+
+Values with a destructor are dropped at end of scope. `String` is an owned, heap-allocated,
+UTF-8 value with move semantics.
+
+`unsafe { }` is where the compiler's guarantees are suspended and the programmer's take over. It
+is restricted rather than unrestricted: it is auditable, isolated, and forbidden inside a
+`#![total(strict)]` crate.
+
+A `&mut T` may be taken only of a binding declared `mut`. Taking `&mut` of an immutable binding is
+a compile error.
+
+### N12.1 Array parameters — OPEN DECISION
+
+**This subsection is not yet decided. It is written as two options because the choice is the
+owner's, and choosing silently would be worse than leaving it visibly open.** Everything else in
+Part I is settled; this is not, and no reader should treat either option below as the rule.
+
+The question: **does a `[T; N]` parameter copy the caller's array, or alias it?**
+
+Nothing in this specification has ever answered that. §N12 defines moves, borrow-checking and
+destructors and says nothing about array parameters. It matters because `[T; N]` has a
+compile-time size, so a copy is a coherent option in a way it is not for a slice, and because
+without a rule the callee's `a[0] = x` is either a local edit or a caller-visible mutation, with
+no way for a reader to tell which.
+
+The two options are not symmetric — they differ in what they cost and in what they make of the
+other two questions below.
+
+**Option A — value semantics.** `[T; N]` is a value type. Passing one copies `N * sizeof(T)`
+bytes; the callee's writes are invisible to the caller. Then `&[T; N]` and `&mut [T; N]` have the
+job every reference has: avoiding the copy, and opting into caller-visible mutation respectively.
+This is coherent with `[T; N]` being sized and with §N12's "moves are the default" — and it is the
+only option under which the three spellings mean three different things.
+*Cost:* every array argument is a memcpy unless the author remembers `&`. For a compiler written
+in this language that is a real cost, and the bootstrap subset has been avoiding it by convention
+already.
+
+**Option B — reference semantics.** `[T; N]` always aliases the caller's storage, matching C's
+array-to-pointer decay. Then `&[T; N]` and `&mut [T; N]` are **redundant spellings**, and the
+specification should say so and pick one: either they are forbidden, or `&mut` becomes the *only*
+permitted spelling for a parameter the callee writes through, with bare `[T; N]` read-only.
+*Cost:* the language inherits a C wart, and "moves are the default" acquires an exception that has
+to be stated everywhere arrays are discussed.
+
+Two dependent questions, which cannot be answered before the choice above:
+
+1. **What do `&[T; N]` and `&mut [T; N]` mean?** Under A they are the no-copy and mutable-alias
+   forms. Under B they are noise unless promoted to the mutation marker.
+2. **Is `mut` on a parameter part of the type, or a binding mode?**
+   [`bootstrap-subset.md`](bootstrap-subset.md) currently requires `mut` on every struct and array
+   parameter, and `benchmarks/palladium/bubble_sort.pd:11` follows it
+   (`fn bubble_sort(mut arr: [i64; 45000], n: i64)`). If `mut` is a binding mode — a statement about
+   the callee's local name — it cannot also be what makes a mutation caller-visible. If it is part
+   of the type, then `mut arr: [T; N]` is a third reference spelling and Option B's redundancy
+   problem gets worse, not better.
+
+Until this is decided, the bootstrap subset's convention governs by default, because it is written
+down and followed: struct and array parameters are declared `mut`, and a write through a parameter
+not declared `mut` is refused. That is a placeholder with an owner, not a rule with a rationale.
+
+Measured consequences of each choice are recorded in [A9.2](#a92-array-parameters).
+
+## N13. Execution model
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A10 — implemented](#a10-execution-model)**</sub>
+
+Execution begins at `fn main`. Arguments are evaluated left to right. A compilation unit without
+a `main` is a library.
+
+## N14. Builtins and the standard library
+
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A8 — partial: 38 builtins exist, 4 of them outside the normative set; stdlib/ does not parse](#a8-builtins)**</sub>
+
+A **builtin** is an operation the compiler knows intrinsically: it is in scope without an import,
+its name is reserved, and it has no Palladium definition a program could read or replace. The
+normative content of this section is the *surface* — which capabilities are builtin, what their
+signatures look like, and what distinguishes them from library code — not a name list.
+
+> An earlier draft of this section delegated the normative list to
+> `docs/reference/builtins.md`, which `scripts/gen-builtin-docs.py` generates from
+> `src/builtins.rs`. That was a mistake and contradicted this document's own premise: it made the
+> language definition change whenever the compiler's table changed, so `pdc` could have *redefined
+> Palladium* by adding a row. The generated table is evidence about the implementation and lives in
+> [A8](#a8-builtins). Part I defines the surface; Part II reports what is built.
+
+**The normative set, enumerated.** "Closed" is meaningless unless the set can be named, so it is
+named here. These identifiers are reserved: a program may not define or shadow them, and a
+conforming implementation provides all of them with these signatures.
+
+| Name | Signature | Effects |
+|---|---|---|
+| `print` | `(String) -> ()` | io |
+| `print_int` | `(i64) -> ()` | io |
+| `panic` | `(String) -> !` | panic |
+| `string_len` | `(String) -> i64` | pure |
+| `string_concat` | `(String, String) -> String` | pure |
+| `string_eq` | `(String, String) -> bool` | pure |
+| `string_char_at` | `(String, i64) -> char` | pure |
+| `string_substring` | `(String, i64, i64) -> String` | pure |
+| `string_from_char` | `(char) -> String` | pure |
+| `string_to_int` | `(String) -> Result<i64, ParseError>` | pure |
+| `int_to_string` | `(i64) -> String` | pure |
+| `char_is_digit` | `(char) -> bool` | pure |
+| `char_is_alpha` | `(char) -> bool` | pure |
+| `char_is_whitespace` | `(char) -> bool` | pure |
+| `arg_count` | `() -> i64` | io |
+| `arg_at` | `(i64) -> String` | io |
+| `file_open` | `(String, OpenMode) -> Result<File, IoError>` | io |
+| `file_read_all` | `(File) -> Result<String, IoError>` | io |
+| `file_read_line` | `(File) -> Result<Option<String>, IoError>` | io |
+| `file_write` | `(File, String) -> Result<(), IoError>` | io |
+| `file_close` | `(File) -> Result<(), IoError>` | io |
+| `file_flush` | `(File) -> Result<(), IoError>` | io |
+| `file_seek` | `(File, i64, SeekFrom) -> Result<i64, IoError>` | io |
+| `file_exists` | `(String) -> bool` | io |
+| `path_exists` | `(String) -> bool` | io |
+| `path_is_file` | `(String) -> bool` | io |
+| `path_is_dir` | `(String) -> bool` | io |
+| `create_dir` | `(String) -> Result<(), IoError>` | io |
+| `create_dir_all` | `(String) -> Result<(), IoError>` | io |
+| `remove_file` | `(String) -> Result<(), IoError>` | io |
+| `remove_dir` | `(String) -> Result<(), IoError>` | io |
+| `remove_dir_all` | `(String) -> Result<(), IoError>` | io |
+| `read_file_to_string` | `(String) -> Result<String, IoError>` | io |
+| `write_string_to_file` | `(String, String) -> Result<(), IoError>` | io |
+
+Thirty-four names. `File`, `OpenMode`, `SeekFrom`, `IoError` and `ParseError` are prelude types
+([N4](#n4-types)); a `File` is an opaque handle, not an integer.
+
+> **Reconciliation against `src/builtins.rs`, name by name.** The implementation defines **38**
+> names; this table defines **34**. Set arithmetic, computed from the table above and the compiler's
+> own registry:
+>
+> - normative − implemented = **none**. Every one of the 34 names exists in `pdc`.
+> - implemented − normative = **exactly four**: `file_open_ex`, `file_close_ex`, `file_read_ex`,
+>   `file_write_ex`. They are a parallel handle API that exists because `OpenMode` does not, and
+>   they are not part of the language.
+>
+> 34 + 4 = 38, so the accounting closes. What does *not* match is signatures: the filesystem
+> builtins return `i64`/`bool` handles rather than `Result`, and `string_char_at` returns `i64`
+> rather than `char` because `char` is not a type yet. Itemised in [A8](#a8-builtins).
+>
+> *(A previous version of this annex said "36 builtins", inherited from the pre-cleanup
+> specification's section heading. It was never right: `src/builtins.rs` has had 38 since
+> `191f8c1` made it the single table, and the generated `reference/builtins.md` says 38. Corrected
+> at every site.)*
+>
+> This table is the definition, and it is written independently of the generated one on purpose —
+> an earlier draft delegated to it, which would have let `pdc` redefine Palladium by adding a row.
+
+Three normative constraints, which are properties of the language rather than of any table:
+
+1. **Builtins are closed.** The set is exactly the 34 names above. A program cannot define a new
+   builtin, and the set does not vary by target. A capability that varies by target belongs in the
+   standard library.
+2. **Builtins are not privileged in the type system.** They take and return ordinary types; there
+   is no builtin-only type and no builtin-only calling convention.
+3. **Filesystem builtins are effectful** in the sense of [N7](#n7-effects-and-asynchrony), and
+   their effects propagate to callers. Output builtins are effectful. String, character and
+   conversion builtins are pure.
+
+Above the builtins sits a **standard library**, written in Palladium and read like any other
+module: core types and traits, collections (`Vec<T>`, `HashMap<K, V>`, `String`, `Option<T>`),
+math, buffered and networked I/O, and process/environment access. The dividing line is constraint
+1: if it can be written in Palladium, it is library, not builtin.
+
+---
+
+# Part II: Implementation status annex
+
+What `pdc` does at commit `abeb665`, per Part I section. Each row is either a source location or a
+command that was run.
+
+| Normative section | Status | Where the detail is |
+|---|---|---|
+| [N1 Overview](#n1-overview-and-design-commitments) | partial | [A1](#a1-pipeline-and-backends) — C backend works; LLVM backend is skeletal |
+| [N2 Lexical structure](#n2-lexical-structure) | partial | [A2](#a2-lexical-structure) — no floats, chars, hex, or attributes |
+| [N3 Program structure and items](#n3-program-structure-and-items) | partial | [A3](#a3-program-structure), [A4](#a4-items) |
+| [N4 Types](#n4-types) | partial | [A5](#a5-types) — no floats, slices, fn types; `Option`/`Result` not built in |
+| [N5 Statements and expressions](#n5-statements-and-expressions) | partial | [A6](#a6-statements-and-expressions) — `if`/`match` are statements; no closures, `loop`, `else if`, compound assignment |
+| [N6 Patterns](#n6-patterns) | partial | [A7](#a7-patterns) — three forms only; exhaustiveness for enums only |
+| [N7 Effects and asynchrony](#n7-effects-and-asynchrony) | unimplemented | [A6.5](#a65-question-mark-async-and-await), and the divergence list in [`async-as-effect.md`](../reference/features/async-system/async-as-effect.md#where-the-implementation-currently-diverges) |
+| [N8 Totality](#n8-totality) | unimplemented | [A2](#a2-lexical-structure) — attributes do not lex; no checker exists |
+| [N9 References and lifetimes](#n9-references-and-lifetimes) | unimplemented | [A9](#a9-memory-model) — `ref` is not a keyword; no region inference |
+| [N10 Traits and generics](#n10-traits-and-generics) | unimplemented | [A4.4](#a44-traits), [A5](#a5-types) |
+| [N11 Modules](#n11-modules) | partial | [A3](#a3-program-structure) — `import` works; no `mod` item |
+| [N12 Memory model](#n12-memory-model) | partial | [A9](#a9-memory-model) — checked but not typed; `String` is Copy; array parameters [A9.2](#a92-array-parameters); `&mut` of an immutable local accepted [A9.3](#a93-mut-of-an-immutable-local-is-accepted) |
+| [N13 Execution model](#n13-execution-model) | implemented | [A10](#a10-execution-model) |
+| [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtins) — 38 builtins exist against a normative 34; signatures differ; `stdlib/` does not parse |
+
+## A1. Pipeline and backends
+
+The pipeline (`src/driver/mod.rs:49`) is:
+
+```
+lex → parse → macro expand → resolve imports → typecheck → borrow check
+    → effect analysis (informational only) → unsafe check → optimize → C codegen → gcc
+```
+
+The C backend is the real backend. An LLVM text backend exists
+(`src/codegen/llvm_text_backend.rs`, 1442 lines) but is skeletal: `break` and `continue` emit
+`br label %loop_end_placeholder` under a TODO (`src/codegen/llvm_text_backend.rs:914`, `src/codegen/llvm_text_backend.rs:921`), `match` is a TODO if/else chain
+(`src/codegen/llvm_text_backend.rs:933`), and enum construction, `?`, macro invocation and `await` are one unimplemented TODO
+together (`src/codegen/llvm_text_backend.rs:1379`). It also bails on ordinary code — "Unsupported iterator type in for loop"
+(`src/codegen/llvm_text_backend.rs:820`), "Unsupported binary operator" (`src/codegen/llvm_text_backend.rs:1081`), "Complex function calls not yet supported"
+(`src/codegen/llvm_text_backend.rs:1222`). No conformance row exercises it.
+
+Generated C is linked against `runtime/palladium_runtime.c`, which supplies 16 file/path symbols.
+`pdc` resolves that runtime relative to its own install location — `pdc --print-runtime` shows
+which copy it found, and `$PALLADIUM_RUNTIME` overrides it. (Until 2026-08-22 the path was
+hardcoded relative to the working directory, so an installed compiler could not link anything.)
+
 
 **The C backend is the only backend.** An LLVM text backend exists in the tree
 (`src/codegen/llvm_text_backend.rs`) and `--llvm` selects it, but as of 2026-08-22 it **refuses
@@ -60,37 +526,29 @@ links and runs. The C backend prints `22`.
 That case is why the gate is wholesale: verifying the assembly cannot detect it, so a gate covering
 only the loud half would read as protection while providing none.
 
-Generated C is linked against `runtime/palladium_runtime.c`, which supplies 16 file/path
-symbols. `pdc` resolves that runtime relative to its own install location — `pdc --print-runtime`
-shows which copy it found, and `$PALLADIUM_RUNTIME` overrides it. (Until 2026-08-22 the path was
-hardcoded relative to the working directory, so an installed compiler could not link anything.)
+## A2. Lexical structure
 
-## 2. Lexical structure
+The lexer is `logos`-based (`src/lexer/token.rs`).
 
-Source is UTF-8. The lexer is `logos`-based (`src/lexer/token.rs`).
+**implemented**: decimal integers, strings, booleans, identifiers
+(`src/lexer/token.rs:12`). The sign is part of the integer token, so `i-1` lexes as `i` then
+`-1`.
 
-### 2.1 Literals ✅ / ❌
+**unimplemented**: float literals, char literals, hex (`0x`), binary (`0b`), octal, numeric
+separators, raw strings, `\0` / `\xNN` / `\u{}` escapes, string interpolation. No lexer rule
+produces any of them.
 
-```ebnf
-integer_literal = [ '-' ] digit { digit } ;        (* the sign is part of the token *)
-string_literal  = '"' { char | escape } '"' ;
-escape          = '\' ( 'n' | 't' | 'r' | '"' | '\' ) ;
-boolean_literal = "true" | "false" ;
+**unimplemented — attributes.** There is no `#` token at all. `#[total]` fails before parsing:
+
+```
+error: Unexpected character '#' at line 1, column 1
+  = note: Palladium only allows ASCII letters, numbers, and common symbols
 ```
 
-✅ decimal integers, strings, booleans.
-❌ **float literals, char literals, hex (`0x`), binary (`0b`), octal, numeric separators, raw
-strings, `\0` / `\xNN` / `\u{}` escapes, string interpolation.** The lexer has no rule that
-produces any of them (`src/lexer/token.rs:12-30`). The v1.0 spec listed hex and binary
-literals; they do not exist.
+This is the blocker under [N8](#n8-totality): totality is not merely unimplemented, its syntax is
+one level below the parser.
 
-### 2.2 Identifiers and keywords ✅
-
-```ebnf
-identifier = ( letter | '_' ) { letter | digit | '_' } ;
-```
-
-The 29 keywords the lexer recognizes (`src/lexer/token.rs:33-118`):
+The 29 keywords the lexer recognizes (`src/lexer/token.rs:33`):
 
 ```
 fn let mut if else while return true false for in break continue
@@ -99,23 +557,23 @@ unsafe async await macro
 ```
 
 Note `import`, not `use`. **`loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`,
-`crate`, `super`, `extern` are NOT keywords** — they lex as ordinary identifiers, so
-`let loop = 1;` is legal and `loop { }` is a parse error at the `{`.
+`crate`, `super`, `extern`, `try`, `with`, `effect` are NOT keywords** — they lex as ordinary
+identifiers, so `let loop = 1;` is legal and `loop { }` is a parse error at the `{`. The absence
+of `ref` is why the normative reference syntax of [N9](#n9-references-and-lifetimes) does not
+parse; the absence of `with` and `effect` is why the effect contexts of
+[N7](#n7-effects-and-asynchrony) do not.
 
-### 2.3 Operators ✅ / ❌
+`async` and `await` **are** keywords — the two things [N7](#n7-effects-and-asynchrony) says the
+language does not have are the two the implementation has.
 
-✅ `+ - * / % = == != ! < > <= >= && ||`
-❌ `+= -= *= /= %=` (no compound assignment), `| ^ ~ << >>` (no bitwise operators — the v1.0
-spec listed all of them), `..=`, `as` casts.
+**Operators. implemented**: `+ - * / % = == != ! < > <= >= && ||`.
+**unimplemented**: `+= -= *= /= %=` (no compound assignment), `| ^ ~ << >>` (no bitwise
+operators), `..=`, `as` casts. `|` and `$` are lexed but never consumed by the parser; `as` is
+consumed only for import aliases (`src/parser/mod.rs:259`).
 
-`|` and `$` are lexed but never consumed by the parser; `as` is consumed only for import
-aliases (`src/parser/mod.rs:259`).
+Comments (`// line`, `/* block */`) are implemented.
 
-### 2.4 Comments ✅
-
-`// line` and `/* block */`, treated as whitespace.
-
-## 3. Program structure
+## A3. Program structure
 
 ```ebnf
 program = { import } { item } ;
@@ -130,12 +588,13 @@ import = "import" path [ "as" identifier ] ";"
        | "import" path "::" "{" identifier { "," identifier } "}" ";" ;
 ```
 
-Items (`src/parser/mod.rs:344-406`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`, `macro`.
-❌ **There is no top-level `const`, `static`, `mod`, or `use` item.**
+Items (`src/parser/mod.rs:344`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`, `macro`.
+**unimplemented: there is no top-level `const`, `static`, `mod`, or `use` item** — so
+[N11](#n11-modules)'s file-based modules exist only as far as `import` reaches.
 
-## 4. Items
+## A4. Items
 
-### 4.1 Functions ✅
+### A4.1 Functions
 
 ```ebnf
 function = [ "pub" ] [ "async" ] "fn" identifier [ generic_params ]
@@ -144,160 +603,205 @@ param    = [ "mut" ] identifier ":" type | self_param ;
 self_param = [ "&" ] [ "mut" ] "self" ;
 ```
 
-✅ parameters, return types, `pub`, `self` receivers in `impl` blocks.
-❌ default parameter values, pattern parameters, varargs, `where` clauses.
-❌ **effect clauses (`!\[io\]`) do not exist in the surface syntax.** `Function.effects` is
-hardcoded `None` by the parser (`src/parser/mod.rs:549`). Effects are *inferred* afterwards
-(`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:139-145`); they gate
-nothing. The v1.0 spec's `fn read_file(p: String) -> String ![io]` is not parseable.
+**implemented**: parameters, return types, `pub`, `self` receivers in `impl` blocks.
+**unimplemented**: default parameter values, pattern parameters, varargs, `where` clauses.
 
-### 4.2 Structs ✅ with field restrictions
+**unimplemented — effect clauses.** `![io]` does not exist in the surface syntax.
+`Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:565`, corrected from
+v0.2's `src/parser/mod.rs:549`, which is where the `Function` literal opens). Effects are *inferred* afterwards
+(`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:151`, corrected
+from `src/driver/mod.rs:139-145`); they gate nothing. `crate::effects::` is referenced from exactly one place in
+the compiler, `src/driver/mod.rs:147`.
 
-```ebnf
-struct_def = [ "pub" ] "struct" identifier [ generic_params ] "{" fields "}" ;
-```
+`async fn` is accepted and typechecked: `async fn g() -> i64 { return 1; }` fails with
+"Type mismatch: expected Future<Int>, found Int", i.e. the return type is wrapped in a `Future`.
+Under [N7](#n7-effects-and-asynchrony) neither the keyword nor the wrapper should exist.
 
-Field types that work: `i64`/`i32`/`u32`/`u64`, `bool`, `String`, `[T; N]`, other structs, enums.
+### A4.2 Structs
 
-⚠️ Field types that parse and then fail in codegen:
-- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1119`)
-- generic → "Generic types in structs not yet supported" (`:1104`)
-- reference → "Reference types in structs not yet supported" (`:1109`)
+**implemented** field types: `i64`/`i32`/`u32`/`u64`, `bool`, `String`, `[T; N]`, other structs,
+enums.
 
-### 4.3 Enums ✅
+**partial** — field types that parse and then fail in codegen (all three corrected from v0.2,
+which was ~250 lines low):
+- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1369`)
+- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1374`)
+- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1384`)
 
-```ebnf
-enum_def = "enum" identifier [ generic_params ] "{" variants "}" ;
-variant  = identifier [ "(" types ")" | "{" fields "}" ] ;
-```
+### A4.3 Enums
 
-✅ unit, tuple, and struct variants; construction and `match` both work.
-⚠️ `pub` on an enum is parsed and then silently discarded — `EnumDef` has no visibility field
-(`src/parser/mod.rs:379`, `src/ast/mod.rs:139-146`).
+**implemented**: unit, tuple, and struct variants; construction and `match` both work.
+**partial**: `pub` on an enum is parsed and then silently discarded — `EnumDef` has no visibility
+field (`src/parser/mod.rs:379`, `src/ast/mod.rs:139`).
 
-### 4.4 Traits ❌
+### A4.4 Traits
 
-Traits parse (`src/parser/mod.rs:736-960`) and then **emit nothing** — codegen produces no C
-for a trait (`src/codegen/mod.rs:754-757`); there is no vtable or dispatch mechanism anywhere.
-Trait method bodies are never typechecked (`src/typeck/mod.rs:947`). Additionally, a trait
-method declared with a `self` receiver is a **parse error**, because trait methods use a
-separate parameter loop that does not handle `self` (`src/parser/mod.rs:863-897`).
+**unimplemented.** Traits parse (`src/parser/mod.rs:752`, corrected from line 736–960 of the pre-cleanup revision) and then
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1013`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:795-797`, corrected
+from `src/typeck/mod.rs:947`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+because trait methods use a separate parameter loop that does not handle `self`
+(`src/parser/mod.rs:876`, corrected from line 863–897 of the pre-cleanup revision).
 
-The v1.0 spec's `trait Display { fn fmt(&self) -> String; }` does not parse.
+So `trait Display { fn fmt(&self) -> String; }` does not parse, and
+[N10](#n10-traits-and-generics) has no implementation at all.
 
-### 4.5 Impl blocks ✅ (associated functions only)
+`tests/07_traits_basic.pd` PASSES conformance while only printing that traits are unimplemented.
+
+### A4.5 Impl blocks
 
 ```ebnf
 impl_block = "impl" [ generic_params ] [ type "for" ] type "{" { function } "}" ;
 ```
 
-✅ Methods become mangled free functions `__pd_Type_method` (`src/codegen/mod.rs:1861`).
-❌ Associated constants and associated types are rejected (`src/parser/mod.rs:1030`).
-⚠️ **Methods cannot be called with `.` syntax** — see §6.4. Call them as
-`Type::method(receiver, args)`.
+**implemented**: methods become mangled free functions `__pd_Type_method`
+(`src/codegen/mod.rs:1027-1033`, corrected from line 1861 of the pre-cleanup revision).
+**unimplemented**: associated constants and associated types are rejected — an impl body may
+contain only `fn` (`src/parser/mod.rs:1045-1051`, corrected from line 1030 of the pre-cleanup revision).
+**partial**: methods cannot be called with `.` syntax — see [A6.4](#a64-method-calls). Call them
+as `Type::method(receiver, args)`.
 
-### 4.6 Macros ⚠️
+### A4.6 Macros
 
-User macros (`macro name!(a, b) { … }`) parse into a raw token stream that is lossily
+**partial.** User macros (`macro name!(a, b) { … }`) parse into a raw token stream that is lossily
 converted; unlisted tokens degrade into `AstToken::Ident` of a debug string
-(`src/parser/mod.rs:1258`).
+(`src/parser/mod.rs:1274`, corrected from line 1258 of the pre-cleanup revision).
 
-Four builtin macros exist (`src/macros/mod.rs:41-54`), each taking **exactly one** expression:
+Four builtin macros exist (`src/macros/mod.rs:41`), each taking **exactly one** expression:
 
 | Macro | Expands to | Status |
 |---|---|---|
-| `println!(e)` | `print(e); print("\n")` | ✅ (one argument only — `println!()` and `println!(a, b)` fail) |
-| `assert!(c)` | `if (!(c)) { panic("Assertion failed"); }` | ✅ |
-| `vec![e]` | `[e]` — a **1-element array**, not a growable vector | ⚠️ misleading name |
-| `dbg!(e)` | calls `print_debug` | ❌ **broken** — `print_debug` is defined nowhere (`src/macros/mod.rs:161`) |
+| `println!(e)` | `print(e); print("\n")` | implemented (one argument only — `println!()` and `println!(a, b)` fail) |
+| `assert!(c)` | `if (!(c)) { panic("Assertion failed"); }` | implemented |
+| `vec![e]` | `[e]` — a **1-element array**, not a growable vector | partial; misleading name |
+| `dbg!(e)` | calls `print_debug` | unimplemented — `print_debug` is defined nowhere (`src/macros/mod.rs:167`, corrected from line 161 of the pre-cleanup revision) |
 
-## 5. Types
+Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
+`grep -rn hygien src/ --include='*.rs'` returns nothing.
+
+## A5. Types
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | ✅ | `int` is an alias for `i64` (`src/parser/mod.rs:2038`) |
-| `i32`, `u32`, `u64` | ✅ | |
-| `bool`, `String` | ✅ | |
-| `()` | ✅ | unit |
-| `[T; N]` | ✅ | `N` is an integer literal or an identifier |
-| `&T`, `&mut T` | ⚠️ | parses, but the typechecker is a **no-op**: `&i64` and `i64` are indistinguishable to it (`src/typeck/mod.rs:2470-2486`). There is no reference type in the checker. |
-| `Name<A, B>` | ⚠️ | see below |
-| `(A, B)` | ⚠️ | becomes `void*` in C (`src/codegen/mod.rs:828`); no tuple expression exists, so no tuple is constructible |
-| `f32`, `f64`, `char`, `str`, `u8`, `usize` | ❌ | not in the primitive table (`src/parser/mod.rs:2037-2043`) |
-| `fn(A) -> B` | ❌ | function types are unparseable |
-| `[T]` slices, `dyn T`, `impl T` | ❌ | |
-| `<T: Bound>`, `where` | ❌ | `parse_generic_params` accepts bare names only; the `:` is a parse error |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:2064`, corrected from line 2038 of the pre-cleanup revision) |
+| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:2062-2070` (corrected from line 2037–2043 of the pre-cleanup revision) |
+| `bool`, `String` | implemented | |
+| `()` | implemented | unit |
+| `[T; N]` | implemented | `N` is an integer literal or an identifier |
+| `&T`, `&mut T` | partial | parses, but the typechecker is a **no-op**: `Type::Reference` maps to its inner type — "For now, treat references as the inner type / TODO: Proper reference type handling" (`src/typeck/mod.rs:121-125`, corrected from line 2470–2486 of the pre-cleanup revision). `&i64` and `i64` are indistinguishable to it. |
+| `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
+| `Name<A, B>` | partial | see below |
+| `(A, B)` | partial | becomes `void*` in C (`src/codegen/mod.rs:1086-1089`, corrected from line 828 of the pre-cleanup revision); no tuple expression exists, so no tuple is constructible |
+| `f32`, `f64`, `char`, `str`, `u8`, `usize` | unimplemented | not in the primitive table |
+| `fn(A) -> B` | unimplemented | function types are unparseable |
+| `[T]` slices, `dyn T`, `impl T` | unimplemented | |
+| `<T: Bound>`, `where` | unimplemented | `parse_generic_params` accepts bare names only; the `:` is a parse error |
 
-⚠️ **Generic argument bug**: inside `<…>`, any identifier whose characters are all uppercase or
-`_` is reclassified as a *const generic argument* (`src/parser/mod.rs:2054-2079`). So `Foo<T>`
-yields a const-generic `T`, not a type argument. Only mixed-case names like `Vec<Item>` reach
-the type branch.
+**partial — generic argument bug**: inside `<…>`, any identifier whose characters are all
+uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:2090-2100`,
+corrected from line 2054–2079 of the pre-cleanup revision). So `Foo<T>` yields a const-generic `T`, not a type argument. Only
+mixed-case names like `Vec<Item>` reach the type branch.
 
-⚠️ **Const generics** parse but are dropped: array sizes from a const parameter resolve to `0`
-(`src/codegen/mod.rs:1360`).
+**partial — const generics**: they parse, and in codegen an `ArraySize::ConstParam` is emitted
+into C verbatim as the parameter's *name* while an `ArraySize::Expr` becomes the literal `"0"`
+(`src/codegen/mod.rs:1057-1059`). Neither is monomorphised. *(v0.2 said "array sizes from a const
+parameter resolve to `0`" citing `src/codegen/mod.rs:1362`; that is the expression case, not the const-parameter
+case.)*
 
-### 5.1 Option and Result ❌ (as built-ins)
+`tests/08_generics_basic.pd` PASSES conformance while only printing that generics are
+unimplemented.
 
-There is no built-in `Option` or `Result` — no prelude, no declaration, no lexer or parser
-support. They are ordinary user enums if you declare them, with no methods and no `?`. Declaring
-one does not make `?` work: the operator is rejected outright (see §6.5), because nothing lowers
-it onto the representation your enum is compiled to. Use `match`.
+### A5.1 Option and Result
 
-The v1.0 spec's prelude (`type Option<T> = enum { Some(T), None };`) does not exist.
+**unimplemented as built-ins.** There is no built-in `Option` or `Result` — no prelude, no
+declaration, no lexer or parser support. They are ordinary user enums if you declare them, with no
+methods and no `?`. Declaring one does not make `?` work: the operator is rejected outright (see
+[A6.5](#a65-question-mark-async-and-await)), because nothing lowers it onto the representation your
+enum is compiled to. Use `match`.
 
-## 6. Statements and expressions
+**unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
+They are ordinary user enums if you declare them. The only special-casing is that `?` typechecks
+against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2521`, corrected from line 2495 of the pre-cleanup revision) — and
+then generates C for a `struct Result` layout that codegen never emits (see
+[A6.5](#a65-question-mark-async-and-await)).
 
-### 6.1 Statements ✅
+## A6. Statements and expressions
+
+### A6.1 Statements
 
 `let`, assignment, `if`/`else`, `while`, `for … in`, `match`, `return`, `break`, `continue`,
-`unsafe { }`, expression statements.
+`unsafe { }`, expression statements (`src/parser/mod.rs:1321`).
 
-- ✅ `let [mut] x [: T] = e;` — **the initializer is mandatory** (`src/parser/mod.rs:1411`);
-  the binding must be a plain identifier (no patterns).
-- ✅ assignment targets: identifier, index, field, deref.
-- ❌ **`else if`** — after `else` the parser requires `{` (`src/parser/mod.rs:1441`). Verified:
-  `if a {} else if b {}` → `Expected '{' after else`. Use a nested `if` inside the `else`.
-- ❌ **`loop`** — not a keyword. Use `while true`.
-- ❌ compound assignment (`i += 1`) — verified: `Expected expression, but found '='`.
-- ❌ bare nested blocks as statements.
-- ✅ `break` / `continue`, unlabeled, valueless.
+- implemented: `let [mut] x [: T] = e;` — **the initializer is mandatory**
+  (`src/parser/mod.rs:1405`, corrected from line 1411 of the pre-cleanup revision); the binding must be a plain identifier
+  (no patterns).
+- implemented: assignment targets — identifier, index, field, deref.
+- **unimplemented: `else if`** — after `else` the parser requires `{`
+  (`src/parser/mod.rs:1469`, corrected from line 1441 of the pre-cleanup revision). Verified: `if a {} else if b {}` →
+  `Expected '{' after else`. Use a nested `if` inside the `else`.
+- **unimplemented: `loop`** — not a keyword. Use `while true`.
+- unimplemented: compound assignment (`i += 1`) — verified: `Expected expression, but found '='`.
+- unimplemented: bare nested blocks as statements; `try { }` blocks.
+- implemented: `break` / `continue`, unlabeled, valueless.
 
-### 6.2 `for` loops ✅ over ranges, ⚠️ over arrays
+`unsafe { }` parses and `src/unsafe_ops` runs (`src/driver/mod.rs:164-172`), but raw pointer types
+and `unsafe fn` do not exist, so [N12](#n12-memory-model)'s restricted-unsafe is unimplemented.
+`tests/11_unsafe_blocks.pd` PASSES while only printing that.
 
-`for i in 0..n { }` ✅.
-⚠️ `for x in arr { }` where `arr` is a **function parameter** miscompiles: codegen emits
-`sizeof(arr)/sizeof(arr[0])` (`src/codegen/mod.rs:1553-1571`), which is the pointer size after
-array-to-pointer decay, and it hardcodes the element type as `long long`. Iterate parameters
-with an explicit index and `while`.
+### A6.2 `for` loops
 
-### 6.3 Expression forms
+`for i in 0..n { }` — implemented.
+**partial**: `for x in arr { }` where `arr` is a **function parameter** miscompiles: codegen emits
+`sizeof(arr)/sizeof(arr[0])` (`src/codegen/mod.rs:1922-1924`, corrected from line 1553–1571 of the pre-cleanup revision), which
+is the pointer size after array-to-pointer decay, and it hardcodes the element type as
+`long long`. Iterate parameters with an explicit index and `while`.
 
-✅ literals, identifiers, struct literals, array literals `[a,b,c]` and `[v; n]`, indexing,
-field access, calls, enum construction, unary `- ! & *`, binary operators.
+### A6.3 Expression forms
 
-❌ **`if`, `match`, and blocks are statements, not expressions** (`src/parser/mod.rs:1301`,
-`:1306`). `let x = if c { 1 } else { 2 };` does not parse.
-❌ closures — no closure token path and no closure AST node.
-❌ tuple expressions and `.0` indexing.
-❌ `as` casts, string interpolation.
-⚠️ ranges outside a `for` header — codegen error (`src/codegen/mod.rs:2121`).
-⚠️ empty array literal `[]` — typeck cannot infer the element type (`src/typeck/mod.rs:1874`).
+implemented: literals, identifiers, struct literals, array literals `[a,b,c]` and `[v; n]`,
+indexing, field access, calls, enum construction, unary `- ! & *`, binary operators.
 
-⚠️ **Precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for its
-right operand (`src/parser/mod.rs:1964`), so `a * -b` fails to parse. Write `a * (0 - b)` or
-bind the negation to a variable.
+- **unimplemented: `if`, `match`, and blocks are statements, not expressions**
+  (`src/parser/mod.rs:1325`, `src/parser/mod.rs:1330`). `let x = if c { 1 } else { 2 };` does not parse. This is a
+  direct contradiction of [N5](#n5-statements-and-expressions).
+- unimplemented: closures — no closure token path and no closure AST node.
+- unimplemented: tuple expressions and `.0` indexing.
+- unimplemented: `as` casts, string interpolation.
+- partial: ranges outside a `for` header — codegen error "Range expressions can only be used in
+  for loops" (`src/codegen/mod.rs:2467-2470`, corrected from line 2121 of the pre-cleanup revision).
+- partial: empty array literal `[]` — typeck cannot infer the element type
+  (`src/typeck/mod.rs:2722`, corrected from line 1874 of the pre-cleanup revision).
 
-### 6.4 Method calls ❌
+**partial — precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for
+its right operand (`src/parser/mod.rs:1990`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
+Write `a * (0 - b)` or bind the negation to a variable. [N5](#n5-statements-and-expressions)
+requires `a * -b`.
 
-`x.f()` parses as a call whose callee is a field access, and the typechecker rejects exactly
-that: **"Indirect function calls not yet supported"** (`src/typeck/mod.rs:1712`; same guard at
-`src/codegen/mod.rs:1870`). Verified against `pdc`.
+### A6.4 Method calls
+
+**unimplemented.** `x.f()` parses as a call whose callee is a field access, and the typechecker
+rejects exactly that: **"Indirect function calls not yet supported"**
+(`src/typeck/mod.rs:1562`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
+
+*(v0.2 also claimed a "same guard" in codegen at line 1870 of the pre-cleanup revision.
+`grep -n 'Indirect function calls' src/codegen/mod.rs` returns nothing; there is no such guard in
+codegen at any line. Claim withdrawn — and written without a citation form on purpose, so the gate
+does not pin a line this document is calling wrong.)*
 
 Call associated functions as `Type::method(receiver, …)`.
 
-### 6.5 `?` and `async`/`await` ❌ — rejected, not lowered
+### A6.5 Question mark, async and await
 
-Both parse. Neither can be compiled, and since D5 the compiler says so instead of emitting C:
+**unimplemented — rejected, not lowered.** *(This section previously read "partial — silent
+breakage", describing C that referenced an undefined `struct Result` layout and a `poll` member
+nothing generated. Defect D5 was fixed on `main` in commit `439b241`; both are now refused at
+typecheck. The silent-breakage description is retracted.)*
+
+- `?` generates C that references a `struct Result { int is_ok; union {…} data; }` layout which
+  **no other part of codegen emits** — user enums are generated with a `.tag` field and
+  `__Enum__Variant` constants instead (`src/codegen/mod.rs:2548-2569`, corrected from line 2160–2201 of the pre-cleanup revision). The result is C that does not compile.
+- `.await` emits `while (!<tmp>.poll(&<tmp>)) { }` and then reads `<tmp>.result`, calling a `poll`
+  member that is never generated (`src/codegen/mod.rs:2604-2615`, corrected from line 2208–2237 of the pre-cleanup revision —
+  which is the builtin-name mapping table, unrelated).
 
 ```
 error: the `?` operator is not implemented
@@ -323,13 +827,13 @@ that what precedes `?` is a Result, because in those programs it is not.
 The `match` alternative is bounded, and the help says where it stops rather than leaving it to be
 discovered. Measured: dispatch works, propagation out of a helper works, payload types other than
 `i64` work — but a generic `Result<T, E>` does **not** compile, because code generation skips
-generic enum definitions (`src/codegen/mod.rs:841`, `:909`, `:929`) and generic enum construction
+generic enum definitions (`src/codegen/mod.rs:841`, `src/codegen/mod.rs:905-909`, `src/codegen/mod.rs:929`) and generic enum construction
 infers only the parameters a variant mentions, so `Result::Err(e)` yields `Result<(), E>`. One
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`src/typeck/mod.rs:2356`, `:2363`) and again by code
-generation (`src/codegen/mod.rs:2537`, `:2549`), which is callable on its own.
+The refusal is raised by the type checker (`src/typeck/mod.rs:2356`, `src/typeck/mod.rs:2363`) and again by code
+generation (`src/codegen/mod.rs:2509`, `src/codegen/mod.rs:2521`), which is callable on its own.
 
 What they used to do:
 
@@ -344,7 +848,7 @@ Both lowerings are deleted rather than kept behind a flag: they encoded a repres
 implementation must not reuse, and version control holds them.
 
 The LLVM backend is a sharper case and is only safe by ordering. Its expression lowering has no
-arm for either node — the catch-all at `src/codegen/llvm_text_backend.rs:1378` returns the
+arm for either node — the catch-all at `src/codegen/llvm_text_backend.rs:1378-1380` returns the
 constant `0` for `Question`, `Await`, `EnumConstructor` and `MacroInvocation` alike, which
 compiles and is wrong. The type checker refuses before a backend is chosen, which is what
 `tests/d5_unimplemented_constructs.rs` pins.
@@ -359,24 +863,77 @@ where a `T` is required, so the signature has to change too.
 
 Both are excluded from the bootstrap subset.
 
-### 6.6 Tail expressions
+Under [N7](#n7-effects-and-asynchrony) the correct end state is not a working `.await` but no
+`.await`: the operator is not part of the language. Making it a hard compile error is a step
+toward the definition, not away from it. The full divergence list, including the ordering bug in
+effect propagation and the fact that `impl` methods are never effect-analysed, is in
+[`async-as-effect.md`](../reference/features/async-system/async-as-effect.md#where-the-implementation-currently-diverges).
 
-`fn add(a: i64, b: i64) -> i64 { a + b }` — a function body ending in an expression rather than
-a `return`.
+`tests/09_effects_system.pd` and `tests/10_async_await.pd` PASS conformance while only printing
+that the features are unimplemented.
+
+### A6.6 Tail expressions
+
+`fn add(a: i64, b: i64) -> i64 { a + b }` — a function body ending in an expression rather than a
+`return`.
 
 This is in the grammar (`grammar.ebnf`) and it previously **compiled cleanly and returned
-garbage**: the generated C was `long long add(...) { (a + b); }` with no `return`, and
-`add(2,3)` printed `6162934856`. No error, no warning, wrong answer — the project's most
-dangerous defect class, and every function in `stdlib/` that ended in an expression was affected.
-It is fixed: the parser now lowers a function body's tail expression to a return when a return
-type is declared. A tail expression in a *nested* block still does not become a return.
+garbage**: the generated C was `long long add(...) { (a + b); }` with no `return`, and `add(2,3)`
+printed `6162934856`. No error, no warning, wrong answer — the project's most dangerous defect
+class.
 
-Regardless of that fix, **write explicit `return` in every value-returning function.** The
-bootstrap compiler does.
+**Two corrections to the previous version of this paragraph.**
 
-## 7. Patterns ✅ (three forms only)
+*Retracted: the blast radius.* It said "and every function in `stdlib/` that ended in an expression
+was affected." That is false. Measured at `abeb665`, **0 of the 21 `.pd` files under `stdlib/`
+compile** — every one is rejected at lex or parse time, so nothing there was ever compiled and the
+defect cannot have lived there. The affected-`stdlib/` claim was a counterfactual stated as a
+finding. A related over-correction is also retracted: an earlier phrasing that the resolver "never
+loads" the prelude was too strong. The resolver is live and reads `$PALLADIUM_PATH`
+(`src/resolver/mod.rs:51-52`); imports use `import`, not `use`. What holds is narrower and
+measured: `stdlib/` is on no default search path, and forcing it on does not help —
+`PALLADIUM_PATH=…/stdlib/std` with `import option;` gives
+`error: Unexpected token: expected 'fn' for method, found 'pub'`. See [A8](#a8-builtins) for
+packaging.
 
-`src/ast/mod.rs:313-323` defines exactly three pattern variants:
+*Corrected: "It is fixed" was half true.* The parser lowers a tail **expression** to
+`Stmt::Return`, but not a tail `if`. Measured at `abeb665`:
+
+```
+fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n - 1) + fib(n - 2) } }
+fn main() { print_int(fib(10)); }
+```
+
+compiles clean and prints **`8261746944`** where the answer is 55. The generated C is
+
+```c
+long long fib(long long n) {
+    if ((n <= 1)) {
+    n;
+    } else {
+    (fib((n - 1)) + fib((n - 2)));
+    }
+}
+```
+
+— bare expression statements, no `return`, in the single most idiomatic shape a recursive function
+takes. So **D3 is open, not fixed**, for every function whose body is a tail `if`. A tail expression
+in any other nested block is likewise not lowered.
+
+The "437 affected sites" figure quoted elsewhere is an **understatement, not an upper bound**: the
+heuristic that produced it requires a bare expression immediately before the closing brace, and a
+tail-`if` function ends with the `else` block's `}`. A companion scan found **369 further sites** of
+that shape. *(Both counts are the stdlib unit's measurement, reproduced here by reference; this unit
+verified the `fib` reproduction and the generated C above directly.)*
+
+`CLAUDE.md:66` records D3 as fixed. That is accurate only for the tail-expression case.
+
+Regardless, **write explicit `return` in every value-returning function.** The bootstrap compiler
+does, which is why `make selfhost` is unaffected by any of this.
+
+## A7. Patterns
+
+**partial — three forms only.** `src/ast/mod.rs:313` defines exactly three pattern variants:
 
 ```ebnf
 pattern = "_"
@@ -385,21 +942,42 @@ pattern = "_"
                                | "{" identifier ":" pattern { "," … } "}" ] ;
 ```
 
-❌ literal patterns (`1 =>`, `"s" =>`, `true =>`), range patterns, or-patterns (`A | B`),
-guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut` bindings,
-`@` bindings, field shorthand, `..` rest.
+**unimplemented**: literal patterns (`1 =>`, `"s" =>`, `true =>`), range patterns, or-patterns
+(`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
+bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum
-(`src/typeck/mod.rs:2760-2790`). Codegen emits no default arm
-(`src/codegen/mod.rs:1731`), so a non-exhaustive match on a non-enum falls through silently.
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1349`,
+corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
+(`src/codegen/mod.rs:1956`, `src/codegen/mod.rs:1977-1988`) with a wildcard arm becoming the final `else`; when no
+arm matches and no wildcard arm was written, control simply falls through — there is no trap.
 
 Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else` chains.
 
-## 8. Builtin functions (36)
+## A8. Builtins
 
-Defined in two tables that must agree: `src/typeck/mod.rs:352-527` (signatures) and
-`src/codegen/mod.rs:1813-1851` (C name mapping). Their C bodies are emitted inline into every
-output file (`src/codegen/mod.rs:251-575`).
+**partial.** 38 builtins exist and work — the 34 that [N14](#n14-builtins-and-the-standard-library)
+defines, plus `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex`, which are not
+part of the language. They are evidence about the implementation, not the
+definition of the builtin surface — that is [N14](#n14-builtins-and-the-standard-library).
+The generated table [`docs/reference/builtins.md`](../reference/builtins.md) is produced by
+`scripts/gen-builtin-docs.py` from `src/builtins.rs` and is the authoritative record of *what
+`pdc` provides today*.
+
+Measured against N14: every normative name is present (`normative − implemented = none`), and
+four extra names are not (`implemented − normative = the four *_ex names`). Two signature-level
+divergences: **filesystem builtins return `i64`/`bool` handles rather than `Result`**, because
+`Result` is not built in ([A5.1](#a51-option-and-result)); and `string_char_at` returns `i64`
+rather than `char`, because `char` is not a type ([A5](#a5-types)). **N14's effect classification
+is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
+
+Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
+checker derives its signature table from it (`src/typeck/mod.rs:365`) and so does the borrow
+checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
+(`src/codegen/mod.rs:2186`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+every output file (`src/codegen/mod.rs:494`, corrected from line 251–575 of the pre-cleanup revision).
+
+*(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
+became the SSOT; it is no longer the mechanism.)*
 
 **Core**: `print(String)`, `print_int(i64)`, `panic(String)`
 
@@ -425,23 +1003,56 @@ output file (`src/codegen/mod.rs:251-575`).
 `String` also supports `+` for concatenation.
 
 > The `*_ex`, path, and directory builtins are thin wrappers over `extern` symbols supplied at
-> link time by `runtime/palladium_runtime.c`. Before that file existed, every one of these —
-> and in fact every Palladium program — failed to link.
+> link time by `runtime/palladium_runtime.c`. Before that file existed, every one of these — and
+> in fact every Palladium program — failed to link.
 
-## 9. Memory model
+**The standard library above them is unimplemented, and unshipped.** Measured at `abeb665`:
 
-Ownership and borrowing are *checked* (`src/ownership/borrow_checker.rs`) but not *represented*
-in the type system: the typechecker treats `&T` as `T` (`src/typeck/mod.rs:2470-2486`).
+- **0 of 21** `.pd` files under `stdlib/` compile. Each is rejected at lex or parse time;
+  `pdc compile stdlib/std/option.pd` fails with `Expected 'fn' for method, but found 'pub'`.
+- It is not merely unreachable by default. The resolver is live and honours `$PALLADIUM_PATH`
+  (`src/resolver/mod.rs:51-52`), but pointing it at the tree does not help:
+  `PALLADIUM_PATH=…/stdlib/std` with `import option;` gives
+  `error: Unexpected token: expected 'fn' for method, found 'pub'`.
+- It is not packaged. `grep -rn stdlib .github/` returns **0 hits** (exit 1), and neither Homebrew
+  formula installs it — `pdc.rb` installs `share/palladium/runtime`, `pdc-preview.rb` installs
+  `lib/palladium/runtime`, and neither names `stdlib`. *(Formula paths are the stdlib unit's
+  measurement of the tap; the `.github` grep is this unit's.)*
+- `scripts/conformance.sh:211` defaults its scope to `tests` and `examples`, so `stdlib/` has never had a
+  green row and its breakage was invisible.
+
+A consequence worth stating plainly: because nothing under `stdlib/` has ever compiled, no defect
+in the compiler can have "silently miscompiled the standard library". See
+[A6.6](#a66-tail-expressions), where exactly that claim is retracted.
+
+## A9. Memory model
+
+**partial.** Ownership and borrowing are *checked* (`src/ownership/borrow_checker.rs`, 1165 lines)
+but not *represented* in the type system: the typechecker treats `&T` as `T`
+(`src/typeck/mod.rs:121-125`).
 
 What the borrow checker actually enforces is a move/initialization discipline plus
-conflicting-borrow detection. It is currently stricter than the language needs in at least two
-measured cases (`examples/practical/simple_sort.pd`, `tests/misc/test_vec_i64.pd` both fail
-with "Conflicting borrows" on code that is sound).
+conflicting-borrow detection. **A previous version of this annex asserted a defect here that does
+not exist; it is retracted and re-measured in [A9.4](#a94-defect-d6-retracted).**
 
-No garbage collector. Strings are allocated from a 64 KiB static arena with a malloc fallback
-and are freed at exit (`src/codegen/mod.rs:210-245`).
+*(v0.2 said the checker "is currently stricter than the language needs in at least two measured
+cases (`examples/practical/simple_sort.pd`, `tests/misc/test_vec_i64.pd` both fail with
+"Conflicting borrows"). Re-measured at `abeb665`: `test_vec_i64.pd` now **compiles**, and
+`simple_sort.pd` fails with "Unsupported type in reference parameter", not a borrow error. The
+v0.2 sentence is retracted; the surviving borrow-checker defect is
+[A9.3](#a93-mut-of-an-immutable-local-is-accepted).)*
 
-### 9.1 `String` is a copyable handle (decision, 2026-08-21)
+**[N9](#n9-references-and-lifetimes) is unimplemented in full.** `ref` is not a keyword; the
+implemented spelling is Rust's `&`/`&mut` **with** `'a` parameter lists — the exact annotation
+burden the definition removes. `fn f<'a>(x: &'a String) -> &'a String { return x; }` compiles.
+`Function.lifetime_params` is parsed (`src/parser/mod.rs:553`) and read nowhere outside test and
+LSP fixtures. There is no region inference: `grep -rn 'region\|Region' src/ --include='*.rs'`
+returns nothing.
+
+No garbage collector. Strings are allocated from a 64 KiB static arena with a malloc fallback and
+are freed at exit (`src/codegen/mod.rs:424`, corrected from line 210–245 of the pre-cleanup revision).
+
+### A9.1 `String` is a copyable handle (decision, 2026-08-21)
 
 `String` lowers to `const char*`, is allocated from the arena, and is **never freed
 individually** — `grep -c '__pd_free\|pd_free_string' src/codegen/mod.rs` returns 0; the only
@@ -450,24 +1061,139 @@ glue.
 
 Treating `String` as a move-only type therefore tracks an ownership that does not exist at
 runtime, and — decisively — **cannot be worked around in the surface language**: there is no
-`clone`, and `&T` is not a distinct type to the checker (§5), so with move semantics there is
-no syntax at all that reads a `String` twice out of an array slot or a struct field.
+`clone`, and `&T` is not a distinct type to the checker ([A5](#a5-types)), so with move semantics
+there is no syntax at all that reads a `String` twice out of an array slot or a struct field.
 
-`String` is therefore a Copy type. Passing it copies a pointer; nothing is duplicated and
-nothing is invalidated.
+`String` is therefore a Copy type in the implementation. Passing it copies a pointer; nothing is
+duplicated and nothing is invalidated. Struct types (`Type::Custom`) remain move-only.
 
-> **Tension.** This contradicts the aspiration that `String` is an owned, heap-allocated value
-> with Rust-like move semantics. Restoring that aspiration requires drop glue, per-value
-> deallocation, and a real reference type in the checker — none of which exist. Until they do,
-> the specification describes the implementation rather than the intent. Struct types
-> (`Type::Custom`) remain move-only.
+> **Tension.** [N12](#n12-memory-model) defines `String` as an owned, heap-allocated value with
+> move semantics and a destructor. The implementation contradicts that, and the contradiction is
+> not a bug to be papered over: restoring the definition requires drop glue, per-value
+> deallocation, and a real reference type in the checker, none of which exist. Until they do, this
+> annex records the deviation rather than the specification adopting it. This is the one place in
+> the document where an implementation decision was previously allowed to rewrite the definition;
+> it is now recorded as a divergence instead.
 
-## 10. Execution model
+### A9.2 Array parameters
 
-Execution starts at `fn main`. Arguments are evaluated left to right. The driver requires a
-`main` function; a library module without one cannot be compiled standalone.
+The normative question is open ([N12.1](#n121-array-parameters-open-decision)). What the
+implementation does is not open, and it is the same for all three spellings.
 
-## 11. Conformance
+A `[T; N]` parameter is lowered to a C array declarator (`src/codegen/mod.rs:1055`), which decays
+to a pointer. **No spelling copies.** Measured at `abeb665`:
+
+| Spelling | Result |
+|---|---|
+| `mut a: [i64; 3]` | compiles; generated C is `void bump(long long a[3]);` — a write is caller-visible. Program prints `99`. |
+| `a: [i64; 3]` (no `mut`) | compiles; a write is caller-visible; **no diagnostic**. Program prints `99`. |
+| `a: &mut [i64; 3]` | does not compile: "Unsupported type in reference parameter" (`src/codegen/mod.rs:1636`). |
+
+So today the reference spellings are not an alternative to the bare one — one of them is rejected
+outright, and the other two behave identically.
+
+Consequence for whichever ruling lands:
+
+- **Option A (value semantics)** would make this row **unimplemented**, and the gap is exactly
+  `src/codegen/mod.rs:1055`: it emits a decayed declarator where a copy is required.
+- **Option B (reference semantics)** would make this row **partial at best — never implemented**,
+  because Option B is not "what the compiler already does". It needs a further rule that does not
+  exist yet: either the reference spellings are forbidden, or `&mut [T; N]` becomes the required
+  spelling for a parameter written through. Current behaviour satisfies neither. It permits
+  mutation through a bare non-`mut` array with no diagnostic, and it rejects `&mut [T; N]`
+  outright, so under Option B the implementation is wrong in both directions at once.
+
+The interim behaviour on the codegen branch — refusing writes except through `&mut [T; N]` and
+`mut xs: [T; N]` — enforces [`bootstrap-subset.md`](bootstrap-subset.md)'s existing convention
+("Struct and array parameters are always declared `mut`"), which
+`benchmarks/palladium/bubble_sort.pd:11` already follows. That is the right placeholder: it invents
+nothing.
+
+> Note on a citation inherited from `bootstrap-subset.md`: that file attributes the move
+> classification to `src/ownership/borrow_checker.rs:184-190`. At `abeb665` those lines are
+> `fn collect_function_sig`. The same `f323cf1` drift described in §0 affects that file too; it was
+> not in this change's scope to repair.
+
+### A9.3 `&mut` of an immutable local is accepted
+
+[N12](#n12-memory-model) requires that `&mut` be takeable only of a `mut` binding. The
+implementation does not enforce it for struct types. Measured at `abeb665`:
+
+```
+struct S { x: i64 }
+fn bump(s: &mut S) { s.x = 77; }
+fn main() { let v: S = S { x: 1 }; bump(&mut v); print_int(v.x); }
+```
+
+compiles, links, and prints `77` — an immutable local mutated, with no diagnostic from the borrow
+checker (`src/ownership/borrow_checker.rs:48`, where `ParamMode::Move` and the borrow modes are
+defined; there is no mutability check on the referent).
+
+Scope of the defect, measured: it reproduces for **struct** referents. It does not reproduce for
+arrays (`&mut [T; N]` is rejected earlier, [A9.2](#a92-array-parameters)) and not for `i64`
+(`&mut i64` produces C that gcc rejects). A brief handed to this unit reported the array case as
+reproducing; it does not at `abeb665`, and the struct case does.
+
+### A9.4 Defect D6, retracted
+
+A previous version of this annex, and of
+[`feature-index.toml`](../reference/features/feature-index.toml), stated that a call argument is
+borrowed as `Lifetime::Named("fn")` and released against `Lifetime::Scope(n)`, so the borrow is
+never released and a value cannot be passed twice. That claim cited
+`src/ownership/borrow_checker.rs:241`.
+
+**The claim is false and the citation was wrong.** `src/ownership/borrow_checker.rs:241` is
+`ReturnOwnership::Borrowed(Lifetime::Named("fn"))` — the ownership classification for a function's
+**borrowed return value**, which has nothing to do with argument lifetimes. The citation had a
+green fingerprint the whole time, which is exactly the gate's limit: a pin proves a line has not
+moved, never that it supports the claim.
+
+Re-measured from scratch at `abeb665`:
+
+| Program | Result |
+|---|---|
+| `t(s); t(s);` — same `String` passed to two separate calls | accepted, prints `5 5` |
+| `take2(s, s)` — same `String` twice in one call | accepted, prints `10` |
+| `s1(v); s1(v);` — same array to two separate calls | accepted, prints `1 1` |
+| `bump(&mut p); bump(&mut p);` — successive mutable borrows | accepted, prints `2` |
+| `print(p.name); f(p.name); p.n` — field to a builtin, then reused | accepted, prints `abc 3 1` |
+
+None of D6's symptoms reproduce. The call path creates a per-call lifetime and ends its borrows
+when the call finishes: `src/ownership/borrow_checker.rs:519` (`let call_lifetime =
+self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:525` (`self.context.end_borrows(&call_lifetime);`), with the
+contract stated at `src/ownership/borrow_checker.rs:43-44` — "the caller-side borrow always lasts exactly for the call
+expression".
+
+D6 was **fixed in commit `191f8c1`** ("fix(compiler): five defects that made the language
+unusable", 2026-08-21), twelve commits before `abeb665`. Its message says so directly: *"D6 call
+arguments were borrowed forever. Argument borrows were tagged `Lifetime::Named("fn")` while release
+only removed `Lifetime::Scope(n)`, so a value could never be passed to two functions. Borrows now
+end with the call."* The description was accurate about the original defect and was carried forward
+into documentation written after the fix landed.
+
+Two rejections do still occur, and both are correct rather than defects:
+
+- `take2(p, p)` where `p` is a **struct** — `Use of moved value: p`. Struct parameters are moves
+  (`src/ownership/borrow_checker.rs:224`), so this is move semantics working.
+- `sum2(v, v)` with two `mut [i64; 3]` parameters — `Conflicting borrows`. A `mut` array parameter
+  is a mutable borrow (`src/ownership/borrow_checker.rs:210`), so passing the same array as two
+  simultaneous mutable borrows is refused. **This is expected under the current aliasing
+  convention, not unconditionally correct**: it follows from Option B's reading of
+  [N12.1](#n121-array-parameters-open-decision), which is still open. Under Option A a `[T; N]`
+  parameter would be a value, `sum2(v, v)` would pass two independent copies, and refusing it
+  would be a bug. The struct rejection above needs no such qualification — moves are settled.
+
+> **Action outside this repository's documentation:** the project's `CLAUDE.md` lists D6 under
+> "남은 결함 (열림)" — remaining open defects. That is stale by twelve commits and should be moved
+> to the fixed list. This unit did not edit `CLAUDE.md`.
+
+## A10. Execution model
+
+**implemented.** Execution starts at `fn main`. Arguments are evaluated left to right. The driver
+requires a `main` function; a library module without one cannot be compiled standalone — which is
+why `scripts/conformance.sh` reports `SKIP_NO_MAIN` for two files rather than failing them.
+
+## A11. Conformance
 
 `scripts/conformance.sh` compiles, links, and runs every `.pd` under `tests/` and `examples/`
 against `tests/conformance-manifest.txt`, a **closed inventory** declaring what each fixture is
@@ -510,8 +1236,25 @@ Because the inventory is closed, a fixture that is deleted, renamed, or added wi
 fails the gate rather than silently shrinking or growing it. The gate's own ability to fail is
 tested by `make test-conformance-runner` (96 cases).
 
-## 12. Relationship to the bootstrap subset
+The three failures: `examples/practical/simple_sort.pd` ("Unsupported type in reference
+parameter"), `tests/misc/test1.pd` ("Expected function, struct, enum, trait, type, impl, or macro
+declaration"), `tests/projects/hello_pdm/tests/test_math.pd` ("Undefined function: add").
 
-[`bootstrap-subset.md`](bootstrap-subset.md) defines PBS-1, the subset in which the
-self-hosting compiler is written and which that compiler implements. PBS-1 is deliberately
-smaller than what `pdc` accepts: it excludes every ⚠️ construct in this document.
+`scripts/check-docs.sh` does the same for documentation snippets, and `scripts/selfhost.sh` checks
+the self-hosting fixed point.
+
+**Six files in `tests/` named after a feature do not exercise it.** `07_traits_basic.pd`,
+`08_generics_basic.pd`, `09_effects_system.pd`, `10_async_await.pd`, `11_unsafe_blocks.pd` and
+`12_modules_imports.pd` each only `print` a message saying the feature is unimplemented, and pass
+trivially. A green conformance run is therefore **not** evidence for traits, generics, effects,
+async, unsafe enforcement, or modules. *(v0.2 named two of these six; the other four have the same
+shape.)*
+
+## A12. Relationship to the bootstrap subset
+
+[`bootstrap-subset.md`](bootstrap-subset.md) defines PBS-1, the subset in which the self-hosting
+compiler is written and which that compiler implements. PBS-1 is deliberately smaller than what
+`pdc` accepts: it excludes every **partial** construct in this annex.
+
+`make selfhost` reaches a byte-identical fixed point, which makes PBS-1 the one part of this
+document where definition and implementation coincide.

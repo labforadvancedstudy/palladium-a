@@ -1,8 +1,14 @@
-> **PROPOSAL — not implemented.** This document describes a design that has not been
-> built. Nothing in it is a description of how the compiler behaves today; for that see
-> [`docs/specification/language-spec.md`](../specification/language-spec.md), where every
-> claim carries a source location. Code in this file is not compiled by
-> `scripts/check-docs.sh` and is not expected to work.
+> **NORMATIVE LANGUAGE DEFINITION.** On the *language* axis this document is normative: it
+> defines part of Palladium, and [`language-spec.md` §N10](../specification/language-spec.md#n10-traits-and-generics)
+> incorporates it by reference.
+>
+> **Compiler status: see [annex A5](../specification/language-spec.md#a5-types).** This banner
+> deliberately does not restate the status — an earlier version asserted "nothing here is built"
+> while the annex recorded working `import` parsing, because a status written in two places goes
+> stale in one of them. The annex classifies every feature; this points at it.
+>
+> Code in this file is not compiled by `scripts/check-docs.sh`. Material that is genuinely
+> undecided is under "Open design questions" below and is explicitly **not** normative.
 
 # Palladium Generics Design
 
@@ -25,7 +31,7 @@ fn identity<T>(value: T) -> T {
     return value;
 }
 
-fn swap<T>(a: &mut T, b: &mut T) {
+fn swap<T>(a: ref mut T, b: ref mut T) {
     let temp = *a;
     *a = *b;
     *b = temp;
@@ -62,7 +68,7 @@ impl<T> Vec<T> {
         }
     }
     
-    fn push(&mut self, value: T) {
+    fn push(ref mut self, value: T) {
         // Implementation
     }
 }
@@ -88,40 +94,6 @@ fn sum<T: Add>(a: T, b: T) -> T {
     return a + b;
 }
 ```
-
-## Implementation Plan
-
-### Phase 1: Basic Generic Functions (This week)
-1. **Lexer/Parser changes**:
-   - Add `<` and `>` for type parameters
-   - Parse generic function signatures
-   - Parse generic type instantiations
-
-2. **AST changes**:
-   ```rust
-   struct Function {
-       type_params: Vec<String>, // ["T", "U"]
-       // ... existing fields
-   }
-   ```
-
-3. **Type checking**:
-   - Track generic parameters in scope
-   - Substitute concrete types during instantiation
-   - Verify type consistency
-
-4. **Code generation**:
-   - Monomorphization: generate specialized versions
-   - Name mangling for different instantiations
-
-### Phase 2: Generic Structs (Next week)
-- Extend parser for struct type parameters
-- Handle generic fields in type checker
-- Generate specialized struct definitions
-
-### Phase 3: Generic Enums (Following week)
-- Similar to structs but with variants
-- Special handling for Option and Result
 
 ## Example: Implementation Steps
 
@@ -186,9 +158,67 @@ int main() {
 4. Verify monomorphization works
 5. Check error cases
 
-## Next Steps
+## Open design questions
+
+<sub>**Non-normative.** Everything above defines the language; everything in this section is
+undecided and defines nothing. The distinction matters because "not yet built" and "not yet
+decided" were previously carried by the same PROPOSAL banner, which made every open question look
+like settled design awaiting an implementer.</sub>
+
+Nothing in this document has been escalated as an open *design* question yet. What is here is
+material that was carried above the fold as though it were definitional and is not: work
+schedules, and status marks that were false. It sits here so that the banner above cannot be read
+as blessing it.
+
+### Relocated: Implementation Plan
+
+<sub>**Non-normative.** This was above the fold when the dual-axis banner landed, which
+silently promoted a work schedule to normative language definition. A schedule is neither a
+definition nor a measurement: these week estimates were written in January 2025 and none of
+the work happened. Implementation status is the annex's job
+([`language-spec.md` Part II](../specification/language-spec.md#part-ii-implementation-status-annex)).</sub>
+
+## Implementation Plan
+
+### Phase 1: Basic Generic Functions (This week)
+1. **Lexer/Parser changes**:
+   - Add `<` and `>` for type parameters
+   - Parse generic function signatures
+   - Parse generic type instantiations
+
+2. **AST changes**:
+   ```rust
+   struct Function {
+       type_params: Vec<String>, // ["T", "U"]
+       // ... existing fields
+   }
+   ```
+
+3. **Type checking**:
+   - Track generic parameters in scope
+   - Substitute concrete types during instantiation
+   - Verify type consistency
+
+4. **Code generation**:
+   - Monomorphization: generate specialized versions
+   - Name mangling for different instantiations
+
+### Phase 2: Generic Structs (Next week)
+- Extend parser for struct type parameters
+- Handle generic fields in type checker
+- Generate specialized struct definitions
+
+### Phase 3: Generic Enums (Following week)
+- Similar to structs but with variants
+- Special handling for Option and Result
+
+### Relocated: Next Steps
+
+<sub>**Non-normative.** An implementation task list, which the banner above would otherwise
+make part of the language definition.</sub>
 
 1. Add `<` and `>` tokens to lexer
 2. Extend function parsing for type parameters
 3. Create simple type substitution system
 4. Implement monomorphization in codegen
+

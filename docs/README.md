@@ -21,14 +21,31 @@ in them bore a salvageable relationship to the implementation.
 
 | | |
 |---|---|
-| [Language specification](specification/language-spec.md) | every construct, marked working / parses-but-broken / not implemented, each with a source location |
-| [Grammar](specification/grammar.ebnf) | EBNF derived from `src/parser/mod.rs`, not from intent |
+| [Language specification](specification/language-spec.md) | two parts: Part I defines the language, Part II records what `pdc` implements, construct by construct, with a source location for every row |
+| [Grammar](specification/grammar.ebnf) | EBNF; Part A is derived from `src/parser/mod.rs`, Part B lists the normative productions the parser does not accept |
 | [Bootstrap subset (PBS-1)](specification/bootstrap-subset.md) | the subset the self-hosting compiler is written in *and* implements; the self-hosting gate; the open-defect table |
 | [Builtins](reference/builtins.md) | all 38, generated from `src/builtins.rs` |
 
-Read the specification's middle category before trusting anything. `?`, `.await` and
-un-annotated `let` used to pass the type checker and then emit C that does not compile — or,
-worse, C that runs and is wrong; all three are now compile errors that name the construct.
+Read the annex's **partial** rows before trusting anything. `?`, `.await` and un-annotated `let`
+used to pass the type checker and then emit C that does not compile — or, worse, C that runs and is
+wrong; all three are now compile errors that name the construct. Tuples still parse and lower to
+`void*`.
+
+## Feature definitions
+
+[`reference/features/`](reference/features/) defines the language's features, including the three
+it exists for. These documents are **normative**: they say what Palladium is, not what `pdc` does.
+Their Palladium blocks are fenced `no-compile` because the compiler does not accept that syntax
+yet, and each carries a "where the implementation currently diverges" section with `file:line`
+evidence.
+
+| | |
+|---|---|
+| [v1.0 feature list](reference/features/PALLADIUM_V1_FEATURES.md) | every feature that constitutes v1.0, and the eight advantages over Rust |
+| [Async as effect](reference/features/async-system/async-as-effect.md) | no `async`, no `.await`, no function coloring |
+| [Totality checking](reference/features/advanced/totality-checking.md) | `#![total(strict)]`, `#[decreases(expr)]` |
+| [Implicit lifetimes](reference/features/core-language/implicit-lifetimes.md) | `ref` / `ref mut`, no `'a` |
+| [Feature index](reference/features/feature-index.toml) | one row per feature: where it is defined, what `pdc` does, and the evidence |
 
 ## Internals
 
@@ -48,6 +65,13 @@ worse, C that runs and is wrong; all three are now compile errors that name the 
 [`design/`](design/) holds designs that were never built — traits, generics, the module system,
 the technical manifesto, the roadmap. Every file there opens with a PROPOSAL banner and is
 excluded from the documentation check. Nothing in that directory describes current behaviour.
+
+The specification reads three of them — the trait system, generics and the module system — as
+normative for the language and unimplemented in `pdc`
+([N10](specification/language-spec.md#n10-traits-and-generics),
+[N11](specification/language-spec.md#n11-modules)). Their PROPOSAL banners remain accurate about
+the compiler; they are not accurate about the language's intent, and reconciling the two wordings
+is open.
 
 ## Project
 

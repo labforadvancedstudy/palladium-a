@@ -155,11 +155,28 @@ functions.
 
 ## Not scheduled, and why
 
-`async`/`.await`, the effect system, and totality checking appear throughout the older
-documentation as though they were close. They are not. Effect clauses do not exist in the surface
-syntax; effects are inferred after the fact and gate nothing; `async` emits a call to a function
-that is never generated. They are design proposals — see [`docs/design/`](../design/) — and belong
-after M4 at the earliest, because each needs a type system able to express it.
+Effects and asynchrony, totality checking, and implicit lifetimes are **defined parts of the
+language** — they are what Palladium is for, and each has a normative specification section and a
+feature document:
+
+- [Effects and asynchrony](../specification/language-spec.md#n7-effects-and-asynchrony) ·
+  [`async-as-effect.md`](../reference/features/async-system/async-as-effect.md)
+- [Totality](../specification/language-spec.md#n8-totality) ·
+  [`totality-checking.md`](../reference/features/advanced/totality-checking.md)
+- [References and lifetimes](../specification/language-spec.md#n9-references-and-lifetimes) ·
+  [`implicit-lifetimes.md`](../reference/features/core-language/implicit-lifetimes.md)
+
+None of the three is implemented, and the older documentation read as though they were close. They
+are not. Effect clauses do not exist in the surface syntax; effects are inferred after the fact and
+gate nothing; `.await` emits a call to a member that is never generated; `ref` is not a keyword;
+attributes do not even lex, so `#[total]` fails at the character `#`. The per-section evidence is
+in the [implementation status annex](../specification/language-spec.md#part-ii-implementation-status-annex)
+and the [feature index](../reference/features/feature-index.toml).
+
+They are unscheduled, not undefined, and they belong after M4 at the earliest — each needs a type
+system able to express it, and for two of the three the first prerequisite is smaller than the
+feature (an attribute lexer; a `ref` keyword). Being unscheduled is a statement about this
+roadmap's ordering, not about the language.
 
 ## Keeping this file honest
 

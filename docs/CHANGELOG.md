@@ -33,9 +33,13 @@ was false — no Palladium-written compiler had ever compiled itself.
 ### Fixed
 
 - **Nothing could link.** The C runtime is now shipped and tracked.
-- **Tail expressions were silently discarded.** `fn add(a, b) -> i64 { a + b }` compiled cleanly
-  and returned garbage — the generated C had no `return`. Every function in `stdlib/` that ended
-  in an expression was affected.
+- **Tail expressions were silently discarded** (partly fixed; a tail `if` still is — see
+  [`language-spec.md` A6.6](specification/language-spec.md#a66-tail-expressions)).
+  `fn add(a, b) -> i64 { a + b }` compiled cleanly
+  and returned garbage — the generated C had no `return`. *(This entry previously added "Every
+  function in `stdlib/` that ended in an expression was affected." Retracted: 0 of 21 `.pd` files
+  under `stdlib/` compile at all, so nothing there was ever compiled and the defect cannot have
+  lived there.)*
 - **`let` without a type annotation was emitted as `long long`** whatever the initializer was, so
   references, enum values and string copies became integers and failed in gcc. Inference now
   covers the common cases; an initializer with no rule is a compile error naming the variable,
