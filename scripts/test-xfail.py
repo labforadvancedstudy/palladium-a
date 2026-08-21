@@ -55,6 +55,34 @@ which:
       retire it from the suite, the SLOW set is an explicit allowlist below and
       adding to it means editing this file.
 
+MILESTONE EXIT, AS A COMMAND — AND WHY IT HAD TO BE ADDED HERE
+`scripts/conformance.sh` already turns a milestone's exit criterion into a
+command: `CONFORMANCE_FORBID_OWNER=M1` fails if any evaluated untranscribed /
+vacuous / xfail row in `tests/conformance-manifest.txt` is still owed to M1.
+
+But this repository has TWO owner inventories, not one. The manifest owns .pd
+fixtures; `#[ignore]` reasons own Rust tests, and they carry `(owned by M<n>)`
+in exactly the same grammar (`OWNER_RE` below). `make m1-exit` consulted only
+the first, so it exited 0 while three M1-owned `#[ignore]` rows were still
+failing — one of them the tail-`if` miscompile that M1 was named for. The
+release that exists to remove silent miscompiles shipped one, and its own exit
+criterion could not see it.
+
+So `TEST_XFAIL_FORBID_OWNER=M<n>` is the mirror of `CONFORMANCE_FORBID_OWNER`,
+deliberately using the same word (`OWED_TO_M<n>`) and the same shape of line, so
+that "what does milestone N still owe" is one idea with one vocabulary rather
+than two dialects. `make m1-exit` now runs both and is red unless both are
+clean.
+
+Note the same limit the conformance runner states about itself: the owner is an
+editable label, so retagging a row to another milestone slips this check. The
+authorisation boundary is REVIEW OF THE REASON TEXT, not this script.
+
+Env:
+  TEST_XFAIL_FORBID_OWNER   fail if any still-failing XFAIL is owned by this
+                            milestone (e.g. M1). Unset by default, so the
+                            ordinary `make test-xfail` is unaffected.
+
 Usage: scripts/test-xfail.py [--self-test]
 """
 
@@ -381,14 +409,26 @@ def classify(site):
     return "UNTAGGED"
 
 
-def reconcile(listed, obs, index):
+def owner_of(site):
+    """The milestone an XFAIL is owed to, or None. Same grammar as OWNER_RE."""
+    m = OWNER_RE.search(site["attr"])
+    return m.group(1) if m else None
+
+
+def reconcile(listed, obs, index, forbid_owner=None):
     """listed: [(target, path)]; obs: [(target, path, outcome)].
 
     Keys are (target, module path) on both sides. -> (counts, problems)
+
+    `forbid_owner` is the milestone-exit gate: when set to "M<n>", a declared
+    XFAIL owned by that milestone which is STILL FAILING is reported as
+    OWED_TO_M<n>. An XFAIL that now passes is not owed — it is an XPASS, which
+    already fails the gate through its own path and asks for the `#[ignore]` to
+    be deleted.
     """
     problems = []
     counts = {"xfail": 0, "xpass": 0, "slow_pass": 0,
-              "declared_xfail": 0, "declared_slow": 0}
+              "declared_xfail": 0, "declared_slow": 0, "owed": 0}
 
     tags, sites = {}, {}
     for key in listed:
@@ -458,6 +498,18 @@ def reconcile(listed, obs, index):
                                  % (target, path, sites[key]["attr"].strip())))
             else:
                 counts["xfail"] += 1
+                # Milestone gate. Deliberately worded like the conformance
+                # runner's OWED_TO_ line so the two inventories read the same.
+                if forbid_owner and owner_of(sites[key]) == forbid_owner:
+                    counts["owed"] += 1
+                    site = sites[key]
+                    problems.append((
+                        "OWED",
+                        "%s::%s [OWED_TO_%s] class=xfail is still owed to %s\n"
+                        "      declared at %s:%d\n"
+                        "      reason: %s"
+                        % (target, path, forbid_owner, forbid_owner,
+                           site["file"], site["line"], site["attr"].strip())))
         elif tag == "SLOW":
             if outcome == "ok":
                 counts["slow_pass"] += 1
@@ -661,14 +713,54 @@ def self_test():
                             [("tests/x_test.rs", "test_s", "ok")], index)
     check("SLOW off the allowlist fails", [k for k, _ in problems], ["TAG"])
 
+    # 10. The milestone gate. This is the check the repo did not have: an
+    #     `#[ignore]` owed to M1 and still failing must fail `make m1-exit`,
+    #     while the ordinary `make test-xfail` (no owner set) stays green on the
+    #     very same input. Both halves matter — a gate that fires always is as
+    #     useless as one that never fires.
+    owners = index_sites({
+        "tests/x_test.rs":
+            '#[test] #[ignore = "XFAIL: a (owned by M1)"] fn test_m1() {}\n'
+            '#[test] #[ignore = "XFAIL: b (owned by M2)"] fn test_m2() {}'})
+    both = [("tests/x_test.rs", "test_m1"), ("tests/x_test.rs", "test_m2")]
+    both_failed = [("tests/x_test.rs", "test_m1", "FAILED"),
+                   ("tests/x_test.rs", "test_m2", "FAILED")]
+
+    c, problems = reconcile(both, both_failed, owners)
+    check("no owner set: still-failing XFAILs are clean",
+          ([k for k, _ in problems], c["owed"]), ([], 0))
+
+    c, problems = reconcile(both, both_failed, owners, forbid_owner="M1")
+    check("forbid M1: only the M1 row is owed",
+          ([k for k, _ in problems], c["owed"]), (["OWED"], 1))
+    check("the OWED line names the milestone and the declaration site",
+          ("[OWED_TO_M1]" in problems[0][1]
+           and "tests/x_test.rs:1" in problems[0][1]),
+          True)
+
+    c, problems = reconcile(both, both_failed, owners, forbid_owner="M2")
+    check("forbid M2 selects a different row",
+          ("test_m2" in problems[0][1], c["owed"]), (True, 1))
+
+    # An XPASS is NOT owed: it passes, so the milestone does not owe it — what
+    # it owes is the deletion of the `#[ignore]`, which XPASS already demands.
+    # Counting it as owed too would report one defect as two.
+    _, problems = reconcile(both,
+                            [("tests/x_test.rs", "test_m1", "ok"),
+                             ("tests/x_test.rs", "test_m2", "FAILED")],
+                            owners, forbid_owner="M1")
+    check("an XPASS is reported as XPASS, not as owed",
+          sorted(k for k, _ in problems), ["XPASS"])
+
     if failures:
         print("self-test FAILED:", file=sys.stderr)
         for f in failures:
             print("  " + f, file=sys.stderr)
         return False
-    print("self-test: 21 checks green (reason lookup incl. same name in two "
+    print("self-test: 26 checks green (reason lookup incl. same name in two "
           "modules and in two targets, shared module, missing and ambiguous "
-          "reasons, literal-safe scanning, cargo attribution, verdicts)")
+          "reasons, literal-safe scanning, cargo attribution, verdicts, and the "
+          "milestone-owner gate incl. its off state)")
     return True
 
 
@@ -726,7 +818,17 @@ def main():
         problems.append(("CARGO", "cargo exited %d with no failing test to "
                                   "explain it" % rc_run))
 
-    counts, more = reconcile(listed, obs, index_sites(read_sources()))
+    forbid_owner = os.environ.get("TEST_XFAIL_FORBID_OWNER", "").strip() or None
+    if forbid_owner and not re.fullmatch(r"M[1-9]|unscheduled", forbid_owner):
+        # Fail closed. A typo'd milestone would match no owner and the gate
+        # would report "nothing owed" — a green run that established nothing,
+        # which is the failure mode this whole file exists to remove.
+        print("error: TEST_XFAIL_FORBID_OWNER=%r is not a valid owner "
+              "(M1..M9 or 'unscheduled')" % forbid_owner, file=sys.stderr)
+        return 1
+
+    counts, more = reconcile(listed, obs, index_sites(read_sources()),
+                             forbid_owner=forbid_owner)
     problems += more
 
     print("==============================================")
@@ -741,9 +843,17 @@ def main():
     print("  slow       = passes, excluded only for cost, on the reviewed allowlist")
     print("  stale      = cargo lists it as ignored, running it reported nothing")
     print("  undeclared = it ran as ignored but the listing does not have it")
+    if forbid_owner:
+        # Print the denominator even when it is zero: "0 owed" out of a stated
+        # number of XFAILs is a measurement, "no output" is not.
+        print("milestone gate: TEST_XFAIL_FORBID_OWNER=%s -> %d of %d still-failing "
+              "XFAIL(s) owed to %s"
+              % (forbid_owner, counts["owed"], counts["xfail"], forbid_owner))
     print("==============================================")
 
     titles = {
+        "OWED": ("OWED — still failing and still owed to %s, so that milestone is "
+                 "not finished:" % forbid_owner),
         "XPASS": "XPASS — these now pass; delete the #[ignore] so they join the regression net:",
         "STALE": "STALE — listed as ignored but never reported a result:",
         "UNDECLARED": "UNDECLARED — ran as ignored but is not in the listing:",
@@ -754,7 +864,7 @@ def main():
         "BUILD": "Build errors:",
         "CARGO": "Unexplained cargo status:",
     }
-    for kind in ("XPASS", "STALE", "UNDECLARED", "SLOWFAIL", "DUPLICATE",
+    for kind in ("OWED", "XPASS", "STALE", "UNDECLARED", "SLOWFAIL", "DUPLICATE",
                  "TAG", "NO_RESULT", "BUILD", "CARGO"):
         items = [m for k, m in problems if k == kind]
         if items:

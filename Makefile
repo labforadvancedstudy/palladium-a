@@ -266,9 +266,35 @@ conformance: build ## Compile+link+run every .pd under tests/ and examples/, aga
 test-conformance-runner: build ## Prove the conformance gate still goes RED when it should
 	@bash scripts/test-conformance-runner.sh
 
+# M1's exit criterion, as a command.
+#
+# THERE ARE TWO OWNER INVENTORIES IN THIS REPO, AND THIS USED TO READ ONE.
+#   tests/conformance-manifest.txt          owns .pd fixtures (`owner` column)
+#   #[ignore = "XFAIL: … (owned by M<n>)"]  owns Rust tests
+# Both use the same `(owned by M<n>)` grammar and both are enforceable, but this
+# target only ran the first. Measured at 2ef170f, the v0.3.0 release commit: it
+# exited 0 while THREE M1-owned #[ignore] rows were still failing, one of them
+# the tail-`if` miscompile M1 was named for — `fib(10)` printed 8261746944 and
+# exited 0. The release that exists to remove silent miscompiles shipped one,
+# and its own exit criterion could not see it.
+#
+# Both halves run even when the first is red: stopping at the first failure
+# reports half the debt and costs a round trip to discover the rest.
 .PHONY: m1-exit
-m1-exit: build ## M1's exit criterion, as a command: nothing in the corpus still owed to M1
-	@CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests examples
+m1-exit: build ## M1's exit criterion: nothing in EITHER owner inventory still owed to M1
+	@rc=0; \
+	echo "$(YELLOW)== inventory 1 of 2: .pd fixtures (tests/conformance-manifest.txt) ==$(NC)"; \
+	CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests examples || rc=1; \
+	echo; \
+	echo "$(YELLOW)== inventory 2 of 2: Rust #[ignore] reasons ==$(NC)"; \
+	TEST_XFAIL_FORBID_OWNER=M1 python3 scripts/test-xfail.py || rc=1; \
+	echo; \
+	if [ $$rc -eq 0 ]; then \
+	  echo "$(GREEN)✓ M1 exit criterion met — nothing in either inventory is owed to M1$(NC)"; \
+	else \
+	  echo "$(RED)✗ M1 is NOT finished — see the OWED_TO_M1 line(s) above$(NC)"; \
+	fi; \
+	exit $$rc
 
 .PHONY: selfhost
 selfhost: build ## Run the self-hosting fixed-point gate (bootstrap/pdc.pd)
