@@ -697,7 +697,7 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 | `<T: Bound>`, `where` | unimplemented | `parse_generic_params` accepts bare names only; the `:` is a parse error |
 
 **partial — generic argument bug**: inside `<…>`, any identifier whose characters are all
-uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:2090-2100`,
+uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:2100-2110`,
 corrected from line 2054–2079 of the pre-cleanup revision). So `Foo<T>` yields a const-generic `T`, not a type argument. Only
 mixed-case names like `Vec<Item>` reach the type branch.
 

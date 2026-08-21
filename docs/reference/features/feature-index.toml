@@ -132,7 +132,7 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/codegen/mod.rs:1369 'Generic types in structs not yet supported'",
-  "src: src/parser/mod.rs:2090-2100 all-uppercase name inside <...> reclassified as a const argument",
+  "src: src/parser/mod.rs:2100-2110 all-uppercase name inside <...> reclassified as a const argument",
   "cmd: pdc compile 'fn f<T: Clone>(x: T) {} fn main(){}' -> error: expected '>' after generic parameters, found ':'",
   "conformance: tests/08_generics_basic.pd PASS (placeholder: only prints that generics are unimplemented)",
 ]

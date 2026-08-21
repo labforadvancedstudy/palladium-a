@@ -162,13 +162,13 @@ src/parser/mod.rs	1469-1469	docs/specification/bootstrap-subset.md	5659f666d863	
 src/parser/mod.rs	1469-1469	docs/specification/language-spec.md	5659f666d863	self.consume(Token::LeftBrace, "Expected '{' after else")?;
 src/parser/mod.rs	176-176	docs/reference/features/feature-index.toml	45976242aecd	while self.check(&Token::Import) {
 src/parser/mod.rs	176-176	docs/specification/language-spec.md	45976242aecd	while self.check(&Token::Import) {
-src/parser/mod.rs	1990-1990	docs/specification/language-spec.md	a86c29990d38	let right = self.parse_postfix()?;
-src/parser/mod.rs	2062-2070	docs/specification/bootstrap-subset.md	0ae185fc0cc4	let base_type = match name.as_str() { "i32" => Type::I32, "i64" | "int" => Ty ... " => Type::Bool, "String" => Type::String, _ => Type::Custom(name.clone()), };
-src/parser/mod.rs	2062-2070	docs/specification/language-spec.md	0ae185fc0cc4	let base_type = match name.as_str() { "i32" => Type::I32, "i64" | "int" => Ty ... " => Type::Bool, "String" => Type::String, _ => Type::Custom(name.clone()), };
-src/parser/mod.rs	2064-2064	docs/specification/language-spec.md	4093f823773b	"i64" | "int" => Type::I64, // "int" is an alias for i64
-src/parser/mod.rs	2090-2100	docs/reference/features/feature-index.toml	784ad42c33e0	match &ty { Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() ||  ... arams args.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); }
-src/parser/mod.rs	2090-2100	docs/specification/bootstrap-subset.md	784ad42c33e0	match &ty { Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() ||  ... arams args.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); }
-src/parser/mod.rs	2090-2100	docs/specification/language-spec.md	784ad42c33e0	match &ty { Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() ||  ... arams args.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); }
+src/parser/mod.rs	1990-1990	docs/specification/language-spec.md	195425617880	match token {
+src/parser/mod.rs	2062-2070	docs/specification/bootstrap-subset.md	82c9da120f31	inner: Box::new(inner), }) } (Token::Identifier(name), _) => { // First check ... elf.type_params_in_scope.contains(&name) { return Ok(Type::TypeParam(name)); }
+src/parser/mod.rs	2062-2070	docs/specification/language-spec.md	82c9da120f31	inner: Box::new(inner), }) } (Token::Identifier(name), _) => { // First check ... elf.type_params_in_scope.contains(&name) { return Ok(Type::TypeParam(name)); }
+src/parser/mod.rs	2064-2064	docs/specification/language-spec.md	d10b36aa74a5	}
+src/parser/mod.rs	2100-2110	docs/reference/features/feature-index.toml	25cd3fa9d387	Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() || c == '_') => ... rgs.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); } _ => {
+src/parser/mod.rs	2100-2110	docs/specification/bootstrap-subset.md	25cd3fa9d387	Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() || c == '_') => ... rgs.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); } _ => {
+src/parser/mod.rs	2100-2110	docs/specification/language-spec.md	25cd3fa9d387	Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() || c == '_') => ... rgs.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); } _ => {
 src/parser/mod.rs	259-259	docs/specification/language-spec.md	17c6d474e56f	if self.check(&Token::As) {
 src/parser/mod.rs	344-344	docs/specification/language-spec.md	9db1fcae3b35	fn parse_item(&mut self) -> Result<Item> {
 src/parser/mod.rs	354-354	docs/reference/features/async-system/async-as-effect.md	bf78a17122be	let is_async = if self.check(&Token::Async) {
