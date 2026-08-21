@@ -1,3 +1,0 @@
-tail_if_defect_fixture
-fib and classify are defined above and deliberately not called
-see tests/stdlib/DRIVERS.tsv for the pinned expectation

@@ -569,7 +569,7 @@ language does not have are the two the implementation has.
 **Operators. implemented**: `+ - * / % = == != ! < > <= >= && ||`.
 **unimplemented**: `+= -= *= /= %=` (no compound assignment), `| ^ ~ << >>` (no bitwise
 operators), `..=`, `as` casts. `|` and `$` are lexed but never consumed by the parser; `as` is
-consumed only for import aliases (`src/parser/mod.rs:259`).
+consumed only for import aliases (`src/parser/mod.rs:520`).
 
 Comments (`// line`, `/* block */`) are implemented.
 
@@ -580,7 +580,7 @@ program = { import } { item } ;
 ```
 
 **Imports must all precede items** — the parser drains imports first
-(`src/parser/mod.rs:176`), so an `import` after a `fn` is a syntax error.
+(`src/parser/mod.rs:437`), so an `import` after a `fn` is a syntax error.
 
 ```ebnf
 import = "import" path [ "as" identifier ] ";"
@@ -588,7 +588,7 @@ import = "import" path [ "as" identifier ] ";"
        | "import" path "::" "{" identifier { "," identifier } "}" ";" ;
 ```
 
-Items (`src/parser/mod.rs:344`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`, `macro`.
+Items (`src/parser/mod.rs:605`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`, `macro`.
 **unimplemented: there is no top-level `const`, `static`, `mod`, or `use` item** — so
 [N11](#n11-modules)'s file-based modules exist only as far as `import` reaches.
 
@@ -607,8 +607,8 @@ self_param = [ "&" ] [ "mut" ] "self" ;
 **unimplemented**: default parameter values, pattern parameters, varargs, `where` clauses.
 
 **unimplemented — effect clauses.** `![io]` does not exist in the surface syntax.
-`Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:565`, corrected from
-v0.2's `src/parser/mod.rs:549`, which is where the `Function` literal opens). Effects are *inferred* afterwards
+`Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:852`, corrected from
+v0.2's `src/parser/mod.rs:836`, which is where the `Function` literal opens). Effects are *inferred* afterwards
 (`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:151`, corrected
 from `src/driver/mod.rs:139-145`); they gate nothing. `crate::effects::` is referenced from exactly one place in
 the compiler, `src/driver/mod.rs:147`.
@@ -632,15 +632,15 @@ which was ~250 lines low):
 
 **implemented**: unit, tuple, and struct variants; construction and `match` both work.
 **partial**: `pub` on an enum is parsed and then silently discarded — `EnumDef` has no visibility
-field (`src/parser/mod.rs:379`, `src/ast/mod.rs:139`).
+field (`src/parser/mod.rs:640`, `src/ast/mod.rs:139`).
 
 ### A4.4 Traits
 
-**unimplemented.** Traits parse (`src/parser/mod.rs:752`, corrected from line 736–960 of the pre-cleanup revision) and then
+**unimplemented.** Traits parse (`src/parser/mod.rs:1039`, corrected from line 736–960 of the pre-cleanup revision) and then
 emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1013`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:795-797`, corrected
 from `src/typeck/mod.rs:947`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
-(`src/parser/mod.rs:876`, corrected from line 863–897 of the pre-cleanup revision).
+(`src/parser/mod.rs:1163`, corrected from line 863–897 of the pre-cleanup revision).
 
 So `trait Display { fn fmt(&self) -> String; }` does not parse, and
 [N10](#n10-traits-and-generics) has no implementation at all.
@@ -656,7 +656,7 @@ impl_block = "impl" [ generic_params ] [ type "for" ] type "{" { function } "}" 
 **implemented**: methods become mangled free functions `__pd_Type_method`
 (`src/codegen/mod.rs:1027-1033`, corrected from line 1861 of the pre-cleanup revision).
 **unimplemented**: associated constants and associated types are rejected — an impl body may
-contain only `fn` (`src/parser/mod.rs:1045-1051`, corrected from line 1030 of the pre-cleanup revision).
+contain only `fn` (`src/parser/mod.rs:1332-1338`, corrected from line 1030 of the pre-cleanup revision).
 **partial**: methods cannot be called with `.` syntax — see [A6.4](#a64-method-calls). Call them
 as `Type::method(receiver, args)`.
 
@@ -664,7 +664,7 @@ as `Type::method(receiver, args)`.
 
 **partial.** User macros (`macro name!(a, b) { … }`) parse into a raw token stream that is lossily
 converted; unlisted tokens degrade into `AstToken::Ident` of a debug string
-(`src/parser/mod.rs:1274`, corrected from line 1258 of the pre-cleanup revision).
+(`src/parser/mod.rs:1561`, corrected from line 1258 of the pre-cleanup revision).
 
 Four builtin macros exist (`src/macros/mod.rs:41`), each taking **exactly one** expression:
 
@@ -682,8 +682,8 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:2064`, corrected from line 2038 of the pre-cleanup revision) |
-| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:2062-2070` (corrected from line 2037–2043 of the pre-cleanup revision) |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:2413`, corrected from line 2038 of the pre-cleanup revision) |
+| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:2411-2419` (corrected from line 2037–2043 of the pre-cleanup revision) |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
@@ -698,7 +698,7 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 | `<T: Bound>`, `where` | unimplemented | `parse_generic_params` accepts bare names only; the `:` is a parse error |
 
 **partial — generic argument bug**: inside `<…>`, any identifier whose characters are all
-uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:2100-2110`,
+uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:2449-2459`,
 corrected from line 2054–2079 of the pre-cleanup revision). So `Foo<T>` yields a const-generic `T`, not a type argument. Only
 mixed-case names like `Vec<Item>` reach the type branch.
 
@@ -730,14 +730,14 @@ then generates C for a `struct Result` layout that codegen never emits (see
 ### A6.1 Statements
 
 `let`, assignment, `if`/`else`, `while`, `for … in`, `match`, `return`, `break`, `continue`,
-`unsafe { }`, expression statements (`src/parser/mod.rs:1321`).
+`unsafe { }`, expression statements (`src/parser/mod.rs:1634`).
 
 - implemented: `let [mut] x [: T] = e;` — **the initializer is mandatory**
-  (`src/parser/mod.rs:1405`, corrected from line 1411 of the pre-cleanup revision); the binding must be a plain identifier
+  (`src/parser/mod.rs:1718`, corrected from line 1411 of the pre-cleanup revision); the binding must be a plain identifier
   (no patterns).
 - implemented: assignment targets — identifier, index, field, deref.
 - **unimplemented: `else if`** — after `else` the parser requires `{`
-  (`src/parser/mod.rs:1469`, corrected from line 1441 of the pre-cleanup revision). Verified: `if a {} else if b {}` →
+  (`src/parser/mod.rs:1792`, corrected from line 1441 of the pre-cleanup revision). Verified: `if a {} else if b {}` →
   `Expected '{' after else`. Use a nested `if` inside the `else`.
 - **unimplemented: `loop`** — not a keyword. Use `while true`.
 - unimplemented: compound assignment (`i += 1`) — verified: `Expected expression, but found '='`.
@@ -764,7 +764,7 @@ implemented: literals, identifiers, struct literals, array literals `[a,b,c]` an
 indexing, field access, calls, enum construction, unary `- ! & *`, binary operators.
 
 - **unimplemented: `if`, `match`, and blocks are statements, not expressions**
-  (`src/parser/mod.rs:1325`, `src/parser/mod.rs:1330`). `let x = if c { 1 } else { 2 };` does not parse. This is a
+  (`src/parser/mod.rs:1638`, `src/parser/mod.rs:1643`). `let x = if c { 1 } else { 2 };` does not parse. This is a
   direct contradiction of [N5](#n5-statements-and-expressions).
 - unimplemented: closures — no closure token path and no closure AST node.
 - unimplemented: tuple expressions and `.0` indexing.
@@ -775,7 +775,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   (`src/typeck/mod.rs:2722`, corrected from line 1874 of the pre-cleanup revision).
 
 **partial — precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for
-its right operand (`src/parser/mod.rs:1990`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
+its right operand (`src/parser/mod.rs:2339`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
 Write `a * (0 - b)` or bind the negation to a variable. [N5](#n5-statements-and-expressions)
 requires `a * -b`.
 
@@ -1048,7 +1048,7 @@ v0.2 sentence is retracted; the surviving borrow-checker defect is
 **[N9](#n9-references-and-lifetimes) is unimplemented in full.** `ref` is not a keyword; the
 implemented spelling is Rust's `&`/`&mut` **with** `'a` parameter lists — the exact annotation
 burden the definition removes. `fn f<'a>(x: &'a String) -> &'a String { return x; }` compiles.
-`Function.lifetime_params` is parsed (`src/parser/mod.rs:553`) and read nowhere outside test and
+`Function.lifetime_params` is parsed (`src/parser/mod.rs:840`) and read nowhere outside test and
 LSP fixtures. There is no region inference: `grep -rn 'region\|Region' src/ --include='*.rs'`
 returns nothing.
 

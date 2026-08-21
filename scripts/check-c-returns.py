@@ -35,7 +35,11 @@ because this is legitimate and must NOT be flagged:
     }
 
 Its last line is `}`. So the analysis recurses: an if/else terminates iff both
-branches terminate; an if without an else never does.
+branches terminate; an if without an else never does. `} else if (...) {` is an
+else branch holding one nested if — reading it as "no else" and continuing past
+it spliced the last arm's `return` into the enclosing block, which said
+"terminates" about an if/else-if chain with no final `else`. That is exactly the
+C a `match` lowers to.
 
 EXIT TAXONOMY — a finding and a malfunction must not share an exit code.
     0  every function analysed, none can fall off its end
@@ -69,6 +73,43 @@ NORETURN_RE = re.compile(r"^(?:__pd_panic|abort|exit|__builtin_unreachable)\s*\(
 RETURN_RE = re.compile(r"^return\b")
 
 
+# `} else if (...) {` — an else branch that is itself one compound statement.
+ELSE_IF_RE = re.compile(r"^\}[ \t]*else[ \t]+(\S.*\{)[ \t]*$")
+
+
+def parse_compound(lines, header, i):
+    """Parse one compound statement whose body starts at line `i`.
+
+    Returns (item, index_after_the_whole_construct).
+    """
+    then_items, j = parse_block(lines, i)
+    closing = lines[j].strip() if j < len(lines) else "}"
+    if closing.startswith("} else {"):
+        else_items, k = parse_block(lines, j + 1)
+        return ("compound", header, then_items, else_items), k + 1
+    m = ELSE_IF_RE.match(closing)
+    if m:
+        # The else branch holds exactly one nested compound, and it must be
+        # recorded AS the else branch.
+        #
+        # Before this case existed, the branch below treated `} else if` as
+        # "no else" and then resumed reading at the line after it — which
+        # spliced the else-if's BODY into the parent statement list. So a chain
+        # whose last arm ends in `return` looked terminating: that `return`
+        # became the parent's last statement. Measured on the C that a
+        # `match` lowers to (an if/else-if chain with NO final `else`), this
+        # analyser reported the file clean while gcc on the same file said
+        # "non-void function does not return a value in all control paths".
+        # A false "terminates" is the silent direction this whole check exists
+        # to avoid, so it is worth the extra case.
+        nested, k = parse_compound(lines, m.group(1), j + 1)
+        return ("compound", header, then_items, [nested]), k
+    # `} else` with the body on following lines — treat as no else rather than
+    # guessing; a false "does not terminate" is a loud failure that gets looked
+    # at, a false "terminates" is silent.
+    return ("compound", header, then_items, None), j + 1
+
+
 def parse_block(lines, i):
     """Parse statements until this block's closing brace.
 
@@ -82,22 +123,8 @@ def parse_block(lines, i):
             # Closes this block (possibly `} else {`, handled by the caller).
             return items, i
         if text.endswith("{"):
-            header = text
-            then_items, j = parse_block(lines, i + 1)
-            closing = lines[j].strip() if j < len(lines) else "}"
-            if closing.startswith("} else {"):
-                else_items, k = parse_block(lines, j + 1)
-                items.append(("compound", header, then_items, else_items))
-                i = k + 1
-            elif closing.startswith("} else"):
-                # `} else` with the body on following lines — treat as no else
-                # rather than guessing; a false "does not terminate" is a loud
-                # failure that gets looked at, a false "terminates" is silent.
-                items.append(("compound", header, then_items, None))
-                i = j + 1
-            else:
-                items.append(("compound", header, then_items, None))
-                i = j + 1
+            item, i = parse_compound(lines, text, i + 1)
+            items.append(item)
             continue
         if text:
             items.append(("stmt", text))

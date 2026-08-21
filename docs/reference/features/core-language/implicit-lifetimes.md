@@ -210,12 +210,12 @@ error: Unexpected token: expected ')' (Expected ')'), found identifier 'String'
 **2. The implementation uses Rust's syntax, including the `'a` parameters this design removes.**
 `reference = '&' [ "'" identifier ] [ "mut" ] type` (`grammar.ebnf:145`), and generic parameter
 lists accept lifetimes (`generic_param` at `grammar.ebnf:130`, parsed at
-`src/parser/mod.rs:36`). Measured: `fn f<'a>(x: &'a String) -> &'a String { return x; }`
+`src/parser/mod.rs:297`). Measured: `fn f<'a>(x: &'a String) -> &'a String { return x; }`
 compiles and links. So the annotation burden the design deletes is currently the only supported
 spelling.
 
 **3. Nothing consumes the lifetimes it parses.** `Function.lifetime_params` is populated
-(`src/parser/mod.rs:553`) and, outside the parser, appears only as `vec![]` in test and LSP
+(`src/parser/mod.rs:840`) and, outside the parser, appears only as `vec![]` in test and LSP
 fixtures — `grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser'` returns
 nothing else. There is no region inference of any kind: `grep -rn 'region\|Region' src/
 --include='*.rs'` returns nothing.

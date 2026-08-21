@@ -289,24 +289,29 @@ fn main() {
     );
 }
 
-/// A function whose body ends in a tail `if` emits no `return` at all:
+/// D3b, closed. A function whose body ends in a tail `if` used to emit no
+/// `return` at all:
 ///
 ///     long long fib(long long n) {
 ///         if ((n <= 1)) { n; } else { (fib((n - 1)) + fib((n - 2))); }
 ///     }
 ///
-/// The parser lowers a tail *expression* to `Stmt::Return`, but not a tail
-/// `if`, so the caller reads whatever is in the return register. gcc only
-/// warns, so nothing in the pipeline stops it.
+/// The parser lowered a tail *expression* to `Stmt::Return`, but not a tail
+/// `if`, so the caller read whatever was in the return register. gcc only
+/// warns, so nothing in the pipeline stopped it.
 ///
-/// The assertion here is deliberately narrow — one fixture, one function. The
+/// The `#[ignore = "XFAIL: …"]` this test used to carry is gone: the fix is in
+/// `src/parser/mod.rs` (`lower_tail_to_return`), so an ignored test here would
+/// be a stale expectation and `make test-xfail` reports that as an XPASS.
+///
+/// The assertion is deliberately narrow — one fixture, one function. The
 /// general invariant ("every non-void function's body must definitely return on
 /// every path", as a terminator analysis over the emitted C, which also covers
-/// tail `match` and constructs nobody has hit yet) is being built on
-/// `feat/m1-stdlib-gate` as `scripts/check-c-returns.py`. When that lands, this
-/// test should be deleted in favour of it rather than kept in parallel.
+/// tail `match` and constructs nobody has hit yet) landed as
+/// `scripts/check-c-returns.py` and runs over every `tests/stdlib/` driver in
+/// `make stdlib-gate`. This test is kept anyway because it is the *end-to-end*
+/// statement — .pd in, C out, one named function — and it costs one compile.
 #[test]
-#[ignore = "XFAIL: a tail `if` is not lowered to a return — `fn fib(n: i64) -> i64 { if n <= 1 { n } else { … } }` emits a body with no `return` statement, so the caller reads garbage while the compiler reports success (owned by M1; superseded by scripts/check-c-returns.py on feat/m1-stdlib-gate)"]
 fn test_tail_if_function_emits_a_return() {
     let module = unique_module_name("tailif");
     let output = compile_with_pdc(

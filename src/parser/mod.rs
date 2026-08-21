@@ -14,6 +14,267 @@ pub struct Parser {
     current_token_cache: Option<(Token, Span)>,
 }
 
+/// The value-producing shape of a block's final statement, as the parser saw it.
+///
+/// WHY THIS LIVES IN THE PARSER AND NOT IN A LATER PASS
+/// ----------------------------------------------------
+/// The property being lowered is "the block ends in an expression written with
+/// **no** `;`". The AST cannot express it: `foo();` and a trailing `foo()` are
+/// both `Stmt::Expr(..)`, and a branch of an `if` is a bare `Vec<Stmt>` with no
+/// record of which of its statements was in tail position. So the distinction
+/// exists only between `parse_block_with_implicit_return` reading the token and
+/// the `Vec<Stmt>` it returns. A pass over the AST would have to *guess*, and a
+/// guess here turns `if c { print_int(1); } else { print_int(2); }` into
+/// `return print_int(1);` — returning void from a non-void function.
+///
+/// The alternative would be to enrich the AST with a tail marker and lower
+/// later. That is a strictly larger change (every `Stmt::Expr` construction and
+/// match site) which buys nothing: `parse_function` is the only consumer,
+/// because only there is the return type known.
+#[derive(Debug, Clone)]
+enum BlockTail {
+    /// Nothing to lower: the block is empty, or ends in a `;` statement, a
+    /// `return`, a loop, a `let`, … Its value is not a tail expression.
+    NoValue,
+    /// The last statement is a `Stmt::Expr` written without a `;`.
+    Expr,
+    /// The last statement is an `if`. Each branch carries its own tail;
+    /// `else_tail` is `None` when the `if` has no `else` at all.
+    If {
+        then_tail: Box<BlockTail>,
+        else_tail: Option<Box<BlockTail>>,
+        span: Span,
+    },
+    /// The last statement is a `match`, with one tail per arm in arm order.
+    Match {
+        arm_tails: Vec<BlockTail>,
+        span: Span,
+    },
+}
+
+impl BlockTail {
+    /// Did the programmer write a value in tail position anywhere in here?
+    ///
+    /// This is the trigger for the refusal below, and it is deliberately about
+    /// *what was written* rather than about control flow. A tail expression in
+    /// a branch is unambiguous evidence that the branch was meant to be the
+    /// function's value; if some other path of the same construct has no value,
+    /// the program as written cannot be compiled honestly.
+    fn writes_a_value(&self) -> bool {
+        match self {
+            BlockTail::NoValue => false,
+            BlockTail::Expr => true,
+            BlockTail::If {
+                then_tail,
+                else_tail,
+                ..
+            } => {
+                then_tail.writes_a_value()
+                    || else_tail.as_ref().is_some_and(|e| e.writes_a_value())
+            }
+            BlockTail::Match { arm_tails, .. } => {
+                arm_tails.iter().any(|t| t.writes_a_value())
+            }
+        }
+    }
+
+    /// The span to blame when this tail cannot be lowered.
+    fn span(&self) -> Option<Span> {
+        match self {
+            BlockTail::NoValue | BlockTail::Expr => None,
+            BlockTail::If { span, .. } | BlockTail::Match { span, .. } => Some(*span),
+        }
+    }
+
+    /// `if` or `match` — the keyword named in the refusal.
+    fn keyword(&self) -> &'static str {
+        match self {
+            BlockTail::Match { .. } => "match",
+            _ => "if",
+        }
+    }
+
+}
+
+/// Can every path out of `stmts` be made to end in a `return`?
+///
+/// This walks the statements and the tail together, because the two carry
+/// different halves of the answer: the tail says which leaves are `;`-less
+/// expressions that the lowering below can rewrite, and the statements say
+/// which leaves already end in a `return` (or a call that does not come back)
+/// and so need no rewriting at all.
+///
+/// That second half is not a nicety. `if n > 0 { return n * 10; } else { n - 1 }`
+/// has a perfectly good value on both paths — one written as a `return`, one in
+/// tail position — and a rule that only looked at the tail would refuse it.
+///
+/// This is the same invariant `scripts/check-c-returns.py` enforces over the
+/// emitted C ("returns on every path"), stated over the source instead. It is
+/// deliberately shallow: it decides the *tail* construct of a function body,
+/// not arbitrary control flow, so it is not a general flow analysis and does
+/// not pretend to be one.
+fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
+    match tail {
+        // The lowering will turn this leaf into a `return`.
+        BlockTail::Expr => true,
+        // Nothing to lower here, so this path is only good if it already ends
+        // in a terminator.
+        BlockTail::NoValue => already_terminates(stmts),
+        BlockTail::If {
+            then_tail,
+            else_tail,
+            ..
+        } => {
+            let Some(Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            }) = stmts.last()
+            else {
+                return false;
+            };
+            // No `else` means the false path reaches the closing brace with
+            // nothing to return, whatever the `if` branch does.
+            match (else_branch, else_tail) {
+                (Some(eb), Some(et)) => {
+                    returns_on_every_path(then_branch, then_tail)
+                        && returns_on_every_path(eb, et)
+                }
+                _ => false,
+            }
+        }
+        BlockTail::Match { arm_tails, .. } => {
+            let Some(Stmt::Match { arms, .. }) = stmts.last() else {
+                return false;
+            };
+            // `all` over an empty iterator is `true`, so emptiness is explicit.
+            // NOTE the residual: even when every arm returns, the C emitted for
+            // a `match` is an `if`/`else if` chain with no final `else`, so a
+            // value matching no arm still falls off. That is exhaustiveness, a
+            // separate open defect; the generated-C invariant flags it.
+            !arms.is_empty()
+                && arms.len() == arm_tails.len()
+                && arms
+                    .iter()
+                    .zip(arm_tails.iter())
+                    .all(|(arm, t)| returns_on_every_path(&arm.body, t))
+        }
+    }
+}
+
+/// Does this statement list already end in something that does not fall
+/// through?
+///
+/// Mirrors `NORETURN_RE` in `scripts/check-c-returns.py`: a trailing
+/// `panic("…")` aborts, so a branch that ends in one has no fall-through path
+/// even though it produces no value. Refusing that shape would reject a program
+/// whose C is correct.
+fn already_terminates(stmts: &[Stmt]) -> bool {
+    match stmts.last() {
+        Some(Stmt::Return(_)) => true,
+        Some(Stmt::Expr(Expr::Call { func, .. })) => {
+            matches!(func.as_ref(), Expr::Ident(name) if name == "panic")
+        }
+        _ => false,
+    }
+}
+
+/// Which path has no value, phrased for the diagnostic. Names the *first*
+/// offending path so the message points at one concrete thing.
+fn missing_path(stmts: &[Stmt], tail: &BlockTail) -> String {
+    match tail {
+        BlockTail::Expr => "this branch".to_string(),
+        BlockTail::NoValue => "this branch".to_string(),
+        BlockTail::If {
+            then_tail,
+            else_tail,
+            ..
+        } => {
+            let Some(Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            }) = stmts.last()
+            else {
+                return "some path".to_string();
+            };
+            match (else_branch, else_tail) {
+                (None, _) | (_, None) => {
+                    "there is no `else` branch, so the false path".to_string()
+                }
+                (Some(eb), Some(et)) => {
+                    if !returns_on_every_path(then_branch, then_tail) {
+                        "the `if` branch".to_string()
+                    } else if !returns_on_every_path(eb, et) {
+                        "the `else` branch".to_string()
+                    } else {
+                        "some path".to_string()
+                    }
+                }
+            }
+        }
+        BlockTail::Match { arm_tails, .. } => {
+            let Some(Stmt::Match { arms, .. }) = stmts.last() else {
+                return "some path".to_string();
+            };
+            match arms
+                .iter()
+                .zip(arm_tails.iter())
+                .position(|(arm, t)| !returns_on_every_path(&arm.body, t))
+            {
+                Some(i) => format!("match arm {}", i + 1),
+                None => "an unmatched value".to_string(),
+            }
+        }
+    }
+}
+
+/// Rewrite every tail expression described by `tail` into a `return`.
+///
+/// Only ever called after `returns_on_every_path`, so every leaf it walks to is
+/// either a `Stmt::Expr` in tail position (rewritten) or a branch that already
+/// terminates (left alone).
+fn lower_tail_to_return(stmts: &mut [Stmt], tail: &BlockTail) {
+    match tail {
+        BlockTail::NoValue => {}
+        BlockTail::Expr => {
+            if let Some(last @ Stmt::Expr(_)) = stmts.last_mut() {
+                // Move the expression out through a placeholder rather than
+                // cloning it: an arm's tail can be an arbitrarily large call
+                // tree and this runs once per function.
+                let taken = std::mem::replace(last, Stmt::Return(None));
+                if let Stmt::Expr(expr) = taken {
+                    *last = Stmt::Return(Some(expr));
+                }
+            }
+        }
+        BlockTail::If {
+            then_tail,
+            else_tail,
+            ..
+        } => {
+            if let Some(Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            }) = stmts.last_mut()
+            {
+                lower_tail_to_return(then_branch, then_tail);
+                if let (Some(eb), Some(et)) = (else_branch.as_mut(), else_tail.as_ref()) {
+                    lower_tail_to_return(eb, et);
+                }
+            }
+        }
+        BlockTail::Match { arm_tails, .. } => {
+            if let Some(Stmt::Match { arms, .. }) = stmts.last_mut() {
+                for (arm, arm_tail) in arms.iter_mut().zip(arm_tails.iter()) {
+                    lower_tail_to_return(&mut arm.body, arm_tail);
+                }
+            }
+        }
+    }
+}
+
 impl Parser {
     pub fn new(tokens: Vec<(Token, Span)>) -> Self {
         let current_token_cache = if !tokens.is_empty() {
@@ -523,22 +784,48 @@ impl Parser {
 
         self.consume(Token::LeftBrace, "Expected '{'")?;
 
-        let (mut body, has_tail_expr) = self.parse_block_with_implicit_return()?;
+        let (mut body, body_tail) = self.parse_block_with_implicit_return()?;
 
         // Grammar: `block = '{' { statement } [ expression ] '}'` — a trailing
         // expression in a function body is the function's value. Lower it to an
         // explicit return so codegen emits `return <expr>;` instead of dropping
         // it as a bare expression statement (which returned garbage).
-        // Only the *function body* tail is lowered; tails of nested blocks
-        // (if/else branches) are deliberately left alone.
+        //
+        // D3 lowered only `BlockTail::Expr`. D3b is the same defect one level
+        // in: `fn fib(n: i64) -> i64 { if n <= 1 { n } else { … } }` ends in a
+        // `Stmt::If`, never entered that path, and `fib(10)` returned
+        // 8261746944 instead of 55. So the lowering now recurses through the
+        // branches of a tail `if` and the arms of a tail `match`.
+        //
+        // Only the *function body* tail is lowered, and only the tails at the
+        // end of it: an `if` in the middle of a body still has ordinary
+        // expression statements in its branches.
+        //
         // A unit function (`return_type == None`) keeps the plain expression
         // statement: its tail value is simply discarded.
-        if return_type.is_some() && has_tail_expr {
-            if matches!(body.last(), Some(Stmt::Expr(_))) {
-                if let Some(Stmt::Expr(expr)) = body.pop() {
-                    body.push(Stmt::Return(Some(expr)));
-                }
+        if return_type.is_some() {
+            if returns_on_every_path(&body, &body_tail) {
+                lower_tail_to_return(&mut body, &body_tail);
+            } else if body_tail.writes_a_value() {
+                // A value was written in tail position but some path of the same
+                // construct has none. Emitting C for this is how the compiler
+                // starts lying — the function falls off its end and returns
+                // whatever is in the return register. Refuse instead.
+                //
+                // Nothing correct is lost by refusing: to reach here a program
+                // must already contain a tail expression inside a branch, and
+                // every such program miscompiles today.
+                return Err(CompileError::tail_value_not_on_every_path(
+                    body_tail.keyword(),
+                    &missing_path(&body, &body_tail),
+                    body_tail.span().unwrap_or(start_span),
+                ));
             }
+            // Otherwise no value was written in tail position anywhere (e.g.
+            // `if c { return 1; }` as the last statement). That is the general
+            // missing-return problem, which needs a flow analysis this parser
+            // does not have, and it is caught downstream by the generated-C
+            // invariant in scripts/check-c-returns.py. Left alone deliberately.
         }
 
         let end_span = self.consume(Token::RightBrace, "Expected '}'")?;
@@ -1277,16 +1564,39 @@ impl Parser {
 
     /// Parse a block of statements that may have an implicit return
     ///
-    /// Returns the statements plus a flag telling the caller whether the block
-    /// ended in **tail position** — i.e. a trailing expression with no `;`.
-    /// The flag is what lets `parse_function` lower a function-body tail into
-    /// `Stmt::Return`; without it a tail expression is indistinguishable from a
-    /// plain expression statement and silently generates no `return` in C.
-    fn parse_block_with_implicit_return(&mut self) -> Result<(Vec<Stmt>, bool)> {
+    /// Returns the statements plus the [`BlockTail`] describing the block's
+    /// final statement. The tail is what lets `parse_function` lower a
+    /// function-body tail into `Stmt::Return`; without it a tail expression is
+    /// indistinguishable from a plain expression statement and silently
+    /// generates no `return` in C.
+    ///
+    /// `if` and `match` are dispatched here rather than through
+    /// `parse_statement` for one reason only: their branch tails have to travel
+    /// out with them. `parse_statement` returns a bare `Stmt`, and by the time
+    /// a `Stmt::If` exists the fact that a branch ended in a `;`-less
+    /// expression is gone. The parse itself is unchanged — the same
+    /// `parse_if` / `parse_match` bodies run.
+    fn parse_block_with_implicit_return(&mut self) -> Result<(Vec<Stmt>, BlockTail)> {
         let mut stmts = Vec::new();
-        let mut has_tail_expr = false;
+        // The tail of the statement parsed most recently. Overwritten on every
+        // iteration, so when the loop exits at `}` it describes the last
+        // statement — which is the only one in tail position.
+        let mut tail = BlockTail::NoValue;
 
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            if self.check(&Token::If) {
+                let (stmt, if_tail) = self.parse_if_with_tail()?;
+                stmts.push(stmt);
+                tail = if_tail;
+                continue;
+            }
+            if self.check(&Token::Match) {
+                let (stmt, match_tail) = self.parse_match_with_tail()?;
+                stmts.push(stmt);
+                tail = match_tail;
+                continue;
+            }
+
             // Check if this could be the last expression (implicit return)
             let checkpoint = self.current;
 
@@ -1296,25 +1606,28 @@ impl Parser {
                 if self.check(&Token::RightBrace) {
                     // This is an implicit return
                     stmts.push(Stmt::Expr(expr));
-                    has_tail_expr = true;
+                    tail = BlockTail::Expr;
                     break;
                 } else if self.check(&Token::Semicolon) {
                     // Normal expression statement
                     self.advance()?; // consume ';'
                     stmts.push(Stmt::Expr(expr));
+                    tail = BlockTail::NoValue;
                 } else {
                     // Rewind and parse as statement
                     self.current = checkpoint;
                     stmts.push(self.parse_statement()?);
+                    tail = BlockTail::NoValue;
                 }
             } else {
                 // Rewind and parse as statement
                 self.current = checkpoint;
                 stmts.push(self.parse_statement()?);
+                tail = BlockTail::NoValue;
             }
         }
 
-        Ok((stmts, has_tail_expr))
+        Ok((stmts, tail))
     }
 
     /// Parse a statement
@@ -1452,23 +1765,34 @@ impl Parser {
 
     /// Parse an if statement
     fn parse_if(&mut self) -> Result<Stmt> {
+        Ok(self.parse_if_with_tail()?.0)
+    }
+
+    /// Parse an if statement, keeping the tail of each branch.
+    ///
+    /// Tail expressions inside if/else branches stay plain expression
+    /// statements here — whether they become returns is decided in
+    /// `parse_function`, which is the only place that knows the return type.
+    /// What this function must not do is *discard* the branch tails, because
+    /// nothing downstream can reconstruct them (see [`BlockTail`]).
+    fn parse_if_with_tail(&mut self) -> Result<(Stmt, BlockTail)> {
         let start_span = self.consume(Token::If, "Expected 'if'")?;
 
         let condition = self.parse_expression()?;
 
         self.consume(Token::LeftBrace, "Expected '{' after if condition")?;
 
-        // Tail expressions inside if/else branches stay plain expression
-        // statements — only a function-body tail is a return (see parse_function).
-        let (then_branch, _) = self.parse_block_with_implicit_return()?;
+        let (then_branch, then_tail) = self.parse_block_with_implicit_return()?;
 
         self.consume(Token::RightBrace, "Expected '}' after if body")?;
 
+        let mut else_tail = None;
         let else_branch = if self.check(&Token::Else) {
             self.advance()?; // consume 'else'
             self.consume(Token::LeftBrace, "Expected '{' after else")?;
 
-            let (else_stmts, _) = self.parse_block_with_implicit_return()?;
+            let (else_stmts, tail) = self.parse_block_with_implicit_return()?;
+            else_tail = Some(Box::new(tail));
 
             let _end_span = self.consume(Token::RightBrace, "Expected '}' after else body")?;
             Some(else_stmts)
@@ -1477,18 +1801,26 @@ impl Parser {
         };
 
         let end_span = self.tokens[self.current - 1].1;
+        let span = Span::new(
+            start_span.start,
+            end_span.end,
+            start_span.line,
+            start_span.column,
+        );
 
-        Ok(Stmt::If {
-            condition,
-            then_branch,
-            else_branch,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
-        })
+        Ok((
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            },
+            BlockTail::If {
+                then_tail: Box::new(then_tail),
+                else_tail,
+                span,
+            },
+        ))
     }
 
     /// Parse a while statement
@@ -1593,6 +1925,17 @@ impl Parser {
 
     /// Parse a match statement
     fn parse_match(&mut self) -> Result<Stmt> {
+        Ok(self.parse_match_with_tail()?.0)
+    }
+
+    /// Parse a match statement, keeping the tail of each arm.
+    ///
+    /// Only the `pattern => expression,` arm form can carry a tail expression:
+    /// a block-bodied arm parses its statements with `parse_statement`, which
+    /// requires a `;`, so `Red => { 1 }` is a parse error today ("Expected ';'
+    /// after expression", measured). The tail therefore comes out of exactly
+    /// one branch below.
+    fn parse_match_with_tail(&mut self) -> Result<(Stmt, BlockTail)> {
         let start_span = self.consume(Token::Match, "Expected 'match'")?;
 
         let expr = self.parse_expression()?;
@@ -1600,6 +1943,7 @@ impl Parser {
         self.consume(Token::LeftBrace, "Expected '{' after match expression")?;
 
         let mut arms = Vec::new();
+        let mut arm_tails = Vec::new();
 
         while !self.check(&Token::RightBrace) && !self.is_at_end() {
             // Parse pattern
@@ -1608,6 +1952,7 @@ impl Parser {
             self.consume(Token::FatArrow, "Expected '=>' after pattern")?;
 
             // Parse arm body
+            let mut arm_tail = BlockTail::NoValue;
             let body = if self.check(&Token::LeftBrace) {
                 // Block body
                 self.advance()?; // consume '{'
@@ -1638,24 +1983,28 @@ impl Parser {
                     self.advance()?;
                 }
                 
+                // `Red => 1,` is a value in tail position: the arm body is a
+                // single `Stmt::Expr` that was never terminated by a `;`.
+                arm_tail = BlockTail::Expr;
                 vec![Stmt::Expr(expr)]
             };
 
             arms.push(MatchArm { pattern, body });
+            arm_tails.push(arm_tail);
         }
 
         let end_span = self.consume(Token::RightBrace, "Expected '}' after match arms")?;
+        let span = Span::new(
+            start_span.start,
+            end_span.end,
+            start_span.line,
+            start_span.column,
+        );
 
-        Ok(Stmt::Match {
-            expr,
-            arms,
-            span: Span::new(
-                start_span.start,
-                end_span.end,
-                start_span.line,
-                start_span.column,
-            ),
-        })
+        Ok((
+            Stmt::Match { expr, arms, span },
+            BlockTail::Match { arm_tails, span },
+        ))
     }
 
     /// Parse an unsafe block

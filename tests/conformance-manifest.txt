@@ -98,12 +98,17 @@ tests/regression/for_over_array_param.pd	run	-	expected	-	-
 # library would rest on. stdlib/ itself has no rows here: 0 of its 21 files
 # compile, none defines `fn main`, and its compile verdicts are pinned by
 # `make stdlib-gate` against stdlib/MANIFEST.tsv instead.
-# stdlib_tail_if_defect is a CODEGEN fixture: its main prints a constant and
-# deliberately does not call the two functions the compiler miscompiles, because
-# recording their garbage in a transcript would bless the miscompile. What is
-# asserted about it lives in tests/stdlib/DRIVERS.tsv as known_violation:fib,classify.
+# stdlib_tail_if was stdlib_tail_if_defect, a CODEGEN fixture whose main printed
+# a constant and deliberately did NOT call the two functions the compiler
+# miscompiled, because recording their garbage here would bless the miscompile.
+# D3b is fixed, so its main now calls them and this transcript carries their
+# values. stdlib_tail_match does the same for a tail `match`; its C is still
+# pinned known_violation in tests/stdlib/DRIVERS.tsv for a SEPARATE open defect
+# (a `match` lowers to an if/else-if chain with no final `else`), which does not
+# change the values it prints and so does not affect this row.
 tests/stdlib/stdlib_tail_return.pd	run	-	expected	-	-
-tests/stdlib/stdlib_tail_if_defect.pd	run	-	expected	-	-
+tests/stdlib/stdlib_tail_if.pd	run	-	expected	-	-
+tests/stdlib/stdlib_tail_match.pd	run	-	expected	-	-
 tests/stdlib/stdlib_builtins_string.pd	run	-	expected	-	-
 tests/stdlib/stdlib_builtins_char_args.pd	run	-	expected	-	-
 tests/stdlib/stdlib_builtins_file.pd	run	-	expected	-	-

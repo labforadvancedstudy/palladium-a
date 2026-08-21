@@ -267,6 +267,55 @@ impl CompileError {
         }
     }
 
+    /// D3b: a function body ends in an `if`/`match` that produces a value on
+    /// some paths and nothing on others.
+    ///
+    /// The lowering added for D3b turns the tail expression of every branch
+    /// into a `return`. It can only do that when every branch HAS one. When one
+    /// does not — most often because the `if` has no `else` — there is nothing
+    /// to return on that path, and code generation used to emit a non-void
+    /// function that simply falls off its end. Measured before this refusal
+    /// existed: `fn f(n: i64) -> i64 { if n > 0 { n } }` compiled clean, exit 0,
+    /// no diagnostic, and `f(3)` printed 8261746944.
+    ///
+    /// Why this is a refusal and not a silent fallthrough: the branch tail is
+    /// unambiguous evidence of what the programmer meant. They wrote a value in
+    /// the position that *is* the function's value. Guessing zero, or letting
+    /// the C fall through, is the compiler answering a question it was not
+    /// asked.
+    ///
+    /// Nothing that used to work is lost. To reach here, a program must already
+    /// contain a tail expression inside a branch of a tail `if`/`match`, and
+    /// every such program miscompiled before this change — there is no correct
+    /// behaviour to regress.
+    ///
+    /// Both workarounds are receipted as programs that compile AND run in
+    /// `tests/d3b_tail_if.rs`: `no_else_workaround_else_branch_compiles_and_runs`
+    /// and `no_else_workaround_explicit_returns_compiles_and_runs`.
+    pub fn tail_value_not_on_every_path(keyword: &str, missing: &str, span: Span) -> Self {
+        CompileError::Unimplemented {
+            // Phrased without an article before the keyword: the message is
+            // built for both `if` and `match`, and "a `if`" is what a format
+            // string with a hardcoded article produces.
+            construct: format!(
+                "a tail `{}` that produces a value on some paths but not all",
+                keyword
+            ),
+            consequence: format!(
+                "the tail expression in a branch is the function's return value, but {} has no \
+                 value to return; code generation would emit a non-void function that falls off \
+                 its end and yields whatever happens to be in the return register",
+                missing
+            ),
+            workaround:
+                "give every path a value — add the missing `else`/arm with its own tail \
+                 expression, as in `if n <= 1 { n } else { n * 2 }` — or drop tail position \
+                 entirely and write explicit returns, as in `if n <= 1 { return n; } return n * 2;`"
+                    .to_string(),
+            span: Some(span),
+        }
+    }
+
     /// Convert this error into a diagnostic with helpful suggestions
     pub fn to_diagnostic(&self) -> Diagnostic {
         match self {

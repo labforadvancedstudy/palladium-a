@@ -7,7 +7,12 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "pdc")]
 #[command(author = "Alan von Palladium Team")]
-#[command(version = "0.1.0-alpha")]
+// Derived from Cargo.toml, never written out by hand. The literal that used to
+// be here said `0.1.0-alpha` while the package was at 0.3.0 — two releases of
+// drift in the one string a user reads to find out what they are running. A
+// binary that misreports its own version cannot be used to reproduce anything.
+// `tests/version_matches_cargo_toml.rs` fails if this becomes a literal again.
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Alan von Palladium Compiler - Where Legends Compile")]
 #[command(long_about = r#"
 Alan von Palladium Compiler
