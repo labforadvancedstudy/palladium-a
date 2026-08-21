@@ -394,22 +394,38 @@ Execution starts at `fn main`. Arguments are evaluated left to right. The driver
 
 ## 11. Conformance
 
-`scripts/conformance.sh` compiles, links, and runs every `.pd` under `tests/` and `examples/`.
-Current status: **37 pass, 3 vacuous, 2 xfail, 0 fail, 2 skipped** (2026-08-22).
-`scripts/check-docs.sh` does the same for documentation snippets, and `scripts/selfhost.sh`
-checks the self-hosting fixed point.
+`scripts/conformance.sh` compiles, links, and runs every `.pd` under `tests/` and `examples/`
+against `tests/conformance-manifest.txt`, a **closed inventory** declaring what each fixture is
+expected to do. Current status (2026-08-22):
 
-⚠️ Several files in `tests/` named after a feature do not exercise it —
-`tests/07_traits_basic.pd`, `tests/08_generics_basic.pd` and `tests/12_modules_imports.pd` only
-`print` a message saying the feature is unimplemented. A green conformance run is therefore **not**
-evidence that traits, generics or modules work. They do not (§4.4, §5). The runner no longer counts
-these as passes: each carries a first-line `//@ vacuous: <reason>` marker and is reported as
-`PASS_VACUOUS`, tallied separately in the summary.
+**verified 35 · vacuous 5 · xfail 2 · skip 2 · failures 0**, over 44 fixtures.
 
-Programs that are known to fail are declared in `tests/conformance-xfail.txt` with a mandatory
-reason, and reported as `XFAIL` without failing the gate. The declaration is not a way to hide a
-failure: if a listed program starts passing it is reported `XPASS` and the gate **fails**, so an
-expectation cannot quietly go stale.
+`scripts/check-docs.sh` does the same for documentation snippets, and `scripts/selfhost.sh` checks
+the self-hosting fixed point.
+
+Each fixture declares a class:
+
+- **run** — must compile, link and run. If it declares `expected`, its stdout is diffed
+  byte-for-byte against a sibling `.expected` transcript and it counts as *verified*; otherwise
+  only its exit code is checked and it counts as *unverified*. The distinction is load-bearing: a
+  missing C `return` is undefined behaviour, so a tail-return miscompile (defect D3) prints garbage
+  and still exits 0. An exit-code verdict cannot see a wrong answer.
+- **vacuous** — runs, but only prints that its feature is unimplemented. Its note must name the
+  feature it fails to cover. ⚠️ Five files are in this state: `07_traits_basic`,
+  `08_generics_basic`, `09_effects_system`, `10_async_await` and `12_modules_imports`. A green
+  conformance run is **not** evidence that traits, generics, effects, async or modules work. They
+  do not (§4.4, §5).
+- **xfail** — a known failure pinned to a stage *and* a diagnostic fingerprint. Failing at a
+  different stage, or with a different message, fails the gate, so a fresh bug cannot hide behind
+  an old excuse. A listed program that starts passing is `XPASS` and fails the gate.
+- **reject** — a negative test: the compiler *must* refuse it with the declared diagnostic. This is
+  real coverage, and it is how "the compiler rejects `.await`" gets tested instead of a program
+  that prints prose about async being unimplemented.
+- **skip** — declared non-program (no `fn main`).
+
+Because the inventory is closed, a fixture that is deleted, renamed, or added without a declaration
+fails the gate rather than silently shrinking or growing it. The gate's own ability to fail is
+tested by `make test-conformance-runner` (45 cases).
 
 ## 12. Relationship to the bootstrap subset
 

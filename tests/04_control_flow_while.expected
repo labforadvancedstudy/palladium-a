@@ -1,0 +1,44 @@
+Basic while loop:
+0
+1
+2
+3
+4
+
+While with complex condition:
+10
+8
+6
+4
+2
+
+While with break:
+0
+1
+2
+
+While with continue (skip even numbers):
+1
+3
+5
+7
+9
+
+Nested while loops:
+0
+1
+10
+11
+20
+21
+
+Find first number divisible by 7:
+21
+
+Countdown:
+5
+4
+3
+2
+1
+Liftoff!

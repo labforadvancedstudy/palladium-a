@@ -1,0 +1,32 @@
+=== Ownership in Palladium ===
+
+
+Move semantics:
+Before move: 
+Hello, ownership!
+Taking ownership of: 
+Hello, ownership!
+
+
+Borrowing:
+Borrowing: 
+Borrowed string
+Still valid: 
+Borrowed string
+
+
+Struct ownership:
+Borrowed data value: 
+42
+Original still valid: 
+42
+
+
+Mutable borrowing:
+Before modification: 
+10
+After modification: 
+20
+
+
+=== Ownership demo complete ===

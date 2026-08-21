@@ -1,0 +1,50 @@
+=== Control Flow in Palladium ===
+
+
+If/else statements:
+x is greater than 5
+
+
+Grade calculation:
+Grade: B
+
+
+While loop:
+0
+1
+2
+3
+4
+
+
+While with break:
+0
+1
+2
+
+
+For loop with range:
+0
+1
+2
+3
+4
+
+
+For loop with array:
+10
+20
+30
+40
+50
+
+
+Loop with continue (skip even):
+1
+3
+5
+7
+9
+
+
+=== Control flow demo complete ===

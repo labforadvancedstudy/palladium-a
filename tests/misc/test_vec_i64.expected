@@ -1,0 +1,28 @@
+Testing VecI64...
+After pushing 5 elements:
+5
+Elements:
+10
+20
+30
+40
+50
+Sum:
+150
+Max:
+50
+Min:
+10
+After reverse:
+50
+40
+30
+20
+10
+Popping:
+10
+20
+Final length:
+3
+After clear:
+0

@@ -1,0 +1,7 @@
+tokens scanned:
+5
+sum:
+47
+add node:
+3
+int main() { return 47; }

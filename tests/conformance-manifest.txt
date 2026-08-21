@@ -1,0 +1,65 @@
+# Palladium conformance corpus — CLOSED INVENTORY.
+#
+# Every .pd file under the scanned roots must appear here exactly once, and
+# every entry must correspond to a file on disk. A fixture that is deleted,
+# renamed, or moved out of the gate turns the gate RED rather than quietly
+# shrinking it. That is the point: this repo has twice been burned by things
+# disappearing silently (.gitignore *.c hid runtime/palladium_runtime.c for a
+# year; *.txt nearly hid this file).
+#
+# Columns are TAB-separated. All six are mandatory; use `-` for N/A.
+#   path	class	stage	fingerprint	owner	note
+#
+# class:  run     must compile, link and run with exit 0
+#         vacuous runs, but only prints that its feature is unimplemented
+#         xfail   known failure, pinned to a stage AND a diagnostic
+#         skip    not a program (no fn main)
+#
+# Adding coverage (e.g. stdlib/): add the root to the make target and add one
+# line per fixture here. An undeclared fixture fails the gate, so new files
+# cannot arrive unnoticed either.
+
+examples/practical/calculator.pd	run	-	expected	-	-
+examples/practical/fibonacci.pd	run	-	expected	-	-
+examples/practical/prime_checker.pd	run	-	expected	-	-
+examples/practical/simple_sort.pd	xfail	compile	Unsupported type in reference parameter	M1	defect D9: &mut [i64; N] reference parameter rejected by codegen. The branch that fixes D9 must delete this line in the same commit.
+examples/tutorial/01_variables.pd	run	-	expected	-	-
+examples/tutorial/02_functions.pd	run	-	expected	-	-
+examples/tutorial/03_ownership.pd	run	-	expected	-	-
+examples/tutorial/04_structs.pd	run	-	expected	-	-
+examples/tutorial/05_control_flow.pd	run	-	expected	-	-
+examples/tutorial/06_arrays.pd	run	-	expected	-	-
+tests/01_lexical_comments.pd	run	-	expected	-	-
+tests/01_lexical_literals.pd	run	-	expected	-	-
+tests/02_types_arrays.pd	run	-	expected	-	-
+tests/02_types_enums.pd	run	-	expected	-	-
+tests/02_types_primitives.pd	run	-	expected	-	-
+tests/02_types_structs.pd	run	-	expected	-	-
+tests/03_functions_basic.pd	run	-	expected	-	-
+tests/04_control_flow_for.pd	run	-	expected	-	-
+tests/04_control_flow_if.pd	run	-	expected	-	-
+tests/04_control_flow_while.pd	run	-	expected	-	-
+tests/05_borrowing_references.pd	run	-	expected	-	-
+tests/05_ownership_basic.pd	run	-	expected	-	-
+tests/06_pattern_matching.pd	run	-	expected	-	-
+tests/07_traits_basic.pd	vacuous	-	-	M4	claims: traits. Declares no trait and no impl; body is only print calls. Trait conformance is ZERO.
+tests/08_generics_basic.pd	vacuous	-	-	M4	claims: generics. Instantiates no generic type or function; body is only print calls. Generic conformance is ZERO.
+tests/09_effects_system.pd	vacuous	-	-	unscheduled	claims: the effect system. No effect annotation appears anywhere; body is only print calls. Effect conformance is ZERO.
+tests/10_async_await.pd	vacuous	-	-	unscheduled	claims: async/await. Contains no async fn and no .await; body is only print calls. Async conformance is ZERO - this is why defect D5 survived.
+tests/11_unsafe_blocks.pd	run	-	expected	-	-
+tests/12_modules_imports.pd	vacuous	-	-	M3	claims: modules and imports. Exercises no module construct; body is only print calls. Module conformance is ZERO.
+tests/bootstrap_capability_probe.pd	run	-	expected	-	-
+tests/integration/simple_test.pd	run	-	expected	-	-
+tests/integration/test.pd	run	-	expected	-	symlink to simple_test.pd — duplicate coverage, kept so the inventory matches what find sees
+tests/integration/test_break_continue.pd	run	-	expected	-	-
+tests/integration/test_break_simple.pd	run	-	expected	-	-
+tests/integration/test_optimizations.pd	run	-	expected	-	-
+tests/misc/test1.pd	run	-	expected	-	-
+tests/misc/test_llvm_example.pd	run	-	expected	-	-
+tests/misc/test_vec_i64.pd	run	-	expected	-	-
+tests/misc/test_vec_simple.pd	run	-	expected	-	-
+tests/projects/hello_pdm/package.pd	skip	-	-	-	package manifest, not a program
+tests/projects/hello_pdm/src/main.pd	run	-	expected	-	-
+tests/projects/hello_pdm/src/math.pd	skip	-	-	-	library module providing add()/factorial(); has no fn main by design
+tests/projects/hello_pdm/tests/test_math.pd	xfail	compile	Undefined function: add	M3	calls add()/factorial() from src/math.pd; needs cross-file module imports (no use/mod in the language)
+tests/projects/hello_pdm/tests/test_simple.pd	run	-	expected	-	-

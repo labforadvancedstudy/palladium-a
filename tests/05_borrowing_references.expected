@@ -1,0 +1,22 @@
+Original value:
+42
+
+Counter value:
+42
+After shared ref, original still valid:
+42
+
+After mutable ref modification:
+11
+
+Counter value:
+100
+100
+
+After increment:
+201
+
+Reference result:
+42
+
+Nested reference: skipped

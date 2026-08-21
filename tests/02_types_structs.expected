@@ -1,0 +1,22 @@
+Point struct:
+10
+20
+
+Mutable point after modification:
+100
+200
+
+Rectangle:
+0
+100
+
+Person:
+Alice
+30
+Person is active
+
+Unit struct: skipped
+
+Point from function:
+42
+84

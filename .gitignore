@@ -68,7 +68,7 @@ test_file.txt
 # The conformance expected-failure manifest is INPUT to a gate, not a scratch
 # file: if it is untracked the gate silently loses every declared expectation.
 # Same trap as the blanket *.c above. Do not remove this negation.
-!tests/conformance-xfail.txt
+!tests/conformance-manifest.txt
 
 # Test files in root (should be in tests/)
 /test.pd
