@@ -331,19 +331,26 @@ mod tests {
                         ]),
                         span: Span::dummy(),
                     },
-                    Stmt::Expr(Expr::Integer(3)), // Reachable (if condition is false and no else)
+                    // Dead: control continues past an if/else when EITHER arm
+                    // falls through (`can_continue_after`,
+                    // src/optimizer/dead_code.rs:35-70), and here neither does
+                    // — the then arm breaks and the else arm continues. This
+                    // fixture cannot tell `||` from `&&`, which is why
+                    // test_statement_after_if_with_one_falling_arm_is_kept
+                    // exists; do not read the rule off this test.
+                    Stmt::Expr(Expr::Integer(3)),
                 ],
                 span: Span::dummy(),
             },
         ]);
-        
+
         pass.optimize_program(&mut program).unwrap();
-        
+
         match &program.items[0] {
             Item::Function(func) => {
                 match &func.body[0] {
                     Stmt::While { body, .. } => {
-                        assert_eq!(body.len(), 2); // If and the expression after
+                        assert_eq!(body.len(), 1); // Only the if; the expression after it is unreachable
                         match &body[0] {
                             Stmt::If { then_branch, else_branch, .. } => {
                                 assert_eq!(then_branch.len(), 1); // Only break
@@ -355,6 +362,287 @@ mod tests {
                     _ => panic!("Expected While statement"),
                 }
             }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// Reachability after an `if/else` is a *may* question — "can control get
+    /// to the next statement" — and an if/else runs exactly one arm. So the
+    /// next statement is reachable when EITHER arm falls through, not when both
+    /// do.
+    ///
+    /// `test_complex_control_flow` and `test_nested_control_flow` cannot see
+    /// the difference: both of their arms diverge, where `&&` and `||` agree.
+    /// This is the fixture that separates them. With the `&&` this pass used to
+    /// use, `print_x` below was deleted — live code, removed, silently.
+    #[test]
+    fn test_statement_after_if_with_one_falling_arm_is_kept() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Ident("c".to_string()),
+                // Diverges.
+                then_branch: vec![Stmt::Return(Some(Expr::Integer(1)))],
+                // Falls through — so control reaches the statement after the if
+                // whenever `c` is false.
+                else_branch: Some(vec![Stmt::Let {
+                    name: "x".to_string(),
+                    ty: None,
+                    value: Expr::Integer(2),
+                    mutable: false,
+                    span: Span::dummy(),
+                }]),
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![Expr::Ident("x".to_string())],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    2,
+                    "the call after the if is reachable when the else arm falls through"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// The same rule with the arms swapped: the *then* arm falls through and
+    /// the else arm diverges. Order must not matter.
+    #[test]
+    fn test_statement_after_if_with_falling_then_arm_is_kept() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Ident("c".to_string()),
+                then_branch: vec![Stmt::Let {
+                    name: "x".to_string(),
+                    ty: None,
+                    value: Expr::Integer(2),
+                    mutable: false,
+                    span: Span::dummy(),
+                }],
+                else_branch: Some(vec![Stmt::Return(Some(Expr::Integer(1)))]),
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![Expr::Ident("x".to_string())],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    2,
+                    "the call after the if is reachable when the then arm falls through"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// A constant condition names the arm that runs, so the *other* arm must
+    /// not contribute to reachability. Constant folding runs before this pass,
+    /// so `if 5 > 3` arrives here already folded — which is what makes
+    /// `test_multiple_optimization_passes` correct: its else arm falls through,
+    /// but the condition is `true`, so the else arm never runs and the
+    /// statement after the if really is dead.
+    #[test]
+    fn test_constant_true_if_ignores_its_else_arm() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Bool(true),
+                then_branch: vec![Stmt::Return(Some(Expr::Integer(1)))],
+                // Falls through, but is unreachable: the condition is true.
+                else_branch: Some(vec![Stmt::Expr(Expr::Integer(3))]),
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    1,
+                    "with a constant-true condition only the then arm runs, and it returns"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// The mirror image: a constant-false condition runs only the else arm.
+    #[test]
+    fn test_constant_false_if_ignores_its_then_arm() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Bool(false),
+                // Falls through, but is unreachable: the condition is false.
+                then_branch: vec![Stmt::Expr(Expr::Integer(3))],
+                else_branch: Some(vec![Stmt::Return(Some(Expr::Integer(1)))]),
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    1,
+                    "with a constant-false condition only the else arm runs, and it returns"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// Constant true, no else: the then arm always runs, so if it diverges
+    /// nothing after the `if` is reachable. This is the one case the pass has
+    /// always special-cased; it is pinned here directly rather than left to
+    /// rest on `test_nested_blocks_dead_code` exercising it incidentally.
+    #[test]
+    fn test_constant_true_if_without_else_takes_the_then_arm() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Bool(true),
+                then_branch: vec![Stmt::Return(Some(Expr::Integer(1)))],
+                else_branch: None,
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    1,
+                    "a constant-true if with no else always runs its then arm, which returns"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// Constant false, no else: *nothing* runs, so whatever follows is live.
+    /// This is the combination where getting the rule wrong deletes reachable
+    /// code rather than merely retaining dead code, so it is asserted with a
+    /// statement that must survive.
+    #[test]
+    fn test_constant_false_if_without_else_keeps_the_next_statement() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![
+            Stmt::If {
+                condition: Expr::Bool(false),
+                // Never runs — and, crucially, it diverges. A rule that read
+                // the then arm here would delete the live call below.
+                then_branch: vec![Stmt::Return(Some(Expr::Integer(1)))],
+                else_branch: None,
+                span: Span::dummy(),
+            },
+            Stmt::Expr(Expr::Call {
+                func: Box::new(Expr::Ident("print_x".to_string())),
+                args: vec![],
+                span: Span::dummy(),
+            }),
+        ]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => {
+                assert_eq!(
+                    func.body.len(),
+                    2,
+                    "a constant-false if with no else executes nothing, so the call after it is live"
+                );
+            }
+            _ => panic!("Expected Function item"),
+        }
+    }
+
+    /// The complement of `test_complex_control_flow`: an `if` with no else
+    /// branch may be skipped entirely, so a statement after it is reachable
+    /// even when the then branch diverges. Without this case, changing the
+    /// rule to "an `if` always terminates" would leave both tests green.
+    #[test]
+    fn test_statement_after_if_without_else_is_kept() {
+        let mut pass = DeadCodeEliminationPass::new();
+
+        let mut program = create_test_program(vec![Stmt::While {
+            condition: Expr::Bool(true),
+            body: vec![
+                Stmt::If {
+                    condition: Expr::Ident("x".to_string()),
+                    then_branch: vec![
+                        Stmt::Break { span: Span::dummy() },
+                        Stmt::Expr(Expr::Integer(1)), // Dead
+                    ],
+                    else_branch: None,
+                    span: Span::dummy(),
+                },
+                Stmt::Expr(Expr::Integer(3)), // Reachable: the if may be skipped
+            ],
+            span: Span::dummy(),
+        }]);
+
+        pass.optimize_program(&mut program).unwrap();
+
+        match &program.items[0] {
+            Item::Function(func) => match &func.body[0] {
+                Stmt::While { body, .. } => {
+                    assert_eq!(body.len(), 2); // If and the expression after it
+                    match &body[0] {
+                        Stmt::If { then_branch, .. } => {
+                            assert_eq!(then_branch.len(), 1); // Only break
+                        }
+                        _ => panic!("Expected If statement"),
+                    }
+                }
+                _ => panic!("Expected While statement"),
+            },
             _ => panic!("Expected Function item"),
         }
     }
@@ -439,7 +727,9 @@ mod tests {
                                 ]),
                                 span: Span::dummy(),
                             },
-                            Stmt::Expr(Expr::Integer(3)), // Reachable if inner if takes neither branch
+                            // Dead: an if/else always takes one of its arms, and
+                            // both of the inner ones diverge (return / break).
+                            Stmt::Expr(Expr::Integer(3)),
                         ],
                         else_branch: None,
                         span: Span::dummy(),
@@ -459,7 +749,7 @@ mod tests {
                     Stmt::While { body, .. } => {
                         match &body[0] {
                             Stmt::If { then_branch, .. } => {
-                                assert_eq!(then_branch.len(), 2); // Inner if and expr
+                                assert_eq!(then_branch.len(), 1); // Only the inner if; what follows is unreachable
                                 match &then_branch[0] {
                                     Stmt::If { then_branch: inner_then, else_branch: inner_else, .. } => {
                                         assert_eq!(inner_then.len(), 1); // Dead code removed

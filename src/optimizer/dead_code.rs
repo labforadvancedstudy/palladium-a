@@ -32,28 +32,50 @@ impl DeadCodeEliminationPass {
                 else_branch,
                 ..
             } => {
-                // Special case: constant true condition with no else branch
-                // This handles the specific pattern that test_nested_blocks_dead_code expects
-                if let Expr::Bool(true) = condition {
-                    if else_branch.is_none() {
-                        // Only then branch executes
-                        let then_can_continue =
-                            then_branch.is_empty() || self.can_continue_after(then_branch.last().unwrap());
-                        return then_can_continue;
+                // A constant condition tells us exactly which arm runs, so the
+                // other arm says nothing about reachability. Constant folding
+                // runs before this pass (see `Optimizer::optimize`), so `if
+                // 5 > 3 { … }` reaches us as `Expr::Bool(true)`.
+                match condition {
+                    Expr::Bool(true) => {
+                        // Only the then branch executes; an else branch, if
+                        // present, is unreachable and irrelevant here.
+                        return then_branch.is_empty()
+                            || self.can_continue_after(then_branch.last().unwrap());
                     }
+                    Expr::Bool(false) => {
+                        // Only the else branch executes; with no else branch,
+                        // nothing executes and control simply continues.
+                        return match else_branch {
+                            Some(else_branch) => {
+                                else_branch.is_empty()
+                                    || self.can_continue_after(else_branch.last().unwrap())
+                            }
+                            None => true,
+                        };
+                    }
+                    _ => {}
                 }
-                
-                // Control can continue after an if statement only if:
-                // 1. There's no else branch AND the then branch can continue, OR
-                // 2. There's an else branch AND BOTH branches can continue
+
+                // This is a MAY question — "can control reach the statement
+                // after this if" — not a MUST question. An if/else executes
+                // exactly one arm, so the next statement is reachable as soon
+                // as EITHER arm falls through:
+                //
+                //     if c { return 1; } else { x = 2; }
+                //     print(x);              // reachable whenever c is false
+                //
+                // Answering with `&&` (all arms continue) deletes that `print`.
+                // Anything this returns must be an over-approximation: saying
+                // "can continue" when it cannot only leaves dead code in place,
+                // while saying "cannot" when it can removes live code.
                 let then_can_continue =
                     then_branch.is_empty() || self.can_continue_after(then_branch.last().unwrap());
 
                 if let Some(else_branch) = else_branch {
-                    // Both branches must be able to continue
-                    let else_can_continue = 
+                    let else_can_continue =
                         else_branch.is_empty() || self.can_continue_after(else_branch.last().unwrap());
-                    then_can_continue && else_can_continue
+                    then_can_continue || else_can_continue
                 } else {
                     // No else branch, so control can continue past the if
                     // (the condition might be false, skipping the then branch)

@@ -113,3 +113,7 @@ Thumbs.db
 *.tmp
 *.temp
 .worktrees
+
+# Python bytecode from scripts/
+__pycache__/
+*.pyc

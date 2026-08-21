@@ -1616,6 +1616,15 @@ impl Parser {
                     stmts.push(self.parse_statement()?);
                 }
                 self.consume(Token::RightBrace, "Expected '}' after match arm body")?;
+
+                // `match_arm = pattern "=>" ( block | expression ) [ ',' ]`
+                // (docs/specification/grammar.ebnf:166). The comma is optional
+                // after a block body too; leaving it unconsumed made the next
+                // iteration read it as a pattern.
+                if self.check(&Token::Comma) {
+                    self.advance()?;
+                }
+
                 stmts
             } else {
                 // Single expression body
@@ -3439,6 +3448,42 @@ mod tests {
                 assert_eq!(arms[0].body.len(), 2);
             }
         }
+    }
+
+    /// `match_arm = pattern "=>" ( block | expression ) [ ',' ]`
+    /// (docs/specification/grammar.ebnf:166) — the comma is optional after
+    /// EITHER form. The parser used to consume it only after an expression
+    /// body, so a comma after a block body was re-read as the next pattern
+    /// and reported as "Expected pattern, but found ','".
+    #[test]
+    fn test_parse_match_block_body_comma_separated() {
+        let source = r#"
+        fn main() {
+            match x {
+                Color::Red => {
+                    print("red");
+                },
+                Color::Green => {
+                    print("green");
+                },
+            }
+        }
+        "#;
+
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.collect_tokens().unwrap();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse().expect("comma after a block arm must parse");
+
+        let Item::Function(func) = &ast.items[0] else {
+            panic!("expected a function");
+        };
+        let Stmt::Match { arms, .. } = &func.body[0] else {
+            panic!("expected a match statement");
+        };
+        assert_eq!(arms.len(), 2);
+        assert_eq!(arms[0].body.len(), 1);
+        assert_eq!(arms[1].body.len(), 1);
     }
 
     #[test]
