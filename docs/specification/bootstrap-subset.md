@@ -216,9 +216,10 @@ The self-hosting compiler is built entirely from these (full table in
 explicit length counter — the standard PBS-1 idiom:
 
 ```palladium
-let mut kinds = [0; 4096];
-let mut count = 0;
-// ... kinds[count] = k; count = count + 1;
+fn push(mut kinds: [i64; 4096], mut count: i64, k: i64) -> i64 {
+    kinds[count] = k;
+    return count + 1;
+}
 ```
 
 ## 9. The self-hosting gate

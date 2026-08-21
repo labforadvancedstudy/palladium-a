@@ -218,14 +218,14 @@ fn main() {
 
 ```palladium
 fn main() {
-    let x = 42;
-    let y = &x;        // Immutable borrow
+    let x: i64 = 42;
+    let y: &i64 = &x;      // immutable borrow — annotate it
     print_int(*y);
-    
-    let mut z = 10;
-    let w = &mut z;    // Mutable borrow
+
+    let mut z: i64 = 10;
+    let w: &mut i64 = &mut z;
     *w = 20;
-    print_int(z);      // Output: 20
+    print_int(z);          // 20
 }
 ```
 

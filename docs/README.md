@@ -1,69 +1,67 @@
-# Palladium Documentation
+# Palladium documentation
 
-Welcome to the Palladium programming language documentation. This directory contains all documentation for the Palladium project, organized by audience and purpose.
+Every claim in `specification/`, `user-guide/` and `reference/` is checked against the compiler.
+Code blocks are compiled by `scripts/check-docs.sh` (`make check-docs`), and the builtin
+reference is generated from the compiler's own table. If a snippet lives in those directories
+and is not marked `no-compile`, it compiles.
 
-## 📚 Documentation Structure
+That mechanism is the point. Before 2026-08-21 this tree held 508 non-compiling snippets
+describing a language that did not exist — traits, generics with bounds, closures, `async`,
+floats, a standard library. Those documents were deleted rather than corrected, because nothing
+in them bore a salvageable relationship to the implementation.
 
-### [User Guide](./user-guide/)
-Start here if you're new to Palladium. Contains tutorials, getting started guides, and "The Palladium Book" - a comprehensive introduction to the language following Feynman's learning principles.
+## Start here
 
-- Getting started guide
-- The Palladium Book (Chapters 1-10)
-- Tutorials and examples
+| | |
+|---|---|
+| [Getting started](user-guide/getting-started.md) | install, first program, verifying the install, troubleshooting |
+| [Tutorial](user-guide/tutorial.md) | the language, worked through — every snippet is compiled |
 
-### [Language Reference](./reference/)
-Comprehensive reference documentation for the Palladium language and standard library.
+## Reference
 
-- Language reference manual
-- Standard library API documentation
-- Feature specifications
-- Built-in functions and types
+| | |
+|---|---|
+| [Language specification](specification/language-spec.md) | every construct, marked working / parses-but-broken / not implemented, each with a source location |
+| [Grammar](specification/grammar.ebnf) | EBNF derived from `src/parser/mod.rs`, not from intent |
+| [Bootstrap subset (PBS-1)](specification/bootstrap-subset.md) | the subset the self-hosting compiler is written in *and* implements; the self-hosting gate; the open-defect table |
+| [Builtins](reference/builtins.md) | all 38, generated from `src/builtins.rs` |
 
-### [Language Specification](./specification/)
-Formal specifications for the Palladium language.
+Read the specification's middle category before trusting anything: `?`, `.await`, tuples and
+un-annotated `let` all pass the type checker and then emit C that does not compile — or, worse,
+C that runs and is wrong.
 
-- EBNF grammar (`grammar.ebnf`)
-- Language specification
-- Operational semantics
+## Internals
 
-### [Internals](./internals/)
-Documentation for compiler developers and contributors.
+| | |
+|---|---|
+| [Architecture](internals/ARCHITECTURE.md) | compiler structure |
+| [Error messages](internals/ERROR_MESSAGES_IMPROVEMENT.md) | diagnostics work |
+| [Performance notes](internals/PERFORMANCE_OPTIMIZATION.md) | optimiser notes |
+| [Bootstrap history](internals/bootstrap/) | earlier bootstrap attempts, kept as narrative |
 
-- Compiler architecture
-- Bootstrap documentation
-- Module system design
-- Performance optimization notes
-- Error message system
+> The bootstrap history predates the 2026-08 fixed point and describes attempts that never
+> compiled themselves. It is kept because the reasoning is interesting, not because it is
+> accurate; its snippets are excluded from the documentation check.
 
-### [Contributing](./contributing/)
-Information for those who want to contribute to Palladium.
+## Proposals
 
-- Vision and roadmap
-- Technical manifesto
-- Design decisions
-- Comparison with other languages
+[`design/`](design/) holds designs that were never built — traits, generics, the module system,
+the technical manifesto, the roadmap. Every file there opens with a PROPOSAL banner and is
+excluded from the documentation check. Nothing in that directory describes current behaviour.
 
-### [Marketing](./marketing/)
-Materials explaining Palladium's philosophy and positioning.
+## Project
 
-- The Turing and von Neumann philosophy
-- Marketing materials
+| | |
+|---|---|
+| [Milestones](contributing/MILESTONES.md) | what is next, and why |
+| [Palladium vs Rust](contributing/palladium_vs_rust_comparison.md) | measured benchmarks and an honest feature comparison |
+| [Changelog](CHANGELOG.md) | |
 
-## 🔍 Quick Links
+## Gates
 
-- **New to Palladium?** Start with the [Getting Started Guide](./user-guide/getting-started.md)
-- **Looking for API docs?** Check the [Language Reference](./reference/LANGUAGE_REFERENCE.md)
-- **Want to contribute?** Read the [Vision Roadmap](./contributing/VISION_ROADMAP.md)
-- **Interested in the compiler?** See [Compiler Architecture](./internals/ARCHITECTURE.md)
-- **Bootstrap process?** Check [Bootstrap Documentation](./internals/bootstrap/)
-
-## 📈 Documentation Status
-
-The documentation is actively maintained and updated. Current status:
-- User Guide: 90% complete
-- Language Reference: 85% complete
-- Specifications: 100% complete
-- Internals: 80% complete
-- Contributing: 75% complete
-
-For the latest updates, see [CHANGELOG.md](./CHANGELOG.md) and [PROGRESS.md](./PROGRESS.md).
+| Command | Checks |
+|---|---|
+| `make selfhost` | the compiler compiles itself to a byte-identical fixed point |
+| `make conformance` | every `.pd` under `tests/` and `examples/` compiles, links and runs |
+| `make check-docs` | every documentation snippet compiles |
+| `make test-honest` | every Rust test binary, integration tests included |

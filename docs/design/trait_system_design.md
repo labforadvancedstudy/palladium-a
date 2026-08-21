@@ -1,3 +1,9 @@
+> **PROPOSAL — not implemented.** This document describes a design that has not been
+> built. Nothing in it is a description of how the compiler behaves today; for that see
+> [`docs/specification/language-spec.md`](../specification/language-spec.md), where every
+> claim carries a source location. Code in this file is not compiled by
+> `scripts/check-docs.sh` and is not expected to work.
+
 # Palladium Trait System Design
 *Version 1.0 - January 19, 2025*
 

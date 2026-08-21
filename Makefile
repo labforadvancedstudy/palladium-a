@@ -272,3 +272,11 @@ test-honest: ## Run EVERY test binary, including integration tests (no fail-fast
 	@echo "$(YELLOW)Note: 'make test-rust' uses --lib --bins and never runs tests/*.rs,$(NC)"
 	@echo "$(YELLOW)which is why the integration failures below went unnoticed.$(NC)"
 	$(CARGO) test --release --no-fail-fast
+
+.PHONY: check-docs
+check-docs: build ## Compile every ```palladium block in the documentation
+	@bash scripts/check-docs.sh docs README.md
+
+.PHONY: gates
+gates: conformance check-docs selfhost ## Run every language-level gate
+	@echo "$(GREEN)✓ all gates green$(NC)"

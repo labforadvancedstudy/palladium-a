@@ -1,479 +1,163 @@
-# Getting Started with Palladium
+# Getting started
 
-> ⚠️ **Note**: Palladium is currently in active development (v0.1.1). Some features mentioned in this guide may be incomplete or subject to change.
+Install the compiler, build one program, and confirm the install is sound. The language itself
+is in the [tutorial](tutorial.md).
 
-Welcome to the Palladium programming language! This guide will help you get started with installing and using Palladium.
+## Install
 
-## Table of Contents
+### Homebrew
 
-1. [Installation](#installation)
-2. [Your First Program](#your-first-program)
-3. [Basic Examples](#basic-examples)
-4. [Language Features](#language-features)
-5. [Current Limitations](#current-limitations)
-6. [Troubleshooting](#troubleshooting)
+```bash
+brew tap 2lab-ai/tap
+brew install pdc
+```
 
-## Installation
+A preview channel tracks `main` and installs alongside the stable one:
 
-### From crates.io (Recommended)
+```bash
+brew install pdc-preview      # binary is `pdc-preview`
+```
+
+Use `pdc-preview` to try unreleased fixes; use `pdc` for anything you care about.
+
+### From crates.io
 
 ```bash
 cargo install alan-von-palladium
 ```
 
-### From Source
+### From source
 
 ```bash
-# Clone the repository
 git clone https://github.com/labforadvancedstudy/palladium-a.git
 cd palladium-a
-
-# Build in release mode
 cargo build --release
-
-# The compiler binary will be at ./target/release/pdc
+export PATH="$PATH:$(pwd)/target/release"
 ```
 
-### Verify Installation
+### Requirement
 
-```bash
-pdc --version
-```
+A C compiler on `PATH`. Palladium emits C and then invokes `gcc` — which on macOS is clang under
+that name — to produce the executable. If `gcc --version` answers, you are set.
 
-You should see:
-```
-pdc 0.1.1
-```
+## Your first program
 
-## Your First Program
-
-Create a file named `hello.pd`:
+Put this in `hello.pd`:
 
 ```palladium
-// Your first Palladium program
 fn main() {
     print("Hello, Palladium!");
 }
 ```
 
-Compile and run:
-
 ```bash
-# Compile
 pdc compile hello.pd -o hello
-
-# Run
 ./build_output/hello
 ```
 
-Output:
-```
-Hello, Palladium!
-```
+Output goes to `build_output/`, alongside the generated C. Read `build_output/hello.c` once —
+Palladium's semantics are exactly what that C does, and having seen it makes every later error
+message legible.
 
-### Understanding the Compilation Process
-
-When you compile a Palladium program, you'll see detailed output:
+## What a compile actually does
 
 ```
-🔨 Compiling hello.pd...
-📖 Lexing...
-   Found 11 tokens (0.40ms)
-🌳 Parsing...
-   Parsed 1 top-level items (0.24ms)
-🔮 Expanding macros...
-   Macros expanded successfully! (0.19ms)
-🔍 Type checking...
-   All types check out! (0.38ms)
-🔒 Borrow checking...
-   Memory safety verified! (0.16ms)
-🌊 Analyzing effects...
-   Function 'main' has effects: {IO}
-   Effect analysis complete!
-⚠️  Checking unsafe operations...
-   Unsafe operations verified!
-🔧 Optimizing...
-   Running Constant Folding
-   Running Dead Code Elimination
-   Running Expression Simplification
-   Optimization complete (0.07ms)
-⚡ Generating C code...
-   Generated C code: build_output/hello.c
-   Code generation complete (0.44ms)
-✅ Compilation successful!
-🔗 Linking with gcc...
-   Created executable: build_output/hello
+pdc compile hello.pd
+  ├─ lex, parse
+  ├─ resolve imports, expand macros
+  ├─ typecheck
+  ├─ borrow check
+  ├─ analyse effects        (informational only — gates nothing)
+  ├─ optimise
+  ├─ emit C                 -> build_output/hello.c
+  └─ gcc build_output/hello.c <runtime>/palladium_runtime.c -I<runtime>
+                            -> build_output/hello
 ```
 
-## Basic Examples
+That last step needs the C runtime shipped with the compiler. `pdc` locates it automatically:
 
-### Variables and Types
-
-```palladium
-fn main() {
-    // Integer variables
-    let x = 42;
-    let y: i64 = 100;
-    
-    print("x = ");
-    print_int(x);
-    print("y = ");
-    print_int(y);
-    
-    // Mutable variables
-    let mut count = 0;
-    count = count + 1;
-    count = count + 1;
-    
-    print("count = ");
-    print_int(count);
-    
-    // Strings
-    let message = "Hello from Palladium!";
-    print(message);
-}
+```bash
+pdc --print-runtime
 ```
 
-Output:
-```
-x = 
-42
-y = 
-100
-count = 
-2
-Hello from Palladium!
-```
+Resolution order, first hit wins:
 
-### Functions
+1. `$PALLADIUM_RUNTIME`, if set. It must contain `palladium_runtime.c` — if it does not, `pdc`
+   stops with an error rather than quietly falling back, because a silent fallback is how a
+   broken install looks like a working one.
+2. Next to the executable: `../share/palladium/runtime`, then `../lib/palladium/runtime`, then
+   `runtime/`. This is the packaged layout.
+3. `./runtime` in the current directory — what makes a source checkout work.
 
-```palladium
-fn add(a: i64, b: i64) -> i64 {
-    return a + b;
-}
+## Verify the install
 
-fn multiply(x: i64, y: i64) -> i64 {
-    return x * y;
-}
+Run this from a directory that is **not** a Palladium checkout, so nothing is found by accident:
 
-fn greet(name: String) {
-    print("Hello, ");
-    print(name);
-    print("!");
-}
-
-fn main() {
-    let sum = add(10, 20);
-    print("10 + 20 = ");
-    print_int(sum);
-    
-    let product = multiply(6, 7);
-    print("6 * 7 = ");
-    print_int(product);
-    
-    greet("Palladium");
-}
+```bash
+cd /tmp
+pdc --print-runtime                                  # prints a directory that exists
+printf 'fn main() { print("ok"); }\n' > ok.pd
+pdc compile ok.pd -o ok && ./build_output/ok         # prints: ok
 ```
 
-Output:
-```
-10 + 20 = 
-30
-6 * 7 = 
-42
-Hello, 
-Palladium
-!
-```
-
-### Control Flow
-
-```palladium
-fn main() {
-    // if-else statements
-    let x = 10;
-    if x > 5 {
-        print("x is greater than 5");
-    } else {
-        print("x is less than or equal to 5");
-    }
-    
-    // while loops
-    print("Counting down:");
-    let mut i = 5;
-    while i > 0 {
-        print_int(i);
-        i = i - 1;
-    }
-    
-    // for loops
-    print("For loop:");
-    for j in 0..5 {
-        print_int(j);
-    }
-}
-```
-
-Output:
-```
-x is greater than 5
-Counting down:
-5
-4
-3
-2
-1
-For loop:
-0
-1
-2
-3
-4
-```
-
-### Arrays and Structs
-
-```palladium
-struct Point {
-    x: i64,
-    y: i64,
-}
-
-struct Person {
-    age: i64,
-    id: i64,
-}
-
-fn main() {
-    // Arrays
-    let numbers = [1, 2, 3, 4, 5];
-    print("Array elements:");
-    for i in 0..5 {
-        print_int(numbers[i]);
-    }
-    
-    // Array initialization
-    let mut scores = [0; 5];  // 5 elements initialized to 0
-    scores[0] = 100;
-    scores[1] = 95;
-    scores[2] = 87;
-    
-    // Structs
-    let p = Point { x: 10, y: 20 };
-    print("Point x:");
-    print_int(p.x);
-    print("Point y:");
-    print_int(p.y);
-    
-    // Mutable structs
-    let mut person = Person { age: 25, id: 1001 };
-    person.age = person.age + 1;
-    print("After birthday:");
-    print_int(person.age);
-}
-```
-
-Output:
-```
-Array elements:
-1
-2
-3
-4
-5
-Point x:
-10
-Point y:
-20
-After birthday:
-26
-```
-
-## Language Features
-
-### Currently Supported
-
-✅ **Basic Types**
-- `i32`, `i64` - Signed integers
-- `u32`, `u64` - Unsigned integers  
-- `bool` - Boolean values
-- `String` - String type
-- Arrays - Fixed-size arrays `[T; N]`
-
-✅ **Control Flow**
-- `if`/`else` statements
-- `while` loops
-- `for` loops with ranges
-- `break` and `continue`
-
-✅ **Functions**
-- Function definitions with parameters
-- Return types
-- Multiple parameters
-
-✅ **Structs and Enums**
-- Struct definitions
-- Field access
-- Enum definitions
-- Basic pattern matching
-
-✅ **Memory Safety**
-- Ownership system
-- Borrowing checker
-- Mutable and immutable references
-
-✅ **Other Features**
-- Single-line comments (`//`)
-- Effects system (IO tracking)
-
-### Pattern Matching Example
-
-```palladium
-enum Result {
-    Ok(i64),
-    Err(String),
-}
-
-fn divide(a: i64, b: i64) -> Result {
-    if b == 0 {
-        return Result::Err("Division by zero");
-    }
-    return Result::Ok(a / b);
-}
-
-fn main() {
-    let result = divide(10, 2);
-    match result {
-        Result::Ok(value) => {
-            print("Result: ");
-            print_int(value);
-        }
-        Result::Err(msg) => {
-            print("Error: ");
-            print(msg);
-        }
-    }
-}
-```
-
-Output:
-```
-Result: 
-5
-```
-
-## Current Limitations
-
-> ⚠️ **Development Status**: The following features are planned but not yet implemented:
-
-### Not Yet Supported
-
-❌ **Generics**
-```palladium
-// This will NOT compile
-struct Vec<T> {
-    data: [T; 100],
-    len: i64,
-}
-```
-
-❌ **Traits**
-```palladium
-// This will NOT compile
-trait Display {
-    fn display(&self);
-}
-```
-
-❌ **Closures**
-```palladium
-// This will NOT compile
-let add = |x, y| x + y;
-```
-
-❌ **Async/Await**
-```palladium
-// This will NOT compile
-async fn fetch_data() -> String {
-    await some_io_operation()
-}
-```
-
-❌ **Modules and Imports**
-```palladium
-// This will NOT compile
-use std::collections::Vec;
-mod my_module;
-```
-
-❌ **Advanced Pattern Matching**
-- Guards in match expressions
-- Destructuring in patterns
-- `if let` and `while let`
-
-❌ **Other Missing Features**
-- Multi-line comments (`/* */`)
-- Nested block comments
-- Hex/binary literals (`0xFF`, `0b1010`)
-- String concatenation with `+`
-- `else if` chains (use nested `if` instead)
-- Implicit returns
-- Method syntax (`obj.method()`)
-- Operator overloading
-
-### Known Issues
-
-1. **Print Functions**: `print` and `print_int` output on separate lines
-2. **Error Messages**: UTF-8 handling in error messages may have issues
-3. **LLVM Backend**: SSA numbering issues prevent LLVM IR compilation
-4. **Borrow Checker**: May be overly restrictive in some cases
+If that works, the install is sound.
 
 ## Troubleshooting
 
-### Common Errors
+**`gcc compilation failed: ... palladium_runtime.c`**
+The runtime was not found. `pdc --print-runtime` lists every path it tried. Point
+`PALLADIUM_RUNTIME` at the directory holding `palladium_runtime.c`.
 
-**"Unexpected token"**
-- Check for missing semicolons
-- Ensure all brackets and parentheses are matched
-- Verify function signatures are correct
+**An error about C you never wrote** — `incompatible pointer to integer conversion`, or
+`member reference base type 'long long' is not a structure`.
+Almost always a `let` with no type annotation. Code generation defaults initializers it does not
+recognise to a 64-bit integer, so references, enum values and string copies come out as
+integers. Add the type:
 
-**"Type mismatch"**
-- Palladium has strict typing
-- Ensure explicit types match
-- Use explicit casts when needed
-
-**"Borrow checker error"**
-- Cannot have mutable and immutable borrows simultaneously
-- Store intermediate values in variables to avoid complex borrowing
-
-### Compiler Options
-
-```bash
-# Compile with optimization
-pdc compile program.pd -o program -O
-
-# Use LLVM backend (experimental)
-pdc compile program.pd -o program --llvm
-
-# Show help
-pdc --help
+```palladium
+fn main() {
+    let x: i64 = 42;
+    let y: &i64 = &x;     // not `let y = &x;`
+    print_int(*y);
+}
 ```
 
-## Next Steps
+Tracked as D7 in the [bootstrap subset](../specification/bootstrap-subset.md) §7.
 
-1. **Explore Examples**: Check the `examples/` directory for more code samples
-2. **Read the User Guide**: Continue with the language chapters in this guide
-3. **Report Issues**: Help improve Palladium by reporting bugs on GitHub
-4. **Join the Community**: Contribute to the language development
+**`Expected '{' after else`**
+There is no `else if` — nest the `if` inside the `else` block.
 
-## Getting Help
+```palladium no-compile
+fn main() {
+    let x: i64 = 5;
+    if x > 9 { print("big"); } else if x > 1 { print("mid"); }
+}
+```
 
-- **GitHub Issues**: https://github.com/labforadvancedstudy/palladium-a/issues
-- **Documentation**: Continue reading this user guide
-- **Examples**: `examples/tutorial/` and `examples/practical/`
+**`Indirect function calls not yet supported`**
+Method syntax is not implemented. Call `Type::method(receiver, ...)`.
 
-Remember that Palladium is in active development. Your feedback and contributions are welcome!
+```palladium no-compile
+fn main() {
+    let s: String = "abc";
+    print_int(s.len());        // no method syntax
+}
+```
 
----
+**`Use of moved value`**
+Struct parameters move. Declare them `mut`, which makes them pointers in the generated C and
+borrows rather than moves — and lets the callee's changes reach you.
 
-*Last updated: January 2025 | Palladium v0.1.1*
+**`Expected function, struct, enum, trait, type, impl, or macro declaration`**
+Usually a top-level `const`, `static`, `mod` or `use` — none of which exist. Imports use the
+`import` keyword and must all appear before the first item.
+
+## Where next
+
+- [Tutorial](tutorial.md) — the language, worked through. Every snippet is compiled by
+  `scripts/check-docs.sh`.
+- [Language specification](../specification/language-spec.md) — every construct with its status
+  and the source location that proves it.
+- [Builtin reference](../reference/builtins.md) — all 38 builtins, generated from the compiler's
+  own table.
+- [Palladium vs Rust](../contributing/palladium_vs_rust_comparison.md) — measured comparison.

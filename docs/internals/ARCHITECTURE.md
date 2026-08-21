@@ -192,7 +192,12 @@ palladium/
 - **Tier 2**: Unsafe code with explicit boundaries
 
 ### 2. Effect System
-```palladium
+
+> **PROPOSAL — not implemented.** Effect clauses do not exist in the surface syntax; the parser
+> hardcodes `effects: None` (`src/parser/mod.rs:549`). Effects are inferred after the fact and
+> only printed. Nothing below parses.
+
+```palladium no-compile
 effect async { await<T>(Future<T>) -> T }
 effect error { throw<E>(E) -> ! }
 effect total { metric<M: Nat>(M) }
