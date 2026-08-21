@@ -69,6 +69,8 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
+strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
+
 CC=${CC:-gcc}
 if ! command -v "$CC" >/dev/null 2>&1; then
   echo "error: C compiler '$CC' not found; Net B cannot run" >&2
@@ -136,22 +138,52 @@ for c in "$@"; do
 
   # Net B. Redirect to a file rather than piping: a `| head` here would SIGPIPE
   # the compiler and could be mistaken for a diagnostic.
-  # A non-zero exit from the C compiler is NOT by itself a return-type finding:
-  # a missing header, a syntax error or an out-of-memory abort all exit non-zero
-  # too. Measured: a file with a bad #include was reported as a
-  # "-Werror=return-type" failure by the previous form. The diagnostic must
-  # actually be the return-type one, and anything else is a distinct verdict.
+  # NET B CLASSIFICATION. A non-zero exit from the C compiler is not by itself a
+  # return-type finding, and neither is the mere SIGHTING of return-type wording
+  # somewhere in the log: `#error no return statement` contains that text and is
+  # a completely unrelated defect (measured — it used to be reported as a Net B
+  # finding). So the COMPLETE diagnostic set is validated:
+  #   * the compiler must have exited 1, a normal "I found errors" exit. Anything
+  #     above 128 is a signal — a killed compiler proves nothing, however much
+  #     text it managed to buffer;
+  #   * there must be at least one `error:` line;
+  #   * EVERY error line must be a return-type diagnostic. One unrelated error
+  #     means this file failed for another reason and Net B cannot speak to it.
+  # Findings are emitted as structured `FINDING` lines, carrying file:line, so
+  # Net B is subject to the same corroboration rule as Net A rather than sitting
+  # outside it.
   b_log=$(mktemp)
-  if ! "$CC" -fsyntax-only -Werror=return-type -I "$RUNTIME_DIR" "$c" >"$b_log" 2>&1; then
-    if grep -qa -e '-Wreturn-type' -e 'does not return a value' -e 'no return statement' "$b_log"; then
-      printf '  %sFAIL%s Net B (%s -Werror=return-type) in %s\n' "$RED" "$NC" "$CC" "$c"
-      grep -a "error:" "$b_log" | head -5 | sed 's/^/        /'
-      file_violation=1
-    else
-      printf '  %sHARNESS%s Net B could not run on %s — %s failed for an UNRELATED reason, so it proves nothing here\n' \
-        "$RED" "$NC" "$c" "$CC"
-      grep -a -e "error:" -e "fatal error:" "$b_log" | head -3 | sed 's/^/        /'
+  "$CC" -fsyntax-only -Werror=return-type -I "$RUNTIME_DIR" "$c" >"$b_log" 2>&1
+  b_rc=$?
+  if [ "$b_rc" -ne 0 ]; then
+    b_errors=$(strip_ansi <"$b_log" | grep -a 'error:' || true)
+    b_total=$(printf '%s' "$b_errors" | grep -c . || true)
+    b_rettype=$(printf '%s\n' "$b_errors" \
+      | grep -aE 'error: .*(non-void function does not return a value|control reaches end of non-void function|\[-Werror?=?return-type\])' || true)
+    b_rt_n=$(printf '%s' "$b_rettype" | grep -c . || true)
+
+    if [ "$b_rc" -gt 128 ]; then
+      printf '  %sHARNESS%s Net B: %s was killed by a signal (exit %d) on %s — a killed compiler proves nothing\n' \
+        "$RED" "$NC" "$CC" "$b_rc" "$c"
       file_harness=1
+    elif [ "$b_rc" -ne 1 ]; then
+      printf '  %sHARNESS%s Net B: %s exited %d on %s, which is not its "errors found" exit\n' \
+        "$RED" "$NC" "$CC" "$b_rc" "$c"
+      file_harness=1
+    elif [ "$b_total" -eq 0 ]; then
+      printf '  %sHARNESS%s Net B: %s failed on %s but emitted no error diagnostic to classify\n' \
+        "$RED" "$NC" "$CC" "$c"
+      sed 's/^/        /' "$b_log" | head -3
+      file_harness=1
+    elif [ "$b_rt_n" -ne "$b_total" ]; then
+      printf '  %sHARNESS%s Net B could not run on %s — %d of %d diagnostics are NOT return-type errors, so %s failed for another reason\n' \
+        "$RED" "$NC" "$c" "$((b_total - b_rt_n))" "$b_total" "$CC"
+      printf '%s\n' "$b_errors" | grep -avE 'non-void function does not return a value|control reaches end of non-void function|\[-Werror?=?return-type\]' | head -3 | sed 's/^/        /'
+      file_harness=1
+    else
+      printf '  %sFAIL%s Net B (%s -Werror=return-type) in %s\n' "$RED" "$NC" "$CC" "$c"
+      printf '%s\n' "$b_rettype" | head -5 | sed 's/^/        FINDING /'
+      file_violation=1
     fi
   fi
   rm -f "$b_log"
@@ -161,7 +193,10 @@ for c in "$@"; do
   elif [ "$file_violation" -ne 0 ]; then
     violations=$((violations+1))
   else
-    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$c"
+    # Report the denominator: "ok" over zero analysed functions would be a
+    # vacuous pass, and Net A now refuses that case outright.
+    printf '  %sok%s   %s (%s)\n' "$GREEN" "$NC" "$c" \
+      "$(printf '%s\n' "$a_out" | grep -a '^ANALYSED' | head -1 | sed 's/^ANALYSED //; s/ in [0-9]* file(s)$//')"
   fi
 done
 

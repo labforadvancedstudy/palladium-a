@@ -264,12 +264,23 @@ Both nets share one exit taxonomy, because a finding and a malfunction must not 
 |---|---|
 | 0 | analysed, invariant holds |
 | 1 | at least one genuine `FINDING`, nothing malfunctioned |
-| 2 | **harness error** — input missing or unreadable, the analyser raised, or the C compiler failed for an unrelated reason |
+| 2 | **harness error** — input missing or unreadable, the analyser raised, zero functions were recognised, or the C compiler failed for an unrelated reason |
 
 Harness errors *dominate*: a run that malfunctioned cannot assert what the defects are, nor that
-there are none. This was not academic — before the taxonomy existed, a Python `RecursionError`
-traceback was printed as `FAIL Net A (falls off the end)`, i.e. the checker reporting a defect it
-had never looked for.
+there are none. Three measured cases drove this, each of which had reported a defect or a pass it
+never established:
+
+- a Python `RecursionError` traceback printed as `FAIL Net A (falls off the end)`;
+- `#error no return statement` — an unrelated defect — classified as a Net B return-type finding,
+  because the classifier looked for that wording *anywhere* in the log. Net B now requires the
+  compiler to have exited 1 (not a signal), to have emitted at least one `error:`, and for **every**
+  error to be a return-type diagnostic; one unrelated error makes the whole file a harness case;
+- a checker killed with signal 9 (exit 137) reported as `generated C violates the structural
+  invariant`. Consumers now require **exactly** exit 1 before reading findings.
+
+Both nets emit structured `FINDING` lines, so a non-zero exit is only believed when corroborated by
+a well-formed finding, and Net A reports how many function definitions it recognised — "ok" over
+zero analysed functions is refused outright rather than counted as clean.
 
 **Net A is not independently sound**, and is not documented as though it were. It reads the shape
 pdc happens to emit line by line, so unusual formatting, `switch`, or `goto` could defeat it — Net B

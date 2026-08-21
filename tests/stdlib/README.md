@@ -13,6 +13,7 @@ the 38 builtins in `src/builtins.rs` that a real standard library would be built
 | Driver | Covers |
 |---|---|
 | `stdlib_tail_return.pd` | D3 — every shape of tail-expression return, plus explicit `return` and the unit tail that must *not* be lowered |
+| `stdlib_tail_if_defect.pd` | **D3b, an OPEN defect.** A tail `if` is never lowered, so a function ending in `if`/`else` still miscompiles. A codegen fixture: its `main` prints a constant and deliberately does not call the broken functions. Pinned `known_violation:fib,classify` in `DRIVERS.tsv` |
 | `stdlib_builtins_string.pd` | the 8 string builtins + `print` / `print_int` |
 | `stdlib_builtins_char_args.pd` | `char_is_*`, `arg_count`, `arg_at` |
 | `stdlib_builtins_file.pd` | the 16 usable file and path builtins |

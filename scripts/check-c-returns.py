@@ -156,7 +156,12 @@ def terminates(items):
 
 
 def check_file(path):
-    """Return (violations, harness_errors) for one file."""
+    """Return (violations, harness_errors, functions_recognised) for one file.
+
+    The third value is what makes "analysed" observable. Without it, a file whose
+    formatting this reader does not recognise — or an empty one — exits 0 after
+    inspecting ZERO functions, which is indistinguishable from a clean result.
+    """
     try:
         with open(path, "r", errors="replace") as fh:
             lines = fh.read().splitlines()
@@ -164,13 +169,15 @@ def check_file(path):
         # NOT a finding: we never got to look. Previously this returned 1 and
         # was reported as a structural defect in a file that could not be read.
         print(f"HARNESS {path}: cannot read: {exc}")
-        return (0, 1)
+        return (0, 1, 0)
 
     violations = 0
+    recognised = 0
     i = 0
     while i < len(lines):
         line = lines[i]
         if DEF_RE.match(line):
+            recognised += 1
             body, close = parse_block(lines, i + 1)
             if not VOID_RE.match(line.strip()) and not terminates(body):
                 print(
@@ -181,7 +188,12 @@ def check_file(path):
             i = close + 1
             continue
         i += 1
-    return (violations, 0)
+    if recognised == 0:
+        # A C file pdc produced always defines functions. Zero means this reader
+        # did not understand the file, not that the file is clean.
+        print(f"HARNESS {path}: no function definitions recognised — nothing was analysed")
+        return (0, 1, 0)
+    return (violations, 0, recognised)
 
 
 def main(argv):
@@ -190,18 +202,22 @@ def main(argv):
         return 2
     violations = 0
     harness = 0
+    recognised = 0
     for path in argv[1:]:
         try:
-            v, h = check_file(path)
+            v, h, r = check_file(path)
         except Exception:  # noqa: BLE001 - any analyser bug is a HARNESS error
             # Without this, an uncaught exception exits 1 and is indistinguishable
             # from a finding. A crashed analyser has not proved anything.
             print(f"HARNESS {path}: analyser raised:")
             for line in traceback.format_exc().rstrip().splitlines():
                 print(f"HARNESS   {line}")
-            v, h = 0, 1
+            v, h, r = 0, 1, 0
         violations += v
         harness += h
+        recognised += r
+    # Always report the denominator, so a caller can see that work was done.
+    print(f"ANALYSED {recognised} function definition(s) in {len(argv) - 1} file(s)")
     if harness:
         return 2
     return 1 if violations else 0

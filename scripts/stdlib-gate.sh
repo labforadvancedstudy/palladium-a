@@ -342,19 +342,26 @@ while IFS=$'\t' read -r base golden cverdict purpose; do
   case "$cverdict" in
     clean)
       clean_n=$((clean_n+1))
-      if [ "$cc_rc" -eq 2 ]; then
-        note "$drv: the generated-C check MALFUNCTIONED — this is not evidence the C is bad OR good"
-        strip_ansi <"$cc_log" | sed 's/^/      /'
-      elif [ "$cc_rc" -ne 0 ]; then
+      # Only exit 1 is a finding. Everything else non-zero — 2, or a signal such
+      # as 137 — is a malfunction. Measured: a checker killed with 137 used to be
+      # reported here as "generated C violates the structural invariant".
+      if [ "$cc_rc" -eq 0 ]; then
+        :
+      elif [ "$cc_rc" -eq 1 ]; then
         note "$drv: generated C violates the structural invariant (declared 'clean')"
+        strip_ansi <"$cc_log" | sed 's/^/      /'
+      else
+        note "$drv: the generated-C check MALFUNCTIONED (exit $cc_rc) — this is not evidence the C is bad OR good"
         strip_ansi <"$cc_log" | sed 's/^/      /'
       fi
       ;;
     known_violation:*)
       known_n=$((known_n+1))
       want_fns=${cverdict#known_violation:}
-      if [ "$cc_rc" -eq 2 ]; then
-        note "$drv: the generated-C check MALFUNCTIONED — the pinned violation could not be confirmed"
+      # A partial FINDING set from a malfunctioning checker must never be allowed
+      # to "match" the pinned set. Require exactly exit 1 before reading findings.
+      if [ "$cc_rc" -ne 0 ] && [ "$cc_rc" -ne 1 ]; then
+        note "$drv: the generated-C check MALFUNCTIONED (exit $cc_rc) — the pinned violation could not be confirmed"
         strip_ansi <"$cc_log" | sed 's/^/      /'
         continue
       fi
@@ -385,6 +392,10 @@ fi
 # ---------------------------------------------------------------------------
 echo
 echo "== Phase 3: every builtin in src/builtins.rs is accounted for =="
+# Baseline BEFORE the first check in this phase. It used to be captured after the
+# canonical-vs-recorded set check, so that one failure could still be followed by
+# a green phase line.
+phase3_before=$failures
 canonical=$(grep -oE '^[[:space:]]+name: "[a-z_0-9]+"' src/builtins.rs | sed -E 's/.*"(.*)"/\1/' | sort)
 recorded=$(grep -vE '^[[:space:]]*(#|$)' "$BUILTIN_MANIFEST" | cut -f1 | sort)
 if [ "$canonical" != "$recorded" ]; then
@@ -397,7 +408,6 @@ fi
 
 # Counters record entries that VERIFIED, not entries that were merely declared.
 # Incrementing before the checks made "31 exercised" true by construction.
-phase3_before=$failures
 covered=0; partial=0; unusable=0
 declared=0
 while IFS=$'\t' read -r name status stage fp detail note; do
@@ -467,26 +477,61 @@ while IFS=$'\t' read -r name status stage fp detail note; do
   fi
 done < "$BUILTIN_MANIFEST"
 # MERGE-TIME RECONCILIATION.
-# fix/m1-builtin-registry enumerates the C-seam defects per DIMENSION in
-# PRELUDE_TYPE_MISMATCHES; this file can only say UNUSABLE or not. While that
-# constant does not exist, nothing to reconcile. Once it lands, every builtin it
-# names must still be recorded UNUSABLE here — otherwise one of the two tables
-# has been promoted without the other, which is precisely the drift both exist
-# to stop. This check arms itself automatically on merge rather than resting on
-# anyone remembering.
-if grep -q 'PRELUDE_TYPE_MISMATCHES' src/builtins.rs 2>/dev/null; then
-  recon_missing=0
-  while IFS= read -r bname; do
-    [ -n "$bname" ] || continue
-    if ! grep -qE "^${bname}\tUNUSABLE\t" "$BUILTIN_MANIFEST"; then
-      note "RECONCILE: src/builtins.rs PRELUDE_TYPE_MISMATCHES names '$bname' as C-seam broken, but $BUILTIN_MANIFEST does not record it UNUSABLE — resolve both tables together"
-      recon_missing=$((recon_missing+1))
-    fi
-  done < <(sed -n '/PRELUDE_TYPE_MISMATCHES/,/\];/p' src/builtins.rs \
-             | grep -oE '"[a-z_0-9]+ (param|return)' | sed -E 's/"([a-z_0-9]+).*/\1/' | sort -u)
-  [ "$recon_missing" -eq 0 ] && ok "reconciled with PRELUDE_TYPE_MISMATCHES in src/builtins.rs"
+# fix/m1-builtin-registry enumerates the C-seam defects per DIMENSION; this file
+# can only say UNUSABLE or not. Once that branch lands, every builtin it marks
+# unsupported must still be recorded UNUSABLE here — otherwise one table has been
+# promoted without the other, which is the drift both exist to stop.
+#
+# Keyed on `Support::Unsupported`, a structured field on each Builtin in that
+# branch, rather than on the prose of the PRELUDE_TYPE_MISMATCHES string array:
+# an enum variant survives reformatting, and the array's wording does not.
+# `PRELUDE_TYPE_MISMATCHES` is accepted as a second activation marker only.
+#
+# FAILS CLOSED. Earlier this silently disarmed itself if the constant were
+# renamed or reformatted: extraction returned zero names and it still printed
+# "reconciled". Now, once ANY marker is present, an empty extraction is a
+# failure, because "I found nothing to reconcile" and "I could not read it" must
+# not look the same.
+if grep -q -e 'Support::Unsupported' -e 'PRELUDE_TYPE_MISMATCHES' src/builtins.rs 2>/dev/null; then
+  recon_names=$(python3 - src/builtins.rs <<'RECON'
+import re, sys
+src = open(sys.argv[1], errors="replace").read()
+names = set()
+# Each `Builtin { ... }` block that carries Support::Unsupported.
+for block in re.findall(r"Builtin\s*\{.*?\n    \}", src, re.S):
+    if "Support::Unsupported" in block:
+        m = re.search(r'name:\s*"([a-z_0-9]+)"', block)
+        if m:
+            names.add(m.group(1))
+# Fallback: the PRELUDE_TYPE_MISMATCHES array, if that is all that exists.
+if not names:
+    arr = re.search(r"PRELUDE_TYPE_MISMATCHES[^=]*=\s*&\[(.*?)\];", src, re.S)
+    if arr:
+        names.update(re.findall(r'"([a-z_0-9]+) (?:param|return)', arr.group(1)))
+print("\n".join(sorted(names)))
+RECON
+)
+  recon_rc=$?
+  recon_count=$(printf '%s' "$recon_names" | grep -c . || true)
+  if [ "$recon_rc" -ne 0 ]; then
+    note "RECONCILE: could not parse src/builtins.rs for unsupported builtins (extractor exit $recon_rc) — failing closed rather than reporting 'reconciled'"
+  elif [ "$recon_count" -eq 0 ]; then
+    note "RECONCILE: src/builtins.rs carries a seam marker but zero builtin names could be extracted — the parsing contract broke; failing closed"
+  else
+    recon_missing=0
+    while IFS= read -r bname; do
+      [ -n "$bname" ] || continue
+      if ! grep -qE "^${bname}\tUNUSABLE\t" "$BUILTIN_MANIFEST"; then
+        note "RECONCILE: src/builtins.rs marks '$bname' unsupported at the C seam, but $BUILTIN_MANIFEST does not record it UNUSABLE — resolve both tables together"
+        recon_missing=$((recon_missing+1))
+      fi
+    done <<RECONEOF
+$recon_names
+RECONEOF
+    [ "$recon_missing" -eq 0 ] && ok "reconciled with src/builtins.rs ($recon_count unsupported builtin(s))"
+  fi
 else
-  printf '  %s..%s   PRELUDE_TYPE_MISMATCHES not present yet; reconciliation arms itself when fix/m1-builtin-registry lands\n' "$GREEN" "$NC"
+  printf '  %s..%s   no C-seam marker in src/builtins.rs yet; reconciliation arms itself when fix/m1-builtin-registry lands\n' "$GREEN" "$NC"
 fi
 
 if [ "$failures" -eq "$phase3_before" ]; then
