@@ -76,9 +76,6 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 **Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
 parsing misclassifies any all-uppercase name as a *const* generic argument
 (`src/parser/mod.rs:2054-2079`), so `Foo<T>` does not mean what it looks like.
-parsing misclassifies any all-uppercase name as a *const* generic argument — the guard and the
-`GenericArg::Const(ConstValue::ConstParam(...))` it selects are at
-(`src/parser/mod.rs:2100-2110`), so `Foo<T>` does not mean what it looks like.
 
 ## 3.1 Additional PBS-1 rules (measured, not stylistic)
 
