@@ -1,3 +1,4 @@
+//@ vacuous: prints that traits are unimplemented; declares no trait and no impl — M4 owns the feature
 // Test 07: Traits - Not Yet Implemented
 // Traits are in the language specification but not yet implemented
 

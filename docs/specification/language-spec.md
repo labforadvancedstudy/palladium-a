@@ -395,13 +395,21 @@ Execution starts at `fn main`. Arguments are evaluated left to right. The driver
 ## 11. Conformance
 
 `scripts/conformance.sh` compiles, links, and runs every `.pd` under `tests/` and `examples/`.
-Current status: **39 pass, 3 fail, 2 skipped** (2026-08-22). `scripts/check-docs.sh` does the
-same for documentation snippets, and `scripts/selfhost.sh` checks the self-hosting fixed point.
+Current status: **37 pass, 3 vacuous, 2 xfail, 0 fail, 2 skipped** (2026-08-22).
+`scripts/check-docs.sh` does the same for documentation snippets, and `scripts/selfhost.sh`
+checks the self-hosting fixed point.
 
-⚠️ Note that several files in `tests/` named after a feature do not exercise it —
-`tests/07_traits_basic.pd` and `tests/08_generics_basic.pd` only `print` a message saying the
-feature is unimplemented, and pass trivially. A green conformance run is therefore **not**
-evidence that traits or generics work. They do not (§4.4, §5).
+⚠️ Several files in `tests/` named after a feature do not exercise it —
+`tests/07_traits_basic.pd`, `tests/08_generics_basic.pd` and `tests/12_modules_imports.pd` only
+`print` a message saying the feature is unimplemented. A green conformance run is therefore **not**
+evidence that traits, generics or modules work. They do not (§4.4, §5). The runner no longer counts
+these as passes: each carries a first-line `//@ vacuous: <reason>` marker and is reported as
+`PASS_VACUOUS`, tallied separately in the summary.
+
+Programs that are known to fail are declared in `tests/conformance-xfail.txt` with a mandatory
+reason, and reported as `XFAIL` without failing the gate. The declaration is not a way to hide a
+failure: if a listed program starts passing it is reported `XPASS` and the gate **fails**, so an
+expectation cannot quietly go stale.
 
 ## 12. Relationship to the bootstrap subset
 

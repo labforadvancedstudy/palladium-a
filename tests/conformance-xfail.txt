@@ -1,0 +1,19 @@
+# Conformance expected-failure manifest, read by scripts/conformance.sh.
+#
+# Format:  <path relative to repo root><whitespace><reason>
+# Comments (`#`) and blank lines are ignored. A reason is mandatory.
+#
+# An entry here means "this program is known not to work, and we know why".
+# It does NOT soften the gate:
+#   - a listed file that fails    -> XFAIL, and the reason is printed on every run
+#   - a listed file that PASSES   -> XPASS, and the gate FAILS (delete the entry)
+#   - a listed file that does not exist, or is skipped -> STALE, and the gate FAILS
+#
+# So an entry can only ever be paid off, never forgotten.
+
+tests/projects/hello_pdm/tests/test_math.pd  calls add()/factorial() from src/math.pd; needs cross-file module imports (no `use`/`mod` in the language) — owned by M3
+
+# D9: codegen rejects `&[T; N]` / `&mut [T; N]` parameters. Being fixed in a
+# separate work unit; when that lands this line turns XPASS and the gate goes
+# red until someone deletes it. Deleting it is the correct resolution.
+examples/practical/simple_sort.pd  `&mut [i64; N]` reference parameter rejected by codegen ("Unsupported type in reference parameter") — defect D9, owned by M1

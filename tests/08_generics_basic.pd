@@ -1,3 +1,4 @@
+//@ vacuous: prints that generics are unimplemented; instantiates no generic type or function — M4 owns the feature
 // Test 08: Generics - Not Yet Fully Implemented
 // Generics are partially implemented but have limitations
 

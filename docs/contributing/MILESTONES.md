@@ -16,7 +16,7 @@ opinion.
 | | |
 |---|---|
 | Self-hosting | ✅ fixed point — `make selfhost` |
-| Language conformance | 39 of 42 programs compile, link and run — `make conformance` |
+| Language conformance | 37 of 42 programs compile, link, run *and* exercise a feature; 3 are vacuous placeholders and 2 are declared-failing — `make conformance` |
 | Documentation | every snippet compiles — `make check-docs` |
 | Unit tests | 404 pass, 2 pre-existing failures |
 | Integration tests | 43 fail, all pre-existing — `make test-honest` |
@@ -31,10 +31,16 @@ emit wrong code. This milestone converts silent wrongness into diagnostics.
 
 | Defect | What happens today |
 |---|---|
-| D7 | an un-annotated `let` is emitted as `long long` whatever the initializer was, so references, enum values and string copies silently become integers |
 | D5 | `?` emits C referencing a `struct Result` layout codegen never defines; `.await` calls a `poll` member that is never generated. Neither reports an error |
 | D4 | `for` over an array *parameter* uses `sizeof` on a pointer that has already decayed |
-| D9 | `&[T; N]` / `&mut [T; N]` parameters are rejected in codegen — `examples/practical/simple_sort.pd` still fails on exactly this |
+| D9 | `&[T; N]` / `&mut [T; N]` parameters are rejected in codegen — `examples/practical/simple_sort.pd` still fails on exactly this, and is the one M1-owned entry in `tests/conformance-xfail.txt` |
+
+Closed:
+
+- **D7** — an un-annotated `let` was emitted as `long long` regardless of its initializer. Fixed in
+  `04104c5` ("fix(codegen): infer let types instead of defaulting them to i64"). Verified: a program
+  containing `let s = "hello"; let b = true; let p = P { x: 3 };` compiles, links and runs, and the
+  emitted C declares `const char* s` and `struct P p` rather than `long long`.
 
 Two structural gaps belong here too, because both are gates that cannot see their own failures:
 
@@ -44,8 +50,20 @@ Two structural gaps belong here too, because both are gates that cannot see thei
   effects checker and in two LSP files. The "one table" invariant currently holds only for the
   type checker and the borrow checker.
 
-**Exit**: nothing in the language specification is marked ⚠️ "parses, then breaks" without also
-being reported as an error. `make conformance` at 42/42. `stdlib/` behind a gate.
+**Exit**, in the terms the runner actually prints:
+
+1. `make conformance` exits 0 with `compile_fail=0 link_fail=0 run_fail=0 xpass=0`.
+2. No remaining entry in `tests/conformance-xfail.txt` is owned by M1. Today there are two —
+   `simple_sort.pd` (D9, M1) and `hello_pdm/tests/test_math.pd` (cross-file imports, M3) — so M1
+   ends when only the M3/M4 entry is left.
+3. Nothing in the language specification is marked ⚠️ "parses, then breaks" without also being
+   reported as an error.
+4. `stdlib/` behind a gate.
+
+`42/42` was the old exit criterion and it was the wrong target: it counted three placeholder
+programs that only print "not yet implemented" as passes, so it could have been met without
+implementing anything. The runner now reports those as `vacuous` and they are *expected* to stay
+vacuous through M1 — they turn into real passes when M3 and M4 build the features they name.
 
 ## M2 — Writing real programs stops hurting (v0.4)
 
