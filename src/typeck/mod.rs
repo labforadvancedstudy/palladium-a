@@ -2994,18 +2994,15 @@ mod tests {
 
     // D5. Both programs below used to type check, and then code generation
     // emitted C against a `struct Result` and a `poll` member that no part of
-    // the compiler ever defines. The programs are the measured repros: they are
-    // the shapes that get *through* the old type rules, which reject the naive
-    // misuse but not these.
+    // the compiler ever defines. They are kept as the measured repros — the
+    // shapes that reached the backend back when type rules gated these
+    // operators. The refusal no longer depends on that: it fires on any
+    // operand, which `both_constructs_are_rejected_whatever_the_operand_is` in
+    // tests/d5_unimplemented_constructs.rs covers.
 
-    #[test]
-    fn test_question_operator_is_reported_as_unimplemented() {
-        // `might_fail` is declared to return Result<i64, i64>, which is what the
-        // old rules demanded of `?`; the body recurses so nothing has to build a
-        // Result value. This compiled, and gcc then rejected the generated C:
-        //   error: variable has incomplete type 'struct Result'
-        let err = check(
-            r#"
+    /// The measured `?` repro, kept verbatim as a source constant so the tests
+    /// can slice it with the reported span instead of asserting magic numbers.
+    const SOURCE_WITH_QUESTION: &str = r#"
         enum Result<T, E> {
             Ok(T),
             Err(E),
@@ -3024,39 +3021,9 @@ mod tests {
         fn main() {
             helper(3);
         }
-        "#,
-        )
-        .unwrap_err();
+        "#;
 
-        match err {
-            CompileError::Unimplemented {
-                ref construct,
-                ref span,
-                ..
-            } => {
-                assert!(construct.contains('?'), "{}", construct);
-                // The diagnostic must point at the operator, not at the file.
-                // The span is the *postfix suffix*, so it underlines `(x)?`
-                // rather than the `?` alone — a parser-wide convention
-                // (`src/parser/mod.rs:2604`), pinned here so a change to it is
-                // a deliberate decision rather than a silent drift.
-                let span = span.expect("span");
-                assert_eq!((span.line, span.column), (12, 36));
-                assert_eq!(span.end - span.start, 4, "underlines `(x)?`");
-            }
-            other => panic!("expected an Unimplemented error, got: {}", other),
-        }
-    }
-
-    #[test]
-    fn test_await_is_reported_as_unimplemented() {
-        // A function *declared* to return Future<i64> is the only way to hand
-        // `.await` the Future<T> the old rules wanted — an `async fn` call is
-        // typed as its bare return type, so awaiting one never checked. This
-        // compiled, and gcc then rejected the generated C:
-        //   error: member reference base type 'long long' is not a structure
-        let err = check(
-            r#"
+    const SOURCE_WITH_AWAIT: &str = r#"
         fn work(x: i64) -> Future<i64> {
             return work(x);
         }
@@ -3065,31 +3032,9 @@ mod tests {
             let v: i64 = work(3).await;
             print_int(v);
         }
-        "#,
-        )
-        .unwrap_err();
+        "#;
 
-        match err {
-            CompileError::Unimplemented {
-                ref construct,
-                ref span,
-                ..
-            } => {
-                assert!(construct.contains("await"), "{}", construct);
-                let span = span.expect("span");
-                assert_eq!((span.line, span.column), (7, 30));
-                assert_eq!(span.end - span.start, 9, "underlines `(3).await`");
-            }
-            other => panic!("expected an Unimplemented error, got: {}", other),
-        }
-    }
-
-    #[test]
-    fn test_await_span_survives_a_multiline_postfix_chain() {
-        // A span is only useful if it still lands on the construct when the
-        // postfix chain is broken across lines.
-        let err = check(
-            r#"
+    const SOURCE_WITH_MULTILINE_AWAIT: &str = r#"
         fn work(x: i64) -> Future<i64> {
             return work(x);
         }
@@ -3100,20 +3045,94 @@ mod tests {
             ).await;
             print_int(v);
         }
-        "#,
-        )
-        .unwrap_err();
+        "#;
 
-        match err {
-            CompileError::Unimplemented { span, .. } => {
-                let span = span.expect("span");
-                // Reported at the head of the postfix chain, and wide enough to
-                // cover the `.await` three lines later.
-                assert_eq!((span.line, span.column), (7, 30));
-                assert!(span.end - span.start > 9, "{:?}", span);
-            }
+    fn unimplemented_span(source: &str) -> Span {
+        match check(source).unwrap_err() {
+            CompileError::Unimplemented { span, .. } => span.expect("span"),
             other => panic!("expected an Unimplemented error, got: {}", other),
         }
+    }
+
+    #[test]
+    fn test_question_operator_is_reported_as_unimplemented() {
+        let err = check(SOURCE_WITH_QUESTION).unwrap_err();
+        let construct = match &err {
+            CompileError::Unimplemented { construct, .. } => construct.clone(),
+            other => panic!("expected an Unimplemented error, got: {}", other),
+        };
+        assert!(construct.contains('?'), "{}", construct);
+
+        // Two properties that must survive any later narrowing of the span:
+        // it is on the operator's line, and it *ends* at the operator. Width is
+        // asserted separately, in the known-quirk test, so that fixing the
+        // start position does not require editing a test which would then read
+        // as though the wide span had been correct.
+        let span = unimplemented_span(SOURCE_WITH_QUESTION);
+        assert_eq!(span.line, 12);
+        let text = &SOURCE_WITH_QUESTION[span.start..span.end];
+        assert!(
+            text.ends_with('?'),
+            "span must end at the operator: {:?}",
+            text
+        );
+        assert!(
+            SOURCE_WITH_QUESTION[..span.end].ends_with("might_fail(x)?"),
+            "span must end where the operator ends"
+        );
+    }
+
+    #[test]
+    fn test_await_is_reported_as_unimplemented() {
+        let err = check(SOURCE_WITH_AWAIT).unwrap_err();
+        let construct = match &err {
+            CompileError::Unimplemented { construct, .. } => construct.clone(),
+            other => panic!("expected an Unimplemented error, got: {}", other),
+        };
+        assert!(construct.contains("await"), "{}", construct);
+
+        let span = unimplemented_span(SOURCE_WITH_AWAIT);
+        assert_eq!(span.line, 7);
+        let text = &SOURCE_WITH_AWAIT[span.start..span.end];
+        assert!(
+            text.ends_with(".await"),
+            "span must end at the operator: {:?}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_await_span_survives_a_multiline_postfix_chain() {
+        // A span is only useful if it still covers the construct when the
+        // postfix chain is broken across lines.
+        let span = unimplemented_span(SOURCE_WITH_MULTILINE_AWAIT);
+        let text = &SOURCE_WITH_MULTILINE_AWAIT[span.start..span.end];
+        assert!(text.ends_with(".await"), "{:?}", text);
+        assert!(text.contains('\n'), "the chain spans lines: {:?}", text);
+        // The end is what a reader follows; it lands on the `.await` itself,
+        // two lines below where the span starts.
+        assert!(
+            SOURCE_WITH_MULTILINE_AWAIT[..span.end].ends_with(").await"),
+            "span must end where the operator ends"
+        );
+    }
+
+    /// Known imprecision, pinned deliberately and separately.
+    ///
+    /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
+    /// `.await` over `(3).await` rather than over the operator alone
+    /// (`src/parser/mod.rs:2459`, `:2606`). That is not what these diagnostics
+    /// *should* point at — it is what they currently point at. Narrowing the
+    /// span to the operator is a welcome change: it will fail exactly this
+    /// test, and no other, which is the point of keeping it apart from the
+    /// assertions above.
+    #[test]
+    fn known_quirk_postfix_spans_cover_the_operand_too() {
+        let q = unimplemented_span(SOURCE_WITH_QUESTION);
+        assert_eq!(&SOURCE_WITH_QUESTION[q.start..q.end], "(x)?");
+
+        let a = unimplemented_span(SOURCE_WITH_AWAIT);
+        assert_eq!(&SOURCE_WITH_AWAIT[a.start..a.end], "(3).await");
     }
 
     #[test]
@@ -3134,11 +3153,16 @@ mod tests {
             "the note must not deny a type the triggering program declares: {}",
             note
         );
-        assert!(
-            diag.suggestions.iter().any(|s| s.message.contains("match")),
-            "{:?}",
-            diag.suggestions
-        );
+        let help = diag
+            .suggestions
+            .iter()
+            .map(|s| s.message.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(help.contains("match"), "{}", help);
+        // …and it must name its own limit rather than imply the `match`
+        // replacement generalises to a generic Result, which does not compile.
+        assert!(help.contains("Result<T, E>` will not compile"), "{}", help);
 
         // No diagnostic may promise a release. The roadmap changes; the binary
         // that was already shipped does not.
@@ -3167,10 +3191,12 @@ mod tests {
 
     #[test]
     fn test_await_diagnostic_does_not_suggest_merely_deleting_the_await() {
-        // Measured: on the only shape that reaches this diagnostic, deleting
-        // `.await` yields "Type mismatch: expected Int, found Future<Int>".
-        // A suggestion that trades one error for another is the defect this
-        // whole change exists to remove, so it is asserted against by name.
+        // Measured on a `-> Future<T>` function, the case the advice is for:
+        // deleting `.await` yields "Type mismatch: expected Int, found
+        // Future<Int>". A suggestion that trades one error for another is the
+        // defect this whole change exists to remove, so it is asserted against
+        // by name. The phrasing must also stay conditional, because the operand
+        // is never inspected and may not involve a function at all.
         let diag = CompileError::await_unimplemented(Span::new(0, 1, 1, 1)).to_diagnostic();
         let help = diag
             .suggestions
@@ -3178,11 +3204,18 @@ mod tests {
             .map(|s| s.message.clone())
             .collect::<Vec<_>>()
             .join(" ");
-        assert!(help.contains("-> T"), "{}", help);
-        assert!(help.contains("not `-> Future<T>`"), "{}", help);
+        assert!(help.contains("change it to `-> T`"), "{}", help);
         assert!(
             !help.contains("call the function without `.await`"),
             "that suggestion does not compile: {}",
+            help
+        );
+        // Phrased conditionally, because the operand is never inspected: a
+        // `some_variable.await` has no function whose signature could change.
+        assert!(help.contains("If a function is declared"), "{}", help);
+        assert!(
+            !help.starts_with("declare the function"),
+            "unconditional phrasing presumes an operand shape: {}",
             help
         );
     }

@@ -60,18 +60,24 @@ pub enum CompileError {
     #[error("Code generation failed: {message}")]
     CodegenError { message: String },
 
-    // A construct that the parser and the type checker accept but that no
-    // backend can lower. Emitting approximate code for these is how a compiler
-    // starts lying: the program either fails inside generated C the user never
-    // wrote, or — worse — links and runs with the wrong semantics. Refusing at
-    // the construct's own span is the honest answer until the feature lands.
+    // A construct the parser accepts but that no backend can lower. Emitting
+    // approximate code for these is how a compiler starts lying: the program
+    // either fails inside generated C the user never wrote, or — worse — links
+    // and runs with the wrong semantics. Refusing at the construct's own span
+    // is the honest answer until the feature lands.
+    //
+    // These are raised *before* the operand is examined, so `consequence` and
+    // `workaround` must hold for every operand the construct can be written
+    // with. Advice that only fits the shape the old type rules used to require
+    // is advice that is wrong for `3?`.
     #[error("{construct} is not implemented")]
     Unimplemented {
         /// How the construct is written in source, e.g. "the `?` operator".
         construct: String,
         /// What would happen if the compiler kept pretending.
         consequence: String,
-        /// What the programmer can do today instead.
+        /// What the programmer can do today instead. Must be true for any
+        /// operand, and must name its own limits rather than imply generality.
         workaround: String,
         span: Option<Span>,
     },
@@ -172,17 +178,28 @@ impl Span {
 }
 
 impl CompileError {
-    /// D5: `?` parses and type-checks, but nothing lowers it.
+    /// D5: `?` parses, but nothing lowers it.
     ///
-    /// Note what is and is not missing. A program only reaches this diagnostic
-    /// by *declaring* a `Result` enum, so the type is not the problem — the
-    /// absent piece is a lowering of `?` onto the enum representation the
-    /// compiler actually emits (`.tag` plus `__Enum__Variant` constants). Code
-    /// generation instead emitted a `struct Result { int is_ok; union … }`
-    /// layout that nothing else produces, so the program died inside gcc.
+    /// Note what is and is not missing. `Result` is not a missing *type* —
+    /// a user can declare one, and before this refusal existed that is exactly
+    /// how a program reached code generation. The absent piece is a lowering of
+    /// `?` onto the enum representation the compiler actually emits (`.tag`
+    /// plus `__Enum__Variant` constants); it emitted a `struct Result { int
+    /// is_ok; union … }` layout that nothing else produces, so the program died
+    /// inside gcc.
     ///
-    /// The workaround is receipted by `test_question_workaround_compiles`: the
-    /// suggested `match` replacement is compiled and run, not asserted.
+    /// Raised without inspecting the operand, so the wording may not assume one
+    /// — `3?` and `unknown()?` reach here too. It also may not imply that the
+    /// `match` alternative generalises further than it does: code generation
+    /// skips generic enum definitions entirely (`src/codegen/mod.rs:841`,
+    /// `:909`, `:929`), so `Result<T, E>` is not a compilable replacement and
+    /// the help says so rather than leaving the reader to discover it.
+    ///
+    /// Every clause is receipted in `tests/d5_unimplemented_constructs.rs`:
+    /// `question_workaround_compiles_and_runs` (dispatch),
+    /// `question_workaround_propagates_out_of_a_helper` (propagation),
+    /// `question_workaround_is_not_limited_to_i64_payloads` (payload types),
+    /// and `generic_result_is_not_a_compilable_workaround` (the warned limit).
     pub fn question_unimplemented(span: Span) -> Self {
         CompileError::Unimplemented {
             construct: "the `?` operator".to_string(),
@@ -191,24 +208,30 @@ impl CompileError {
                  and would instead produce C for a `struct Result { int is_ok; union … }` layout \
                  that no enum is ever generated as"
                     .to_string(),
-            workaround: "match on the returned enum and handle each variant explicitly, e.g. \
-                 `match might_fail(x) { Result::Ok(v) => …, Result::Err(e) => … }`"
-                .to_string(),
+            workaround:
+                "there is no error-propagation operator; return the value and dispatch on it with \
+                 `match`. Only non-generic enums are compiled, so declare a concrete one such as \
+                 `enum Result { Ok(i64), Err(i64) }` — `Result<T, E>` will not compile"
+                    .to_string(),
             span: Some(span),
         }
     }
 
-    /// D5: `.await` parses and type-checks, but nothing lowers it.
+    /// D5: `.await` parses, but nothing lowers it.
     ///
-    /// The workaround has to change the *signature*, not just delete the
-    /// `.await`. The only shape that reaches this diagnostic is a plain
-    /// function declared `-> Future<T>` (a call to an `async fn` is typed as
-    /// its bare return type, so awaiting one never type checked), and dropping
-    /// `.await` there leaves a `Future<T>` where a `T` is required —
-    /// "Type mismatch: expected Int, found Future<Int>". Suggesting that would
-    /// repeat the defect this diagnostic exists to remove.
+    /// Raised without inspecting the operand, so the advice is phrased for any
+    /// of them — `some_variable.await` reaches here as readily as a call does,
+    /// and telling its author to "change the function's return type" would name
+    /// a function that is not there.
     ///
-    /// Receipted by `test_await_workaround_compiles`.
+    /// Where a `-> Future<T>` signature *is* involved, the fix has to change it
+    /// rather than just drop the `.await`: dropping it leaves a `Future<T>`
+    /// where a `T` is required ("Type mismatch: expected Int, found
+    /// Future<Int>", measured). Suggesting the shorter edit would repeat the
+    /// defect this diagnostic exists to remove, which is why
+    /// `deleting_the_await_alone_does_not_compile` guards against it.
+    ///
+    /// Receipted by `await_workaround_compiles_and_runs`.
     pub fn await_unimplemented(span: Span) -> Self {
         CompileError::Unimplemented {
             construct: "`.await`".to_string(),
@@ -217,9 +240,9 @@ impl CompileError {
                  member that no generated C struct has"
                     .to_string(),
             workaround:
-                "declare the function to return its value directly (`-> T`, not `-> Future<T>`) \
-                 and call it; deleting `.await` on its own leaves a Future where a value is \
-                 required"
+                "nothing can be awaited; write the computation as an ordinary synchronous call. \
+                 If a function is declared `-> Future<T>`, change it to `-> T` — deleting \
+                 `.await` on its own leaves a Future where a value is required"
                     .to_string(),
             span: Some(span),
         }

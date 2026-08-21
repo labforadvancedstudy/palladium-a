@@ -285,13 +285,26 @@ error: the `?` operator is not implemented
   = note: code generation has no lowering of `?` onto the enum representation it emits,
           and would instead produce C for a `struct Result { int is_ok; union … }` layout
           that no enum is ever generated as
-  = help: match on the returned enum and handle each variant explicitly, e.g.
-          `match might_fail(x) { Result::Ok(v) => …, Result::Err(e) => … }`
+  = help: there is no error-propagation operator; return the value and dispatch on it
+          with `match`. Only non-generic enums are compiled, so declare a concrete one
+          such as `enum Result { Ok(i64), Err(i64) }` — `Result<T, E>` will not compile
 ```
 
-Note what is *not* claimed: the `Result` type is not missing. A program only reaches this
-diagnostic by declaring one — that is how it satisfies the type rules. What is missing is the
+Note what is *not* claimed: `Result` is not a missing type — you can declare one, and before
+this refusal existed that is how a program reached code generation. What is missing is the
 lowering onto the representation enums actually get.
+
+The refusal fires on the operator itself, before the operand is examined, so `3?` and
+`unknown()?` reach it too. The wording is therefore phrased for any operand: it does not assert
+that what precedes `?` is a Result, because in those programs it is not.
+
+The `match` alternative is bounded, and the help says where it stops rather than leaving it to be
+discovered. Measured: dispatch works, propagation out of a helper works, payload types other than
+`i64` work — but a generic `Result<T, E>` does **not** compile, because code generation skips
+generic enum definitions (`src/codegen/mod.rs:841`, `:909`, `:929`) and generic enum construction
+infers only the parameters a variant mentions, so `Result::Err(e)` yields `Result<(), E>`. One
+syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
+and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`src/typeck/mod.rs:2356`, `:2363`) and again by code
 generation (`src/codegen/mod.rs:2537`, `:2549`), which is callable on its own.
@@ -314,11 +327,13 @@ constant `0` for `Question`, `Await`, `EnumConstructor` and `MacroInvocation` al
 compiles and is wrong. The type checker refuses before a backend is chosen, which is what
 `tests/d5_unimplemented_constructs.rs` pins.
 
-`async fn` still *declares* fine; only `.await` is rejected. A call to an `async fn` is typed as
-its bare return type, so awaiting one never type checked in the first place — the shape that
-used to reach code generation was a plain function declared `-> Future<T>`. Note the corollary
-for the workaround: deleting `.await` alone leaves a `Future<T>` where a `T` is required, so the
-signature has to change too.
+`async fn` still *declares* fine; only `.await` is rejected, and it is rejected on any operand —
+`some_variable.await` as much as a call. Historically the only shape that reached code generation
+was a plain function declared `-> Future<T>`, because a call to an `async fn` is typed as its bare
+return type and so awaiting one never type checked; that is a fact about the old type rules, which
+no longer gate anything. The workaround is phrased conditionally for the same reason. Where a
+`-> Future<T>` signature *is* involved, note that deleting `.await` alone leaves a `Future<T>`
+where a `T` is required, so the signature has to change too.
 
 Both are excluded from the bootstrap subset.
 
