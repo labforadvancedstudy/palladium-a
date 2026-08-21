@@ -78,6 +78,18 @@ is_accepted() { [ "$1" = "COMPILE_OK" ] || [ "$1" = "ACCEPTED_NO_MAIN" ]; }
 
 # ---------------------------------------------------------------------------
 echo "== Phase 0: negative control (can this harness fail at all?) =="
+# CALIBRATION FIRST. Every verdict below rests on pdc exiting 0 for a valid
+# program and 1 for a rejection. That is measured on this project's targets, not
+# a law: on a platform where a rejection returned 0 it would be read as success
+# and every row would be wrong. Re-measure rather than trust the docstring.
+cal_log="$SCRATCH/calibrate.log"
+$PROBE calibrate --pdc "$PDC" --scratch "$SCRATCH/cal" >"$cal_log" 2>&1
+case $? in
+  0) ok "pdc exit contract holds here (success=$(field SUCCESS_EXIT "$cal_log"), reject=$(field REJECT_EXIT "$cal_log"), $(field PLATFORM "$cal_log"))" ;;
+  *) note "pdc exit contract does NOT hold on this platform — no verdict below can be trusted"
+     sed 's/^/        /' "$cal_log" | head -5 ;;
+esac
+
 # The control must REACH the point of comparison before its result means
 # anything. Previously a compile failure, a run failure and the intended
 # mismatch were all reported as "mismatch detection works" — i.e. the control
@@ -474,74 +486,24 @@ while IFS=$'\t' read -r name status stage fp detail note; do
     esac
   fi
 done < "$BUILTIN_MANIFEST"
-# MERGE-TIME RECONCILIATION with fix/m1-builtin-registry.
+# MERGE-TIME RECONCILIATION with the builtin registry.
 #
-# That branch records the C-seam defects per DIMENSION on each Builtin as
-# `support: Support::Unsupported("...")`; this file can only say UNUSABLE or not.
-# Once it lands, every builtin it marks unsupported must still be recorded
-# UNUSABLE here, or one table has been promoted without the other.
-#
-# ACTIVATION IS INFERRED FROM THE `Support` TYPE, not from one spelling: the
-# earlier version keyed on two tokens and silently returned to a dormant GREEN
-# path if either were renamed. Now the presence of `Support` ANYWHERE in
-# src/builtins.rs means the sibling has landed, and from that point an empty
-# extraction is a HARD FAILURE rather than a dormant pass.
-#
-# NOTE FOR THE SIBLING BRANCH: this still parses Rust source, which is a fragile
-# contract in both directions. The durable fix is for the registry to emit a
-# machine-readable list (a generated file, or `pdc --dump-builtins`) that both
-# gates read. Proposed, not assumed.
-recon_out="$SCRATCH/recon.log"
-python3 - src/builtins.rs "$BUILTIN_MANIFEST" >"$recon_out" 2>&1 <<'RECON'
-import re, sys
-src_path, manifest_path = sys.argv[1], sys.argv[2]
-try:
-    src = open(src_path, errors="replace").read()
-except OSError as e:
-    print(f"HARDFAIL cannot read {src_path}: {e}"); sys.exit(2)
-
-landed = "Support" in src
-if not landed:
-    print("DORMANT no Support type in src/builtins.rs; the sibling has not landed")
-    sys.exit(0)
-
-names = set()
-for block in re.findall(r"Builtin\s*\{.*?\n    \}", src, re.S):
-    if "Support::Unsupported" in block:
-        m = re.search(r'name:\s*"([a-z_0-9]+)"', block)
-        if m:
-            names.add(m.group(1))
-if not names:
-    arr = re.search(r"PRELUDE_TYPE_MISMATCHES[^=]*=\s*&\[(.*?)\];", src, re.S)
-    if arr:
-        names.update(re.findall(r'"([a-z_0-9]+) (?:param|return)', arr.group(1)))
-if not names:
-    print("HARDFAIL src/builtins.rs has the Support type but no unsupported builtin "
-          "could be extracted — the parsing contract broke; refusing to report 'reconciled'")
-    sys.exit(2)
-
-recorded = {}
-for line in open(manifest_path):
-    if line.strip() and not line.startswith("#"):
-        c = line.split("\t")
-        recorded[c[0]] = c[1]
-missing = sorted(n for n in names if recorded.get(n) != "UNUSABLE")
-for n in missing:
-    print(f"MISSING {n} is marked unsupported in src/builtins.rs but recorded "
-          f"'{recorded.get(n, '<absent>')}' in {manifest_path}")
-print(f"ACTIVE {len(names)} unsupported builtin(s) checked")
-sys.exit(1 if missing else 0)
-RECON
+# Inside the boundary like every other producer. It used to be inline Python
+# whose uncaught exception exited 1, and the shell's `case 1` only iterated
+# MISSING lines — so a traceback carrying none recorded no failure and
+# reconciliation silently passed. The same arbitrary-exit-to-semantic-result
+# recurrence, inside the check added to close a fail-open.
+recon_log="$SCRATCH/reconcile.log"
+$PROBE reconcile --src src/builtins.rs --manifest "$BUILTIN_MANIFEST" >"$recon_log" 2>&1
 case $? in
-  0) if grep -q '^DORMANT' "$recon_out"; then
-       printf '  %s..%s   %s\n' "$GREEN" "$NC" "$(sed -n 's/^DORMANT //p' "$recon_out")"
-     else
-       ok "reconciled with src/builtins.rs — $(sed -n 's/^ACTIVE //p' "$recon_out")"
-     fi ;;
-  1) while IFS= read -r m; do
-       note "RECONCILE: ${m#MISSING }"
-     done < <(grep '^MISSING' "$recon_out") ;;
-  *) note "RECONCILE: $(grep -m1 '^HARDFAIL' "$recon_out" | sed 's/^HARDFAIL //')" ;;
+  0) case "$(field OUTCOME "$recon_log")" in
+       dormant) printf '  %s..%s   %s\n' "$GREEN" "$NC" "$(field REASON "$recon_log")" ;;
+       *)       ok "reconciled with src/builtins.rs — $(field CHECKED "$recon_log") unsupported builtin(s) checked" ;;
+     esac ;;
+  1) while IFS= read -r m; do note "RECONCILE: ${m#FINDING }"; done \
+       < <(grep '^FINDING ' "$recon_log") ;;
+  *) note "RECONCILE MALFUNCTIONED: $(field REASON "$recon_log") — reconciliation established nothing"
+     sed 's/^/        /' "$recon_log" | head -4 ;;
 esac
 
 if [ "$failures" -eq "$phase3_before" ]; then

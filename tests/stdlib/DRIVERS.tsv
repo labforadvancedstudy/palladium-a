@@ -16,7 +16,7 @@
 #
 # Columns (tab-separated): basename  golden  cverdict  purpose
 #
-# cverdict — what scripts/check-generated-c.sh must say about this file's C:
+# cverdict — what `gate_probe.py generated-c` must say about this file's C:
 #   clean                       the invariant holds; a violation is a REGRESSION
 #   known_violation:<fn>[,<fn>] the invariant is EXPECTED to be violated, in
 #                               exactly these functions, because of an open

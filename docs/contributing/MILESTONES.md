@@ -85,7 +85,7 @@ reliably.** The missing `return` is undefined behaviour, and with the fix revert
 garbage with exit 0 at `-O0` *and* `-O2` (`8264595040` / `8261746944`). An exit-code gate is blind
 to it, and pinning an optimisation level does not help. Even a transcript diff is not a guarantee
 in principle — on another libc the garbage could equal the expected value. So the durable check is
-**structural**: `scripts/check-generated-c.sh` requires every non-void function in the emitted C to
+**structural**: `gate_probe.py generated-c` requires every non-void function in the emitted C to
 return **on every path**, via two independent nets (its own terminator analysis, and
 `-Werror=return-type`), without running anything.
 

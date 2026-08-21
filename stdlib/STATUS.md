@@ -243,7 +243,7 @@ optimisation level would not help either, because the garbage is garbage everywh
 transcript diff is not a guarantee in principle: on another libc or another compiler the garbage
 could equal the expected value by accident and the diff would pass.
 
-The only stable statement about D3 is **structural**, so `scripts/check-generated-c.sh` inspects
+The only stable statement about D3 is **structural**, so `gate_probe.py generated-c` inspects
 `build_output/*.c` and never runs anything. It uses two nets, and the invariant is the *combination*
 of them — neither is a proof on its own:
 
@@ -289,6 +289,26 @@ the same shape was reachable in the forced-import probe, the UNUSABLE probes, an
 `make test-gate-probe` fault-injects exactly that case against **every** producer (17 cases),
 including both signal conventions: `subprocess` reports `-9`, a POSIX shell reports `137`, and a
 check written for one silently never fires on the other.
+
+### What the boundary does and does not cover
+
+An earlier report of mine claimed every remaining exit reader shares one
+`case $?` tri-state form. **That was not true**, and it is the third structural
+claim in this branch that measurement did not support. Counted:
+
+| shape | count | what it reads |
+|---|---|---|
+| `case $?` over `gate_probe.py` | 6 | every producer treated as evidence: pdc verdicts, the forced-import probe, the UNUSABLE probes, driver compilation, the generated-C nets, the registry reconciliation |
+| direct `if [ $? ]` / `[ -x ]` | 11 | Phase 0 controls and file-system predicates |
+
+The residue is deliberate, not overlooked. Phase 0 runs the **compiled
+artifacts** — it must observe that a planted transcript mismatch is detected and
+that `panic()` dies from SIGABRT with its payload on stderr. That is a different
+kind of evidence from "did the producer conclude", and routing it through a
+process-conclusion boundary would not make it safer. What matters is that no
+site outside the boundary turns a producer's *diagnostic text* into a verdict,
+and that is now enforced by construction: the malfunction path prints no
+producer text at all.
 
 ### Seam with `make conformance`
 

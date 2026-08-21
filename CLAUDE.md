@@ -71,7 +71,7 @@ stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fi
   > `fib(10)`이 55 대신 **8261746944** 반환, exit 0. 재귀 base case의 자연스러운 형태가 전부 해당된다.
   > 이 줄이 D3를 done으로 기록해 온 것이 이 결함이 숨어 있던 이유다.
   > 고정 = `tests/stdlib/stdlib_tail_if_defect.pd` + `make stdlib-gate`의 생성-C 구조 불변식
-  > (`scripts/check-generated-c.sh`: 모든 non-void 함수는 **모든 경로에서** return해야 한다).
+  > (`scripts/gate_probe.py generated-c`: 모든 non-void 함수는 **모든 경로에서** return해야 한다).
   > 파서 수정은 별도 작업 단위 — 이 브랜치는 결함을 고정만 하고 고치지 않는다.
   >
   > **정정 2 (2026-08-22)**: 이 줄은 원래 "stdlib 전체가 조용히 miscompile되고 있었다"였다 — 거짓.

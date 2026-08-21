@@ -54,7 +54,7 @@ so a failed assertion is *also* a non-zero exit — but the value is what the di
 With the D3 fix reverted, `fn add(a,b) -> i64 { a + b }` returns garbage and exits 0 at **both**
 `-O0` (`8264595040`) and `-O2` (`8261746944`). No runtime observation of undefined behaviour is
 stable — on another libc the garbage could even equal the expected value and the diff would pass.
-So `scripts/check-generated-c.sh` requires every non-void function in `build_output/*.c` to contain
+So `gate_probe.py generated-c` requires every non-void function in `build_output/*.c` to contain
 a `return` (Net A) and to survive `-Werror=return-type` (Net B). It never runs anything.
 
 **3. Every builtin exercised prints `@builtin <name> -> <observed result>`.**
