@@ -38,7 +38,7 @@ enum ArrayParamForm {
     /// `xs: [T; N]` - no declared intent to mutate anything.
     ByValue,
     /// `mut xs: [T; N]` - the bootstrap subset's spelling for a mutable array
-    /// parameter (docs/specification/bootstrap-subset.md:95).
+    /// parameter (docs/specification/bootstrap-subset.md:96).
     MutByValue,
     /// `xs: &[T; N]`.
     Shared,
@@ -559,7 +559,7 @@ impl CodeGenerator {
     /// front end and here re-checks a reference's mutability - the typechecker
     /// drops it (`src/typeck/mod.rs:2321`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
-    /// (`src/ownership/borrow_checker.rs:253`). So `fn f(xs: &[i64; 3])` could
+    /// (`src/ownership/borrow_checker.rs:491-494`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
     /// the callee's mutable binding, where it is legitimate. Measured, before
     /// this check: the caller's `v[0]` came back 99 through both a shared and a
@@ -1756,12 +1756,12 @@ impl CodeGenerator {
         // Imported modules: public, non-generic functions get a body emitted below.
         //
         // Sorted by module name, like the three sites that fill the definitions
-        // (`:1114`, `:1193`, `:1278`). This is the fourth and last place the
-        // imported modules are iterated, and leaving it in `HashMap` order was
-        // enough on its own to keep the emitted C unstable: with the other three
-        // ordered, twenty-four compiles of one unchanged six-module program still
-        // produced twenty-four distinct files, differing only in this prototype
-        // block. With this one ordered too, thirty of thirty are identical.
+        // (src/codegen/mod.rs:1123, src/codegen/mod.rs:1208, src/codegen/mod.rs:1295).
+        // This is the fourth and last place the imported modules are iterated, and
+        // `HashMap` order here alone kept the emitted C unstable: with the other
+        // three ordered, twenty-four compiles of one unchanged six-module program
+        // still produced twenty-four distinct files, differing only in this block.
+        // Ordered too, `test_the_whole_emitted_c_is_byte_stable`'s 8 are identical.
         let mut imported_modules: Vec<_> = self.imported_modules.clone().into_iter().collect();
         imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
         for (_, module_info) in &imported_modules {

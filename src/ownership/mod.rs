@@ -55,6 +55,20 @@ pub struct Borrow {
     pub lifetime: Lifetime,
     /// Where the borrow occurs
     pub span: Span,
+    /// Depth of the scope that created this borrow, so that `exit_scope` can
+    /// end it.
+    ///
+    /// The lifetime above cannot answer that question. `Lifetime::Scope` is
+    /// declared but **never constructed** — the only two mentions in the tree
+    /// are the equality test in `exit_scope` and the `Display` arm — so the
+    /// `retain` there matched nothing and `borrows` grew monotonically for the
+    /// whole of `check_program`. Every other borrow gets `new_lifetime()`
+    /// (`Anonymous`), which nothing ends outside a call. Measured on plain
+    /// `main` before this field existed: two sibling functions that each do
+    /// `let mut v = 1; let r = &mut v;` were refused with `ConflictingBorrows`,
+    /// the second `v` colliding with the first function's borrow of a
+    /// completely different `v`.
+    pub scope: u32,
 }
 
 /// Place in memory (what can be borrowed)
@@ -85,6 +99,24 @@ pub struct OwnershipContext {
     next_temp: u32,
     /// Lifetime constraints (outlives relationships)
     constraints: Vec<LifetimeConstraint>,
+    /// Places *declared* by each open scope, innermost frame last, each paired
+    /// with whatever entry it shadowed.
+    ///
+    /// `ownership` above is a flat map with no notion of which scope put an
+    /// entry there, and `exit_scope` used to drop borrows only. So an entry
+    /// survived the binding that created it — for the whole rest of the
+    /// compilation, across block *and* function boundaries. That is only
+    /// invisible while every reader keys off "is this place moved"; the moment
+    /// a reader keys off "does this name exist here" (which
+    /// `BorrowChecker::check_expr` now does, to stop a local being laundered by
+    /// a same-named function) a dead entry becomes a live lexical binding and
+    /// refuses a valid program. Measured: `fn a()` moving a local named
+    /// `helper` made `main`'s call to the real `fn helper()` fail with
+    /// "Use of moved value: helper".
+    ///
+    /// Existence in this map is therefore made to mean *in scope*, by recording
+    /// each binder and undoing it at scope exit.
+    scope_decls: Vec<Vec<(Place, Option<Ownership>)>>,
 }
 
 /// Lifetime constraint (e.g., 'a: 'b means 'a outlives 'b)
@@ -102,20 +134,61 @@ impl OwnershipContext {
     /// Enter a new scope
     pub fn enter_scope(&mut self) {
         self.current_scope += 1;
+        self.scope_decls.push(Vec::new());
     }
 
-    /// Exit a scope, invalidating borrows
+    /// Exit a scope, invalidating borrows and retiring the scope's bindings.
     pub fn exit_scope(&mut self) {
-        let scope_lifetime = Lifetime::Scope(self.current_scope);
+        // End every borrow this scope (or anything nested in it that failed to
+        // clean up) created, and restore the ownership state of the places they
+        // borrowed. Selecting on `scope` rather than on `Lifetime::Scope` is the
+        // point: that variant is never constructed, so the retain this replaces
+        // matched nothing at all. See `Borrow::scope`.
+        let closing = self.current_scope;
+        self.release_borrows(|borrow| borrow.scope >= closing);
 
-        // Remove borrows that end with this scope
-        self.borrows
-            .retain(|borrow| borrow.lifetime != scope_lifetime);
-
-        // Clean up moved values in this scope
-        // TODO: Implement proper drop semantics
+        // Retire the bindings this scope introduced, innermost declaration
+        // first, so that a name declared twice in one scope unwinds to the
+        // entry that was there before the scope opened.
+        //
+        // Only *declarations* are undone. A move performed inside this scope on
+        // a place that belongs to an ENCLOSING scope must survive — restoring a
+        // whole snapshot of `ownership` would resurrect the moved-out value and
+        // turn a genuine use-after-move into an accept:
+        //
+        //     let s: S = S { v: 1 };
+        //     if c { let t: S = s; }   // moves the OUTER s
+        //     print_int(s.v);          // must stay refused
+        //
+        // so the undo is per-binder, not per-map.
+        if let Some(declared) = self.scope_decls.pop() {
+            for (place, shadowed) in declared.into_iter().rev() {
+                match shadowed {
+                    Some(previous) => {
+                        self.ownership.insert(place, previous);
+                    }
+                    None => {
+                        self.ownership.remove(&place);
+                    }
+                }
+            }
+        }
 
         self.current_scope -= 1;
+    }
+
+    /// Record that `place` is bound by the innermost open scope, so that
+    /// `exit_scope` can retire it.
+    ///
+    /// Deliberately does NOT touch the current ownership state: the binder's
+    /// own state is set by `init_owned` or `move_value` right after, and
+    /// pre-setting `Owned` here would make `let s: S = s;` accept a use of an
+    /// already-moved `s`.
+    pub fn declare(&mut self, place: &Place) {
+        let shadowed = self.ownership.get(place).cloned();
+        if let Some(frame) = self.scope_decls.last_mut() {
+            frame.push((place.clone(), shadowed));
+        }
     }
 
     /// End every borrow taken with `lifetime`, restoring the ownership state of
@@ -130,9 +203,20 @@ impl OwnershipContext {
     ///
     /// A place that is `Moved` stays moved — ending a borrow never revives it.
     pub fn end_borrows(&mut self, lifetime: &Lifetime) {
+        self.release_borrows(|borrow| &borrow.lifetime == lifetime);
+    }
+
+    /// Drop every borrow matching `doomed` and recompute the ownership state of
+    /// each place that lost one.
+    ///
+    /// The body is what `end_borrows` used to be; it is shared because
+    /// `exit_scope` has to end borrows too and must not re-derive this
+    /// recomputation. The only difference between the two callers is which
+    /// borrows they select.
+    fn release_borrows(&mut self, doomed: impl Fn(&Borrow) -> bool) {
         let mut affected: Vec<Place> = Vec::new();
         self.borrows.retain(|borrow| {
-            if &borrow.lifetime == lifetime {
+            if doomed(borrow) {
                 affected.push(borrow.place.clone());
                 false
             } else {
@@ -282,6 +366,7 @@ impl OwnershipContext {
                     kind: kind.clone(),
                     lifetime: lifetime.clone(),
                     span,
+                    scope: self.current_scope,
                 });
 
                 // Update ownership state

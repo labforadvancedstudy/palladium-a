@@ -299,13 +299,20 @@ scheduler.
 no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 (`docs/specification/grammar.ebnf:58-59`).
 
-**7. `.await` generates C that references a member no part of the compiler emits.**
-Codegen for an await expression emits `while (!<tmp>.poll(&<tmp>)) { }`
-(`src/codegen/mod.rs:2630-2637`) and then reads `<tmp>.result` (`src/codegen/mod.rs:2639-2641`). Nothing generates a
-`poll` member on the produced C type. This is not an error at any earlier stage — it is silent
-breakage discovered by the C compiler, and it is the failure mode `language-spec.md` §6.5 already
-recorded. The parallel defect for `?` is at `src/codegen/mod.rs:2574-2595`, which emits a
-`struct Result { int is_ok; union { ... } data; }` layout that codegen never defines.
+**7. `.await` is refused, and the lowering that used to be here is deleted.**
+Codegen for an await expression returns `await_unimplemented` at the construct's own span
+(`src/codegen/mod.rs:3081-3086`), and the type checker refuses it before that
+(`src/typeck/mod.rs:2438`). `?` is the same shape: refused in codegen
+(`src/codegen/mod.rs:3069-3073`) and in the type checker (`src/typeck/mod.rs:2431`).
+
+*Historical, and the reason those refusals exist — this paragraph described it in the present
+tense until D5 was fixed.* Codegen used to emit `while (!<tmp>.poll(&<tmp>)) { }` and then read
+`<tmp>.result`, and nothing generated a `poll` member on the produced C type; `?` used to emit a
+`struct Result { int is_ok; union { ... } data; }` layout that codegen never defined. Neither was
+an error at any earlier stage — it was silent breakage discovered by the C compiler, which is the
+failure mode `language-spec.md` §6.5 recorded. Both lowerings are gone: searching
+`src/codegen/mod.rs` for `poll(&` and `struct Result` now matches only the two comments that
+explain why the arms refuse (`src/codegen/mod.rs:3071`, `src/codegen/mod.rs:3083`).
 
 Direction of travel: making `.await` a hard compile error is *consistent* with this document,
 because `.await` is not part of the language. The end state is that neither `async` nor `await` is

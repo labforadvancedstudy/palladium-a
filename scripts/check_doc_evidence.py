@@ -143,6 +143,24 @@ CONTINUATION = re.compile(r"(?<![\w/.]):(\d+)(?:-\d+)?`")
 # mechanical form of "a pin whose excerpt does not contain the thing being claimed".
 QUOTED = re.compile(r"`([^`]{6,})`|\"([^\"]{6,})\"|'([^']{8,})'")
 
+# A cited range that cannot support any claim: it contains no word character at all.
+#
+# THIS USED TO BE A LIST OF SIX EXACT STRINGS -- "", "}", "{", "};", ")", "*/" -- and the
+# list is the defect, not the threshold. `]`, `];`, `),`, `);`, `},`, `,`, `|---|---|` and
+# every other punctuation-only line are mechanically identical to the six and were all
+# accepted, so the check named six examples of a class instead of testing the class.
+# Enumerating members of a set the world can extend is the same shape as the citation
+# fingerprints this whole gate exists to replace.
+#
+# The property is "there is nothing here to read": after whitespace normalisation, no word
+# character. `\w` is Unicode-aware in Python 3, so a prose line in any script counts as
+# substantive, and a line of only digits (`42`) does too -- it carries a value a claim can
+# be about. What is left is punctuation and whitespace, which cannot.
+#
+# See the check in `main` for why this is a hard failure and not a warning.
+def is_delimiter_only(text: str) -> bool:
+    return re.search(r"\w", norm(text)) is None
+
 
 def norm(text: str) -> str:
     return " ".join(text.split())
@@ -190,6 +208,38 @@ def strip_fenced(text: str) -> str:
     return "\n".join(out)
 
 
+def citing_sources():
+    """Every file whose `path:line` citations are pinned. -> [(rel, text)]
+
+    THE ROOTS ARE THE SAME ON BOTH SIDES, and until this function existed they were not.
+    `CITED_ROOTS` has always named src/, tests/, scripts/, stdlib/ … as legal TARGETS of a
+    citation, and the scan only ever read docs/. So a citation written in a Rust doc
+    comment or a test's header was checked by NOTHING, and `make check-docs` going green
+    said nothing about it — while those are exactly the files where this repository puts
+    its `file:line` evidence. Measured when the scan was widened: 96 citations in 18 files
+    under src/ and tests/, none of them ever pinned.
+
+    A pin proves a cited range has not MOVED. That is worth more in source than in prose,
+    not less: a comment citing `src/codegen/mod.rs:2723` is read by whoever is editing the
+    file next to it, and inserting twenty lines above the target silently repoints it at
+    something unrelated. Editing source is how citations move; docs/ is where they were
+    being checked.
+
+    Fences are stripped from Markdown only. In a Rust doc comment a fence is written
+    `/// ```text`, which `FENCE` does not match, so nothing here depends on stripping —
+    and leaving it unstripped is the conservative direction: a citation inside a doc fence
+    gets pinned rather than exempted.
+    """
+    out = []
+    for doc in (sorted(ROOT.glob("docs/**/*.md")) + sorted(ROOT.glob("docs/**/*.toml"))
+                + sorted(ROOT.glob("src/**/*.rs")) + sorted(ROOT.glob("tests/**/*.rs"))):
+        text = doc.read_text(encoding="utf-8", errors="replace")
+        if doc.suffix == ".md":
+            text = strip_fenced(text)
+        out.append((str(doc.relative_to(ROOT)), text))
+    return out
+
+
 def collect_citations() -> list[tuple[str, str, str, str, str]]:
     """-> (path, 'start-end', citing-doc, fingerprint-of-the-WHOLE-range, excerpt)
 
@@ -197,12 +247,7 @@ def collect_citations() -> list[tuple[str, str, str, str, str]]:
     Fingerprinting only the first line let everything in `path:49-228` change while green.
     """
     out = []
-    docs = (sorted(ROOT.glob("docs/**/*.md")) + sorted(ROOT.glob("docs/**/*.toml")))
-    for doc in docs:
-        text = doc.read_text(encoding="utf-8")
-        if doc.suffix == ".md":
-            text = strip_fenced(text)
-        rel = str(doc.relative_to(ROOT))
+    for rel, text in citing_sources():
         for m in CITATION.finditer(text):
             path_str, start = m.group(1), int(m.group(2))
             end = int(m.group(3)) if m.group(3) else start
@@ -231,13 +276,15 @@ def collect_continuations() -> list[tuple[str, str]]:
     window and no filename requirement — any `:NNN` backtick shorthand outside a fenced
     block fails, and the author writes the full path. The corpus was swept to zero first,
     so this costs nothing and closes the hole rather than narrowing it.
+
+    SAME CORPUS AS THE PINS (see citing_sources): source and tests are scanned too, and
+    the sweep to zero was repeated there — 21 shorthands in 6 files, all rewritten to full
+    paths. A `(`:1193`, `:1278`)` written in a codegen comment is exactly the form this
+    rule exists to refuse: it is unpinnable, so it cannot be told from a citation that has
+    silently drifted, and every one of those six files is a file whose line numbers move.
     """
     out = []
-    for doc in sorted(ROOT.glob("docs/**/*.md")) + sorted(ROOT.glob("docs/**/*.toml")):
-        text = doc.read_text(encoding="utf-8")
-        if doc.suffix == ".md":
-            text = strip_fenced(text)
-        rel = str(doc.relative_to(ROOT))
+    for rel, text in citing_sources():
         for m in CONTINUATION.finditer(text):
             out.append((rel, text[max(0, m.start() - 60):m.end()].strip()))
     return out
@@ -1380,6 +1427,18 @@ def main() -> int:
     # scripts/gate-receipts.sh asks for the distinct commands, runs each once, then hands
     # the receipts back. The receipts are read only when that same invocation passes the
     # directory, so a stale directory from an earlier run cannot be picked up by accident.
+    # `--classify-target` exists for scripts/test-doc-evidence.sh. The delimiter-only
+    # floor lives on the citation-pin path, which needs the real docs corpus and is
+    # therefore unreachable from `--index-only` — the mode every other control uses. So
+    # the PREDICATE is addressable on its own, and the harness asserts the class over
+    # inputs it supplies rather than over whatever the corpus happens to contain today.
+    # That is the point of the change it guards: the corpus is not a specification of
+    # which lines are delimiter-only.
+    if "--classify-target" in sys.argv:
+        text = sys.argv[sys.argv.index("--classify-target") + 1]
+        print("delimiter-only" if is_delimiter_only(text) else "substantive")
+        return 0
+
     if "--list-gate-commands" in sys.argv:
         for c in list_gate_commands():
             print(c)
@@ -1458,6 +1517,26 @@ def main() -> int:
         for key, (f, x) in sorted(have.items()):
             if f in ("MISSING-FILE", "OUT-OF-RANGE"):
                 fail.append(f"citation {key[0]}:{key[1]} in {key[2]} -> {f}")
+            elif is_delimiter_only(x):
+                # A CITATION WHOSE TARGET IS BLANK IS NOT A WEAK CITATION; IT IS AN
+                # ABSENT ONE. Everything else here checks that a cited range has not
+                # MOVED, and a fingerprint of "" or "}" is perfectly stable — so sixteen
+                # citations pointing at whitespace and bare braces sat green here
+                # indefinitely, seven of them in a specification paragraph whose every
+                # factual claim had since become false. Pinning one is worse than leaving
+                # it unpinned: it converts "nobody checked this" into "the gate is
+                # satisfied". `--update` cannot launder it, because --update returns
+                # before this branch and the next verifying run fails on the new pin.
+                #
+                # This is a floor, not a semantic check. A range CAN be non-blank and
+                # still not support its claim — that reading is the reviewer's job, and
+                # the excerpt column exists for it (see the header written into
+                # docs/citation-pins.tsv). What the floor removes is the case where there
+                # is provably nothing to read.
+                fail.append(
+                    f"citation {key[0]}:{key[1]} in {key[2]} targets {x.strip()!r} — "
+                    f"a blank line or a bare delimiter supports no claim. Repoint it at "
+                    f"the line that does, or delete the claim if no line does.")
             elif key not in want:
                 fail.append(f"citation {key[0]}:{key[1]} in {key[2]} is unpinned "
                             f"(run --update)")

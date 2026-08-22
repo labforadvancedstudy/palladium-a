@@ -210,9 +210,10 @@ impl CompileError {
     /// Raised without inspecting the operand, so the wording may not assume one
     /// — `3?` and `unknown()?` reach here too. It also may not imply that the
     /// `match` alternative generalises further than it does: code generation
-    /// skips generic enum definitions entirely (`src/codegen/mod.rs:841`,
-    /// `:909`, `:929`), so `Result<T, E>` is not a compilable replacement and
-    /// the help says so rather than leaving the reader to discover it.
+    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1151-1152`,
+    /// `src/codegen/mod.rs:1225`, `src/codegen/mod.rs:1245`), so `Result<T, E>` is
+    /// not a compilable replacement and the help says so rather than leaving the
+    /// reader to discover it.
     ///
     /// Every clause is receipted in `tests/d5_unimplemented_constructs.rs`:
     /// `question_workaround_compiles_and_runs` (dispatch),

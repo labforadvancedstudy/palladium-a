@@ -226,20 +226,31 @@ inner type — "For now, treat references as the inner type / TODO: Proper refer
 relation could be inferred even if the machinery existed.
 
 **5. What exists instead is a move/initialization discipline.**
-`src/ownership/borrow_checker.rs` (1165 lines) tracks moves and conflicting borrows over a scope
-counter (`Lifetime` enum at `src/ownership/mod.rs:27`, scope lifetimes at
-`src/ownership/mod.rs:109`). Whatever its defects, that is a different mechanism, not partial
+`src/ownership/borrow_checker.rs` tracks moves and conflicting borrows over a scope
+counter (`Lifetime` enum at `src/ownership/mod.rs:27`, the counter itself at
+`src/ownership/mod.rs:95`, and the scope a borrow was taken in at
+`src/ownership/mod.rs:71`). Whatever its defects, that is a different mechanism, not partial
 delivery of this one: a scope counter is not region inference, and no amount of fixing it produces
 inferred lifetimes.
+
+The counter is a plain `u32` depth, and it is deliberately not routed through `Lifetime` at all:
+`Lifetime::Scope` is a declared variant that nothing ever constructs, so while `exit_scope` was
+written to release borrows by comparing against it, it released none and `borrows` accumulated for
+the whole compilation. Ending a borrow at its scope is now decided by the recorded depth
+(`src/ownership/mod.rs:148`) rather than by a lifetime value — which is the point of this
+document restated from the other side: the pass has scopes, and it has never had regions.
 
 *A previous version of this paragraph asserted a live defect here — that a call argument is
 borrowed as `Lifetime::Named("fn")` and never released, so a value cannot be passed twice. That is
 false and is retracted: the defect was real, it is D6, and it was fixed in commit `191f8c1`, before
-this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:597`) and end
-its borrows when the call finishes (`src/ownership/borrow_checker.rs:603`). Five probes are in
-[`language-spec.md` A9.4](../../../specification/language-spec.md#a94-defect-d6-retracted). The
-defect that IS live is `&mut` of an immutable local, which the borrow checker accepts for struct
-types ([A9.3](../../../specification/language-spec.md#a93-mut-of-an-immutable-local-is-accepted)).*
+this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:800`) and end
+its borrows when the call finishes (`src/ownership/borrow_checker.rs:806`). Five probes are in
+[`language-spec.md` A9.4](../../../specification/language-spec.md#a94-defect-d6-retracted). This
+paragraph then named `&mut` of an immutable local as the defect that WAS live; that one is fixed
+too, and re-measured it is refused for struct, array and scalar referents alike
+([A9.3](../../../specification/language-spec.md#a93-mut-of-an-immutable-local-is-refused-was-accepted)).
+The scalar spelling `&mut i64` remains broken for a different reason — it reaches gcc, which
+rejects the generated C.*
 
 ## Design intent, not measurements
 

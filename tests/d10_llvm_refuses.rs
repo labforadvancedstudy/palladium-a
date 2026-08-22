@@ -265,7 +265,8 @@ fn main() {
 ///
 /// `439b241` made the type checker refuse both, which runs before backend
 /// selection in `Driver::compile_string` (typecheck at `src/driver/mod.rs:109`,
-/// codegen at `:184`). So under `--llvm` these two report the type checker's
+/// backend selection at `src/driver/mod.rs:195-196`). So under `--llvm` these two
+/// report the type checker's
 /// diagnostic, not the backend's.
 ///
 /// This is asserted rather than assumed because the two guards protect against
@@ -375,8 +376,9 @@ fn the_default_backend_still_compiles_what_llvm_now_refuses() {
 //
 // Everything above drives `Driver::with_llvm()`, which leaves the two hops
 // between a user typing `--llvm` and that call unpinned: clap's parsing
-// (`src/cli.rs:43-45`, `:61-63`) and the dispatch that turns the parsed flag
-// into `driver.with_llvm()` (`src/main.rs:114-116`, `:149-151`). A test that
+// (`src/cli.rs:43-45`, `src/cli.rs:61-63`) and the dispatch that turns the parsed
+// flag into `driver.with_llvm()` (`src/main.rs:114-116`, `src/main.rs:149-151`).
+// A test that
 // asserts a refusal while calling past the flag is asserting the wrong claim —
 // the claim is about the flag.
 //

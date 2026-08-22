@@ -405,11 +405,38 @@ impl TypeChecker {
     }
 
     /// Set imported modules for type checking
+    ///
+    /// Modules are visited in SORTED key order, not `HashMap` order — the seventh
+    /// site of the class the rest of this branch fixes, and the only one where the
+    /// hash seed reaches the program's ANSWER rather than only the order of the
+    /// emitted C.
+    ///
+    /// Every insert below is under the BARE name as well as the qualified one
+    /// (`src/typeck/mod.rs:461-462`, `src/typeck/mod.rs:482`,
+    /// `src/typeck/mod.rs:497`), and the map is last-writer-wins. So when two
+    /// imported modules export the same name, iteration order decides which
+    /// signature — and, for a generic, which BODY — survives. `get_instantiations`
+    /// reads `generic_functions` by bare name and hands the winner to codegen's
+    /// monomorphizer, so with
+    ///
+    /// ```text
+    /// liba.pd:  pub fn pick<T>(v: T) -> i64 { return 111; }
+    /// libb.pd:  pub fn pick<T>(v: T) -> i64 { return 222; }
+    /// ```
+    ///
+    /// imported together, twenty compiles of one unchanged program printed 111 ten
+    /// times and 222 ten times. Sorting does not make the choice CORRECT — two
+    /// modules exporting one name is a real ambiguity nothing diagnoses, and
+    /// `test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc` declares
+    /// that — but it makes it the same wrong answer every run, which is the
+    /// precondition for anyone noticing it is wrong.
     pub fn set_imported_modules(&mut self, modules: HashMap<String, crate::resolver::ModuleInfo>) {
         self.imported_modules = modules;
 
         // Process imported functions and add them to our function table
-        for (module_name, module_info) in &self.imported_modules {
+        let mut sorted_modules: Vec<_> = self.imported_modules.iter().collect();
+        sorted_modules.sort_by_key(|(name, _)| *name);
+        for (module_name, module_info) in sorted_modules {
             // For now, process all exported functions from the module
             for item in &module_info.ast.items {
                 match item {
@@ -828,6 +855,40 @@ impl TypeChecker {
                 }
             }
         }
+
+        // Third pass: type check the bodies of the imported modules.
+        //
+        // Same reason as the borrow checker's third pass
+        // (`src/ownership/borrow_checker.rs`, "Third pass"): making an imported
+        // signature callable without ever visiting the body behind it means the
+        // compiler accepts code it has not checked. Measured before this,
+        // `pub fn broken() -> i64 { let s = "x"; return s; }` in a module printed
+        // "Compilation successful" and then died in gcc with "incompatible pointer
+        // to integer conversion returning 'const char *'" — a C diagnostic against
+        // code the user never wrote, which is the class of failure this pass exists
+        // to remove.
+        //
+        // No generic guard here: `check_function` already returns early for a
+        // function with type parameters, so imported generics are treated exactly
+        // as local ones are — checked at instantiation, not at declaration.
+        //
+        // Module order is sorted for the same reason `set_imported_modules` sorts:
+        // when two modules both fail, WHICH error the user is shown must not depend
+        // on the hash seed.
+        let modules = std::mem::take(&mut self.imported_modules);
+        let mut module_names: Vec<&String> = modules.keys().collect();
+        module_names.sort();
+        for module_name in module_names {
+            for item in &modules[module_name].ast.items {
+                if let Item::Function(func) = item {
+                    if !matches!(func.visibility, crate::ast::Visibility::Public) {
+                        continue;
+                    }
+                    self.check_function(func)?;
+                }
+            }
+        }
+        self.imported_modules = modules;
 
         Ok(())
     }
@@ -2933,12 +2994,26 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:3293-3310`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:3295-3359`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
     /// selection correct; it makes it reproducible, which is the precondition
     /// for ever seeing that it is wrong.
+    ///
+    /// AND IT IS WRONG. The cited range covers the whole function, including its
+    /// silent default, because that is where the defect lives: the match loop
+    /// accepts ANY type argument in ANY position, so `fn snd<A, B>(a: A, b: B)`
+    /// instantiated at both `(i64, String)` and `(i64, i64)` resolves the call
+    /// `snd(1, 2)` against the first sorted key — `(i64, String)`, since `S` sorts
+    /// before `i`. Measured: the emitted C contains both `snd__i64_String` and
+    /// `snd__i64_i64`, and calls `snd__i64_String(1, 2)`; the correct
+    /// monomorphization is emitted and never called. When nothing matches at all
+    /// the function still returns the first entry rather than `None`, with no
+    /// diagnostic. Sorting made that reproducible instead of a coin flip, which is
+    /// how it became visible. It is declared as
+    /// `test_a_generic_call_resolves_to_its_own_monomorphization` and is owned by
+    /// M4, not by this branch.
     ///
     /// This matters for the same reason the module ordering does: `make selfhost`
     /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
@@ -2969,6 +3044,17 @@ impl TypeChecker {
     /// [`TypeChecker::get_instantiations`]: this list decides the order in which
     /// codegen emits monomorphized struct definitions, and a `HashMap` key order
     /// would make that depend on the per-process hash seed.
+    ///
+    /// NOT COVERED BY ANY TEST, and it cannot be until generic structs compile.
+    /// The sentence above states what this ordering WOULD decide; no program can
+    /// currently reach it, because `struct Box<T> { v: T }` lowers to `void*` and
+    /// gcc rejects "initializing 'void *' with an expression of incompatible type
+    /// 'struct Box_alpha_i64'". So this is sorted for symmetry with its sibling,
+    /// and this paragraph — not the one above it — is the honest statement of its
+    /// coverage. The same statement appears beside the test that covers the
+    /// sibling (`tests/m3_imported_calls.rs`,
+    /// `test_generic_instantiations_are_emitted_in_a_stable_order`), because a
+    /// reader who arrives at either one should not have to find the other.
     pub fn get_struct_instantiations(&self) -> Vec<(String, Vec<String>, GenericStruct)> {
         let mut result = Vec::new();
 
@@ -3165,7 +3251,8 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:2459`, `:2606`). That is not what these diagnostics
+    /// (`src/parser/mod.rs:2613-2621`, `src/parser/mod.rs:2466-2474`). That is not
+    /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this
     /// test, and no other, which is the point of keeping it apart from the

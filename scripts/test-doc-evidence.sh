@@ -1041,6 +1041,65 @@ index undeclared unimplemented \
 expect_red undeclared "an undeclared fixture is rejected" "not declared in"
 
 echo
+echo "== the blank-target floor tests a PROPERTY, not a list of examples =="
+
+# CASES 33-45. The floor used to be `BLANK_TARGETS = frozenset(("", "}", "{", "};", ")",
+# "*/"))` -- six exact strings. `]`, `];`, `),`, `);`, `},`, a bare comma and a markdown
+# rule are mechanically identical to those six and every one of them was ACCEPTED, so the
+# check named six members of a class instead of testing the class. Six strings do not
+# represent "delimiter-only", and the corpus is not a specification of which lines are.
+#
+# WHY THESE ARE DRIVEN THROUGH `--classify-target` AND NOT THROUGH AN INDEX. The floor
+# lives on the citation-pin path, which reads the real docs corpus; `--index-only` -- the
+# mode every case above uses -- returns before it. Pointing the gate at a throwaway corpus
+# would mean reimplementing the corpus, so the PREDICATE is addressed directly and the
+# inputs are supplied here. That keeps the expectations in the harness rather than in
+# whatever happens to be checked in today.
+#
+# The negative half (`substantive`) is as load-bearing as the positive: a predicate that
+# answers "delimiter-only" to everything passes all six positives and fails no example,
+# and it would reject the entire corpus. `42` and the Korean line are in it because `\w`
+# is Unicode-aware and digit-inclusive, which is the behaviour being relied on.
+classify() {
+  python3 scripts/check_doc_evidence.py --classify-target "$1" 2>&1
+}
+
+# expect_class <expected> <input> <case label>
+expect_class() {
+  local want=$1 input=$2 case=$3 got
+  got=$(classify "$input")
+  if [ "$got" = "$want" ]; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$case"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$case"
+    printf '         (expected %s, got %s)\n' "$want" "$got"
+    fail=$((fail+1))
+  fi
+}
+
+# The six the enumeration already knew. They must keep working.
+expect_class delimiter-only ""    "a blank target supports no claim"
+expect_class delimiter-only "}"   "a bare closing brace supports no claim"
+expect_class delimiter-only "{"   "a bare opening brace supports no claim"
+expect_class delimiter-only "};"  "a braced statement terminator supports no claim"
+expect_class delimiter-only ")"   "a bare closing paren supports no claim"
+expect_class delimiter-only "*/"  "a bare comment terminator supports no claim"
+
+# The ones the enumeration MISSED. Each of these was green before the predicate.
+expect_class delimiter-only "]"          "a bare closing bracket supports no claim (missed by the list)"
+expect_class delimiter-only "];"         "a bracketed statement terminator supports no claim (missed by the list)"
+expect_class delimiter-only "),"         "a paren followed by a comma supports no claim (missed by the list)"
+expect_class delimiter-only ");"         "a paren followed by a semicolon supports no claim (missed by the list)"
+expect_class delimiter-only "},"         "a brace followed by a comma supports no claim (missed by the list)"
+expect_class delimiter-only "  }  "      "whitespace around a delimiter is normalised away"
+expect_class delimiter-only "# ========" "a comment rule of punctuation supports no claim (found one in grammar.ebnf)"
+
+# The negative half: a floor that rejects everything is not a floor.
+expect_class substantive "return b.v;"  "a real statement is substantive"
+expect_class substantive "42"           "a bare number is substantive: a claim can be about a value"
+expect_class substantive "안녕"          "a non-ASCII prose line is substantive (\\w is Unicode-aware)"
+
+echo
 echo "=============================================="
 if [ "$fail" -eq 0 ]; then
   echo "${GREEN}doc-evidence gate probe green${NC} -- $pass case(s): the gate passes a true"

@@ -87,7 +87,7 @@ fn main() {
 fn test_syntax_error_missing_semicolon() {
     // The statement whose semicolon is missing must not be the last thing in
     // the block. `block = '{' { statement } [ expression ] '}'`
-    // (docs/specification/grammar.ebnf:174), so a call with no semicolon at the
+    // (docs/specification/grammar.ebnf:187), so a call with no semicolon at the
     // end of a body is a *trailing expression* and compiles — which is why this
     // test used to fail: it asserted an error for a legal program.
     let source = r#"

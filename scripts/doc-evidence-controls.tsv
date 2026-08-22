@@ -111,3 +111,19 @@ an explicit base cannot make an inapplicable inventory apply	kill	applies-first
 a recursive read from a root containing build output is refused	kill	artifact-ancestor
 -R is refused: it follows symlinks out of the checkout	kill	grep-deref
 no workflow env, job env or run step supplies a base to the coverage runner	kill	ci-no-base
+a blank target supports no claim	guard	the six the enumeration knew must keep failing under either implementation
+a bare closing brace supports no claim	guard	the six the enumeration knew must keep failing under either implementation
+a bare opening brace supports no claim	guard	the six the enumeration knew must keep failing under either implementation
+a braced statement terminator supports no claim	guard	the six the enumeration knew must keep failing under either implementation
+a bare closing paren supports no claim	guard	the six the enumeration knew must keep failing under either implementation
+a bare comment terminator supports no claim	guard	the six the enumeration knew must keep failing under either implementation
+a bare closing bracket supports no claim (missed by the list)	kill	blank-targets
+a bracketed statement terminator supports no claim (missed by the list)	kill	blank-targets
+a paren followed by a comma supports no claim (missed by the list)	kill	blank-targets
+a paren followed by a semicolon supports no claim (missed by the list)	kill	blank-targets
+a brace followed by a comma supports no claim (missed by the list)	kill	blank-targets
+whitespace around a delimiter is normalised away	kill	blank-targets
+a comment rule of punctuation supports no claim (found one in grammar.ebnf)	kill	blank-targets
+a real statement is substantive	guard	a floor that rejects every citation is not a floor
+a bare number is substantive: a claim can be about a value	guard	a floor that rejects every citation is not a floor
+a non-ASCII prose line is substantive (\w is Unicode-aware)	guard	a floor that rejects every citation is not a floor

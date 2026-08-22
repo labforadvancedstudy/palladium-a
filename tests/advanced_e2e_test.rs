@@ -124,7 +124,7 @@ fn test_generic_pair() {
 }
 
 #[test]
-#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:105 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
+#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:118 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
 fn test_trait_implementation() {
     let source = r#"
     trait Drawable {
@@ -353,7 +353,7 @@ fn test_closure_capture() {
 }
 
 #[test]
-#[ignore = "XFAIL: function types — grammar.ebnf:137 'No function types'; a parameter declared `f: fn(T) -> U` stops the parser at 'fn' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: function types — grammar.ebnf:150 'No function types'; a parameter declared `f: fn(T) -> U` stops the parser at 'fn' (owned by M4, 'Abstraction')"]
 fn test_higher_order_functions() {
     let source = r#"
     fn map<T, U>(arr: [T; 5], f: fn(T) -> U) -> [U; 5] {
@@ -416,7 +416,7 @@ fn test_async_await() {
 }
 
 #[test]
-#[ignore = "XFAIL: effect declarations — grammar.ebnf:86 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:99 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_effects_system() {
     let source = r#"
     effect IO {

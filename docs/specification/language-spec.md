@@ -473,7 +473,7 @@ command that was run.
 | [N9 References and lifetimes](#n9-references-and-lifetimes) | unimplemented | [A9](#a9-memory-model) — `ref` is not a keyword; no region inference |
 | [N10 Traits and generics](#n10-traits-and-generics) | unimplemented | [A4.4](#a44-traits), [A5](#a5-types) |
 | [N11 Modules](#n11-modules) | partial | [A3](#a3-program-structure) — `import` works; no `mod` item |
-| [N12 Memory model](#n12-memory-model) | partial | [A9](#a9-memory-model) — checked but not typed; `String` is Copy; array parameters [A9.2](#a92-array-parameters); `&mut` of an immutable local accepted [A9.3](#a93-mut-of-an-immutable-local-is-accepted) |
+| [N12 Memory model](#n12-memory-model) | partial | [A9](#a9-memory-model) — checked but not typed; `String` is Copy; array parameters [A9.2](#a92-array-parameters); `&mut` of an immutable local refused [A9.3](#a93-mut-of-an-immutable-local-is-refused-was-accepted) |
 | [N13 Execution model](#n13-execution-model) | implemented | [A10](#a10-execution-model) |
 | [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtins) — 38 builtins exist against a normative 34; signatures differ; `stdlib/` does not parse |
 
@@ -485,14 +485,6 @@ The pipeline (`src/driver/mod.rs:49`) is:
 lex → parse → macro expand → resolve imports → typecheck → borrow check
     → effect analysis (informational only) → unsafe check → optimize → C codegen → gcc
 ```
-
-The C backend is the real backend. An LLVM text backend exists
-(`src/codegen/llvm_text_backend.rs`, 1442 lines) but is skeletal: `break` and `continue` emit
-`br label %loop_end_placeholder` under a TODO (`src/codegen/llvm_text_backend.rs:914`, `src/codegen/llvm_text_backend.rs:921`), `match` is a TODO if/else chain
-(`src/codegen/llvm_text_backend.rs:933`), and enum construction, `?`, macro invocation and `await` are one unimplemented TODO
-together (`src/codegen/llvm_text_backend.rs:1379`). It also bails on ordinary code — "Unsupported iterator type in for loop"
-(`src/codegen/llvm_text_backend.rs:820`), "Unsupported binary operator" (`src/codegen/llvm_text_backend.rs:1081`), "Complex function calls not yet supported"
-(`src/codegen/llvm_text_backend.rs:1222`). No conformance row exercises it.
 
 Generated C is linked against `runtime/palladium_runtime.c`, which supplies 16 file/path symbols.
 `pdc` resolves that runtime relative to its own install location — `pdc --print-runtime` shows
@@ -625,8 +617,8 @@ enums.
 **partial** — field types that parse and then fail in codegen (all three corrected from v0.2,
 which was ~250 lines low):
 - generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1680`)
-- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1391`)
-- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1401`)
+- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1685`)
+- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1695`)
 
 ### A4.3 Enums
 
@@ -637,8 +629,8 @@ field (`src/parser/mod.rs:379`, `src/ast/mod.rs:139`).
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:752`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1013`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:795-797`, corrected
-from `src/typeck/mod.rs:947`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1013`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:822-824`, corrected
+from `src/typeck/mod.rs:1008`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:876`, corrected from line 863–897 of the pre-cleanup revision).
 
@@ -682,8 +674,8 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:2064`, corrected from line 2038 of the pre-cleanup revision) |
-| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:2062-2070` (corrected from line 2037–2043 of the pre-cleanup revision) |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:2073`) |
+| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:2071-2079` |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
@@ -719,11 +711,14 @@ methods and no `?`. Declaring one does not make `?` work: the operator is reject
 [A6.5](#a65-question-mark-async-and-await)), because nothing lowers it onto the representation your
 enum is compiled to. Use `match`.
 
-**unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
-They are ordinary user enums if you declare them. The only special-casing is that `?` typechecks
-against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2521`, corrected from line 2495 of the pre-cleanup revision) — and
-then generates C for a `struct Result` layout that codegen never emits (see
-[A6.5](#a65-question-mark-async-and-await)).
+*A second paragraph stood here, opening with the same three bold words and contradicting the
+one above: it said `?` "typechecks against a `Generic{name:"Result"}` shape" and "then
+generates C for a `struct Result` layout that codegen never emits". Both halves described the
+pre-D5 compiler. There is no `Result` special-casing left in the type checker at all —
+searching `src/typeck/mod.rs` for the string `Result` as a type name returns nothing — and
+neither backend emits that layout; `?` is refused in both. The citation it carried had drifted
+onto a generic-enum arm that has nothing to do with `Result`. Deleted rather than corrected,
+because the paragraph above is the correction.*
 
 ## A6. Statements and expressions
 
@@ -772,7 +767,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 - partial: ranges outside a `for` header — codegen error "Range expressions can only be used in
   for loops" (`src/codegen/mod.rs:2493-2496`, corrected from line 2121 of the pre-cleanup revision).
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:2722`, corrected from line 1874 of the pre-cleanup revision).
+  (`src/typeck/mod.rs:2783`, corrected from line 1874 of the pre-cleanup revision).
 
 **partial — precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for
 its right operand (`src/parser/mod.rs:1990`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
@@ -783,7 +778,7 @@ requires `a * -b`.
 
 **unimplemented.** `x.f()` parses as a call whose callee is a field access, and the typechecker
 rejects exactly that: **"Indirect function calls not yet supported"**
-(`src/typeck/mod.rs:1562`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
+(`src/typeck/mod.rs:1623`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
 
 *(v0.2 also claimed a "same guard" in codegen at line 1870 of the pre-cleanup revision.
 `grep -n 'Indirect function calls' src/codegen/mod.rs` returns nothing; there is no such guard in
@@ -799,12 +794,13 @@ breakage", describing C that referenced an undefined `struct Result` layout and 
 nothing generated. Defect D5 was fixed on `main` in commit `439b241`; both are now refused at
 typecheck. The silent-breakage description is retracted.)*
 
-- `?` generates C that references a `struct Result { int is_ok; union {…} data; }` layout which
-  **no other part of codegen emits** — user enums are generated with a `.tag` field and
-  `__Enum__Variant` constants instead (`src/codegen/mod.rs:2574-2595`, corrected from line 2160–2201 of the pre-cleanup revision). The result is C that does not compile.
-- `.await` emits `while (!<tmp>.poll(&<tmp>)) { }` and then reads `<tmp>.result`, calling a `poll`
-  member that is never generated (`src/codegen/mod.rs:2630-2641`, corrected from line 2208–2237 of the pre-cleanup revision —
-  which is the builtin-name mapping table, unrelated).
+*Two bullets stood here restating the retracted description in the PRESENT tense — "`?`
+generates C that references a `struct Result` layout", "`.await` emits
+`while (!<tmp>.poll(&<tmp>)) { }`" — three lines after the retraction above and thirty before
+"What they used to do" below said the same thing in the past tense. A reader could not tell
+which paragraph described the compiler. They are deleted, not repointed: their line citations
+had drifted onto an enum-variant lookup and a bare `));` respectively, so they were not
+evidence for the claim either way.*
 
 ```
 error: the `?` operator is not implemented
@@ -835,8 +831,9 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`src/typeck/mod.rs:2356`, `src/typeck/mod.rs:2363`) and again by code
-generation (`src/codegen/mod.rs:2535`, `src/codegen/mod.rs:2547`), which is callable on its own.
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:2431`, `.await` at
+`src/typeck/mod.rs:2438`) and again by code generation (`?` at `src/codegen/mod.rs:3069-3073`,
+`.await` at `src/codegen/mod.rs:3081-3086`), which is callable on its own.
 
 What they used to do:
 
@@ -845,7 +842,7 @@ What they used to do:
   constants instead. gcc reported `variable has incomplete type 'struct Result'`.
 - `.await` emitted `while (!f.poll(&f)) {}`. C has no member function calls, and the poll
   routine that *is* generated is the free function `<name>_poll`
-  (`src/codegen/mod.rs:2616`), which that call never names. There is no async runtime.
+  (`src/codegen/mod.rs:3132`), which that call never names. There is no async runtime.
 
 Both lowerings are deleted rather than kept behind a flag: they encoded a representation a real
 implementation must not reuse, and version control holds them.
@@ -949,7 +946,7 @@ pattern = "_"
 (`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
 bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1349`,
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1410`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
 (`src/codegen/mod.rs:1982`, `src/codegen/mod.rs:2003-2014`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
@@ -1043,7 +1040,7 @@ cases (`examples/practical/simple_sort.pd`, `tests/misc/test_vec_i64.pd` both fa
 "Conflicting borrows"). Re-measured at `abeb665`: `test_vec_i64.pd` now **compiles**, and
 `simple_sort.pd` fails with "Unsupported type in reference parameter", not a borrow error. The
 v0.2 sentence is retracted; the surviving borrow-checker defect is
-[A9.3](#a93-mut-of-an-immutable-local-is-accepted).)*
+[A9.3](#a93-mut-of-an-immutable-local-is-refused-was-accepted).)*
 
 **[N9](#n9-references-and-lifetimes) is unimplemented in full.** `ref` is not a keyword; the
 implemented spelling is Rust's `&`/`&mut` **with** `'a` parameter lists — the exact annotation
@@ -1165,49 +1162,33 @@ reference type in the type checker to carry the permission (§5). A complete mod
 that is M4's work, not this rule's. Until then this rule buys exactly one property: an array
 write that reaches the caller can only come from a spelling that declared it.
 
-## 10. Execution model
+#### The stale account that used to sit here
 
-The normative question is open ([N12.1](#n121-array-parameters-open-decision)). What the
-implementation does is not open, and it is the same for all three spellings.
+An orphan `## 10. Execution model` section stood between A9.2 and A9.3 and gave a
+DIFFERENT account of the same current behaviour, measured at `abeb665`: that
+`&mut [i64; 3]` "does not compile: Unsupported type in reference parameter", that a bare
+`[i64; 3]` parameter mutates its caller "with **no diagnostic**", and that therefore the
+implementation was "wrong in both directions at once". Every one of those three was true
+before D9 and is false now; A9.2's table above is the measured behaviour. Re-measured:
+`&mut [i64; 3]` compiles and the write is caller-visible; a write through a bare `[T; N]`
+parameter is a code-generation error naming the undecided semantics; `mut a: [T; N]`
+compiles and writes through.
 
-A `[T; N]` parameter is lowered to a C array declarator (`src/codegen/mod.rs:1055`), which decays
-to a pointer. **No spelling copies.** Measured at `abeb665`:
+It is deleted rather than corrected because nothing in it was both true and unique: the
+open normative question and its Option A / Option B consequences are
+[N12.1](#n121-array-parameters-open-decision), which is where they belong and where they
+are stated at more length, and the interim rule it described is the table above. It was
+also a `## 10.` heading inside `## A9`, duplicating [A10](#a10-execution-model) — which is
+how a whole section came to be stale without any reader noticing it was there.
 
-| Spelling | Result |
-|---|---|
-| `mut a: [i64; 3]` | compiles; generated C is `void bump(long long a[3]);` — a write is caller-visible. Program prints `99`. |
-| `a: [i64; 3]` (no `mut`) | compiles; a write is caller-visible; **no diagnostic**. Program prints `99`. |
-| `a: &mut [i64; 3]` | does not compile: "Unsupported type in reference parameter" (`src/codegen/mod.rs:2007`). |
 
-So today the reference spellings are not an alternative to the bare one — one of them is rejected
-outright, and the other two behave identically.
+### A9.3 `&mut` of an immutable local is refused (was: accepted)
 
-Consequence for whichever ruling lands:
-
-- **Option A (value semantics)** would make this row **unimplemented**, and the gap is exactly
-  `src/codegen/mod.rs:1055`: it emits a decayed declarator where a copy is required.
-- **Option B (reference semantics)** would make this row **partial at best — never implemented**,
-  because Option B is not "what the compiler already does". It needs a further rule that does not
-  exist yet: either the reference spellings are forbidden, or `&mut [T; N]` becomes the required
-  spelling for a parameter written through. Current behaviour satisfies neither. It permits
-  mutation through a bare non-`mut` array with no diagnostic, and it rejects `&mut [T; N]`
-  outright, so under Option B the implementation is wrong in both directions at once.
-
-The interim behaviour on the codegen branch — refusing writes except through `&mut [T; N]` and
-`mut xs: [T; N]` — enforces [`bootstrap-subset.md`](bootstrap-subset.md)'s existing convention
-("Struct and array parameters are always declared `mut`"), which
-`benchmarks/palladium/bubble_sort.pd:11` already follows. That is the right placeholder: it invents
-nothing.
-
-> Note on a citation inherited from `bootstrap-subset.md`: that file attributes the move
-> classification to `src/ownership/borrow_checker.rs:262-268`. At `abeb665` those lines are
-> `fn collect_function_sig`. The same `f323cf1` drift described in §0 affects that file too; it was
-> not in this change's scope to repair.
-
-### A9.3 `&mut` of an immutable local is accepted
-
-[N12](#n12-memory-model) requires that `&mut` be takeable only of a `mut` binding. The
-implementation does not enforce it for struct types. Measured at `abeb665`:
+[N12](#n12-memory-model) requires that `&mut` be takeable only of a `mut` binding, and the
+implementation now enforces it for every referent kind. The check is
+`check_mutable_borrow_allowed` (`src/ownership/borrow_checker.rs:1049`), which reads the
+`mutable_bindings` map described in [A9.2](#a92-array-parameters); a name no binder
+registered is refused rather than permitted.
 
 ```
 struct S { x: i64 }
@@ -1215,28 +1196,36 @@ fn bump(s: &mut S) { s.x = 77; }
 fn main() { let v: S = S { x: 1 }; bump(&mut v); print_int(v.x); }
 ```
 
-compiles, links, and prints `77` — an immutable local mutated, with no diagnostic from the borrow
-checker (`src/ownership/borrow_checker.rs:59`, where `ParamMode::Move` and the borrow modes are
-defined; there is no mutability check on the referent).
+is refused with "cannot borrow `v` as mutable: it is not declared mutable". With
+`let mut v` it compiles, links and prints `77`.
 
-Scope of the defect, measured: it reproduces for **struct** referents. It does not reproduce for
-arrays (`&mut [T; N]` is rejected earlier, [A9.2](#a92-array-parameters)) and not for `i64`
-(`&mut i64` produces C that gcc rejects). A brief handed to this unit reported the array case as
-reproducing; it does not at `abeb665`, and the struct case does.
+*Historical.* This section asserted the opposite — that the program above "compiles, links,
+and prints `77` — an immutable local mutated, with no diagnostic", measured at `abeb665` —
+and that the defect reproduced for struct referents while not reproducing for arrays. Both
+halves are obsolete: the mutability check landed with the array-parameter work above, and
+re-measured on this tree the struct case is refused and so is the array case.
+
+What is still true from the old scope note, and is a *different* defect: `&mut i64` is not
+a working spelling. `fn bump(s: &mut i64) { *s = 77; }` reaches gcc, which rejects the
+compiler's own output with "indirection requires pointer operand ('long long' invalid)".
+That is a code-generation gap in scalar references, not a mutability-checking one.
 
 ### A9.4 Defect D6, retracted
 
 A previous version of this annex, and of
 [`feature-index.toml`](../reference/features/feature-index.toml), stated that a call argument is
 borrowed as `Lifetime::Named("fn")` and released against `Lifetime::Scope(n)`, so the borrow is
-never released and a value cannot be passed twice. That claim cited
-`src/ownership/borrow_checker.rs:319`.
+never released and a value cannot be passed twice. That claim cited a line of
+`src/ownership/borrow_checker.rs` whose content is at
+`src/ownership/borrow_checker.rs:466` today. The old number is deliberately not repeated here:
+a bare `path:line` naming a revision this tree no longer has is unpinnable, and an unpinnable
+citation cannot be told from one that has silently drifted.
 
-**The claim is false and the citation was wrong.** `src/ownership/borrow_checker.rs:319` is
-`ReturnOwnership::Borrowed(Lifetime::Named("fn"))` — the ownership classification for a function's
-**borrowed return value**, which has nothing to do with argument lifetimes. The citation had a
-green fingerprint the whole time, which is exactly the gate's limit: a pin proves a line has not
-moved, never that it supports the claim.
+**The claim is false and the citation was wrong.** `src/ownership/borrow_checker.rs:466` is
+`ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))` — the ownership classification for a
+function's **borrowed return value**, which has nothing to do with argument lifetimes. The citation
+had a green fingerprint the whole time, which is exactly the gate's limit: a pin proves a line has
+not moved, never that it supports the claim.
 
 Re-measured from scratch at `abeb665`:
 
@@ -1249,9 +1238,9 @@ Re-measured from scratch at `abeb665`:
 | `print(p.name); f(p.name); p.n` — field to a builtin, then reused | accepted, prints `abc 3 1` |
 
 None of D6's symptoms reproduce. The call path creates a per-call lifetime and ends its borrows
-when the call finishes: `src/ownership/borrow_checker.rs:597` (`let call_lifetime =
-self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:603` (`self.context.end_borrows(&call_lifetime);`), with the
-contract stated at `src/ownership/borrow_checker.rs:54-55` — "the caller-side borrow always lasts exactly for the call
+when the call finishes: `src/ownership/borrow_checker.rs:800` (`let call_lifetime =
+self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:806` (`self.context.end_borrows(&call_lifetime);`), with the
+contract stated at `src/ownership/borrow_checker.rs:52-53` — "the caller-side borrow always lasts exactly for the call
 expression".
 
 D6 was **fixed in commit `191f8c1`** ("fix(compiler): five defects that made the language
@@ -1264,9 +1253,9 @@ into documentation written after the fix landed.
 Two rejections do still occur, and both are correct rather than defects:
 
 - `take2(p, p)` where `p` is a **struct** — `Use of moved value: p`. Struct parameters are moves
-  (`src/ownership/borrow_checker.rs:302`), so this is move semantics working.
+  (`src/ownership/borrow_checker.rs:451`), so this is move semantics working.
 - `sum2(v, v)` with two `mut [i64; 3]` parameters — `Conflicting borrows`. A `mut` array parameter
-  is a mutable borrow (`src/ownership/borrow_checker.rs:288`), so passing the same array as two
+  is a mutable borrow (`src/ownership/borrow_checker.rs:430-431`), so passing the same array as two
   simultaneous mutable borrows is refused. **This is expected under the current aliasing
   convention, not unconditionally correct**: it follows from Option B's reading of
   [N12.1](#n121-array-parameters-open-decision), which is still open. Under Option A a `[T; N]`
