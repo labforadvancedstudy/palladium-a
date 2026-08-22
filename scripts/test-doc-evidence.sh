@@ -1097,7 +1097,7 @@ expect_class delimiter-only "# ========" "a comment rule of punctuation supports
 # The negative half: a floor that rejects everything is not a floor.
 expect_class substantive "return b.v;"  "a real statement is substantive"
 expect_class substantive "42"           "a bare number is substantive: a claim can be about a value"
-expect_class substantive "안녕"          "a non-ASCII prose line is substantive (\\w is Unicode-aware)"
+expect_class substantive "안녕"          "a non-ASCII prose line is substantive: the word-character test is Unicode-aware"
 
 echo
 echo "=============================================="
