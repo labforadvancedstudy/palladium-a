@@ -83,6 +83,8 @@ tests/integration/test_break_simple.pd	run	-	expected	-	-
 tests/integration/test_optimizations.pd	run	-	expected	-	-
 tests/misc/test1.pd	run	-	expected	-	-
 tests/misc/test_llvm_example.pd	run	-	expected	-	-
+tests/misc/async_main_is_refused.pd	reject	compile	`async fn main` is not implemented	-	the entry point would be `main_Future main()` with the body in a poll function nothing calls; refused rather than compiled into a program that runs and does nothing
+tests/misc/unit_return_spellings.pd	run	-	expected	-	-
 tests/misc/test_vec_i64.pd	run	-	expected	-	-
 tests/misc/test_vec_simple.pd	run	-	expected	-	-
 tests/projects/hello_pdm/package.pd	skip	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	package manifest; not Palladium source at all, so the parser rejects it outright
@@ -118,7 +120,7 @@ tests/regression/lifetimes_uninferred.pd	run	-	expected	-	-
 # a fixture's comment header is edited, and an expectation that breaks on a
 # comment edit trains people to rewrite expectations.
 tests/reject/array_param_write_byvalue.pd	reject	compile	cannot write to `a`: it is a by-value array parameter	-	OPEN DECISION N12.1: C decays array parameters to pointers, so a write through a by-value `[T; N]` would reach the caller either way; codegen refuses rather than guess which semantics the language will pick
-tests/reject/async_fn.pd	reject	compile	Type mismatch: expected Future<Int>, found Int	-	`async fn` lexes and parses, then the declared return type is rewritten to Future<T> and the body no longer matches it; the spec's position is that there is no async keyword at all
+tests/reject/async_fn.pd	reject	compile	a `return` with a value inside an `async fn` is not implemented	-	`async fn` lexes and parses and is then refused; the spec's position is that there is no async keyword at all. The DIAGNOSTIC changed on branch fix/d3b-tail-if and the fingerprint moved with it: this body's `return 1;` is now refused for having a value at all (the poll function it would be emitted into returns only an int readiness flag, so the value has nowhere to go), which fires before the older `Type mismatch: expected Future<Int>, found Int`. Same stage, same verdict, strictly more specific reason
 tests/reject/closure_literal.pd	reject	compile	Expected expression, but found '|'	-	no Closure/Lambda node exists in src/ast/ or src/parser/, so `|` starts nothing in expression position
 tests/reject/extern_block.pd	reject	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	no `extern` block, so no foreign symbol can be named; the generated code is C, so the ABI is C by construction but there is no syntax to reach it
 tests/reject/generic_bound.pd	reject	compile	Expected '>' (Expected '>' after generic parameters), but found ':'	-	generic parameter lists accept bare names only; the `:` that introduces a trait bound ends the list
@@ -136,12 +138,17 @@ tests/reject/macro_invocation_bracket.pd	reject	compile	Expected '(' (Expected '
 # library would rest on. stdlib/ itself has no rows here: 0 of its 21 files
 # compile, none defines `fn main`, and its compile verdicts are pinned by
 # `make stdlib-gate` against stdlib/MANIFEST.tsv instead.
-# stdlib_tail_if_defect is a CODEGEN fixture: its main prints a constant and
-# deliberately does not call the two functions the compiler miscompiles, because
-# recording their garbage in a transcript would bless the miscompile. What is
-# asserted about it lives in tests/stdlib/DRIVERS.tsv as known_violation:fib,classify.
+# stdlib_tail_if was stdlib_tail_if_defect, a CODEGEN fixture whose main printed
+# a constant and deliberately did NOT call the two functions the compiler
+# miscompiled, because recording their garbage here would bless the miscompile.
+# D3b is fixed, so its main now calls them and this transcript carries their
+# values. stdlib_tail_match does the same for a tail `match`; its C is still
+# pinned known_violation in tests/stdlib/DRIVERS.tsv for a SEPARATE open defect
+# (a `match` lowers to an if/else-if chain with no final `else`), which does not
+# change the values it prints and so does not affect this row.
 tests/stdlib/stdlib_tail_return.pd	run	-	expected	-	-
-tests/stdlib/stdlib_tail_if_defect.pd	run	-	expected	-	-
+tests/stdlib/stdlib_tail_if.pd	run	-	expected	-	-
+tests/stdlib/stdlib_tail_match.pd	run	-	expected	-	-
 tests/stdlib/stdlib_builtins_string.pd	run	-	expected	-	-
 tests/stdlib/stdlib_builtins_char_args.pd	run	-	expected	-	-
 tests/stdlib/stdlib_builtins_file.pd	run	-	expected	-	-

@@ -1,0 +1,44 @@
+// The two spellings of the unit return type must generate the same shape.
+//
+// `fn f()` and `fn f() -> ()` are one type. They emitted different C until
+// 9e2f577: the annotated form produced `return <void expression>;` from a
+// `void` function (a C11 6.8.6.4p1 constraint violation gcc tolerates), and
+// `fn main() -> ()` produced `return <void expression>;` from `int main`,
+// which gcc REFUSES.
+//
+// No other .pd in this repository writes `-> ()`, which is why that went
+// unnoticed through eight rounds of review of this exact area. This fixture
+// exists so the annotated spelling is exercised by `make conformance` from now
+// on, and so a change to it shows up as a changed transcript rather than as
+// nothing at all.
+
+fn plain(n: i64) {
+    print_int(n);
+}
+
+fn annotated(n: i64) -> () {
+    print_int(n)
+}
+
+fn annotated_early(n: i64) -> () {
+    if n > 0 {
+        return;
+    }
+    print_int(0)
+}
+
+// `main` itself, annotated, with a TAIL CONDITIONAL — the shape that makes the
+// lowering produce a `Stmt::Return` in the function whose C type is `int`, and
+// therefore the shape that used to emit `return <void expression>;` from `int
+// main` and be REFUSED by gcc outright.
+fn main() -> () {
+    plain(1);
+    annotated(2);
+    annotated_early(3);
+    annotated_early(-1);
+    if 1 > 0 {
+        print_int(9)
+    } else {
+        print_int(8)
+    }
+}

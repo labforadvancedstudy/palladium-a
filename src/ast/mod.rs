@@ -246,6 +246,46 @@ pub enum Type {
     Tuple(Vec<Type>),
 }
 
+/// Does a LOCAL definition of `name` replace an imported one?
+///
+/// THE ONE DEFINITION OF THAT QUESTION, called by the type checker and by code
+/// generation, because they were asking two.
+///
+/// Typeck said a local TYPE-PARAMETERISED function does not shadow an ordinary
+/// import (it is registered in a separate table and only materialises when
+/// instantiated). Codegen's own list said it does, and therefore suppressed the
+/// imported body — leaving a call resolved by typeck to the imported function
+/// with no definition emitted for it. Typeck's rule is the correct one, because
+/// it describes what actually replaces the imported body: a function with type
+/// parameters emits nothing under its own name, so it replaces nothing.
+///
+/// THE TEST IS `type_params`, AND ONLY `type_params`. An earlier version of this
+/// comment said "a local GENERIC", which is wider than the mechanism: `Function`
+/// also carries `lifetime_params` and `const_params` (:111-123), and a function
+/// generic in only those axes is NOT deferred by anybody. Both passes route it
+/// through the ordinary path — typeck's first pass and `check_function` branch
+/// on `type_params.is_empty()` alone (src/typeck/mod.rs), and codegen's
+/// main-program loop skips on `!func.type_params.is_empty()` alone
+/// (src/codegen/mod.rs) — so it IS emitted under its own name and therefore DOES
+/// replace the import.
+///
+/// MEASURED, both directions, `fn f<'a>()` and `fn f<const N: u64>()` over an
+/// imported `pub fn f()`: as written, one `long long f()` is emitted and the
+/// program prints the local answer. Widening the predicate to
+/// `type_params.is_empty() && const_params.is_empty() && lifetime_params.is_empty()`
+/// — i.e. making the code say what the old comment said — emits the imported
+/// body as well and gcc reports `redefinition of 'f'`. The claim was wrong, not
+/// the mechanism; a control for that direction is
+/// `a_lifetime_generic_local_still_shadows_an_import` in tests/d3b_tail_if.rs.
+///
+/// It lives here rather than in either pass so that "both passes ask one
+/// question" is a fact about the call graph and not a claim in a comment.
+pub fn local_definition_shadows_import(program: &Program, name: &str) -> bool {
+    program.items.iter().any(|item| {
+        matches!(item, Item::Function(f) if f.name == name && f.type_params.is_empty())
+    })
+}
+
 /// Statements
 #[derive(Debug, Clone)]
 pub enum Stmt {

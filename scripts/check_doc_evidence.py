@@ -10,6 +10,53 @@ and no machine does it. A review of 24 pinned targets found 21 supporting their 
 stores a readable excerpt beside the hash so a spot-check needs no source checkout, and
 `--update` prints the old and new excerpt for every changed pin, so a reviewer judges
 meaning rather than a hex string.
+
+HOW TO RELOCATE PINS AFTER AN EDIT SHIFTS A CITED FILE — the procedure, so a reviewer can
+re-derive it instead of trusting that it was done. `--update` on its own is a LAUNDERING
+MACHINE: it will happily record a fingerprint for whatever now sits at `path:line`, and
+"0 MOVED" afterwards proves only that the pins agree with the docs, never that the docs
+point at the right code. So the doc citations are corrected FIRST, by content, and only
+then is `--update` run.
+
+  1. Run the check. It names every citation whose fingerprint no longer matches.
+  2. For each, take the OLD text of the cited range (`git show <base>:<path>`, lines
+     start..end) and search the WORKING TREE file for that exact line sequence.
+       * exactly one match  -> rewrite the citation in the citing doc to the new line
+         numbers. Content equality is what justifies the move, not proximity.
+       * zero or several matches -> the text is not unique (`}`, `true`, `ty,`). Do NOT
+         guess. Establish a uniform offset instead: prove that every line from the first
+         unedited one onwards satisfies `old[i] == new[i + delta]` for a single delta,
+         which makes the relocation an identity rather than a search, then apply it and
+         re-verify each moved range by FINGERPRINT EQUALITY against the pin file.
+  3. Re-run the check. It should now report only "unpinned (run --update)" — i.e. new
+     keys — with no MOVED.
+  4. Run `--update` and read its MOVED list. It should be empty.
+
+MOVED > 0 AFTER STEP 4 IS NOT AUTOMATICALLY A DEFECT, and here is the one benign case,
+recorded because it happened: pin keys are `(path, lines, doc)`, so when citation A shifts
+onto the line number citation B used to occupy, the key survives with different content and
+is reported as MOVED. That is a KEY COLLISION, not a laundering. Resolve it by reading both
+citations and confirming each names the code its prose describes — and say in the commit
+message which keys collided, so the reviewer checks the same two lines you did.
+
+THE HOLE MOVEMENT DETECTION CANNOT SEE, AND THE RULE THAT CLOSES IT.
+Everything above is about a pin whose CONTENT changed. It says nothing about a citation
+that changes its LINE NUMBERS, because the pin key contains them: edit `foo.rs:100` to
+`foo.rs:120` in a doc, run `--update`, and the old key is dropped while a new one is added.
+Neither is a MOVED. So `--update` reported `MOVED 0` while two citations in this repository
+had come to rest on an EMPTY LINE and on a bare `}` — fingerprint-stable, content-free, and
+therefore invisible to every check here. A sweep for that shape found 25 of them across 220
+citations, several carrying `src:` evidence in the feature index whose prose quoted code the
+cited line did not contain (`src/ownership/borrow_checker.rs:519` was claimed to be
+`let call_lifetime = self.context.new_lifetime();` and was `}`).
+
+So: A PIN WHOSE TARGET CARRIES NO CONTENT IS NOT A CITATION. A cited range whose text
+contains no alphanumeric or underscore character at all — blank, `}`, `};`, `)));` — is
+reported as NON-SEMANTIC and fails the gate, in the check AND in `--update`, which is what
+stops the laundering being recorded rather than merely noticed. The rule is deliberately
+the narrowest one that covers the measured shape: `true`, `ty,` and `Ok(())` are all real
+one-token citations and all pass. It does not make a citation CORRECT — `}` was simply the
+one wrongness a machine can name without reading.
 """
 from __future__ import annotations
 
@@ -166,6 +213,18 @@ def norm(text: str) -> str:
     return " ".join(text.split())
 
 
+# A cited range has to CARRY something. Blank lines and pure punctuation are
+# fingerprint-stable and content-free, which is what makes a citation that has
+# come to rest on one invisible to the movement check — see the module
+# docstring. One alphanumeric or underscore character anywhere in the range is
+# enough; the rule names the measured shape and nothing wider.
+SEMANTIC = re.compile(r"[A-Za-z0-9_]")
+
+
+def is_semantic(text: str) -> bool:
+    return bool(SEMANTIC.search(text))
+
+
 def fingerprint(text: str) -> str:
     return hashlib.sha256(norm(text).encode()).hexdigest()[:12]
 
@@ -220,7 +279,7 @@ def citing_sources():
     under src/ and tests/, none of them ever pinned.
 
     A pin proves a cited range has not MOVED. That is worth more in source than in prose,
-    not less: a comment citing `src/codegen/mod.rs:2723` is read by whoever is editing the
+    not less: a comment citing `src/codegen/mod.rs:2751` is read by whoever is editing the
     file next to it, and inserting twenty lines above the target silently repoints it at
     something unrelated. Editing source is how citations move; docs/ is where they were
     being checked.
@@ -279,6 +338,9 @@ def collect_citations() -> list[tuple[str, str, str, str, str]]:
                 out.append((path_str, span, rel, "OUT-OF-RANGE", ""))
                 continue
             body = "\n".join(lines[start - 1:end])
+            if not is_semantic(body):
+                out.append((path_str, span, rel, "NON-SEMANTIC", excerpt(body)))
+                continue
             out.append((path_str, span, rel, fingerprint(body), excerpt(body)))
     return sorted(set(out))
 
@@ -1430,8 +1492,20 @@ def read_pins():
 
 
 def main() -> int:
-    global INDEX
+    global INDEX, PINS, ALLOW
     update = "--update" in sys.argv
+    # `--pins` / `--allow` / `--pins-only` are the citation half's version of the
+    # `--index` seam directly below, and they exist for the same reason: the only
+    # way to know a gate still has an exit code is to hand it something wrong and
+    # require it to say so. scripts/test-doc-evidence.sh points them at a
+    # throwaway pin file and a throwaway doc that cites a bare `}` — the
+    # configuration `--update` used to record silently — and requires this to go
+    # red. Pointing the generated files elsewhere is what keeps that control from
+    # rewriting the tracked ones.
+    if "--pins" in sys.argv:
+        PINS = Path(sys.argv[sys.argv.index("--pins") + 1]).resolve()
+    if "--allow" in sys.argv:
+        ALLOW = Path(sys.argv[sys.argv.index("--allow") + 1]).resolve()
     # `--index` / `--index-only` exist for scripts/test-doc-evidence.sh, which points the
     # evidence checks at a throwaway index containing a KNOWN-FALSE `cmd:` item and
     # requires this gate to go red on it. A gate is worth its exit code, and the only way
@@ -1488,6 +1562,23 @@ def main() -> int:
     violations = collect_normative_violations()
 
     if update:
+        # REFUSED BEFORE ANYTHING IS WRITTEN. `--update` is the laundering
+        # machine the docstring warns about, and a content-free target is the
+        # one laundering a machine can recognise: recording it would put a
+        # fingerprint that can never change into the pin file and close the
+        # question. So the pins are not regenerated at all while one exists.
+        nonsemantic = [(p, s, d, x) for p, s, d, f, x in cites
+                       if f == "NON-SEMANTIC"]
+        if nonsemantic:
+            print(f"REFUSED: {len(nonsemantic)} citation(s) point at a range with no "
+                  f"content. Nothing was written.")
+            for p, s, d, x in nonsemantic:
+                print(f"  {p}:{s}  (cited by {d})  is {x!r}")
+            print("\nA blank line or a bare `}` is fingerprint-stable, so a pin on one "
+                  "can never move\nand never be wrong. Correct the citation by CONTENT "
+                  "first — see this file's docstring,\nstep 2 — then re-run --update.")
+            return 1
+
         old = read_pins() if PINS.exists() else {}
         new = {(p, s, d): (f, x) for p, s, d, f, x in cites}
         changed = [(k, old[k], v) for k, v in sorted(new.items())
@@ -1525,13 +1616,25 @@ def main() -> int:
 
     fail = []
 
+    # The citation half on its own. The full run executes 42 `cmd:` items, which
+    # is far too expensive for a control that has to run several configurations
+    # of one probe document.
+    pins_only = "--pins-only" in sys.argv
+
     if not PINS.exists():
-        fail.append(f"missing {PINS.relative_to(ROOT)} (run --update)")
+        fail.append(f"missing {PINS} (run --update)")
     else:
         want = read_pins()
         have = {(p, s, d): (f, x) for p, s, d, f, x in cites}
         for key, (f, x) in sorted(have.items()):
-            if f in ("MISSING-FILE", "OUT-OF-RANGE"):
+            if f == "NON-SEMANTIC":
+                fail.append(
+                    f"citation {key[0]}:{key[1]} in {key[2]} -> NON-SEMANTIC: the cited "
+                    f"range is {x!r}, which carries no content. A pin on a blank line or "
+                    f"on punctuation is fingerprint-stable forever, so it can never MOVE "
+                    f"and never be wrong — which is exactly how a citation that drifted "
+                    f"onto one stayed green. Cite the code the prose is about.")
+            elif f in ("MISSING-FILE", "OUT-OF-RANGE"):
                 fail.append(f"citation {key[0]}:{key[1]} in {key[2]} -> {f}")
             elif is_delimiter_only(x):
                 # A CITATION WHOSE TARGET IS BLANK IS NOT A WEAK CITATION; IT IS AN
@@ -1565,8 +1668,18 @@ def main() -> int:
                 fail.append(f"pinned citation {key[0]}:{key[1]} in {key[2]} no longer cited "
                             f"(run --update)")
 
+    if pins_only:
+        print(f"citations pinned:   {len(cites)} (whole cited range fingerprinted)")
+        if fail:
+            print("\nFAIL:")
+            for f in fail:
+                print(f"  {f}")
+            return 1
+        print("citation pins: OK")
+        return 0
+
     if not ALLOW.exists():
-        fail.append(f"missing {ALLOW.relative_to(ROOT)} (run --update)")
+        fail.append(f"missing {ALLOW} (run --update)")
     else:
         want_f = {}
         for line in ALLOW.read_text(encoding="utf-8").split("\n"):

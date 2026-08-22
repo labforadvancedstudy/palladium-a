@@ -56,7 +56,7 @@ fn compile_and_run(source: &str) -> Result<String, String> {
 }
 
 #[test]
-#[ignore = "XFAIL: an `async fn` body is not wrapped into a Future — with the language's postfix `.await` (grammar.ebnf:203) this reaches the type checker, which reports 'expected Future<Int>, found Int'; MILESTONES.md records a second gap behind it, that `.await` emits a call to a poll member codegen never generates (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
+#[ignore = "XFAIL: an `async fn` body is not wrapped into a Future. The declared blocker used to be the type checker's 'expected Future<Int>, found Int'; since fbcfc39 the fixture is refused EARLIER, by the outright refusal of a value-carrying `return` in an `async fn`. Two gaps remain behind it: the Future wrapping itself, and `.await` emitting a call to a poll member codegen never generates (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_async_await_basic() {
     let source = r#"
     async fn fetch_data() -> int {
@@ -76,7 +76,7 @@ fn test_async_await_basic() {
 }
 
 #[test]
-#[ignore = "XFAIL: an `async fn` body is not wrapped into a Future — same blocker as test_async_await_basic: 'expected Future<Int>, found Int' (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
+#[ignore = "XFAIL: an `async fn` body is not wrapped into a Future — same blocker as test_async_await_basic: a value-carrying `return` inside an `async fn` is refused outright (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_async_await_multiple() {
     let source = r#"
     async fn fetch_a() -> int { 10 }
@@ -210,7 +210,7 @@ fn test_generic_collections() {
 }
 
 #[test]
-#[ignore = "XFAIL: multi-parameter generic enums — `Result<T, E>` loses its second type argument, so `Result::Err(String)` is checked against Int (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: constructing a variant of a multi-parameter generic enum does not infer the OTHER type argument — `Result::Err(\"Division by zero\")` in a function returning `Result<int, String>` is checked as `Result<(), String>`, not as the declared 'the second type argument is lost': the observed message carries both arguments and the wrong one is the unconstrained `T`. Same blocker as test_error_handling_sugar (owned by M4, 'Generics that work')"]
 fn test_pattern_matching_advanced() {
     let source = r#"
     enum Option<T> {
@@ -374,7 +374,7 @@ fn test_macros() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:119 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1004-1013) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:119 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1477-1486) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics() {
     let source = r#"
     struct Array<T, const N: int> {
@@ -495,7 +495,7 @@ fn test_iterator_protocol() {
 }
 
 #[test]
-#[ignore = "XFAIL: the `?` operator — grammar.ebnf:224-225 '`?` and `.await` appear here because they parse. Nothing lowers them'; since 439b241 it is refused outright with 'the `?` operator is not implemented' rather than emitting undefined C, so this now blocks on the missing lowering (owned by M4, exit criterion: `?` works against the real Result)"]
+#[ignore = "XFAIL: constructing a variant of a multi-parameter generic enum does not infer the other type argument — `Result::Err(\"…\")` in a function returning `Result<int, String>` is checked as `Result<(), String>`, so this fixture dies at that type mismatch before it reaches the `?` operator it was written for (grammar.ebnf:224-225; `?` is separately refused outright with 'the `?` operator is not implemented' since 439b241). Both are owed; this is the one that fires (owned by M4, exit criterion: `?` works against the real Result)"]
 fn test_error_handling_sugar() {
     let source = r#"
     enum Result<T, E> {

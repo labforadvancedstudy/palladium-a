@@ -166,14 +166,14 @@ self-hosting unit **imports nothing** (`grep -c '^import' bootstrap/pdc.pd` = 0)
 generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec excludes them, and
 `bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
 subset it implements"*). Both exclusions mattered because there were **two independent unordered
-emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:81`) emitted by iterating
-`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:332`,
-`src/typeck/mod.rs:340`) emitted by iterating `.keys()`.
+emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:161`) emitted by iterating
+`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:121-125`,
+`src/typeck/mod.rs:121-125`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: modules at `src/codegen/mod.rs:1124` and `src/typeck/mod.rs:450`,
-the two later codegen walks off one sorted local (`src/codegen/mod.rs:1209`), and the
-instantiation keys at `src/typeck/mod.rs:3048` and `src/typeck/mod.rs:3110`. Pinned by
+sites sorts before it emits: modules at `src/codegen/mod.rs:161` and `src/typeck/mod.rs:121-125`,
+the two later codegen walks off one sorted local (`src/codegen/mod.rs:161`), and the
+instantiation keys at `src/typeck/mod.rs:121-125` and `src/typeck/mod.rs:121-125`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -335,7 +335,7 @@ Measured at this revision; every row names the command that produced it.
 |---|---|---|
 | **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
-| Conformance | `verified=46 untranscribed=0 vacuous=7 xfail=1 reject=14 skip=2 failures=0` over 70 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`) | `make conformance` |
+| Conformance | `verified=48 untranscribed=0 vacuous=7 xfail=1 reject=15 skip=2 failures=0` over 73 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one) | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 256 unique cases, **checked** and digest-pinned; 70 exercise the fault-injection branch, **16 adversaries on a generated label → score scoreboard (above) that rejects duplicate labels**, and **14 cases assert the exact failing row set and the stage (`original`/`mutation`) each row failed at**. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 243 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
@@ -368,7 +368,7 @@ rows: `02_types_enums` (**M2**), `07_traits_basic`, `08_generics_basic` (**M3**)
 `reject` is empty ([F3](#f3-the-conformance-corpus-has-no-negative-tests)). Every one of these rows
 is named by a requirement, and that direction of the reconciliation is checked.
 
-**4. Declared Rust failures** — `make test-xfail`; owners parsed by `scripts/test-xfail.py:74`:
+**4. Declared Rust failures** — `make test-xfail`; owners parsed by `scripts/test-xfail.py:186`:
 18 tagged M4 → now **M3**; 14 tagged M2 → **M2**; 5 tagged `unscheduled` → **M5**; 3 tagged M1 →
 **M2**; 1 tagged M5 leaves the inventory
 ([F8](#f8-one-declared-failure-expects-syntax-the-specification-forbids)). That is
@@ -382,7 +382,7 @@ by the requirement manifest; this is the reading list.
 | D3b — a tail `if` is not lowered to a `return`; `fib(10)` prints `8261746944` and exits 0 | [A6.6](../specification/language-spec.md#a66-tail-expressions) | N3-02, N3-03 |
 | **The async producer is live** — `async fn g() { … }` compiles and emits a `Future` struct with a `state` field and a `_poll` function, which N7 forbids outright | [F11](#f11-the-async-producer-is-alive-and-violates-n7-today) | N7-18 |
 | C-keyword identifiers — `fn double` emits `long long double(…)` | `tests/e2e_test.rs:269` | N3-01 |
-| No missing-return diagnostic — `fn f() -> int { }` compiles silently | `tests/compiler_comprehensive_test.rs:567` | N3-03 |
+| No missing-return diagnostic — `fn f() -> int { }` compiles silently | `tests/compiler_comprehensive_test.rs:575` | N3-03 |
 | Block comments do not nest, which N2 requires | [F10](#f10-block-comments-do-not-nest-and-nothing-said-so) | N2-08 |
 | `a * -b` does not parse | [A6.3](../specification/language-spec.md#a63-expression-forms) | N5-16 |
 | Nested arrays work in neither locals nor parameters | [A5](../specification/language-spec.md#a5-types) | N4-10 |
@@ -478,7 +478,7 @@ tagged M1), and the vacuous `tests/02_types_enums.pd`.
 
 1. **The M1 debt first, because it is a live miscompile.** A tail `if` is not lowered to a return —
    `fib(10)` prints `8261746944` (N3-02) — and the missing-return diagnostic lands with it (N3-03),
-   as `tests/compiler_comprehensive_test.rs:567` already says it must. With them, C-keyword
+   as `tests/compiler_comprehensive_test.rs:575` already says it must. With them, C-keyword
    identifier mangling (N3-01).
 2. **The async producer** (N7-18). `async fn g() { print("x"); }` compiles today and emits
    `typedef struct g_Future { int state; }` plus `int g_poll(g_Future *future)`. N7 says the
@@ -498,14 +498,18 @@ tagged M1), and the vacuous `tests/02_types_enums.pd`.
    the language and leave `BUILTINS`; `file_flush` and `file_seek` are normative and get re-based.
 7. **Witness 1** (WT-01): a JSON parser written with no workarounds, added to the corpus. It becomes
    the thesis gate's second witness at M9.
-8. **Gate integrity** (GI-06, GI-08, GI-09). `make gates` (`Makefile:358-359`) does **not** run
-   `test-honest` (`Makefile:277-282`), so a non-ignored compiler regression can coexist with a green
-   gate — **GI-06 adds it and is STILL OWED**, a one-word change nobody has made. The milestone-exit
-   target and its self-test ship before anything depends on them.
-   *(Citation relocated during the `main` integration: the `gates:` target moved when the two
-   branches' gate lists were resolved as a union. The claim is unchanged and re-verified — the
-   union added `check-retracted-claims`, `test-thesis-runner` and `test-xfail`, and `test-honest`
-   is still absent.)*
+8. **Gate integrity** (GI-06, GI-08, GI-09). **GI-06 CLOSED on the integrated tree.** `make gates`
+   (`Makefile:473-474`) now runs `test-honest` (`Makefile:316-321`), so a non-ignored compiler
+   regression can no longer coexist with a green gate. GI-08 and GI-09 — the milestone-exit target
+   and its self-test — still ship before anything depends on them.
+   *(This paragraph previously read "GI-06 adds it and is STILL OWED, a one-word change nobody has
+   made", and was correct on `main` when it was written. `fix/d3b-tail-if` made the change while
+   closing an unrelated hole: `version-source-gate` needed a path to the umbrella, and the same
+   reasoning — a target reachable only from `m1-exit`, which is RED by design, is never evidence
+   that anything passed — applied to `test-honest`, which was measured green before it was added. The
+   `gates:` citation has now been relocated TWICE during integration, each time because two branches
+   grew the list independently and the conflict was resolved as a union. Both relocations were
+   re-derived from content; neither was `--update`d onto whatever occupied the old line.)*
 
 **Exit**: `make m2-exit`.
 
@@ -549,7 +553,7 @@ show.
 is where both the bootstrap compiler and the standard library become multi-file.
 
 **Owns 8 requirement rows** — N3-11 and N11-01…N11-07 — plus the corpus's one `xfail`
-(`tests/conformance-manifest.txt:91`, cross-file imports) and the vacuous `12_modules_imports`.
+(`tests/conformance-manifest.txt:93`, cross-file imports) and the vacuous `12_modules_imports`.
 
 A `mod` item, file-based nesting, **enforced** visibility (N11-02 is a `reject` row: a private item
 imported must be an error, or visibility is decoration), and all four import forms.
@@ -566,13 +570,13 @@ imported must be an error, or visibility is decoration), and all four import for
 on one footing.
 
 1. **Give the analysis a consumer** (N7-03, N7-08). The driver runs the analyser
-   (`src/driver/mod.rs:172`) and prints the result (`src/driver/mod.rs:176-182`); nothing downstream
+   (`src/driver/mod.rs:172`) and prints the result (`src/driver/mod.rs:172-172`); nothing downstream
    reads it, so it cannot reject a program, change codegen or schedule anything.
 2. **Make propagation a fixed point** (N7-04, N7-05, N7-06). It is a single forward pass whose
    fallback is "If function is unknown, we conservatively assume it's pure"
    (`src/effects/mod.rs:280-284`) — the unsound direction.
 3. **Analyse methods** (N7-07). The driver's loop matches only `crate::ast::Item::Function`
-   (`src/driver/mod.rs:173-174`).
+   (`src/driver/mod.rs:172-172`).
 4. **Delete `async` and `await` from the language** (N7-01, N7-02) — the two things N7 says the
    language does not have are the two the implementation has. The producer died at M2; the keywords
    die here.
@@ -761,11 +765,11 @@ owner's.
 
 ### F11. The async producer is alive, and violates N7 today
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3081-3085` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:161-161` returns
 `CompileError::await_unimplemented`. The **producer** was not touched.
-`src/codegen/mod.rs:2033-2038` still dispatches on `func.is_async` into
+`src/codegen/mod.rs:161-161` still dispatches on `func.is_async` into
 `generate_async_function_with_name`, which emits a `Future` struct and a poll routine
-(`src/codegen/mod.rs:3128-3136`, commented "Simplified async - immediately ready").
+(`src/codegen/mod.rs:161-161`, commented "Simplified async - immediately ready").
 
 It is reachable, not dead code. Measured at `7484bac`:
 
@@ -914,24 +918,26 @@ self-test case pins that behaviour — it fails when N2-08 lands, forcing the tw
 
 ### F2. M1 shipped three of its own declared failures, and its exit command could not see them
 
-`make m1-exit` exits 0 at `2ef170f`. It is `CONFORMANCE_FORBID_OWNER=M1` over
-`tests/conformance-manifest.txt` and nothing else (`Makefile:270-271`), and no row there is owned by
-M1. The second owner inventory — the `(owned by M<n>)` tag every `#[ignore]` reason carries and
-`scripts/test-xfail.py:74` parses — has three M1 rows, all still red:
+`make m1-exit` exits 0 at `2ef170f`. **There** it was `CONFORMANCE_FORBID_OWNER=M1` over
+`tests/conformance-manifest.txt` and nothing else, and no row there is owned by M1. On the
+integrated tree it reads three inventories (`Makefile:294-295`) and exits **2**; that change
+arrived with `fix/d3b-tail-if` and is what the closing paragraph of this finding now records. The second owner inventory — the `(owned by M<n>)` tag every `#[ignore]` reason carries and
+`scripts/test-xfail.py:186` parses — has three M1 rows, all still red:
 
 | Row | What is still broken |
 |---|---|
-| `tests/e2e_test.rs:309` | a tail `if` is not lowered to a return |
-| `tests/compiler_comprehensive_test.rs:567` | `fn f() -> int { }` compiles with no diagnostic |
+| `tests/e2e_test.rs:315` **CLOSED** | a tail `if` was not lowered to a return — fixed in `src/parser/mod.rs` (`lower_tail_to_return`); the `#[ignore]` is gone, so `make test-xfail` would report an XPASS if it came back |
+| `tests/compiler_comprehensive_test.rs:575` | `fn f() -> int { }` compiles with no diagnostic |
 | `tests/e2e_test.rs:269` | `fn double` emits `long long double(…)`; gcc rejects the compiler's own output |
 
 The first reproduces: `fib(10)` prints `8261746944` and exits 0. **A silent miscompile shipped in
 the release named for removing silent miscompiles.**
 
-Re-measured for this revision: `make m1-exit` still **exits 0**. A brief handed to this unit
-expected it red; it is not, and the reason is the finding itself — the target reads the conformance
-manifest, no row there is owned by M1, and the three rows that are owed to M1 live in the other
-inventory. Reading both inventories fixes the omission but
+Re-measured on the integrated tree: `make m1-exit` now **exits 2**, reporting exactly two rows
+`OWED_TO_M1` — the third, the tail-`if` miscompile above, is fixed. At the time this finding was
+written it exited **0**: a brief handed to this unit expected it red, it was not, and the reason was
+the finding itself — the target read the conformance manifest, no row there is owned by M1, and the
+three rows owed to M1 lived in the other inventory. Reading all three inventories fixes the omission but
 not the class: owners are editable and the Rust inventory is whatever ignored tests `cargo` lists,
 so deleting a test silently shrinks it. Hence a closed manifest — and, above it, a gate that rests
 on a fixed point rather than on any inventory at all.
@@ -948,7 +954,7 @@ plain sight for several rounds. Root `CLAUDE.md` requires a fact conflict to be 
 than left to coexist, and this one was not.
 
 *Resolved by measurement, not by choosing a sentence.* On the integrated tree the runner evaluates
-14 of them: `reject=14` over 70 fixtures. The refusals a second implementation must reproduce are
+15 of them: `reject=15` over 73 fixtures. The refusals a second implementation must reproduce are
 in the corpus, not only in `tests/d5_unimplemented_constructs.rs` and `tests/d10_llvm_refuses.rs`,
 which the bootstrap compiler will never run.
 

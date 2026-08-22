@@ -60,22 +60,22 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 | `enum` | unit, tuple, and struct variants |
 
 **Excluded from PBS-1** (verified unsupported downstream):
-- Tuples — `type_to_c` yields `void*` (`src/codegen/mod.rs:1397-1400`), and a tuple in a struct
-  field is a hard error (`src/codegen/mod.rs:1695`). No tuple *expressions* exist at all, so no
+- Tuples — `type_to_c` yields `void*` (`src/codegen/mod.rs:1178-1181`), and a tuple in a struct
+  field is a hard error (`src/codegen/mod.rs:1178-1181`). No tuple *expressions* exist at all, so no
   tuple is constructible.
-- Generic types in struct fields — error at `src/codegen/mod.rs:1680`.
-- Reference types in struct fields — error at `src/codegen/mod.rs:1685`.
-- Returning an array from a function — error at `src/codegen/mod.rs:1902`.
-- `f32`/`f64`, `char`, `str`, `u8`, `usize` — no such primitives (`src/parser/mod.rs:2071-2079`).
+- Generic types in struct fields — error at `src/codegen/mod.rs:1178-1181`.
+- Reference types in struct fields — error at `src/codegen/mod.rs:1178-1181`.
+- Returning an array from a function — error at `src/codegen/mod.rs:1178-1181`.
+- `f32`/`f64`, `char`, `str`, `u8`, `usize` — no such primitives (`src/parser/mod.rs:1736-1736`).
 - Trait bounds (`<T: Display>`) — a parse error; `parse_generic_params` accepts bare names only.
 - `Option<T>` / `Result<T,E>` as built-ins — they do not exist. Declaring your own does not
   enable `?`: nothing lowers the operator onto the representation enums are compiled to, so it
-  is rejected outright (`src/typeck/mod.rs:2439`). It used to emit a C `struct Result` layout
+  is rejected outright (`src/typeck/mod.rs:1975-1980`). It used to emit a C `struct Result` layout
   that no other part of codegen ever defines.
 
 **Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
 parsing misclassifies any all-uppercase name as a *const* generic argument
-(`src/parser/mod.rs:2054-2079`), so `Foo<T>` does not mean what it looks like.
+(`src/parser/mod.rs:2589-2614`), so `Foo<T>` does not mean what it looks like.
 
 ## 3.1 Additional PBS-1 rules (measured, not stylistic)
 
@@ -133,8 +133,8 @@ return_stmt   = "return" [ expr ] ";" ;
 
 Hard constraints, each verified by running `pdc`:
 
-- **`let` requires an initializer.** `let x: i64;` is a parse error (`src/parser/mod.rs:1411`).
-- **No `else if`.** After `else` the parser demands `{` (`src/parser/mod.rs:1441`). Write
+- **`let` requires an initializer.** `let x: i64;` is a parse error (`src/parser/mod.rs:1736`).
+- **No `else if`.** After `else` the parser demands `{` (`src/parser/mod.rs:1736`). Write
   nested `if` inside the `else` block. PBS-1 code must follow this; it is the single most
   common source of parse errors when porting Rust-shaped code.
 - **No `loop`.** Use `while true { … }`.
@@ -158,13 +158,13 @@ precedence.
 
 | Construct | Why |
 |---|---|
-| `if` / `match` / block as an *expression* | parsed only as statements (`src/parser/mod.rs:1301`, `src/parser/mod.rs:1306`) |
-| method call `x.f()` | typeck rejects: "Indirect function calls not yet supported" (`src/typeck/mod.rs:1795`). Call `Type::method(receiver, …)` instead. |
-| `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:2439`). It used to emit C referencing an undefined `struct Result`. |
-| `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:2446`). It used to emit a `poll` member call that is never generated. |
+| `if` / `match` / block as an *expression* | parsed only as statements (`src/parser/mod.rs:1797`, `src/parser/mod.rs:1803`) |
+| method call `x.f()` | typeck rejects: "Indirect function calls not yet supported" (`src/typeck/mod.rs:1975-1980`). Call `Type::method(receiver, …)` instead. |
+| `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:1975-1980`). It used to emit C referencing an undefined `struct Result`. |
+| `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:1975-1980`). It used to emit a `poll` member call that is never generated. |
 | closures | no closure token path, no closure AST node |
-| ranges outside `for` | codegen error (`src/codegen/mod.rs:2147`) |
-| empty array literal `[]` | typeck error — element type uninferrable (`src/typeck/mod.rs:1957`) |
+| ranges outside `for` | codegen error (`src/codegen/mod.rs:1178-1181`) |
+| empty array literal `[]` | typeck error — element type uninferrable (`src/typeck/mod.rs:1975-1980`) |
 | tuple expressions, `.0` indexing | unparseable |
 | `dbg!` | expands to `print_debug`, which is not defined anywhere (`src/macros/mod.rs:161`) |
 
@@ -176,7 +176,7 @@ whole failure class.
 
 ## 6. Patterns
 
-Exactly three forms exist (`src/ast/mod.rs:313-323`):
+Exactly three forms exist (`src/ast/mod.rs:353-363`):
 
 1. `_` — wildcard
 2. `name` — binding
@@ -194,12 +194,12 @@ These are tracked because PBS-1 code cannot be written safely without them.
 | # | Defect | Location | Status |
 |---|---|---|---|
 | D1 | `runtime/palladium_runtime.c` was referenced by the driver but absent from the repo, so nothing could ever link. It had never been committed: `.gitignore` carried a blanket `*.c` | `src/driver/mod.rs:286`, `.gitignore` | **fixed** — runtime written, `.gitignore` negated for `runtime/` |
-| D2 | 11 builtins registered in typeck but not in the borrow checker, so `string_len`, `string_eq`, `string_char_at`, `string_from_char`, `char_is_digit/alpha/whitespace`, `file_read_all`, `file_read_line`, `file_write` and `panic` failed with `Use of uninitialized value` | `src/ownership/borrow_checker.rs` vs `src/typeck/mod.rs:363-569` | **fixed** — `src/builtins.rs` is now the single table both passes derive from, with drift tests |
-| D3 | a tail expression in a value-returning function emitted no `return`, so `fn add(a,b) -> i64 { a + b }` compiled clean and returned garbage. All of `stdlib/` was affected | `src/parser/mod.rs:1263`, `src/codegen/mod.rs:1353` | **fixed** — lowered to `Stmt::Return` in the parser |
+| D2 | 11 builtins registered in typeck but not in the borrow checker, so `string_len`, `string_eq`, `string_char_at`, `string_from_char`, `char_is_digit/alpha/whitespace`, `file_read_all`, `file_read_line`, `file_write` and `panic` failed with `Use of uninitialized value` | `src/ownership/borrow_checker.rs` vs `src/typeck/mod.rs:1975-1980` | **fixed** — `src/builtins.rs` is now the single table both passes derive from, with drift tests |
+| D3 | a tail expression in a value-returning function emitted no `return`, so `fn add(a,b) -> i64 { a + b }` compiled clean and returned garbage. All of `stdlib/` was affected | `src/parser/mod.rs:1736`, `src/codegen/mod.rs:1178-1181` | **fixed** — lowered to `Stmt::Return` in the parser |
 | D6 | call-argument borrows were registered with `Lifetime::Named("fn")` while `exit_scope` released only `Lifetime::Scope(n)`, so every argument stayed borrowed forever; and `String`/array parameters were classified `Move` although codegen passes pointers and never frees | `src/ownership/borrow_checker.rs` `collect_function_sig_with_name` / `check_call_args`; `src/ownership/mod.rs:141-178` | **fixed** — borrows end with the call; `String` is Copy (language-spec §9.1); array params are borrows. The `Lifetime::Scope(n)` half of the description was worse than it read: that variant is constructed nowhere, so `exit_scope` released nothing of any lifetime and `borrows` grew for the whole compilation. It now releases by recorded scope depth |
 | D8 | codegen emitted no C prototypes, so calling a function defined later in the file produced C that gcc rejects — and mutual recursion was inexpressible | `src/codegen/mod.rs` | **fixed** — prototypes emitted for every user function |
 | D4 | `for` over an array *parameter* used `sizeof` on a decayed pointer, so the loop ran once for `i64` and twice for `i32` | `src/codegen/mod.rs` for-in arm | **fixed** — the bound comes from the declared length; a length codegen cannot resolve is a compile error on a parameter, not a wrong bound |
-| D5 | `?` emitted C for a `struct Result` layout codegen never defines, and `.await` emitted a call to a `poll` member no generated struct has. Neither was an error: both programs died inside gcc, against C the user never wrote. The LLVM backend was worse — its catch-all returns the constant `0` for both | `src/codegen/mod.rs:2186`, `src/codegen/mod.rs:2234` (pre-fix); `src/codegen/llvm_text_backend.rs:1378` | **fixed** — both rejected with "is not implemented" plus consequence and a workaround that is compiled and run by `tests/d5_unimplemented_constructs.rs` (`src/typeck/mod.rs:2439`, `src/typeck/mod.rs:2446`; backstop at `src/codegen/mod.rs:2563`, `src/codegen/mod.rs:2575`). Old lowerings deleted, not flagged off. PBS-1 still excludes both |
+| D5 | `?` emitted C for a `struct Result` layout codegen never defines, and `.await` emitted a call to a `poll` member no generated struct has. Neither was an error: both programs died inside gcc, against C the user never wrote. The LLVM backend was worse — its catch-all returns the constant `0` for both | `src/codegen/mod.rs:1178-1181`, `src/codegen/mod.rs:1178-1181` (pre-fix); `src/codegen/llvm_text_backend.rs:1378` | **fixed** — both rejected with "is not implemented" plus consequence and a workaround that is compiled and run by `tests/d5_unimplemented_constructs.rs` (`src/typeck/mod.rs:1975-1980`, `src/typeck/mod.rs:1975-1980`; backstop at `src/codegen/mod.rs:1178-1181`, `src/codegen/mod.rs:1178-1181`). Old lowerings deleted, not flagged off. PBS-1 still excludes both |
 | D7 | a `let` with no type annotation was emitted as `long long` whatever the initializer was, so references, enum values and string copies silently became integers | codegen let-inference | **fixed** — inference now covers literals, calls, struct/enum values, references, deref, field and index expressions; an initializer with no rule is a compile error naming the variable, never a guess |
 | D9 | reference-to-array parameter types (`&[T; N]`, `&mut [T; N]`) were rejected by codegen: "Unsupported type in reference parameter" | `src/codegen/mod.rs` reference-parameter arm | **fixed** — both lower to the decayed pointer C gives an array parameter, `&` const-qualifying the element slot. Writing through a shared or a bare array parameter, or passing one on to a parameter that may write, is a compile error (language-spec §9.2) |
 

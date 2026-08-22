@@ -312,25 +312,27 @@ producer text at all.
 
 ### Seam with `make conformance`
 
-Transcript verification of `tests/stdlib/` belongs to **`make conformance`**, not here. All six
+Transcript verification of `tests/stdlib/` belongs to **`make conformance`**, not here. All seven
 drivers listed in `tests/stdlib/DRIVERS.tsv` are programs with `fn main` — ordinary conformance
 fixtures — and the conformance runner has an expected-output verdict class plus its own closed
 inventory over `tests/`. Running and diffing them in both gates would ship two semantic standards
-for one question. (Five of the six exercise builtins or the language surface; the sixth,
-`stdlib_tail_if_defect`, is a codegen fixture whose `main` prints a constant.)
+for one question. (`stdlib_tail_if_defect` used to be the exception — a codegen fixture whose
+`main` printed a constant and called nothing, because its functions returned garbage. D3b is fixed,
+so it is now `stdlib_tail_if.pd` and its `main` calls them and asserts their values.)
 
 `stdlib/` itself stays in this gate: those are library modules with no `main`, where the only
 pinnable thing is a compile verdict and its blocker. Different question, different gate.
 
-## D3 is only half fixed: tail `if` is never lowered
+## D3b (tail `if` is never lowered) — CLOSED 2026-08-22
 
-The retraction above is about *where* D3 struck. This is about whether it is over. It is not.
+The retraction above is about *where* D3 struck. This section was about whether it was over. It
+was not, and now it is. What follows is the defect as measured, then what closed it.
 
-`src/parser/mod.rs:536` lowers a tail **expression** to `Stmt::Return`. A tail `if` is not an
-`Stmt::Expr`, so it is never lowered, and every function whose body ends in an `if`/`else` — the
-natural shape for a recursive base case — still miscompiles exactly the way the original D3 did.
+`parse_function` lowered a tail **expression** to `Stmt::Return`, but a tail `if` is a `Stmt::If`,
+so it was never lowered, and every function whose body ended in an `if`/`else` — the natural shape
+for a recursive base case — miscompiled exactly the way the original D3 did.
 
-Measured 2026-08-22 against this tree, with D3 nominally fixed:
+Measured 2026-08-22 against the v0.3.0 tree, with D3 nominally fixed:
 
 ```
 fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n - 1) + fib(n - 2) } }
@@ -350,11 +352,26 @@ long long fib(long long n) {
 
 `fib(10)` printed **8261746944** instead of 55, exit 0.
 
-This is pinned, not fixed: `tests/stdlib/stdlib_tail_if_defect.pd` carries `fib` plus a second
-shape, `classify`, which has an early `return` *and* a tail `if`. `tests/stdlib/DRIVERS.tsv`
-records it as `known_violation:fib,classify`, so the gate requires exactly those two functions to
-violate the invariant. If the violation spreads, moves, or disappears, the gate goes red. The
-parser fix is a separate work unit on another branch.
+**What closed it.** The parser now walks the branches of a function body's tail `if` and the arms
+of a tail `match`, and rewrites each branch's tail expression into a `return`
+(`src/parser/mod.rs`, `lower_tail_to_return`). `fib(10)` is 55 and the emitted C has a `return` in
+both arms. A branch that has no value while another does — most often an `if` with no `else` — is
+now **refused** with `CompileError::tail_value_not_on_every_path` rather than compiled into a
+fall-through; nothing correct is lost, because to reach that refusal a program must already have a
+tail expression in a branch, and every such program miscompiled before.
+
+The pin did its job on the way out. `tests/stdlib/stdlib_tail_if_defect.pd` was recorded
+`known_violation:fib,classify`, so the moment the parser fix landed the gate went red with
+`XPASS: … is recorded known_violation:fib,classify but its C is now CLEAN — the compiler defect is
+fixed; promote it to 'clean'`. The fixture is now `stdlib_tail_if.pd`, declared `clean`, and its
+`main` calls `fib`/`classify`/`sign`/… and asserts their values — which it deliberately did not do
+before, because recording garbage in a golden would have blessed the miscompile.
+
+**Tail `match` had the same defect**, through the `pattern => expression,` arm form
+(`area_code(Square)` returned -16). It is lowered too, and `tests/stdlib/stdlib_tail_match.pd`
+proves the values — but that file stays `known_violation:area_code,sides` for a **different**,
+still-open defect: codegen lowers a `match` to an `if`/`else if` chain with **no final `else`**, so
+the C cannot prove it returns on every path, and gcc agrees (`-Wreturn-type`).
 
 ### Why `classify` is in the fixture
 
@@ -370,8 +387,12 @@ change and no new test.
 
 ## Known defects this measurement surfaced (reported, not fixed)
 
-0. **D3 is only half fixed** — see the section above. Pinned by the gate; parser fix not in scope
-   for this branch.
+0. **D3b (tail `if`) — CLOSED 2026-08-22**, see the section above. Left open in the same family:
+   a `match` still lowers to an `if`/`else if` chain with no final `else`
+   (`tests/stdlib/stdlib_tail_match.pd`, pinned `known_violation:area_code,sides`), and the general
+   missing-return diagnostic — `fn f() -> i64 { }`, `if c { return 1; }` as a last statement, a
+   loop that may not be entered — is still absent, because deciding it needs a flow analysis the
+   parser does not have. Net A catches all of them after the fact; nothing refuses them.
 
 1. **Six builtins are registered but cannot be called.** `file_flush`, `file_seek`,
    `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex` are declared in

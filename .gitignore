@@ -76,6 +76,12 @@ test_file.txt
 !tests/*.txt
 !tests/**/*.txt
 
+# The Rust suite's closed debt inventory, for exactly the same reason. Untracked,
+# scripts/test-xfail.py reads no rows and reports "0 owed", which reopens every
+# route by which a debt can leave the inventory — the failure the manifest was
+# added to close. Third instance of the blanket-ignore trap.
+!tests/rust-debt-manifest.txt
+
 # ...but a gate input is not a temporary file. The blanket `*.txt` above is the same
 # pattern as the blanket `*.c` that kept runtime/palladium_runtime.c out of this
 # repository for a year (defect D1): without this negation the no-compile allowlist

@@ -328,7 +328,7 @@ GI-02	-	A11	The conformance runner still goes RED when it should	gate	make test-
 GI-03	-	A8	Every evidence producer the stdlib gate reads is fault-injected	gate	make test-gate-probe	satisfied	1.0	-
 GI-04	-	-	Every documentation snippet compiles and every citation resolves	gate	make check-docs	satisfied	1.0	-
 GI-05	-	-	Every test binary runs, integration tests included	gate	make test-honest	satisfied	1.0	-
-GI-06	M2	-	make gates runs test-honest, so a non-ignored regression cannot coexist with a green gate	gate	make gates	owed	1.0	-
+GI-06	M2	-	make gates runs test-honest, so a non-ignored regression cannot coexist with a green gate	gate	make gates	satisfied	1.0	-
 GI-07	-	-	Every declared failure names an owning milestone and none of them passes	gate	make test-xfail	satisfied	1.0	-
 GI-08	M2	-	Every milestone exit reads BOTH debt inventories and this manifest	gate	make m2-exit	owed	1.0	-
 GI-09	M2	-	The owner filter is self-tested: it detects a row planted for the milestone under test	gate	make test-requirements-runner	owed	1.0	-

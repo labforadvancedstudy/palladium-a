@@ -64,6 +64,61 @@ struct ArrayBinding {
     storage: ArrayStorage,
 }
 
+/// WHERE THIS PASS DECIDES THE THINGS REVIEW KEEPS ASKING ABOUT
+/// ------------------------------------------------------------
+/// Same problem as the type checker: ~4,300 lines, past three reviewers' read
+/// limits. The decisions recent review turns on:
+///
+///   `current_fn_unit_return`    the field, and its per-function reset in
+///                               `generate_function_with_name` — BOTH spellings
+///                               of the unit type, and `main`'s `return 0;`
+///                               because its C type is `int`.
+///   `generate_statement`,       the two `Stmt::Return` arms that consume it.
+///   `generate_function_with_name`, `generate_block`,
+///   `generate_async_function_with_name`
+///                               the ONLY three callers of `generate_statement`;
+///                               the first and third set the reset, the second
+///                               inherits it.
+///   `function_signature`        the `actual_return_type` special case that
+///                               rewrites `main` to `int`.
+///
+/// EVERY SITE THAT DECIDES WHAT THE IMPORTED PROGRAM CONTAINS — derived by
+/// listing the readers of `self.imported_modules` and of `self.generic_instantiations`,
+/// not by recalling which ones felt relevant. The first version of this map
+/// named one of them, and the omitted one was a release blocker: it is a claim
+/// about what matters, so it inherits its author's blind spot, and the way out
+/// is to enumerate from the code.
+///
+///   `compile`, signature pass   registers imported public signatures into
+///                               `functions` (later OVERWRITTEN by the local
+///                               pass) and into `async_functions` (a HashSet
+///                               that is only ever inserted into — see the
+///                               declared residual on `async_functions`).
+///                               Asks NO shadowing question.
+///   `compile`, type pass        imported public structs and enums are emitted
+///                               unconditionally beside the local ones. The
+///                               shared predicate is function-only, so this
+///                               question is not merely unasked, it is
+///                               unanswerable here today.
+///   the imported-function loop  which imported BODIES are emitted: public,
+///                               `type_params` empty, and not shadowed — the
+///                               last via
+///                               `crate::ast::local_definition_shadows_import`,
+///                               the same function the type checker calls.
+///   the imported-prototype loop in `generate_function_prototypes`, the ONLY
+///                               `seen` set in this file. Must ask the SAME
+///                               three questions as the body loop, because
+///                               `seen` is first-wins and imports are visited
+///                               first: a shadowed import that gets a prototype
+///                               takes the name and suppresses the local one.
+///                               It did not ask, and gcc refused the result.
+///   `generic_instantiations`    monomorphised bodies, imported or local. The
+///                               list is built by the TYPE CHECKER
+///                               (`TypeChecker::get_instantiations`) from
+///                               `generic_functions`, so which body an
+///                               instantiation carries is decided there and
+///                               only executed here — including for an imported
+///                               generic, which this pass emits like any other.
 pub struct CodeGenerator {
     module_name: String,
     output: String,
@@ -77,6 +132,31 @@ pub struct CodeGenerator {
     array_bindings: std::collections::HashMap<String, ArrayBinding>,
     /// Map of parameter names to their mutability (for current function)
     mutable_params: std::collections::HashMap<String, bool>,
+    /// When the function being generated returns UNIT in Palladium, the C
+    /// return statement that must replace a value-bearing one — and `None`
+    /// when it genuinely returns a value.
+    ///
+    /// It is the statement rather than a bool because C `main` is the exception
+    /// and a bool made it a NAME-KEYED one. `Type::Unit` maps to C `void`
+    /// (`type_to_c`), but `main` is then rewritten to `int`
+    /// (`function_signature`, the `actual_return_type` special case), so the
+    /// right replacement differs: `return;` for an ordinary unit function,
+    /// `return 0;` for `main`. The first version of this field was
+    /// `current_fn_is_void: bool` set with `&& name != "main"`, which excluded
+    /// the one function every program has — and because C `main` returns `int`,
+    /// gcc does NOT extend the courtesy it extends to `void`:
+    ///
+    /// ```text
+    /// fn main() -> () { print_int(7) }
+    /// error: returning 'void' from a function with incompatible result
+    ///        type 'int'
+    /// ```
+    ///
+    /// A hard failure, in the defect that had just been closed, preserved by a
+    /// name-keyed exception. Set per function alongside `mutable_params`, and
+    /// also in `generate_async_function_with_name`, which is the other path
+    /// that feeds `generate_statement`.
+    current_fn_unit_return: Option<&'static str>,
     /// Imported modules
     imported_modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
     /// Generic function instantiations to generate
@@ -98,7 +178,19 @@ pub struct CodeGenerator {
     /// Map from original generic struct name to list of instantiations
     /// e.g., "Box" -> [("i64", "Box_i64"), ("bool", "Box_bool")]
     generic_struct_instantiation_map: std::collections::HashMap<String, Vec<(Vec<String>, String)>>,
-    /// Set of async function names
+    /// Set of async function names.
+    ///
+    /// DECLARED RESIDUAL, not fixed here: unlike `functions`, which the
+    /// main-program pass OVERWRITES entry by entry, this is a set that is only
+    /// ever inserted into. An imported `pub async fn f` shadowed by a local
+    /// ordinary `fn f` therefore leaves `f` in here, and `try_infer_expr_type`
+    /// types a call to the LOCAL `f` as `f_Future`. MEASURED: the emitted C
+    /// carried `f_Future v = f();` beside `long long f()` and gcc reported
+    /// `use of undeclared identifier 'f_Future'`. It is the same class as the
+    /// prototype-loop defect — a decision about the imported program made
+    /// without asking `local_definition_shadows_import` — one container over,
+    /// and it belongs with the module-system defects owed to M4 rather than to
+    /// this branch's scope.
     async_functions: std::collections::HashSet<String>,
     /// Names of struct tags actually emitted (structs + enums, both are
     /// `typedef struct Name {...} Name;`). Used to keep forward declarations
@@ -112,6 +204,7 @@ impl CodeGenerator {
         // Pre-allocate string capacity for better performance
         let initial_capacity = 64 * 1024; // 64KB initial capacity
         Ok(Self {
+            current_fn_unit_return: None,
             module_name: module_name.to_string(),
             output: String::with_capacity(initial_capacity),
             functions: std::collections::HashMap::new(),
@@ -557,7 +650,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:2343`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:2676`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:571-574`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -1291,13 +1384,34 @@ impl CodeGenerator {
             self.output.push('\n');
         }
 
-        // Generate functions from imported modules (same sorted local as above)
+        // Generate functions from imported modules, off the SAME SORTED LOCAL as
+        // above — `imported_modules` here is a sorted Vec, not the HashMap this
+        // loop used to walk with `.values()`, because HashMap order put the hash
+        // seed into the emitted C.
+        //
+        // A LOCAL DEFINITION SHADOWS AN IMPORTED ONE, and this loop emitted both.
+        // The type checker has always resolved the name to the local function —
+        // imported signatures are registered first and the local pass overwrites
+        // them — so emitting the imported body as well produces two C definitions
+        // of one name. Measured with a module declaring `pub async fn main` and a
+        // program declaring its own `fn main`: the C carried `main_Future main()`
+        // AND `int main(int, char**)`, and gcc refused it. It only became visible
+        // once typeck stopped rejecting that program outright, which it should
+        // never have been doing.
+        // THROUGH THE SHARED DEFINITION. This loop used to build its own name
+        // set, which counted a local GENERIC as shadowing — so an imported body
+        // was suppressed while the type checker went on resolving calls to it,
+        // leaving a name typeck accepted with no definition emitted. The one
+        // definition lives in src/ast/mod.rs and both passes call it, which is
+        // what makes "both passes ask one question" a fact about the call graph
+        // rather than a claim in a comment.
         for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
-                    // Only generate public, non-generic functions
+                    // Only generate public, non-generic, non-shadowed functions
                     if matches!(func.visibility, crate::ast::Visibility::Public)
                         && func.type_params.is_empty()
+                        && !crate::ast::local_definition_shadows_import(program, &func.name)
                     {
                         self.generate_function(func)?;
                     }
@@ -1753,10 +1867,28 @@ impl CodeGenerator {
             }
         };
 
-        // Imported modules: public, non-generic functions get a body emitted below.
+        // Imported modules: the ones whose BODY is emitted below, asked through
+        // the same shared definition the body loop uses.
         //
-        // Sorted by module name, like the three sites that fill the definitions
-        // (src/codegen/mod.rs:1123, src/codegen/mod.rs:1208, src/codegen/mod.rs:1295).
+        // This loop used to omit the shadowing test, and it is the loop that
+        // decides the name — `seen` is first-wins and imports are visited before
+        // the main program, so a shadowed import took the slot and the LOCAL
+        // prototype was then dropped as a duplicate. MEASURED: an imported
+        // `pub fn f(x: i64) -> i64` with a local `fn f() -> i64` emitted
+        // `long long f(long long x);` next to `long long f() { … }` and gcc
+        // refused it ("conflicting types for 'f'", "too few arguments"). The
+        // condition list here read like the body loop's but was one term short,
+        // which is exactly what a shared predicate cannot protect against if a
+        // call site does not call it.
+        //
+        // The `seen` ordering is no longer load-bearing between these two
+        // sources: with the shadowing test, an imported name and a local name
+        // cannot both be pushed. A local TYPE-PARAMETERISED function does not
+        // shadow (see `local_definition_shadows_import`) but emits no prototype
+        // under its own name either — its instantiations are mangled — so that
+        // case is not a collision.
+        //
+        // SORTED BY MODULE NAME, like the three sites that fill the definitions.
         // This is the fourth and last place the imported modules are iterated, and
         // `HashMap` order here alone kept the emitted C unstable: with the other
         // three ordered, twenty-four compiles of one unchanged six-module program
@@ -1769,6 +1901,7 @@ impl CodeGenerator {
                 if let Item::Function(func) = item {
                     if matches!(func.visibility, crate::ast::Visibility::Public)
                         && func.type_params.is_empty()
+                        && !crate::ast::local_definition_shadows_import(program, &func.name)
                         && !func.is_async
                         && func.name != "main"
                     {
@@ -2054,6 +2187,20 @@ impl CodeGenerator {
         self.mutable_params.clear();
         self.variables.clear(); // Clear variables from previous function
         self.array_bindings.clear();
+        // BOTH spellings of the unit type, which is the whole point: `None` and
+        // `Some(Type::Unit)` are one return type and must generate one shape.
+        // And `main` is INSIDE the rule, not an exception to it — it just needs
+        // a different replacement, because its C type is `int`.
+        self.current_fn_unit_return = if matches!(func.return_type, None | Some(Type::Unit))
+        {
+            if name == "main" {
+                Some("    return 0;\n")
+            } else {
+                Some("    return;\n")
+            }
+        } else {
+            None
+        };
 
         for param in &func.params {
             // Track if parameter is a pointer (either mutable or reference)
@@ -2215,12 +2362,27 @@ impl CodeGenerator {
                 self.output.push_str(";\n");
             }
             Stmt::Return(None) => {
-                self.output.push_str("    return;\n");
+                // `return;` from C `main` is the same constraint violation one
+                // step down: measured, `fn main() { return; }` emitted `return;`
+                // from `int main`. The unit replacement knows which is right.
+                self.output
+                    .push_str(self.current_fn_unit_return.unwrap_or("    return;\n"));
             }
             Stmt::Return(Some(expr)) => {
-                self.output.push_str("    return ");
-                self.generate_expression(expr)?;
-                self.output.push_str(";\n");
+                if let Some(unit_return) = self.current_fn_unit_return {
+                    // The expression is still EVALUATED — it is there for its
+                    // effect, and dropping it would change what the program
+                    // does — but its value is not returned, because this
+                    // function returns nothing in Palladium.
+                    self.output.push_str("    ");
+                    self.generate_expression(expr)?;
+                    self.output.push_str(";\n");
+                    self.output.push_str(unit_return);
+                } else {
+                    self.output.push_str("    return ");
+                    self.generate_expression(expr)?;
+                    self.output.push_str(";\n");
+                }
             }
             Stmt::Let {
                 name, ty, value, ..
@@ -3135,7 +3297,24 @@ impl CodeGenerator {
         self.output.push_str("    if (future->state == 0) {\n");
         self.output.push_str("        future->state = 1;\n");
 
-        // Generate the actual function body
+        // Generate the actual function body.
+        //
+        // WHAT THIS ASSIGNMENT IS FOR, now that "defensive and unreachable" is
+        // not the answer: it is PER-FUNCTION STATE RESET, the same protocol as
+        // the `mutable_params`/`variables`/`array_bindings` clears above — this
+        // path feeds `generate_statement`, and without it a value left by the
+        // previously generated function would still be in the field.
+        //
+        // It is `None` rather than a replacement because an async body cannot
+        // contain a value-carrying `return` at all: typeck refuses it
+        // (src/typeck/mod.rs, `async_value_return_unimplemented`). Round 11
+        // had this set to `Some("return 1; // Ready")`, which WAS reached —
+        // `fn g() -> Future<()> { … }` with `async fn f() -> () { g() }` type-
+        // checks, and the emission carried a duplicate `return 1;` while the
+        // value was silently dropped. That is now a refusal, so there is
+        // nothing left to replace, and leaving a stale replacement here would
+        // be worse than none.
+        self.current_fn_unit_return = None;
         self.output
             .push_str("        // Execute async function body\n");
         for stmt in &func.body {

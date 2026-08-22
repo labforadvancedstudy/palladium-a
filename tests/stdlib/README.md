@@ -13,7 +13,8 @@ the 38 builtins in `src/builtins.rs` that a real standard library would be built
 | Driver | Covers |
 |---|---|
 | `stdlib_tail_return.pd` | D3 — every shape of tail-expression return, plus explicit `return` and the unit tail that must *not* be lowered |
-| `stdlib_tail_if_defect.pd` | **D3b, an OPEN defect.** A tail `if` is never lowered, so a function ending in `if`/`else` still miscompiles. A codegen fixture: its `main` prints a constant and deliberately does not call the broken functions. Pinned `known_violation:fib,classify` in `DRIVERS.tsv` |
+| `stdlib_tail_if.pd` | D3b, **closed** — a tail `if` is the return value. Was `stdlib_tail_if_defect.pd`, pinned `known_violation:fib,classify`; now `clean`, and its `main` calls `fib`/`classify`/`sign`/… and asserts their values instead of avoiding them |
+| `stdlib_tail_match.pd` | D3b for `match` — the arms are lowered and the transcript proves the values, but codegen emits an `if`/`else if` chain with **no final `else`**, so the C cannot prove it returns on every path (gcc agrees: `-Wreturn-type`). Pinned `known_violation:area_code,sides` for that **separate** open defect |
 | `stdlib_builtins_string.pd` | the 8 string builtins + `print` / `print_int` |
 | `stdlib_builtins_char_args.pd` | `char_is_*`, `arg_count`, `arg_at` |
 | `stdlib_builtins_file.pd` | the 16 usable file and path builtins |
@@ -54,8 +55,10 @@ so a failed assertion is *also* a non-zero exit — but the value is what the di
 With the D3 fix reverted, `fn add(a,b) -> i64 { a + b }` returns garbage and exits 0 at **both**
 `-O0` (`8264595040`) and `-O2` (`8261746944`). No runtime observation of undefined behaviour is
 stable — on another libc the garbage could even equal the expected value and the diff would pass.
-So `gate_probe.py generated-c` requires every non-void function in `build_output/*.c` to contain
-a `return` (Net A) and to survive `-Werror=return-type` (Net B). It never runs anything.
+So `gate_probe.py generated-c` requires every non-void function in `build_output/*.c` to **return
+on every path** (Net A, a terminator analysis — *not* "contains a `return`", which a function with
+an early `return` plus a tail `if` defeats) and to survive `-Werror=return-type` (Net B). It never
+runs anything.
 
 **3. Every builtin exercised prints `@builtin <name> -> <observed result>`.**
 
@@ -74,7 +77,7 @@ marked, then asserted, so the marker and the assertion describe the same single 
 
 `print` and `print_int` return nothing, so they have no result to observe. They are declared
 `COVERED_BY_EFFECT` and carry a bare marker: their observable effect is every line of every
-transcript here, so a regression in either turns all six goldens red at once. That is a declared
+transcript here, so a regression in either turns every golden red at once. That is a declared
 category, not an oversight.
 
 ## If you change a driver

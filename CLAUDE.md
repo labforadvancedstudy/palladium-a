@@ -64,8 +64,13 @@ stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fi
   두 패스가 파생하도록 변경(중복 등록 400줄 삭제 + 드리프트 테스트).
 - D3 tail return — `fn add(a,b) -> i64 { a + b }`가 **에러 없이 쓰레기값 반환**(생성 C에 return 누락).
   파서에서 `Stmt::Return`으로 lowering. 피해자는 일반 사용자 프로그램이었다 — `stdlib/`가 아니다
-  (21개 중 0개만 컴파일되므로 애초에 컴파일된 적이 없다). **tail `if`는 아직 미수정**:
-  `fib(10)`이 55 대신 8261746944 반환. 고정 = `make stdlib-gate`의 생성-C 구조 불변식.
+  (21개 중 0개만 컴파일되므로 애초에 컴파일된 적이 없다).
+- **D3b tail `if` — 닫힘 (2026-08-22).** 파서가 함수 본문 tail `if`의 각 분기와 tail `match`의 각
+  arm까지 재귀적으로 lowering (`src/parser/mod.rs`, `lower_tail_to_return`). `fib(10)` = 55,
+  양쪽 arm에 `return` 방출. 값이 있는 분기와 없는 분기가 섞이면(대표적으로 `else` 없는 tail `if`)
+  조용한 fall-through 대신 **거부**한다 (`CompileError::tail_value_not_on_every_path`).
+  `known_violation` 핀이 XPASS로 인계를 걸어줬고, fixture는 `tests/stdlib/stdlib_tail_if.pd`
+  (`clean`)로 승격 — 이제 `main`이 함수들을 실제로 호출하고 값을 단언한다.
 
 - D4 `for`가 배열 **파라미터**를 순회할 때 decay된 포인터에 `sizeof` 사용. 고쳐짐 — 경계가
   선언된 길이에서 온다. 코드젠이 증명 못 하는 길이는 잘못된 경계가 아니라 컴파일 에러.
@@ -77,16 +82,23 @@ stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fi
   그것을 쓸 수 있는 파라미터로 넘기는 것은 컴파일 에러 (`language-spec` §A9.2).
 
 **남은 결함 (열림):**
-- **D3b tail `if`** — 파서가 tail *expression*은 `Stmt::Return`으로 낮추지만 tail `if`는 안 한다.
-  `fn fib(n) -> i64 { if n <= 1 { n } else { … } }`가 깨끗이 컴파일되고 `fib(10)`이 55 대신
-  8261746944를 반환. `make stdlib-gate`의 생성-C 구조 불변식이 `known_violation`으로 고정 중.
+- **`match`에 final `else`가 없다** — codegen이 `match`를 `if`/`else if` 체인으로 낮추는데 마지막
+  `else`가 없어서, 모든 arm이 `return`해도 생성 C는 "모든 경로에서 return"을 증명하지 못한다
+  (gcc도 동의: `-Wreturn-type`). D3b와 **별개** 결함. 핀 = `tests/stdlib/stdlib_tail_match.pd`
+  (`known_violation:area_code,sides`).
+- **missing-return 진단 부재** — `fn f() -> i64 { }`, 마지막 문장이 `if c { return 1; }`,
+  안 돌 수도 있는 루프. 값이 tail 위치에 *쓰이지 않은* 경우라 파서가 잡을 단서가 없고, 본문 전체
+  흐름 분석이 필요하다. Net A(`scripts/check-c-returns.py`)는 사후에 잡지만 거부하는 건 없다.
+  XFAIL = `tests/compiler_comprehensive_test.rs::test_missing_return_is_an_error` (owned by M1).
+- **C 키워드 식별자 미맹글링** — `fn double(x: i64)`이 `long long double(...)`을 방출해 gcc가 거부.
+  XFAIL = `tests/e2e_test.rs::test_c_keyword_identifier_still_links` (owned by M1).
 - **컴파일 불가능한 빌트인 6개** — `file_flush`·`file_seek`·`file_open_ex`·`file_close_ex`·
   `file_read_ex`·`file_write_ex`. 핸들 표현이 둘로 갈렸다(레거시=인덱스, 확장=`FileHandle`=`void*`).
   경계에서 캐스팅하면 `file_seek(file_open(p), 0, 0)`이 컴파일되고 정수 `1`을 `FILE*`로 역참조하므로
   **gcc 에러가 지금 segfault를 막는 유일한 장치다.** typeck이 `Support::Unsupported`로 먼저 거부 중.
   결정 필요: 확장 계열을 인덱스 테이블로 재기반할 것인가, `BUILTINS`에서 지울 것인가.
-- C 키워드 식별자(`fn double`)가 유효하지 않은 C를 생성. `self`/제네릭 `impl`이 정의되지 않은 C.
-  `Type::method(args)`가 codegen이 emit한 적 없는 `Type_method__new`로 조용히 lowering.
+- `self`/제네릭 `impl`이 정의되지 않은 C. `Type::method(args)`가 codegen이 emit한 적 없는
+  `Type_method__new`로 조용히 lowering.
 - 중첩 배열이 로컬·파라미터 양쪽에서 불가 (`type_to_c`가 선언자가 아니라 타입으로 `T[M][N]` 구성).
 
 **D6은 결함이 아니었다 (철회).** `CLAUDE.md`가 열린 결함으로 올려뒀으나 `191f8c1`에서 이미 고쳐졌고,

@@ -6,7 +6,7 @@
 //
 //   1. `int`/`string` in the expected C. The integer type lowers to
 //      `long long` (`int` is only a source-level alias for `i64`,
-//      `src/parser/mod.rs:2073`) and `print` lowers to `__pd_print`, not
+//      `src/parser/mod.rs:2608`) and `print` lowers to `__pd_print`, not
 //      `printf`.
 //   2. Fragments with no `fn main`. The driver rejects a program without one
 //      ("No main function found"), so a declaration-only snippet cannot be
@@ -563,8 +563,16 @@ fn test_error_cases() {
     }
 }
 
+// The reason below was CORRECTED, not retagged — the owner is still M1 and the
+// test is still ignored, because it still fails. What changed is that the old
+// text carried a clause that has become false: it said this "cannot be fixed in
+// isolation" because "a tail `if` … is also emitted with no return today".
+// D3b landed, and `fn f() -> i64 { if c { 1 } else { 2 } }` now emits a
+// `return` in both branches. Leaving a false statement inside a declared
+// expected-failure is the same disease this milestone exists to treat, so the
+// reason now says what is measurably still missing.
 #[test]
-#[ignore = "XFAIL: no missing-return diagnostic — `fn f() -> int { }` compiles silently and emits a C function with no return statement, so the caller reads garbage. This is M1's own exit criterion ('nothing that parses, then breaks, without also being reported as an error'), and it cannot be fixed in isolation: a tail `if` (`fn f() -> int { if c { 1 } else { 2 } }`) is also emitted with no return today, so the diagnostic and the tail-expression lowering have to land together (owned by M1)"]
+#[ignore = "XFAIL: no missing-return diagnostic — `fn get_value() -> i64 { }` compiles silently and emits `long long get_value() { }`, so the caller reads garbage; scripts/check-c-returns.py sees it after the fact ('non-void function may fall off its end') but nothing refuses it. This is M1's own exit criterion ('nothing that parses, then breaks, without also being reported as an error'). D3b closed the half the parser can decide from what was WRITTEN: a value in tail position with no value on some other path is now refused (src/parser/mod.rs, CompileError::tail_value_not_on_every_path). What is left needs a real flow analysis over the whole body — an empty body, `if c { return 1; }` as the last statement, and a loop that may not be entered all fall off the end with no value written anywhere, so the parser has nothing to key on (owned by M1)"]
 fn test_missing_return_is_an_error() {
     compile_error_contains(
         "fn get_value() -> int { }
@@ -658,7 +666,7 @@ fn test_complex_programs() {
 }
 
 #[test]
-#[ignore = "XFAIL: `&self` receivers and method-call syntax — grammar.ebnf:220 'Method-call syntax x.f() parses but the type checker rejects it: \"Indirect function calls not yet supported\"' (owned by M4, 'Traits with real dispatch' / a real reference type)"]
+#[ignore = "XFAIL: an `impl` block's `Self` is not a known type — this fixture is refused with 'Unknown struct type: Self' before it reaches the `&self` receiver and the method-call syntax (`x.f()`, grammar.ebnf:220, rejected as \"Indirect function calls not yet supported\") it was written for. All three are owed; this is the one that fires (owned by M4, 'Traits with real dispatch' / a real reference type)"]
 fn test_struct_with_methods() {
     compile_and_verify(
         r#"

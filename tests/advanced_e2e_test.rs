@@ -179,7 +179,7 @@ fn test_trait_implementation() {
 }
 
 #[test]
-#[ignore = "XFAIL: method-call syntax `x.f()` — grammar.ebnf:220 says it parses and is then rejected with 'Indirect function calls not yet supported' (owned by M2, item 1)"]
+#[ignore = "XFAIL: a generic enum variant does not infer the enum's type argument — `Option::None` in a function returning `Option<int>` is checked as bare `Option`, so this fixture dies at 'Type mismatch: expected Option<Int>, found Option' before it reaches the method-call syntax (`x.f()`, grammar.ebnf:220) it was written for. Both are owed; this is the one that fires (owned by M2, item 1)"]
 fn test_option_enum() {
     let source = r#"
     enum Option<T> {
@@ -389,7 +389,7 @@ fn test_higher_order_functions() {
 }
 
 #[test]
-#[ignore = "XFAIL: an `async fn` body is not wrapped into a Future — with the language's postfix `.await` this reaches the type checker, which reports 'expected Future<Int>, found Int' (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
+#[ignore = "XFAIL: an `async fn` body is not wrapped into a Future. The declared blocker used to be the type checker's 'expected Future<Int>, found Int'; since fbcfc39 the fixture is refused EARLIER, by the outright refusal of a value-carrying `return` in an `async fn` — there is nowhere to put the value, because the body is emitted into a poll function returning an int readiness flag. The Future gap is still the reason nothing can be done about it (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_async_await() {
     let source = r#"
     async fn fetch_data(id: int) -> int {
@@ -518,7 +518,7 @@ fn test_pattern_matching_guards() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:119 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1004-1013) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:119 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1477-1486) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics_arrays() {
     let source = r#"
     struct Matrix<T, const ROWS: int, const COLS: int> {
