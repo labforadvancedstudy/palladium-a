@@ -68,7 +68,13 @@ test_file.txt
 # The conformance expected-failure manifest is INPUT to a gate, not a scratch
 # file: if it is untracked the gate silently loses every declared expectation.
 # Same trap as the blanket *.c above. Do not remove this negation.
-!tests/conformance-manifest.txt
+#
+# BROADENED, because the negation only protected the file that already existed. Measured:
+# a NEW `tests/hostile-manifest.txt` left `git status --porcelain` empty — a corpus manifest
+# added tomorrow would be silently untracked, which is precisely the trap the paragraph
+# above says it is defending against. `tests/` holds gate INPUT, never scratch.
+!tests/*.txt
+!tests/**/*.txt
 
 # ...but a gate input is not a temporary file. The blanket `*.txt` above is the same
 # pattern as the blanket `*.c` that kept runtime/palladium_runtime.c out of this

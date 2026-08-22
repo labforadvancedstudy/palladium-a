@@ -924,11 +924,19 @@ on a fixed point rather than on any inventory at all.
 
 ### F3. The conformance corpus has no negative tests
 
-`reject=0` on every run. The class exists, the runner implements it, and
-[A11](../specification/language-spec.md#a11-conformance) advertises it — and no fixture uses it. The
-refusals are covered in Rust integration tests (`tests/d5_unimplemented_constructs.rs`,
-`tests/d10_llvm_refuses.rs`), which the bootstrap compiler will never run. 23 manifest rows are
-`reject` rows, three of them are thesis conditions, and M9's parity claim depends on them existing.
+**CLOSED on the integrated tree: `reject=14`.**
+
+*What this finding said, and the tension it carried.* It said `reject=0` on every run — and four
+lines later, that 23 manifest rows are `reject` rows and M9's parity claim depends on them
+existing. Both sentences stood in one section: `reject=0` counted rows the runner EVALUATED, the 23
+counted rows DECLARED in the manifest, and nothing said so, so the file contradicted itself in
+plain sight for several rounds. Root `CLAUDE.md` requires a fact conflict to be recorded rather
+than left to coexist, and this one was not.
+
+*Resolved by measurement, not by choosing a sentence.* On the integrated tree the runner evaluates
+14 of them: `reject=14` over 70 fixtures. The refusals a second implementation must reproduce are
+in the corpus, not only in `tests/d5_unimplemented_constructs.rs` and `tests/d10_llvm_refuses.rs`,
+which the bootstrap compiler will never run.
 
 ### F4. Two differentiators owned no failing row anywhere
 
@@ -955,9 +963,15 @@ replaced with a supersession pointer.
 ### F7. Stale claims in documents this file rests on
 
 - [A11](../specification/language-spec.md#a11-conformance) said "over 44 fixtures", "verified 33 ·
-  vacuous 7 · xfail 2 · skip 2" and named "the three failures", against a measured
-  `verified=43 … xfail=1 … failures=0` over 53. **Corrected**, because this file treats the annex as
-  an authority and stale data in an authority is release governance, not a documentation nit.
+  vacuous 7 · xfail 2 · skip 2" and named "the three failures", against a then-measured
+  "verified 43 … xfail 1 … failures 0" over "53 fixtures". **Corrected**, because this file treats
+  the annex as an authority and stale data in an authority is release governance, not a
+  documentation nit. **It went stale a second time** when the integration took the corpus to 70
+  (`reject` 0 → 14), and A11 additionally carried a universally-quantified absence — "No fixture
+  uses this class" — which nothing could contradict by passing. Both are corrected, and
+  `language-spec.md` is now in `CLAIM_SCANNED` with the corpus size MEASURED from the manifest, so
+  a third round of this is a red gate rather than a reading. Figures quoted as history are written
+  in quotation marks; an unquoted `over N fixtures` is a live claim and is checked.
 - `feature-index.toml`'s `async_as_effect` row claimed `cmd: grep -rn 'effects::' … -> 1 line`
   while a re-run returned **8**, because the evidence gate only regex-matched the *shape*
   `cmd: X -> Y` and never checked a `cmd:` item's output. **REPAIRED ON `main`, by the separate

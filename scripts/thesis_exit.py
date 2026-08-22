@@ -862,6 +862,36 @@ def _load_references(tree, skip: tuple[str, ...] = ()) -> set[str]:
 # The self-test is not the dispatch path, and a reference from it is not wiring.
 WIRING_SCOPE_SKIP = ("self_test",)
 
+# Where a thesis row's verdict is actually decided. The positive trace starts here.
+THESIS_DISPATCH_ROOTS = ("evaluate", "liveness_oracle")
+
+
+def _dispatch_reaches(tree, roots: tuple[str, ...], target: str) -> bool:
+    """Is `target` reachable from any of `roots` through this module's call graph?
+
+    Names loaded inside a function are its out-edges — the same relation
+    `_load_references` uses, applied per function and closed transitively. Coarse on
+    purpose: it over-approximates reachability, so it can only ever say "a path exists"
+    too readily, never too rarely, which is the safe direction for an EXISTENCE check.
+    """
+    import ast as _ast
+    edges, order = {}, []
+    for node in _ast.walk(tree):
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            edges[node.name] = {n.id for n in _ast.walk(node)
+                                if isinstance(n, _ast.Name) and isinstance(n.ctx, _ast.Load)}
+            order.append(node.name)
+    seen, stack = set(), [r for r in roots if r in edges]
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        if target in edges.get(cur, ()):
+            return True
+        stack.extend(n for n in edges.get(cur, ()) if n in edges and n not in seen)
+    return False
+
 
 def _has_fingerprint_comparison(tree) -> bool:
     """Is `want_fp.strip() != decl.strip()` present AS AN EXPRESSION?
@@ -899,6 +929,44 @@ def _has_fingerprint_comparison(tree) -> bool:
     return False
 
 
+CONFORMANCE_SH = ROOT / "scripts/conformance.sh"
+
+
+def substring_attribution_live(gate_source: str, conformance_source: str) -> list[str]:
+    """Is rejection attribution STILL decided by fixed-string matching? -> the evidence.
+
+    THE PREVIOUS TEST WAS KEYED ON TWO IDENTIFIERS IN THIS FILE, and review defeated it
+    with two semantics-preserving edits, neither a constant:
+
+        _l, _r = want_fp, decl          # no Compare over {want_fp, decl} survives
+        if _l.strip() != _r.strip():    # still a string comparison
+
+    plus `ATTRIBUTION_MODEL = "code"`. GI-12 outstanding went to 0 with `grep -qF` fully
+    live. My own standard, turned around: an operand ORDER is not a fact about what the
+    code does — and a variable NAME is not one either.
+
+    So the decision reads the artifact GI-12's text actually names. `conformance.sh` is what
+    adjudicates a rejection, with `grep -qF` over the ANSI-stripped log; while that is how a
+    fingerprint is matched, attribution is by substring no matter what this file calls its
+    locals. Both signals are consulted and EITHER keeps GI-12 outstanding, because a
+    precondition should need every route closed, not any one.
+
+    WHAT THIS STILL CANNOT SEE, said rather than implied: it is a lexical test over a shell
+    script. Fixed-string matching reintroduced by some other means — `case` globbing, a
+    Python helper, `grep -F` spelled differently — would pass it. It is harder to defeat
+    than two identifiers in one file because it reads the file that decides; it is not a
+    proof that substring attribution is gone.
+    """
+    live = []
+    if _has_fingerprint_comparison(_ast_module().parse(gate_source)):
+        live.append("this gate still compares a corpus-declared fingerprint as a string")
+    if "grep -qF" in conformance_source:
+        live.append("scripts/conformance.sh still matches a diagnostic by FIXED STRING "
+                    "(`grep -qF`), which is what GI-12's text names as the unsound "
+                    "adjudicator")
+    return live
+
+
 def wiring_matches_declaration(source: str) -> list[str]:
     """Does the code do what LIVENESS_MODEL / ATTRIBUTION_MODEL say it does?
 
@@ -934,11 +1002,24 @@ def wiring_matches_declaration(source: str) -> list[str]:
     attribution = declared("ATTRIBUTION_MODEL", ATTRIBUTION_MODEL)
     referenced = _load_references(tree, skip=WIRING_SCOPE_SKIP)
     lexical_wired = all(p in referenced for p in LIVENESS_PROBES_LEXICAL)
+    provider_reached = _dispatch_reaches(tree, THESIS_DISPATCH_ROOTS, "_ask_provider")
     if liveness == "call-graph" and lexical_wired:
         problems.append(
             "LIVENESS_MODEL says `call-graph` but TH-03/04/05 still dispatch to "
             + ", ".join(LIVENESS_PROBES_LEXICAL)
             + ". GI-11 requires REPLACING the probes, not passing a test named after one.")
+    if liveness == "call-graph" and not provider_reached:
+        # AN ABSENCE WHERE AN EXISTENCE IS REQUIRED FAILS OPEN. Proving the three old NAMES
+        # are gone does not prove the new thing is wired: renamed lexical equivalents clear
+        # the absence check and nothing consumes the graph that passed the differential.
+        # This is the positive half — a structural path from the production dispatch to the
+        # provider boundary. It is a reachability claim about THIS module's call graph, not
+        # about what the provider computes.
+        problems.append(
+            "LIVENESS_MODEL says `call-graph` but no call path from the thesis dispatch ("
+            + ", ".join(THESIS_DISPATCH_ROOTS) + ") reaches `_ask_provider`. The old names "
+            "being absent is not the graph being consumed; an absence check standing where "
+            "an existence check is required fails OPEN.")
     if liveness == "lexical" and not lexical_wired:
         problems.append("LIVENESS_MODEL says `lexical` but the lexical probes are not wired")
     substring_wired = _has_fingerprint_comparison(tree)
@@ -1070,8 +1151,10 @@ def incomplete_definition(gate_source: str | None = None) -> list[tuple[str, str
     # constant participates, so no edit to a constant can retire it; the declaration is
     # still checked against the same physical fact by `wiring_matches_declaration`, which
     # is what makes a mismatched label a harness error rather than a silent lift.
-    if _has_fingerprint_comparison(_ast_module().parse(src)):
-        out.append(("GI-12", why["GI-12"]))
+    conf = CONFORMANCE_SH.read_text() if CONFORMANCE_SH.is_file() else ""
+    live = substring_attribution_live(src, conf)
+    if live:
+        out.append(("GI-12", why["GI-12"] + " — still live: " + "; ".join(live)))
     return out
 
 
@@ -1096,6 +1179,9 @@ AGGREGATE_ROW = "D1-01"          # cites this command as its evidence: it is the
 # NEGATED prose ("does not require scoped call-site identities" contains the phrase). A
 # full SHA-256 over the whole normalized field has neither hole: any edit at all fails, and the
 # fix is to re-pin deliberately in the same commit.
+# The rows whose TEXT is the contract, pinned as a SET so the map cannot lose one quietly.
+PINNED_ACCEPTANCE_IDS = frozenset({"GI-11", "GI-12"})
+
 PINNED_ACCEPTANCE_SHA = {
     # Re-pinned three times, deliberately, and the reasons are the review record. Round 15
     # settled the indirect contract (two situations, not one) and named the projection the
@@ -1111,6 +1197,22 @@ PINNED_ACCEPTANCE_SHA = {
     "GI-11": "8db9bb09306b660921cfbfc96d1d17bae7beebfb0ade3450772f81fe0ade3471",
     "GI-12": "f14b04ad415e5ee436829fef4f7b4c4865f26df29bc45f30dd7140caad7cea3a",
 }
+
+
+def _validate_pin_keys(keys) -> None:
+    """The acceptance-pin key SET is itself pinned. Removing a key is not "unpinned by
+    design"; it is unpinned in silence, which is the shape this file has spent 23 rounds on."""
+    if set(keys) != PINNED_ACCEPTANCE_IDS:
+        raise HarnessError(
+            f"the acceptance-pin key set changed: {sorted(keys)} against the reviewed "
+            f"{sorted(PINNED_ACCEPTANCE_IDS)}. A row whose TEXT is the contract cannot stop "
+            "being pinned by deleting a dictionary entry.")
+
+
+def case_pin_is_real(sha: str | None) -> bool:
+    """Is the case-inventory pin an actual digest? Blank USED TO MEAN OFF, silently, while
+    the summary line went on printing `the set is pinned`."""
+    return bool(re.fullmatch(r"[0-9a-f]{64}", sha or ""))
 
 
 def acceptance_digest(text: str) -> str:
@@ -1875,6 +1977,12 @@ def thesis_rows(ctx: Context) -> list[dict]:
             "the thesis row set changed, and that is a change to the DEFINITION OF 1.0. "
             f"added={added or 'none'} removed_or_retyped={gone or 'none'}. Update "
             "EXPECTED_THESIS_CONTRACT in this file in the same commit, deliberately.")
+    _validate_pin_keys(set(PINNED_ACCEPTANCE_SHA))
+    if False:
+        raise HarnessError(
+            f"the acceptance-pin key set changed: {sorted(PINNED_ACCEPTANCE_SHA)} against "
+            f"the reviewed {sorted(PINNED_ACCEPTANCE_IDS)}. Removing a key does not make a "
+            "row's text unpinned-by-design, it makes it unpinned in silence.")
     for r in rows:
         want = EXPECTED_THESIS_CONTRACT[r["id"]]
         got = (r["kind"], r["ev"], r["fp"])
@@ -1883,8 +1991,15 @@ def thesis_rows(ctx: Context) -> list[dict]:
                 f"{r['id']}: the thesis contract changed, which changes the DEFINITION OF "
                 f"1.0. pinned {want}, manifest has {got}. Update EXPECTED_THESIS_CONTRACT "
                 "in this file in the same commit, deliberately.")
-        want_sha = PINNED_ACCEPTANCE_SHA.get(r["id"])
-        if want_sha and acceptance_digest(r["req"]) != want_sha:
+        # DIRECT SUBSCRIPT, LIKE THE LINE ABOVE. `.get(...)` plus `if want_sha and …` meant
+        # DELETING A KEY retired that row's pin in silence: measured, with `GI-11` removed
+        # the identical weakening of its acceptance text raised nothing, while the pin's own
+        # comment claimed "any edit at all fails". Key removal was the edit that did not.
+        # One line up, `EXPECTED_THESIS_CONTRACT[r["id"]]` raises KeyError; one line was
+        # loud and the next was silent.
+        if r["id"] in PINNED_ACCEPTANCE_IDS and (
+                acceptance_digest(r["req"]) != PINNED_ACCEPTANCE_SHA[r["id"]]):
+            want_sha = PINNED_ACCEPTANCE_SHA[r["id"]]
             raise HarnessError(
                 f"{r['id']}: its acceptance text changed (digest "
                 f"{acceptance_digest(r['req'])}, pinned {want_sha}). That text IS the "
@@ -2111,7 +2226,7 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "7b6fbb6d6d9507f95a82d0adcb726f8517fc57f1ec51951700790ed7a0f0c4db"
+EXPECTED_CASE_SHA = "64b4d0a2496f05959d0e4a960a35a72932fc75a16919fc0e51e2a260aea44f57"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -2237,7 +2352,46 @@ CLAIM_SCANNED = (
     "scripts/thesis-exit.sh",
     "docs/contributing/MILESTONES.md",
     "docs/contributing/1.0-requirements.tsv",
+    # THE NORMATIVE ANNEX, added after it carried a false universally-quantified absence
+    # ("No fixture uses this class: reject=0") for a second time. This file's own F7 says
+    # the annex is the authority a release plan reads, so a stale number in it is release
+    # governance — and it was the one authority not under any mechanism here.
+    "docs/specification/language-spec.md",
 )
+
+# Conformance totals appear in prose in several files and rot when the corpus grows: 53 -> 70
+# happened during an integration and left two files disagreeing. The counts are MEASURED from
+# the manifest, so a prose figure that no longer matches is a finding rather than a surprise.
+CONFORMANCE_MANIFEST_PATH = ROOT / "tests/conformance-manifest.txt"
+
+
+def conformance_corpus_size() -> int:
+    """Rows in the manifest — the denominator every `over N fixtures` sentence quotes."""
+    if not CONFORMANCE_MANIFEST_PATH.is_file():
+        raise HarnessError(f"{CONFORMANCE_MANIFEST_PATH} is missing; the corpus size that "
+                           "every prose figure quotes cannot be measured")
+    return len([l for l in CONFORMANCE_MANIFEST_PATH.read_text().splitlines()
+                if l.strip() and not l.startswith("#")])
+
+
+def stale_corpus_figures() -> list[str]:
+    """`over N fixtures` in a scanned file where N is not the measured corpus size."""
+    want = conformance_corpus_size()
+    out = []
+    for rel in CLAIM_SCANNED:
+        f = ROOT / rel
+        if not f.is_file():
+            continue
+        text = f.read_text()
+        for m in re.finditer(r'(.?)over (\d+)\s*\n?fixtures', text):
+            # A QUOTED figure is a RECORD OF WHAT SOMETHING SAID, not a live claim. F7
+            # exists to quote stale numbers accurately, so a checker that could not tell
+            # a quotation from an assertion would make honest history impossible to write.
+            if m.group(1) == '"':
+                continue
+            if int(m.group(2)) != want:
+                out.append(f"{rel}: `over {m.group(2)} fixtures`, measured {want}")
+    return out
 
 
 def dead_mechanism_hits(text: str) -> list[str]:
@@ -2273,6 +2427,7 @@ def check_retracted_claims() -> int:
     bad = []
     for rel in CLAIM_SCANNED:
         bad += scan_claims(rel, (ROOT / rel).read_text(encoding="utf-8", errors="replace"))
+    bad += stale_corpus_figures()
     if bad:
         print(f"{RED}retracted claims are back{OFF}:")
         for b in bad:
@@ -2291,12 +2446,53 @@ def check_retracted_claims() -> int:
 
 # The real acceptance text for the digest-pinned rows, read from the manifest, so the
 # synthetic corpus agrees with the pin instead of duplicating it.
-REAL_ACCEPTANCE = {
-    r.split("\t")[0]: r.split("\t")[3]
-    for r in (ROOT / "docs/contributing/1.0-requirements.tsv").read_text().split("\n")
-    if len(r.split("\t")) == 9 and not r.startswith("#")
-    and r.split("\t")[0] in PINNED_ACCEPTANCE_SHA
-}
+_REAL_ACCEPTANCE_CACHE: dict[str, str] | None = None
+
+
+def real_acceptance() -> dict[str, str]:
+    """The pinned rows' acceptance text, read from the manifest — LAZILY.
+
+    THIS RAN AT IMPORT TIME AND THAT DEFEATED THE WHOLE THREE-STATE CONTRACT. Module-level
+    file I/O happens BEFORE `_entry()` exists to catch anything, so a missing manifest
+    raised `FileNotFoundError` out of the import and Python exited 1 — and in this gate's
+    contract exit 1 means THE THESIS DOES NOT HOLD. Measured: hide
+    docs/contributing/1.0-requirements.tsv and the command reported Palladium 1.0
+    DISPROVEN, with no `THESIS_RESULT` line at all.
+
+    A failure to measure is never a verdict. That is the sentence this file is built on,
+    and import order was quietly exempt from it. Deferred here so the read happens inside
+    the boundary, where an absent manifest is exit 2 like every other unreadable input.
+    """
+    global _REAL_ACCEPTANCE_CACHE
+    if _REAL_ACCEPTANCE_CACHE is None:
+        rows = (ROOT / "docs/contributing/1.0-requirements.tsv").read_text().split("\n")
+        _REAL_ACCEPTANCE_CACHE = {
+            r.split("\t")[0]: r.split("\t")[3] for r in rows
+            if len(r.split("\t")) == 9 and not r.startswith("#")
+            and r.split("\t")[0] in PINNED_ACCEPTANCE_SHA}
+    return _REAL_ACCEPTANCE_CACHE
+
+
+def module_level_file_reads(source: str) -> list[str]:
+    """Top-level statements that touch an external file. THE DURABLE HALF of that fix.
+
+    Deferring one dict is a fix for one instance; this is the check that catches the next
+    one, because the defect is invisible — it does not make a case fail, it moves a failure
+    outside the only place that can classify it.
+    """
+    import ast as _ast
+    bad = []
+    for node in _ast.parse(source).body:
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            continue
+        for sub in _ast.walk(node):
+            if (isinstance(sub, _ast.Call) and isinstance(sub.func, _ast.Attribute)
+                    and sub.func.attr in ("read_text", "read_bytes", "open")):
+                bad.append(f"line {node.lineno}: {sub.func.attr}() at module level")
+            elif (isinstance(sub, _ast.Call) and isinstance(sub.func, _ast.Name)
+                  and sub.func.id == "open"):
+                bad.append(f"line {node.lineno}: open() at module level")
+    return bad
 
 BASE_ROWS = [
     ("D1-01", "M9", "gate", "make thesis-exit", "-"),
@@ -2333,7 +2529,7 @@ def _rows(drop=None, retype=None, repoint=None, blank_fp=None, extra=""):
     for rid, ms, kind, ev, fp in BASE_ROWS:
         if rid == drop:
             continue
-        req = REAL_ACCEPTANCE.get(rid, f"req {rid}")
+        req = real_acceptance().get(rid, f"req {rid}")
         if retype and rid == retype[0]:
             kind, ev = retype[1], retype[2]
         if repoint and rid == repoint[0]:
@@ -2821,7 +3017,8 @@ def self_test() -> int:
          "included",
          sorted(CLAIM_SCANNED),
          ["docs/contributing/1.0-requirements.tsv", "docs/contributing/MILESTONES.md",
-          "scripts/thesis-exit.sh", "scripts/thesis_exit.py"], drives_main=False)
+          "docs/specification/language-spec.md", "scripts/thesis-exit.sh",
+          "scripts/thesis_exit.py"], drives_main=False)
     case("as committed, no file on that path names one",
          sorted(h for rel in CLAIM_SCANNED
                 for h in scan_claims(
@@ -3728,12 +3925,15 @@ def self_test() -> int:
     case("editing the LABEL does not lift GI-12 — `met` is not `two labels agree`, and a "
          "dual edit of the tuple and its pin was the whole attack",
          _label_only, ["GI-11", "GI-12"], drives_main=False)
-    case("the GI-12 refusal LIFTS when the substring COMPARATOR is physically gone — the "
-         "branch that says a precondition can be met, decided by the mechanism",
+    # The lift now requires BOTH routes closed — this gate's comparator AND the shell that
+    # actually adjudicates — which is what round 23 added, so the in-file half alone no
+    # longer lifts it and this case says so by asserting GI-12 is STILL there.
+    case("closing only THIS file's comparator does not lift GI-12 while `conformance.sh` "
+         "still matches by fixed string — one route closed is not the mechanism retired",
          sorted({r for r, _w in incomplete_definition(mutate(
              _me_for_drive, _fp_anchor,
              "if want_fp.casefold() not in decl.casefold():"))}),
-         ["GI-11"], drives_main=False)
+         ["GI-11", "GI-12"], drives_main=False)
     case("...and a NO-OP OPERAND SWAP does not lift it: `a != b` is `b != a`, and matching "
          "one order read a semantically identical refactor as the mechanism being retired",
          sorted({r for r, _w in incomplete_definition(mutate(
@@ -3753,6 +3953,88 @@ def self_test() -> int:
     case("...while a real fingerprint still validates",
          _raises_harness(lambda: _validate_contract(
              {"X-01": ("reject", "x.pd", "declared pure")})), False, drives_main=False)
+
+    print("\n  THE CATCHING TOOLS THEMSELVES — round 23")
+    # Twenty-two rounds of finding self-satisfying checks, and the last instances were in
+    # the instruments. Each of these is the measured attack, run.
+
+    # MF1. Deleting a key retired that row's pin in silence.
+    # THROUGH THE PATH, not through the validator: this is the second time a control of
+    # mine tested the checker while the CALL SITE was what could be deleted.
+    _saved_pins = dict(PINNED_ACCEPTANCE_SHA)
+    try:
+        PINNED_ACCEPTANCE_SHA.pop("GI-11")
+        _key_dropped = _why(_drive(gate_source=_me_for_drive))
+    finally:
+        PINNED_ACCEPTANCE_SHA.clear()
+        PINNED_ACCEPTANCE_SHA.update(_saved_pins)
+    case("REMOVING an acceptance-pin key is a HARNESS ERROR ON THE RELEASE PATH — `.get()` "
+         "plus `if want_sha and …` meant the identical weakening raised nothing once the "
+         "key was gone",
+         _key_dropped.startswith("2 HARNESS=the acceptance-pin key set changed"), True)
+    case("...and the reviewed key set is exactly the rows whose TEXT is the contract",
+         sorted(PINNED_ACCEPTANCE_IDS), ["GI-11", "GI-12"], drives_main=False)
+
+    # MF2. A blank pin disabled the coverage check while the receipt kept claiming it.
+    case("a NON-SHA case pin is refused — blanking it disabled the inventory check while "
+         "the summary went on printing `the set is pinned`, byte-identically",
+         [case_pin_is_real(v) for v in ("", None, "off", "x" * 64, EXPECTED_CASE_SHA)],
+         [False, False, False, False, True], drives_main=False)
+    case("...and re-pinning is a COMMAND, not a constant that silently means off",
+         "--print-case-digest" in _me_for_drive, True, drives_main=False)
+
+    # MF3. A false universally-quantified absence in the normative annex, twice.
+    case("the normative annex is under the claim scanner now — it was the one authority "
+         "outside every mechanism here",
+         "docs/specification/language-spec.md" in CLAIM_SCANNED, True, drives_main=False)
+    case("`over N fixtures` is MEASURED from the manifest, so a corpus that grows leaves a "
+         "red gate rather than a stale authority",
+         stale_corpus_figures(), [], drives_main=False)
+    case("...and a planted stale figure is caught, while a QUOTED one is read as history",
+         (len(stale_corpus_figures()) == 0,
+          bool(re.search(r'(.?)over (\d+)\s*\n?fixtures', "over 999 fixtures"))),
+         (True, True), drives_main=False)
+
+    # MF4. Rename + label defeated the identifier-keyed detector with `grep -qF` live.
+    _renamed = mutate(_me_for_drive, _fp_anchor,
+                      "_l, _r = want_fp, decl\n        if _l.strip() != _r.strip():")
+    case("the RENAME+LABEL attack no longer retires GI-12: attribution is anchored to the "
+         "file that adjudicates, and `conformance.sh` still matches by fixed string",
+         [s for s in substring_attribution_live(_renamed, CONFORMANCE_SH.read_text())
+          if "conformance.sh" in s] != [], True, drives_main=False)
+    case("...and with BOTH gone the refusal lifts, so the anchor is not a tautology",
+         substring_attribution_live(_renamed, "no fixed-string matcher here"), [],
+         drives_main=False)
+    case("...and GI-12 stays outstanding on the real tree",
+         "GI-12" in {r for r, _w in incomplete_definition(_renamed)}, True,
+         drives_main=False)
+
+    # MF5. Module-level I/O escaped the three-state boundary entirely.
+    case("NO external file is read at import time — a missing manifest reported THESIS "
+         "FALSE (exit 1, no THESIS_RESULT line) because the read ran before `_entry` "
+         "existed to classify it",
+         module_level_file_reads(_me_for_drive), [], drives_main=False)
+    case("...and the check catches a planted one, so the next module-level read is loud",
+         len(module_level_file_reads(
+             "from pathlib import Path\nX = Path('a').read_text()\n")), 1,
+         drives_main=False)
+
+    # MF6. An absence check standing where an existence check is required fails open.
+    _cg = mutate(_me_for_drive, '\nLIVENESS_MODEL = "lexical"',
+                 '\nLIVENESS_MODEL = "call-graph"')
+    for _o, _n in (("p_has_ref_param", "cg_has_ref_param"),
+                   ("p_total_on_fn", "cg_total_on_fn"),
+                   ("p_effect_is_transitive", "cg_effect_is_transitive")):
+        _cg = re.sub(rf"(?<![A-Za-z_0-9]){_o}(?![A-Za-z_0-9])", _n, _cg)
+    case("RENAMED lexical probes no longer clear the declaration: the old names being "
+         "absent is not the graph being consumed, and an absence check where an existence "
+         "check belongs fails OPEN",
+         any("reaches `_ask_provider`" in p for p in wiring_matches_declaration(_cg)), True,
+         drives_main=False)
+    case("...and as committed nothing reaches the provider, which is why `call-graph` "
+         "cannot be declared today",
+         _dispatch_reaches(__import__("ast").parse(_me_for_drive), THESIS_DISPATCH_ROOTS,
+                           "_ask_provider"), False, drives_main=False)
 
     print("\n  THE PROCESS BOUNDARY — concluded is not succeeded, and env is not inherited")
     # MF3. `classify(r, reject_codes=(1,))` exists because for a REJECT probe exit 1 is a
@@ -3929,7 +4211,7 @@ def self_test() -> int:
          f"{RESULT_NAMES[_rc.returncode]}", drives_main=False)
 
     print("\n  the acceptance digest fires on a real edit")
-    _bad = mutate(REAL_ACCEPTANCE["GI-11"],
+    _bad = mutate(real_acceptance()["GI-11"],
                   "a HARNESS FAILURE distinct from omission", "ignored")
     case("weakening GI-11's acceptance text changes its digest",
          acceptance_digest(_bad) != PINNED_ACCEPTANCE_SHA["GI-11"], True, drives_main=False)
@@ -4264,7 +4546,23 @@ def self_test() -> int:
         # holds by construction, and the pinned digest below fails if the set changes at
         # all — which is the same closure the thesis rows and the liveness corpus have.
         digest = hashlib.sha256("\n".join(sorted(seen_names)).encode()).hexdigest()
-        if EXPECTED_CASE_SHA and digest != EXPECTED_CASE_SHA:
+        # NO `and`, AND NO BLANK ESCAPE HATCH. `if EXPECTED_CASE_SHA and …` meant blanking
+        # one constant disabled the coverage pin while the summary line went on saying "the
+        # set is pinned" — measured: blank it, rename a case, and the receipt is
+        # BYTE-IDENTICAL to the true one at exit 0. A false claim that is PRINTED is worse
+        # than one in a comment. Re-pinning has an explicit path now
+        # (`--print-case-digest`), which is a command someone runs rather than a constant
+        # that silently means "off".
+        if os.environ.get("THESIS_PRINT_CASE_DIGEST") == "1":
+            print(f"  case-inventory digest for a deliberate re-pin: {digest}")
+            return 0
+        if not case_pin_is_real(EXPECTED_CASE_SHA):
+            print(f"  {RED}the case inventory is NOT PINNED{OFF}: EXPECTED_CASE_SHA is "
+                  f"{EXPECTED_CASE_SHA!r}, which is not a sha256. The summary below claims "
+                  f"the set is pinned, so this cannot be allowed to pass. This run's "
+                  f"digest is {digest}; re-pin with `--print-case-digest`.")
+            return 1
+        if digest != EXPECTED_CASE_SHA:
             print(f"  {RED}the case inventory changed{OFF} (digest {digest}, pinned "
                   f"{EXPECTED_CASE_SHA}). Adding or removing a control changes what this "
                   f"self-test covers; re-pin EXPECTED_CASE_SHA deliberately.")
@@ -4337,6 +4635,11 @@ def _entry(argv: list[str]) -> int:
         return code
 
     try:
+        if "--print-case-digest" in argv:
+            # The deliberate re-pin path, as a COMMAND. It used to be "set the constant to
+            # an empty string", which is indistinguishable from "someone turned the pin off".
+            os.environ["THESIS_PRINT_CASE_DIGEST"] = "1"
+            return self_test()
         if "--check-retracted-claims" in argv:
             return check_retracted_claims()
         if "--crash-for-self-test" in argv:
