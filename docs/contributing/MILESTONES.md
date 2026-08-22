@@ -95,23 +95,37 @@ correct answers are already fixed**. GI-11 requires **two things, neither substi
 liveness answers are fixed by review, including the real witness's own shape (`compile_file`
 inside an `else`, genuinely reachable) and six metamorphic variants under alpha-renaming,
 reordering and inert whitespace — which proves the model's **verdicts**; and
-[`tests/callgraph-differential.tsv`](../../tests/callgraph-differential.tsv) — six programs
+[`tests/callgraph-differential.tsv`](../../tests/callgraph-differential.tsv) — **seven** programs
 whose **graph outputs** are fixed by review (scoped call-site identities, declared entry roots,
 an order-independent fixed point, per-edge completion both ways, indirect targets
 resolved-or-declared) — which proves the model's **structure**. The acceptance *observable*
 cannot carry that: measured, an empty `#[test]` reports `1 passed`, so a body of `{}` satisfied
 the entire structural contract.
 
-**Every structural row is fault-injected**, and one row mechanizes provenance: the provider must
-return the digest of the unit it was handed, computed independently by the runner and re-checked
-after the unit changes.
+**Every structural row is fault-injected**, and **provenance is an obligation on every answer
+rather than a row**: the provider returns `(provenance, value)` for each query, the runner
+computes the digest of the unit it submitted and refuses any answer not bound to it — seven rows
+× two queries per run. Asked as its own property it proved only that the provider could hash its
+input, and a stale table with an honest hash scored full marks; that adversary is now executable
+in the self-test and scores **0/7**.
+
+**The indirect contract, settled.** GI-11's text carried two clauses that read as one. They name
+two situations: an indirect call site answered as a **resolution naming one or more targets** or
+as **unresolved** both discharge the obligation, **omitting** the call site is a scored graph
+failure, and an answer that **claims resolution and names no target** is a **harness failure** —
+the gate cannot tell a resolution from a declination, so it refuses to score rather than read it
+as either. The pinned requirement says exactly that, and the corpus enforces it.
 
 **What that does and does not establish, measured rather than argued.** A hardcoded table of all
 seven programs *and* all seven mutations scores **7/7**. Run-time metamorphic renaming takes that
 same table to **0/7** — but an adversary that normalises identifiers, looks up, and re-applies the
-suffix is back to **7/7**. So: **a finite, public corpus cannot defeat a reader.** These rows
-establish that a *wrong* implementation fails; that a *real* one exists is a human-review
-judgement at the point GI-11 lands, and the gate says exactly that. That is **one** boundary, not
+suffix is back to **7/7**. So: **a finite, public corpus cannot defeat a reader.** Every one of
+those figures is produced by an adversary that runs in the self-test, and the self-test fails if
+the gate quotes a figure nothing measured. What these rows establish is that **those specific
+wrong-answer and exact-table strategies fail** — *not* that a wrong implementation fails in
+general, which the 7/7 normalising adversary refutes on the same page. Implementation
+authenticity and generalisation beyond these seven programs are human-review judgements at the
+point GI-11 lands, and the gate says exactly that. That is **one** boundary, not
 a list — provenance used to be a second and is now mechanized. The wired lexical model **fails 7 of the 20**, and
 answering `live` everywhere, answering `dead` everywhere, and a renamed wrapper around the probe
 all fail it too. The corpus is itself closed — id set both ways, full digest over
@@ -229,7 +243,7 @@ Measured at this revision; every row names the command that produced it.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 146 unique cases, **checked**; 11 of them drive the fault-injection branch with injected providers, which had no coverage at all until this round | `make test-thesis-runner` |
+| Thesis gate itself | 169 unique cases, **checked** and digest-pinned; 27 exercise the fault-injection branch — 19 inject a provider, and **10 of those assert the exact failing row set and the stage (`original`/`mutation`) each row failed at**. The previous count said 11 cases *drove* that branch on the strength of `score < total`: measured, an adversary correct on six of seven mutations and wrong on one scores 6/7 and satisfies it, so one row reaching the branch was enough | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 239 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
