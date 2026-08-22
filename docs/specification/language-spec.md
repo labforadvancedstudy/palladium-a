@@ -601,9 +601,9 @@ self_param = [ "&" ] [ "mut" ] "self" ;
 **unimplemented — effect clauses.** `![io]` does not exist in the surface syntax.
 `Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:565`, corrected from
 v0.2's `src/parser/mod.rs:549`, which is where the `Function` literal opens). Effects are *inferred* afterwards
-(`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:174`, corrected
-from `src/driver/mod.rs:162-168`); they gate nothing. `crate::effects::` is referenced from exactly one place in
-the compiler, `src/driver/mod.rs:170`.
+(`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:176`, corrected
+from `src/driver/mod.rs:164-170`); they gate nothing. `crate::effects::` is referenced from exactly one place in
+the compiler, `src/driver/mod.rs:172`.
 
 `async fn` is accepted and typechecked: `async fn g() -> i64 { return 1; }` fails with
 "Type mismatch: expected Future<Int>, found Int", i.e. the return type is wrapped in a `Future`.
@@ -629,8 +629,8 @@ field (`src/parser/mod.rs:379`, `src/ast/mod.rs:139`).
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:752`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1013`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:822-824`, corrected
-from `src/typeck/mod.rs:1008`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1013`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:844-846`, corrected
+from `src/typeck/mod.rs:1030`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:876`, corrected from line 863–897 of the pre-cleanup revision).
 
@@ -739,7 +739,7 @@ because the paragraph above is the correction.*
 - unimplemented: bare nested blocks as statements; `try { }` blocks.
 - implemented: `break` / `continue`, unlabeled, valueless.
 
-`unsafe { }` parses and `src/unsafe_ops` runs (`src/driver/mod.rs:187-195`), but raw pointer types
+`unsafe { }` parses and `src/unsafe_ops` runs (`src/driver/mod.rs:189-197`), but raw pointer types
 and `unsafe fn` do not exist, so [N12](#n12-memory-model)'s restricted-unsafe is unimplemented.
 `tests/11_unsafe_blocks.pd` PASSES while only printing that.
 
@@ -767,7 +767,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 - partial: ranges outside a `for` header — codegen error "Range expressions can only be used in
   for loops" (`src/codegen/mod.rs:2493-2496`, corrected from line 2121 of the pre-cleanup revision).
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:2783`, corrected from line 1874 of the pre-cleanup revision).
+  (`src/typeck/mod.rs:2805`, corrected from line 1874 of the pre-cleanup revision).
 
 **partial — precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for
 its right operand (`src/parser/mod.rs:1990`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
@@ -778,7 +778,7 @@ requires `a * -b`.
 
 **unimplemented.** `x.f()` parses as a call whose callee is a field access, and the typechecker
 rejects exactly that: **"Indirect function calls not yet supported"**
-(`src/typeck/mod.rs:1623`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
+(`src/typeck/mod.rs:1645`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
 
 *(v0.2 also claimed a "same guard" in codegen at line 1870 of the pre-cleanup revision.
 `grep -n 'Indirect function calls' src/codegen/mod.rs` returns nothing; there is no such guard in
@@ -831,8 +831,8 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:2431`, `.await` at
-`src/typeck/mod.rs:2438`) and again by code generation (`?` at `src/codegen/mod.rs:3069-3073`,
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:2453`, `.await` at
+`src/typeck/mod.rs:2460`) and again by code generation (`?` at `src/codegen/mod.rs:3069-3073`,
 `.await` at `src/codegen/mod.rs:3081-3086`), which is callable on its own.
 
 What they used to do:
@@ -946,7 +946,7 @@ pattern = "_"
 (`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
 bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1410`,
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1432`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
 (`src/codegen/mod.rs:1982`, `src/codegen/mod.rs:2003-2014`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
@@ -971,7 +971,7 @@ rather than `char`, because `char` is not a type ([A5](#a5-types)). **N14's effe
 is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
-checker derives its signature table from it (`src/typeck/mod.rs:365`) and so does the borrow
+checker derives its signature table from it (`src/typeck/mod.rs:376`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
 (`src/codegen/mod.rs:2212`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:494`, corrected from line 251–575 of the pre-cleanup revision).
@@ -1186,7 +1186,7 @@ how a whole section came to be stale without any reader noticing it was there.
 
 [N12](#n12-memory-model) requires that `&mut` be takeable only of a `mut` binding, and the
 implementation now enforces it for every referent kind. The check is
-`check_mutable_borrow_allowed` (`src/ownership/borrow_checker.rs:1103`), which reads the
+`check_mutable_borrow_allowed` (`src/ownership/borrow_checker.rs:1140`), which reads the
 `mutable_bindings` map described in [A9.2](#a92-array-parameters); a name no binder
 registered is refused rather than permitted.
 
@@ -1217,11 +1217,11 @@ A previous version of this annex, and of
 borrowed as `Lifetime::Named("fn")` and released against `Lifetime::Scope(n)`, so the borrow is
 never released and a value cannot be passed twice. That claim cited a line of
 `src/ownership/borrow_checker.rs` whose content is at
-`src/ownership/borrow_checker.rs:509` today. The old number is deliberately not repeated here:
+`src/ownership/borrow_checker.rs:546` today. The old number is deliberately not repeated here:
 a bare `path:line` naming a revision this tree no longer has is unpinnable, and an unpinnable
 citation cannot be told from one that has silently drifted.
 
-**The claim is false and the citation was wrong.** `src/ownership/borrow_checker.rs:509` is
+**The claim is false and the citation was wrong.** `src/ownership/borrow_checker.rs:546` is
 `ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))` — the ownership classification for a
 function's **borrowed return value**, which has nothing to do with argument lifetimes. The citation
 had a green fingerprint the whole time, which is exactly the gate's limit: a pin proves a line has
@@ -1238,9 +1238,9 @@ Re-measured from scratch at `abeb665`:
 | `print(p.name); f(p.name); p.n` — field to a builtin, then reused | accepted, prints `abc 3 1` |
 
 None of D6's symptoms reproduce. The call path creates a per-call lifetime and ends its borrows
-when the call finishes: `src/ownership/borrow_checker.rs:854` (`let call_lifetime =
-self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:860` (`self.context.end_borrows(&call_lifetime);`), with the
-contract stated at `src/ownership/borrow_checker.rs:60-61` — "the caller-side borrow always lasts exactly for the call
+when the call finishes: `src/ownership/borrow_checker.rs:891` (`let call_lifetime =
+self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:897` (`self.context.end_borrows(&call_lifetime);`), with the
+contract stated at `src/ownership/borrow_checker.rs:63-64` — "the caller-side borrow always lasts exactly for the call
 expression".
 
 D6 was **fixed in commit `191f8c1`** ("fix(compiler): five defects that made the language
@@ -1253,9 +1253,9 @@ into documentation written after the fix landed.
 Two rejections do still occur, and both are correct rather than defects:
 
 - `take2(p, p)` where `p` is a **struct** — `Use of moved value: p`. Struct parameters are moves
-  (`src/ownership/borrow_checker.rs:494`), so this is move semantics working.
+  (`src/ownership/borrow_checker.rs:531`), so this is move semantics working.
 - `sum2(v, v)` with two `mut [i64; 3]` parameters — `Conflicting borrows`. A `mut` array parameter
-  is a mutable borrow (`src/ownership/borrow_checker.rs:473-474`), so passing the same array as two
+  is a mutable borrow (`src/ownership/borrow_checker.rs:510-511`), so passing the same array as two
   simultaneous mutable borrows is refused. **This is expected under the current aliasing
   convention, not unconditionally correct**: it follows from Option B's reading of
   [N12.1](#n121-array-parameters-open-decision), which is still open. Under Option A a `[T; N]`

@@ -317,6 +317,17 @@ pub struct TypeChecker {
     functions: HashMap<String, CheckerType>,
     /// Generic function definitions
     generic_functions: HashMap<String, GenericFunction>,
+    /// Where the template currently winning each name in `generic_functions`
+    /// came from: `None` for a local definition, `Some(module)` for an import.
+    ///
+    /// WRITTEN IN LOCKSTEP WITH THE MAP ABOVE, AT EVERY INSERT, so it always
+    /// describes the WINNER and not some earlier candidate. It exists because
+    /// `generic_functions` is keyed by bare name and is last-writer-wins, so
+    /// the name alone cannot say WHICH `pick<T>` codegen will monomorphize. A
+    /// consumer handed only the name checked every same-named template,
+    /// including ones nothing emits, and vetoed a build over an error in a body
+    /// that never reached the output.
+    generic_function_origin: HashMap<String, Option<String>>,
     /// Instantiated generic functions
     instantiations: HashMap<FunctionInstantiation, CheckerType>,
     /// Struct definitions
@@ -376,6 +387,7 @@ impl TypeChecker {
         Self {
             functions,
             generic_functions: HashMap::new(),
+            generic_function_origin: HashMap::new(),
             instantiations: HashMap::new(),
             structs: HashMap::new(),
             generic_structs: HashMap::new(),
@@ -412,8 +424,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:461-462`, `src/typeck/mod.rs:482`,
-    /// `src/typeck/mod.rs:497`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:473-474`, `src/typeck/mod.rs:498`,
+    /// `src/typeck/mod.rs:513`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -460,6 +472,10 @@ impl TypeChecker {
                                 };
                                 self.generic_functions
                                     .insert(func.name.clone(), generic_func);
+                                // Lockstep with the insert above: this import is
+                                // now the winner for that bare name.
+                                self.generic_function_origin
+                                    .insert(func.name.clone(), Some(module_name.clone()));
                             } else {
                                 // Regular function
                                 let param_types: Vec<CheckerType> = func
@@ -609,6 +625,10 @@ impl TypeChecker {
                         };
                         self.generic_functions
                             .insert(func.name.clone(), generic_func);
+                        // Lockstep with the insert above. Locals are walked after
+                        // imports, so this overwrites any imported template of the
+                        // same name -- and the origin has to overwrite with it.
+                        self.generic_function_origin.insert(func.name.clone(), None);
                     } else {
                         // Regular function - process as before
                         let param_types: Vec<CheckerType> = func
@@ -775,6 +795,8 @@ impl TypeChecker {
                                 return_type: method.return_type.clone(),
                                 body: method.body.clone(),
                             };
+                            self.generic_function_origin
+                                .insert(method_name.clone(), None);
                             self.generic_functions.insert(method_name, generic_func);
                         } else {
                             // Regular method
@@ -3035,6 +3057,32 @@ impl TypeChecker {
             }
         }
 
+        result
+    }
+
+    /// For every generic name this compilation instantiates, WHERE the template
+    /// codegen will monomorphize came from: `None` local, `Some(module)` imported.
+    ///
+    /// This is `get_instantiations` without the lossy step. That function returns
+    /// the winning `GenericFunction` itself, but a consumer that only needs to
+    /// decide "is THIS declaration the one that gets emitted" was collapsing the
+    /// result to the bare name, and the name is shared by every same-named
+    /// template across every module. Measured before this existed: a module
+    /// exporting `pick<T>` with an ownership error in its body vetoed a build
+    /// whose LOCAL `pick<T>` was the instantiated template and whose C contained
+    /// no trace of the imported one. Renaming the imported function -- changing
+    /// nothing else -- compiled.
+    ///
+    /// Restricted to instantiated names on purpose: an uninstantiated template is
+    /// emitted by nobody, so no consumer should be deciding anything about it
+    /// from this map.
+    pub fn get_instantiated_generic_origins(&self) -> HashMap<String, Option<String>> {
+        let mut result = HashMap::new();
+        for instantiation in self.instantiations.keys() {
+            if let Some(origin) = self.generic_function_origin.get(&instantiation.name) {
+                result.insert(instantiation.name.clone(), origin.clone());
+            }
+        }
         result
     }
 

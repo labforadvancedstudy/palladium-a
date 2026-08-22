@@ -276,8 +276,8 @@ The parser hardcodes `Function.effects` to `None`, commented "Effects will be in
 analysis" (`src/parser/mod.rs:565`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
 `Effect` enum at `src/effects/mod.rs:16-29`, `analyze_function` at `src/effects/mod.rs:151`) and it does union effects across
 statements and calls (`src/effects/mod.rs:263`). But `crate::effects::` is referenced from exactly one place in
-the compiler — `src/driver/mod.rs:170` — and all the driver does with the result is `println!` it
-(`src/driver/mod.rs:174`). No later phase reads it. It cannot reject a program, cannot change
+the compiler — `src/driver/mod.rs:172` — and all the driver does with the result is `println!` it
+(`src/driver/mod.rs:176`). No later phase reads it. It cannot reject a program, cannot change
 codegen, and cannot schedule anything.
 
 **3. Propagation to callers is order-dependent, and unknown callees are assumed pure.**
@@ -288,7 +288,7 @@ contributes no effects to that caller. The definition requires propagation to be
 over the call graph, not a single forward pass.
 
 **4. Effect analysis never sees methods.** The driver's loop matches only
-`crate::ast::Item::Function` (`src/driver/mod.rs:171-172`), so functions inside `impl` blocks are
+`crate::ast::Item::Function` (`src/driver/mod.rs:173-174`), so functions inside `impl` blocks are
 not analysed at all.
 
 **5. Automatic parallelization does not exist.** `grep -rn 'parallel' src/effects/mod.rs
@@ -302,8 +302,8 @@ no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 **7. `.await` is refused, and the lowering that used to be here is deleted.**
 Codegen for an await expression returns `await_unimplemented` at the construct's own span
 (`src/codegen/mod.rs:3081-3086`), and the type checker refuses it before that
-(`src/typeck/mod.rs:2438`). `?` is the same shape: refused in codegen
-(`src/codegen/mod.rs:3069-3073`) and in the type checker (`src/typeck/mod.rs:2431`).
+(`src/typeck/mod.rs:2460`). `?` is the same shape: refused in codegen
+(`src/codegen/mod.rs:3069-3073`) and in the type checker (`src/typeck/mod.rs:2453`).
 
 *Historical, and the reason those refusals exist — this paragraph described it in the present
 tense until D5 was fixed.* Codegen used to emit `while (!<tmp>.poll(&<tmp>)) { }` and then read

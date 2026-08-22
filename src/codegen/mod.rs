@@ -557,9 +557,9 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:2321`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:2343`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
-    /// (`src/ownership/borrow_checker.rs:534-537`). So `fn f(xs: &[i64; 3])` could
+    /// (`src/ownership/borrow_checker.rs:571-574`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
     /// the callee's mutable binding, where it is legitimate. Measured, before
     /// this check: the caller's `v[0]` came back 99 through both a shared and a

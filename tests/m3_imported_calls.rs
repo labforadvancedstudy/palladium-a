@@ -12,15 +12,15 @@
 //! The type checker was handed the resolver's output (`src/driver/mod.rs:104-107`,
 //! `type_checker.set_imported_modules(...)`), so `helper` type-checked. The borrow
 //! checker was constructed with `BorrowChecker::new()` and handed the *pre-resolution*
-//! AST (`src/driver/mod.rs:137`, `src/driver/mod.rs:161`) while `resolved_modules` sat
+//! AST (`src/driver/mod.rs:137`, `src/driver/mod.rs:163`) while `resolved_modules` sat
 //! live and unused in the same scope. Its function table was seeded from
 //! `crate::builtins::BUILTINS` and nothing else
-//! (`src/ownership/borrow_checker.rs:131-134`), and its first pass walks
+//! (`src/ownership/borrow_checker.rs:134-137`), and its first pass walks
 //! `program.items` only — `Program.imports` (`src/ast/mod.rs:9`) is never read, and
 //! `Item` (`src/ast/mod.rs:24-32`) has no `Import` variant, so no walk over items could
 //! have reached one. `helper()` therefore fell out of the function table at
-//! `Expr::Ident` (`src/ownership/borrow_checker.rs:784`), was looked up as a *value*,
-//! was not found, and died at `src/ownership/borrow_checker.rs:837` as
+//! `Expr::Ident` (`src/ownership/borrow_checker.rs:821`), was looked up as a *value*,
+//! was not found, and died at `src/ownership/borrow_checker.rs:874` as
 //! `UseOfUninitializedValue`.
 //!
 //! The pass was not wrong; it was structurally single-file. These tests drive the real
@@ -566,6 +566,192 @@ fn test_an_uninstantiated_imported_generic_with_a_macro_still_compiles() {
     );
 }
 
+/// A DISPLACED imported template must not veto the build.
+///
+/// `TypeChecker::generic_functions` is keyed by bare name and is
+/// last-writer-wins, with locals walked after imports, so a local `pick<T>`
+/// displaces an imported one and codegen monomorphizes the LOCAL. A predicate
+/// that asks only "is the name `pick` instantiated" cannot tell the winner from
+/// the loser, and checked both.
+///
+/// Measured before the origin was carried across the boundary — the emitted C
+/// contains no trace of the imported body:
+///
+///     error: Use of moved value: a
+///
+/// and renaming the imported function, changing nothing else, compiled and ran.
+/// The name collision was the entire difference.
+///
+/// This is the control the previous round did not have: its four reverts
+/// bracketed empty-versus-all selection, which is a different axis from
+/// same-name identity, so all four passed while this was broken.
+#[test]
+fn test_a_local_generic_is_not_vetoed_by_a_displaced_imported_twin() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[(
+            "lib.pd",
+            "pub struct S { v: i64 }\n\
+             pub fn pick<T>(x: T) -> i64 { let a: S = S{v:7}; let b: S = a; let c: S = a; return c.v; }\n",
+        )],
+        "import lib;\n\n\
+         fn pick<T>(x: T) -> i64 { return 3; }\n\n\
+         fn main() { print_int(pick(1)); }\n",
+    );
+    assert!(
+        compiled,
+        "an imported generic that the local definition DISPLACED — and that the \
+         emitted C contains no trace of — vetoed the build; compiler said:\n{}",
+        output
+    );
+    assert_eq!(
+        stdout.as_deref(),
+        Some("3\n"),
+        "the LOCAL template is the one codegen monomorphizes; compiler said:\n{}",
+        output
+    );
+}
+
+/// The same defect with a macro instead of an ownership error, because the two
+/// reach this pass by different routes and a fix could close one and not the
+/// other.
+///
+/// An imported body is never macro-expanded, so walking a displaced one reports
+/// the internal "macros should be expanded before this phase" — again over a
+/// body nothing emits.
+#[test]
+fn test_a_displaced_imported_twin_with_a_macro_does_not_veto_the_build() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[(
+            "libm.pd",
+            "pub fn pick<T>(x: T) -> i64 { let v = vec!(7); return v[0]; }\n",
+        )],
+        "import libm;\n\n\
+         fn pick<T>(x: T) -> i64 { return 3; }\n\n\
+         fn main() { print_int(pick(1)); }\n",
+    );
+    assert!(
+        compiled,
+        "a displaced imported generic's unexpanded macro vetoed the build; \
+         compiler said:\n{}",
+        output
+    );
+    assert_eq!(stdout.as_deref(), Some("3\n"), "compiler said:\n{}", output);
+}
+
+/// The same defect with NO local definition at all: two modules exporting the
+/// name, where the loser is displaced exactly as a local definition displaces
+/// an import.
+///
+/// Modules are walked in sorted order and the map is last-writer-wins, so
+/// `libb` wins and `liba`'s body — which carries the ownership error — is the
+/// one nothing emits. Which of the two wins is a real ambiguity nothing
+/// diagnoses (`test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc`);
+/// what this asserts is only that the LOSER is not checked, since it is not
+/// emitted.
+#[test]
+fn test_the_losing_module_of_a_name_clash_does_not_veto_the_build() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[
+            (
+                "liba.pd",
+                "pub struct S { v: i64 }\n\
+                 pub fn pick<T>(x: T) -> i64 { let a: S = S{v:7}; let b: S = a; let c: S = a; return c.v; }\n",
+            ),
+            ("libb.pd", "pub fn pick<T>(x: T) -> i64 { return 222; }\n"),
+        ],
+        "import liba;\nimport libb;\n\nfn main() { print_int(pick(1)); }\n",
+    );
+    assert!(
+        compiled,
+        "the LOSING module's generic body vetoed a build that emits the other \
+         module's; compiler said:\n{}",
+        output
+    );
+    assert_eq!(
+        stdout.as_deref(),
+        Some("222\n"),
+        "sorted order makes libb the winner; compiler said:\n{}",
+        output
+    );
+}
+
+/// An imported GENERIC struct's layout is needed by the bodies this pass checks.
+///
+/// Registration used to skip generic imported structs, on the reasoning that
+/// codegen emits only non-generic imported ones — the same reasoning, one item
+/// kind across, that was false for functions because of monomorphization.
+/// Structs have that path too. Once the walk started checking instantiated
+/// imported bodies, the missing layout stopped being a harmless omission: field
+/// Copy classification falls back to "not Copy" for a layout it cannot resolve,
+/// so the SECOND read of an `i64` field is reported as a use of a moved value.
+///
+/// Measured, the only difference being `<T>` on the struct:
+///
+///     pub struct P<T> { a: i64 }   -> error: Use of moved value: p.a
+///     pub struct Q    { a: i64 }   -> compiles
+///
+/// The local walk never had this guard, so registering here is what makes the
+/// two sides agree rather than a new rule.
+///
+/// ASSERTED ON THE DIAGNOSTIC, NOT ON `compiled`, and that is not a weaker
+/// claim dressed up. This program does not link, on this branch or on `main`,
+/// and neither does the byte-identical LOCAL version: a generic struct
+/// referenced by its bare name is never emitted, so gcc reports
+/// `variable has incomplete type 'struct P'`. That failure is shared by both
+/// sides and predates this branch, so it is not what this fix owns and is
+/// declared separately in
+/// `test_a_generic_struct_referenced_by_its_bare_name_is_emitted`. What this
+/// fix owns is the ownership verdict, and asserting `compiled` here would tie
+/// this control to an unrelated codegen gap that can be fixed or worsened
+/// without touching registration at all.
+#[test]
+fn test_an_imported_generic_structs_layout_is_registered() {
+    let (_compiled, output, _stdout) = compile_and_run(
+        &[(
+            "libp.pd",
+            "pub struct P<T> { a: i64 }\n\
+             pub fn use2<T>(x: T) -> i64 { let p: P = P { a: 1 }; let m: i64 = p.a; let n: i64 = p.a; return m + n; }\n",
+        )],
+        "import libp;\n\nfn main() { print_int(use2(1)); }\n",
+    );
+    assert!(
+        !output.contains("Use of moved value"),
+        "a generic imported struct's layout was missing, so the second read of \
+         its i64 field was called a move; compiler said:\n{}",
+        output
+    );
+}
+
+/// The codegen gap the control above steps around, declared rather than left
+/// as a sentence in a doc comment.
+///
+/// A generic struct referenced by its bare name type-checks and then emits C
+/// that names a type nothing defines. Measured on both trees, and on the LOCAL
+/// form as well as the imported one, so it is neither this branch's doing nor
+/// import-specific:
+///
+///     struct P<T> { a: i64 }
+///     fn use2<T>(x: T) -> i64 { let p: P = P { a: 1 }; ... }
+///
+///     -> build_output/main.c: variable has incomplete type 'struct P'
+#[test]
+#[ignore = "XFAIL: a generic struct referenced by its BARE name is never emitted — typeck accepts `let p: P = P { a: 1 }` for `struct P<T>`, and codegen emits `struct P p = (struct P){.a = 1}` with no definition of `struct P` anywhere, so gcc reports \"variable has incomplete type 'struct P'\"; reproduces on main and for a LOCAL generic struct as well as an imported one (owned by M4, generics and monomorphization)"]
+fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[],
+        "struct P<T> { a: i64 }\n\
+         fn use2<T>(x: T) -> i64 { let p: P = P { a: 1 }; let m: i64 = p.a; let n: i64 = p.a; return m + n; }\n\n\
+         fn main() { print_int(use2(1)); }\n",
+    );
+    assert!(
+        compiled,
+        "a generic struct named without type arguments emitted C for an \
+         undefined type; compiler said:\n{}",
+        output
+    );
+    assert_eq!(stdout.as_deref(), Some("2\n"), "compiler said:\n{}", output);
+}
+
 // ---------------------------------------------------------------------------
 // What is behind this wall
 // ---------------------------------------------------------------------------
@@ -672,7 +858,7 @@ fn test_local_twin_of_the_unchecked_import_is_rejected() {
 /// Walking imported bodies is only half of the job; the walk has to be handed the
 /// same ENVIRONMENT the local walk gets. It was not. `register_imported_functions`
 /// registered signatures and nothing else, so `struct_fields` — the map that
-/// `place_type` (`src/ownership/borrow_checker.rs:1255`) consults to decide
+/// `place_type` (`src/ownership/borrow_checker.rs:1292`) consults to decide
 /// whether `p.x` is Copy — held local struct layouts only. An imported struct's
 /// `i64` field therefore had no resolvable type, `is_expr_copy` fell into its
 /// conservative `false` default, and the FIRST read of the field MOVED it:
@@ -989,7 +1175,7 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// `filter_module_info` (`src/resolver/mod.rs:105-118`) narrows the `exports`
 /// set and leaves `ast` complete — and `.exports` is read nowhere but its own
 /// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consumer
-/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:438`,
+/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:450`,
 /// `src/codegen/mod.rs:1125`, `src/codegen/mod.rs:1210`,
 /// `src/codegen/mod.rs:1295`, `src/codegen/mod.rs:1767`, and the borrow checker's
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
@@ -1073,13 +1259,13 @@ fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
 }
 
 /// A qualified call cannot be written. `src/parser/mod.rs:2504-2545` turns any
-/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:2236-2241`
+/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:2258-2263`
 /// then reports `Undefined enum type: lib2`. The same holds for an alias
 /// (`import lib2 as m;` → `Undefined enum type: m`), which makes `alias`
 /// unusable too. `register_imported_functions` registers `module::name` for
 /// parity with the type checker, but nothing can currently reach it.
 #[test]
-#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:2504-2545 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:2236-2241 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:2504-2545 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:2258-2263 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M3, cross-file module imports)"]
 fn test_a_qualified_call_reaches_the_imported_function() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1121,7 +1307,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
 /// (`src/codegen/mod.rs:2748-2751`), while the type checker
-/// (`src/typeck/mod.rs:482`) and `register_imported_functions` both insert
+/// (`src/typeck/mod.rs:498`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
 /// With a matching signature the imported definition is merely silent dead code.
@@ -1130,7 +1316,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:482 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:2748-2751 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:498 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:2748-2751 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M3, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],
@@ -1331,9 +1517,9 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// Auditing codegen for what else could put the hash seed into the output
 /// turned up a second, independent source: monomorphized generic
 /// instantiations. `TypeChecker::get_instantiations` builds its `Vec` by
-/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:3025`), which is a
+/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:3047`), which is a
 /// `HashMap`, and `get_struct_instantiations` does the same
-/// (`src/typeck/mod.rs:3061`). Codegen then emits in that Vec's order
+/// (`src/typeck/mod.rs:3109`). Codegen then emits in that Vec's order
 /// (`src/codegen/mod.rs:1285`, `src/codegen/mod.rs:1783`).
 ///
 /// This program imports NOTHING, which is how the two sources were told apart:
@@ -1354,7 +1540,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// `(name, type_args)`.
 ///
 /// NOT COVERED by any test: the sibling sort in `get_struct_instantiations`
-/// (`src/typeck/mod.rs:3061`). Generic *structs* cannot be compiled at all right
+/// (`src/typeck/mod.rs:3109`). Generic *structs* cannot be compiled at all right
 /// now — `struct Box<T> { v: T }` lowers to `void*` and gcc rejects
 /// "initializing 'void *' with an expression of incompatible type
 /// 'struct Box_alpha_i64'" — so there is no program whose output that ordering

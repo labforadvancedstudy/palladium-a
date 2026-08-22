@@ -42,14 +42,17 @@ pub struct BorrowChecker {
     /// had this channel since it was written (`TypeChecker::set_imported_modules`);
     /// this is the same channel, and the driver fills both from one resolver run.
     imported_modules: HashMap<String, crate::resolver::ModuleInfo>,
-    /// Names of the generic functions this compilation actually instantiates,
-    /// as reported by `TypeChecker::get_instantiations`.
+    /// For every generic name this compilation instantiates, WHERE the template
+    /// codegen monomorphizes came from: `None` local, `Some(module)` imported.
     ///
-    /// This is the set codegen monomorphizes from, and it is here so that the
-    /// walk over imported bodies can check exactly what gets emitted rather
-    /// than deciding from the shape of the declaration. See the third pass in
-    /// `check_program` for the fail-open that came of deciding from the shape.
-    instantiated_generics: std::collections::HashSet<String>,
+    /// A SET OF NAMES IS NOT ENOUGH, and that was the second bug on this line.
+    /// `TypeChecker::generic_functions` is keyed by bare name and is
+    /// last-writer-wins, so "the name `pick` is instantiated" says nothing about
+    /// WHICH `pick<T>` is the one emitted. Keyed on the name, this pass checked
+    /// every same-named imported template and refused a build over a body
+    /// nothing emits. Keyed on the origin, it checks the one template that
+    /// becomes C.
+    instantiated_generic_origins: HashMap<String, Option<String>>,
 }
 
 /// Function signature for ownership analysis
@@ -142,7 +145,7 @@ impl Default for BorrowChecker {
             struct_fields: HashMap::new(),
             call_lifetime: None,
             imported_modules: HashMap::new(),
-            instantiated_generics: std::collections::HashSet::new(),
+            instantiated_generic_origins: HashMap::new(),
         }
     }
 }
@@ -167,7 +170,7 @@ impl BorrowChecker {
     /// imported function can be checked at all.
     ///
     /// Takes exactly what `TypeChecker::set_imported_modules` takes
-    /// (`src/typeck/mod.rs:433`), because the driver has one resolver result and
+    /// (`src/typeck/mod.rs:445`), because the driver has one resolver result and
     /// two passes that need it; a second shape here would be a second thing to
     /// keep in sync. Registration itself is deferred to `check_program`, which is
     /// where the ordering against local definitions is decided.
@@ -178,20 +181,21 @@ impl BorrowChecker {
         self.imported_modules = modules;
     }
 
-    /// Tell this pass which generic functions the compilation instantiates.
+    /// Tell this pass which generic templates the compilation instantiates, and
+    /// where each one came from.
     ///
-    /// Takes the names out of `TypeChecker::get_instantiations`, which the driver
-    /// already computes between type checking and this pass (`src/driver/mod.rs:117`)
-    /// and which is the same list codegen monomorphizes from. Supplying it is what
-    /// lets the walk over imported bodies check the set that is EMITTED instead of
-    /// the set that is non-generic — the difference between those two was a
-    /// use-after-move that compiled, linked and ran.
+    /// Takes `TypeChecker::get_instantiated_generic_origins`, which the driver
+    /// computes between type checking and this pass. The ORIGIN is the load-bearing
+    /// half: it is what distinguishes the imported `pick<T>` that gets
+    /// monomorphized from the imported `pick<T>` that a local definition of the
+    /// same name displaced. Passing names alone made those two indistinguishable
+    /// and turned an error in the displaced body into a build failure.
     ///
-    /// Not supplying it is safe in the only direction that matters: the set is then
+    /// Not supplying it is safe in the only direction that matters: the map is then
     /// empty, generic imported bodies are skipped, and this pass is back to where it
-    /// was rather than checking bodies against a set it does not have.
-    pub fn set_instantiated_generics(&mut self, names: std::collections::HashSet<String>) {
-        self.instantiated_generics = names;
+    /// was rather than checking bodies against a map it does not have.
+    pub fn set_instantiated_generic_origins(&mut self, origins: HashMap<String, Option<String>>) {
+        self.instantiated_generic_origins = origins;
     }
 
     /// Register the public functions *and struct layouts* of every imported module.
@@ -209,7 +213,7 @@ impl BorrowChecker {
     ///
     /// Public-only, and imports-before-locals, for the same reasons as functions
     /// below; the type checker registers imported layouts under exactly the same
-    /// filter (`src/typeck/mod.rs:487-488`), so the two passes agree on which
+    /// filter (`src/typeck/mod.rs:503-504`), so the two passes agree on which
     /// `P` is meant.
     ///
     /// AND THE REMAINING WINDOW IS UNREACHABLE, which is a stronger statement than
@@ -255,22 +259,36 @@ impl BorrowChecker {
                         if !matches!(struct_def.visibility, crate::ast::Visibility::Public) {
                             continue;
                         }
-                        // Generic layouts are skipped for the same reason generic
-                        // bodies are, below: codegen emits only NON-generic imported
-                        // structs (`src/codegen/mod.rs:1216-1217`), so a generic
-                        // `P<T>` registered here would be a layout for a type this
-                        // compilation never produces. It would also be registered
-                        // under the bare name `P`, colliding with a local
-                        // non-generic `struct P` — and since codegen emits only the
-                        // local one, that program links while its imported bodies
-                        // were field-checked against whichever layout won the
-                        // insert. Skipping keeps the map to types that exist in the
-                        // output.
-                        if !struct_def.type_params.is_empty()
-                            || !struct_def.lifetime_params.is_empty()
-                        {
-                            continue;
-                        }
+                        // GENERIC LAYOUTS ARE REGISTERED TOO, and the guard that
+                        // used to skip them was the same mistake as the one over
+                        // function bodies, one item kind across.
+                        //
+                        // Its reason was that codegen emits only NON-generic
+                        // imported structs (`src/codegen/mod.rs:1216-1217`), so a
+                        // generic `P<T>` would be "a layout for a type this
+                        // compilation never produces". Structs have a
+                        // monomorphization path too
+                        // (`generic_struct_instantiations`), so that was false in
+                        // exactly the way the function version was — and once the
+                        // walk below started checking instantiated imported bodies,
+                        // the missing layout became a FALSE REJECT rather than a
+                        // harmless omission: field Copy classification falls back to
+                        // "not Copy" for a layout it cannot resolve, so the second
+                        // read of an `i64` field is reported as a use of a moved
+                        // value. Measured, the only difference being `<T>` on the
+                        // struct:
+                        //
+                        //     pub struct P<T> { a: i64 }   -> Use of moved value: p.a
+                        //     pub struct Q    { a: i64 }   -> compiles
+                        //
+                        // The local walk has never had this guard
+                        // (`Item::Struct` below registers every local struct,
+                        // generic or not), so registering here is what makes the two
+                        // sides agree rather than a new rule. The collision the old
+                        // comment worried about is handled by ORDER, as everywhere
+                        // else here: imports first, locals overwrite, so a local
+                        // `struct P` wins the name — which is the layout codegen
+                        // emits.
                         self.struct_fields
                             .insert(struct_def.name.clone(), struct_def.fields.clone());
                     }
@@ -438,8 +456,27 @@ impl BorrowChecker {
                     // `tests/m3_imported_calls.rs`
                     // (`test_a_macro_in_an_imported_body_is_never_expanded`); the
                     // honest fix is expanding module ASTs.
+                    // The ORIGIN, not just the name. `generic_functions` in the
+                    // type checker is keyed by bare name and last-writer-wins,
+                    // with locals walked after imports, so a local `pick<T>`
+                    // DISPLACES an imported one and codegen monomorphizes the
+                    // local. Testing only "is the name `pick` instantiated" made
+                    // this pass check the displaced import too. Measured:
+                    //
+                    //     lib.pd:  pub fn pick<T>(x: T) -> i64 { ...use-after-move... }
+                    //     main.pd: import lib;
+                    //              fn pick<T>(x: T) -> i64 { return 3; }
+                    //              fn main() { print_int(pick(1)); }
+                    //
+                    //     -> error: Use of moved value: a
+                    //
+                    // over a body the emitted C contains no trace of; renaming the
+                    // imported function, changing nothing else, compiled and ran.
+                    // The same shape with no local definition at all is two modules
+                    // exporting the name, where the loser is displaced identically.
                     if !func.type_params.is_empty()
-                        && !self.instantiated_generics.contains(&func.name)
+                        && self.instantiated_generic_origins.get(&func.name)
+                            != Some(&Some(module_name.clone()))
                     {
                         continue;
                     }

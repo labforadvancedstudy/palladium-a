@@ -145,18 +145,20 @@ impl Driver {
             borrow_checker.set_imported_modules(resolved_modules.clone());
         }
 
-        // The instantiation list computed above, so that the walk over imported
-        // bodies covers the generic ones codegen MONOMORPHIZES. Skipping every
-        // generic body instead — on the reasoning that codegen emits only
-        // non-generic imported functions, which is true of the direct path and
-        // false of monomorphization — let a use-after-move inside an imported
-        // `fn bad<T>` compile, emit `bad__i64`, link and print 7.
-        borrow_checker.set_instantiated_generics(
-            instantiations
-                .iter()
-                .map(|(name, _, _)| name.clone())
-                .collect(),
-        );
+        // Which generic templates get monomorphized, AND WHERE EACH CAME FROM, so
+        // the walk over imported bodies covers exactly the bodies codegen emits.
+        //
+        // Both halves were learned the hard way. Skipping every generic body — on
+        // the reasoning that codegen emits only non-generic imported functions,
+        // true of the direct path and false of monomorphization — let a
+        // use-after-move inside an imported `fn bad<T>` compile, emit `bad__i64`,
+        // link and print 7. Then keying on the NAME alone — `instantiations`
+        // collapsed to a set of names — made the pass check every same-named
+        // imported template including ones a local definition had displaced, and
+        // an error in a body nothing emits vetoed the build. The origin map is
+        // the same question asked without the lossy projection.
+        borrow_checker
+            .set_instantiated_generic_origins(type_checker.get_instantiated_generic_origins());
 
         borrow_checker.check_program(&ast)?;
         let borrow_time = borrow_start.elapsed();
