@@ -820,35 +820,59 @@ wf_case "a step in another working directory does not count" no \
 #
 # "preview.yml passes no base to the coverage runner." Every other contract sentence on
 # this branch carries a control; this one did not, and it was reported as implemented in
-# three consecutive rounds without ever being true -- the workflow kept its
-# github.event.before plumbing because this suite's sibling runner reverted the edit each
-# time, and I reported from what I had written instead of from the file.
+# three consecutive rounds without ever being true. Two things were needed each time: this
+# suite's sibling runner reverting the uncommitted edit, and me reporting from what I had
+# written instead of reading the file back.
 #
-# The check is on EXECUTED text, not on the whole file: the comment above the step is
-# allowed to say the words "github.event.before" while explaining why they are gone. What
-# may not happen is a step SETTING a base.
+# WHAT THIS CONTROL MEASURES, AND WHAT ITS LABEL THEREFORE SAYS. It parses three places a
+# base could be set: workflow-level `env:`, job-level `env:`, and step-level `run:`/`env:`.
+# It does NOT see a base arriving through a `uses:` action, a composite action's internals,
+# or a `GITHUB_ENV` write by an earlier step. The label names the three it reads rather
+# than claiming the workflow as a whole, because a control whose name is wider than its
+# parse is the defect this branch spent nine rounds on.
+#
+# The residual is fail-closed today: an inherited COVERAGE_BASE reaches the runner on main,
+# where the inventory is not applicable, and the runner exits 2 rather than reconciling
+# (test-doc-evidence-coverage.sh, the `elif [ -n "${COVERAGE_BASE:-}" ]` arm). So an
+# unparsed path makes CI fail loudly; it does not make it certify main.
+#
+# The check is on EXECUTED text: the comment above the step may say "github.event.before"
+# while explaining why it is gone. What may not happen is a base being SET.
 ci_no_base() {
   python3 - <<'PYNB'
 import re, sys
 src = open(".github/workflows/preview.yml", encoding="utf-8").read().split("\n")
-runs, key = [], None
-for line in src:
-    if re.match(r"^      - ", line):
-        runs.append([]); key = None
-        line = "        " + line[8:]
-    if not runs:
-        continue
-    m = re.match(r"^        ([A-Za-z_-]+):[ ]*(.*)$", line)
+chunks, key, indent = [], None, None
+
+def take(line, want_indent):
+    """Collect a mapping value at `want_indent`, plus its indented continuation."""
+    global key, indent
+    m = re.match(r"^" + " " * want_indent + r"([A-Za-z_-]+):[ ]*(.*)$", line)
     if m:
-        key = m.group(1)
+        key, indent = m.group(1), want_indent
         if key in ("run", "env"):
-            runs[-1].append(m.group(2))
-    elif key in ("run", "env") and re.match(r"^          ", line):
-        runs[-1].append(line.strip())
-    elif re.match(r"^        \S", line):
+            chunks.append(m.group(2))
+        return True
+    if key in ("run", "env") and indent == want_indent and \
+       re.match(r"^" + " " * (want_indent + 2) + r"\S", line):
+        chunks.append(line.strip())
+        return True
+    return False
+
+for line in src:
+    if re.match(r"^      - ", line):                 # a step begins
         key = None
-body = "\n".join("\n".join(r) for r in runs)
-live = "\n".join(l.split("#", 1)[0] for l in body.split("\n"))
+        line = "        " + line[8:]
+    if take(line, 8):        # step-level run:/env:
+        continue
+    if take(line, 4):        # job-level env:
+        continue
+    if take(line, 0):        # workflow-level env:
+        continue
+    if re.match(r"^\S", line) or re.match(r"^  \S", line):
+        key = None
+
+live = "\n".join(l.split("#", 1)[0] for l in "\n".join(chunks).split("\n"))
 bad = [t for t in ("COVERAGE_BASE", "github.event.before") if t in live]
 if bad:
     print(", ".join(bad))
@@ -856,13 +880,13 @@ if bad:
 sys.exit(0)
 PYNB
 }
+CASE="no workflow env, job env or run step supplies a base to the coverage runner"
 if found=$(ci_no_base); then
-  printf '  %sok%s   the workflow passes no base to the coverage runner\n' "$GREEN" "$NC"
-  pass=$((pass+1))
+  printf '  %sok%s   %s\n' "$GREEN" "$NC" "$CASE"; pass=$((pass+1))
 else
-  printf '  %sFAIL%s the workflow passes no base to the coverage runner\n' "$RED" "$NC"
-  printf '         (an executed step still mentions: %s -- under inventory-base a push to\n' "$found"
-  printf '          main is not-applicable, so no base is needed or accepted there)\n'
+  printf '  %sFAIL%s %s\n' "$RED" "$NC" "$CASE"
+  printf '         (still mentions: %s -- under inventory-base a push to main is\n' "$found"
+  printf '          not-applicable, so no base is needed or accepted there)\n'
   fail=$((fail+1))
 fi
 

@@ -110,4 +110,4 @@ a FUTURE branch is not reconciled against a stale inventory	kill	branch-scope
 an explicit base cannot make an inapplicable inventory apply	kill	applies-first
 a recursive read from a root containing build output is refused	kill	artifact-ancestor
 -R is refused: it follows symlinks out of the checkout	kill	grep-deref
-the workflow passes no base to the coverage runner	kill	ci-no-base
+no workflow env, job env or run step supplies a base to the coverage runner	kill	ci-no-base

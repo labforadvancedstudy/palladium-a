@@ -140,14 +140,17 @@ if [ "${1:-}" = "--explain-base" ]; then
   exit 0
 fi
 
-# Every file a mutation may touch. Restored from git after each one, and on exit.
+# Every file a mutation may touch. Restored from a startup SNAPSHOT after each one and
+# on exit -- not from git; see the note below the dirty-tree guard.
 MUTABLE="scripts/check_doc_evidence.py scripts/gate-receipts.sh .github/workflows/preview.yml Makefile scripts/test-doc-evidence-coverage.sh scripts/test-doc-evidence.sh"
 
 for f in $MUTABLE; do
   [ "${1:-}" = --explain-base ] && break   # resolves a scope and exits; mutates nothing
   if ! git diff --quiet -- "$f" || ! git diff --cached --quiet -- "$f"; then
-    echo "error: $f has uncommitted changes. This script rewrites it and restores it" >&2
-    echo "       from git, which would destroy them. Commit or stash first." >&2
+    echo "error: $f has uncommitted changes. This script rewrites it while measuring" >&2
+    echo "       and puts back what it found, so they would survive -- but mutating a" >&2
+    echo "       file nobody has reviewed measures something nobody has reviewed." >&2
+    echo "       Commit or stash first." >&2
     exit 2
   fi
 done
@@ -157,19 +160,36 @@ TMP_KILL=$(mktemp "${TMPDIR:-/tmp}/doc-evidence-killsets.XXXXXX") || exit 2
 # RESTORE FROM A SNAPSHOT, NEVER FROM git.
 #
 # This used to be `git checkout -- $MUTABLE`, which discards UNCOMMITTED changes to every
-# file in that list. That is not a theoretical hazard: it is why a fix to
+# file in that list. That is not a theoretical hazard: a fix to
 # .github/workflows/preview.yml was reported as applied three times and was not there any
-# of them. Each round I edited the workflow, then ran this script; its EXIT trap reverted
-# the edit; the commit went out without it; and I reported from what I had written rather
-# than from what was on disk. One cause, three false reports.
+# of them.
+#
+# ONE SHARED FILESYSTEM MECHANISM, PLUS A REPEATED VERIFICATION FAILURE. Both were needed
+# every time. The mechanism: this script's EXIT trap reverting an uncommitted edit. The
+# failure: reporting intended work without reading the committed state back off disk. The
+# first is fixed below; the second is a habit, and the only thing that catches it is
+# looking at the file instead of at what you meant to write. (That the trap erased each
+# specific edit is my reading of the mechanism and the outcome -- the pre- and post-run
+# working trees are gone, so it is not something I can show.)
 #
 # The rule that generalises past the instance: A TOOL THAT REWRITES FILES TO MEASURE THEM
 # MUST PUT BACK WHAT IT FOUND, NOT WHAT SOME OTHER SOURCE SAYS SHOULD BE THERE. Restoring
 # from git makes the tool's idea of "unchanged" differ from the working tree's, and the
-# difference is silently destructive. The dirty-tree guard below stays, because mutating a
-# dirty checker measures something nobody has reviewed — but safety no longer depends on
-# anyone remembering to honour it, and a mode that skips the guard can no longer destroy
-# anything.
+# difference is silently destructive.
+#
+# WHAT THE SNAPSHOT ESTABLISHES, AND WHAT IT DOES NOT. It establishes that the CONTENT of
+# a file that existed and was readable at startup is put back after each mutation and on
+# exit, so an uncommitted edit to a MUTABLE file survives a run. It does NOT make this
+# script incapable of destroying anything:
+#   * absence is not preserved -- a path created during the run is not removed;
+#   * a snapshotted file that is DELETED comes back as a plain regular file, so a symlink
+#     is not restored as a symlink and its target is not restored at all;
+#   * `cp -p` preserves mode and timestamps, not ownership, ACLs or xattrs;
+#   * an edit made concurrently by someone else during the run is overwritten, not merged;
+#   * SIGKILL and power loss run no trap, so the last mutation stays on disk;
+#   * restore errors are suppressed, so a failure to put a file back is silent.
+# The dirty-tree guard below therefore stays: it is not the safety belt any more, but it
+# keeps the script from measuring a file nobody has reviewed.
 SNAP=$(mktemp -d "${TMPDIR:-/tmp}/doc-evidence-snapshot.XXXXXX") || exit 2
 snap_of() { printf '%s/%s' "$SNAP" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_')"; }
 for _f in $MUTABLE; do

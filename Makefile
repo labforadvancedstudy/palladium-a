@@ -295,8 +295,10 @@ check-doc-evidence: ## Pin doc citations, the no-compile allowlist, and RUN ever
 test-doc-evidence: ## Prove the evidence gate goes RED on a deliberately false cmd: item
 	@bash scripts/test-doc-evidence.sh
 
-# NOT in `gates`: it rewrites the gate's own sources and restores them from git, so it
-# refuses to run against a dirty tree — the normal state while someone is working on one.
+# NOT in `gates`: it rewrites the gate's own sources and puts back what it found (a
+# startup snapshot, not `git checkout`), and it refuses to run against a dirty tree — the
+# normal state while someone is working on one — because mutating an unreviewed file
+# measures an unreviewed file.
 # It runs in CI, where the tree is always clean, and on demand. A green control suite only
 # says the controls agree with the code; this says they would NOTICE if the code stopped
 # working. (No counts here on purpose: they drift, and a stale number in a comment is the
