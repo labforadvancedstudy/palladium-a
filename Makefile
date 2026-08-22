@@ -329,8 +329,21 @@ stdlib-gate: build ## Pin the stdlib/ measurement, account builtins, check gener
 test-gate-probe: build ## Fault-inject every producer the stdlib gate reads as evidence
 	@bash scripts/test-gate-probe.sh
 
+# `#[command(version = "0.1.0-alpha")]` sat in src/cli.rs while Cargo.toml went 0.1.0 ->
+# 0.2.0 -> 0.3.0, so both shipped releases install a compiler that answers `--version` with
+# 0.1.0-alpha. Two releases, no gate, because no gate ever ran the binary. This one does:
+# it executes every declared [[bin]] and compares what it printed against the manifest.
+# Not a grep for `env!` — that reads the source, and the source is not what the user runs.
+.PHONY: version-gate
+version-gate: build ## Run every built binary and require its --version to match Cargo.toml
+	@bash scripts/version-gate.sh
+
+.PHONY: test-version-gate
+test-version-gate: ## Prove the version gate goes RED on binaries that misreport themselves
+	@bash scripts/test-version-gate.sh
+
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe ## Run every language-level gate
+gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------
