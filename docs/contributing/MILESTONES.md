@@ -74,10 +74,12 @@ one level, `@true` satisfied the next.
 in both witnesses; each has a non-vacuous conformance fixture and a reject twin refused at its
 declared fingerprint; and `bootstrap/pdc.pd` still reaches a byte-identical fixed point.
 
-**It would not mean** that any differentiator is used on a path the program runs — liveness is
-not asserted, after three lexical reachability models each failed open. **Nor** that a refusal
-was the one its row names — `grep -qF` over the whole log lets incidental text satisfy a
-fingerprint, which is measured, not argued.
+**What it would say about liveness and attribution is not fixed here, deliberately.** The
+command derives that from the models actually wired at the time, and prints it. A paragraph
+fixed in prose would have gone on denying liveness after GI-11 landed — the same half-applied
+retraction the banned-phrase lint exists to catch, which I repaired in code last round and left
+here. Today those models are the lexical one and the substring matcher, so today there is no
+verdict at all; when they are replaced, the command will say what the replacements establish.
 
 Those two gaps are **GI-11** and **GI-12**. They are not scored rows — scoring them was the
 defect. **Five** rungs of the same ladder were climbed and each was satisfiable by a replacement
@@ -88,12 +90,18 @@ establish that a future replacement of that artifact is genuine, because whoever
 replacement also writes the check.*
 
 What escapes it is a check satisfiable only by **producing different answers on inputs whose
-correct answers are already fixed**. GI-11's precondition is now
-[`tests/liveness-differential.tsv`](../../tests/liveness-differential.tsv): twelve programs whose
+correct answers are already fixed**. GI-11 requires **two things, neither substituting for the other**:
+[`tests/liveness-differential.tsv`](../../tests/liveness-differential.tsv) — 20 programs whose
 liveness answers are fixed by review, including the real witness's own shape (`compile_file`
-inside an `else`, genuinely reachable). The wired lexical model **fails four of them today**, and
+inside an `else`, genuinely reachable) and six metamorphic variants under alpha-renaming,
+reordering and inert whitespace — which proves the model's **verdicts**; and its acceptance
+observable, which proves the model's **contract** (scoped call-site identities, entry roots, an
+order-independent fixed point, per-edge completion, indirect targets resolved-or-declared). The
+corpus touches none of the second, so making it the whole precondition would let GI-11 clear
+with the structure it contracted for unbuilt. The wired lexical model **fails 7 of the 20**, and
 answering `live` everywhere, answering `dead` everywhere, and a renamed wrapper around the probe
-all fail it too. While either precondition is outstanding **no verdict is computed at all**. Until
+all fail it too. The corpus is itself closed — id set both ways, full digest over
+(id, answer, subject, source) — because it carries the whole liveness precondition. While either precondition is outstanding **no verdict is computed at all**. Until
 then this is a **fail-closed scaffold, not a language certificate** — which is the only form in which a weaker gate is defensible, and it is why the
 safeguards had to become preconditions rather than scheduled work.
 
@@ -207,7 +215,7 @@ Measured at this revision; every row names the command that produced it.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 124 **unique** cases — 59 drive the gate end to end against an injected repository state, 65 exercise a helper | `make test-thesis-runner` |
+| Thesis gate itself | 126 unique cases, **checked** — a duplicate label is a harness error and the set is digest-pinned; 59 drive the gate end to end | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 239 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |

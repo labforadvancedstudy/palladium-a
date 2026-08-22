@@ -44,7 +44,13 @@
 #
 #   THESIS_RESULT <code> <name>
 #
-# and survives the Make layer intact.
+# and survives the Make layer intact. THE CONTRACT ON A CONSUMER, precisely:
+#
+#   * AWAIT PROCESS COMPLETION before reading. A partial stream may not contain the line.
+#   * Accept exactly ONE occurrence, ANCHORED at the start of a line, as the FINAL line of
+#     STDOUT. Do not first-match: a merged stdout+stderr stream can end with Make's own
+#     `*** [thesis-exit] Error 2`, and prose above may quote the token.
+#   * Read STDOUT only. The line is never written to stderr.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."

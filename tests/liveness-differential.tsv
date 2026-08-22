@@ -43,6 +43,19 @@
 # why:      the reasoning a reviewer checks the answer against.
 # source-of-truth: `reviewed` (decided by reading) or a file:line this shape was measured at.
 #
+# WHAT THESE CASES DO NOT ESTABLISH. Reviewers put the ceiling plainly: a lexical
+# classifier could score full marks by recognising the three literal divergence forms and
+# then following at most one named intermediary from `main`. The metamorphic variants below
+# raise the cost of that — alpha-renaming, reordering and inert whitespace cannot change
+# liveness, so a source fingerprint or a twelve-form classifier answers them inconsistently
+# — but NO FINITE CORPUS REMOVES THE HUMAN-REVIEW BOUNDARY. This corpus proves the model's
+# VERDICTS on cases a reviewer fixed. It says nothing about the model's STRUCTURE: scoped
+# call-site identities, declared entry roots, an order-independent fixed point, provenance,
+# per-edge completion, indirect targets resolved-or-declared. That is GI-11's observable,
+# and GI-11 requires BOTH — the corpus and the observable — precisely because neither
+# substitutes for the other. Feasibility that needs interprocedural constant propagation is
+# deliberately out of scope here and belongs to the observable.
+#
 # A model must answer every row. REFUSING IS FAILING: a model that cannot decide these is
 # not the replacement GI-11 requires. R4's honest refusal is the right behaviour for the
 # LEXICAL model and is exactly why the lexical model does not satisfy GI-11.
@@ -63,4 +76,19 @@ via-callee	live	ornament	fn ornament() -> i64 { return 1; }\nfn mid() -> i64 { r
 inside-else	live	compile_file	fn compile_file(p: String) { print(p); }\nfn main() { let n: i64 = arg_count(); if n < 3 { print("usage"); } else { compile_file("x"); } }	a conditional branch is REACHABLE; a naive under-approximation calls this dead, and it is the real witness's own shape	bootstrap/pdc.pd:980-989
 loop-body	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { let i: i64 = 0; while i < 3 { ornament(); i = i + 1; } }	a loop body that may execute is reachable	reviewed
 after-conditional	live	ornament	fn ornament() -> i64 { return 1; }\nfn side() { print("x"); }\nfn main() { if true { side(); } ornament(); }	the `if` completes, so what follows runs	reviewed
-in-return-expr	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { let v: i64 = ornament(); print_int(v); }	a call in an initializer certainly evaluates	reviewed
+in-initializer	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { let v: i64 = ornament(); print_int(v); }	a call in a `let` INITIALIZER evaluates. (Named `in-return-expr` until round 11; it was never a return expression, and GI-11's contract names initializers, conditions and return expressions as three separate shapes)	reviewed
+in-condition	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { if ornament() > 0 { print("y"); } }	a call in a CONDITION evaluates before either branch is chosen	reviewed
+in-return-expr	live	ornament	fn ornament() -> i64 { return 1; }\nfn mid() -> i64 { return ornament(); }\nfn main() { print_int(mid()); }	a call in a RETURN EXPRESSION evaluates; truncating at the `return` token loses it	reviewed
+
+# --- METAMORPHIC VARIANTS -------------------------------------------------------------
+# The same programs under transformations that CANNOT change liveness: alpha-renaming,
+# reordering definitions, and inert whitespace. A model that scored well by recognising
+# the three literal divergence forms, or by fingerprinting these sources, answers these
+# differently from their originals — and a correct model cannot tell them apart. This does
+# not remove the human-review boundary; it raises the cost of overfitting to the corpus.
+mm-diverging-if-renamed	dead	decoration	fn decoration() -> i64 { return 1; }\nfn main() { if true { return; } decoration(); }	alpha-renamed `diverging-if`; the answer cannot depend on the identifier	reviewed
+mm-while-true-reordered	dead	ornament	fn main() { while true { } ornament(); }\nfn ornament() -> i64 { return 1; }	`while-true` with the definition AFTER main; order is not semantics	reviewed
+mm-direct-spaced	live	ornament	fn ornament( ) -> i64 {\n\n    return 1;\n}\nfn main( ) {\n    ornament( );\n}	`direct` with inert whitespace and newlines	reviewed
+mm-via-callee-renamed	live	deep	fn deep() -> i64 { return 1; }\nfn hop() -> i64 { return deep(); }\nfn main() { hop(); }	alpha-renamed `via-callee`	reviewed
+mm-false-branch-reordered	dead	ornament	fn main() { if false { ornament(); } }\nfn ornament() -> i64 { return 1; }	`false-branch` with the definition after main	reviewed
+mm-inside-else-renamed	live	build	fn build(p: String) { print(p); }\nfn main() { let n: i64 = arg_count(); if n < 3 { print("usage"); } else { build("x"); } }	alpha-renamed `inside-else`, the real witness's shape	reviewed

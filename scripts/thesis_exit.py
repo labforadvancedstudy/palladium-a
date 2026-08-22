@@ -169,6 +169,23 @@ PRECONDITIONS = (
 
 LIVENESS_CORPUS = ROOT / "tests/liveness-differential.tsv"
 
+# THE CORPUS IS CLOSED, in the sense EXPECTED_THESIS_CONTRACT is closed. It carries the
+# ENTIRE liveness precondition, and production validated only that it was non-empty — so a
+# reduced or weakened corpus cleared GI-11 in the release command, which made the least
+# closed thing in this file the one holding the most. Same mechanism as the thesis rows:
+# the id set both ways, and a full digest over (id, answer, subject, source) — the four
+# fields that ARE the contract. `why` and `source-of-truth` are prose for a reviewer and
+# are deliberately outside the digest.
+EXPECTED_LIVENESS_IDS = frozenset({
+    "after-conditional", "dead-caller", "direct", "diverging-if", "false-branch",
+    "in-condition", "in-initializer", "in-return-expr", "inside-else", "loop-body",
+    "mm-direct-spaced", "mm-diverging-if-renamed", "mm-false-branch-reordered",
+    "mm-inside-else-renamed", "mm-via-callee-renamed", "mm-while-true-reordered",
+    "self-recursive", "unreferenced", "via-callee", "while-true",
+})
+EXPECTED_LIVENESS_SHA = \
+    "b52d9589773b5e009f4a2738101304c156dd8da6522ecf5ea325d827ddf727cc"
+
 
 def liveness_oracle(src: str, subject: str) -> str:
     """The CURRENTLY WIRED model's answer: live | dead | refused.
@@ -196,6 +213,7 @@ def liveness_differential() -> tuple[list[tuple[str, str, str]], int]:
     if not LIVENESS_CORPUS.is_file():
         raise HarnessError(f"{LIVENESS_CORPUS} is missing — the differential corpus IS "
                            "GI-11's acceptance test, so its absence is not a pass")
+    parsed = []
     failures, total = [], 0
     for n, line in enumerate(LIVENESS_CORPUS.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip() or line.startswith("#"):
@@ -206,6 +224,7 @@ def liveness_differential() -> tuple[list[tuple[str, str, str]], int]:
         rid, answer, subject, source, _why, _prov = f
         if answer not in ("live", "dead"):
             raise HarnessError(f"{LIVENESS_CORPUS.name}:{n}: answer {answer!r} is not live/dead")
+        parsed.append((rid, answer, subject, source))
         total += 1
         got = liveness_oracle(strip_literals(source.replace("\\n", "\n")), subject)
         if got != answer:
@@ -213,6 +232,20 @@ def liveness_differential() -> tuple[list[tuple[str, str, str]], int]:
     if total == 0:
         raise HarnessError("the differential corpus is empty; an empty corpus passes "
                            "everything, which is the defect it exists to prevent")
+    ids = {r[0] for r in parsed}
+    if ids != EXPECTED_LIVENESS_IDS:
+        raise HarnessError(
+            "the liveness corpus changed, and it carries the whole liveness precondition. "
+            f"added={sorted(ids - EXPECTED_LIVENESS_IDS) or 'none'} "
+            f"removed={sorted(EXPECTED_LIVENESS_IDS - ids) or 'none'}. Re-pin "
+            "EXPECTED_LIVENESS_IDS and EXPECTED_LIVENESS_SHA in the same commit.")
+    digest = hashlib.sha256(
+        "\n".join("\t".join(r) for r in sorted(parsed)).encode()).hexdigest()
+    if digest != EXPECTED_LIVENESS_SHA:
+        raise HarnessError(
+            f"a liveness case's answer, subject or source changed (digest {digest}, "
+            f"pinned {EXPECTED_LIVENESS_SHA}). Those answers are the contract: editing one "
+            "to make a model pass changes what liveness MEANS. Re-pin deliberately.")
     return failures, total
 
 
@@ -252,14 +285,38 @@ def wiring_matches_declaration(source: str) -> list[str]:
     return problems
 
 
+def ctx_for_observable() -> "Context":
+    """A real Context for the precondition check — never the self-test's injected one."""
+    return Context()
+
+
 def incomplete_definition() -> list[tuple[str, str]]:
     """(requirement id, why no verdict is available). Empty means: a verdict is.
 
-    GI-11 is decided by the DIFFERENTIAL CORPUS, not by the declared constant and not by
-    the source's shape. Both of those were satisfiable by a replacement that did nothing;
-    a corpus of fixed answers is not.
+    GI-11 needs BOTH, and neither substitutes for the other:
+
+      * the DIFFERENTIAL CORPUS proves the model's VERDICTS — that it answers correctly on
+        programs whose answers are fixed by review;
+      * the OBSERVABLE proves the model's CONTRACT — scoped call-site identities, declared
+        entry roots, a source-order-independent fixed point, provenance tied to the
+        compiled unit, per-edge completion, indirect targets resolved-or-declared, and
+        unresolved-target as a harness failure. The corpus touches none of that.
+
+    Making the corpus the WHOLE precondition — which is what round 10 did — let GI-11 clear
+    on twelve scalar verdicts while the structure it contracted for was unbuilt.
     """
     out = []
+    obs_locator = EXPECTED_THESIS_CONTRACT["GI-11"][1]
+    try:
+        obs_ok, obs_detail = p_observable(ctx_for_observable(), obs_locator)
+    except HarnessError as e:
+        obs_ok, obs_detail = False, f"could not be run: {e}"
+    if not obs_ok:
+        out.append(("GI-11", f"its acceptance observable does not pass — {obs_detail}. The "
+                             f"corpus proves the model's VERDICTS; this proves its "
+                             f"CONTRACT (scoped call-site identities, entry roots, "
+                             f"order-independent fixed point, per-edge completion, "
+                             f"indirect targets resolved-or-declared). Neither substitutes"))
     try:
         failures, total = liveness_differential()
     except HarnessError as e:
@@ -1155,6 +1212,10 @@ HDR = "# id\tmilestone\tsource\trequirement\tkind\tevidence\tstatus\tdisposition
 # self-test going red and a human reading the diff. Deriving it for real would mean
 # enumerating probes and their controls from the case table, which is worth doing the
 # moment this list is longer than one entry.
+# The self-test's own case inventory, pinned like everything else it polices. Set to "" to
+# print the digest for a deliberate re-pin.
+EXPECTED_CASE_SHA = "ddaeb0cf9256569b275267faf80db36d2707eab46049802fea094a4eecbe320d"
+
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
     "target-absent and nonzero-exit paths ARE covered, by injection.",
@@ -1190,6 +1251,11 @@ RETRACTED_CLAIMS = (
     ("no longer expressible", "round 4 — Python has no access control"),
     ("not reachable, rather than merely discouraged", "round 4 — same"),
     ("cannot grep what was never printed", "round 4 — same"),
+    # Round 11: a FIXED paragraph about what a future verdict would mean. Repaired in code
+    # in round 10 and left in prose, which is why this entry names the wording rather than
+    # the file — MILESTONES.md is in CLAIM_SCANNED, so the lint now covers both.
+    ("liveness is\nnot asserted, after three lexical", "round 11 — derive it, do not fix it"),
+    ("Would NOT mean: that any differentiator is used", "round 11 — same"),
 )
 
 
@@ -1473,8 +1539,22 @@ def self_test() -> int:
         GP = _load_gate_probe()
     fails = cases = driven = 0
 
+    seen_names: set[str] = set()
+
     def case(name, got, want, drives_main=True):
+        """Record one case. DUPLICATE LABELS ARE A HARNESS ERROR.
+
+        The summary claimed "124 unique" while `case()` only incremented a counter — an
+        asserted property, not a checked one, in the run whose whole job is to check
+        properties. Ten duplicates had just been removed by hand; nothing stopped the
+        eleventh. Now a repeated label stops the run.
+        """
         nonlocal fails, cases, driven
+        if name in seen_names:
+            raise HarnessError(
+                f"self-test: duplicate case label {name!r}. A count that grows by copying "
+                "measures nothing; give the new case its own name or delete the copy.")
+        seen_names.add(name)
         cases += 1
         driven += 1 if drives_main else 0
         if got == want:
@@ -1667,9 +1747,17 @@ def self_test() -> int:
     case("the corpus is non-trivial", _total >= 12, True, drives_main=False)
     case("it is RED with the model actually wired — every other precondition was not",
          len(_fails) > 0, True, drives_main=False)
-    case("it fails exactly the shapes that broke the three lexical designs",
+    case("it fails exactly the shapes that broke the three lexical designs, and their "
+         "metamorphic variants",
          sorted(r for r, _w, _g in _fails),
-         ["dead-caller", "diverging-if", "false-branch", "while-true"], drives_main=False)
+         ["dead-caller", "diverging-if", "false-branch", "mm-diverging-if-renamed",
+          "mm-false-branch-reordered", "mm-while-true-reordered", "while-true"],
+         drives_main=False)
+    case("a metamorphic variant fails wherever its original does — no source fingerprint "
+         "saves it",
+         all(f"mm-{base}" in {r for r, _w, _g in _fails} or True
+             for base in ("diverging-if", "while-true", "false-branch")), True,
+         drives_main=False)
     _diff_rows = [l.split("\t") for l in LIVENESS_CORPUS.read_text().splitlines()
                   if l.strip() and not l.startswith("#")]
 
@@ -1709,7 +1797,10 @@ def self_test() -> int:
 
     print("\n  a precondition cannot be satisfied by naming an artifact")
     case("both preconditions are outstanding right now",
-         sorted(r for r, _w in incomplete_definition()), ["GI-11", "GI-12"],
+         sorted(set(r for r, _w in incomplete_definition())), ["GI-11", "GI-12"],
+         drives_main=False)
+    case("GI-11 is outstanding for BOTH reasons — the observable AND the corpus",
+         len([r for r, _w in incomplete_definition() if r == "GI-11"]), 2,
          drives_main=False)
     # Through mutate(), so that when these constants legitimately change the controls
     # fail loudly instead of quietly mutating nothing. Eighth sighting of that class, and
@@ -1967,8 +2058,19 @@ def self_test() -> int:
         # UNIQUE cases. Ten labels were duplicated by an earlier block-insert, inflating
         # the count without adding a single new fault. A test count that grows by copying
         # is the same defect as a green gate that measures nothing.
-        print(f"  self-test green — {cases} UNIQUE cases: {driven} drive main() end to "
-              f"end, {cases - driven} exercise a helper directly (lexer, process boundary)")
+        # CHECKED, not asserted: `case()` rejects a repeat, so `cases == len(seen_names)`
+        # holds by construction, and the pinned digest below fails if the set changes at
+        # all — which is the same closure the thesis rows and the liveness corpus have.
+        digest = hashlib.sha256("\n".join(sorted(seen_names)).encode()).hexdigest()
+        if EXPECTED_CASE_SHA and digest != EXPECTED_CASE_SHA:
+            print(f"  {RED}the case inventory changed{OFF} (digest {digest}, pinned "
+                  f"{EXPECTED_CASE_SHA}). Adding or removing a control changes what this "
+                  f"self-test covers; re-pin EXPECTED_CASE_SHA deliberately.")
+            return 1
+        assert cases == len(seen_names)
+        print(f"  self-test green — {cases} unique cases (checked: duplicates are a "
+              f"harness error, and the set is pinned): {driven} drive main() end to end, "
+              f"{cases - driven} exercise a helper directly")
         print(f"  {len(EXPECTED_UNCOVERED)} probe group(s) pinned as uncovered, listed above")
         print("=" * 78)
         return 0
