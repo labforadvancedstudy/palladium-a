@@ -69,12 +69,18 @@
 #   gate: <make target> -> <result>       a project gate and its outcome, EXECUTED and checked
 #                                         against a receipt from that run by
 #                                         `make gate-receipts`. Every key=value in the result
-#                                         is compared to the gate's own output BY VALUE (not
-#                                         containment, which let `verified=4` validate against
-#                                         a run printing `verified=46`), and a result with no
+#                                         is compared to the gate's own output BY VALUE and must
+#                                         be the ONLY value that run printed for the key —
+#                                         containment let `verified=4` validate against a run
+#                                         printing `verified=46`, and mere membership let a run
+#                                         printing both endorse either. A result with no
 #                                         key=value and no quoted span is prose and rejected.
-#                                         Receipts carry a run id, so output left over from an
-#                                         earlier run cannot satisfy a later one. `make
+#                                         Receipts are written to a private temporary directory
+#                                         that scripts/gate-receipts.sh removes when it exits,
+#                                         so the certifying path cannot discover or reuse an
+#                                         earlier run's output; an earlier design wrote a run id
+#                                         NEXT TO the receipts, which authenticated nothing
+#                                         because the id could simply be read back. `make
 #                                         check-docs` alone prints `gate=N, NONE validated`:
 #                                         a gate needs a build and that target is a lint, so
 #                                         the seam is counted and named rather than silent.
@@ -132,9 +138,10 @@ evidence = [
   "src: src/ownership/mod.rs:329-333 add_constraint, the only writer of that vector",
   "cmd: grep -rn LifetimeConstraint src/ --include='*.rs' -> exit 0, 3 lines -- the field, the struct, and the push inside add_constraint. Nothing constructs one elsewhere and nothing reads the vector",
   "cmd: grep -rn add_constraint src/ --include='*.rs' -> exit 0, 1 line -- its own definition; the only writer is called by nobody",
+  "cmd: grep -rniE 'constraint|outliv|longer|shorter|subtyp' src/ownership/borrow_checker.rs -> exit 0, 10 lines -- every one a comment or a test name; the other half of the module declares no outlives type, field or construction of its own",
   "src: src/ownership/mod.rs:132-141 end_borrows, the only other operation on a lifetime, compares them with \"borrow.lifetime == lifetime\" -- equality, never ordering",
 ]
-note = "Two corrections, one of them to an argument this file made while correcting others. (1) The row used to rest on \"0 real readers; every hit is `lifetime_params: vec![]` in a test fixture\". Executed, that is false: 83 hits across 13 files, of which typeck and codegen are load-bearing. Explicit lifetime lists are parsed and carried end to end -- which is the annotation burden this feature exists to remove. (2) It then argued that nothing could INFER a lifetime because `grep -rn 'region|Region'` was empty. That does not follow, and it was written in the same row that had just found 83 readers: the absence of two identifier spellings is not a statement about behaviour. The claim is now behavioural, and stated at the width it is proved to. tests/regression/lifetimes_uninferred.pd returns a reference to a local that dies at the closing brace -- the canonical lifetime error -- and it compiles, links and runs. Its paired reject fixture shows the borrow checker DOES read the body of a function nothing calls, so that is a statement about lifetimes rather than about dead code being skipped. The code path agrees: the return arm carries a TODO where the check would be, and add_constraint -- the only way an outlives relation could be recorded -- is referenced exactly once in the tree, by its own definition. WHAT THAT ESTABLISHES, PRECISELY: there is no return-lifetime or outlives checking, which is what this feature requires and is why it is unimplemented. It does NOT establish that no limited lifetime reasoning exists anywhere in the compiler -- borrow_checker.rs mints per-call lifetimes and ends argument borrows with the call, which is how defect D6 came to be retracted. HOW FAR THE OUTLIVES CLAIM IS CHECKED, since one grep on a single symbol would not carry it: src/ownership/ is two files, mod.rs and borrow_checker.rs. Within them LifetimeConstraint is the only type that relates two lifetimes and `constraints` the only field holding them; all three occurrences of that type in the whole of src/ are its field, its declaration and the push inside add_constraint, which nothing calls; nothing reads the vector; and the only other operation on a lifetime, end_borrows, compares by equality rather than ordering. So the absent thing is the RELATION between lifetimes, and that is checked against the module rather than inferred from a name."
+note = "Two corrections, one of them to an argument this file made while correcting others. (1) The row used to rest on \"0 real readers; every hit is `lifetime_params: vec![]` in a test fixture\". Executed, that is false: 83 hits across 13 files, of which typeck and codegen are load-bearing. Explicit lifetime lists are parsed and carried end to end -- which is the annotation burden this feature exists to remove. (2) It then argued that nothing could INFER a lifetime because `grep -rn 'region|Region'` was empty. That does not follow, and it was written in the same row that had just found 83 readers: the absence of two identifier spellings is not a statement about behaviour. The claim is now behavioural, and stated at the width it is proved to. tests/regression/lifetimes_uninferred.pd returns a reference to a local that dies at the closing brace -- the canonical lifetime error -- and it compiles, links and runs. Its paired reject fixture shows the borrow checker DOES read the body of a function nothing calls, so that is a statement about lifetimes rather than about dead code being skipped. The code path agrees: the return arm carries a TODO where the check would be, and add_constraint -- the only way an outlives relation could be recorded -- is referenced exactly once in the tree, by its own definition. WHAT THAT ESTABLISHES, PRECISELY: there is no return-lifetime or outlives checking, which is what this feature requires and is why it is unimplemented. It does NOT establish that no limited lifetime reasoning exists anywhere in the compiler -- borrow_checker.rs mints per-call lifetimes and ends argument borrows with the call, which is how defect D6 came to be retracted. HOW FAR THE OUTLIVES CLAIM IS CHECKED, since one grep on a single symbol would not carry it: src/ownership/ is two files. In mod.rs, LifetimeConstraint is the only type relating two lifetimes and `constraints` the only field holding them; all three occurrences of that type in the whole of src/ are its field, its declaration and the push inside add_constraint, which nothing calls; nothing reads the vector; and end_borrows, the only other operation on a lifetime, compares by equality rather than ordering. In borrow_checker.rs, every occurrence of constraint/outlives/longer/shorter/subtyping is a comment or a test name -- it declares no outlives type, field or construction of its own. So the absent thing is the RELATION between lifetimes, checked across both files of the module rather than inferred from one name."
 
 [core_language.memory_management.reference_syntax]
 description = "ref / ref mut instead of & and &mut."
@@ -416,7 +423,9 @@ spec = "PALLADIUM_V1_FEATURES.md#41-verification"
 implementation = "unimplemented"
 evidence = [
   "cmd: grep -rn 'Coq\\|Lean\\|Isabelle\\|Proof' src/ --include='*.rs' -> exit 0, 2 lines -- both the marketing tagline \"Turing's Proofs Meet von Neumann's Performance\", at src/main.rs:100 and src/cli.rs:14",
-  "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.v' -o -name '*.thy' -o -name '*.lean' -> exit 0, 0 lines -- no proof-assistant artifact is checked in",
+  "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.v' -> exit 0, 0 lines -- no Coq artifact is checked in",
+  "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.thy' -> exit 0, 0 lines -- no Isabelle artifact is checked in",
+  "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.lean' -> exit 0, 0 lines -- no Lean artifact is checked in",
 ]
 note = "Depends on totality_checking, which is also unimplemented."
 

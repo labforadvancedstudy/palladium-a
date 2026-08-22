@@ -64,7 +64,8 @@ expect_green() {
   if [ "$RC" -eq 0 ]; then
     printf '  %sok%s   %s\n' "$GREEN" "$NC" "$2"; pass=$((pass+1))
   else
-    printf '  %sFAIL%s %s -- expected exit 0, got %s\n' "$RED" "$NC" "$2" "$RC"
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$2"
+    printf '         (expected exit 0, got %s)\n' "$RC"
     printf '%s\n' "$OUT" | sed 's/^/         | /' | head -12
     fail=$((fail+1))
   fi
@@ -75,20 +76,22 @@ expect_red() {
   local name=$1 case=$2; shift 2
   run "$name"
   if [ "$RC" -eq 0 ]; then
-    printf '  %sFAIL%s %s -- gate stayed GREEN on a deliberately false item\n' "$RED" "$NC" "$case"
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$case"
+    printf '         (gate stayed GREEN on a deliberately false item)\n'
     fail=$((fail+1)); return
   fi
   # Red for the RIGHT reason, and about THIS row.
   local want missing=0
   if ! printf '%s\n' "$OUT" | grep -qF -- "probe.$name"; then
-    printf '  %sFAIL%s %s -- went red without naming the row probe.%s\n' \
-      "$RED" "$NC" "$case" "$name"
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$case"
+    printf '         (went red without naming the row probe.%s)\n' "$name"
     printf '%s\n' "$OUT" | sed 's/^/         | /' | head -12
     fail=$((fail+1)); return
   fi
   for want in "$@"; do
     if ! printf '%s\n' "$OUT" | grep -qF -- "$want"; then
-      printf '  %sFAIL%s %s -- message lacks %s\n' "$RED" "$NC" "$case" "$want"
+      printf '  %sFAIL%s %s\n' "$RED" "$NC" "$case"
+      printf '         (message lacks: %s)\n' "$want"
       missing=1
     fi
   done
@@ -307,8 +310,8 @@ expect_red find_negation "find negation is refused: it would invert the L3 probe
 # measures a scope the command never searched.
 index find_type_or unimplemented \
   "cmd: find $INREPO/empty -type f -o -name '*.zzz' -> exit 0, 0 lines"
-expect_red find_type_or "-o joining a TRAVERSAL to a matching predicate is refused" \
-  "before any matching predicate"
+expect_red find_type_or "a find disjunction is refused outright, not reduced" \
+  "-o" "one \`cmd:\` item per pattern"
 
 index find_match_then_type unimplemented \
   "cmd: find src -name '*.zzz' -type f -> exit 0, 0 lines"
@@ -321,12 +324,30 @@ expect_red find_bad_type "an invalid multi-letter -type argument is refused" "-t
 
 index find_dangling_o unimplemented \
   "cmd: find src -name zzz -o -type f -> exit 0, 0 lines"
-expect_red find_dangling_o "-o not followed by a matching predicate is refused" "-o"
+expect_red find_dangling_o "a disjunction mixing match and traversal is refused" "-o"
+
+# THE THIRD DEFECT IN THIS CONSTRUCT IN THREE ROUNDS, and why the grammar shrank instead
+# of getting cleverer. `-a` binds tighter than `-o`, so this reads as name(x) OR (name(y)
+# AND print): measured, the command printed 0 lines and its probe printed 3, so L3 passed
+# an absence that had read nothing relevant. Rounds one and two were the same construct.
+index find_action_under_o unimplemented \
+  "cmd: find src -name '*.x' -o -name '*.y' -print -> exit 0, 0 lines"
+expect_red find_action_under_o "an action under a disjunction is refused (it bound to one branch)" \
+  "-o"
+
+index find_two_matches unimplemented \
+  "cmd: find src -name a -name b -> exit 0, 0 lines"
+expect_red find_two_matches "two matching predicates are refused: one item per pattern" \
+  "at most one"
+
+index find_action unimplemented \
+  "cmd: find src -name '*.zzz' -print -> exit 0, 0 lines"
+expect_red find_action "an action is refused; the default action already prints" "-print"
 
 # And the honest shapes must still be writable, or the grammar is just a wall.
-index find_disjunction unimplemented \
-  "cmd: find src stdlib -name '*.v' -o -name '*.thy' -o -name '*.lean' -> exit 0, 0 lines"
-expect_green find_disjunction "a two-plus-name disjunction over a real scope passes"
+index find_plain unimplemented \
+  "cmd: find src stdlib -name '*.zzz' -> exit 0, 0 lines"
+expect_green find_plain "one matching predicate over a real scope passes"
 
 index find_maxdepth unimplemented \
   "cmd: find src -maxdepth 0 -name '*.zzz' -> exit 0, 0 lines"
@@ -370,8 +391,8 @@ if [ "$RC" -eq 0 ] && ! printf '%s\n' "$OUT" | grep -qF HIJACKED; then
   printf '  %sok%s   %s\n' "$GREEN" "$NC" "a hijacked PATH does not change WHICH BINARY runs"
   pass=$((pass+1))
 else
-  printf '  %sFAIL%s %s -- exit %s\n' "$RED" "$NC" \
-    "a hijacked PATH does not change WHICH BINARY runs" "$RC"
+  printf '  %sFAIL%s %s\n' "$RED" "$NC" "a hijacked PATH does not change WHICH BINARY runs"
+  printf '         (exit %s)\n' "$RC"
   printf '%s\n' "$OUT" | sed 's/^/         | /' | head -10
   fail=$((fail+1))
 fi
@@ -389,8 +410,9 @@ if [ "$RC" -eq 0 ]; then
     "an inherited GREP_OPTIONS does not change WHAT THE TOOL DOES"
   pass=$((pass+1))
 else
-  printf '  %sFAIL%s %s -- exit %s\n' "$RED" "$NC" \
-    "an inherited GREP_OPTIONS does not change WHAT THE TOOL DOES" "$RC"
+  printf '  %sFAIL%s %s\n' "$RED" "$NC" \
+    "an inherited GREP_OPTIONS does not change WHAT THE TOOL DOES"
+  printf '         (exit %s)\n' "$RC"
   printf '%s\n' "$OUT" | sed 's/^/         | /' | head -10
   fail=$((fail+1))
 fi
@@ -419,7 +441,8 @@ PYEOF
   if printf '%s\n' "$OUT" | grep -qF "$want"; then
     printf '  %sok%s   %s\n' "$GREEN" "$NC" "$name"; pass=$((pass+1))
   else
-    printf '  %sFAIL%s %s -- wanted %s\n         | %s\n' "$RED" "$NC" "$name" "$want" "$OUT"
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$name"
+    printf '         (wanted %s)\n         | %s\n' "$want" "$OUT"
     fail=$((fail+1))
   fi
 }
@@ -482,7 +505,8 @@ gate_case() {  # gate_case <index-name> <expect green|red> <case> [fragment]
   elif [ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -qF -- "$frag"; then
     printf '  %sok%s   %s\n' "$GREEN" "$NC" "$case"; pass=$((pass+1)); return
   fi
-  printf '  %sFAIL%s %s -- exit %s\n' "$RED" "$NC" "$case" "$RC"
+  printf '  %sFAIL%s %s\n' "$RED" "$NC" "$case"
+  printf '         (exit %s)\n' "$RC"
   printf '%s\n' "$OUT" | sed 's/^/         | /' | head -10
   fail=$((fail+1))
 }
@@ -533,7 +557,8 @@ gr_case() {      # gr_case <allow|refuse> <command>
     printf '  %sok%s   gate command %-40s -> %s\n' "$GREEN" "$NC" "'$cmd'" "$want"
     pass=$((pass+1))
   else
-    printf '  %sFAIL%s gate command %-40s -> %s, wanted %s\n' "$RED" "$NC" "'$cmd'" "$got" "$want"
+    printf '  %sFAIL%s gate command %-40s -> %s\n' "$RED" "$NC" "'$cmd'" "$want"
+    printf '         (it was %s)\n' "$got"
     fail=$((fail+1))
   fi
 }
@@ -557,8 +582,8 @@ if grep -q 'OUT=\$(mktemp -d' scripts/gate-receipts.sh \
    && ! grep -q 'OUT=build_output/gate-receipts' scripts/gate-receipts.sh; then
   printf '  %sok%s   %s\n' "$GREEN" "$NC" "$CASE"; pass=$((pass+1))
 else
-  printf '  %sFAIL%s %s -- a shared, surviving directory is replayable, and two runs race\n' \
-    "$RED" "$NC" "$CASE"; fail=$((fail+1))
+  printf '  %sFAIL%s %s\n' "$RED" "$NC" "$CASE"
+  printf '         (a shared, surviving directory is replayable, and two runs race)\n'; fail=$((fail+1))
 fi
 
 # ... and the checker refuses a receipts directory that is repository content, so one
@@ -573,40 +598,25 @@ CASE="a receipts directory inside the repository is refused"
 if [ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -qF "inside the repository"; then
   printf '  %sok%s   %s\n' "$GREEN" "$NC" "$CASE"; pass=$((pass+1))
 else
-  printf '  %sFAIL%s %s -- it was accepted, exit %s\n' "$RED" "$NC" "$CASE" "$RC"
+  printf '  %sFAIL%s %s\n' "$RED" "$NC" "$CASE"
+  printf '         (it was accepted, exit %s)\n' "$RC"
   fail=$((fail+1))
 fi
 
-# ORDERING. `test-doc-evidence` ran before `gate-receipts` in both certifying paths, and
-# the control read whatever a previous target had left on disk -- so on a clean checkout
-# `make gates` failed, and it passed locally only because stale receipts were present.
-# The control is self-contained now, which makes the order redundant; it is asserted
-# anyway, because a certifying path should not rely on that redundancy holding.
-# `gates:` is one line, the workflow is many, so each is read the way it is written.
-if awk -F'gate-receipts' '/^gates:/ {n=split($0,_,""); \
-      pa=index($0,"gate-receipts"); pb=index($0,"test-doc-evidence"); \
-      found=1; exit !(pa && pb && pa < pb)} END{exit !found || 1-ok}' Makefile 2>/dev/null \
-   || awk '/^gates:/ {pa=index($0,"gate-receipts"); pb=index($0,"test-doc-evidence");
-           exit !(pa && pb && pa < pb)} END{}' Makefile; then
-  printf '  %sok%s   Makefile gates: runs gate-receipts before test-doc-evidence\n' \
-    "$GREEN" "$NC"; pass=$((pass+1))
-else
-  printf '  %sFAIL%s Makefile gates: runs gate-receipts before test-doc-evidence -- it does\n' \
-    "$RED" "$NC"
-  printf '         NOT, and on a clean checkout that ordering is how the certifying target\n'
-  printf '         came to pass only because an earlier run had left receipts on disk\n'
-  fail=$((fail+1))
-fi
-order_case() {   # order_case <file> <first> <second>   (line order, multi-line files)
-  if awk -v a="$2" -v b="$3" 'index($0,a){if(!pa)pa=NR} index($0,b){if(!pb)pb=NR}
-       END{exit !(pa && pb && pa < pb)}' "$1"; then
-    printf '  %sok%s   %s runs %s before %s\n' "$GREEN" "$NC" "$1" "$2" "$3"; pass=$((pass+1))
+# CI WIRING. Not the order -- with the probe minting its own receipts the order fixes
+# nothing, and a textual prerequisite check does not measure execution order under
+# `make -j` anyway; that fix and its control are deleted rather than kept as a measurement
+# of the wrong thing. What DOES matter is that the workflow invokes the evidence gate at
+# all: before this branch it ran scripts/check-docs.sh directly and check-doc-evidence
+# appeared in no workflow, so every cmd: item and every gate: receipt went unrun in CI.
+for step in check-doc-evidence.sh gate-receipts.sh test-doc-evidence.sh; do
+  if grep -qF "scripts/$step" .github/workflows/preview.yml; then
+    printf '  %sok%s   CI runs scripts/%s\n' "$GREEN" "$NC" "$step"; pass=$((pass+1))
   else
-    printf '  %sFAIL%s %s runs %s before %s -- it does NOT\n' "$RED" "$NC" "$1" "$2" "$3"
-    fail=$((fail+1))
+    printf '  %sFAIL%s CI runs scripts/%s\n' "$RED" "$NC" "$step"
+    printf '         (it does NOT, so that gate never runs on a push)\n'; fail=$((fail+1))
   fi
-}
-order_case .github/workflows/preview.yml gate-receipts.sh test-doc-evidence.sh
+done
 
 echo
 echo "== a claim about what the compiler DOES needs evidence from a run =="

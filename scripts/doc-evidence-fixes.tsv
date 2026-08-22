@@ -36,8 +36,8 @@
 
 scripts/check_doc_evidence.py	mutated	the evidence checker: cmd: execution, L1/L2/L3, hermeticity, per-segment status, gate: receipt validation, the dynamic-evidence rule
 scripts/gate-receipts.sh	mutated	the receipt runner: the argv grammar for a cited gate, and invocation-private receipt storage
-Makefile	mutated	gate-receipts must run before test-doc-evidence in `gates`; ordering is asserted by a control
-.github/workflows/preview.yml	mutated	the same ordering in CI, plus the three evidence steps that had never run there
+Makefile	content	target wiring. Its targets are what `make gates` runs, so a mis-wired target fails that target rather than these controls; the ordering fix it used to carry was deleted once the probe began minting its own receipts, because it no longer fixed anything
+.github/workflows/preview.yml	mutated	the three evidence steps that had never run in CI: before this branch the job called check-docs.sh directly and check-doc-evidence appeared in no workflow
 scripts/test-doc-evidence.sh	is-the-detector	the controls themselves; see the disposition note above
 scripts/test-doc-evidence-coverage.sh	is-the-detector	the coverage runner; it cannot mutate itself without deciding its own verdict
 docs/reference/features/feature-index.toml	content	the evidence corpus. Covered by `make check-docs` (every cmd: executed) and `make gate-receipts` (every gate: outcome checked against a run)
@@ -63,4 +63,5 @@ tests/reject/ref_parameter.pd	content	negative fixture, refused at a declared st
 tests/reject/total_attribute.pd	content	negative fixture, refused at a declared stage+diagnostic by `make conformance`
 tests/reject/try_block.pd	content	negative fixture, refused at a declared stage+diagnostic by `make conformance`
 tests/reject/uncalled_body_is_checked.pd	content	negative fixture, refused at a declared stage+diagnostic by `make conformance`
-scripts/doc-evidence-fixes.tsv	is-the-detector	this file; it is the denominator, and it is reconciled against git rather than trusted
+scripts/doc-evidence-fixes.tsv	is-the-detector	the file denominator, reconciled against git rather than trusted
+scripts/doc-evidence-controls.tsv	is-the-detector	the control denominator, reconciled against the labels the probe prints at runtime

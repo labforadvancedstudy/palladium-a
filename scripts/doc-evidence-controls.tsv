@@ -1,0 +1,90 @@
+# CLOSED INVENTORY of every control case scripts/test-doc-evidence.sh emits.
+#
+# WHY. The coverage runner mapped 22 named fragments to mutations and called the controls
+# non-vacuous. There were 64. Deleting an unmapped one changed no baseline failure and had
+# no mutation identity, so the runner stayed green -- the claim was wider than the
+# measurement, for the third time on this branch. Now every control has a declared role,
+# reconciled BOTH WAYS against the labels the script prints AT RUNTIME, so a control cannot
+# be deleted, renamed, or silently stop running without this file failing.
+#
+# The list below is reconciled against what `bash scripts/test-doc-evidence.sh` prints, and
+# that one command is also how a reviewer reproduces every case and its verdict:
+#   bash scripts/test-doc-evidence.sh
+# `make test-doc-evidence-coverage` then reverts each fix and reports which case notices.
+#
+# Columns are TAB-separated: case-label  role  detail
+#   kill  <mutation>   reverting that mutation MUST make this case fail, checked by name --
+#                      a mutation that reddens three unrelated cases while leaving this one
+#                      passing is WRONG-CONTROL, not coverage.
+#   guard <reason>     a green-side control, there to stop the gate becoming OVER-strict. No
+#                      mutation makes it fail, and that is its job; the role is declared so
+#                      "nothing kills it" is a statement rather than a gap.
+
+a TRUE index passes (count, absence, PIPELINE, find expr, conformance)	guard	the fatal green control: if it fails, detection cannot be told from breakage
+a false LINE COUNT is rejected, showing claimed and actual	kill	executed
+a false EXIT STATUS is rejected even when the count matches	kill	executed
+a command that COULD NOT LOOK is not a proof of absence	kill	l2-exists
+an absence over a MISSING PATH is rejected (--include hides it)	kill	l2-exists
+the same shape over an EXISTING path still passes	guard	L2 must not refuse a live path
+a clustered -rvn item is not falsely rejected by its own probe	guard	the probe must strip inversion
+a prose result is rejected: there is nothing to compare	kill	executed
+a quote absent from the output is rejected	kill	executed
+an inline pdc program is refused and sent to conformance	kill	executed
+a build is refused and sent to gate:	kill	executed
+a build artifact is refused: not reproducible from a checkout	kill	executed
+a shell operator is refused	kill	executed
+a command outside the allowlist is refused	kill	executed
+a command naming NO path is refused	kill	l1-path
+an option-supplied pattern (--regexp=) is refused	kill	l1-pattern-opt
+a clustered -e is refused	kill	l1-pattern-opt
+an option taking a separate argument is refused	kill	l1-pattern-opt
+an absence over an EMPTY scope is refused (measured, not parsed)	kill	l3-probe
+an absence filtered to an empty file set is refused	kill	l3-probe
+a downstream segment naming a path is refused	kill	l1-path
+an absence over an empty scope is refused for FIND too	kill	l3-find-probe
+find -exec is refused: it runs a program of the document's choosing	kill	find-allowlist
+find -delete is refused: an observation may not alter the tree	kill	find-allowlist
+find negation is refused: it would invert the L3 probe	kill	find-allowlist
+a find disjunction is refused outright, not reduced	kill	find-grammar
+a traversal predicate AFTER a match is refused	kill	find-grammar
+an invalid multi-letter -type argument is refused	kill	find-grammar
+a disjunction mixing match and traversal is refused	kill	find-grammar
+an action under a disjunction is refused (it bound to one branch)	kill	find-grammar
+two matching predicates are refused: one item per pattern	kill	find-grammar
+an action is refused; the default action already prints	kill	find-grammar
+one matching predicate over a real scope passes	guard	the permitted grammar stays writable
+-maxdepth 0 is preserved by the probe, not neutralised	guard	traversal must survive the probe
+traversal AND match (no -o) keeps the -type bound	guard	the permitted conjunction stays writable
+a regular file as the starting path is a valid scope	guard	a file is a legitimate scope
+an executable named by PATH is refused	kill	exe-path
+a symlink resolving outside the repository is refused	kill	l2-symlink
+a hijacked PATH does not change WHICH BINARY runs	kill	tool-resolution
+an inherited GREP_OPTIONS does not change WHAT THE TOOL DOES	kill	pinned-env
+an upstream segment exiting 3 is a MALFUNCTION, not a result	kill	seg-status
+an upstream segment killed by a signal is a MALFUNCTION	kill	seg-status
+an upstream segment exiting 137 (shell convention) is a MALFUNCTION	kill	seg-status
+an upstream segment exiting 1 (grep: no match) still concludes	guard	grep's 1 is a verdict, not a malfunction
+a real SIGPIPE from a downstream grep -q is caught (not white-box)	kill	seg-status
+a gate: result with no checkable token is refused	kill	gate-checkable
+a gate: result the run DID print validates	guard	receipt validation must accept the truth
+a TRUNCATED number (verified=4 vs verified=46) is refused	kill	gate-exact
+a number the gate did not print is refused	kill	gate-exact
+a self-contradicting run endorses NEITHER value	kill	gate-exact
+gate command 'make conformance'                       -> allow	guard	the real gate commands must stay runnable
+gate command 'cargo build --release'                  -> allow	guard	the real gate commands must stay runnable
+gate command 'cargo test --release --lib lsp::'       -> allow	guard	the real gate commands must stay runnable
+gate command 'make conformance CC=clang'              -> refuse	kill	gate-argv-grammar
+gate command 'make conformance -j 8'                  -> refuse	kill	gate-argv-grammar
+gate command 'make conformance --always-make'         -> refuse	kill	gate-argv-grammar
+gate command 'cargo build --release --features anything' -> refuse	kill	gate-argv-grammar
+gate command 'make conformance; rm -rf /'             -> refuse	kill	gate-argv-grammar
+receipts are invocation-private and removed on exit	kill	gate-private-receipts
+a receipts directory inside the repository is refused	kill	gate-receipts-in-repo
+CI runs scripts/check-doc-evidence.sh	kill	ci-steps
+CI runs scripts/gate-receipts.sh	kill	ci-steps
+CI runs scripts/test-doc-evidence.sh	kill	ci-steps
+a partial/implemented row with only STATIC evidence is refused	kill	dynamic-evidence
+the same row passes once it cites a fixture	guard	the dynamic-evidence rule must be satisfiable
+an unimplemented row may still rest on an absence proof	guard	absence proofs stay legal for unimplemented
+a class the manifest disagrees with is rejected	kill	conformance-class
+an undeclared fixture is rejected	kill	conformance-class

@@ -1,35 +1,36 @@
 #!/usr/bin/env bash
-# How much of the doc-evidence gate the controls actually cover, MEASURED — over a
-# denominator that comes from git rather than from a string in this file.
+# Whether the doc-evidence controls would NOTICE if the gate stopped working.
 #
-# WHY THIS IS A SCRIPT AND NOT A TABLE IN A COMMIT MESSAGE
-# "45 of 45 controls pass" says the controls agree with the code. It does not say the
-# controls would NOTICE if the code stopped working; a suite of vacuous assertions passes
-# just as cleanly. The number that means something is: with fix X reverted, how many
-# controls go red.
+# WHAT THIS ESTABLISHES, EXACTLY -- and nothing wider:
+#   1. every control case the probe emits has a DECLARED ROLE in
+#      scripts/doc-evidence-controls.tsv, reconciled both ways against the labels the probe
+#      prints at runtime, so a control cannot be deleted, renamed or silently skipped;
+#   2. every `kill` control is actually killed by the mutation it names -- checked BY NAME,
+#      so a mutation that reddens three unrelated cases and leaves its own passing is
+#      WRONG-CONTROL rather than coverage;
+#   3. every mutation still applies (MUTATION-DEAD otherwise) and every file declared
+#      `mutated` has at least one.
 #
-# WHY THE DENOMINATOR COMES FROM git
-# The first version mutated ONE FILE from a hand-written list and printed "every fix has
-# a control". Four fixes lived in scripts/gate-receipts.sh, the controls, the Makefile and
-# the CI workflow — none in the target, all revertible with nothing going red.
-# MUTATION-DEAD catches a LISTED replacement that stops applying; an OMITTED one is
-# invisible. That is the disease this runner exists to find, one level up, in the runner.
+# WHAT IT DOES NOT ESTABLISH. It does not establish that "every fix has a control". A fix
+# has no machine-readable identity: a new repair inside an already-inventoried file changes
+# no file set and needs no new mutation, so a fix can be entirely absent from the table
+# while this runs green. That was claimed for two rounds and was false; the unit that IS
+# authoritative is the control, so the control is what is now closed over. Adding a fix
+# without a control is caught by review of the two inventories, not by this script.
 #
-# So the files this branch changed are read from `git diff --name-only <merge-base>..HEAD`
-# and reconciled against scripts/doc-evidence-fixes.tsv in BOTH directions — the closed
-# inventory discipline tests/conformance-manifest.txt applies to fixtures. A file cannot
-# leave the measurement by being forgotten, only by being argued for in a row.
-#
-# WHAT THIS RUNNER COVERS, PLAINLY:
-#   * it reverts fixes in the files declared `mutated` and requires controls to notice;
-#   * it does NOT mutate the controls or itself (`is-the-detector`), because a detector
-#     grading its own mutation decides its own verdict. What protects those files is this
-#     table: delete a control and its fix's count drops, or the fix goes UNCOVERED;
-#   * it does NOT mutate fixtures, transcripts, the manifest, the pin file or the feature
-#     index (`content`). Those are covered by `make conformance` and `make check-docs`,
-#     named per row, and reverting one fails THAT gate rather than these controls.
+# WHY TWO INVENTORIES.
+#   doc-evidence-controls.tsv  closes over the CONTROLS -- runtime-derived, works anywhere.
+#   doc-evidence-fixes.tsv     closes over the FILES this branch changed. Its denominator
+#                              is a git diff, which is meaningful on a feature branch and
+#                              meaningless once merged: on main the merge-base with main is
+#                              HEAD, so the diff is empty, and a shallow CI checkout has no
+#                              main ref at all. That reconciliation is therefore reported as
+#                              NOT APPLICABLE, with the reason, when no base can be
+#                              established -- it is a branch-time check, and the two above
+#                              are what carry the claim everywhere.
 #
 # Usage: bash scripts/test-doc-evidence-coverage.sh
+#        COVERAGE_BASE=<rev> bash scripts/test-doc-evidence-coverage.sh   # force the base
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
@@ -38,7 +39,7 @@ INVENTORY=scripts/doc-evidence-fixes.tsv
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YEL=$'\033[0;33m'; NC=$'\033[0m'
 
 # Every file a mutation may touch. Restored from git after each one, and on exit.
-MUTABLE="scripts/check_doc_evidence.py scripts/gate-receipts.sh Makefile .github/workflows/preview.yml"
+MUTABLE="scripts/check_doc_evidence.py scripts/gate-receipts.sh .github/workflows/preview.yml"
 
 for f in $MUTABLE; do
   if ! git diff --quiet -- "$f" || ! git diff --cached --quiet -- "$f"; then
@@ -51,53 +52,116 @@ done
 restore() { git checkout -- $MUTABLE 2>/dev/null; }
 trap restore EXIT INT TERM
 
-# --- the denominator, reconciled against git -------------------------------------------
-BASE=$(git merge-base main HEAD 2>/dev/null)
-if [ -z "$BASE" ]; then
-  echo "error: no merge-base with main, so the set of files this branch changed cannot" >&2
-  echo "       be established. Refusing to measure coverage over a guess." >&2
-  exit 2
-fi
-[ -f "$INVENTORY" ] || { echo "error: $INVENTORY missing; it IS the denominator." >&2; exit 2; }
+# --- the file-set reconciliation: branch-time, and honest about when it is not ---------
+CONTROLS=scripts/doc-evidence-controls.tsv
+[ -f "$INVENTORY" ] || { echo "error: $INVENTORY missing; it IS the file denominator." >&2; exit 2; }
+[ -f "$CONTROLS" ]  || { echo "error: $CONTROLS missing; it IS the control denominator." >&2; exit 2; }
 
-CHANGED=$(git diff --name-only "$BASE"..HEAD)
+# In order: an explicit base; the first parent when HEAD is a merge (post-merge on main,
+# where `merge-base main HEAD` is HEAD and the diff would be empty); the merge-base with
+# main or origin/main on a feature branch. If none resolves -- a shallow CI checkout has
+# no main ref and no HEAD^ -- the file reconciliation is NOT APPLICABLE and says so.
+BASE=""
+if [ -n "${COVERAGE_BASE:-}" ]; then
+  BASE=$(git rev-parse --verify "${COVERAGE_BASE}^{commit}" 2>/dev/null)
+elif [ "$(git rev-list --parents -n 1 HEAD 2>/dev/null | wc -w | tr -d ' ')" -ge 3 ]; then
+  BASE=$(git rev-parse --verify 'HEAD^1' 2>/dev/null)      # merge commit: what it merged
+else
+  for ref in main origin/main; do
+    if git rev-parse --verify "$ref" >/dev/null 2>&1; then
+      BASE=$(git merge-base "$ref" HEAD 2>/dev/null); [ -n "$BASE" ] && break
+    fi
+  done
+fi
+CHANGED=""
+[ -n "$BASE" ] && CHANGED=$(git diff --name-only "$BASE"..HEAD)
+
+echo "=============================================="
 if [ -z "$CHANGED" ]; then
-  echo "error: this branch changed no files against $BASE. An empty denominator is a" >&2
-  echo "       broken invocation, not full coverage." >&2
-  exit 2
-fi
-
-echo "=============================================="
-echo "denominator: $(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ') file(s) changed since $(git rev-parse --short "$BASE"),"
-echo "reconciled against $INVENTORY in both directions"
-echo "=============================================="
-
-recon=0
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  if ! awk -F'\t' -v p="$f" '$1==p {found=1} END {exit !found}' "$INVENTORY"; then
-    printf '  %sUNDECLARED%s    %s -- changed by this branch, absent from the inventory\n' \
-      "$RED" "$NC" "$f"
-    recon=$((recon+1))
+  echo "file-set reconciliation: NOT APPLICABLE"
+  if [ -z "$BASE" ]; then
+    echo "  no base commit resolves (no main/origin/main ref, HEAD is not a merge, and"
+    echo "  COVERAGE_BASE is unset) -- a shallow checkout looks like this."
+  else
+    echo "  base $(git rev-parse --short "$BASE") is HEAD's own tree, so the diff is empty;"
+    echo "  after a merge there is no branch left to diff. This is a branch-time check."
   fi
-done <<EOF
-$CHANGED
-EOF
+  echo "  The control closure below is what carries the claim, and it runs anywhere."
+else
+  echo "file-set reconciliation: $(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ') file(s) changed since $(git rev-parse --short "$BASE"),"
+  echo "reconciled against $INVENTORY in both directions"
+fi
+echo "=============================================="
+
+# The disposition vocabulary is CLOSED. Only the literal `mutated` had any enforcement, so
+# `content`, `is-the-detector`, an invented value or a TYPO all bypassed the mutation
+# requirement -- measured, misspelling one row as `mutatd` dropped a file out of coverage
+# and the run stayed green. tests/conformance-manifest.txt validates its class column for
+# exactly this reason.
+recon=0
 while IFS=$'\t' read -r path disp _; do
   case "$path" in ''|'#'*) continue ;; esac
-  if ! printf '%s\n' "$CHANGED" | grep -qxF -- "$path"; then
-    printf '  %sMISSING%s       %s -- declared %s, but this branch did not change it\n' \
-      "$RED" "$NC" "$path" "$disp"
+  case "$disp" in
+    mutated|is-the-detector|content) ;;
+    *) printf '  %sBAD-DISPOSITION%s %s -- %s is not one of: mutated, is-the-detector, content\n' \
+         "$RED" "$NC" "$path" "'$disp'"; recon=$((recon+1)) ;;
+  esac
+done < "$INVENTORY"
+
+if [ -n "$CHANGED" ]; then
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    if ! awk -F'\t' -v p="$f" '$1==p {found=1} END {exit !found}' "$INVENTORY"; then
+      printf '  %sUNDECLARED%s    %s -- changed by this branch, absent from the inventory\n' \
+        "$RED" "$NC" "$f"
+      recon=$((recon+1))
+    fi
+  done <<EOF2
+$CHANGED
+EOF2
+  while IFS=$'\t' read -r path disp _; do
+    case "$path" in ''|'#'*) continue ;; esac
+    if ! printf '%s\n' "$CHANGED" | grep -qxF -- "$path"; then
+      printf '  %sMISSING%s       %s -- declared %s, but this branch did not change it\n' \
+        "$RED" "$NC" "$path" "$disp"
+      recon=$((recon+1))
+    fi
+  done < "$INVENTORY"
+fi
+
+# --- control closure: runtime labels vs declared roles, both directions -----------------
+LIVE=$(bash scripts/test-doc-evidence.sh 2>&1 | sed 's/\x1b\[[0-9;]*m//g' \
+       | grep -E '^  (ok   |FAIL )' | sed 's/^  ok   //; s/^  FAIL //' | sed 's/[[:space:]]*$//')
+if [ -z "$LIVE" ]; then
+  echo "error: the probe emitted no control cases at all; nothing to reconcile." >&2
+  exit 2
+fi
+while IFS= read -r c; do
+  [ -z "$c" ] && continue
+  if ! awk -F'\t' -v p="$c" '$1==p {f=1} END {exit !f}' "$CONTROLS"; then
+    printf '  %sUNDECLARED-CONTROL%s %s\n' "$RED" "$NC" "$c"; recon=$((recon+1))
+  fi
+done <<EOF2
+$LIVE
+EOF2
+while IFS=$'\t' read -r label role _; do
+  case "$label" in ''|'#'*) continue ;; esac
+  if ! printf '%s\n' "$LIVE" | grep -qxF -- "$label"; then
+    printf '  %sMISSING-CONTROL%s    %s -- declared %s, but the probe no longer emits it\n' \
+      "$RED" "$NC" "$label" "$role"
     recon=$((recon+1))
   fi
-done < "$INVENTORY"
+done < "$CONTROLS"
+
 if [ "$recon" -gt 0 ]; then
   echo
-  echo "${RED}inventory does not reconcile${NC} -- $recon discrepancy(ies). Coverage measured"
-  echo "over an inventory that disagrees with git is coverage over a guess."
+  echo "${RED}inventories do not reconcile${NC} -- $recon discrepancy(ies). Coverage measured"
+  echo "over an inventory that disagrees with what actually runs is coverage over a guess."
   exit 1
 fi
-printf '  %sok%s            inventory reconciles with git in both directions\n' "$GREEN" "$NC"
+printf '  %sok%s            %s control case(s) emitted, every one with a declared role\n' \
+  "$GREEN" "$NC" "$(printf '%s\n' "$LIVE" | wc -l | tr -d ' ')"
+[ -n "$CHANGED" ] && printf '  %sok%s            file inventory reconciles with git in both directions\n' "$GREEN" "$NC"
 
 MUTATED_FILES=$(awk -F'\t' '$2=="mutated" {print $1}' "$INVENTORY")
 
@@ -110,7 +174,7 @@ w = sys.argv[1]
 FILES = {"py": "scripts/check_doc_evidence.py", "gr": "scripts/gate-receipts.sh",
          "mk": "Makefile", "ci": ".github/workflows/preview.yml"}
 which = {"gate-argv-grammar": "gr", "gate-private-receipts": "gr",
-         "make-ordering": "mk", "ci-ordering": "ci"}.get(w, "py")
+         "ci-steps": "ci"}.get(w, "py")
 p = pathlib.Path(FILES[which])
 t = orig = p.read_text()
 
@@ -133,8 +197,8 @@ elif w == "l3-find-probe":     # find: keep the traversal bound in the probe
                   '        return [head] + parsed["paths"]', 1)
 elif w == "find-allowlist":    # find's expression is enumerated (-exec, -delete, -not)
     t = t.replace("        err = check_find_expression(opts)", "        err = None", 1)
-elif w == "find-o-grammar":    # -o may not join a traversal predicate to a matching one
-    t = t.replace("            if not seen_match:", "            if False:", 1)
+elif w == "find-grammar":      # the permitted expression: <traversal>* <match>?
+    t = t.replace("        err = check_find_expression(opts)\n        if err:", "        err = None\n        if err:", 1)
 elif w == "exe-path":          # the tool may not be named by path
     t = t.replace('        if "/" in head:', "        if False:", 1)
 elif w == "tool-resolution":   # WHICH BINARY runs: resolved on a pinned PATH
@@ -164,11 +228,8 @@ elif w == "gate-private-receipts":   # back to a shared, surviving receipts dire
     t = t.replace('OUT=$(mktemp -d "${TMPDIR:-/tmp}/palladium-gate-receipts.XXXXXX") || exit 2\n'
                   'trap \'rm -rf "$OUT"\' EXIT INT TERM',
                   'OUT=build_output/gate-receipts\nrm -rf "$OUT"; mkdir -p "$OUT"', 1)
-elif w == "make-ordering":
-    t = t.replace("check-docs gate-receipts test-doc-evidence",
-                  "check-docs test-doc-evidence gate-receipts", 1)
-elif w == "ci-ordering":
-    t = t.replace("      - name: Gate receipts\n        run: bash scripts/gate-receipts.sh\n", "", 1)
+elif w == "ci-steps":          # the workflow must invoke the evidence gate at all
+    t = t.replace("      - name: Documentation evidence\n        run: bash scripts/check-doc-evidence.sh\n", "", 1)
 else:
     sys.exit(2)
 if t == orig:
@@ -190,7 +251,7 @@ l2-symlink|scripts/check_doc_evidence.py|a symlink resolving outside the reposit
 l3-probe|scripts/check_doc_evidence.py|an absence over an EMPTY scope is refused
 l3-find-probe|scripts/check_doc_evidence.py|an absence over an empty scope is refused for FIND too
 find-allowlist|scripts/check_doc_evidence.py|find -exec is refused
-find-o-grammar|scripts/check_doc_evidence.py|joining a TRAVERSAL to a matching predicate is refused
+find-grammar|scripts/check_doc_evidence.py|a find disjunction is refused outright, not reduced
 exe-path|scripts/check_doc_evidence.py|an executable named by PATH is refused
 tool-resolution|scripts/check_doc_evidence.py|a hijacked PATH does not change WHICH BINARY runs
 pinned-env|scripts/check_doc_evidence.py|an inherited GREP_OPTIONS does not change WHAT THE TOOL DOES
@@ -202,8 +263,7 @@ dynamic-evidence|scripts/check_doc_evidence.py|only STATIC evidence is refused
 conformance-class|scripts/check_doc_evidence.py|a class the manifest disagrees with is rejected
 gate-argv-grammar|scripts/gate-receipts.sh|make conformance CC=clang
 gate-private-receipts|scripts/gate-receipts.sh|receipts are invocation-private and removed on exit
-make-ordering|Makefile|Makefile gates: runs gate-receipts before test-doc-evidence
-ci-ordering|.github/workflows/preview.yml|preview.yml runs gate-receipts.sh before"
+ci-steps|.github/workflows/preview.yml|CI runs scripts/check-doc-evidence.sh"
 
 # A failing CASE line, not any line containing the word: a summary line or a quoted
 # diagnostic would otherwise inflate the count — the same membership-versus-agreement
@@ -253,6 +313,18 @@ while IFS= read -r entry; do
 done <<EOF
 $MUTATIONS
 EOF
+
+# Every mutation named as a `kill` role must actually be in the table above; otherwise a
+# control declares itself covered by something that never runs.
+while IFS=$'\t' read -r label role detail; do
+  case "$label" in ''|'#'*) continue ;; esac
+  [ "$role" = kill ] || continue
+  if ! printf '%s\n' "$MUTATIONS" | grep -q "^$detail|"; then
+    printf '  %sPHANTOM-KILL%s  %-22s no mutation by that name exists (declared by: %s)\n' \
+      "$RED" "$NC" "$detail" "$label"
+    uncovered=$((uncovered+1))
+  fi
+done < "$CONTROLS"
 
 # A file declared `mutated` that nothing mutates is the omission this reconciliation
 # exists to surface, and it is exactly what happened to four files last round.

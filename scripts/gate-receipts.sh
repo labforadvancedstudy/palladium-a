@@ -38,13 +38,17 @@
 # and validate a week-old run. Measured — it printed 10/10. The comment claiming only the
 # producing invocation knew the id was simply false.
 #
-# Receipts now live in a private `mktemp -d` that is REMOVED WHEN THIS SCRIPT EXITS, on
-# every path including a failure or an interrupt. There is nothing to replay because
-# nothing outlives the run, and the checker additionally refuses a receipts directory
-# inside the repository, so one cannot be committed and pointed at. The same change
-# removes a race: every invocation used to share build_output/gate-receipts, so two
-# concurrent runs would tear each other's RUN_ID, truncate each other's receipts and
-# interleave index.tsv — one failing spuriously while the other validated mixed files.
+# Receipts now live in a private `mktemp -d` removed when this script exits, on every
+# path including failure and interrupt. THE GUARANTEE, STATED AT ITS REAL WIDTH: a
+# receipts directory is not DISCOVERABLE by, and not REUSABLE by, the certifying path —
+# every invocation mints a fresh unpredictable path and passes only that one to the
+# checker, so no later run can be pointed at an earlier run's bytes. It is NOT
+# "nothing survives": a SIGKILL or a host failure leaves the directory behind, and the
+# checker will read an external directory that is explicitly handed to it. What that
+# residue cannot do is contaminate a later certifying run. The checker additionally
+# refuses a receipts directory inside the repository, so one cannot be committed and
+# pointed at. The same change removes a race: every invocation used to share
+# build_output/gate-receipts, so two concurrent runs tore each other's files.
 #
 # Usage: bash scripts/gate-receipts.sh
 

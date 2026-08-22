@@ -392,9 +392,8 @@ GREP_INVERT_SHORT = "v"
 # predicates and preserves the TRAVERSAL ones, and that rewrite can only be total over a
 # set this small. Negation is refused for the same reason: under `-not`, neutralising
 # `-name X` to `-name '*'` would match nothing, and the probe would accuse an honest item.
-FIND_MATCH_PREDICATES = {"-name", "-iname", "-path", "-ipath"}    # neutralised in the probe
+FIND_MATCH_PREDICATES = {"-name", "-iname", "-path", "-ipath"}    # at most ONE, neutralised
 FIND_TRAVERSAL_PREDICATES = {"-type", "-maxdepth", "-mindepth"}   # kept: they decide what is READ
-FIND_ACTIONS = {"-print", "-print0"}
 FIND_TYPE_ARGS = {"f", "d", "l", "p", "s", "b", "c"}
 
 # 4 MiB. A broad recursive grep can emit far more than the gate needs, and an unbounded
@@ -516,53 +515,40 @@ def parse_segment(argv):
 
 
 def check_find_expression(expr):
-    """The find grammar this gate permits, which is narrower than find's. -> error-or-None.
+    """The find expression this gate permits. -> error-or-None.
 
-        <traversal>*  [ <match> ( -o <match> )* ]  <action>?
+        <traversal>*  <match>?
 
-    A CONJUNCTION of traversal predicates, then at most one DISJUNCTION of matching
-    predicates, then an optional action. `-o` may not join a traversal predicate to
-    anything, and there is no `-a`, no negation, and no parentheses.
+    A conjunction of traversal predicates and AT MOST ONE matching predicate. No `-o`, no
+    `-a`, no action, no negation, no parentheses.
 
-    WHY THIS SHAPE AND NOT find's. The L3 guarantee is that a probe with the matching
-    predicates neutralised must produce output, so an empty result means an empty scope.
-    That reduction is only sound if neutralising matching WIDENS the result and traversal
-    still bounds it. Under `-o` mixing the two, it does not:
+    WHY IT IS THIS SMALL. Three review rounds produced three defects in this one
+    construct, each time in the reduction that turns a command into its L3 probe:
+      round 1  the probe deleted the expression outright, so `find empty-dir -type f`
+               probed as `find empty-dir` and printed the directory itself;
+      round 2  `-type` was preserved but `-o` is Boolean, so `-type f -o -name '*.zzz'`
+               reads as (type f) OR (name) and one vacuous branch removed the -type bound;
+      round 3  `-a` binds tighter than `-o`, so `-name '*.x' -o -name '*.y' -print` reads
+               as name(x) OR (name(y) AND print) — measured, the command printed 0 lines
+               and its probe printed 3.
+    Each fix was to the instance. The construct is find's Boolean expression grammar, and
+    a gate does not need one: the corpus had exactly ONE item using `-o`, and it splits
+    into three items that are each trivially checkable. So the grammar is cut down to the
+    fragment where the reduction is obviously sound, rather than made cleverer again.
 
-        find empty-dir -type f -o -name '*.zzz'   -> 0 lines   (the real command)
-        find empty-dir -type f -o -name '*'       -> 1 line    (the probe: the dir itself)
-
-    One vacuous OR branch defeats the `-type f` bound entirely, so the probe answered a
-    question the command had not asked. The grammar is narrowed here rather than the
-    guarantee being narrowed there, because a guarantee with an exception is the thing
-    this whole branch exists to remove. THIS IS THE STATED LIMIT: L3 is total over the
-    grammar above, and a find outside it is refused rather than measured.
+    THE GUARANTEE, IN ONE SENTENCE: because the expression is a conjunction of traversal
+    predicates and at most one matching predicate, replacing that predicate's argument
+    with `*` yields a command whose results are a SUPERSET of the original's, so an empty
+    probe proves the scope held nothing for the command to match.
     """
-    i, seen_match, seen_action = 0, False, False
+    i, seen_match = 0, None
     while i < len(expr):
         tok = expr[i]
-        if tok in FIND_ACTIONS:
-            seen_action = True
-            i += 1
-            continue
-        if seen_action:
-            return f"puts {tok!r} after the action {expr[i-1]!r}"
-        if tok == "-o":
-            if not seen_match:
-                return ("uses `-o` before any matching predicate. In the grammar this gate "
-                        "permits, `-o` joins matching predicates to each other and nothing "
-                        "else — `find <dir> -type f -o -name '*.zzz'` reads as (type f) OR "
-                        "(name), so one vacuous branch removes the -type bound and the L3 "
-                        "probe would measure a scope the command never searched")
-            if i + 2 >= len(expr) + 1 or expr[i + 1] not in FIND_MATCH_PREDICATES:
-                return "has `-o` that is not followed by another matching predicate"
-            i += 1
-            continue
         if tok in FIND_TRAVERSAL_PREDICATES:
             if seen_match:
-                return (f"puts the traversal predicate {tok!r} after a matching one. "
-                        f"Traversal predicates bound WHAT IS READ and must come first, so "
-                        f"the probe can keep them while neutralising the match")
+                return (f"puts the traversal predicate {tok!r} after the matching predicate "
+                        f"{seen_match!r}. Traversal bounds WHAT IS READ and must come "
+                        f"first, so the probe can keep it while neutralising the match")
             if i + 1 >= len(expr):
                 return f"has {tok!r} with no argument"
             if tok == "-type" and expr[i + 1] not in FIND_TYPE_ARGS:
@@ -571,19 +557,30 @@ def check_find_expression(expr):
             i += 2
             continue
         if tok in FIND_MATCH_PREDICATES:
+            if seen_match:
+                return (f"uses two matching predicates ({seen_match} and {tok}). This gate "
+                        f"permits at most one, because the probe replaces it with a "
+                        f"match-everything argument and that reduction is only obviously "
+                        f"sound when there is nothing to combine it with. Write one item "
+                        f"per pattern")
             if i + 1 >= len(expr):
                 return f"has {tok!r} with no argument"
-            seen_match = True
+            seen_match = tok
             i += 2
             continue
-        allowed = sorted(FIND_ACTIONS | FIND_MATCH_PREDICATES | FIND_TRAVERSAL_PREDICATES)
+        allowed = sorted(FIND_MATCH_PREDICATES | FIND_TRAVERSAL_PREDICATES)
+        extra = ""
+        if tok in ("-o", "-a", "-not", "!", "(", ")", "-print", "-print0"):
+            extra = (" find's Boolean expression grammar is deliberately outside this "
+                     "gate: `-o` and `-a` have precedence, and every attempt to reduce an "
+                     "expression containing them to a sound probe has been wrong. Write "
+                     "one `cmd:` item per pattern instead; the default action already "
+                     "prints, so `-print` is never needed.")
         return (f"uses the find predicate {tok!r}, which is not in the observation set "
-                f"({', '.join(allowed)}, -o). A find expression is forwarded to a real "
+                f"({', '.join(allowed)}).{extra} A find expression is forwarded to a real "
                 f"process, so `-exec` would run a program of this document's choosing and "
                 f"`-delete` would alter the checkout — neither is caught by the tool "
-                f"checks, because the program being run really is find. Negation and "
-                f"parentheses are excluded because the L3 probe neutralises matching "
-                f"predicates, and under either the rewrite would not widen the result")
+                f"checks, because the program being run really is find")
     return None
 
 
@@ -595,14 +592,11 @@ def build_probe(parsed):
     the dialect. Inversion is removed — as a token and as a letter in a short cluster —
     because with it "matched everything" becomes "printed nothing".
 
-    find: the traversal conjunction is KEPT and the whole matching disjunction collapses
-    to a single `-name '*'`. Two earlier versions were wrong here. The first deleted the
-    expression entirely and probed `find <paths>`, which prints the directory itself, so
-    `find empty-dir -type f` passed. The second neutralised each matching predicate in
-    place, which is still defeated by `-type f -o -name '*.zzz'` — the OR branch removes
-    the -type bound. check_find_expression now permits only `<traversal>* [<match> (-o
-    <match>)*] <action>?`, over which collapsing the disjunction is exactly "match
-    anything the traversal admits", and the reduction is total.
+    find: the traversal predicates are kept verbatim and the single matching predicate has
+    its argument replaced by `*`. See check_find_expression for why the permitted grammar
+    is only `<traversal>* <match>?` — three rounds of defects in the reduction of find's
+    Boolean expressions, fixed each time at the instance, until the construct itself was
+    removed.
     """
     head = parsed["head"]
     if head == "grep":
@@ -617,23 +611,16 @@ def build_probe(parsed):
             opts.append(o)
         return [head] + opts + [""] + parsed["paths"]
     if head == "find":
-        expr, i, matched = [], 0, False
+        expr, i = [], 0
         src = parsed["opts"]
         while i < len(src):
             tok = src[i]
             if tok in FIND_MATCH_PREDICATES:
-                if not matched:
-                    expr += ["-name", "*"]          # the whole disjunction, collapsed
-                    matched = True
-                i += 2
-            elif tok == "-o":
-                i += 1                              # folded into the single branch above
-            elif tok in FIND_TRAVERSAL_PREDICATES:
-                expr += [tok, src[i + 1]]           # preserved: it bounds what is read
+                expr += [tok, "*"]                  # the one match, widened to everything
                 i += 2
             else:
-                expr.append(tok)                    # an action
-                i += 1
+                expr += [tok, src[i + 1]]           # a traversal predicate, kept verbatim
+                i += 2
         return [head] + parsed["paths"] + expr
     return None
 
@@ -1002,11 +989,15 @@ def load_receipts(dirpath: Path):
     it authenticated, so `--gate-run-id "$(cat .../RUN_ID)"` replayed a week-old run — 
     measured, it validated 10/10.
 
-    Freshness is now structural. scripts/gate-receipts.sh writes into a private mktemp
-    directory and removes it on exit, so nothing survives to be replayed and two concurrent
-    runs cannot share one. The one thing left to enforce here is that a receipts directory
-    may not live INSIDE the repository: a directory under version control is content, and
-    content can be committed to look like the outcome of a run that never happened.
+    Freshness is now structural, and the guarantee is narrower than "nothing survives":
+    scripts/gate-receipts.sh writes into a private mktemp directory it removes on exit, so
+    an earlier run's receipts are neither DISCOVERABLE by nor REUSABLE by a later
+    certifying run — each mints its own unpredictable path. A SIGKILL or a host failure
+    can still leave a directory behind, and this function will read one that is explicitly
+    handed to it; what neither can do is contaminate the certifying path. The one thing
+    left to enforce here is that a receipts directory may not live INSIDE the repository:
+    a directory under version control is content, and content can be committed to look
+    like the outcome of a run that never happened.
     """
     idx = dirpath / "index.tsv"
     if not idx.exists():
