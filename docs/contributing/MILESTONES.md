@@ -63,14 +63,14 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **191 rows, 31 satisfied · 152 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **192 rows, 31 satisfied · 153 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
 | Disposition | Count | Meaning |
 |---|---|---|
 | `thesis` | 23 | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
-| `1.0` | 162 | the witnesses exercise it, or a `thesis` row rests on it |
+| `1.0` | 163 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
 Nothing is dropped silently. A requirement the thesis does not exercise is marked `post-1.0` in
@@ -157,13 +157,13 @@ Measured at `7484bac`, not read from the previous version of this file.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 68 cases — 48 drive the gate end to end against an injected repository state, 20 exercise a helper | `make test-thesis-runner` |
+| Thesis gate itself | 77 cases — 51 drive the gate end to end against an injected repository state, 26 exercise a helper | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 232 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 38 builtins accounted against a normative 34 | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 31 satisfied · 152 owed · 8 blocked, over 191 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 31 satisfied · 153 owed · 8 blocked, over 192 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -629,7 +629,7 @@ Six more probes of the same family, each now with a control that fails on revert
 And the self-test itself, for the second time: it called the probe helpers directly, so deleting
 the production wiring left every case green. It now builds a temporary repository — requirements
 TSV, witnesses, conformance verdicts, `make` results, effect reports — and drives `main()`,
-asserting the **exit code**. Sixty-eight cases, of which five drop the injection entirely and drive
+asserting the **exit code**. Seventy-seven cases, of which six drop the injection entirely and drive
 the real subprocess boundary — including one where conformance, `pdc` and `make` all run and
 conclude successfully, so the *green* path is exercised and not only the failures. The one probe
 group with no negative control (the real `make` subprocess) is a **disclosure pinned verbatim**:
@@ -652,6 +652,16 @@ sibling branch **without a compiler change**, and a runner that sees only `REJEC
 "refused because the prohibition is enforced" from "refused for incidental unsupported syntax".
 So the manifest gained a ninth column and each thesis reject row **names the diagnostic its
 refusal must carry**.
+
+**And condition 3 is currently weaker than its own banner says.** *"For an inference feature the
+rejection is the product"* requires knowing **which** rejection you got. The corpus cannot tell:
+measured, a fixture that fails on a stray `@@@` — an entirely incidental lex error — whose source
+line happens to contain the phrase `there is no ``async`` keyword` is reported `REJECTED` at that
+fingerprint and counted as `reject=1` coverage, exit 0. The compiler echoes the source line into
+the diagnostic and `grep -qF` searches the whole log. That is requirement **GI-12**, owned by M2:
+`pdc` emits a stable diagnostic **code**, and a reject row pins the code rather than a phrase that
+can appear anywhere. Until it lands, a `reject` row proves *the compiler refused this program* and
+*a declared phrase appears in the log* — not that the refusal was the one the row names.
 
 The chain, stated exactly, because condition 3 rests on it: `scripts/conformance.sh:636` runs
 `grep_status F "$fp" "$TMPROOT/diag"`, and `grep_status` (`scripts/conformance.sh:145-152`)

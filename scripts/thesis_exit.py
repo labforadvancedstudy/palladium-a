@@ -303,6 +303,18 @@ def balanced_span(src: str, open_at: int, opener="(", closer=")") -> str:
     return ""
 
 
+def duplicate_function_names(src: str) -> list[str]:
+    """Names defined more than once. `bodies` is keyed by BARE NAME, so two functions
+    sharing one — trivially, two `impl` blocks with a `len` each — silently overwrite,
+    and every edge into the loser vanishes. Detected, not tolerated (R4)."""
+    seen, dupes = set(), []
+    for m in FN_HEADER.finditer(src):
+        if m.group(1) in seen:
+            dupes.append(m.group(1))
+        seen.add(m.group(1))
+    return sorted(set(dupes))
+
+
 def function_bodies(src: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for m in FN_HEADER.finditer(src):
@@ -342,19 +354,19 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
     """
     require_modellable(src, "TH-03 / `ref` parameter reachability")
     bodies = function_bodies(src)
-    reachable = reachable_from_main(bodies)
+    reachable = certainly_reached_from_main(bodies)   # existence check: see R2
     if not reachable:
-        return False, "no `fn main`, so nothing is reachable"
+        return False, "no `fn main`, so nothing is certainly reached"
     dead = []
     for m in FN_HEADER.finditer(src):
         if not REF_PARAM.search(balanced_span(src, m.end() - 1)):
             continue
         if m.group(1) in reachable:
-            return True, f"fn {m.group(1)}, reachable from main"
+            return True, f"fn {m.group(1)}, certainly reached from main"
         dead.append(m.group(1))
     if dead:
-        return False, (f"`ref` parameters exist but only on function(s) unreachable from "
-                       f"main: {', '.join(sorted(set(dead)))}")
+        return False, (f"`ref` parameters exist, but on no function CERTAINLY reached from "
+                       f"main (R2): {', '.join(sorted(set(dead)))}")
     return False, "no `fn` declares a `ref` / `ref mut` PARAMETER"
 
 
@@ -369,12 +381,24 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
 #       defined in the same compilation unit. Self-edges do not count: a function's own
 #       recursive call is not evidence anything reaches it.
 #
-#   R2  A call inside a block guarded by a LITERAL FALSE condition — `if false { … }`,
-#       `while false { … }` — is NOT a call. This is the only folding performed, and the
-#       minimality is the point: it refuses the cheapest ornament without pretending to
-#       be a partial evaluator. `if 1 == 2 { … }` is NOT folded; it is modelled as live,
-#       which over-approximates, which is the safe direction for a gate that is trying to
-#       catch decoration.
+#   R2  TH-03, TH-04 and TH-05 are EXISTENCE checks — "this differentiator is used on a
+#       path the program runs" — and for an existence check over-approximating
+#       reachability fails OPEN: the more things look reachable, the more decorations
+#       pass. An earlier version of this contract called over-approximation "the safe
+#       direction", which is backwards, and folding `if false { … }` blocked one spelling
+#       while `if true { … } else { ornament(); }` — exactly as cheap to write — sailed
+#       through. Blocking a spelling is not blocking the class.
+#
+#       So the existence probes do not use reachability at all. They use
+#       CERTAIN REACHABILITY, an UNDER-approximation: a call counts only if it sits at
+#       the top level of a body — inside no conditional, loop or match — and no `return`
+#       or `panic(` precedes it there. `model says certain` then implies `actually runs`,
+#       which is the direction an existence check needs. Everything conditional is
+#       treated as NOT certain, so the gate fails closed on all control flow it does not
+#       model, without enumerating spellings.
+#
+#       The cost is real and is the point: a differentiator used only behind an `if` does
+#       not certify, and the probe says so rather than guessing. GI-11 is what lifts it.
 #
 #   R3  An INDIRECT call has no statically visible target: dispatch through a trait bound
 #       (`T::method(…)` where `T` is a type parameter), a `.`-method call, a closure, or a
@@ -383,9 +407,24 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
 #       was to teach FN_HEADER the optional parameter list, not to give up. What the model
 #       cannot see is the DISPATCH, not the genericity.
 #
-#   R4  THEREFORE: any construct whose edges this model cannot see is a HARNESS ERROR,
-#       not a silent edge and not a silent non-edge. The gate stops and says it cannot
-#       measure (exit 2) instead of returning an answer it cannot support.
+#   R4  A DETECTED invisible-edge construct is a HARNESS ERROR — exit 2, not a silent
+#       edge and not a silent non-edge. The detected set is exactly: a function-typed
+#       parameter written `: fn(`, a closure written `|…| {` or `|…| expr`, a `.`-method
+#       call, dispatch `T::m(…)` through a declared type parameter, and two functions
+#       sharing a name.
+#
+#       WHAT IS NOT DETECTED, stated because an earlier version of this line promised
+#       "every" and delivered an enumeration: a closure whose body opens with `(`, `[` or
+#       a unary operator; a function value inferred with no `: fn(` annotation; dispatch
+#       through `impl<T>`; and any construct the grammar gains after this was written.
+#       Those are UNMODELLED, not handled — and because R2's existence probes count only
+#       CERTAIN calls, an unmodelled construct's body is nested and therefore excluded,
+#       so the failure direction is a wrong RED rather than a wrong green.
+#
+#       docs/specification/grammar.ebnf is the authority for what the language can
+#       contain; this list is not derived from it and will drift. GI-11 is the fix, and
+#       it is scheduled at the START of M3 rather than merely owned by it, because M3
+#       constructs must not enter a witness while the model cannot see them.
 #
 #       This matters more than it looks. M3 — the very next milestone — is traits and
 #       generics, moved to second on the argument that bootstrap/pdc.pd is 991 lines
@@ -419,6 +458,9 @@ GENERIC_PARAMS = re.compile(
 def unmodellable(src: str) -> list[str]:
     """Constructs whose call edges R1-R3 cannot see. Non-empty means: do not answer."""
     found = [why for pat, why in UNMODELLABLE if pat.search(src)]
+    dupes = duplicate_function_names(src)
+    if dupes:
+        found.append(f"two functions sharing a name ({', '.join(dupes)}) — R3/R4")
     params = set()
     for m in GENERIC_PARAMS.finditer(src):
         for raw in m.group(1).split(","):
@@ -467,6 +509,57 @@ def strip_false_blocks(body: str) -> str:
     return "".join(out)
 
 
+DIVERGES = re.compile(r"(?<![A-Za-z_0-9])(return|panic\s*\()")
+
+
+def top_level_calls(body: str, exclude: str = "") -> set[str]:
+    """Calls that certainly execute: brace-depth 0, before any divergence.
+
+    Everything inside `{ … }` — the body of any `if`, `else`, `while`, `for` or `match` —
+    is dropped, because this model cannot decide whether it runs. That is the fail-closed
+    direction R2 requires, and it needs no list of control-flow spellings: an unmodelled
+    construct's body is nested, so it is excluded by construction.
+    """
+    out, depth, i, n = [], 0, 0, len(body)
+    seg = []
+    while i < n:
+        c = body[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            seg.append(c)
+        i += 1
+    text = "".join(seg)
+    m = DIVERGES.search(text)
+    if m:
+        # Keep the DIVERGING STATEMENT ITSELF and drop what follows it. `return depth(1);`
+        # certainly evaluates `depth(1)` — truncating at the `return` token dropped the
+        # call in the returned expression and produced a false negative, which for an
+        # existence check is a wrong RED rather than a wrong green, but wrong either way.
+        end = text.find(";", m.start())
+        text = text[:len(text) if end < 0 else end + 1]
+    for name in CALL.findall(text):
+        if name != exclude:
+            out.append(name)
+    return set(out)
+
+
+def certainly_reached_from_main(bodies: dict[str, str]) -> set[str]:
+    """The UNDER-approximation the existence probes use. See R2."""
+    if "main" not in bodies:
+        return set()
+    certain, frontier = {"main"}, ["main"]
+    while frontier:
+        cur = frontier.pop()
+        for c in top_level_calls(bodies.get(cur, ""), exclude=cur):
+            if c in bodies and c not in certain:
+                certain.add(c)
+                frontier.append(c)
+    return certain
+
+
 def reachable_from_main(bodies: dict[str, str]) -> set[str]:
     """Functions the program can actually run, per the contract above.
 
@@ -497,13 +590,13 @@ def p_total_on_fn(src: str) -> tuple[bool, str]:
         return False, "no `#[total]` attached to a `fn`"
     require_modellable(src, "TH-04 / #[total] reachability")
     bodies = function_bodies(src)
-    reachable = reachable_from_main(bodies)
+    reachable = certainly_reached_from_main(bodies)   # existence check: see R2
     if not reachable:
-        return False, "no `fn main`, so nothing is reachable"
+        return False, "no `fn main`, so nothing is certainly reached"
     live = [n for n in names if n in reachable]
     if not live:
         return False, f"`#[total]` only on function(s) unreachable from main: {', '.join(names)}"
-    return True, f"#[total] on {', '.join(live)}, reachable from main"
+    return True, f"#[total] on {', '.join(live)}, certainly reached from main"
 
 
 def p_effect_is_transitive(report: str, src: str) -> tuple[bool, str]:
@@ -528,7 +621,7 @@ def p_effect_is_transitive(report: str, src: str) -> tuple[bool, str]:
     def direct_io(name: str) -> set[str]:
         return {c for c in CALL.findall(bodies.get(name, "")) if c in IO_BUILTINS}
 
-    reachable = reachable_from_main(bodies)
+    reachable = certainly_reached_from_main(bodies)  # existence check: see R2
     for caller in sorted(reported):
         if caller not in bodies:
             continue                    # reported but not defined here: no edge to show
@@ -542,7 +635,8 @@ def p_effect_is_transitive(report: str, src: str) -> tuple[bool, str]:
                 return True, (f"`{caller}` performs no IO itself -> calls `{callee}` -> "
                               f"`{sorted(io)[0]}`; reported {reported[caller]}")
     named = ", ".join(sorted(reported))
-    return False, (f"no caller REACHABLE FROM MAIN exhibits the edge caller -> callee -> "
+    return False, (f"no caller CERTAINLY REACHED FROM MAIN (R2) exhibits the edge caller -> "
+                   f"callee -> "
                    f"IO builtin; every function reported with an IO effect ({named}) "
                    f"either performs IO directly, is unreachable, is not defined here, or "
                    f"calls nothing that does")
@@ -971,9 +1065,9 @@ def _verdict(row_id: str, verdict: str) -> str:
     kind, ev, _fp = _C[row_id]
     was = "REJECTED" if kind == "reject" else "PASS_VERIFIED"
     old, new = f"{ev} {was}", f"{ev} {verdict}".strip()
-    if old not in ALL_VERDICTS:
-        raise HarnessError(f"self-test: no verdict line for {row_id} ({old!r}) to mutate")
-    return ALL_VERDICTS.replace(old, new)
+    # Through mutate(), so the "one helper owns every synthetic edit" claim is true and
+    # the count is EXACTLY one rather than at-least-one.
+    return mutate(ALL_VERDICTS, old, new)
 # Every pinned reject fingerprint, so the all-green state really is all-green. One entry
 # used to cover one row; the other five rows had `-` and skipped the comparison, which is
 # the hole MF2 closed.
@@ -1153,6 +1247,28 @@ def self_test() -> int:
     case("an absent make target goes RED",
          _drive(make={"selfhost": 0, "thesis-exit": 0}), 1)
 
+    print("\n  R2 — existence checks fail CLOSED, so a decoration cannot pass")
+    _bypass = ("fn ornament(x: ref String) -> i64 { return 1; }\n"
+               "fn okpath(mut c: C) { header(c); }\n"
+               "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
+               "fn emit(mut c: C, s: String) { file_write(c.out, s); }\n"
+               "fn header(mut c: C) { emit(c, \"x\"); }\n")
+    case("`if true { ok(); } else { ornament(); }` does NOT certify — the bypass R2 missed",
+         _drive(witness_b=_bypass + "fn main() { if true { okpath(c); } else "
+                                    "{ ornament(s); depth(1); } }\n"), 1)
+    case("the same features at the TOP LEVEL of main do certify",
+         _drive(witness_b=_bypass + "fn main() { okpath(c); ornament(s); depth(1); }\n"), 0)
+    case("a call after a `return` does not certify",
+         sorted(top_level_calls("return a(); b();")), ["a"], drives_main=False)
+    case("a call INSIDE the returned expression does certify",
+         sorted(top_level_calls("return depth(1);")), ["depth"], drives_main=False)
+    case("a call after `panic(...)` does not certify",
+         sorted(top_level_calls("panic(\"x\"); b();")), ["panic"], drives_main=False)
+
+    print("\n  R4 — the detected set, and the name collision reviewers found")
+    case("two functions sharing a name are a HARNESS ERROR, not a silent overwrite",
+         _drive(witness_b=GOOD_WITNESS + "fn header(mut c: C) { emit(c, \"y\"); }\n"), 2)
+
     print("\n  TH-05 — the effect must be TRANSITIVE, and the edge must be exhibited")
     case("a DIRECT-only effect goes RED", _drive(report=GOOD_REPORT.splitlines()[0]), 1)
     case("a reported function that CALLS NOTHING goes RED",
@@ -1230,8 +1346,46 @@ def self_test() -> int:
          _mut("this text is not in the witness", "x"), "rejected", drives_main=False)
     case("a mutation matching more often than declared is rejected",
          _mut("c", "d"), "rejected", drives_main=False)
+    def _vd(row_id, verdict):
+        try:
+            _verdict(row_id, verdict)
+            return "accepted"
+        except HarnessError:
+            return "rejected"
+
+    case("_verdict on a row with a real verdict line is accepted",
+         _vd("N9-01", "OUTPUT_MISMATCH"), "accepted", drives_main=False)
+    case("_verdict on a GATE row (no verdict line) is rejected, not silently a no-op",
+         _vd("SH-01", "WHATEVER"), "rejected", drives_main=False)
     case("a mutation whose replacement equals the original is rejected",
          _mut("return depth(1);", "return depth(1);"), "rejected", drives_main=False)
+
+    print("\n  CROSS-LAYER: what `REJECTED` does and does not prove (GI-12)")
+    # Not an argument — a measurement, driven through the REAL scripts/conformance.sh.
+    # A fixture that fails for an entirely incidental reason, whose log happens to carry
+    # the pinned phrase because the compiler echoes the source line, is reported REJECTED
+    # and counted as coverage. The equality tightening proves the row and the corpus
+    # AGREE; it cannot prove the matching text came from the intended diagnostic, because
+    # `grep -qF` searches the whole ANSI-stripped log.
+    incidental_verdict = "skipped (pdc not built)"
+    if (ROOT / "target/release/pdc").is_file():
+        with tempfile.TemporaryDirectory(dir=ROOT / "build_output") as d:
+            probe = Path(d)
+            phrase = _C["N7-01"][2]
+            (probe / "incidental.pd").write_text(
+                'fn main() {\n    let msg = "' + phrase + '";\n    @@@\n}\n')
+            man = probe / "manifest.txt"
+            rel = probe.relative_to(ROOT)
+            man.write_text(f"{rel}/incidental.pd\treject\tcompile\t{phrase}\t-\tprobe\n")
+            env_probe = dict(os.environ, CONFORMANCE_MANIFEST=str(man.relative_to(ROOT)))
+            GPmod = GP
+            res = GPmod.classify(GPmod.run(
+                ["bash", str(ROOT / "scripts/conformance.sh"), str(rel)],
+                cwd=str(ROOT), env={"CONFORMANCE_MANIFEST": str(man.relative_to(ROOT))}))
+            text = getattr(res, "text", "")
+            incidental_verdict = "REJECTED" if "REJECTED" in text else "not REJECTED"
+    case("an INCIDENTAL diagnostic satisfies a pinned fingerprint — measured, not argued",
+         incidental_verdict, "REJECTED", drives_main=False)
 
     print("\n  the PIN itself is checked, not only the manifest against it")
 

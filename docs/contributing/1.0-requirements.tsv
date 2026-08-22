@@ -319,7 +319,8 @@ GI-07	-	-	Every declared failure names an owning milestone and none of them pass
 GI-08	M2	-	Every milestone exit reads BOTH debt inventories and this manifest	gate	make m2-exit	owed	1.0	-
 GI-09	M2	-	The owner filter is self-tested: it detects a row planted for the milestone under test	gate	make test-requirements-runner	owed	1.0	-
 GI-10	M9	-	1.0 exits on the whole manifest plus the gates plus test-honest	gate	make v1-exit	owed	1.0	-
-GI-11	M3	-	The thesis gate reads the compiler's OWN call graph, not a regex approximation of one	observable	tests/n10_callgraph.rs::pdc_emits_a_call_graph_the_gate_can_consume	owed	1.0	-
+GI-12	M2	-	A rejection is attributable: pdc emits a stable diagnostic CODE, and a reject row pins the code, not a phrase found anywhere in the log	reject	tests/reject/incidental_diagnostic.pd	owed	1.0	incidental match must not satisfy a pinned code
+GI-11	M3-start	-	pdc emits a call graph the gate consumes: control flow declared, indirect targets resolved or refused, duplicate identities distinct, unresolved edge = fail closed	observable	tests/n10_callgraph.rs::call_graph_meets_its_acceptance_contract	owed	1.0	-
 
 # --- Owner decisions. A blocked row above cannot be written until these are answered. -----
 D1-01	M9	F5	RESOLVED 2026-08-22: neither option. 1.0 IS the thesis gate; this manifest enumerates, it does not gate	gate	make thesis-exit	owed	thesis	-
