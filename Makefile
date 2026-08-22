@@ -455,6 +455,22 @@ version-source-gate: ## Require that no source file states this compiler's versi
 gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate version-source-gate test-xfail test-honest ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
+# `make gates` GREEN IS A STATEMENT ABOUT THIS WORKTREE, AND THAT IS NOT THE TREE
+# THAT LANDS. Measured: this branch was green under `make gates` six consecutive
+# times and its merge into main was RED with 18 cited line ranges MOVED — main's
+# MILESTONES.md cites LINE NUMBERS into files this branch inserted lines above,
+# and git merged both sides without a single conflict marker because they touch
+# different regions of different files. A semantic conflict is invisible to a
+# three-way merge and was invisible to both branches' gates.
+#
+# DELIBERATELY NOT IN `gates`: it RUNS `gates`, so putting it in the list would
+# recurse. It is the hand-back step, not a gate — run it before declaring a
+# branch ready, and read the sha it prints, because the verdict expires the
+# moment the target ref moves.
+.PHONY: merge-preflight
+merge-preflight: ## Run `make gates` against the merge of this branch into REF (default main)
+	@bash scripts/merge-preflight.sh $(REF)
+
 # --- Expected failures in the Rust test suite ------------------------------
 # Appended at the end deliberately: the gates section above is being edited in
 # parallel.
