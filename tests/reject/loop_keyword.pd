@@ -1,0 +1,9 @@
+// NEGATIVE TEST -- there is no `loop` keyword.
+//
+// `loop` lexes as an identifier, so `loop { ... }` parses as an expression
+// statement whose expression is a variable named `loop`, and the `{` that
+// follows is where a `;` was expected. The unconditional loop must be written
+// `while true { ... }`.
+fn main() {
+    loop { break; }
+}

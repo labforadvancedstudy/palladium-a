@@ -1,0 +1,28 @@
+// `mut a: [T; N]` -- the one array-parameter spelling that lets a callee write,
+// and the caller sees the write.
+//
+// C decays every array parameter to a pointer, so `void bump(long long a[3])`
+// aliases the caller's storage. The language has not decided whether `[T; N]`
+// parameters copy or alias (language-spec.md N12.1, OPEN DECISION); this file
+// pins what the compiler DOES, so that deciding it later is a visible change to
+// this transcript rather than a silent one.
+//
+// Every value is printed rather than only asserted: a wrong answer here would
+// otherwise be invisible behind exit 0, which is how D3 miscompiled for a year.
+fn bump(a: [i64; 3]) -> i64 {
+    return a[0];
+}
+
+fn bump_mut(mut a: [i64; 3]) {
+    a[0] = 99;
+}
+
+fn main() {
+    let mut v: [i64; 3] = [1, 2, 3];
+    print_int(bump(v));
+    bump_mut(v);
+    print_int(v[0]);
+    print_int(v[1]);
+    print_int(v[2]);
+    print("array_param_mut_write_ok");
+}
