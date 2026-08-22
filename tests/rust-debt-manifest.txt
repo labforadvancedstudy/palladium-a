@@ -1,0 +1,116 @@
+# The Rust suite's CLOSED DEBT INVENTORY.
+#
+# WHY THIS FILE EXISTS
+# scripts/test-xfail.py reconciles `cargo test --list --ignored` against
+# `cargo test --ignored`: it answers "is every declared failure still failing".
+# It cannot answer "is the debt still declared", because BOTH of its sides are
+# derived from the same listing, and a debt can leave that listing two ways:
+#
+#     delete the `#[ignore]` from a still-failing test   -> not listed
+#     delete the test                                    -> not listed
+#
+# Either way the gate goes green having established nothing. That is the exact
+# failure that let v0.3.0 ship a live silent miscompile under a green
+# `make m1-exit`. tests/conformance-manifest.txt already solved this class for
+# .pd fixtures by being a closed inventory; this is the same shape for the Rust
+# tests, and scripts/test-xfail.py enforces it.
+#
+# FORMAT — 5 TAB-separated non-empty columns:
+#   1 target      exactly as cargo prints it after `Running` (e.g. tests/e2e_test.rs)
+#   2 test        the FULL module path cargo prints (e.g. tests::group::test_x)
+#   3 class       owed | paid
+#   4 owner       M1..M9 | unscheduled for `owed`; `-` for `paid`
+#   5 diagnostic  literal text the failure must print, for `owed`; `-` for `paid`
+#
+# THE TWO CLASSES
+#   owed   the test must exist, must still be #[ignore]d as XFAIL, its
+#          #[ignore] owner must MATCH column 4, and when it fails the output it
+#          printed must CONTAIN column 5. Retagging one of the first two now
+#          disagrees with the other instead of silently moving a debt.
+#   paid   the test must exist and must NOT be #[ignore]d any more. Whether it
+#          PASSES is the ordinary suite's job — which is why `make m1-exit` runs
+#          the ordinary suite as inventory 3 of 3. A `paid` row over a test that
+#          still fails is red there, not green here.
+#
+# WHY COLUMN 5 EXISTS: AN XFAIL IS AN EXISTENCE CHECK ON A FAILURE, AND ANY
+# FAILURE SATISFIES IT. Columns 1-4 are reconciled against cargo's `ok|FAILED`,
+# which records THAT a test failed and never WHICH defect failed. A fixture that
+# exercises six unimplemented features dies at whichever the parser meets first;
+# a test can be blocked by a defect entirely upstream of the one it declares;
+# and in both cases the row stays green while its reason text describes
+# something that no longer happens. Measured the first time this column existed:
+# 8 of the 43 rows below were failing for a reason other than the one their
+# `#[ignore]` named. Column 5 is matched against the output cargo already
+# captures for every failing test, and a mismatch is reported as
+# DEBT_DIAGNOSTIC — distinctly from a row that fails for its named reason.
+#
+# The column is a MEASUREMENT, not a proof that the reason is the right one: a
+# substring copied out of a run is as authoritative as the reason text a
+# reviewer reads, and no more.
+#
+# It is NOT as authoritative as the owner column beside it, which is what this
+# comment used to claim. The owner is checked against a SECOND inventory — the
+# `#[ignore]` reason must name the same milestone, or the run reports DEBT_OWNER
+# — while this column is checked against nothing but the run it was copied from,
+# and the report prints the observed string when a row misses, so pasting it
+# back into column 5 is the cheapest thing a hurried author can do. Review of
+# the reason text is the whole boundary here. What the column buys is that the
+# reason and the run cannot drift apart in silence.
+#
+# PAYING A DEBT IS A TRANSITION, NOT A DELETION. Delete the row and the test is
+# an UNDECLARED_DEBT; delete the test and the row is DEBT_MISSING. Deleting both
+# is an edit to a reviewed inventory that removes a named debt by name — the
+# same authorisation boundary scripts/conformance.sh states about itself. This
+# file cannot tell an honest reclassification from an evasive one. What it
+# guarantees is that the evasion has to be written down.
+#
+# The reason text is NOT duplicated here on purpose: it lives in the #[ignore]
+# attribute, which is the thing a reader edits, and a second copy would drift.
+# The owner IS duplicated on purpose, because the duplicate is cross-checked.
+#
+# target	test	class	owner	diagnostic
+tests/advanced_e2e_test.rs	test_async_await	owed	unscheduled	Compilation failed: a `return` with a value inside an `async fn` is not implemented
+tests/advanced_e2e_test.rs	test_closure_capture	owed	M4	Compilation failed: Unexpected token: expected expression, found '|'
+tests/advanced_e2e_test.rs	test_const_generics_arrays	owed	M4	Compilation failed: Unexpected token: expected type parameter name, found 'const'
+tests/advanced_e2e_test.rs	test_effects_system	owed	unscheduled	Compilation failed: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
+tests/advanced_e2e_test.rs	test_generic_identity_function	owed	M4	Compilation failed: Type mismatch: expected String, found Int
+tests/advanced_e2e_test.rs	test_generic_pair	owed	M4	Compilation failed: Undefined enum type: Pair
+tests/advanced_e2e_test.rs	test_higher_order_functions	owed	M4	Compilation failed: Unexpected token: expected type, found 'fn'
+tests/advanced_e2e_test.rs	test_iterator_trait	owed	M4	Compilation failed: Unexpected token: expected 'fn' (Expected 'fn' for trait method), found 'type'
+tests/advanced_e2e_test.rs	test_option_enum	owed	M2	Compilation failed: Type mismatch: expected Option<Int>, found Option
+tests/advanced_e2e_test.rs	test_pattern_matching_guards	owed	M2	Compilation failed: Unexpected token: expected ':' (Expected ':' after field name in pattern), found ','
+tests/advanced_e2e_test.rs	test_result_error_handling	owed	M4	Compilation failed: Type mismatch: expected Result<Int, String>, found Result<Int>
+tests/advanced_e2e_test.rs	test_trait_implementation	owed	M4	Compilation failed: Unexpected token: expected parameter name, found '&'
+tests/advanced_e2e_test.rs	test_type_aliases_complex	owed	M2	Compilation failed: Unexpected token: expected ')' (Expected ')' after expression), found ','
+tests/advanced_features_test.rs	test_async_await_basic	owed	unscheduled	Compilation failed: a `return` with a value inside an `async fn` is not implemented
+tests/advanced_features_test.rs	test_async_await_multiple	owed	unscheduled	Compilation failed: a `return` with a value inside an `async fn` is not implemented
+tests/advanced_features_test.rs	test_closures	owed	M4	Compilation failed: Unexpected token: expected expression, found '|'
+tests/advanced_features_test.rs	test_const_generics	owed	M4	Compilation failed: Unexpected token: expected type parameter name, found 'const'
+tests/advanced_features_test.rs	test_effects_system	owed	unscheduled	Compilation failed: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
+tests/advanced_features_test.rs	test_error_handling_sugar	owed	M4	Compilation failed: Type mismatch: expected Result<Int, String>, found Result<(), String>
+tests/advanced_features_test.rs	test_generic_collections	owed	M2	Compilation failed: Unexpected token: expected ';' (Expected ';' after expression), found '='
+tests/advanced_features_test.rs	test_iterator_protocol	owed	M4	Compilation failed: Unexpected token: expected 'fn' (Expected 'fn' for trait method), found 'type'
+tests/advanced_features_test.rs	test_lifetime_annotations	owed	M2	Compilation failed: Indirect function calls not yet supported
+tests/advanced_features_test.rs	test_macros	owed	M5	Compilation failed: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
+tests/advanced_features_test.rs	test_module_system	owed	M2	Compilation failed: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
+tests/advanced_features_test.rs	test_pattern_matching_advanced	owed	M4	Compilation failed: Type mismatch: expected Result<Int, String>, found Result<(), String>
+tests/advanced_features_test.rs	test_trait_system	owed	M4	Compilation failed: Unexpected token: expected parameter name, found '&'
+tests/advanced_features_test.rs	test_unsafe_operations	owed	M4	Compilation failed: Unexpected token: expected ';' (Expected ';' after let statement), found 'as'
+tests/compiler_comprehensive_test.rs	test_as_cast	owed	M2	Error: Unexpected token: expected ';' (Expected ';' after let statement), found 'as'
+tests/compiler_comprehensive_test.rs	test_bitwise_operators	owed	M2	Error: Unexpected token: expected ';' (Expected ';' after let statement), found '&'
+tests/compiler_comprehensive_test.rs	test_compound_assignment_operators	owed	M2	Error: Unexpected token: expected expression, found '='
+tests/compiler_comprehensive_test.rs	test_else_if_chain	owed	M2	Error: Unexpected token: expected '{' (Expected '{' after else), found 'if'
+tests/compiler_comprehensive_test.rs	test_loop_keyword	owed	M2	Error: Unexpected token: expected ';' (Expected ';' after expression), found '{'
+tests/compiler_comprehensive_test.rs	test_match_on_integer_literal	owed	M2	Error: Unexpected token: expected pattern, found integer 1
+tests/compiler_comprehensive_test.rs	test_missing_return_is_an_error	owed	M1	Expected an error for: fn get_value() -> int { } fn main() { } but it compiled to:
+tests/compiler_comprehensive_test.rs	test_struct_with_methods	owed	M4	Error: Unknown struct type: Self
+tests/compiler_comprehensive_test.rs	test_top_level_const	owed	M2	Error: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
+tests/compiler_comprehensive_test.rs	test_top_level_static	owed	M2	Error: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
+tests/compiler_comprehensive_test.rs	test_trait_declaration_emits_code	owed	M4	Output missing '// Trait:' for source:
+tests/compiler_comprehensive_test.rs	test_type_alias_emits_typedef	owed	M4	Output missing 'typedef long long Int;' for source:
+tests/e2e_test.rs	test_c_keyword_identifier_still_links	owed	M1	error: 'long long double' is invalid
+tests/d3b_tail_if.rs	the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end	owed	unscheduled	gcc is invoked without -Werror=return-type
+tests/d3b_tail_if.rs	an_imported_function_is_visible_to_the_borrow_checker	owed	M4	error: Use of uninitialized value: helper
+tests/d3b_tail_if.rs	selective_import_excludes_a_symbol_from_the_consumers	owed	M4	error: `async fn main` is not implemented
+tests/d3b_tail_if.rs	two_modules_exporting_one_name_are_deterministic	owed	M4	error: conflicting types for 'dup'
+tests/d3b_tail_if.rs	a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future	owed	M4	error: use of undeclared identifier 'f_Future'

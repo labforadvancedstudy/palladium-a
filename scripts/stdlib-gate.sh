@@ -157,11 +157,20 @@ else
 fi
 
 # And the generated-C checker must itself be able to fail.
+#
+# Written in the shape codegen actually emits: one statement per line, opening
+# brace last on its line. `int main(void) { return 0; }` on ONE line used to sit
+# here, and scripts/check-c-returns.py now refuses to guess at a top-level shape
+# its generator never produces — it answers HARNESS (2) for the whole file,
+# which this control would read as "the checker malfunctioned" rather than as
+# the rejection it is testing for.
 cat >"$SCRATCH/negc.c" <<'EOF'
 long long falls_off(long long a, long long b) {
     (a + b);
 }
-int main(void) { return 0; }
+int main(void) {
+    return 0;
+}
 EOF
 # Same discipline: the checker must REJECT this file (exit 1), not merely fail.
 # It exits 2 when its own harness is broken — a missing analyser, no python3, no

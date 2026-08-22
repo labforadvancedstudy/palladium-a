@@ -266,9 +266,48 @@ conformance: build ## Compile+link+run every .pd under tests/ and examples/, aga
 test-conformance-runner: build ## Prove the conformance gate still goes RED when it should
 	@bash scripts/test-conformance-runner.sh
 
+# M1's exit criterion, as a command.
+#
+# THERE ARE THREE INVENTORIES IN THIS REPO, AND THIS USED TO READ ONE.
+#   tests/conformance-manifest.txt          owns .pd fixtures (`owner` column)
+#   tests/rust-debt-manifest.txt            owns Rust tests, cross-checked
+#                                           against #[ignore = "… (owned by M<n>)"]
+#   the ordinary Rust suite                 owns everything not ignored
+# The first two use the same `(owned by M<n>)` grammar and both are enforceable,
+# but this target only ran the first. Measured at 2ef170f, the v0.3.0 release
+# commit: it exited 0 while THREE M1-owned #[ignore] rows were still failing,
+# one of them the tail-`if` miscompile M1 was named for — `fib(10)` printed
+# 8261746944 and exited 0. The release that exists to remove silent miscompiles
+# shipped one, and its own exit criterion could not see it.
+#
+# WHY THE ORDINARY SUITE IS HERE TOO (inventory 3). The Rust debt manifest is a
+# closed inventory of tests that are ALLOWED to fail. `paid` says a row's test
+# is no longer #[ignore]d — it does not say the test passes, and asking
+# scripts/test-xfail.py to prove that would mean running the suite anyway. So
+# the suite runs, once, here: a row transitioned to `paid` over a test that
+# still fails is red in this step. Without it, `paid` would be a way to retire a
+# failing test by editing one word.
+#
+# All three run even when an earlier one is red: stopping at the first failure
+# reports part of the debt and costs a round trip to discover the rest.
 .PHONY: m1-exit
-m1-exit: build ## M1's exit criterion, as a command: nothing in the corpus still owed to M1
-	@CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests examples
+m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1
+	@rc=0; \
+	echo "$(YELLOW)== inventory one of three: .pd fixtures (tests/conformance-manifest.txt) ==$(NC)"; \
+	CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests examples || rc=1; \
+	echo; \
+	echo "$(YELLOW)== inventory two of three: Rust debt (tests/rust-debt-manifest.txt + #[ignore] reasons) ==$(NC)"; \
+	TEST_XFAIL_FORBID_OWNER=M1 python3 scripts/test-xfail.py || rc=1; \
+	echo; \
+	echo "$(YELLOW)== inventory three of three: the ordinary Rust suite (nothing here is allowed to fail) ==$(NC)"; \
+	$(CARGO) test --release --no-fail-fast || rc=1; \
+	echo; \
+	if [ $$rc -eq 0 ]; then \
+	  echo "$(GREEN)✓ M1 exit criterion met — nothing in any inventory is owed to M1$(NC)"; \
+	else \
+	  echo "$(RED)✗ M1 is NOT finished — see the OWED_TO_M1 / failure line(s) above$(NC)"; \
+	fi; \
+	exit $$rc
 
 .PHONY: selfhost
 selfhost: build ## Run the self-hosting fixed-point gate (bootstrap/pdc.pd)
@@ -342,6 +381,76 @@ version-gate: build ## Run every built binary and require its --version to match
 test-version-gate: ## Prove the version gate goes RED on binaries that misreport themselves
 	@bash scripts/test-version-gate.sh
 
+# THE SOURCE SIDE OF THE VERSION CLAIM, AND IT NEEDED ITS OWN TARGET BECAUSE IT
+# HAD NO PATH TO `gates` AT ALL. `version-gate` above RUNS the binaries; it can
+# only read output shaped `<name> <version>`, so the banner in src/main.rs and a
+# `pub const` no binary prints are structurally invisible to it — which is where
+# two of the three version defects actually lived. That surface is covered by
+# tests/version_matches_cargo_toml.rs, an ORDINARY integration test, and
+# `make test-rust` is `--lib --bins`: nothing on the certifying path executed it.
+# A check reachable only by someone who already knows to name it is a document.
+#
+# COST, MEASURED AT THE `gates` LEVEL, the way the test-xfail entry below insists
+# on — AND MEASURED TWICE, because once was misleading. Two back-to-back pairs of
+# `make gates` without / with this entry and `test-honest`:
+#
+#     1m45s -> 2m07s   (+21s)
+#     2m00s -> 2m46s   (+46s)
+#
+# Same tree, same machine, hours apart. The spread is machine load, not the
+# gates, and quoting either number alone would have been a claim the next run
+# falsifies — so both are here and the honest statement is "tens of seconds on a
+# two-minute run". On its own this target is 0.2s warm once the test binary is
+# linked; quoting THAT would understate what adding it to the list costs. It is
+# placed beside the two version targets it completes rather than at the end,
+# because its failure is the same class.
+.PHONY: version-source-gate
+version-source-gate: ## Require that no source file states this compiler's version by hand
+	@$(CARGO) test --release --test version_matches_cargo_toml
+
+# `test-xfail` BELONGS IN THIS LIST, and its absence was this round's own defect.
+# It is the check that every #[ignore]d row still fails FOR THE REASON IT
+# DECLARES — the headline mechanism of the last two rounds — and until now it was
+# reachable only by naming its own target or through `m1-exit`, which is RED by
+# design and therefore never evidence that anything passed. A check that the
+# certifying path does not run is a document.
+#
+# COST, MEASURED BY RUNNING IT BOTH WAYS BACK TO BACK rather than by subtracting
+# a standalone timing: `make gates` 1m43s without this entry, 1m47s with it — 4s,
+# because everything ahead of it in this list has already built the test binaries
+# it needs. (`make test-xfail` on its own is 41s from a build warm for `cargo
+# build --release` but not for `cargo test --release`; that number is the
+# rebuild, not this gate, and quoting it here would have overstated the cost by
+# ten times.) It sits at the expensive end of the list — it runs every #[ignore]d
+# row — so every cheaper failure is reported before it starts. It was "last, and
+# the only entry that runs the whole test suite" until `test-honest` joined the
+# prerequisites after it, which is both of those things more literally.
+#
+# `test-honest` IS HERE NOW, AND THE COMMENT THAT USED TO SIT IN ITS PLACE WAS
+# WRONG TWICE OVER. It said the suite was "a real hole… a scope decision with an
+# owner", which named no owner and tracked no obligation — a decoration. Then,
+# writing this round's replacement, I asserted the suite could not be in this
+# list because its debt is open by design. MEASURED, before shipping that
+# sentence: `make test-honest` is 668 passed / 0 failed / 46 ignored, GREEN, 8.4s
+# warm. The debt that is open is `m1-exit`'s first two inventories (2 rows
+# OWED_TO_M1); inventory 3, which is this same command character for character,
+# is green. So the only argument against it was cost, and the cost is 8.4s
+# standalone-warm — the bulk of what this entry and `version-source-gate` add to
+# `make gates` together, which two back-to-back pairs put at +21s and +46s on a
+# two-minute run. See the `version-source-gate` comment for why both are quoted.
+#
+# And "m1-exit already runs it" is not an answer — that is exactly the argument
+# the last round rejected for `test-xfail`: a target that is RED by design is
+# never evidence that anything inside it passed.
+#
+# `version-source-gate` IS ALSO newly here, and its absence was this round's
+# defect, the same shape as `test-xfail`'s last round: the source-side version
+# check lived in an ordinary integration test that no target on this path ran.
+# It OVERLAPS `test-honest` — the same four tests run twice, 0.2s — and stays
+# separate on purpose: it fails with a headline naming the version claim instead
+# of one line inside a 714-test `--no-fail-fast` wall, and a named target is
+# something scripts/test-version-gate.sh can pin membership of, which "some test
+# somewhere inside the suite" is not.
 .PHONY: gates
 # `thesis-exit` is DELIBERATELY ABSENT and must stay absent: it exits 2 by design, and a
 # green umbrella that swallowed a NO_VERDICT would be the one reading this branch exists to
@@ -349,14 +458,36 @@ test-version-gate: ## Prove the version gate goes RED on binaries that misreport
 # reachable only from a target outside the umbrella, which is an enforcement gap, not a
 # design choice.
 #
-# RESOLVED AS A UNION, DELIBERATELY. `main` and this branch each carried gates the other
-# did not: taking either side wholesale silently DROPS gates. From `main`: gate-receipts,
-# test-doc-evidence, version-gate, test-version-gate. From this branch:
-# check-retracted-claims, test-thesis-runner, test-xfail. Neither line contained
-# `test-xfail` or this gate's self-test, which is how every defence built here ended up
-# reachable only from outside the umbrella.
-gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate check-retracted-claims test-thesis-runner test-xfail ## Run every language-level gate
+# RESOLVED AS A UNION, DELIBERATELY, AND FOR THE SECOND TIME. `main` and each incoming
+# branch have carried gates the other did not, so taking either side wholesale silently
+# DROPS gates. From the thesis branch: check-retracted-claims, test-thesis-runner,
+# test-xfail. From fix/d3b-tail-if: version-source-gate, test-honest. Fifteen targets, and
+# a conflict on this line should be resolved this way every time — the union is the only
+# resolution that cannot lose a gate, and losing one is silent by construction.
+#
+# `test-honest` ARRIVING HERE CLOSES GI-06, which docs/contributing/1.0-requirements.tsv
+# carried as `owed` and MILESTONES.md described as "a one-word change nobody has made".
+# Both are updated in this same commit: a requirement whose status changes in a merge and
+# is not written down in that merge is a claim measured against a state that no longer
+# exists.
+gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate version-source-gate check-retracted-claims test-thesis-runner test-xfail test-honest ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
+
+# `make gates` GREEN IS A STATEMENT ABOUT THIS WORKTREE, AND THAT IS NOT THE TREE
+# THAT LANDS. Measured: this branch was green under `make gates` six consecutive
+# times and its merge into main was RED with 18 cited line ranges MOVED — main's
+# MILESTONES.md cites LINE NUMBERS into files this branch inserted lines above,
+# and git merged both sides without a single conflict marker because they touch
+# different regions of different files. A semantic conflict is invisible to a
+# three-way merge and was invisible to both branches' gates.
+#
+# DELIBERATELY NOT IN `gates`: it RUNS `gates`, so putting it in the list would
+# recurse. It is the hand-back step, not a gate — run it before declaring a
+# branch ready, and read the sha it prints, because the verdict expires the
+# moment the target ref moves.
+.PHONY: merge-preflight
+merge-preflight: ## Run `make gates` against the merge of this branch into REF (default main)
+	@bash scripts/merge-preflight.sh $(REF)
 
 # --- Expected failures in the Rust test suite ------------------------------
 # Appended at the end deliberately: the gates section above is being edited in

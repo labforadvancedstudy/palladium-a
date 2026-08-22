@@ -7,7 +7,24 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "pdc")]
 #[command(author = "Alan von Palladium Team")]
-#[command(version)] // = CARGO_PKG_VERSION, never a literal. Enforced by `make version-gate`.
+// Derived from Cargo.toml, never written out by hand. The literal that used to
+// be here said `0.1.0-alpha` while the package was at 0.3.0 — two releases of
+// drift in the one string a user reads to find out what they are running. A
+// binary that misreports its own version cannot be used to reproduce anything.
+//
+// TWO GATES, NEITHER SUBSUMING THE OTHER, and this line is why the source-side
+// one had to stop naming a spelling. `make version-gate` RUNS every binary and
+// reads `--version`, which is the only thing that answers what a user is
+// actually running — but it can only read output shaped `<name> <version>` on
+// one non-blank line, so the banner printed on every compile is a surface it
+// structurally cannot parse. `tests/version_matches_cargo_toml.rs` reads src/
+// instead, and so covers the banner and every other file the binary never
+// prints through `--version`. This bare `#[command(version)]` and
+// `env!("CARGO_PKG_VERSION")` are the SAME derivation; the source-side test
+// demanded one of the two spellings by name, which made this correct line red.
+// A predicate over a fact ("the version is not a literal") admits both; a
+// predicate over a spelling picks a winner no one decided on.
+#[command(version)] // = CARGO_PKG_VERSION, never a literal.
 #[command(about = "Alan von Palladium Compiler - Where Legends Compile")]
 #[command(long_about = r#"
 Alan von Palladium Compiler

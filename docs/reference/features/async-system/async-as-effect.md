@@ -268,12 +268,12 @@ citations in `language-spec.md` before this change were taken from the pre-clean
 `function` production carries an optional `async` (`docs/specification/grammar.ebnf:91`), `.await`
 is a postfix operator (`docs/specification/grammar.ebnf:216`), and the keyword list names both
 (`docs/specification/grammar.ebnf:56`). The parser sets `Function.is_async` from that keyword
-(`src/parser/mod.rs:354`, `src/parser/mod.rs:365`). The implementation therefore offers exactly the two things this
+(`src/parser/mod.rs:761`, `src/parser/mod.rs:772`). The implementation therefore offers exactly the two things this
 document says the language does not have: an `async` marker and an await operator.
 
 **2. Effects are inferred, but the result is print-only — it gates nothing.**
 The parser hardcodes `Function.effects` to `None`, commented "Effects will be inferred during
-analysis" (`src/parser/mod.rs:565`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
+analysis" (`src/parser/mod.rs:1038`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
 `Effect` enum at `src/effects/mod.rs:16-29`, `analyze_function` at `src/effects/mod.rs:151`) and it does union effects across
 statements and calls (`src/effects/mod.rs:263`). But `crate::effects::` is referenced from exactly one place in
 the compiler — `src/driver/mod.rs:147` — and all the driver does with the result is `println!` it
@@ -299,12 +299,14 @@ scheduler.
 no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 (`docs/specification/grammar.ebnf:58-59`).
 
-**7. `.await` generates C that references a member no part of the compiler emits.**
-Codegen for an await expression emits `while (!<tmp>.poll(&<tmp>)) { }`
-(`src/codegen/mod.rs:2604-2611`) and then reads `<tmp>.result` (`src/codegen/mod.rs:2613-2615`). Nothing generates a
-`poll` member on the produced C type. This is not an error at any earlier stage — it is silent
-breakage discovered by the C compiler, and it is the failure mode `language-spec.md` §6.5 already
-recorded. The parallel defect for `?` is at `src/codegen/mod.rs:2548-2569`, which emits a
+**7. `.await` is refused by code generation, because the C it used to emit referenced a member
+no part of the compiler emits.** The await arm now returns `CompileError::await_unimplemented`
+(`src/codegen/mod.rs:3215-3219`). It previously emitted `while (!<tmp>.poll(&<tmp>)) { }` and then
+read `<tmp>.result`, while nothing generates a `poll` member on the produced C type — the poll
+routine that IS generated is the free function `<name>_poll`. That was not an error at any
+earlier stage: it was silent breakage discovered by the C compiler, which is the failure mode
+`language-spec.md` §6.5 recorded. The parallel defect for `?` was the same shape and is refused
+at the same place (`src/codegen/mod.rs:3203-3207`); it used to emit a
 `struct Result { int is_ok; union { ... } data; }` layout that codegen never defines.
 
 Direction of travel: making `.await` a hard compile error is *consistent* with this document,

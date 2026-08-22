@@ -1,0 +1,95 @@
+// The tail-`match` half of D3b — FIXED at the source level, still PINNED at
+// the generated-C level, and the gap between those two sentences is the point
+// of this file.
+//
+// WHAT WAS BROKEN AND IS NOW FIXED
+// A `match` in tail position has exactly one arm form that can carry a value:
+// `pattern => expression,`. (A block-bodied arm parses its statements with
+// `parse_statement`, which demands a `;`, so `Circle => { 1 }` is a parse
+// error — "Expected ';' after expression", measured.) That form built a
+// one-statement `Stmt::Expr` body which nothing lowered, so measured on the
+// previous commit:
+//
+//     fn area_code(s: Shape) -> i64 {
+//         match s { Shape::Circle => 1, Shape::Square => 2 }
+//     }
+//
+//   emitted `1;` / `2;` in the branches and `area_code(Green)` printed -16.
+//
+// The parser now lowers the arms of a function body's tail `match` the same way
+// it lowers the branches of a tail `if`, and the values asserted below are
+// correct. That is what this driver's transcript proves.
+//
+// WHAT IS STILL OPEN, AND WHY THIS IS `known_violation:area_code`
+// Code generation lowers a `match` to an `if` / `else if` chain with NO final
+// `else` (src/codegen/mod.rs — visible in build_output/stdlib_tail_match.c):
+//
+//     if (_match_expr.tag == __Shape__Circle) { return 1; }
+//     else if (_match_expr.tag == __Shape__Square) { return 2; }
+//     else if (_match_expr.tag == __Shape__Triangle) { return 3; }
+//
+// so a tag matching no arm falls off the end. Nothing in this file can produce
+// such a tag, but the emitted C does not carry that proof, and neither
+// scripts/check-c-returns.py nor gcc will take it on trust — gcc says
+// "non-void function does not return a value in all control paths
+// [-Wreturn-type]" on exactly this function.
+//
+// That is a SEPARATE open defect from D3b: exhaustive `match` lowering (the
+// last arm, or an exhaustiveness proof, should emit a plain `else`). Declaring
+// this file `clean` would require weakening the invariant to make it pass,
+// which is the one thing the gate exists to forbid. So it is pinned to the one
+// function it corrupts, and the pin will fail loudly — as XPASS — the day
+// codegen closes the gap.
+
+enum Shape {
+    Circle,
+    Square,
+    Triangle,
+}
+
+// The D3b shape for `match`. Every arm is a `pattern => expression` tail.
+fn area_code(s: Shape) -> i64 {
+    match s {
+        Shape::Circle => 1,
+        Shape::Square => 2,
+        Shape::Triangle => 3,
+    }
+}
+
+// Block-bodied arms with explicit returns were never part of D3b — they emitted
+// `return` before this change and must still. Their C has the same missing
+// final `else`, so this function is pinned too if it is ever added to the
+// violation set; today it is NOT, because DRIVERS.tsv names `area_code` only
+// and the gate requires the sets to match exactly. Keeping this function here
+// is what makes that a real check rather than a tautology.
+fn sides(s: Shape) -> i64 {
+    match s {
+        Shape::Circle => {
+            return 0;
+        }
+        Shape::Square => {
+            return 4;
+        }
+        Shape::Triangle => {
+            return 3;
+        }
+    }
+}
+
+fn expect_i64(label: String, actual: i64, expected: i64) {
+    print(label);
+    print_int(actual);
+    if actual != expected {
+        panic("tail-match: value mismatch");
+    }
+}
+
+fn main() {
+    expect_i64("area_circle", area_code(Shape::Circle), 1);
+    expect_i64("area_square", area_code(Shape::Square), 2);
+    expect_i64("area_triangle", area_code(Shape::Triangle), 3);
+    expect_i64("sides_circle", sides(Shape::Circle), 0);
+    expect_i64("sides_square", sides(Shape::Square), 4);
+    expect_i64("sides_triangle", sides(Shape::Triangle), 3);
+    print("tail_match_ok");
+}

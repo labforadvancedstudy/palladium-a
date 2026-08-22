@@ -40,6 +40,36 @@ check() {  # check <name> <expected_exit> <actual_exit> [detail]
 # Each prints text the gate would otherwise believe, then dies.
 mk() { printf '%s\n' "$2" >"$TMP/$1"; chmod +x "$TMP/$1"; }
 
+# Kill ONLY what this suite spawned.
+#
+# Cleanup used to be `pkill -f "sleep 600"` and two like it — a pattern match
+# over EVERY process on the machine. On a developer box or a shared CI runner
+# that is a loaded gun pointed at unrelated work: any `sleep 600`, anybody's.
+# The producers below now write the pid of the process they leave behind into a
+# file, and this kills that pid and nothing else.
+# ONLY ONE REAP REMAINS, and that is the point.
+#
+# `reap` authenticates by PID alone, so it is only safe against a process that
+# is still ALIVE and therefore still owns its pid — after `killpg` has already
+# killed something, its number can be reused and a later `kill -9` would hit an
+# unrelated process. Removing the calls is better than guarding them:
+#
+#   slow_desc  `sh -c "sleep 600" &`   IN the process group -> killpg reaches it
+#   in-group   `time.sleep(30)` fork   IN the process group -> killpg reaches it
+#   escapee    fork + setsid()         NOT in the group     -> killpg cannot
+#
+# So the first two reaps were redundant AND carried the reuse hazard; they are
+# gone. The third is the only one with anything left to kill, and its target is
+# alive by construction, so its pid cannot have been reused.
+reap() {   # reap <pidfile>
+  [ -f "$1" ] || return 0
+  while IFS= read -r pid; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill -9 "$pid" 2>/dev/null || true
+  done <"$1"
+  rm -f "$1"
+}
+
 mk pdc_sigkill '#!/bin/sh
 echo "error: No main function found" >&2
 kill -9 $$'
@@ -67,105 +97,1267 @@ echo "== a signaled pdc that ALREADY printed the expected diagnostic =="
 # Phase 1 verdict classification.
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_sigkill" --out t_v1 >"$TMP/o" 2>&1
 check "pdc-verdict, SIGKILL (-9)" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and the reason is the signal" 0 $?
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_exit137" --out t_v2 >"$TMP/o" 2>&1
 check "pdc-verdict, shell-reported 137" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and 137 is read as the same signal" 0 $?
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_weird" --out t_v3 >"$TMP/o" 2>&1
 check "pdc-verdict, unpinned exit 42" 2 $?
+grep -q 'exit 42' "$TMP/o"
+check "  and the reason names the unpinned code" 0 $?
 $PROBE pdc-verdict stdlib/std/option.pd --pdc /nonexistent/pdc --out t_v4 >"$TMP/o" 2>&1
 check "pdc-verdict, producer missing" 2 $?
+grep -q 'cannot execute' "$TMP/o"
+check "  and the reason is that it could not be executed" 0 $?
 
 # The forced-import probe and the UNUSABLE probes share pdc-reject.
 $PROBE pdc-reject stdlib/std/option.pd --pdc "$TMP/pdc_blocker_sigkill" --out t_r1 \
   --expect-stage compile --require "Expected 'fn' for method, but found 'pub'" >"$TMP/o" 2>&1
 check "pdc-reject, SIGKILL after the expected blocker" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and the reason is the signal, not the blocker" 0 $?
 $PROBE pdc-reject stdlib/std/option.pd --pdc "$TMP/pdc_gcc_sigkill" --out t_r2 \
   --expect-stage link --require "incompatible integer to pointer conversion" >"$TMP/o" 2>&1
 check "pdc-reject, SIGKILL after the expected link diagnostic" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and the reason is the signal, not the diagnostic" 0 $?
 
 echo
 echo "== a signaled C compiler that ALREADY printed a return-type error =="
 $PROBE generated-c build_output/stdlib_vec_i64.c --cc "$TMP/cc_sigkill" >"$TMP/o" 2>&1
 check "Net B, SIGKILL (-9)" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and the reason is the signal" 0 $?
 $PROBE generated-c build_output/stdlib_vec_i64.c --cc "$TMP/cc_exit137" >"$TMP/o" 2>&1
 check "Net B, shell-reported 137" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and 137 is read as the same signal" 0 $?
 $PROBE generated-c build_output/stdlib_vec_i64.c --cc /nonexistent/cc >"$TMP/o" 2>&1
 check "Net B, compiler missing" 2 $?
+grep -q 'cannot execute' "$TMP/o"
+check "  and the reason is that the compiler could not be executed" 0 $?
 
 echo
 echo "== the Python analysis (Net A) =="
 printf '// no functions at all\n' >"$TMP/empty.c"
 $PROBE generated-c "$TMP/empty.c" >"$TMP/o" 2>&1
 check "Net A, zero functions recognised" 2 $?
+grep -q 'no function definitions recognised' "$TMP/o"
+check "  and it says so, rather than malfunctioning for some other reason" 0 $?
 $PROBE generated-c /nonexistent/x.c >"$TMP/o" 2>&1
 check "Net A, missing input" 2 $?
+grep -q 'does not exist' "$TMP/o"
+check "  and the reason is the missing input" 0 $?
 printf 'long long deep(long long n) {\n' >"$TMP/deep.c"
 for _ in $(seq 1 4000); do printf '    if (n) {\n' >>"$TMP/deep.c"; done
 printf '    return 1;\n' >>"$TMP/deep.c"
 for _ in $(seq 1 4000); do printf '    }\n' >>"$TMP/deep.c"; done
-printf '}\nint main(void){return 0;}\n' >>"$TMP/deep.c"
+printf '}\nint main(void) {\n    return 0;\n}\n' >>"$TMP/deep.c"
 $PROBE generated-c "$TMP/deep.c" >"$TMP/o" 2>&1
 check "Net A, analyser raises (RecursionError)" 2 $?
+grep -q 'RecursionError' "$TMP/o"
+check "  and it really was the analyser raising, not another malfunction" 0 $?
+
+echo
+echo "== Net A coverage must be CLOSED, not sampled =="
+# THE HOLE THIS CLOSES. Net A's only coverage alarm used to be "ZERO functions
+# recognised", which cannot fire on a MIXED file: one definition in the shape it
+# knows makes the denominator nonzero while every other definition is skipped in
+# silence. Each fixture below pairs one recognised definition with one shape the
+# reader cannot account for, and every one of them must MALFUNCTION (2) — a
+# verdict of 0 would be the same disease as the `} else if` false negative that
+# certified a shipped milestone.
+mixed() {  # mixed <name> <second-definition-text> <expected reason>
+  { printf 'long long ok(long long n) {\n    return n;\n}\n'; printf '%b' "$2"; } >"$TMP/$1.c"
+  $PROBE generated-c "$TMP/$1.c" >"$TMP/o" 2>&1
+  check "Net A, mixed file: $1" 2 $?
+  # ...FOR THE STATED REASON. Exit 2 conflates every harness failure, so the
+  # code alone cannot tell "this definition was not accounted for" from any
+  # other malfunction — the third pass over this class, and the sites the
+  # previous two did not reach.
+  grep -q "$3" "$TMP/o"
+  check "  and the reason is $3" 0 $?
+}
+mixed same_line_body     'long long hidden(void) { return 1; }\n' \
+      'top-level construct this reader does not recognise'
+mixed multiline_def      'long long\nhidden(void)\n{\n    return 1;\n}\n' \
+      'top-level construct this reader does not recognise'
+mixed conditional_cpp    '#ifdef X\nlong long hidden(void) {\n}\n#endif\n' \
+      'preprocessor directive that can decide which'
+mixed unclosed_body      'long long hidden(void) {\n    return 1;\n' \
+      'never closed'
+# A `goto` out of `while (1)` makes the loop escapable; `contains_break` only
+# looks for `break`. This function DOES fall off its end (gcc: "control reaches
+# end of non-void function"), and with the loop as the first item of the body
+# the terminator scan would answer "cannot fall through" — a silent false
+# negative, and the only one the whole-list scan introduced. Detecting the
+# construct and malfunctioning is what pays for that scan.
+printf 'long long jumps(long long n) {\n    while (1) {\n        goto done;\n    }\ndone:\n    ;\n}\n' >"$TMP/goto.c"
+$PROBE generated-c "$TMP/goto.c" >"$TMP/o" 2>&1
+check "Net A, goto out of while(1) is not read as inescapable" 2 $?
+grep -q 'goto' "$TMP/o"
+check "  and the malfunction names the construct" 0 $?
+
+# A conditional INSIDE a body. The top-level scan never sees it — parse_block
+# records `#if` as an ordinary statement — so the refusal has to be repeated in
+# unmodelled_construct(). Without it the `return` counts and the build with
+# FEATURE off falls off the end while this reader calls the file clean. A
+# refusal enforced only where it was convenient to look is a docstring.
+printf 'long long f(long long n) {\n#if FEATURE\n    return 1;\n#endif\n}\n' >"$TMP/cpp_in_body.c"
+$PROBE generated-c "$TMP/cpp_in_body.c" >"$TMP/o" 2>&1
+check "Net A, #if inside a function body" 2 $?
+grep -q 'preprocessor directive inside a function body' "$TMP/o"
+check "  and the malfunction names it" 0 $?
+# ...at the DIRECTIVE's line (2), not the function definition's (1). Naming the
+# line is part of the operator contract this reader states for itself, and it
+# used to report the enclosing definition — the wrong place in a generated file
+# nobody wrote by hand.
+grep -q 'cpp_in_body.c:2: a preprocessor directive' "$TMP/o"
+check "  at the construct's own line, not the definition's" 0 $?
+# ...including one nested inside a compound, which the statement walk only
+# reaches by recursing into both arms.
+printf 'long long g(long long n) {\n    if (n) {\n#ifdef X\n        return 1;\n#endif\n        return 3;\n    } else {\n        return 2;\n    }\n}\n' >"$TMP/cpp_nested.c"
+$PROBE generated-c "$TMP/cpp_nested.c" >"$TMP/o" 2>&1
+check "Net A, a directive nested inside a compound" 2 $?
+grep -q 'preprocessor directive' "$TMP/o"
+check "  and the reason names the directive" 0 $?
+
+# `switch` IS THE CONSTRUCT THE DOCSTRING NAMES as an example of something this
+# reader does not model — and it was not fail-closed. Line numbers were threaded
+# through compound items and then never read for the compound itself, so a
+# switch header was never inspected: it only made `item_terminates` answer
+# False, and `terminates()` scans with `any`, so a later `return` overrode it.
+# Measured at d801042: `switch (n) { } return 0;` exited 0, CLEAN.
+printf 'long long f(long long n) {\n    switch (n) {\n    }\n    return 0;\n}\n' >"$TMP/switch_then_return.c"
+$PROBE generated-c "$TMP/switch_then_return.c" >"$TMP/o" 2>&1
+check "Net A, a switch followed by a return is not read as clean" 2 $?
+grep -q 'a `switch`' "$TMP/o"
+check "  and the malfunction names the construct" 0 $?
+# The empty switch alone was a FINDING (loud, but the wrong verdict: it is not a
+# defect in the C, it is a shape this reader cannot judge).
+printf 'long long g(long long n) {\n    switch (n) {\n    }\n}\n' >"$TMP/switch_empty.c"
+$PROBE generated-c "$TMP/switch_empty.c" >"$TMP/o" 2>&1
+check "Net A, an empty switch is a malfunction, not a finding" 2 $?
+grep -q 'a .switch.' "$TMP/o"
+check "  and the reason names the switch" 0 $?
+# ...and the same rule generalises: any compound header this reader does not
+# model stops the file, rather than silently answering "does not terminate".
+printf 'long long h(long long n) {\n    __unknown_construct (n) {\n        return 1;\n    }\n    return 0;\n}\n' >"$TMP/unknown_header.c"
+$PROBE generated-c "$TMP/unknown_header.c" >"$TMP/o" 2>&1
+check "Net A, an unmodelled compound header stops the file" 2 $?
+grep -q 'header this reader does not' "$TMP/o"
+check "  and the reason names the header" 0 $?
+
+# A HEADER SPLIT ACROSS LINES presents no header at all. `parse_block` records
+# `if (n)` as an ordinary statement and `{` as a modelled BARE BLOCK, so the
+# `return` inside reads as unconditional and a function that falls through when
+# the condition is false was reported CLEAN. Measured at 6ab9b9c: exit 0.
+# `MODELLED_HEADER_RE` could not see this — the generalisation was about header
+# text and this shape has none. The property is about the STATEMENT: every
+# statement this generator emits inside a body ends with `;` or is a comment
+# (measured over 400 generated files, no exceptions), so anything else stops.
+printf 'long long f(long long n) {\n    if (n)\n    {\n        return 1;\n    }\n}\n' >"$TMP/split_header.c"
+$PROBE generated-c "$TMP/split_header.c" >"$TMP/o" 2>&1
+check "Net A, a header split across lines is not read as a bare block" 2 $?
+grep -q 'does not end in' "$TMP/o"
+check "  and the malfunction says why" 0 $?
+# A macro invocation expanding to control flow has the same shape.
+printf 'long long g(long long n) {\n    RETURN_IF(n)\n    {\n        return 1;\n    }\n    return 0;\n}\n' >"$TMP/macro_header.c"
+$PROBE generated-c "$TMP/macro_header.c" >"$TMP/o" 2>&1
+check "Net A, a macro invocation before a block stops the file" 2 $?
+grep -q 'does not end in' "$TMP/o"
+check "  and the reason is the unterminated statement" 0 $?
+
+# MF5's predicate is "every body statement ends in `;` or is a comment", so the
+# shapes it BYPASSES are executable rather than inferred. A valid `do { … }
+# while (…);` tail: the closing line ends in `;`, so nothing here fires — and
+# the reader still gets it right, because `item_terminates` models `do` as its
+# body. No false clean was demonstrated, and this pins that.
+printf 'long long f(long long n) {\n    do {\n        return 1;\n    } while (n);\n}\n' >"$TMP/dowhile.c"
+$PROBE generated-c "$TMP/dowhile.c" >"$TMP/o" 2>&1
+check "Net A, a valid do/while tail is accepted, not tripped by the semicolon rule" 0 $?
+# A label, an empty statement and a line-continued macro are all LOUD — the
+# conservative direction. Each is a construct codegen does not emit, so the
+# right answer is "this reader cannot judge it", not a verdict.
+printf 'long long g(long long n) {\n    if (n) {\n        return 1;\n    }\ndone:\n    return 0;\n}\n' >"$TMP/label.c"
+$PROBE generated-c "$TMP/label.c" >"$TMP/o" 2>&1
+check "Net A, a label is a malfunction, not a verdict" 2 $?
+grep -q 'a label' "$TMP/o"
+check "  and it is named as a label" 0 $?
+printf 'long long h(long long n) {\n    ;\n    return 0;\n}\n' >"$TMP/empty.c"
+$PROBE generated-c "$TMP/empty.c" >"$TMP/o" 2>&1
+check "Net A, a bare empty statement is accepted (it ends in a semicolon)" 0 $?
+printf 'long long k(long long n) {\n    LOOP(n) \\\n        return 1;\n    return 0;\n}\n' >"$TMP/contmacro.c"
+$PROBE generated-c "$TMP/contmacro.c" >"$TMP/o" 2>&1
+check "Net A, a line-continued macro invocation stops the file" 2 $?
+grep -q 'does not end in' "$TMP/o"
+check "  and the reason is the unterminated statement" 0 $?
+
+# The other direction: unreachable code after a `return` must NOT be reported as
+# a fall-through. The parser accepts this shape (src/parser/mod.rs,
+# already_terminates), so a Net A that refused it would go red on valid output.
+printf 'long long f(long long n) {\n    if (n) {\n        return 1;\n        n = n + 2;\n    } else {\n        return 2;\n    }\n}\n' >"$TMP/unreachable.c"
+$PROBE generated-c "$TMP/unreachable.c" >"$TMP/o" 2>&1
+check "Net A, statements after a return are unreachable, not a fall-through" 0 $?
+
+# REACHABILITY REACHES INTO BREAK DETECTION TOO. `while (1) { return 2; break; }`
+# cannot be left: the `break` is dead text. Counting every syntactically present
+# break made this a FINDING, and the parser refused the Palladium program that
+# produces it — both analyses wrong in the same way, which is the risk of
+# mirroring two hand-written readers.
+printf 'long long f(long long n) {\n    if (n) {\n        return 1;\n    } else {\n        while (1) {\n            return 2;\n            break;\n        }\n    }\n}\n' >"$TMP/dead_break.c"
+$PROBE generated-c "$TMP/dead_break.c" >"$TMP/o" 2>&1
+check "Net A, a break after a return does not make a loop escapable" 0 $?
+# ...and the guard, with the break FIRST: now it runs, the loop IS escapable,
+# and the function really can fall off its end. gcc agrees, so this is a finding
+# from both nets.
+printf 'long long f(long long n) {\n    if (n) {\n        return 1;\n    } else {\n        while (1) {\n            break;\n        }\n    }\n}\n' >"$TMP/live_break.c"
+$PROBE generated-c "$TMP/live_break.c" >"$TMP/o" 2>&1
+check "Net A, a reachable break still makes it a finding" 1 $?
 
 echo
 echo "== unrelated failures must not be read as the expected finding =="
-printf '#error no return statement\nlong long f(void){return 1;}\n' >"$TMP/wording.c"
+# The definition is multi-line ON PURPOSE: written on one line, Net A stops the
+# file as unaccounted-for and Net B — the thing this case is about — is never
+# reached. Measured at 199c7bd: the one-line form exited 2 from "no function
+# definitions recognised", so this check passed without ever running a C
+# compiler.
+printf '#error no return statement\nlong long f(void) {\n    return 1;\n}\n' >"$TMP/wording.c"
 $PROBE generated-c "$TMP/wording.c" >"$TMP/o" 2>&1
 check "Net B, unrelated error containing return-type wording" 2 $?
+grep -q 'Net B' "$TMP/o"
+check "  and it really was Net B that objected" 0 $?
 
 echo
 echo "== exec-layer faults must be malfunctions, not findings =="
 printf '#!/bin/sh\necho hi\n' >"$TMP/noperm"; chmod 000 "$TMP/noperm"
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/noperm" --out t_p1 >"$TMP/o" 2>&1
 check "producer not executable (PermissionError)" 2 $?
+grep -qi 'permission denied\|PermissionError' "$TMP/o"
+check "  and the reason is the permission, not an unrelated failure" 0 $?
 printf 'not a program\n' >"$TMP/notexec"; chmod +x "$TMP/notexec"
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/notexec" --out t_p2 >"$TMP/o" 2>&1
 check "producer is not executable format (ENOEXEC)" 2 $?
+grep -qi 'exec format error\|ENOEXEC\|cannot execute' "$TMP/o"
+check "  and the reason is the exec failure" 0 $?
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP" --out t_p3 >"$TMP/o" 2>&1
 check "producer is a directory" 2 $?
+grep -q 'cannot execute' "$TMP/o"
+check "  and the reason is the exec failure" 0 $?
 
 echo
 echo "== Net A import failure is a malfunction =="
-mv scripts/check-c-returns.py "$TMP/neta.hidden"
+# THE TRACKED ANALYSER IS NEVER MOVED. This block used to `mv`
+# scripts/check-c-returns.py into $TMP and overwrite its path twice, restoring
+# it only on the normal path — so an interrupt inside that window left the EXIT
+# trap to delete $TMP *and the saved original*, with the tracked file missing or
+# replaced by a two-line stub. Same family as a `git checkout` that discards
+# uncommitted work: a sweep that destroys tracked state when interrupted.
+# GATE_PROBE_NET_A injects the path instead, so nothing checked in is touched.
 $PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
+GATE_PROBE_NET_A="$TMP/definitely-absent.py" \
+  $PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
 check "Net A analyser missing" 2 $?
-printf 'def check_file(  # syntax error\n' >scripts/check-c-returns.py
-$PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
+grep -q 'is missing' "$TMP/o"
+check "  and the reason is that the analyser is missing" 0 $?
+printf 'def check_file(  # syntax error\n' >"$TMP/neta_unparsable.py"
+GATE_PROBE_NET_A="$TMP/neta_unparsable.py" \
+  $PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
 check "Net A analyser does not import" 2 $?
-printf 'X = 1\n' >scripts/check-c-returns.py
-$PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
+grep -q 'Net A could not be loaded' "$TMP/o"
+check "  and the reason is the failed import" 0 $?
+printf 'X = 1\n' >"$TMP/neta_no_entry.py"
+GATE_PROBE_NET_A="$TMP/neta_no_entry.py" \
+  $PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
 check "Net A analyser lacks check_file()" 2 $?
-mv "$TMP/neta.hidden" scripts/check-c-returns.py
+grep -q 'defines no check_file' "$TMP/o"
+check "  and the reason is the missing entry point" 0 $?
 
 echo
 echo "== the reconciliation cannot exit 1 without a structured finding =="
 $PROBE reconcile --src /nonexistent/builtins.rs --manifest tests/stdlib/BUILTINS.tsv >"$TMP/o" 2>&1
 check "reconcile, unreadable registry" 2 $?
+grep -q 'cannot read' "$TMP/o"
+check "  and the reason is that the registry could not be read" 0 $?
 $PROBE reconcile --src src/builtins.rs --manifest /nonexistent/BUILTINS.tsv >"$TMP/o" 2>&1
 check "reconcile, unreadable manifest" 2 $?
+grep -q 'cannot read' "$TMP/o"
+check "  and the reason is that the manifest could not be read" 0 $?
 sed 's/name:/ident:/g; s/"\([a-z_0-9]*\) param/"\1 FIELD/g; s/"\([a-z_0-9]*\) return/"\1 FIELD/g' \
   src/builtins.rs >"$TMP/broken_builtins.rs"
 $PROBE reconcile --src "$TMP/broken_builtins.rs" --manifest tests/stdlib/BUILTINS.tsv >"$TMP/o" 2>&1
 check "reconcile, parsing contract broken" 2 $?
+grep -qi 'no Support type\|parse\|contract' "$TMP/o"
+check "  and the reason is the broken parsing contract" 0 $?
 
 echo
-echo "== a descendant holding the pipe must not outlive the timeout =="
+echo "== a descendant holding the pipe must not stall the harness =="
 # The direct child exits immediately; a grandchild keeps the merged pipe open.
-# Without process-group kill the read blocks past the timeout instead of
-# returning a malfunction.
+# THE ASSERTION USED TO BE THE CLOCK ALONE — "under 30s" — and it printed the
+# exit code without checking it, under a label about not stalling "the read".
+# A control's label is a claim, and an unasserted claim in a control is the same
+# defect as an unasserted claim in prose. Both are asserted now: the verdict
+# (this capture never reaches EOF, so it is a malfunction) and the clock.
 mk slow_desc '#!/bin/sh
 sh -c "sleep 600" &
+echo $! >"$SLOW_PIDFILE"
 exit 0'
+SLOW_PIDFILE="$TMP/slow_desc.pid"; export SLOW_PIDFILE
 start=$(date +%s)
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/slow_desc" --out t_d1 >"$TMP/o" 2>&1
 rc=$?; elapsed=$(( $(date +%s) - start ))
-if [ "$elapsed" -lt 30 ]; then
-  printf '  %sok%s   descendant does not stall the read (%ss, exit %s)\n' "$GREEN" "$NC" "$elapsed" "$rc"
+check "a descendant holding the pipe makes it a malfunction, not a verdict" 2 $rc
+grep -q 'did not reach EOF' "$TMP/o"
+check "  and the reason is the missing EOF" 0 $?
+if [ "$elapsed" -lt 60 ]; then
+  printf '  %sok%s   and it did not stall (%ss)\n' "$GREEN" "$NC" "$elapsed"
   pass=$((pass+1))
 else
-  printf '  %sFAIL%s descendant stalled the read for %ss — process-group kill did not work\n' "$RED" "$NC" "$elapsed"
+  printf '  %sFAIL%s descendant stalled the harness for %ss\n' "$RED" "$NC" "$elapsed"
   fail=$((fail+1))
 fi
-pkill -f "sleep 600" 2>/dev/null || true
+# no reap: this descendant is in the process group, so killpg reached it
+
+echo
+echo "== EOF must be awaited BEFORE the writers are killed =="
+# THE ORDERING DEFECT. `killpg` used to run FIRST and EOF was asked about
+# afterwards — but killing a writer closes its pipe handle, so EOF then arrived
+# BECAUSE OF THE CLEANUP. It proved "all writers are closed after I killed
+# them", which is true of every run.
+#
+# This producer keeps its descendant IN THE PROCESS GROUP (no setsid), so the
+# kill really does reach it. The parent writes a first line and exits 0 while
+# the descendant holds the pipe and would have written more. Under the old
+# order that is `Concluded` with a TRUNCATED capture — a verdict formed from
+# part of a producer's output, with nothing recording that anything was
+# missing. Under the new order EOF has not arrived on its own within the join,
+# so the capture is marked incomplete before anything is killed.
+mk pdc_ingroup "#!/bin/sh
+$(command -v python3) -c 'import os, sys, time
+if os.fork() == 0:
+    open(os.environ[\"REAP_PIDFILE\"], \"w\").write(str(os.getpid()))
+    time.sleep(30)                 # still in the group; killpg WILL reach it
+    sys.stdout.write(\"error: No main function found\\n\")
+    sys.stdout.flush()
+    os._exit(0)
+sys.stdout.write(\"first chunk\\n\")
+sys.stdout.flush()
+os._exit(0)'
+"
+REAP_PIDFILE="$TMP/ingroup.pid" $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_ingroup" --out t_ing >"$TMP/o" 2>&1
+check "an in-group writer still holding the pipe is not a concluded verdict" 2 $?
+grep -q 'did not reach EOF' "$TMP/o"
+check "  and the reason names the missing EOF, not the exit status" 0 $?
+grep -q 'WITHHELD_PARTIAL\|WITHHELD ' "$TMP/o"
+check "  and what was captured is not announced as the complete output" 0 $?
+# no reap: this descendant is in the process group, so killpg reached it
+
+echo
+echo "== a writer that outlives the process group must not read as concluded =="
+# THE TOCTOU THIS REPLACED. The previous capture wrote to a shared temporary
+# FILE and established completeness by comparing `len(read())` against
+# `fstat().st_size`. Both are samples taken from a file somebody else may still
+# be writing: `killpg` delivery is ASYNCHRONOUS, descendants are never reaped,
+# and a descendant that calls setsid() is not in the group at all. Agreement
+# between two samples of a moving file establishes nothing.
+#
+# This producer forks a grandchild, puts it in its OWN SESSION, and exits 0
+# while the grandchild holds the inherited stdout for a minute. EOF therefore
+# never arrives. The honest answer is that the capture cannot be known to be
+# complete — a MALFUNCTION — and it has to arrive promptly rather than after the
+# full 300s timeout, because the producer itself finished.
+mk pdc_escapee "#!/bin/sh
+$(command -v python3) -c 'import os, sys, time
+if os.fork() == 0:
+    os.setsid()
+    open(os.environ[\"REAP_PIDFILE\"], \"w\").write(str(os.getpid()))
+    time.sleep(60)
+    os._exit(0)
+sys.stdout.write(\"error: No main function found\\n\")
+sys.stdout.flush()
+os._exit(0)'
+"
+start=$(date +%s)
+REAP_PIDFILE="$TMP/escapee.pid" $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_escapee" --out t_esc >"$TMP/o" 2>&1
+rc=$?; elapsed=$(( $(date +%s) - start ))
+check "a stream that never reaches EOF is a malfunction, not a verdict" 2 $rc
+grep -q 'did not reach EOF' "$TMP/o"
+check "  and it says the capture could not be known to be complete" 0 $?
+if [ "$elapsed" -lt 60 ]; then
+  printf '  %sok%s   and it decided promptly (%ss), not at the 300s timeout\n' "$GREEN" "$NC" "$elapsed"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s it waited %ss — the drain join is not bounded\n' "$RED" "$NC" "$elapsed"
+  fail=$((fail+1))
+fi
+reap "$TMP/escapee.pid"
+
+echo
+echo "== a producer noisier than one pipe buffer must still conclude =="
+# THE HARNESS MUST NOT MANUFACTURE ITS OWN MALFUNCTION. `run()` waits on the
+# CHILD rather than draining its output, which is right — a grandchild can hold
+# a pipe open past the timeout — but with a pipe that means nobody empties the
+# 64 KiB buffer while the child runs, so a producer that writes more BLOCKS in
+# write(2), the parent blocks in wait(), and the harness reports "timed out
+# after 300s". That verdict is indistinguishable from a producer that really
+# hung, and it is false.
+#
+# Measured at fcbabca: `cargo test --release --no-fail-fast -- --ignored` emits
+# 78296 bytes; through the pipe form it took the full 300s and returned 124,
+# through the file form 45s and its real 101. Every caller until then stayed
+# under 64 KiB, so the bound was on the INPUTS, not on the harness — which is
+# why this case exists rather than a comment saying "outputs are small".
+mk pdc_verbose '#!/bin/sh
+awk "BEGIN{for(i=0;i<40000;i++) print \"noise line, wider than one pipe buffer in total\"}"
+echo "error: No main function found" >&2
+exit 1'
+start=$(date +%s)
+$PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_verbose" --out t_noisy >"$TMP/o" 2>&1
+rc=$?; elapsed=$(( $(date +%s) - start ))
+check "1.7MB of producer output is classified, not timed out" 0 $rc
+if [ "$elapsed" -lt 60 ]; then
+  printf '  %sok%s   and it did not stall (%ss)\n' "$GREEN" "$NC" "$elapsed"; pass=$((pass+1))
+else
+  printf '  %sFAIL%s the harness blocked for %ss on its own capture buffer\n' "$RED" "$NC" "$elapsed"
+  fail=$((fail+1))
+fi
+
+echo
+echo "== the abandoned-capture bound is enforced, not just written down =="
+# Each capture that never reaches EOF leaves a descriptor with the reader thread
+# that owns it, so the cost is real and `generated-c` takes an unbounded file
+# list. The bound is checked BEFORE the next process starts; this drives the
+# counter to the limit directly rather than spending ~45s reproducing it (the
+# nine-run reproduction is recorded beside MAX_ABANDONED_CAPTURES).
+python3 - >"$TMP/o" 2>&1 <<'CAPPY'
+import sys
+sys.path.insert(0, "scripts")
+import gate_probe as gp
+
+bad = []
+gp._abandoned_captures = gp.MAX_ABANDONED_CAPTURES
+v = gp.run_and_classify(["sh", "-c", "echo hi; exit 0"])
+if not isinstance(v, gp.Malfunction):
+    bad.append("at the limit, a further run was %s, not Malfunction"
+               % type(v).__name__)
+elif "refusing to run" not in v.how:
+    bad.append("the refusal does not name the bound: %r" % v.how[:80])
+gp._abandoned_captures = 0
+v = gp.run_and_classify(["sh", "-c", "echo hi; exit 0"])
+if not isinstance(v, gp.Concluded):
+    bad.append("below the limit an ordinary producer must still conclude, got %s"
+               % type(v).__name__)
+print("\n".join(bad) if bad else "ok")
+sys.exit(1 if bad else 0)
+CAPPY
+check "at the limit, run() refuses rather than leaking another descriptor" 0 $?
+grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
+
+echo
+echo "== the boundary must promise only what it delivers =="
+# THE CLAIM THAT WAS TOO BIG. gate_probe.py said reading the output of a producer
+# that did not conclude was structurally unexpressible, and Withheld's repr said
+# the same. It is not: `r._out` and `v.withheld._b` both hold the bytes —
+# deliberately, because `spill()` needs them and because `run()` must hand them
+# back before `classify()` can read them. The prose now says exactly that.
+#
+# WHAT THESE CHECKS ARE, AT THEIR TRUE SIZE, because "they keep prose and code in
+# step" is what this comment said and that is bigger than any of them. Items 1-4
+# are BEHAVIOURAL and hold in general: they fail if a future edit re-grows a
+# promise the class cannot keep, or lets the bytes back onto a parsed stream.
+# Item 5 is LEXICAL and holds only over wordings already measured false here —
+# its own contract, stated where it lives, is that a KNOWN false claim cannot be
+# repeated. Collapsing whitespace before matching closes ONE evasion, a phrase
+# broken across a line wrap; a semantic paraphrase of the same false claim walks
+# past it untouched, and nothing in this file would notice.
+python3 - >"$TMP/o" 2>&1 <<'PY'
+import os, pathlib, re, subprocess, sys, tempfile
+sys.path.insert(0, "scripts")
+import gate_probe as gp
+
+bad = []
+r = gp.Run(["x"], -9, "SECRET")
+v = gp.classify(r, reject_codes=())
+
+# 1. The verdict type carries no text, so `res.text` on a possible malfunction
+#    is an AttributeError rather than a silent empty string.
+if not isinstance(v, gp.Malfunction) or hasattr(v, "text"):
+    bad.append("Malfunction has a `text` attribute again")
+
+# 2. No formatting path may carry the bytes: interpolation into a printed line
+#    is exactly how output reaches a stream a shell greps.
+for how, s in (("repr", repr(v.withheld)), ("str", str(v.withheld)),
+               ("f-string", f"{v.withheld}"), ("format", "{}".format(v.withheld)),
+               ("Malfunction repr", repr(v))):
+    if "SECRET" in s:
+        bad.append("%s of a withheld value carries the bytes" % how)
+
+# 3. It must not behave like a string by accident.
+if isinstance(v.withheld, str):
+    bad.append("Withheld is a str")
+try:
+    iter(v.withheld)
+    bad.append("Withheld is iterable")
+except TypeError:
+    pass
+
+# 4. The honest channel must keep working, or people route around it — AND it
+#    must report its own failure. It used to swallow the OSError and return the
+#    path anyway (`WITHHELD_AT` over a file that does not exist); then it
+#    checked `is_file()`, which passes on a STALE file from an earlier run and
+#    on a PARTIAL one. EXISTENCE IS NOT PRESERVATION.
+with tempfile.TemporaryDirectory() as d:
+    d = pathlib.Path(d)
+    path, err = v.withheld.spill(d / "spilled")
+    if err is not None or path.read_bytes() != b"SECRET":
+        bad.append("spill() no longer writes the output it withheld (%s)" % err)
+
+    # a target that cannot be written at all
+    path, err = v.withheld.spill(d / "no-such-dir" / "x")
+    if err is None:
+        bad.append("spill() reports success for a write that did not happen")
+    if path.exists():
+        bad.append("the failing-spill fixture is not actually failing")
+
+    # A PRE-EXISTING FILE AT THE TARGET. `is_file()` was satisfied by the stale
+    # one, so a spill that wrote nothing could still be announced as WITHHELD_AT.
+    stale = d / "stale"
+    stale.write_bytes(b"OUTPUT FROM AN EARLIER RUN")
+    path, err = v.withheld.spill(stale)
+    if err is not None or path.read_bytes() != b"SECRET":
+        bad.append("spill() over a pre-existing file did not replace it (%s)"
+                   % err)
+
+    # A PARTIAL WRITE: the filesystem accepts the call and keeps less than it
+    # was given. Injected by truncating the read-back.
+    real_read = pathlib.Path.read_bytes
+    pathlib.Path.read_bytes = lambda self: real_read(self)[:2]
+    try:
+        _, err = v.withheld.spill(d / "short")
+    finally:
+        pathlib.Path.read_bytes = real_read
+    if err is None:
+        bad.append("spill() accepted a write whose read-back was short")
+    if (d / "short").exists():
+        bad.append("a failed spill left a file at the target path")
+
+# 6. A CAPTURE THAT DID NOT CONCLUDE IS NOT EVIDENCE EITHER. `run()` used to
+#    swallow a read failure on its capture, substitute empty output, and hand
+#    back the PRODUCER'S exit code — so a producer that exited 0 whose output
+#    could not be read became Concluded(""): a semantic verdict built on
+#    evidence nobody saw, inside the module that exists to prevent that.
+real_popen = subprocess.Popen
+
+
+class UnreadablePipe:
+    """A Popen whose captured stream cannot be read."""
+
+    def __init__(self, *a, **k):
+        self._p = real_popen(*a, **k)
+        self.pid = self._p.pid
+
+    class _Stream:
+        def read(self, *a):
+            raise OSError("injected capture read failure")
+
+        def fileno(self):
+            return os.open(os.devnull, os.O_RDONLY)
+
+        def close(self):
+            pass
+
+    stdout = _Stream()
+
+    def wait(self, timeout=None):
+        return self._p.wait(timeout=timeout)
+
+    @property
+    def returncode(self):
+        return self._p.returncode
+
+
+gp.subprocess.Popen = UnreadablePipe
+try:
+    broken = gp.run(["sh", "-c", "echo REAL OUTPUT; exit 0"])
+finally:
+    gp.subprocess.Popen = real_popen
+verdict = gp.classify(broken)
+if broken.signal_number is not None:
+    bad.append("the capture-failure fixture producer was signalled, not exit 0")
+if not isinstance(verdict, gp.Malfunction):
+    bad.append("a producer that exited 0 with an unreadable capture was "
+               "classified %s, not Malfunction" % type(verdict).__name__)
+if hasattr(verdict, "text"):
+    bad.append("the capture-failure verdict carries text")
+if "could not be captured" not in getattr(verdict, "how", ""):
+    bad.append("the capture-failure verdict does not say the capture failed")
+
+# 7. BYTES, NOT A RENDERING. `Run` used to hold a UTF-8-with-replacement decode
+#    and `spill()` re-encoded it, so a producer emitting invalid UTF-8 was
+#    spilled as something else while WITHHELD_AT promised its complete output.
+#    An ASCII fixture cannot tell the two apart — which is why this one is not
+#    ASCII.
+binary = gp.run([sys.executable, "-c",
+                 "import sys,os; sys.stdout.buffer.write(b'A\\xffB'); "
+                 "sys.stdout.flush(); os._exit(9)"])
+bin_verdict = gp.classify(binary)
+if not isinstance(bin_verdict, gp.Malfunction):
+    bad.append("the binary fixture did not malfunction (exit 9 is unpinned)")
+else:
+    with tempfile.TemporaryDirectory() as d:
+        p2, e2 = bin_verdict.withheld.spill(pathlib.Path(d) / "bin")
+        if e2 is not None:
+            bad.append("spilling invalid UTF-8 failed: %s" % e2)
+        elif p2.read_bytes() != b"A\xffB":
+            bad.append("spill() rewrote the producer's bytes: %r != %r"
+                       % (p2.read_bytes(), b"A\xffB"))
+
+# 5. RETRACTED CLAIMS MAY NOT BE REASSERTED — ANYWHERE IN THE FILE, AND IN
+#    EVERY FILE THAT MAKES THE CLAIM.
+#
+#    Two histories are compressed here. The check first read only the text
+#    before the "WHAT THIS IS NOT" heading, so `Run.__doc__` and
+#    `classify.__doc__` went on asserting the retracted version BELOW it for a
+#    round: a check whose SCOPE was narrower than the property it claimed.
+#    Then gate_probe.py's docstring was corrected while scripts/test-xfail.py
+#    kept the wider promise for two more rounds: a claim retracted in one file
+#    and left standing in another. Hence: whole files, and a file list per
+#    claim, which any new file describing these rules must join.
+#
+#    WHAT THIS IS: a lexical guard over wordings MEASURED FALSE in this
+#    repository. Not a claim detector — it cannot recognise a fresh way of
+#    saying the same thing. What it buys is that a KNOWN false claim cannot be
+#    repeated.
+CLAIMS = [
+    # (files, forbidden lowercase substring, why it is false)
+    (["scripts/gate_probe.py"], "no accessor",
+     "Run._out is the accessor"),
+    (["scripts/gate_probe.py"], "no other route",
+     "Run._out is another route"),
+    (["scripts/gate_probe.py", "scripts/test-xfail.py"], "unexpressible",
+     "reading a non-concluding producer's output is expressible"),
+    (["scripts/gate_probe.py", "scripts/test-xfail.py"], "cannot be reached",
+     "the bytes can be reached; the invariant is non-publication"),
+    (["scripts/gate_probe.py", "scripts/test-xfail.py"], "impossible to read",
+     "same"),
+    (["scripts/gate_probe.py"], "the only way to the bytes",
+     "spill() is the intended way, not the only one"),
+    # THE PROMISE, in every file that states it. The grep covers git-tracked
+    # files and literal spellings, exempting a mention only where it sits wholly
+    # inside a backticked bare dotted name — say that, or broaden the mechanism
+    # to match.
+    (["scripts/gate_probe.py", "scripts/test-xfail.py"], "any consumer outside",
+     "the enforced scope is git-tracked files and literal spellings only"),
+    # THE MECHANISM, described three times as something it never did. Three
+    # files said the private-slot grep skips comment lines: it does not, and
+    # never has — a comment is exempt only when the mention inside it is a
+    # backticked bare dotted name, which is why `# see the _out slot` written as
+    # `x._out` without backticks IS a finding. scripts/test-xfail.py:145-147 has
+    # said so explicitly for a round while the other two said the opposite.
+    #
+    # THE PHRASES ARE SPLIT so that this table can list the ENFORCER itself.
+    # Every phrase above is spelled here, in this file, which is exactly why
+    # scripts/test-gate-probe.sh appears in none of their file lists — and it was
+    # one row away from catching its own stale sentence at line 740. Python
+    # concatenates adjacent literals at parse time, so the phrase exists when the
+    # check runs and does not exist in the file being checked.
+    (["scripts/gate_probe.py", "scripts/test-xfail.py",
+      "scripts/test-gate-probe.sh"],
+     "comment lines " "excluded",
+     "comment lines are searched; the exemption is a backticked bare dotted "
+     "name, not a comment"),
+    (["scripts/gate_probe.py", "scripts/test-xfail.py",
+      "scripts/test-gate-probe.sh"],
+     "ignoring comment " "lines",
+     "same claim, second spelling"),
+    # Measured in round 2 and contradicted inside the same test file for a
+    # round: constant folding rewrites `1 == 1` to true, so BOTH spellings emit
+    # `while (1)`. tests/d3b_tail_if.rs pins that count at 2.
+    (["tests/d3b_tail_if.rs", "src/parser/mod.rs", "scripts/check-c-returns.py"],
+     "while ((1 == 1))",
+     "constant folding (src/optimizer/constant_folding.rs:154, BinOp::Eq) turns "
+     "it into `while (1)`; measured, both spellings emit the same C"),
+]
+# WHITESPACE IS COLLAPSED BEFORE MATCHING, and that is a repair, not a tidy-up.
+# Every file this table guards is PROSE wrapped at 79 columns, so a multi-word
+# phrase lands across a line break as often as not, and a plain substring match
+# reads a phrase with a newline inside it as a different string entirely.
+# MEASURED while the rows above were being added: the retracted claim was put
+# back into BOTH gate_probe.py and this file, and only this file's copy — the one
+# that happened to fit on a single line — was caught. A guard that a paragraph
+# reflow switches off has coverage nobody chose.
+#
+# AND NOTE WHAT THAT MAKES OF PROSE IN THIS FILE: with whitespace collapsed, a
+# comment that QUOTES a forbidden phrase in order to explain it trips the row
+# itself — line wrapping is no longer hiding it. That is why every phrase above
+# is split across adjacent literals, and why none of them is spelled out in a
+# sentence anywhere here. This paragraph is the only description of them, and it
+# names none.
+def flat(text):
+    return re.sub(r"\s+", " ", text.lower())
+
+
+for files, phrase, why in CLAIMS:
+    for f in files:
+        fp = pathlib.Path(f)
+        if fp.exists() and flat(phrase) in flat(fp.read_text()):
+            bad.append("%s reasserts a claim measured false: %r (%s)"
+                       % (f, phrase, why))
+
+print("\n".join(bad) if bad else "ok")
+sys.exit(1 if bad else 0)
+PY
+check "the boundary's promises match its code" 0 $?
+grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
+
+# THE INTRA-MODULE ALLOWLIST — because the grep below exempts all of
+# gate_probe.py, which is exactly where the defect it was built for lived
+# (`cmd_calibrate` read a raw `Run.rc` and never looked at `capture_error`).
+# A rule whose scope excludes the location of its own defect is not a rule.
+#
+# THREE VERSIONS, AND WHAT EACH ONE MISSED:
+#   1. line CONTENT via `grep -vxF` — set membership where accounting was meant:
+#      a new reader could DUPLICATE an approved line elsewhere and pass.
+#   2. a regex over `(class|def)\s+NAME` with an indentation stack — it did not
+#      know `async def`, so a read could move into a nested async function.
+#   3. `ast` with a JOINED NAME PATH — better, but a name is not an identity:
+#      two `def classify` at the same level, or two sibling lambdas, produce the
+#      same key, so a ONE-FOR-ONE RELOCATION between them passes unchanged. That
+#      is precisely the property the key was introduced to prevent.
+#
+# So each definition now carries an ORDINAL among its same-named siblings —
+# `classify#0`, `<lambda>#1` — which is a structural identity rather than a
+# name, and the table is keyed by it. And only `ast.Load` counts: matching bare
+# `ast.Attribute` certified constructor ASSIGNMENTS as reads, so replacing a
+# write with a read preserved the approved count.
+#
+# WHAT IT STILL DOES NOT SEE, stated rather than left to the next review: a read
+# moved WITHIN one function (into or out of a comprehension, or to another line)
+# keeps its key. That is a relocation that does not change which function may
+# see a raw status, which is the property being defended.
+python3 - >"$TMP/allow.out" 2>&1 <<'ALLOWPY'
+import ast, collections, pathlib, sys
+
+PRIVATE = ("_out", "_b", "_rc")
+
+# (scope path with sibling ordinals, attribute) -> exact number of LOADS.
+ALLOWED = collections.Counter({
+    ("Withheld#0.spill#0", "_b"): 3,
+    ("Run#0.signal_number#0", "_rc"): 4,
+    ("Run#0.describe#0", "_rc"): 2,
+    ("classify#0", "_rc"): 4,
+    ("classify#0", "_out"): 3,
+    ("report_malfunction#0", "_b"): 1,
+})
+
+src = pathlib.Path("scripts/gate_probe.py").read_text()
+tree = ast.parse(src)
+
+found = collections.Counter()
+where = collections.defaultdict(list)
+
+# EXECUTION scopes, not just definitions. A comprehension and a generator
+# expression each run in their own frame — a generator's LAZILY — so a load that
+# moves into one changes WHEN and WHERE it executes. Leaving them out let such a
+# move keep its approved key, which is not the within-function relocation that
+# was ruled acceptable.
+DEF_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+IMPLICIT_SCOPES = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+SCOPES = DEF_SCOPES + IMPLICIT_SCOPES
+
+IMPLICIT_NAME = {
+    ast.ListComp: "<listcomp>",
+    ast.SetComp: "<setcomp>",
+    ast.DictComp: "<dictcomp>",
+    ast.GeneratorExp: "<genexpr>",
+}
+
+
+def scope_name(node, counts):
+    if isinstance(node, ast.Lambda):
+        base = "<lambda>"
+    elif isinstance(node, IMPLICIT_SCOPES):
+        base = IMPLICIT_NAME[type(node)]
+    else:
+        base = node.name
+    n = counts[base]
+    counts[base] += 1
+    return "%s#%d" % (base, n)
+
+
+def record(node, path):
+    key = (".".join(path) or "<module>", node.attr)
+    found[key] += 1
+    where[key].append("%d:%d" % (node.lineno, node.col_offset))
+
+
+def definition_time(node):
+    """Definition-time expressions of a def, yielded ONCE, in the enclosing scope.
+
+    THE CONTRACT IS LEXICAL, NOT EVALUATION-TIME. Under `from __future__ import
+    annotations` (PEP 563) annotations are stored as strings and never
+    evaluated, so calling these "evaluated in the enclosing scope" would be
+    wrong for a file that opts in. What this walker actually guarantees is that
+    a private-slot name WRITTEN in one of these positions is attributed to the
+    enclosing scope rather than to the function, which is the conservative
+    reading and the one the table needs: the guard is about where a name may be
+    written, not about when it runs.
+
+    Decorators, positional defaults, KEYWORD-ONLY defaults and annotations. The
+    previous version walked decorators and positional defaults in the enclosing
+    scope AND again beneath the new function key (double-counting), while
+    keyword-only defaults were never walked at all — so a load could move into
+    one and keep its key.
+    """
+    out = list(getattr(node, "decorator_list", []) or [])
+    args = getattr(node, "args", None)
+    if args is not None:
+        out += [d for d in (args.defaults or []) if d is not None]
+        out += [d for d in (getattr(args, "kw_defaults", None) or []) if d is not None]
+        # PARAMETER ANNOTATIONS TOO — every flavour. `visit` skips the whole
+        # `ast.arguments` node on the way in (so the defaults above are not
+        # walked twice), and the first version of this function collected only
+        # defaults and the RETURN annotation, so a private load written into a
+        # parameter annotation was invisible to the table entirely.
+        for group in ("posonlyargs", "args", "kwonlyargs"):
+            for a in getattr(args, group, None) or []:
+                if a.annotation is not None:
+                    out.append(a.annotation)
+        for a in (getattr(args, "vararg", None), getattr(args, "kwarg", None)):
+            if a is not None and a.annotation is not None:
+                out.append(a.annotation)
+    ret = getattr(node, "returns", None)
+    if ret is not None:
+        out.append(ret)
+    return out
+
+
+def visit(node, path, counts):
+    """Record `node` if it is a private load, then descend in the right scope."""
+    if isinstance(node, ast.Attribute) and node.attr in PRIVATE \
+            and isinstance(node.ctx, ast.Load):
+        record(node, path)
+    if isinstance(node, SCOPES):
+        outer = definition_time(node)
+        for expr in outer:                      # enclosing scope, exactly once
+            visit(expr, path, counts)
+        inner_path = path + [scope_name(node, counts)]
+        inner_counts = collections.Counter()
+        for child in ast.iter_child_nodes(node):
+            # `arguments` holds the defaults and annotations already walked
+            # above; decorator expressions are direct children and likewise.
+            if isinstance(child, ast.arguments):
+                continue
+            if any(child is e for e in outer):
+                continue
+            visit(child, inner_path, inner_counts)
+        return
+    for child in ast.iter_child_nodes(node):
+        visit(child, path, counts)
+
+
+visit(tree, [], collections.Counter())
+
+problems = []
+for key in sorted(set(ALLOWED) | set(found)):
+    want, got = ALLOWED.get(key, 0), found.get(key, 0)
+    if want == got:
+        continue
+    at = ", ".join(where.get(key, [])) or "nowhere"
+    if want == 0:
+        problems.append("UNAPPROVED load of .%s in %s (x%d, at %s)"
+                        % (key[1], key[0], got, at))
+    else:
+        problems.append("expected %d load(s) of .%s in %s, found %d (at %s)"
+                        % (want, key[1], key[0], got, at))
+print("\n".join(problems) if problems else "ok")
+sys.exit(1 if problems else 0)
+ALLOWPY
+if [ $? -eq 0 ]; then
+  printf '  %sok%s   every private-slot LOAD inside gate_probe.py matches the reviewed (scope#ordinal, attribute, count) table\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s the private-slot loads inside gate_probe.py no longer match the table:\n' "$RED" "$NC"
+  sed 's/^/        /' "$TMP/allow.out"
+  fail=$((fail+1))
+fi
+
+# WHAT THIS CHECK IS, SAID PLAINLY — the same discipline the Withheld repr got,
+# applied to the promise as well as to the mechanism.
+#
+# SCOPE: every file git tracks (`git ls-files`), binaries skipped. It used to
+# read only `.py`/`.sh`/`.rs` under scripts/, tests/ and src/, so "any consumer"
+# in the module docstring was wider than what any gate checked.
+#
+# THE EXEMPTION IS A SHAPE THE MENTION MUST HAVE, NOT A REGION OF THE LINE THAT
+# IS DELETED FIRST. Two rounds of "remove the prose, then match what is left"
+# both failed, in both directions, because deciding what is prose needs a lexer
+# and a regex is not one. MEASURED, on the previous version:
+#
+#     s = "http://x"; y = r._out    ->  's = "http:'      live access ERASED
+#     obj.`x`_out = 1               ->  'obj._out = 1'    access INVENTED
+#
+# The `//` inside a STRING LITERAL looked like a comment tail and took the real
+# access away with it; and deleting a span between `obj.` and `_out` joined two
+# halves that were never adjacent, so the guard reported an access nobody wrote.
+# Two backticks in separate string literals erase everything between them the
+# same way, and nested or unbalanced Markdown was never modelled at all. The
+# earlier round had already recorded one wrong cost here — the whole-line
+# version's stated cost, "a shell line using backticks for command
+# substitution", was not the cost it had — and the span version repeated the
+# mistake one layer down: its stated cost was unmodelled Markdown, when its
+# actual cost was erasing live access and inventing access that is not there.
+#
+# So the grammar is NARROWED rather than given another case, and the line is
+# never modified. A mention is EXEMPT only when the whole of it sits inside a
+# backticked BARE DOTTED NAME — a backtick, an optional leading `.`, an
+# identifier, dot-separated identifier pieces, a backtick, and nothing else. No
+# whitespace, no quotes, no operators. That span cannot reach across a statement
+# (it would have to contain a space or a quote), so nothing between two
+# unrelated backticks is ever exempted; and since nothing is deleted, no two
+# characters can become adjacent that were not. Everything that is not that
+# shape is treated as code. BLAST RADIUS MEASURED BEFORE THE SWAP: zero lines in
+# the tracked tree change verdict.
+#
+# WHAT STILL WALKS PAST IT, because a guard described as more than it is becomes
+# the next round's defect: `getattr(x, "_b")`, a name assembled from tokens,
+# `vars(x)["_b"]`, anything constructed at runtime, an untracked file, and a
+# private slot spelled as a backticked bare name inside a string literal. It is
+# a LEXICAL CONVENTION GUARD, not access control. The cost of the narrowing is
+# also stated rather than implied: a prose mention that is NOT backticked — say
+# a comment reading "the _out slot" written as `x._out` without backticks — is
+# now a finding, and the fix is to add the backticks the convention asks for.
+#
+# Two files are exempt and both are load-bearing rather than convenient:
+# gate_probe.py OWNS the slots, and this file is the ENFORCER — it must spell the
+# names in its pattern in order to search for them.
+#
+# THE ROWS AND THE TREE SCAN NOW RUN ON THE SAME OBJECT, IN ONE PROCESS, AND
+# THAT IS A RETRACTION. Until this round the fault-injection table lived in a
+# SECOND heredoc with its own hand-typed copy of `PRIVATE`, `NAME` and
+# `flagged` — a control that was a duplicate of the thing it controlled, with
+# no equality check anywhere between them. It certified nothing about the
+# enforcer, and the receipt built on it was unsound: widening the grammar to
+# admit `(…)`/`[…]` in the COPY turned two rows red, while widening it HERE —
+# the predicate actually in force — left all twelve rows green and the tree
+# verdict unchanged. The header that used to sit further down said "AND THE
+# EXEMPTION ITSELF IS FAULT-INJECTED"; a duplicate of it was.
+#
+# This is the same failure tests/d3b_tail_if.rs:107-122 states as the reason
+# agreement between two analyses must be EXECUTED and not asserted — live in
+# this file while that sentence was in that one. scripts/test-xfail.py and
+# scripts/check_doc_evidence.py both import what they check; this was the one
+# control in the branch that re-implemented it.
+#
+# So: ONE definition, and the rows run FIRST. If the predicate does not do what
+# its rows say, the tree is NOT scanned and neither row passes — a scan verdict
+# produced by a predicate already known to be wrong is worse than no verdict,
+# because it is greppable as a pass. (`grep -c` on the three definition lines,
+# just below this block, is what keeps a second copy from being pasted back in.)
+#
+# AND THE ROWS RUN THROUGH `scan_text`, NOT THROUGH `flagged`, WHICH IS THE
+# SECOND RETRACTION OF THE SAME DISEASE ONE LAYER DOWN. Unifying the rows and the
+# tree on one PREDICATE left a FOURTH hand-written statement of the property
+# standing in front of it: the per-line loop skipped any line not containing
+# `_out`, `_b` or `_rc` — three substrings against the predicate's four branches.
+# MEASURED, on the previous version: a tracked file holding
+#
+#     return res.withheld._secret
+#
+# matches `PRIVATE`'s `\.withheld\._` branch and contains none of the three, so
+# the loop `continue`d before `flagged` was ever called and the scan printed `ok`
+# with rc 0. All twelve rows stayed green throughout, because they called
+# `flagged` directly and never went near the loop. A control that enters the
+# system one function BELOW the thing in force certifies that function, not the
+# scan. So the rows now enter where the tree enters, the prefilter is deleted
+# (70ms -> 110ms for the whole tree, measured three runs each), and that line is
+# row 13 of the table below.
+python3 - >"$TMP/leaks.out" 2>&1 <<'LEAKPY'
+import os, pathlib, re, stat, subprocess, sys
+
+PRIVATE = re.compile(r"\._out\b|\._b\b|\._rc\b|\.withheld\._")
+# The ONLY exempt shape: a backticked bare dotted name. Nothing is removed from
+# the line; a mention is exempt when it lies wholly inside one of these spans.
+NAME = re.compile(r"`\.?[A-Za-z_][A-Za-z0-9_]*(?:\._?[A-Za-z0-9_]+)*`")
+EXEMPT = {"scripts/gate_probe.py", "scripts/test-gate-probe.sh"}
+
+
+def flagged(line):
+    spans = [m.span() for m in NAME.finditer(line)]
+    return any(
+        not any(s <= m.start() and m.end() <= e for s, e in spans)
+        for m in PRIVATE.finditer(line)
+    )
+
+
+def scan_text(name, text):
+    """Every flagged line of `text`, as `path:line: text`.
+
+    THE ONE ENTRY POINT. The rows below and the tree walk further down both call
+    THIS, so any filtering, fast path or short-circuit added here is covered by
+    the rows — which is exactly what was not true of the substring prefilter this
+    replaces.
+    """
+    out = []
+    for n, line in enumerate(text.split("\n"), 1):
+        if flagged(line):
+            out.append("%s:%d: %s" % (name, n, line.strip()[:100]))
+    return out
+
+
+# STEP 1 — THE EXEMPTION IS FAULT-INJECTED, against the predicate above rather
+# than against a transcription of it. A prose mention must stay invisible, and
+# live access must stay visible even when prose shares its line, which is
+# exactly the case the whole-line version missed. Rows 7 and 8 are the false
+# NEGATIVES the span-removal version produced (a live access erased), row 9 its
+# false POSITIVE (an access invented out of two halves), reproduced so that
+# reverting to any delete-then-match scheme is red rather than reviewed.
+ROWS = [
+    ("# the bytes survive in `Run._out` and `Withheld._b`", False,
+     "a comment naming the slots is the retraction, not access"),
+    ("    `Run._out`. What IS structural here is that every caller", False,
+     "backticked prose in a docstring"),
+    ("x = r._out  # `debug`", True,
+     "live access with backticked prose on the same line"),
+    ("    return res.withheld._b", True, "plain access"),
+    ("value = obj._rc + 1  // `note`", True, "live access, Rust comment tail"),
+    ("/// See `Withheld._b` for why", False, "a doc comment"),
+    ('s = "http://x"; y = r._out', True,
+     "`//` inside a STRING LITERAL is not a comment tail: deleting from it "
+     "erased a live access further right"),
+    ('a = "`"; x = r._out; b = "`"', True,
+     "two backticks in separate string literals are not one prose span: "
+     "deleting between them erased the access lying between"),
+    ("obj.`x`_out = 1", False,
+     "deleting the span joined `obj.` to `_out` and reported an access that "
+     "is not written anywhere on the line"),
+    # THE COST OF THE NARROWING, MADE EXECUTABLE. The exempt shape is a
+    # backticked BARE DOTTED NAME, so a backticked mention carrying anything
+    # else — a call, a subscript — is NOT exempt and IS flagged. That is a
+    # deliberate false positive on legitimate prose, and the fix for an author
+    # who hits it is the last row: backtick the bare name and leave the call or
+    # the index outside. Widening the grammar to admit `(…)` or `[…]` would
+    # readmit the class this guard exists for, because a call is exactly where a
+    # live access lives. These three rows are the ones that stayed green through
+    # a widening of the enforcer for as long as they lived in a second process.
+    ("# see `Run._out()` for the raw bytes", True,
+     "a backticked CALL is not a bare name, so it is flagged"),
+    ("# see `Run._out[index]` for the raw bytes", True,
+     "a backticked SUBSCRIPT is not a bare name either, for the same reason"),
+    ("# see `Run._out`() for the raw bytes", False,
+     "and the documented fix works: the bare name is backticked, the call is "
+     "not"),
+    # ROW 13 — the line the substring prefilter carried past the predicate for a
+    # whole round. `.withheld._` is `PRIVATE`'s fourth branch and none of `_out`,
+    # `_b`, `_rc` occurs in it, so the loop skipped it and the tree scan printed
+    # `ok`. It is red against the prefilter and green without it, which is the
+    # only reason it is here.
+    ("    return res.withheld._secret", True,
+     "a withheld slot whose name is none of the three: the prefilter that used "
+     "to guard this loop skipped the line before the predicate could see it"),
+]
+
+bad = []
+for line, want, why in ROWS:
+    # THROUGH `scan_text`, the function the tree walk calls — not through
+    # `flagged`, which is one layer below what is actually in force.
+    got = bool(scan_text("<row>", line))
+    if got != want:
+        bad.append("%r -> flagged=%s, wanted %s (%s)" % (line, got, want, why))
+if bad:
+    print("the predicate does not do what its rows say:")
+    print("\n".join(bad))
+    sys.exit(2)
+
+# STEP 2 — and only now, the tree.
+#
+# FAIL CLOSED ON ENUMERATION. `git ls-files` used to be read for its stdout with
+# its status ignored, so a git that exited non-zero — wrong directory, broken
+# index, no git on PATH — yielded no paths, an empty `leaks`, and rc 0: the
+# scanner certified a tree it never read, and the certificate was greppable as a
+# pass. MEASURED, with a `git` on PATH that exits 128 and prints nothing: `ok`,
+# rc 0. That is the `Concluded` vs `Malfunction` distinction gate_probe.py draws
+# about its own producers, applied to this scanner's own input — a scan that
+# cannot enumerate the tree has not scanned it, and must say so with a status of
+# its own rather than borrow the clean one.
+proc = subprocess.run(["git", "ls-files", "-z"], capture_output=True)
+if proc.returncode != 0 or not proc.stdout:
+    print("MALFUNCTION: cannot enumerate the tree — `git ls-files -z` exited "
+          "%d with %d byte(s) of output. Nothing was scanned, so nothing is "
+          "certified." % (proc.returncode, len(proc.stdout)))
+    err = proc.stderr.decode("utf-8", "replace").strip()
+    if err:
+        print(err[:400])
+    sys.exit(3)
+
+leaks = []
+unreadable = []
+for raw in proc.stdout.split(b"\0"):
+    if not raw:
+        continue
+    name = raw.decode("utf-8", "replace")
+    if name in EXEMPT:
+        continue
+    path = pathlib.Path(name)
+    # `Path.is_file()` SWALLOWS OSError and answers False, so "cannot stat it"
+    # and "it is a directory" were the same answer. `os.stat` follows symlinks
+    # exactly as is_file() did, and FileNotFoundError keeps the one skip that was
+    # always intended: tracked in the index, absent from the worktree.
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        continue
+    except OSError as e:
+        unreadable.append("%s: %s" % (name, e))
+        continue
+    if not stat.S_ISREG(st.st_mode):
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue                      # binary: there is no text to read
+    except OSError as e:
+        # A tracked file that IS there and cannot be read is a malfunction, not
+        # a file with nothing in it. Skipping it silently is the same fail-open
+        # one file at a time.
+        unreadable.append("%s: %s" % (name, e))
+        continue
+    leaks.extend(scan_text(name, text))
+
+if unreadable:
+    print("MALFUNCTION: %d tracked file(s) could not be read, so the tree was "
+          "scanned only in part:" % len(unreadable))
+    print("\n".join(unreadable[:20]))
+    sys.exit(3)
+
+print("\n".join(leaks) if leaks else "ok")
+sys.exit(1 if leaks else 0)
+LEAKPY
+leak_rc=$?
+if [ "$leak_rc" -eq 2 ]; then
+  printf '  %sFAIL%s the exemption does not hide what its rows say it hides:\n' "$RED" "$NC"
+  sed 's/^/        /' "$TMP/leaks.out"
+  fail=$((fail+1))
+  printf '  %sFAIL%s no consumer outside gate_probe.py names a withheld private slot — NOT ESTABLISHED: the tree was not scanned, because the predicate that would have scanned it is wrong\n' "$RED" "$NC"
+  fail=$((fail+1))
+else
+  printf '  %sok%s   the exemption hides a backticked bare name and nothing else\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+  if [ "$leak_rc" -eq 0 ]; then
+    printf '  %sok%s   no consumer outside gate_probe.py names a withheld private slot\n' "$GREEN" "$NC"
+    pass=$((pass+1))
+  elif [ "$leak_rc" -eq 3 ]; then
+    # NOT the same verdict as "a leak was found", and not the same as a pass
+    # either: the scan could not read the tree it was asked to certify.
+    printf '  %sFAIL%s no consumer outside gate_probe.py names a withheld private slot — NOT ESTABLISHED: the scan MALFUNCTIONED and never read the tree\n' "$RED" "$NC"
+    sed 's/^/        /' "$TMP/leaks.out"
+    fail=$((fail+1))
+  else
+    printf '  %sFAIL%s a consumer reaches past the boundary for withheld bytes:\n' "$RED" "$NC"
+    sed 's/^/        /' "$TMP/leaks.out"
+    fail=$((fail+1))
+  fi
+fi
+
+# AND THE SINGLE DEFINITION IS ENFORCED STRUCTURALLY, because "one definition"
+# is a property of this file that prose cannot hold. The duplicate that made the
+# receipt above unsound was created by pasting the predicate into a second
+# heredoc; that paste is now a red row. Counting definition lines is exactly as
+# strong as it looks — a copy under another name, or a predicate rebuilt out of
+# `re.compile` calls spelled differently, walks past it — and it is here for the
+# ordinary way of doing it, which is the way it happened.
+#
+# (`PRIVATE` is also spelled in the ALLOWPY block above, as a tuple of the three
+# slot NAMES. That is not a third copy of this predicate: it answers a different
+# question — which function may LOAD a raw slot — with a different mechanism
+# (Python's own AST). The names WERE duplicated between them with nothing
+# checking it, recorded as a known hole for a round; the two are now reconciled
+# below, because "recorded" is what the last two control/enforcer drifts were
+# each doing right up until they drifted.)
+#
+# `scan_text` IS COUNTED TOO, and that is the round-19 addition: the copy that
+# fooled the rows this time was not a copy of the predicate, it was a fourth
+# statement of the property (a three-substring prefilter) sitting in the scan
+# loop above `flagged`. Both the shared entry point and the predicate now have
+# to be single.
+flagged_defs=$(grep -c '^def flagged(line):$' scripts/test-gate-probe.sh)
+scan_defs=$(grep -c '^def scan_text(name, text):$' scripts/test-gate-probe.sh)
+private_defs=$(grep -c '^PRIVATE = re.compile' scripts/test-gate-probe.sh)
+if [ "$flagged_defs" -eq 1 ] && [ "$scan_defs" -eq 1 ] && [ "$private_defs" -eq 1 ]; then
+  printf '  %sok%s   the predicate and the scan entry point each have exactly one definition in this file\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s the private-slot predicate is defined %s time(s), the scan entry point %s time(s) and the pattern %s time(s) — a control that is a COPY of what it controls certifies nothing about the enforcer. Delete the copy and run the rows against the definition in force.\n' \
+    "$RED" "$NC" "$flagged_defs" "$scan_defs" "$private_defs"
+  fail=$((fail+1))
+fi
+
+# AND THE TWO SPELLINGS OF THE SLOT NAMES ARE RECONCILED, rather than documented
+# as unreconciled. They cannot share a definition — they live in two separate
+# heredocs run as two separate interpreters, and merging them would put the AST
+# walk and the tree scan in one process for no reason but this. So the agreement
+# is EXECUTED: both spellings are read back out of this file and the derived name
+# sets are compared. That is the discipline tests/d3b_tail_if.rs:107-122 states
+# and the one both of this round's defects came from ignoring — a documented
+# disagreement is still a disagreement.
+python3 - >"$TMP/agree.out" 2>&1 <<'AGREEPY'
+import pathlib, re, sys
+
+src = pathlib.Path("scripts/test-gate-probe.sh").read_text()
+
+m_tuple = re.search(r'^PRIVATE = \((.*)\)$', src, re.M)
+m_regex = re.search(r'^PRIVATE = re\.compile\(r"(.*)"\)$', src, re.M)
+if not m_tuple or not m_regex:
+    print("one of the two PRIVATE spellings is no longer where this check reads "
+          "it (tuple=%s, regex=%s). Both must stay greppable or this agreement "
+          "stops being executed." % (bool(m_tuple), bool(m_regex)))
+    sys.exit(1)
+
+names_from_tuple = set(re.findall(r'"([^"]+)"', m_tuple.group(1)))
+
+# Each branch of the regex is either a NAME branch — `\._out\b` — or a nested
+# PREFIX branch — `\.withheld\._` — which guards any private field of a named
+# member and has no counterpart in the AST table by design.
+names_from_regex, prefixes = set(), set()
+for branch in m_regex.group(1).split("|"):
+    name = re.fullmatch(r"\\\.(_[A-Za-z0-9_]+)\\b", branch)
+    if name:
+        names_from_regex.add(name.group(1))
+        continue
+    prefix = re.fullmatch(r"\\\.([A-Za-z0-9_]+)\\\._", branch)
+    if prefix:
+        prefixes.add(prefix.group(1))
+        continue
+    print("branch %r matches neither shape this check knows. Teach it the shape "
+          "or the sets below are being compared against a partial reading of "
+          "the pattern." % branch)
+    sys.exit(1)
+
+if names_from_tuple != names_from_regex:
+    print("the two spellings of the private slot names disagree:\n"
+          "  ALLOWPY tuple : %s\n"
+          "  LEAKPY regex  : %s\n"
+          "  only in tuple : %s\n"
+          "  only in regex : %s"
+          % (sorted(names_from_tuple), sorted(names_from_regex),
+             sorted(names_from_tuple - names_from_regex),
+             sorted(names_from_regex - names_from_tuple)))
+    sys.exit(1)
+
+print("ok %d name(s), %d nested prefix branch(es): %s"
+      % (len(names_from_regex), len(prefixes), sorted(prefixes)))
+AGREEPY
+if [ $? -eq 0 ]; then
+  printf '  %sok%s   the AST tables slot names and the tree scans pattern name the same slots (%s)\n' \
+    "$GREEN" "$NC" "$(cat "$TMP/agree.out")"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s the two hand-written spellings of the private slot names have drifted:\n' "$RED" "$NC"
+  sed 's/^/        /' "$TMP/agree.out"
+  fail=$((fail+1))
+fi
 
 echo
 echo "== the malfunction path must not republish producer text =="

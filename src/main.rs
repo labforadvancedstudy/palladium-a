@@ -87,18 +87,23 @@ fn main() {
 }
 
 fn print_banner() {
+    // The version comes from Cargo.toml, like `--version`. This line used to
+    // spell it out by hand as v0.1-alpha — a third copy of the version,
+    // printed on every single compile, two releases stale.
+    // tests/version_matches_cargo_toml.rs fails if a literal comes back.
     println!(
         r#"
-     _    __     ______    ____                      _ _           
-    / \   \ \   / /  _ \  / ___|___  _ __ ___  _ __ (_) | ___ _ __ 
+     _    __     ______    ____                      _ _
+    / \   \ \   / /  _ \  / ___|___  _ __ ___  _ __ (_) | ___ _ __
    / _ \   \ \ / /| |_) || |   / _ \| '_ ` _ \| '_ \| | |/ _ \ '__|
-  / ___ \   \ V / |  __/ | |__| (_) | | | | | | |_) | | |  __/ |   
- /_/   \_\   \_/  |_|     \____\___/|_| |_| |_| .__/|_|_|\___|_|   
-                                               |_|                  
-    
-    Alan von Palladium Compiler v0.1-alpha
+  / ___ \   \ V / |  __/ | |__| (_) | | | | | | |_) | | |  __/ |
+ /_/   \_\   \_/  |_|     \____\___/|_| |_| |_| .__/|_|_|\___|_|
+                                               |_|
+
+    Alan von Palladium Compiler v{}
     "Turing's Proofs Meet von Neumann's Performance"
-    "#
+    "#,
+        env!("CARGO_PKG_VERSION")
     );
 }
 

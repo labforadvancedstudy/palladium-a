@@ -1,0 +1,168 @@
+// D3b regression driver: a tail `if`/`match` is the function's return value.
+//
+// WAS `stdlib_tail_if_defect.pd`, PINNED known_violation:fib,classify
+// D3 lowered a tail *expression* to `Stmt::Return`, but a tail `if` is a
+// `Stmt::If`, so it was never lowered. Measured on the previous commit:
+//
+//     fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n-1) + fib(n-2) } }
+//
+//   emitted
+//     long long fib(long long n) {
+//         if ((n <= 1)) {
+//         n;                                  <- bare expression, no return
+//         } else {
+//         (fib((n - 1)) + fib((n - 2)));      <- bare expression, no return
+//         }
+//     }
+//   and `fib(10)` printed 8261746944 instead of 55, exit 0, no diagnostic.
+//
+// The parser now recurses into the branches of a function body's tail `if` and
+// the arms of a tail `match` (src/parser/mod.rs, `lower_tail_to_return`), so
+// `main` below CALLS these functions and asserts their values. It deliberately
+// did not before: recording garbage in a golden transcript blesses a miscompile.
+//
+// WHY EVERY VALUE IS PRINTED AND NOT ONLY ASSERTED
+// (inherited from stdlib_tail_return.pd, and re-measured for this file)
+// The missing `return` is undefined behaviour in the generated C, so at -O2 gcc
+// may fold an `if (r != 55)` guard to false and delete the panic that would
+// have caught it. Re-measured with the parser change reverted: this driver
+// printed 8261746944 for fib(10) and STILL EXITED 0. An exit-code-only gate
+// cannot see D3b. The values below are diffed against stdlib_tail_if.expected,
+// so a wrong value fails even when the assertion is optimised away.
+//
+// The second net is structural: tests/stdlib/DRIVERS.tsv records this file as
+// `clean`, and `make stdlib-gate` runs scripts/check-c-returns.py over the
+// emitted C to require that every non-void function here returns on every path.
+// That net needs no execution and is optimisation-independent.
+
+// The tail `match` half of D3b lives in stdlib_tail_match.pd, not here: the C
+// emitted for a `match` is an `if`/`else if` chain with no final `else`, so it
+// cannot be declared `clean` even with every arm returning. See that file.
+
+// --- the shape that defined D3b: a recursive base case in a tail if/else ---
+
+fn fib(n: i64) -> i64 {
+    if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+// Early explicit return, THEN a tail `if`. This shape is why the generated-C
+// invariant is phrased as "returns on every path" rather than "contains a
+// return": the weaker rule sees `return 0;` and passes the function, while
+// classify(5) used to return 0 instead of 10.
+fn classify(n: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    if n <= 1 { n } else { n * 2 }
+}
+
+// Nested: the `else` branch is itself a tail `if`. `else if` is not in the
+// grammar (measured: "Expected '{' after else"), so this is how a three-way
+// choice is written, and the lowering has to recurse to reach `2` and `3`.
+fn sign(n: i64) -> i64 {
+    if n > 0 { 1 } else { if n < 0 { 2 } else { 3 } }
+}
+
+// A branch may end in statements before its tail expression.
+fn tail_after_stmts(n: i64) -> i64 {
+    if n > 0 {
+        let doubled = n * 2;
+        print_int(doubled);
+        doubled + 1
+    } else {
+        print_int(0);
+        0
+    }
+}
+
+// Non-i64 return types go through the same path.
+fn is_big(n: i64) -> bool {
+    if n > 100 { true } else { false }
+}
+
+fn name_of(n: i64) -> String {
+    if n == 1 { "one" } else { "many" }
+}
+
+// A tail expression in one branch and an explicit `return` in the other: the
+// lowering must produce a `return` in BOTH arms, not just the one it rewrote.
+fn mixed_return(n: i64) -> i64 {
+    if n > 0 {
+        return n * 10;
+    } else {
+        n - 1
+    }
+}
+
+// A function whose body ends in an `if` but whose branches only `return` must
+// keep working: there is no tail expression, so nothing is lowered.
+fn both_explicit(n: i64) -> i64 {
+    if n > 0 {
+        return 7;
+    } else {
+        return 8;
+    }
+}
+
+// A unit function's tail `if` must NOT be lowered — `return print_int(n);`
+// would return void from a void function, and gcc rejects it. This is the
+// regression guard for the `return_type.is_some()` condition on the lowering.
+fn unit_tail_if(n: i64) {
+    if n > 0 {
+        print_int(n);
+    } else {
+        print_int(0);
+    }
+}
+
+fn expect_i64(label: String, actual: i64, expected: i64) {
+    print(label);
+    print_int(actual);
+    if actual != expected {
+        panic("tail-if: value mismatch");
+    }
+}
+
+fn expect_bool(label: String, actual: bool, expected: bool) {
+    print(label);
+    if actual {
+        print("true");
+    } else {
+        print("false");
+    }
+    if actual != expected {
+        panic("tail-if: bool mismatch");
+    }
+}
+
+fn expect_str(label: String, actual: String, expected: String) {
+    print(label);
+    print(actual);
+    if string_eq(actual, expected) {
+        return;
+    }
+    panic("tail-if: string mismatch");
+}
+
+fn main() {
+    expect_i64("fib_10", fib(10), 55);
+    expect_i64("fib_1", fib(1), 1);
+    expect_i64("fib_0", fib(0), 0);
+    expect_i64("classify_neg", classify(-3), 0);
+    expect_i64("classify_small", classify(1), 1);
+    expect_i64("classify_big", classify(5), 10);
+    expect_i64("sign_pos", sign(7), 1);
+    expect_i64("sign_neg", sign(-7), 2);
+    expect_i64("sign_zero", sign(0), 3);
+    expect_i64("tail_after_stmts", tail_after_stmts(4), 9);
+    expect_bool("is_big_true", is_big(101), true);
+    expect_bool("is_big_false", is_big(3), false);
+    expect_str("name_of_one", name_of(1), "one");
+    expect_str("name_of_many", name_of(9), "many");
+    expect_i64("mixed_return_then", mixed_return(3), 30);
+    expect_i64("mixed_return_else", mixed_return(-3), -4);
+    expect_i64("both_explicit_then", both_explicit(1), 7);
+    expect_i64("both_explicit_else", both_explicit(-1), 8);
+    unit_tail_if(6);
+    print("tail_if_ok");
+}

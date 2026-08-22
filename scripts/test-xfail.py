@@ -55,13 +55,125 @@ which:
       retire it from the suite, the SLOW set is an explicit allowlist below and
       adding to it means editing this file.
 
+MILESTONE EXIT, AS A COMMAND — AND WHY IT HAD TO BE ADDED HERE
+`scripts/conformance.sh` already turns a milestone's exit criterion into a
+command: `CONFORMANCE_FORBID_OWNER=M1` fails if any evaluated untranscribed /
+vacuous / xfail row in `tests/conformance-manifest.txt` is still owed to M1.
+
+But this repository has TWO owner inventories, not one. The manifest owns .pd
+fixtures; `#[ignore]` reasons own Rust tests, and they carry `(owned by M<n>)`
+in exactly the same grammar (`OWNER_RE` below). `make m1-exit` consulted only
+the first, so it exited 0 while three M1-owned `#[ignore]` rows were still
+failing — one of them the tail-`if` miscompile that M1 was named for. The
+release that exists to remove silent miscompiles shipped one, and its own exit
+criterion could not see it.
+
+So `TEST_XFAIL_FORBID_OWNER=M<n>` is the mirror of `CONFORMANCE_FORBID_OWNER`,
+deliberately using the same word (`OWED_TO_M<n>`) and the same shape of line, so
+that "what does milestone N still owe" is one idea with one vocabulary rather
+than two dialects. `make m1-exit` now runs both and is red unless both are
+clean.
+
+Note the same limit the conformance runner states about itself: the owner is an
+editable label, so retagging a row to another milestone slips this check. The
+authorisation boundary is REVIEW OF THE REASON TEXT, not this script. What the
+debt manifest below adds is that the label now exists in TWO reviewed places
+which must agree, so a retag is a two-file edit rather than a one-word one.
+
+AND THE INVENTORY ITSELF IS CLOSED — see DEBT_MANIFEST below. Everything above
+is derived from cargo, which means a debt that leaves cargo's listing (the
+`#[ignore]` deleted, or the test deleted) leaves BOTH sides of the
+reconciliation at once and the gate goes green having established nothing.
+
+AND EVERY OWED ROW NAMES THE FAILURE IT EXPECTS.
+Everything above reads cargo's `ok|FAILED`, which makes an XFAIL an EXISTENCE
+CHECK ON A FAILURE: any failure satisfies it. That is not a declaration. A test
+whose fixture exercises six unimplemented features dies at whichever the parser
+meets first; a test can be blocked by a defect UPSTREAM of the one its
+`#[ignore]` names; and in both cases the row stays green while the reason text
+describes something that no longer happens. Measured on this tree the first time
+the check existed: 8 of 43 owed rows were failing for a reason other than the
+one their `#[ignore]` named — three async tests whose declared
+"expected Future<Int>, found Int" had been replaced by an outright refusal, two
+declaring "Indirect function calls not yet supported" that die earlier in enum
+type inference, one declaring the `?` operator that never reaches a `?`, one
+whose declared mechanism the observed message contradicts, and one whose
+declared measurement ("six identical compilations produced …") cannot happen
+because the fixture no longer compiles at all.
+
+So column 5 of the debt manifest is the DIAGNOSTIC: a literal substring that
+must appear in what the test printed when it failed. `cargo test` reports the
+captured stdout of every failing test under `---- <name> stdout ----`, so the
+evidence is already there — it was simply never read. A row that fails WITHOUT
+its declared diagnostic is reported as DEBT_DIAGNOSTIC, separately from a row
+that fails with it, which is the distinction "is it still failing" cannot make.
+
+What this does NOT claim: that the diagnostic is the RIGHT one. A substring
+copied from a run is a measurement, and it is as authoritative as the reason
+text a reviewer reads — no more than that.
+
+AND NOT "EXACTLY AS AUTHORITATIVE AS THE OWNER COLUMN BESIDE IT", which is what
+this paragraph used to say and which overstated it. The owner is cross-checked
+against a SECOND inventory: the manifest row and the `#[ignore]` reason must
+name the same milestone, and a disagreement is DEBT_OWNER, so moving a debt is a
+two-file edit. The diagnostic is cross-checked against nothing but the run it was
+copied from — and when a row misses, the report below PRINTS the observed
+string, which leaves the cheapest evasion (paste it into column 5) one copy
+away. Said out loud because a reviewer who knows it reads the diff differently:
+here the review of the reason text is the whole of the authorisation boundary,
+with no second inventory behind it.
+
+What the column does buy is that the reason and the run can no longer drift
+apart in silence: when the upstream defect is fixed and the test starts failing
+further along, the gate says so and names both strings.
+
+Env:
+  TEST_XFAIL_FORBID_OWNER   fail if any still-failing XFAIL is owned by this
+                            milestone (e.g. M1). Unset by default, so the
+                            ordinary `make test-xfail` is unaffected.
+
 Usage: scripts/test-xfail.py [--self-test]
 """
 
 import os
 import re
-import subprocess
 import sys
+
+# THE PROCESS BOUNDARY IS NOT RE-IMPLEMENTED HERE.
+# scripts/gate_probe.py owns it. What that buys, stated no larger than it is —
+# an earlier version of this comment said reading a non-concluding producer's
+# output "stops being a rule someone has to remember and becomes an
+# AttributeError", and that was false. The bytes survive in `Run._out` and
+# `Withheld._b`, deliberately, so `spill()` can put them in a file for a human.
+# What is true:
+#
+#   * `classify()` is the route to the output, and the failure result —
+#     `Malfunction` — has no `.text`. Writing `res.text` on something that might
+#     be a malfunction is an AttributeError rather than a silent empty string,
+#     so the ACCIDENT is caught by the interpreter.
+#   * Getting the bytes anyway takes a private name, and there is a gate for
+#     the ordinary way of writing one: scripts/test-gate-probe.sh greps every
+#     GIT-TRACKED file for the literal spellings `._out`, `._b`, `._rc` and
+#     `.withheld._`, outside gate_probe.py and the enforcer, exempting a
+#     mention only where it sits inside a backticked bare dotted name — not
+#     comment lines, which took a lexer to find and never had one.
+#     That is the whole of the mechanism. `getattr(x, "_b")`, a name
+#     assembled at runtime, and an untracked file all walk past it — it is a
+#     convention guard, not access control. (This comment said "any consumer
+#     outside gate_probe.py" for two rounds after gate_probe.py's own docstring
+#     was corrected: a promise retracted in one file and left standing in
+#     another.)
+#
+# It matters exactly here: this file replaced a hand-written Rust module scanner
+# with `cargo test --list` to get "cargo versus cargo", and that argument only
+# holds if cargo's VERDICT is read, not merely its stdout.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# `classify` is imported under a distinct name: this file already has a
+# `classify(site)` for #[ignore] tags, and a silent shadow there would have
+# turned every process verdict into a tag verdict.
+from gate_probe import Malfunction, classify as classify_process  # noqa: E402
+from gate_probe import run as run_process  # noqa: E402
+from gate_probe import run_and_classify  # noqa: E402
 
 # Reviewed allowlist of tests that may be #[ignore]d for cost alone. Keyed by
 # the SAME identity reconciliation uses — (target, full module path) — because
@@ -90,6 +202,34 @@ DOCTEST_RE = re.compile(r"^\s+Doc-tests ")
 RESULT_RE = re.compile(r"^test result:")
 TEST_RE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED)$")
 LIST_RE = re.compile(r"^(\S+): test$")
+# libtest prints the captured output of each failing test under a header of this
+# shape, after all of that target's result lines. It is the ONLY place the gate
+# can learn WHY a test failed rather than THAT it did.
+DETAIL_RE = re.compile(r"^---- (\S+) (?:stdout|stderr) ----$")
+FAILURES_RE = re.compile(r"^failures:$")
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# The panic message: everything between libtest's location line and its
+# backtrace note. Used only to SHOW a reader what a row failed with; the
+# diagnostic is matched against the whole captured block, because the compiler
+# under test prints its diagnostics to stdout before the assertion fires.
+PANIC_RE = re.compile(r"panicked at [^\n]*\n(.*?)(?:\nnote: run with|\Z)", re.S)
+
+
+def flatten(text):
+    """ANSI-stripped, whitespace-collapsed — the form both sides of a
+    diagnostic comparison are in.
+
+    Colour codes are stripped because the compiler under test emits them and a
+    manifest column cannot carry them; whitespace is collapsed because a
+    diagnostic that wraps across lines in one terminal width must not stop
+    matching in another."""
+    return " ".join(ANSI_RE.sub("", text).split())
+
+
+def panic_message(text, width=220):
+    m = PANIC_RE.search(ANSI_RE.sub("", text))
+    msg = flatten(m.group(1)) if m else flatten(text)
+    return msg if len(msg) <= width else msg[:width] + " …"
 
 
 def parse_list(out):
@@ -110,29 +250,58 @@ def parse_list(out):
 
 
 def parse_run(out):
-    """`cargo test -- --ignored` -> (observations, targets that never reported)."""
+    """`cargo test -- --ignored` -> (observations, unreported targets, details).
+
+    `details` is {(target, test): captured output}, taken from libtest's
+    `---- <name> stdout ----` blocks. That is the evidence for WHICH failure
+    happened, which the `ok|FAILED` line cannot carry. A test with both a stdout
+    and a stderr block contributes both, concatenated, because which stream a
+    diagnostic went to is not something a debt row should have to know.
+    """
     target, obs, unreported, open_target = None, [], [], None
+    details, detail_key, detail_buf = {}, None, []
+
+    def close_detail():
+        if detail_key is not None:
+            details[detail_key] = details.get(detail_key, "") + "\n".join(detail_buf)
+
     for raw in out.splitlines():
         m = RUNNING_RE.match(raw)
         if m:
+            close_detail()
+            detail_key, detail_buf = None, []
             if open_target:
                 unreported.append(open_target)
             target = open_target = m.group(1)
             continue
         if DOCTEST_RE.match(raw):
+            close_detail()
+            detail_key, detail_buf = None, []
             if open_target:
                 unreported.append(open_target)
             target = open_target = "doc-tests"
             continue
-        if RESULT_RE.match(raw):
-            open_target = None
+        m = DETAIL_RE.match(raw)
+        if m:
+            close_detail()
+            detail_key, detail_buf = (target, m.group(1)), []
+            continue
+        if FAILURES_RE.match(raw) or RESULT_RE.match(raw):
+            close_detail()
+            detail_key, detail_buf = None, []
+            if RESULT_RE.match(raw):
+                open_target = None
+            continue
+        if detail_key is not None:
+            detail_buf.append(raw)
             continue
         m = TEST_RE.match(raw)
         if m:
             obs.append((target, m.group(1), m.group(2)))
+    close_detail()
     if open_target:
         unreported.append(open_target)
-    return obs, unreported
+    return obs, unreported, details
 
 
 # --------------------------------------------------------------------------
@@ -381,14 +550,30 @@ def classify(site):
     return "UNTAGGED"
 
 
-def reconcile(listed, obs, index):
+def owner_of(site):
+    """The milestone an XFAIL is owed to, or None. Same grammar as OWNER_RE."""
+    m = OWNER_RE.search(site["attr"])
+    return m.group(1) if m else None
+
+
+def reconcile(listed, obs, index, forbid_owner=None, state=None):
     """listed: [(target, path)]; obs: [(target, path, outcome)].
 
     Keys are (target, module path) on both sides. -> (counts, problems)
+
+    `state`, when given, is filled with the per-test `tags` and `sites` this
+    pass resolved, so `reconcile_debt` can cross-check the manifest against the
+    SAME reading of the `#[ignore]` attributes rather than doing its own.
+
+    `forbid_owner` is the milestone-exit gate: when set to "M<n>", a declared
+    XFAIL owned by that milestone which is STILL FAILING is reported as
+    OWED_TO_M<n>. An XFAIL that now passes is not owed — it is an XPASS, which
+    already fails the gate through its own path and asks for the `#[ignore]` to
+    be deleted.
     """
     problems = []
     counts = {"xfail": 0, "xpass": 0, "slow_pass": 0,
-              "declared_xfail": 0, "declared_slow": 0}
+              "declared_xfail": 0, "declared_slow": 0, "owed": 0}
 
     tags, sites = {}, {}
     for key in listed:
@@ -428,6 +613,24 @@ def reconcile(listed, obs, index):
                                  "1..9, or '(owned by unscheduled…)' for work "
                                  "under MILESTONES.md 'Not scheduled, and why'."
                                  % (loc, target, path)))
+            elif len({owner_of(c) for c in cands}) > 1:
+                # FAIL CLOSED. Candidates are validated for KIND above and for
+                # owner VALIDITY just above, but the milestone gate below reads
+                # ONE of them (`cands[0]`), so two well-formed arms owned by
+                # different milestones make "who owes this test" depend on which
+                # declaration appears first in the file. That is a verdict
+                # decided by source order, which is not a verdict. Both are
+                # named because the fix is to make them agree, and a reader
+                # needs to see what they currently say.
+                where = ", ".join("%s:%d [owned by %s]"
+                                  % (c["file"], c["line"], owner_of(c))
+                                  for c in cands)
+                problems.append(("TAG", "%s::%s: its candidate declarations "
+                                        "disagree about the OWNER (%s). "
+                                        "Milestone selection would depend on "
+                                        "which one is read first."
+                                 % (target, path, where)))
+                tags[key] = None
         elif tag == "SLOW":
             counts["declared_slow"] += 1
             if key not in SLOW_ALLOWLIST:
@@ -458,6 +661,18 @@ def reconcile(listed, obs, index):
                                  % (target, path, sites[key]["attr"].strip())))
             else:
                 counts["xfail"] += 1
+                # Milestone gate. Deliberately worded like the conformance
+                # runner's OWED_TO_ line so the two inventories read the same.
+                if forbid_owner and owner_of(sites[key]) == forbid_owner:
+                    counts["owed"] += 1
+                    site = sites[key]
+                    problems.append((
+                        "OWED",
+                        "%s::%s [OWED_TO_%s] class=xfail is still owed to %s\n"
+                        "      declared at %s:%d\n"
+                        "      reason: %s"
+                        % (target, path, forbid_owner, forbid_owner,
+                           site["file"], site["line"], site["attr"].strip())))
         elif tag == "SLOW":
             if outcome == "ok":
                 counts["slow_pass"] += 1
@@ -470,6 +685,229 @@ def reconcile(listed, obs, index):
 
     counts["listed"] = len(listed_set)
     counts["observed"] = len(observed_keys)
+    if state is not None:
+        state["tags"], state["sites"] = tags, sites
+    return counts, problems
+
+
+# --------------------------------------------------------------------------
+# The closed debt inventory
+# --------------------------------------------------------------------------
+# WHY A MANIFEST WHEN CARGO ALREADY KNOWS WHAT IS IGNORED
+#
+# Everything above derives BOTH sides of the reconciliation from
+# `cargo test --list --ignored`. That answers "is every declared failure still
+# failing" and it cannot answer "is the debt still declared", because the debt
+# leaving the listing removes it from both sides at once:
+#
+#     delete `#[ignore]` from a still-failing test  -> gone from the listing
+#     delete the test                               -> gone from the listing
+#
+# Either way `make test-xfail` and `make m1-exit` go green having established
+# nothing. That is the shape of the failure that let v0.3.0 ship: a milestone
+# exit criterion that could not see its own debt. `scripts/conformance.sh`
+# solved this class for .pd fixtures by making the manifest a CLOSED INVENTORY —
+# a fixture on disk that is not declared is UNDECLARED, a row whose fixture is
+# gone is MISSING, and paying off an xfail is a row TRANSITION rather than a row
+# deletion. This is that shape, applied to the Rust suite.
+#
+#     owed  the test must exist, must still be `#[ignore]`d as XFAIL, and its
+#           `#[ignore]` owner must MATCH this row's owner. Retagging one of the
+#           two now disagrees with the other instead of silently moving a debt.
+#     paid  the test must exist and must NOT be ignored any more. Whether it
+#           PASSES is the ordinary suite's job — which is why `make m1-exit`
+#           now runs it (inventory 3 of 3). A row that says paid over a test
+#           that still fails is red there, not green here.
+#
+# WHAT DELETING BUYS YOU: nothing. Delete the row and the test is an undeclared
+# XFAIL (UNDECLARED_DEBT). Delete the test and the row is MISSING. Delete both
+# and you have edited a reviewed manifest to remove a named debt, which is the
+# same authorisation boundary conformance.sh states about itself: the runner
+# cannot tell an honest reclassification from an evasive one, REVIEW OF THE
+# MANIFEST is the boundary. What it does buy is that the evasion has to be
+# written down.
+DEBT_MANIFEST = "tests/rust-debt-manifest.txt"
+DEBT_CLASSES = ("owed", "paid")
+
+
+def read_debt_manifest(path):
+    """-> (rows, errors). A row is a dict; errors are strings."""
+    rows, errors, seen = [], [], {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw_lines = fh.read().splitlines()
+    except OSError as exc:
+        return None, ["cannot read %s: %s. The Rust debt is a CLOSED inventory; "
+                      "without the manifest this gate cannot know what left it"
+                      % (path, exc)]
+    for lineno, raw in enumerate(raw_lines, 1):
+        line = raw.rstrip("\r")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) != 5 or not all(c.strip() for c in cols):
+            errors.append("%s:%d: expected 5 tab-separated non-empty columns "
+                          "(target, test, class, owner, diagnostic), got: %r"
+                          % (path, lineno, line))
+            continue
+        target, test, cls, owner, diagnostic = (c.strip() for c in cols)
+        key = (target, test)
+        if key in seen:
+            errors.append("%s:%d: duplicate row for %s::%s (first at line %d)"
+                          % (path, lineno, target, test, seen[key]))
+            continue
+        seen[key] = lineno
+        if cls not in DEBT_CLASSES:
+            errors.append("%s:%d: unknown class %r (owed|paid)"
+                          % (path, lineno, cls))
+            continue
+        if cls == "owed" and not re.fullmatch(r"M[1-9]|unscheduled", owner):
+            errors.append("%s:%d: class=owed needs an owner M1..M9 or "
+                          "'unscheduled', got %r" % (path, lineno, owner))
+            continue
+        if cls == "paid" and owner != "-":
+            errors.append("%s:%d: class=paid must have owner '-' (it is not "
+                          "owed to anyone any more), got %r"
+                          % (path, lineno, owner))
+            continue
+        if cls == "paid" and diagnostic != "-":
+            errors.append("%s:%d: class=paid must have diagnostic '-' (it is "
+                          "not expected to fail any more), got %r"
+                          % (path, lineno, diagnostic))
+            continue
+        if cls == "owed" and diagnostic == "-":
+            # FAIL CLOSED. `-` is the paid spelling, and accepting it here would
+            # reintroduce the exact hole this column closes: an owed row that
+            # any failure satisfies.
+            errors.append("%s:%d: class=owed needs a diagnostic — the literal "
+                          "text the failure must print. '-' is the paid "
+                          "spelling; a row with no diagnostic is an existence "
+                          "check on a failure, which any failure satisfies"
+                          % (path, lineno))
+            continue
+        rows.append({"target": target, "test": test, "class": cls,
+                     "owner": owner, "diagnostic": diagnostic,
+                     "line": lineno, "path": path})
+    return rows, errors
+
+
+def reconcile_debt(rows, listed, all_tests, tags, sites, outcomes=None,
+                   details=None):
+    """Close the inventory both ways. -> (counts, problems)
+
+    `listed`    (target, path) cargo reports as IGNORED
+    `all_tests` (target, path) cargo lists AT ALL — the set a deleted test
+                leaves, and the only way to tell "the #[ignore] came off" from
+                "the test is gone".
+    `outcomes`  (target, path) -> "ok" | "FAILED", from the run
+    `details`   (target, path) -> what the test printed before it failed
+
+    The last two answer WHICH failure. Without them a row is satisfied by any
+    failure at all, including one caused by a defect upstream of the one it
+    declares — see the module docstring. They are optional so that the manifest
+    checks above can be exercised on their own; when they are absent the
+    diagnostic column is simply not evaluated, and the caller says so rather
+    than reporting a check it did not run.
+    """
+    problems = []
+    counts = {"owed": 0, "paid": 0, "diagnostic_checked": 0,
+              "diagnostic_matched": 0}
+    outcomes = outcomes or {}
+    details = details or {}
+    listed_set, all_set = set(listed), set(all_tests)
+    declared = set()
+
+    for row in rows:
+        key = (row["target"], row["test"])
+        declared.add(key)
+        where = "%s:%d" % (row["path"], row["line"])
+        if key not in all_set:
+            problems.append(("DEBT_MISSING",
+                             "%s: %s::%s is declared %s but cargo does not list "
+                             "such a test at all — it was deleted, renamed, or "
+                             "moved to a target that no longer builds. Deleting "
+                             "a test is not how a debt is paid."
+                             % (where, row["target"], row["test"], row["class"])))
+            continue
+        if row["class"] == "owed":
+            counts["owed"] += 1
+            if key not in listed_set:
+                problems.append(("DEBT_STATE",
+                                 "%s: %s::%s is declared owed but is NOT "
+                                 "#[ignore]d any more. If it now passes, "
+                                 "transition this row to `paid` with owner '-'; "
+                                 "if it still fails, the #[ignore] must come "
+                                 "back. A debt does not stop existing by "
+                                 "leaving the ignored set."
+                                 % (where, row["target"], row["test"])))
+                continue
+            tag = tags.get(key)
+            if tag != "XFAIL":
+                problems.append(("DEBT_STATE",
+                                 "%s: %s::%s is declared owed but its #[ignore] "
+                                 "is tagged %s, not XFAIL"
+                                 % (where, row["target"], row["test"],
+                                    tag or "unreadable")))
+                continue
+            # WHICH FAILURE, NOT THAT ONE HAPPENED. Only evaluated for a row
+            # the run actually reported as FAILED: an XPASS is already a
+            # verdict of its own, and reporting "and its diagnostic was
+            # missing" on top of it would count one defect twice.
+            if outcomes.get(key) == "FAILED":
+                counts["diagnostic_checked"] += 1
+                text = details.get(key)
+                if text is None:
+                    problems.append((
+                        "DEBT_DIAGNOSTIC",
+                        "%s: %s::%s FAILED but produced no captured output, so "
+                        "the declared diagnostic could not be checked. A row "
+                        "whose failure cannot be identified is an existence "
+                        "check on a failure.\n      declared: %s"
+                        % (where, row["target"], row["test"],
+                           row["diagnostic"])))
+                elif row["diagnostic"] not in flatten(text):
+                    problems.append((
+                        "DEBT_DIAGNOSTIC",
+                        "%s: %s::%s is still failing, but NOT for the reason "
+                        "this row declares. Either the declared defect moved "
+                        "and the reason text is stale, or something upstream "
+                        "now fails first — read both, then fix the "
+                        "declaration or the code.\n"
+                        "      declared: %s\n"
+                        "      observed: %s"
+                        % (where, row["target"], row["test"],
+                           row["diagnostic"], panic_message(text))))
+                else:
+                    counts["diagnostic_matched"] += 1
+
+            declared_owner = owner_of(sites[key]) if key in sites else None
+            if declared_owner != row["owner"]:
+                problems.append(("DEBT_OWNER",
+                                 "%s: %s::%s is owed to %s here, but its "
+                                 "#[ignore] at %s:%d says %s. The two "
+                                 "inventories must name the same milestone — "
+                                 "retagging one of them is how a debt moves "
+                                 "quietly."
+                                 % (where, row["target"], row["test"],
+                                    row["owner"], sites[key]["file"],
+                                    sites[key]["line"], declared_owner)))
+        else:  # paid
+            counts["paid"] += 1
+            if key in listed_set:
+                problems.append(("DEBT_STATE",
+                                 "%s: %s::%s is declared paid but is still "
+                                 "#[ignore]d, so it is not in the regression "
+                                 "net. Delete the #[ignore], or set the row "
+                                 "back to owed."
+                                 % (where, row["target"], row["test"])))
+
+    for key in sorted(listed_set):
+        if tags.get(key) == "XFAIL" and key not in declared:
+            problems.append(("UNDECLARED_DEBT",
+                             "%s::%s is an XFAIL cargo knows about, but no row "
+                             "in %s declares it. Every owed test must be in the "
+                             "inventory, or the inventory cannot tell you what "
+                             "left it." % (key[0], key[1], DEBT_MANIFEST)))
     return counts, problems
 
 
@@ -624,7 +1062,7 @@ def self_test():
           [("src/lib.rs", "optimizer::dead_code_test::tests::test_a"),
            ("tests/x_test.rs", "a::test_dup")])
 
-    obs, unreported = parse_run(
+    obs, unreported, _ = parse_run(
         "     Running unittests src/lib.rs (target/release/deps/palladium-ab)\n"
         "test optimizer::dead_code_test::tests::test_a ... FAILED\n"
         "test result: FAILED. 0 passed; 1 failed\n"
@@ -636,10 +1074,42 @@ def self_test():
            ("tests/x_test.rs", "a::test_dup", "ok")])
     check("no unreported target", unreported, [])
 
-    _, unreported = parse_run(
+    _, unreported, _ = parse_run(
         "     Running tests/x_test.rs (target/release/deps/x_test-cd)\n"
         "test a::test_dup ... FAILED\n")
     check("unreported target detected", unreported, ["tests/x_test.rs"])
+
+    # 8b. THE CAPTURED OUTPUT OF A FAILING TEST, which is the only evidence for
+    #     WHICH failure happened. Two targets may hold same-named tests, so the
+    #     detail is keyed the same way everything else is; the block must not
+    #     swallow the result line that follows it; and ANSI colour from the
+    #     compiler under test must not stop a diagnostic matching.
+    obs, _, details = parse_run(
+        "     Running tests/a_test.rs (target/release/deps/a_test-11)\n"
+        "test t ... FAILED\n"
+        "\nfailures:\n\n"
+        "---- t stdout ----\n"
+        "\x1b[1;31merror\x1b[0m: boom in a\n"
+        "thread 't' panicked at tests/a_test.rs:1:1:\n"
+        "assert failed: boom in a\n"
+        "note: run with `RUST_BACKTRACE=1`\n"
+        "\nfailures:\n    t\n"
+        "test result: FAILED. 0 passed; 1 failed\n"
+        "     Running tests/b_test.rs (target/release/deps/b_test-22)\n"
+        "test t ... FAILED\n"
+        "---- t stdout ----\n"
+        "boom in b\n"
+        "test result: FAILED. 0 passed; 1 failed\n")
+    check("details keyed by (target, path), not by bare name",
+          sorted(details), [("tests/a_test.rs", "t"), ("tests/b_test.rs", "t")])
+    check("a detail block does not swallow the next target's results",
+          obs, [("tests/a_test.rs", "t", "FAILED"),
+                ("tests/b_test.rs", "t", "FAILED")])
+    check("ANSI colour does not hide a diagnostic",
+          "error: boom in a" in flatten(details[("tests/a_test.rs", "t")]), True)
+    check("the panic message is what a reader is shown",
+          panic_message(details[("tests/a_test.rs", "t")]),
+          "assert failed: boom in a")
 
     # 9. The verdicts themselves.
     index = index_sites({
@@ -661,31 +1131,309 @@ def self_test():
                             [("tests/x_test.rs", "test_s", "ok")], index)
     check("SLOW off the allowlist fails", [k for k, _ in problems], ["TAG"])
 
+    # 10. The milestone gate. This is the check the repo did not have: an
+    #     `#[ignore]` owed to M1 and still failing must fail `make m1-exit`,
+    #     while the ordinary `make test-xfail` (no owner set) stays green on the
+    #     very same input. Both halves matter — a gate that fires always is as
+    #     useless as one that never fires.
+    owners = index_sites({
+        "tests/x_test.rs":
+            '#[test] #[ignore = "XFAIL: a (owned by M1)"] fn test_m1() {}\n'
+            '#[test] #[ignore = "XFAIL: b (owned by M2)"] fn test_m2() {}'})
+    both = [("tests/x_test.rs", "test_m1"), ("tests/x_test.rs", "test_m2")]
+    both_failed = [("tests/x_test.rs", "test_m1", "FAILED"),
+                   ("tests/x_test.rs", "test_m2", "FAILED")]
+
+    c, problems = reconcile(both, both_failed, owners)
+    check("no owner set: still-failing XFAILs are clean",
+          ([k for k, _ in problems], c["owed"]), ([], 0))
+
+    c, problems = reconcile(both, both_failed, owners, forbid_owner="M1")
+    check("forbid M1: only the M1 row is owed",
+          ([k for k, _ in problems], c["owed"]), (["OWED"], 1))
+    check("the OWED line names the milestone and the declaration site",
+          ("[OWED_TO_M1]" in problems[0][1]
+           and "tests/x_test.rs:1" in problems[0][1]),
+          True)
+
+    c, problems = reconcile(both, both_failed, owners, forbid_owner="M2")
+    check("forbid M2 selects a different row",
+          ("test_m2" in problems[0][1], c["owed"]), (True, 1))
+
+    # An XPASS is NOT owed: it passes, so the milestone does not owe it — what
+    # it owes is the deletion of the `#[ignore]`, which XPASS already demands.
+    # Counting it as owed too would report one defect as two.
+    _, problems = reconcile(both,
+                            [("tests/x_test.rs", "test_m1", "ok"),
+                             ("tests/x_test.rs", "test_m2", "FAILED")],
+                            owners, forbid_owner="M1")
+    check("an XPASS is reported as XPASS, not as owed",
+          sorted(k for k, _ in problems), ["XPASS"])
+
+    # 11. OWNER AGREEMENT BETWEEN CANDIDATE DECLARATIONS. Two `#[cfg]` arms may
+    #     legitimately carry different reason TEXT, but not different owners:
+    #     the milestone gate reads one of them, so a disagreement makes "which
+    #     milestone owes this" depend on which arm appears first in the file.
+    disagree = """
+        #[cfg(unix)]
+        mod m { #[test] #[ignore = "XFAIL: unix (owned by M1)"] fn test_d() {} }
+        #[cfg(not(unix))]
+        mod m { #[test] #[ignore = "XFAIL: other (owned by M2)"] fn test_d() {} }
+    """
+    index = index_sites({"tests/p/main.rs": disagree})
+    _, problems = reconcile([("tests/p/main.rs", "m::test_d")],
+                            [("tests/p/main.rs", "m::test_d", "FAILED")], index)
+    check("arms that disagree about the owner are an error",
+          [k for k, _ in problems], ["TAG"])
+    check("the owner disagreement names BOTH owners",
+          ("owned by M1" in problems[0][1] and "owned by M2" in problems[0][1]),
+          True)
+    # ... and it must FAIL CLOSED: neither milestone may be told it is finished
+    # while the row's owner is undecided.
+    c, problems = reconcile([("tests/p/main.rs", "m::test_d")],
+                            [("tests/p/main.rs", "m::test_d", "FAILED")],
+                            index, forbid_owner="M1")
+    check("a disagreed owner is not silently attributed",
+          (c["owed"], sorted(k for k, _ in problems)), (0, ["TAG"]))
+
+    # 12. THE CLOSED DEBT INVENTORY. Every route by which a debt can leave the
+    #     `--list --ignored` reconciliation must be caught by the manifest.
+    debt_state = {}
+    debt_index = index_sites({
+        "tests/x_test.rs":
+            '#[test] #[ignore = "XFAIL: a (owned by M1)"] fn test_owed() {}'})
+    reconcile([("tests/x_test.rs", "test_owed")],
+              [("tests/x_test.rs", "test_owed", "FAILED")], debt_index,
+              state=debt_state)
+    tags, sites = debt_state["tags"], debt_state["sites"]
+    owed_row = [{"target": "tests/x_test.rs", "test": "test_owed",
+                 "class": "owed", "owner": "M1", "diagnostic": "the named defect",
+                 "line": 1, "path": DEBT_MANIFEST}]
+    listed = [("tests/x_test.rs", "test_owed")]
+
+    _, problems = reconcile_debt(owed_row, listed, listed, tags, sites)
+    check("a declared, still-ignored, still-owed test is clean", problems, [])
+
+    # The row is gone but the test is not: an undeclared debt.
+    _, problems = reconcile_debt([], listed, listed, tags, sites)
+    check("deleting the ROW is not an escape hatch",
+          [k for k, _ in problems], ["UNDECLARED_DEBT"])
+
+    # The test is gone: this is the v0.3.0 failure — the debt left the
+    # inventory and every cargo-derived check went green.
+    _, problems = reconcile_debt(owed_row, [], [], tags, sites)
+    check("deleting the TEST is not an escape hatch",
+          [k for k, _ in problems], ["DEBT_MISSING"])
+
+    # The `#[ignore]` came off while the test still fails: it vanishes from the
+    # ignored listing, so only the manifest can see it.
+    _, problems = reconcile_debt(owed_row, [], listed, tags, sites)
+    check("removing #[ignore] while owed is caught",
+          [k for k, _ in problems], ["DEBT_STATE"])
+
+    # Retagging the `#[ignore]` to another milestone must disagree with the row.
+    moved = [dict(owed_row[0], owner="M2")]
+    _, problems = reconcile_debt(moved, listed, listed, tags, sites)
+    check("a debt retagged in only one inventory is caught",
+          [k for k, _ in problems], ["DEBT_OWNER"])
+    check("the owner disagreement names both milestones",
+          ("M2" in problems[0][1] and "M1" in problems[0][1]), True)
+
+    # 12b. AND THE ROW MUST NAME **WHICH** FAILURE. Everything above is
+    #      satisfied by any failure at all, which is how a row stays green
+    #      while something upstream of its declared defect is what actually
+    #      fails. Three states, and the middle one is the whole point: it is a
+    #      failure, and it is reported DISTINCTLY from a failure that matches.
+    ok_key = ("tests/x_test.rs", "test_owed")
+    failed = {ok_key: "FAILED"}
+    c, problems = reconcile_debt(
+        owed_row, listed, listed, tags, sites, outcomes=failed,
+        details={ok_key: "\x1b[31merror\x1b[0m: the named defect\nboom\n"})
+    check("a row failing WITH its declared diagnostic is clean and counted",
+          (problems, c["diagnostic_matched"], c["diagnostic_checked"]),
+          ([], 1, 1))
+
+    c, problems = reconcile_debt(
+        owed_row, listed, listed, tags, sites, outcomes=failed,
+        details={ok_key: "error: something else broke first\n"})
+    check("a row failing for an UNNAMED reason is reported distinctly",
+          ([k for k, _ in problems], c["diagnostic_matched"]),
+          (["DEBT_DIAGNOSTIC"], 0))
+    # Indexed defensively, unlike the checks above: this is the one whose REVERT
+    # is the receipt, and a traceback is a worse receipt than a named failing
+    # check — it does not say which property was lost.
+    msg = problems[0][1] if problems else ""
+    check("the report names both the declared and the observed failure",
+          ("the named defect" in msg and "something else broke first" in msg),
+          True)
+
+    c, problems = reconcile_debt(owed_row, listed, listed, tags, sites,
+                                 outcomes=failed, details={})
+    check("a failure with no captured output cannot be identified, so it fails",
+          [k for k, _ in problems], ["DEBT_DIAGNOSTIC"])
+
+    # An XPASS is not a diagnostic problem: it is already a verdict, and
+    # reporting the missing diagnostic on top would count one defect twice.
+    c, problems = reconcile_debt(owed_row, listed, listed, tags, sites,
+                                 outcomes={ok_key: "ok"}, details={})
+    check("an XPASS is not also reported as a missing diagnostic",
+          (problems, c["diagnostic_checked"]), ([], 0))
+
+    # `paid` is the transition, and it means "no longer ignored".
+    paid = [dict(owed_row[0], **{"class": "paid", "owner": "-",
+                                 "diagnostic": "-"})]
+    _, problems = reconcile_debt(paid, [], listed, tags, sites)
+    check("a paid row over a test that is no longer ignored is clean",
+          problems, [])
+    _, problems = reconcile_debt(paid, listed, listed, tags, sites)
+    check("a paid row over a still-ignored test is caught",
+          [k for k, _ in problems], ["DEBT_STATE"])
+    _, problems = reconcile_debt(paid, [], [], tags, sites)
+    check("a paid row whose test was deleted is caught",
+          [k for k, _ in problems], ["DEBT_MISSING"])
+
+    # 13. Manifest syntax fails closed, naming the line.
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+        fh.write("# comment\n"
+                 "tests/x_test.rs\ttest_a\towed\tM1\tit says why\n"
+                 "tests/x_test.rs\ttest_a\towed\tM1\tit says why\n"
+                 "tests/x_test.rs\ttest_b\towed\tsomeday\tit says why\n"
+                 "tests/x_test.rs\ttest_c\tmaybe\tM1\tit says why\n"
+                 "tests/x_test.rs\ttest_d\tpaid\tM1\t-\n"
+                 "tests/x_test.rs\ttest_e\towed\tM1\t-\n"
+                 "tests/x_test.rs\ttest_f\tpaid\t-\tstill expects a failure\n"
+                 "two columns only\n")
+        tmp_manifest = fh.name
+    rows, errs = read_debt_manifest(tmp_manifest)
+    os.unlink(tmp_manifest)
+    check("manifest: one good row survives, seven errors are named",
+          (len(rows), len(errs)), (1, 7))
+    check("an owed row with no diagnostic is named as such",
+          any(":7: class=owed needs a diagnostic" in e for e in errs), True)
+    check("a paid row that still expects a failure is named as such",
+          any(":8: class=paid must have diagnostic '-'" in e for e in errs),
+          True)
+    rows, errs = read_debt_manifest("/nonexistent/rust-debt-manifest.txt")
+    check("a missing manifest is fatal, not empty", (rows, len(errs)), (None, 1))
+
+    # 14. THE PRODUCER'S VERDICT, NOT JUST ITS STDOUT. A cargo that was killed
+    #     after printing a complete-looking listing must not be believed: a
+    #     SHORT listing is indistinguishable from a repo with fewer ignored
+    #     tests, so the gate would report a smaller debt and pass.
+    from gate_probe import Run
+
+    parsable = ("     Running tests/x_test.rs (target/release/deps/x_test-cd)\n"
+                "a::test_dup: test\n")
+    check("a listing that concluded is read",
+          read_listing(classify_process(Run(["cargo"], 0, parsable), reject_codes=()),
+                       "listing")[0],
+          [("tests/x_test.rs", "a::test_dup")])
+    for rc, label in ((-9, "SIGKILL (-9)"), (137, "shell-reported 137"),
+                      (101, "unpinned exit 101"), (1, "unpinned exit 1")):
+        listed_, problem = read_listing(
+            classify_process(Run(["cargo"], rc, parsable), reject_codes=()), "listing")
+        check("a listing from a producer that died — %s — is refused" % label,
+              (listed_, problem is not None and "did not conclude" in problem),
+              (None, True))
+    # The verdict type carries no text, so `res.text` on a possible malfunction
+    # is an AttributeError rather than a silent empty string. That catches the
+    # ACCIDENT; it does not make the bytes unreachable (they are still in
+    # `Withheld`, for `spill()`), and the grep in scripts/test-gate-probe.sh is
+    # what stops a consumer reaching for them on purpose.
+    check("Malfunction exposes no text",
+          hasattr(classify_process(Run(["cargo"], -9, parsable), reject_codes=()), "text"),
+          False)
+    # The RUN pins 101 (libtest's "a test failed"), which IS a conclusion.
+    res = classify_process(Run(["cargo"], 101, "test x ... FAILED\n"), reject_codes=(101,))
+    check("the ignored run treats 101 as a conclusion, not a malfunction",
+          (isinstance(res, Malfunction), res.succeeded), (False, False))
+    check("...but a signal is a malfunction even at the same output",
+          isinstance(classify_process(Run(["cargo"], -9, "test x ... FAILED\n"),
+                              reject_codes=(101,)), Malfunction),
+          True)
+
+    # AND THE GATE HAS TO BE REACHABLE — the check that this file is on the
+    # certifying path, which it was not. `make gates` ran ten gates and not this
+    # one, so "every declared failure still fails for its declared reason" was
+    # enforced only by naming this target by hand, or by `make m1-exit`, which is
+    # RED by design and therefore never evidence that anything passed. The
+    # version gate's tester makes the same assertion about itself for the same
+    # reason (scripts/test-version-gate.sh:172-186); a gate nobody runs is a
+    # document, and this is the line that notices when it becomes one again.
+    # `make -n` goes through run_and_classify, not raw subprocess: this file does
+    # not re-implement the process boundary, and a `make` that dies on a signal
+    # must not be read as "the target is not wired".
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    dry = run_and_classify(["make", "-n", "gates"], cwd=root, reject_codes=())
+    check("make gates runs scripts/test-xfail.py",
+          dry.succeeded and "scripts/test-xfail.py" in dry.text, True)
+
     if failures:
         print("self-test FAILED:", file=sys.stderr)
         for f in failures:
             print("  " + f, file=sys.stderr)
         return False
-    print("self-test: 21 checks green (reason lookup incl. same name in two "
+    print("self-test: 62 checks green (reason lookup incl. same name in two "
           "modules and in two targets, shared module, missing and ambiguous "
-          "reasons, literal-safe scanning, cargo attribution, verdicts)")
+          "reasons, literal-safe scanning, cargo attribution, verdicts, the "
+          "milestone-owner gate incl. its off state, owner agreement between "
+          "candidate declarations, the closed debt inventory incl. every route "
+          "out of it, the DIAGNOSTIC column — a row failing for an unnamed "
+          "reason is reported distinctly from one failing for its named "
+          "reason — and the producer boundary: a signalled or unpinned cargo "
+          "is refused even when its listing parses)")
     return True
 
 
 # --------------------------------------------------------------------------
 
-def run_cargo(extra):
-    """cargo test with the two streams merged BY THE OS.
+def run_cargo(extra, reject_codes=()):
+    """cargo test with the two streams merged BY THE OS, and its STATUS READ.
 
     Cargo prints `Running <target>` to stderr and test lines to stdout, and it
     is their interleaving that says which target a test belongs to. Capturing
     the two separately and concatenating puts every target header after every
-    result, and everything parses with target None.
+    result, and everything parses with target None. `gate_probe.run` merges
+    them at the OS level for the same reason.
+
+    -> Concluded | Malfunction. `reject_codes` are the exit codes that mean
+    "this producer finished and said no", measured for the two shapes used here:
+
+        cargo test -- --list [--ignored]   exit 0            (a listing)
+        cargo test -- --ignored            exit 101 on fail  (libtest's code)
+
+    So a LISTING passes `reject_codes=()` — only exit 0 concludes, because a
+    listing that did not finish is not a listing — and the RUN passes
+    `reject_codes=(101,)`. Anything else, and every signal, is a Malfunction,
+    which has no `.text` for this file to read.
     """
-    proc = subprocess.run(
-        ["cargo", "test", "--release", "--no-fail-fast", "--"] + extra,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    return proc.returncode, proc.stdout
+    # `run_and_classify` rather than run()+classify(): a caller that never holds
+    # a `Run` has no raw exit status to read, which is how `cmd_calibrate`
+    # formed a verdict without asking whether the output had been captured.
+    return run_and_classify(
+        ["cargo", "test", "--release", "--no-fail-fast", "--"] + list(extra),
+        reject_codes=reject_codes)
+
+
+def read_listing(res, what):
+    """-> (listed, problem). Exactly one is None.
+
+    THE FAILURE THIS EXISTS TO STOP: a producer that was signalled, or exited
+    for an unpinned reason, having ALREADY printed a complete-looking listing.
+    Its stdout parses. Believing it is the family M1 spent itself on — trusting
+    parsable output from a process that did not finish — and it is worse here
+    than elsewhere, because a SHORT listing is indistinguishable from a repo
+    with fewer ignored tests: the gate would report a smaller debt and pass.
+    """
+    if isinstance(res, Malfunction):
+        return None, ("%s did not conclude (%s). Nothing was established: its "
+                      "output may look like a complete listing and is not "
+                      "evidence, so it has not been read." % (what, res.how))
+    err = build_error(res.text)
+    if err:
+        return None, "%s did not build: %s" % (what, err)
+    return parse_list(res.text), None
 
 
 def build_error(out):
@@ -707,31 +1455,83 @@ def main():
 
     problems = []
 
-    _, out_list = run_cargo(["--list", "--ignored"])
-    err = build_error(out_list)
+    listed, err = read_listing(run_cargo(["--list", "--ignored"]),
+                               "the ignored listing (cargo test -- --list --ignored)")
     if err:
-        print("error: the ignored set did not build: " + err, file=sys.stderr)
+        print("error: " + err, file=sys.stderr)
         return 1
-    listed = parse_list(out_list)
 
-    rc_run, out_run = run_cargo(["--ignored"])
-    err = build_error(out_run)
+    # The full listing, not just the ignored subset. This is the ONLY way to
+    # tell "the #[ignore] came off" from "the test is gone" — and the second is
+    # the escape hatch the debt manifest exists to close.
+    all_tests, err = read_listing(run_cargo(["--list"]),
+                                  "the full listing (cargo test -- --list)")
+    if err:
+        print("error: " + err, file=sys.stderr)
+        return 1
+
+    # 101 is libtest's "a test failed", which is the NORMAL outcome here: 40
+    # declared expected failures fail. Anything else — a signal, a build abort,
+    # a code nobody pinned — means the run did not conclude, so there is no
+    # observation set and reconciling against one would invent STALE rows for
+    # every test that never got to run.
+    res_run = run_cargo(["--ignored"], reject_codes=(101,))
+    if isinstance(res_run, Malfunction):
+        print("error: the ignored run did not conclude (%s). Nothing was "
+              "established, so no verdict is issued; its output has not been "
+              "read." % res_run.how, file=sys.stderr)
+        return 1
+    err = build_error(res_run.text)
     if err:
         problems.append(("BUILD", "the ignored set did not build: " + err))
-    obs, unreported = parse_run(out_run)
+    obs, unreported, details = parse_run(res_run.text)
+    outcomes = {(t, p): o for t, p, o in obs}
     for t in unreported:
         problems.append(("NO_RESULT", "%s started and never reported a result "
                                       "— it did not run at all" % t))
-    if rc_run != 0 and not any(o[2] == "FAILED" for o in obs):
+    if not res_run.succeeded and not any(o[2] == "FAILED" for o in obs):
         problems.append(("CARGO", "cargo exited %d with no failing test to "
-                                  "explain it" % rc_run))
+                                  "explain it" % res_run.rc))
 
-    counts, more = reconcile(listed, obs, index_sites(read_sources()))
+    forbid_owner = os.environ.get("TEST_XFAIL_FORBID_OWNER", "").strip() or None
+    if forbid_owner and not re.fullmatch(r"M[1-9]|unscheduled", forbid_owner):
+        # Fail closed. A typo'd milestone would match no owner and the gate
+        # would report "nothing owed" — a green run that established nothing,
+        # which is the failure mode this whole file exists to remove.
+        print("error: TEST_XFAIL_FORBID_OWNER=%r is not a valid owner "
+              "(M1..M9 or 'unscheduled')" % forbid_owner, file=sys.stderr)
+        return 1
+
+    state = {}
+    counts, more = reconcile(listed, obs, index_sites(read_sources()),
+                             forbid_owner=forbid_owner, state=state)
     problems += more
+
+    rows, manifest_errors = read_debt_manifest(DEBT_MANIFEST)
+    for e in manifest_errors:
+        problems.append(("DEBT_MANIFEST", e))
+    if rows is None:
+        debt = {"owed": 0, "paid": 0, "diagnostic_checked": 0,
+                "diagnostic_matched": 0}
+    else:
+        debt, more = reconcile_debt(rows, listed, all_tests,
+                                    state["tags"], state["sites"],
+                                    outcomes=outcomes, details=details)
+        problems += more
 
     print("==============================================")
     print("cargo lists %d ignored test(s); %d of them ran"
           % (counts["listed"], counts["observed"]))
+    print("cargo lists %d test(s) in total (the set a deleted test leaves)"
+          % len(set(all_tests)))
+    print("debt inventory (%s): owed=%d paid=%d"
+          % (DEBT_MANIFEST, debt["owed"], debt["paid"]))
+    # The denominator is the finding. "N owed" says nothing about whether those
+    # N are failing for the reasons they name; this line is the only place that
+    # distinction is reported, and printing it even when it is a clean N/N is
+    # what keeps "we check this" from becoming a claim nobody measures.
+    print("owed rows failing for their DECLARED diagnostic: %d of %d checked"
+          % (debt["diagnostic_matched"], debt["diagnostic_checked"]))
     print("declared: xfail=%d slow=%d"
           % (counts["declared_xfail"], counts["declared_slow"]))
     print("ran:      xfail=%d xpass=%d slow_pass=%d"
@@ -741,9 +1541,24 @@ def main():
     print("  slow       = passes, excluded only for cost, on the reviewed allowlist")
     print("  stale      = cargo lists it as ignored, running it reported nothing")
     print("  undeclared = it ran as ignored but the listing does not have it")
+    if forbid_owner:
+        # Print the denominator even when it is zero: "0 owed" out of a stated
+        # number of XFAILs is a measurement, "no output" is not.
+        print("milestone gate: TEST_XFAIL_FORBID_OWNER=%s -> %d of %d still-failing "
+              "XFAIL(s) owed to %s"
+              % (forbid_owner, counts["owed"], counts["xfail"], forbid_owner))
     print("==============================================")
 
     titles = {
+        "DEBT_MANIFEST": "%s is malformed — the closed inventory cannot be read:" % DEBT_MANIFEST,
+        "DEBT_MISSING": "MISSING — declared in the debt inventory, but no such test exists:",
+        "DEBT_STATE": "the debt inventory and the #[ignore] attributes disagree about STATE:",
+        "DEBT_OWNER": "the debt inventory and the #[ignore] attributes disagree about the OWNER:",
+        "DEBT_DIAGNOSTIC": ("failing, but NOT for the declared reason — an XFAIL that any "
+                            "failure satisfies is not a declaration:"),
+        "UNDECLARED_DEBT": "UNDECLARED — an XFAIL that no row of the debt inventory declares:",
+        "OWED": ("OWED — still failing and still owed to %s, so that milestone is "
+                 "not finished:" % forbid_owner),
         "XPASS": "XPASS — these now pass; delete the #[ignore] so they join the regression net:",
         "STALE": "STALE — listed as ignored but never reported a result:",
         "UNDECLARED": "UNDECLARED — ran as ignored but is not in the listing:",
@@ -754,8 +1569,10 @@ def main():
         "BUILD": "Build errors:",
         "CARGO": "Unexplained cargo status:",
     }
-    for kind in ("XPASS", "STALE", "UNDECLARED", "SLOWFAIL", "DUPLICATE",
-                 "TAG", "NO_RESULT", "BUILD", "CARGO"):
+    for kind in ("OWED", "XPASS", "STALE", "UNDECLARED", "SLOWFAIL", "DUPLICATE",
+                 "TAG", "DEBT_MANIFEST", "DEBT_MISSING", "DEBT_STATE",
+                 "DEBT_OWNER", "DEBT_DIAGNOSTIC", "UNDECLARED_DEBT",
+                 "NO_RESULT", "BUILD", "CARGO"):
         items = [m for k, m in problems if k == kind]
         if items:
             print()
@@ -765,7 +1582,9 @@ def main():
 
     if not problems:
         print("✓ every ignored test cargo knows about has a declared reason, "
-              "and every declared failure is still failing")
+              "every declared failure is still failing FOR THE DIAGNOSTIC IT "
+              "DECLARES, and every owed test is declared in %s (and still "
+              "exists)" % DEBT_MANIFEST)
         return 0
     sys.stdout.flush()
     print("\n%d problem(s) above." % len(problems), file=sys.stderr)

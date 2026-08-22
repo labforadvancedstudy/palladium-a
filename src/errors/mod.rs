@@ -236,6 +236,130 @@ impl CompileError {
         }
     }
 
+    /// A value-carrying `return` inside an `async fn` has nowhere to put its
+    /// value.
+    ///
+    /// MEASURED at 7d2fc0d. The type space is wider than the spellings:
+    /// typeck gives an async function the return type `Future<declared>`, and
+    /// an ORDINARY function may declare `Future<()>`, so
+    ///
+    /// ```text
+    /// fn g() -> Future<()> { panic("x"); }
+    /// async fn f() -> () { g() }
+    /// ```
+    ///
+    /// type-checks. The parser lowers that tail to `Stmt::Return(Some(..))`,
+    /// and the poll function it lands in returns an `int` readiness flag with
+    /// no slot for a value — so the value was evaluated and DROPPED, and the
+    /// emitted C carried a duplicate `return 1; // Ready`. The same shape with
+    /// a non-unit output (`async fn f() -> i64 { g() }`, `g() -> Future<i64>`)
+    /// emitted `return <struct>;` from an `int` function and gcc refused it.
+    ///
+    /// Refused rather than lowered, for the same reason `async fn main` is:
+    /// giving the value somewhere to live means a future with a result slot
+    /// and something to drive it, which is the async runtime §N7 says does not
+    /// exist. The async producer as a whole is recorded as a normative
+    /// violation of §N7 owned by M2; this removes the silent value-drop
+    /// underneath it.
+    pub fn async_value_return_unimplemented(span: Span) -> Self {
+        CompileError::Unimplemented {
+            construct: "a `return` with a value inside an `async fn`".to_string(),
+            consequence:
+                "the body is emitted into a poll function that returns only an `int` \
+                 readiness flag, so there is nowhere to put the value: it would be \
+                 evaluated and discarded, and for a non-unit output the emitted C does \
+                 not compile at all"
+                    .to_string(),
+            workaround:
+                "make the function ordinary (`fn`) and return the value directly. There \
+                 is no async runtime, so a future's result has nowhere to live and \
+                 nothing to deliver it"
+                    .to_string(),
+            span: Some(span),
+        }
+    }
+
+    /// The same refusal for a SET of offending imported declarations.
+    ///
+    /// `CompileError` carries one span, so a compiler that finds several of
+    /// these has a choice: report one and drop the rest, or report one that
+    /// NAMES the rest. Reporting one and dropping the rest is what the type
+    /// checker used to do, and because its input arrived in `HashMap` order the
+    /// survivor was not even a function of the program. This constructor takes
+    /// offenders the caller has already put in a deterministic order, points the
+    /// span at the first, and lists every name in `construct`, so a second
+    /// offender is visible without a second compile.
+    ///
+    /// The leading text is byte-identical to
+    /// `async_value_return_unimplemented` because it is the same refusal for the
+    /// same reason; only the list of locations differs. `consequence` and
+    /// `workaround` are unchanged and remain true of each named declaration
+    /// individually, which is the condition this variant's doc comment puts on
+    /// advice raised before the operand is examined.
+    ///
+    /// # Panics
+    /// If `offenders` is empty — an error that names no offender is a claim with
+    /// no referent, and every caller already knows its list is non-empty.
+    pub fn async_value_return_unimplemented_in_imports(offenders: &[(String, Span)]) -> Self {
+        let (_, first_span) = offenders
+            .first()
+            .expect("a refusal must name at least one offending declaration");
+        let names = offenders
+            .iter()
+            .map(|(name, _)| format!("`{}`", name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut err = Self::async_value_return_unimplemented(*first_span);
+        if let CompileError::Unimplemented { construct, .. } = &mut err {
+            *construct = format!("{} (imported: {})", construct, names);
+        }
+        err
+    }
+
+    /// `async fn main` compiles to an entry point nothing can call.
+    ///
+    /// MEASURED at d0eebbf: `async fn main() { print_int(7) }` produced no
+    /// diagnostic, compiled, linked, ran and exited 0 — having printed nothing.
+    /// The emitted entry point was
+    ///
+    /// ```text
+    /// main_Future main() { … }        // not int main(int, char**)
+    /// int main_poll(main_Future *f) { … }
+    /// ```
+    ///
+    /// so the body sits inside a poll function that nobody calls, and the C
+    /// runtime's entry point returns a struct. A program that compiles, links,
+    /// runs, exits 0 and does nothing is the D3/D3b family at the entry point.
+    ///
+    /// WHY THIS IS A REFUSAL AND NOT A FIX. Making it work needs an async
+    /// runtime to drive the future, and the specification says there is none
+    /// (§N7). This compiler's rule when it cannot honour a construct is to
+    /// refuse it with the reason and a workaround — `?`, `.await` and the LLVM
+    /// backend are all refused that way — not to emit something that looks
+    /// like a program.
+    ///
+    /// The ANNOTATED form was already rejected, by accident rather than by
+    /// design: `async fn main() -> ()` fails as "Type mismatch: expected
+    /// Future<()>, found ()" because typeck wraps the declared return type in
+    /// `Future`. With no annotation there is nothing to mismatch, which is why
+    /// only this spelling reached code generation.
+    pub fn async_main_unimplemented(span: Span) -> Self {
+        CompileError::Unimplemented {
+            construct: "`async fn main`".to_string(),
+            consequence:
+                "the entry point would be emitted as `main_Future main()` rather than \
+                 `int main(int, char**)`, with the body inside a `main_poll` function that \
+                 nothing calls — so the program links, runs, exits 0 and does nothing"
+                    .to_string(),
+            workaround:
+                "make `main` an ordinary function: `fn main() { … }`. There is no async \
+                 runtime to drive a future returned from the entry point, so nothing else \
+                 can give it its meaning"
+                    .to_string(),
+            span: Some(span),
+        }
+    }
+
     /// D5: `.await` parses, but nothing lowers it.
     ///
     /// Raised without inspecting the operand, so the advice is phrased for any
@@ -262,6 +386,55 @@ impl CompileError {
                 "nothing can be awaited; write the computation as an ordinary synchronous call. \
                  If a function is declared `-> Future<T>`, change it to `-> T` — deleting \
                  `.await` on its own leaves a Future where a value is required"
+                    .to_string(),
+            span: Some(span),
+        }
+    }
+
+    /// D3b: a function body ends in an `if`/`match` that produces a value on
+    /// some paths and nothing on others.
+    ///
+    /// The lowering added for D3b turns the tail expression of every branch
+    /// into a `return`. It can only do that when every branch HAS one. When one
+    /// does not — most often because the `if` has no `else` — there is nothing
+    /// to return on that path, and code generation used to emit a non-void
+    /// function that simply falls off its end. Measured before this refusal
+    /// existed: `fn f(n: i64) -> i64 { if n > 0 { n } }` compiled clean, exit 0,
+    /// no diagnostic, and `f(3)` printed 8261746944.
+    ///
+    /// Why this is a refusal and not a silent fallthrough: the branch tail is
+    /// unambiguous evidence of what the programmer meant. They wrote a value in
+    /// the position that *is* the function's value. Guessing zero, or letting
+    /// the C fall through, is the compiler answering a question it was not
+    /// asked.
+    ///
+    /// Nothing that used to work is lost. To reach here, a program must already
+    /// contain a tail expression inside a branch of a tail `if`/`match`, and
+    /// every such program miscompiled before this change — there is no correct
+    /// behaviour to regress.
+    ///
+    /// Both workarounds are receipted as programs that compile AND run in
+    /// `tests/d3b_tail_if.rs`: `no_else_workaround_else_branch_compiles_and_runs`
+    /// and `no_else_workaround_explicit_returns_compiles_and_runs`.
+    pub fn tail_value_not_on_every_path(keyword: &str, missing: &str, span: Span) -> Self {
+        CompileError::Unimplemented {
+            // Phrased without an article before the keyword: the message is
+            // built for both `if` and `match`, and "a `if`" is what a format
+            // string with a hardcoded article produces.
+            construct: format!(
+                "a tail `{}` that produces a value on some paths but not all",
+                keyword
+            ),
+            consequence: format!(
+                "the tail expression in a branch is the function's return value, but {} has no \
+                 value to return; code generation would emit a non-void function that falls off \
+                 its end and yields whatever happens to be in the return register",
+                missing
+            ),
+            workaround:
+                "give every path a value — add the missing `else`/arm with its own tail \
+                 expression, as in `if n <= 1 { n } else { n * 2 }` — or drop tail position \
+                 entirely and write explicit returns, as in `if n <= 1 { return n; } return n * 2;`"
                     .to_string(),
             span: Some(span),
         }
