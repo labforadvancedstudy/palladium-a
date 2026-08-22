@@ -763,15 +763,31 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 // `#[ignore]` reason is the observed one, not a prediction — and each is left
 // failing on purpose.
 //
-// They are `#[ignore = "XFAIL: … (owned by M3)"]` because that is this repo's
+// They are `#[ignore = "XFAIL: … (owned by M4)"]` because that is this repo's
 // mechanism for a measured, owned debt: `scripts/test-xfail.py` (via
 // `make test-xfail`) runs every ignored test and fails the gate if a declared
 // failure PASSES. So paying one off is a TRANSITION — delete the `#[ignore]`
-// and let the test join the regression net — and never a deletion. M3 is the
-// owner because M3 is where modules live (docs/contributing/MILESTONES.md:112-121,
-// "no enums, no `match`, no `for`, no generics and no modules"), and it is the
-// owner both existing module rows in tests/conformance-manifest.txt already
-// carry.
+// and let the test join the regression net — and never a deletion.
+//
+// THE OWNER IS M4, AND IT WAS M3 UNTIL THIS BRANCH MERGED `d2d5bd4`. That merge
+// restructured the milestones and split modules out into their own
+// (`docs/contributing/MILESTONES.md:532-541`, "M4 — Modules", which claims the
+// module rows explicitly: "plus the corpus's one `xfail` … cross-file imports
+// — and the vacuous `12_modules_imports`"). M3 is now traits and generics
+// (`docs/contributing/MILESTONES.md:498`), which is not what these rows are
+// about.
+//
+// The file is still named `m3_imported_calls.rs`. Renaming it would move every
+// citation that points into it, so the name is left as a historical artefact and
+// the OWNER STRINGS are what carry the attribution — those are what
+// `CONFORMANCE_FORBID_OWNER` and the milestone-exit targets read.
+//
+// NOT FIXED HERE, AND REPORTED INSTEAD: the two module rows in
+// `tests/conformance-manifest.txt` still say M3, while the MILESTONES section
+// above names those exact two rows as M4's. That inconsistency arrived with
+// `d2d5bd4` — both rows are byte-identical at `728779b` and this branch has
+// never touched that file — so it is main's to resolve, and the owner column is
+// machine-read by `CONFORMANCE_FORBID_OWNER`.
 //
 // TWO OF THEM WERE NOT MISSING FEATURES, AND THOSE TWO ARE NOW PAID OFF. The
 // first two tests below — imported bodies being borrow-checked and type-checked —
@@ -973,7 +989,7 @@ fn test_imported_function_bodies_are_type_checked() {
 /// It works if `main` also imports `liba` directly — which is the diamond case,
 /// and is why this is a missing hop rather than a missing feature.
 #[test]
-#[ignore = "XFAIL: transitive imports are resolved and thrown away — src/resolver/mod.rs:190 discards the recursive result into `_sub_modules` and src/resolver/mod.rs:70-95 returns only the top-level program's own imports, so `main -> libb -> liba` emits `outer`'s body calling `base` and gcc reports \"call to undeclared function 'base'\" (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: transitive imports are resolved and thrown away — src/resolver/mod.rs:190 discards the recursive result into `_sub_modules` and src/resolver/mod.rs:70-95 returns only the top-level program's own imports, so `main -> libb -> liba` emits `outer`'s body calling `base` and gcc reports \"call to undeclared function 'base'\" (owned by M4, cross-file module imports)"]
 fn test_a_module_can_use_what_it_imports() {
     let (compiled, output, stdout) = compile_and_run(
         &[
@@ -1017,7 +1033,7 @@ fn test_a_module_can_use_what_it_imports() {
 /// that instead would silence THIS diagnostic while leaving codegen still emitting
 /// only public functions, and the program would go back to failing in gcc.
 #[test]
-#[ignore = "XFAIL: a module has no private scope — every consumer filters `ast.items` by Visibility::Public, so `pub fn outer() { return priv_helper() + 1; }` beside a private `fn priv_helper` reports \"Undefined function: priv_helper\" (and a private struct reports \"Unknown struct type\"); before the imported-body checks the same program reached gcc as \"call to undeclared function 'priv_helper'\" (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: a module has no private scope — every consumer filters `ast.items` by Visibility::Public, so `pub fn outer() { return priv_helper() + 1; }` beside a private `fn priv_helper` reports \"Undefined function: priv_helper\" (and a private struct reports \"Unknown struct type\"); before the imported-body checks the same program reached gcc as \"call to undeclared function 'priv_helper'\" (owned by M4, cross-file module imports)"]
 fn test_a_module_can_use_its_own_private_items() {
     let (compiled, output, stdout) = compile_and_run(
         &[(
@@ -1054,7 +1070,7 @@ fn test_a_module_can_use_its_own_private_items() {
 /// move which phase says it. The honest fix is expanding module ASTs in the
 /// resolver, which is M3's work.
 #[test]
-#[ignore = "XFAIL: an imported module's AST is never macro-expanded — src/driver/mod.rs:80-81 expands the top-level AST BEFORE module resolution at src/driver/mod.rs:89-97, and src/resolver/mod.rs:145-148 only lexes and parses, so a macro in a public imported body reaches the checkers as Expr::MacroInvocation and reports the internal \"macros should be expanded before this phase\"; on main the same program reaches codegen and reports it there (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: an imported module's AST is never macro-expanded — src/driver/mod.rs:80-81 expands the top-level AST BEFORE module resolution at src/driver/mod.rs:89-97, and src/resolver/mod.rs:145-148 only lexes and parses, so a macro in a public imported body reaches the checkers as Expr::MacroInvocation and reports the internal \"macros should be expanded before this phase\"; on main the same program reaches codegen and reports it there (owned by M4, cross-file module imports)"]
 fn test_a_macro_in_an_imported_body_is_never_expanded() {
     let (compiled, output, stdout) = compile_and_run(
         &[(
@@ -1181,7 +1197,7 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
 /// module.
 #[test]
-#[ignore = "XFAIL: `import m::{a};` imports all of `m` — src/resolver/mod.rs:105-118 filters the `exports` set but not `ast`, and `.exports` is read nowhere but its own filter (src/resolver/mod.rs:113), so every consumer re-derives visibility from `ast.items`; a name the import did not list compiles and runs (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: `import m::{a};` imports all of `m` — src/resolver/mod.rs:105-118 filters the `exports` set but not `ast`, and `.exports` is read nowhere but its own filter (src/resolver/mod.rs:113), so every consumer re-derives visibility from `ast.items`; a name the import did not list compiles and runs (owned by M4, cross-file module imports)"]
 fn test_selective_import_does_not_import_the_rest() {
     let (compiled, output, stdout) = compile_and_run(
         &[(
@@ -1204,7 +1220,7 @@ fn test_selective_import_does_not_import_the_rest() {
 /// (`src/codegen/mod.rs:1308-1317`) with no shadowing check at all. The front
 /// end's answer is right and unenforceable.
 #[test]
-#[ignore = "XFAIL: a local definition that shadows an imported one emits BOTH into the C — src/codegen/mod.rs:1294-1306 emits every public imported function and src/codegen/mod.rs:1308-1317 every local one, with no shadowing check, so gcc reports \"redefinition of 'helper'\" even though both checkers correctly resolved the call to the local definition (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: a local definition that shadows an imported one emits BOTH into the C — src/codegen/mod.rs:1294-1306 emits every public imported function and src/codegen/mod.rs:1308-1317 every local one, with no shadowing check, so gcc reports \"redefinition of 'helper'\" even though both checkers correctly resolved the call to the local definition (owned by M4, cross-file module imports)"]
 fn test_a_local_definition_shadows_an_imported_one() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1241,7 +1257,7 @@ fn test_a_local_definition_shadows_an_imported_one() {
 /// whether one happens: gcc already refuses this. A compiler that hands invalid
 /// C to gcc and lets gcc explain has not diagnosed anything.
 #[test]
-#[ignore = "XFAIL: two imported modules exporting the same name are not diagnosed — the front end silently picks one (sorted module order, in the borrow checker's `register_imported_functions` and in `TypeChecker::set_imported_modules`) and codegen emits both bodies, so the user meets it as gcc's \"redefinition of 'dup'\" against C they never wrote (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: two imported modules exporting the same name are not diagnosed — the front end silently picks one (sorted module order, in the borrow checker's `register_imported_functions` and in `TypeChecker::set_imported_modules`) and codegen emits both bodies, so the user meets it as gcc's \"redefinition of 'dup'\" against C they never wrote (owned by M4, cross-file module imports)"]
 fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
     let (compiled, output, _) = compile_and_run(
         &[
@@ -1265,7 +1281,7 @@ fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
 /// unusable too. `register_imported_functions` registers `module::name` for
 /// parity with the type checker, but nothing can currently reach it.
 #[test]
-#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:2504-2545 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:2258-2263 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:2504-2545 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:2258-2263 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
 fn test_a_qualified_call_reaches_the_imported_function() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1286,7 +1302,7 @@ fn test_a_qualified_call_reaches_the_imported_function() {
 /// resolver looks for `util.pd`. The last segment of a path can never be a
 /// module, which means a module tree deeper than one level is unexpressible.
 #[test]
-#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:213-224 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:213-224 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M4, cross-file module imports)"]
 fn test_a_module_in_a_subdirectory_can_be_imported() {
     let (compiled, output, stdout) = compile_and_run(
         &[(
@@ -1316,7 +1332,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:498 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:2748-2751 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M3, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:498 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:2748-2751 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],

@@ -343,7 +343,19 @@ test-version-gate: ## Prove the version gate goes RED on binaries that misreport
 	@bash scripts/test-version-gate.sh
 
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate ## Run every language-level gate
+# `thesis-exit` is DELIBERATELY ABSENT and must stay absent: it exits 2 by design, and a
+# green umbrella that swallowed a NO_VERDICT would be the one reading this branch exists to
+# prevent. Its SELF-TEST belongs here, though — every defence this branch built was
+# reachable only from a target outside the umbrella, which is an enforcement gap, not a
+# design choice.
+#
+# RESOLVED AS A UNION, DELIBERATELY. `main` and this branch each carried gates the other
+# did not: taking either side wholesale silently DROPS gates. From `main`: gate-receipts,
+# test-doc-evidence, version-gate, test-version-gate. From this branch:
+# check-retracted-claims, test-thesis-runner, test-xfail. Neither line contained
+# `test-xfail` or this gate's self-test, which is how every defence built here ended up
+# reachable only from outside the umbrella.
+gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate check-retracted-claims test-thesis-runner test-xfail ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------
@@ -353,3 +365,26 @@ gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evi
 .PHONY: test-xfail
 test-xfail: ## Run the #[ignore]d tests and fail if a declared failure now passes
 	@python3 scripts/test-xfail.py
+
+# --- The definition of 1.0, as a command -----------------------------------
+# Committed RED on purpose. See scripts/thesis-exit.sh and
+# docs/contributing/MILESTONES.md: 1.0 is the thesis proven on the self-hosting
+# compiler, not an inventory with no unmet rows.
+
+.PHONY: thesis-exit
+thesis-exit: build ## The definition of Palladium 1.0. RED until M9.
+	@bash scripts/thesis-exit.sh
+
+# Fault injection, not a call to the helpers: for every probe that reads source or
+# a verdict, a state that VIOLATES the property must go RED and a state that
+# satisfies it must go green. Probe groups with no negative control are named in
+# the output rather than left silent.
+.PHONY: test-thesis-runner
+test-thesis-runner: build ## Fault-inject every thesis probe and prove it can still go RED
+	@bash scripts/thesis-exit.sh --self-test
+
+# The banned-list check belongs on the release path, not only under --self-test:
+# three retracted claims survived a deletion because nothing on this path looked.
+.PHONY: check-retracted-claims
+check-retracted-claims: ## Fail if wording a review round retracted has come back
+	@python3 scripts/thesis_exit.py --check-retracted-claims
