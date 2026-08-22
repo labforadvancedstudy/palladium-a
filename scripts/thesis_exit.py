@@ -77,7 +77,7 @@ import subprocess
 import sys
 import traceback
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from collections.abc import Mapping
 from types import MappingProxyType
 from dataclasses import dataclass, field
@@ -758,17 +758,40 @@ def callgraph_differential() -> tuple[list[tuple[str, str, str, str]], int]:
     return failures, len(parsed)
 
 
-def _load_references(tree) -> set[str]:
-    """Every name USED as a value somewhere in `tree`.
+def _load_references(tree, skip: tuple[str, ...] = ()) -> set[str]:
+    """Every name USED as a value in `tree`, ignoring the bodies of functions in `skip`.
 
     A `Name` in Load context is a reference the interpreter will follow. A string
     constant that spells the same name is not, a `def` of it is not, and a comment is
     not in the tree at all — which is the whole difference between this and asking
     whether the file contains some characters.
+
+    `skip` EXISTS BECAUSE THE QUESTION IS ABOUT THE GATE, NOT ABOUT THE TESTS. "TH-03/04/05
+    dispatch to the lexical probes" is a claim about the evaluation path. Measured: adding
+    one self-test case that calls `p_effect_is_transitive` directly was enough to keep the
+    probe "wired" with its real dispatch deleted — the control went green while the thing
+    it controls was gone. A check whose sensitivity depends on what the test file happens
+    to mention is the same defect as one satisfied by a comment, one layer along.
     """
     import ast as _ast
-    return {n.id for n in _ast.walk(tree)
-            if isinstance(n, _ast.Name) and isinstance(n.ctx, _ast.Load)}
+    skipped = {id(n) for n in _ast.walk(tree)
+               if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+               and n.name in skip}
+    out = set()
+
+    def walk(node):
+        if id(node) in skipped:
+            return
+        if isinstance(node, _ast.Name) and isinstance(node.ctx, _ast.Load):
+            out.add(node.id)
+        for child in _ast.iter_child_nodes(node):
+            walk(child)
+    walk(tree)
+    return out
+
+
+# The self-test is not the dispatch path, and a reference from it is not wiring.
+WIRING_SCOPE_SKIP = ("self_test",)
 
 
 def _has_fingerprint_comparison(tree) -> bool:
@@ -833,7 +856,7 @@ def wiring_matches_declaration(source: str) -> list[str]:
         return m.group(1) if m else default
     liveness = declared("LIVENESS_MODEL", LIVENESS_MODEL)
     attribution = declared("ATTRIBUTION_MODEL", ATTRIBUTION_MODEL)
-    referenced = _load_references(tree)
+    referenced = _load_references(tree, skip=WIRING_SCOPE_SKIP)
     lexical_wired = all(p in referenced for p in LIVENESS_PROBES_LEXICAL)
     if liveness == "call-graph" and lexical_wired:
         problems.append(
@@ -1201,9 +1224,22 @@ def function_bodies(src: str) -> dict[str, str]:
 
 
 def callees(body: str, exclude: str = "") -> set[str]:
-    """Names called in a body, minus the function's own recursive call. A self-edge is not
-    reachability: `#[total] fn r(n) { return r(n); }` was "live" because its own name
-    appeared in a body — its own."""
+    """IDENTIFIERS IMMEDIATELY FOLLOWED BY `(`, minus the function's own name.
+
+    NOT "names called", which is what this said. Measured: `return (1 + 2);` yields
+    `return` and `if (x) { }` yields `if`. The set is an over-approximation of the call
+    names in a body.
+
+    Consequence, audited rather than assumed: the only consumer is
+    `p_effect_is_transitive`, which uses each candidate to look up a BODY and ask whether
+    that body calls an IO builtin. A spurious candidate has no body, so `direct_io` is
+    empty and it cannot manufacture a green edge — the over-approximation is benign THERE.
+    It is not licensed anywhere else, and a second consumer would have to re-do this
+    audit.
+
+    A self-edge is not reachability: `#[total] fn r(n) { return r(n); }` was "live"
+    because its own name appeared in a body — its own.
+    """
     return {c for c in CALL.findall(body) if c != exclude}
 
 
@@ -1219,10 +1255,23 @@ def p_no_lifetime_param_list(src: str) -> tuple[bool, str]:
 
 
 def p_has_ref_param(src: str) -> tuple[bool, str]:
-    """A `ref` / `ref mut` PARAMETER on a function reachable from `main`.
+    """A `ref` / `ref mut` PARAMETER on a function SOME OTHER BODY IN THE UNIT MENTIONS.
 
-    A parameter in dead code is an ornament: it shows the syntax parses, not that the
-    compiler is written against references. Same discipline as `p_total_on_fn`.
+    THE SUMMARY LINE SAID "reachable from `main`" FOR SIX ROUNDS AND THE CODE NEVER
+    DECIDED THAT. Separating input, constructed rather than argued:
+
+        fn main() { }
+        fn dead_caller() -> i64 { return helper(); }
+        fn helper(x: ref String) -> i64 { return 1; }
+
+    `helper` is unreachable from `main` — its only caller is itself unreachable — and this
+    returns GREEN, because `provably_dead` asks whether any other body mentions the name,
+    which `dead_caller`'s does. The wording was the same retracted property round 18 found
+    in the roadmap, surviving here in the probe it describes, spelled differently enough to
+    slip the banned phrases. Both spellings are banned now.
+
+    What the rule buys is stated where it is true: a parameter that NOTHING in the unit
+    names is an ornament, and that is refutable (P2). "On a live path" is GI-11's job.
     """
     require_modellable(src, "TH-03 / `ref` parameter")
     bodies = function_bodies(src)
@@ -1269,12 +1318,25 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
 #       case) nothing can call it. Sound in the direction it is used. The converse —
 #       "referenced, therefore live" — is NOT claimed.
 #
-#   R4  A construct that could create a call this model cannot see is a HARNESS ERROR
-#       (exit 2): a closure in ANY form, a function-typed parameter, a `.`-method call,
-#       `T::m(…)` through a declared type parameter, and two functions sharing a name.
-#       An earlier version left some closure forms undetected and justified it by saying
-#       their bodies were nested and therefore excluded — false for exactly the
-#       expression-bodied form, which has no braces at all.
+#   R4  THESE constructs are a HARNESS ERROR (exit 2), because each could create a call
+#       this model cannot see: a closure in ANY form, a function-typed parameter, a
+#       `.`-method call, `T::m(…)` through a declared type parameter, and two functions
+#       sharing a name. An earlier version left some closure forms undetected and
+#       justified it by saying their bodies were nested and therefore excluded — false for
+#       exactly the expression-bodied form, which has no braces at all.
+#
+#       THE LIST IS NOT A COMPLETENESS PROOF, and the sentence above used to read as one.
+#       What P2 needs is weaker than "R4 catches every indirect call": it needs that a
+#       function called anywhere must have its NAME appear in some other body. Measured,
+#       by construction rather than by assertion: `let f = helper; f();` is NOT refused by
+#       R4 — and P2 still does not fire, because `helper` is named in `main`. The same held
+#       for every construction tried (a binding, an indexed call through a table). What
+#       would break P2 is a call whose target is never named in any `fn` body — expansion
+#       from a user macro body, a linker-visible export, reflection — and this language has
+#       none of the first two today (macros are builtins; `extern` is rejected) while the
+#       third does not exist. THAT IS AN ARGUMENT, NOT A PROOF: I could not construct a
+#       counterexample, which is not the same as there being none, and it is written down
+#       here so the next reader attacks it rather than trusting it.
 #
 # WHAT IS NO LONGER ASSERTED, AND WHERE THAT OBLIGATION NOW LIVES.
 # Liveness. The gate does not certify that a differentiator is used on a path the program
@@ -1345,7 +1407,26 @@ def provably_dead(bodies: dict[str, str], name: str) -> bool:
     treated as possible use, not as absence. What this decides is therefore narrower than
     reachability and narrower than the old wording — it is "no other function body
     mentions this identifier", nothing more. `main` is an entry root and is never dead.
+
+    THE PREMISE THAT WAS UNSTATED, AND IS NOW ENFORCED. "Nothing can call it" holds only
+    if THIS UNIT IS THE WHOLE PROGRAM. Constructed:
+
+        pub fn exported(x: ref String) -> i64 { return 1; }
+
+    a library unit whose function is named nowhere else — `provably_dead` returned True,
+    and an exported function called from another compilation unit is not dead. Every
+    witness this gate reads today is a whole program, so the refutation was sound in
+    practice and unsound in principle; a premise that holds by luck is a premise nobody
+    is checking. A unit with no entry root is now a HARNESS ERROR: the model cannot say
+    what is dead in a fragment, and refusing is the answer it is entitled to.
     """
+    if "main" not in bodies:
+        raise HarnessError(
+            "P2 (the dead-code refutation) assumes the unit under test is the WHOLE "
+            "PROGRAM: 'no other body mentions this name' means 'nothing can call it' only "
+            "when there is no other body anywhere. This unit declares no `fn main`, so it "
+            "may be a fragment whose functions are called from outside it, and the "
+            "refutation is refused rather than guessed.")
     if name == "main":
         return False
     for other, body in bodies.items():
@@ -1413,11 +1494,15 @@ def p_effect_is_transitive(report: str, src: str) -> tuple[bool, str]:
                 return True, (f"`{caller}` performs no IO itself -> calls `{callee}` -> "
                               f"`{sorted(io)[0]}`; reported {reported[caller]}")
     named = ", ".join(sorted(reported))
-    return False, (f"no live caller exhibits the edge caller -> "
+    # "is unreachable" stood here and the code decided no such thing: `provably_dead` is
+    # "no other body in the unit mentions this name". A verdict line is a claim like any
+    # other, and this one was making the gate's own weakest inference sound like an
+    # analysis.
+    return False, (f"no caller with a mentioned name exhibits the edge caller -> "
                    f"callee -> "
                    f"IO builtin; every function reported with an IO effect ({named}) "
-                   f"either performs IO directly, is unreachable, is not defined here, or "
-                   f"calls nothing that does")
+                   f"either performs IO directly, is named by nothing else in the unit, "
+                   f"is not defined here, or calls nothing that does")
 
 
 # ---------------------------------------------------------------------------
@@ -1859,7 +1944,7 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "4965d74cb0907cfcd3773a59095c2a6d1be241d65548117e52b68f7dcf2989ab"
+EXPECTED_CASE_SHA = "2b0a0323006ff3975b57e122c2f6edb4e0fe4d885b40d11eff29069d3f175799"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -1915,6 +2000,12 @@ RETRACTED_CLAIMS = (
     # was wrong, which is what RETRACTED_CLAIMS is for. They go here.
     ("reachability from `main`", "round 18 — `provably_dead` decides mentions, not reach"),
     ("that is actually called", "round 18 — a mention is not a call; same defect"),
+    # Round 19: the same property, in the probes' OWN prose and in a verdict line, spelled
+    # differently enough to walk past the two entries above. A retracted property has as
+    # many spellings as English has, which is the standing weakness of a phrase list and
+    # the reason the entry says what the code decides instead of only what it does not.
+    ("PARAMETER on a function reachable from", "round 19 — it decides `mentioned`, not `reachable`"),
+    ("is unreachable, is not defined here", "round 19 — the verdict line claimed reachability"),
 )
 
 # Mechanisms that NO LONGER EXIST, as EXACT TOKENS, matched CASE-INSENSITIVELY.
@@ -2238,10 +2329,15 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
                                           else (observables or GOOD_OBSERVABLE)),
                       assume_definition_complete=not definition_incomplete)
         buf = io.StringIO()
+        # THE REASON A HARNESS ERROR CARRIES IS ON stderr, and only stdout was captured —
+        # so a case asserting WHY the gate refused could not see the why at all, and the
+        # only assertion available was the exit code. Both streams are captured now, which
+        # is what makes `_because(...)` possible.
         try:
-            with redirect_stdout(buf):
+            with redirect_stdout(buf), redirect_stderr(buf):
                 rc = main(ctx)
-        except HarnessError:
+        except HarnessError as exc:
+            buf.write(f"\nharness error: {exc}\n")
             rc = 2
         _drive.last_output = buf.getvalue()
         return rc
@@ -2279,6 +2375,25 @@ def self_test() -> int:
         else:
             print(f"  {RED}FAIL{OFF} {name} (got {got!r}, want {want!r})")
             fails += 1
+
+    def _because(code, needle):
+        """(exit code, does the output NAME the reason?).
+
+        A DECLARED FAILURE MUST NOT BE SATISFIED BY ANY FAILURE. `_drive(...) == 2` says
+        "some harness error happened", and every harness error satisfies it — the shape
+        that let one upstream wall discharge three separate declared debts on a sibling
+        branch. Where the reason is the point, it is asserted; the count of cases that
+        still assert only an exit code is reported in the round's audit rather than
+        implied away.
+        """
+        return (code, needle in _drive.last_output)
+
+    def _raises_harness(fn):
+        try:
+            fn()
+        except HarnessError:
+            return True
+        return False
 
     print("thesis-exit self-test — the GATE is driven where a gate-level answer is what")
     print("  is in question. MOST cases run main() against an injected repository state and")
@@ -2345,12 +2460,17 @@ def self_test() -> int:
     case("a GENERIC function is visible to the model, not silently invisible (R3)",
          _drive(witness_b=mutate(GOOD_WITNESS, "fn drive(x: ref String, mut c: C)",
                                  "fn drive<T>(x: ref String, mut c: C)")), 0)
-    case("trait-bound dispatch `T::m(…)` is a HARNESS ERROR, never a guess (R4)",
-         _drive(witness_b=GOOD_WITNESS + "fn show<T: Display>(x: T) { T::fmt(x); }\n"), 2)
-    case("a `.`-method call is a HARNESS ERROR (R4)",
-         _drive(witness_b=GOOD_WITNESS + "fn m(s: S) { s.len(); }\n"), 2)
-    case("a function-typed parameter is a HARNESS ERROR (R4)",
-         _drive(witness_b=GOOD_WITNESS + "fn hof(f: fn(i64) -> i64) { }\n"), 2)
+    case("trait-bound dispatch `T::m(…)` is a HARNESS ERROR, never a guess (R4) — and the "
+         "output NAMES that reason, so an unrelated malfunction cannot satisfy this case",
+         _because(_drive(witness_b=GOOD_WITNESS
+                         + "fn show<T: Display>(x: T) { T::fmt(x); }\n"),
+                  "dispatch through the type parameter"), (2, True))
+    case("a `.`-method call is a HARNESS ERROR (R4), and says so",
+         _because(_drive(witness_b=GOOD_WITNESS + "fn m(s: S) { s.len(); }\n"),
+                  "a `.`-method call"), (2, True))
+    case("a function-typed parameter is a HARNESS ERROR (R4), and says so",
+         _because(_drive(witness_b=GOOD_WITNESS + "fn hof(f: fn(i64) -> i64) { }\n"),
+                  "a function-typed parameter"), (2, True))
     case("`#[total]` named only by another function is NOT refuted (P1, not liveness)",
          _drive(witness_b=mutate(GOOD_WITNESS, "return depth(1);", "return 1;")
                           + "fn dead() -> i64 { return depth(2); }\n"), 0)
@@ -2397,8 +2517,20 @@ def self_test() -> int:
     print("\n  R4 — every closure form refuses, not only the brace form")
     for form, label in [("|x| ornament(x)", "brace/ident body"), ("|x| (ornament(x))", "paren body"),
                         ("|x| [ornament(x)]", "bracket body"), ("|x| -ornament(x)", "unary body")]:
-        case(f"a closure with a {label} is a HARNESS ERROR",
-             _drive(witness_b=GOOD_WITNESS + f"fn hof(mut c: C) {{ let f = {form}; }}\n"), 2)
+        case(f"a closure with a {label} is a HARNESS ERROR, naming the closure",
+             _because(_drive(witness_b=GOOD_WITNESS
+                             + f"fn hof(mut c: C) {{ let f = {form}; }}\n"),
+                      "a closure in any form"), (2, True))
+
+    # THE MEASUREMENT BEHIND THE HELPER. An unrelated malfunction produces the SAME exit
+    # code and none of the R4 wording, so `== 2` on its own does not distinguish the defect
+    # a case is named for from any other defect. This is the sibling branch's `test-xfail`
+    # finding, reproduced here rather than assumed not to apply.
+    case("exit 2 alone does NOT discriminate: an unrelated malfunction is also exit 2, and "
+         "carries none of the R4 reason — which is why the cases above assert the reason",
+         _because(_drive(real_conformance="#!/bin/sh\necho 'f/ref.pd PASS_VERIFIED'\n"
+                                          "kill -9 $$\n"),
+                  "a closure in any form"), (2, False), drives_main=False)
 
     print("\n  TH-05 — P2 applies to the caller (on the callee it is vacuous)")
     case("a caller nothing names cannot supply the exhibited edge (P2 on the caller)",
@@ -3183,6 +3315,25 @@ def self_test() -> int:
          _have_block, _want_block, drives_main=False)
     case("editing one score in that block is caught",
          _have_block.replace("/", "/9", 1) == _want_block, False, drives_main=False)
+    # AN ANCHOR MUST NOT BE WEAKER THAN WHAT IT ANCHORS. A byte-comparison against a
+    # render is satisfied by a DEGENERATE render — an empty measurement set produces an
+    # empty table, and an empty table matches an empty table. Two citation pins on a
+    # sibling branch had relocated onto a blank line and a bare `}` while the pin gate
+    # reported no movement; this is the same shape, so it is closed rather than trusted to
+    # the pinned scoreboard map alone.
+    case("a DEGENERATE render — no adversaries measured — does not match the committed "
+         "block, so an emptied scoreboard cannot pass by comparing equal to itself",
+         scoreboard_block({}) == _have_block, False, drives_main=False)
+    case("...and the committed block carries one row per adversary, counted, not assumed",
+         sum(1 for ln in _have_block.splitlines()
+             if ln.startswith("| ") and not ln.startswith("| adversary")),
+         len(_MEASURED), drives_main=False)
+    case("...and every measured label appears in it, so a row cannot be dropped while the "
+         "row count is padded",
+         sorted(lbl for lbl in _MEASURED if f"| {lbl} |" not in _have_block), [],
+         drives_main=False)
+    case("a whitespace-only block is not a render either",
+         scoreboard_block({}).strip() == "", False, drives_main=False)
     # Assembled at run time: written whole, the bare token would be a real unmeasured
     # figure in a file this check reads, which is how the previous planted control was
     # caught by its own check.
@@ -3273,6 +3424,69 @@ def self_test() -> int:
          (LIVENESS_CORPUS == _real_corpus, liveness_differential()[1]),
          (True, len(EXPECTED_LIVENESS_IDS)), drives_main=False)
 
+    print("\n  THE LEXICAL PROBE FAMILY — its own prose, audited against its own code")
+    # Round 19. Every claim below was separated from the code by CONSTRUCTION, and the
+    # construction is the case: a claim nobody can separate is either sound or untestable,
+    # and each is labelled with which.
+    _rp = ("fn main() { }\n"
+           "fn dead_caller() -> i64 { return helper(); }\n"
+           "fn helper(x: ref String) -> i64 { return 1; }\n")
+    case("WIDER, and now corrected: a `ref` param on a function unreachable from `main` "
+         "is GREEN — the probe decides `some other body mentions it`, never reachability",
+         p_has_ref_param(strip_literals(_rp))[0], True, drives_main=False)
+    case("...and both spellings of that retracted property are banned, so the docstring "
+         "cannot say `reachable` again",
+         # Assembled at run time: written whole, each would be a live occurrence of the
+         # phrase it bans, in a file the banned-list check reads. Fourth sighting of that
+         # shape this session, and the guard caught it every time.
+         (len(stale_claims("a ref PARAMETER on a function reachable" + " from `main`")),
+          len(stale_claims("it is unreachable, is not defined" + " here, or calls nothing"))),
+         (1, 1), drives_main=False)
+
+    case("WIDER, and now corrected: `callees` returns identifiers followed by `(`, not "
+         "names called — `return (1 + 2);` yields `return`",
+         (sorted(callees("return (1 + 2);")), sorted(callees("if (x) { }"))),
+         (["return"], ["if"]), drives_main=False)
+    case("...and the over-approximation is benign in its ONE consumer: a spurious name "
+         "has no body, so it cannot exhibit an IO edge",
+         p_effect_is_transitive("Function 'h' has effects: [Io]\n", strip_literals(
+             "fn main() { h(); }\nfn h() { return (1); }\n"))[0], False,
+         drives_main=False)
+
+    # THE PREMISE P2 NEVER STATED: the unit is the whole program.
+    case("a unit with NO entry root refuses the dead-code refutation instead of guessing "
+         "— an exported function of a library fragment is not dead because this file does "
+         "not name it",
+         _raises_harness(lambda: provably_dead(
+             function_bodies(strip_literals("pub fn exported(x: i64) -> i64 { return 1; }")),
+             "exported")), True, drives_main=False)
+    case("...and a whole program still answers",
+         provably_dead(function_bodies(strip_literals(
+             "fn main() { }\nfn lonely() -> i64 { return 1; }\n")), "lonely"), True,
+         drives_main=False)
+    case("...and `main` itself is never dead",
+         provably_dead(function_bodies(strip_literals("fn main() { }\n")), "main"), False,
+         drives_main=False)
+
+    # SOUND, AND SAID SO PLAINLY — no counterexample exists because the construction
+    # forbids one, which is a proof rather than a failed search.
+    case("SOUND: the callee half of the effect edge is vacuous by construction — a callee "
+         "is FOUND by being named in the caller's body, so `provably_dead` is False for it",
+         provably_dead({"caller": "callee();", "callee": "return 1;", "main": ""},
+                       "callee"), False, drives_main=False)
+
+    # THE CLAIMED CONTROL THAT DID NOT EXIST. `strip_literals`' docstring said a self-test
+    # case pinned non-nesting so the gate and the compiler flip together at N2-08. Nothing
+    # pinned it. It does now, and the claim is true for the first time.
+    case("SOUND: block comments do NOT nest, matching bootstrap/pdc.pd — the inner `*/` "
+         "ends the comment and what follows is live source",
+         strip_literals("/* outer /* inner */ async fn g() { }").strip(),
+         "async fn g() { }", drives_main=False)
+    case("...so a real `async` after an inner close is FOUND, which is how the gate and "
+         "the compiler stay in lockstep until N2-08 lands",
+         p_no_async_token(strip_literals("/* a /* b */ async fn g() { }"))[0], False,
+         drives_main=False)
+
     print("\n  the machine contract Make cannot carry")
     _rc = subprocess.run([sys.executable, str(ROOT / "scripts/thesis_exit.py")],
                          capture_output=True, text=True, cwd=ROOT)
@@ -3303,12 +3517,6 @@ def self_test() -> int:
     # it was sitting on the two mutations that matter most.
     _me = (ROOT / "scripts/thesis_exit.py").read_text()
 
-    def _raises_harness(fn):
-        try:
-            fn()
-        except HarnessError:
-            return True
-        return False
     # Anchored at column zero so the mutation hits the DECLARATION and not the copies of
     # it inside prose. mutate() rejected the ambiguous form, which is why it exists.
     case("declaring `call-graph` while the lexical probes are still wired is caught",
@@ -3354,6 +3562,15 @@ def self_test() -> int:
     case("...while the real expression reads as wired",
          _has_fingerprint_comparison(__import__("ast").parse(
              _fp_anchor + "\n    pass\n")), True, drives_main=False)
+    case("a reference from the SELF-TEST is not wiring — measured: one audit case calling "
+         "a probe directly kept it `wired` with its dispatch deleted",
+         ("p_effect_is_transitive" in _load_references(__import__("ast").parse(
+             "def self_test():\n    p_effect_is_transitive(a, b)\n"),
+             skip=WIRING_SCOPE_SKIP),
+          "p_effect_is_transitive" in _load_references(__import__("ast").parse(
+              "def evaluate():\n    p_effect_is_transitive(a, b)\n"),
+              skip=WIRING_SCOPE_SKIP)),
+         (False, True), drives_main=False)
     case("a name mentioned only as a STRING is not a load reference",
          "p_has_ref_param" in _load_references(__import__("ast").parse(
              'PROBES = ("p_has_ref_param",)\n')), False, drives_main=False)
