@@ -85,6 +85,36 @@ is derived from cargo, which means a debt that leaves cargo's listing (the
 `#[ignore]` deleted, or the test deleted) leaves BOTH sides of the
 reconciliation at once and the gate goes green having established nothing.
 
+AND EVERY OWED ROW NAMES THE FAILURE IT EXPECTS.
+Everything above reads cargo's `ok|FAILED`, which makes an XFAIL an EXISTENCE
+CHECK ON A FAILURE: any failure satisfies it. That is not a declaration. A test
+whose fixture exercises six unimplemented features dies at whichever the parser
+meets first; a test can be blocked by a defect UPSTREAM of the one its
+`#[ignore]` names; and in both cases the row stays green while the reason text
+describes something that no longer happens. Measured on this tree the first time
+the check existed: 8 of 43 owed rows were failing for a reason other than the
+one their `#[ignore]` named — three async tests whose declared
+"expected Future<Int>, found Int" had been replaced by an outright refusal, two
+declaring "Indirect function calls not yet supported" that die earlier in enum
+type inference, one declaring the `?` operator that never reaches a `?`, one
+whose declared mechanism the observed message contradicts, and one whose
+declared measurement ("six identical compilations produced …") cannot happen
+because the fixture no longer compiles at all.
+
+So column 5 of the debt manifest is the DIAGNOSTIC: a literal substring that
+must appear in what the test printed when it failed. `cargo test` reports the
+captured stdout of every failing test under `---- <name> stdout ----`, so the
+evidence is already there — it was simply never read. A row that fails WITHOUT
+its declared diagnostic is reported as DEBT_DIAGNOSTIC, separately from a row
+that fails with it, which is the distinction "is it still failing" cannot make.
+
+What this does NOT claim: that the diagnostic is the RIGHT one. A substring
+copied from a run is a measurement, and the review of the reason text is still
+the authorisation boundary — exactly as it is for the owner column. What it buys
+is that the reason and the run can no longer drift apart in silence: when the
+upstream defect is fixed and the test starts failing further along, the gate
+says so and names both strings.
+
 Env:
   TEST_XFAIL_FORBID_OWNER   fail if any still-failing XFAIL is owned by this
                             milestone (e.g. M1). Unset by default, so the
@@ -160,6 +190,34 @@ DOCTEST_RE = re.compile(r"^\s+Doc-tests ")
 RESULT_RE = re.compile(r"^test result:")
 TEST_RE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED)$")
 LIST_RE = re.compile(r"^(\S+): test$")
+# libtest prints the captured output of each failing test under a header of this
+# shape, after all of that target's result lines. It is the ONLY place the gate
+# can learn WHY a test failed rather than THAT it did.
+DETAIL_RE = re.compile(r"^---- (\S+) (?:stdout|stderr) ----$")
+FAILURES_RE = re.compile(r"^failures:$")
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# The panic message: everything between libtest's location line and its
+# backtrace note. Used only to SHOW a reader what a row failed with; the
+# diagnostic is matched against the whole captured block, because the compiler
+# under test prints its diagnostics to stdout before the assertion fires.
+PANIC_RE = re.compile(r"panicked at [^\n]*\n(.*?)(?:\nnote: run with|\Z)", re.S)
+
+
+def flatten(text):
+    """ANSI-stripped, whitespace-collapsed — the form both sides of a
+    diagnostic comparison are in.
+
+    Colour codes are stripped because the compiler under test emits them and a
+    manifest column cannot carry them; whitespace is collapsed because a
+    diagnostic that wraps across lines in one terminal width must not stop
+    matching in another."""
+    return " ".join(ANSI_RE.sub("", text).split())
+
+
+def panic_message(text, width=220):
+    m = PANIC_RE.search(ANSI_RE.sub("", text))
+    msg = flatten(m.group(1)) if m else flatten(text)
+    return msg if len(msg) <= width else msg[:width] + " …"
 
 
 def parse_list(out):
@@ -180,29 +238,58 @@ def parse_list(out):
 
 
 def parse_run(out):
-    """`cargo test -- --ignored` -> (observations, targets that never reported)."""
+    """`cargo test -- --ignored` -> (observations, unreported targets, details).
+
+    `details` is {(target, test): captured output}, taken from libtest's
+    `---- <name> stdout ----` blocks. That is the evidence for WHICH failure
+    happened, which the `ok|FAILED` line cannot carry. A test with both a stdout
+    and a stderr block contributes both, concatenated, because which stream a
+    diagnostic went to is not something a debt row should have to know.
+    """
     target, obs, unreported, open_target = None, [], [], None
+    details, detail_key, detail_buf = {}, None, []
+
+    def close_detail():
+        if detail_key is not None:
+            details[detail_key] = details.get(detail_key, "") + "\n".join(detail_buf)
+
     for raw in out.splitlines():
         m = RUNNING_RE.match(raw)
         if m:
+            close_detail()
+            detail_key, detail_buf = None, []
             if open_target:
                 unreported.append(open_target)
             target = open_target = m.group(1)
             continue
         if DOCTEST_RE.match(raw):
+            close_detail()
+            detail_key, detail_buf = None, []
             if open_target:
                 unreported.append(open_target)
             target = open_target = "doc-tests"
             continue
-        if RESULT_RE.match(raw):
-            open_target = None
+        m = DETAIL_RE.match(raw)
+        if m:
+            close_detail()
+            detail_key, detail_buf = (target, m.group(1)), []
+            continue
+        if FAILURES_RE.match(raw) or RESULT_RE.match(raw):
+            close_detail()
+            detail_key, detail_buf = None, []
+            if RESULT_RE.match(raw):
+                open_target = None
+            continue
+        if detail_key is not None:
+            detail_buf.append(raw)
             continue
         m = TEST_RE.match(raw)
         if m:
             obs.append((target, m.group(1), m.group(2)))
+    close_detail()
     if open_target:
         unreported.append(open_target)
-    return obs, unreported
+    return obs, unreported, details
 
 
 # --------------------------------------------------------------------------
@@ -646,12 +733,12 @@ def read_debt_manifest(path):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         cols = line.split("\t")
-        if len(cols) != 4 or not all(c.strip() for c in cols):
-            errors.append("%s:%d: expected 4 tab-separated non-empty columns "
-                          "(target, test, class, owner), got: %r"
+        if len(cols) != 5 or not all(c.strip() for c in cols):
+            errors.append("%s:%d: expected 5 tab-separated non-empty columns "
+                          "(target, test, class, owner, diagnostic), got: %r"
                           % (path, lineno, line))
             continue
-        target, test, cls, owner = (c.strip() for c in cols)
+        target, test, cls, owner, diagnostic = (c.strip() for c in cols)
         key = (target, test)
         if key in seen:
             errors.append("%s:%d: duplicate row for %s::%s (first at line %d)"
@@ -671,21 +758,50 @@ def read_debt_manifest(path):
                           "owed to anyone any more), got %r"
                           % (path, lineno, owner))
             continue
+        if cls == "paid" and diagnostic != "-":
+            errors.append("%s:%d: class=paid must have diagnostic '-' (it is "
+                          "not expected to fail any more), got %r"
+                          % (path, lineno, diagnostic))
+            continue
+        if cls == "owed" and diagnostic == "-":
+            # FAIL CLOSED. `-` is the paid spelling, and accepting it here would
+            # reintroduce the exact hole this column closes: an owed row that
+            # any failure satisfies.
+            errors.append("%s:%d: class=owed needs a diagnostic — the literal "
+                          "text the failure must print. '-' is the paid "
+                          "spelling; a row with no diagnostic is an existence "
+                          "check on a failure, which any failure satisfies"
+                          % (path, lineno))
+            continue
         rows.append({"target": target, "test": test, "class": cls,
-                     "owner": owner, "line": lineno, "path": path})
+                     "owner": owner, "diagnostic": diagnostic,
+                     "line": lineno, "path": path})
     return rows, errors
 
 
-def reconcile_debt(rows, listed, all_tests, tags, sites):
+def reconcile_debt(rows, listed, all_tests, tags, sites, outcomes=None,
+                   details=None):
     """Close the inventory both ways. -> (counts, problems)
 
     `listed`    (target, path) cargo reports as IGNORED
     `all_tests` (target, path) cargo lists AT ALL — the set a deleted test
                 leaves, and the only way to tell "the #[ignore] came off" from
                 "the test is gone".
+    `outcomes`  (target, path) -> "ok" | "FAILED", from the run
+    `details`   (target, path) -> what the test printed before it failed
+
+    The last two answer WHICH failure. Without them a row is satisfied by any
+    failure at all, including one caused by a defect upstream of the one it
+    declares — see the module docstring. They are optional so that the manifest
+    checks above can be exercised on their own; when they are absent the
+    diagnostic column is simply not evaluated, and the caller says so rather
+    than reporting a check it did not run.
     """
     problems = []
-    counts = {"owed": 0, "paid": 0}
+    counts = {"owed": 0, "paid": 0, "diagnostic_checked": 0,
+              "diagnostic_matched": 0}
+    outcomes = outcomes or {}
+    details = details or {}
     listed_set, all_set = set(listed), set(all_tests)
     declared = set()
 
@@ -721,6 +837,37 @@ def reconcile_debt(rows, listed, all_tests, tags, sites):
                                  % (where, row["target"], row["test"],
                                     tag or "unreadable")))
                 continue
+            # WHICH FAILURE, NOT THAT ONE HAPPENED. Only evaluated for a row
+            # the run actually reported as FAILED: an XPASS is already a
+            # verdict of its own, and reporting "and its diagnostic was
+            # missing" on top of it would count one defect twice.
+            if outcomes.get(key) == "FAILED":
+                counts["diagnostic_checked"] += 1
+                text = details.get(key)
+                if text is None:
+                    problems.append((
+                        "DEBT_DIAGNOSTIC",
+                        "%s: %s::%s FAILED but produced no captured output, so "
+                        "the declared diagnostic could not be checked. A row "
+                        "whose failure cannot be identified is an existence "
+                        "check on a failure.\n      declared: %s"
+                        % (where, row["target"], row["test"],
+                           row["diagnostic"])))
+                elif row["diagnostic"] not in flatten(text):
+                    problems.append((
+                        "DEBT_DIAGNOSTIC",
+                        "%s: %s::%s is still failing, but NOT for the reason "
+                        "this row declares. Either the declared defect moved "
+                        "and the reason text is stale, or something upstream "
+                        "now fails first — read both, then fix the "
+                        "declaration or the code.\n"
+                        "      declared: %s\n"
+                        "      observed: %s"
+                        % (where, row["target"], row["test"],
+                           row["diagnostic"], panic_message(text))))
+                else:
+                    counts["diagnostic_matched"] += 1
+
             declared_owner = owner_of(sites[key]) if key in sites else None
             if declared_owner != row["owner"]:
                 problems.append(("DEBT_OWNER",
@@ -903,7 +1050,7 @@ def self_test():
           [("src/lib.rs", "optimizer::dead_code_test::tests::test_a"),
            ("tests/x_test.rs", "a::test_dup")])
 
-    obs, unreported = parse_run(
+    obs, unreported, _ = parse_run(
         "     Running unittests src/lib.rs (target/release/deps/palladium-ab)\n"
         "test optimizer::dead_code_test::tests::test_a ... FAILED\n"
         "test result: FAILED. 0 passed; 1 failed\n"
@@ -915,10 +1062,42 @@ def self_test():
            ("tests/x_test.rs", "a::test_dup", "ok")])
     check("no unreported target", unreported, [])
 
-    _, unreported = parse_run(
+    _, unreported, _ = parse_run(
         "     Running tests/x_test.rs (target/release/deps/x_test-cd)\n"
         "test a::test_dup ... FAILED\n")
     check("unreported target detected", unreported, ["tests/x_test.rs"])
+
+    # 8b. THE CAPTURED OUTPUT OF A FAILING TEST, which is the only evidence for
+    #     WHICH failure happened. Two targets may hold same-named tests, so the
+    #     detail is keyed the same way everything else is; the block must not
+    #     swallow the result line that follows it; and ANSI colour from the
+    #     compiler under test must not stop a diagnostic matching.
+    obs, _, details = parse_run(
+        "     Running tests/a_test.rs (target/release/deps/a_test-11)\n"
+        "test t ... FAILED\n"
+        "\nfailures:\n\n"
+        "---- t stdout ----\n"
+        "\x1b[1;31merror\x1b[0m: boom in a\n"
+        "thread 't' panicked at tests/a_test.rs:1:1:\n"
+        "assert failed: boom in a\n"
+        "note: run with `RUST_BACKTRACE=1`\n"
+        "\nfailures:\n    t\n"
+        "test result: FAILED. 0 passed; 1 failed\n"
+        "     Running tests/b_test.rs (target/release/deps/b_test-22)\n"
+        "test t ... FAILED\n"
+        "---- t stdout ----\n"
+        "boom in b\n"
+        "test result: FAILED. 0 passed; 1 failed\n")
+    check("details keyed by (target, path), not by bare name",
+          sorted(details), [("tests/a_test.rs", "t"), ("tests/b_test.rs", "t")])
+    check("a detail block does not swallow the next target's results",
+          obs, [("tests/a_test.rs", "t", "FAILED"),
+                ("tests/b_test.rs", "t", "FAILED")])
+    check("ANSI colour does not hide a diagnostic",
+          "error: boom in a" in flatten(details[("tests/a_test.rs", "t")]), True)
+    check("the panic message is what a reader is shown",
+          panic_message(details[("tests/a_test.rs", "t")]),
+          "assert failed: boom in a")
 
     # 9. The verdicts themselves.
     index = index_sites({
@@ -1016,8 +1195,8 @@ def self_test():
               state=debt_state)
     tags, sites = debt_state["tags"], debt_state["sites"]
     owed_row = [{"target": "tests/x_test.rs", "test": "test_owed",
-                 "class": "owed", "owner": "M1", "line": 1,
-                 "path": DEBT_MANIFEST}]
+                 "class": "owed", "owner": "M1", "diagnostic": "the named defect",
+                 "line": 1, "path": DEBT_MANIFEST}]
     listed = [("tests/x_test.rs", "test_owed")]
 
     _, problems = reconcile_debt(owed_row, listed, listed, tags, sites)
@@ -1048,8 +1227,49 @@ def self_test():
     check("the owner disagreement names both milestones",
           ("M2" in problems[0][1] and "M1" in problems[0][1]), True)
 
+    # 12b. AND THE ROW MUST NAME **WHICH** FAILURE. Everything above is
+    #      satisfied by any failure at all, which is how a row stays green
+    #      while something upstream of its declared defect is what actually
+    #      fails. Three states, and the middle one is the whole point: it is a
+    #      failure, and it is reported DISTINCTLY from a failure that matches.
+    ok_key = ("tests/x_test.rs", "test_owed")
+    failed = {ok_key: "FAILED"}
+    c, problems = reconcile_debt(
+        owed_row, listed, listed, tags, sites, outcomes=failed,
+        details={ok_key: "\x1b[31merror\x1b[0m: the named defect\nboom\n"})
+    check("a row failing WITH its declared diagnostic is clean and counted",
+          (problems, c["diagnostic_matched"], c["diagnostic_checked"]),
+          ([], 1, 1))
+
+    c, problems = reconcile_debt(
+        owed_row, listed, listed, tags, sites, outcomes=failed,
+        details={ok_key: "error: something else broke first\n"})
+    check("a row failing for an UNNAMED reason is reported distinctly",
+          ([k for k, _ in problems], c["diagnostic_matched"]),
+          (["DEBT_DIAGNOSTIC"], 0))
+    # Indexed defensively, unlike the checks above: this is the one whose REVERT
+    # is the receipt, and a traceback is a worse receipt than a named failing
+    # check — it does not say which property was lost.
+    msg = problems[0][1] if problems else ""
+    check("the report names both the declared and the observed failure",
+          ("the named defect" in msg and "something else broke first" in msg),
+          True)
+
+    c, problems = reconcile_debt(owed_row, listed, listed, tags, sites,
+                                 outcomes=failed, details={})
+    check("a failure with no captured output cannot be identified, so it fails",
+          [k for k, _ in problems], ["DEBT_DIAGNOSTIC"])
+
+    # An XPASS is not a diagnostic problem: it is already a verdict, and
+    # reporting the missing diagnostic on top would count one defect twice.
+    c, problems = reconcile_debt(owed_row, listed, listed, tags, sites,
+                                 outcomes={ok_key: "ok"}, details={})
+    check("an XPASS is not also reported as a missing diagnostic",
+          (problems, c["diagnostic_checked"]), ([], 0))
+
     # `paid` is the transition, and it means "no longer ignored".
-    paid = [dict(owed_row[0], **{"class": "paid", "owner": "-"})]
+    paid = [dict(owed_row[0], **{"class": "paid", "owner": "-",
+                                 "diagnostic": "-"})]
     _, problems = reconcile_debt(paid, [], listed, tags, sites)
     check("a paid row over a test that is no longer ignored is clean",
           problems, [])
@@ -1064,17 +1284,24 @@ def self_test():
     import tempfile
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
         fh.write("# comment\n"
-                 "tests/x_test.rs\ttest_a\towed\tM1\n"
-                 "tests/x_test.rs\ttest_a\towed\tM1\n"
-                 "tests/x_test.rs\ttest_b\towed\tsomeday\n"
-                 "tests/x_test.rs\ttest_c\tmaybe\tM1\n"
-                 "tests/x_test.rs\ttest_d\tpaid\tM1\n"
+                 "tests/x_test.rs\ttest_a\towed\tM1\tit says why\n"
+                 "tests/x_test.rs\ttest_a\towed\tM1\tit says why\n"
+                 "tests/x_test.rs\ttest_b\towed\tsomeday\tit says why\n"
+                 "tests/x_test.rs\ttest_c\tmaybe\tM1\tit says why\n"
+                 "tests/x_test.rs\ttest_d\tpaid\tM1\t-\n"
+                 "tests/x_test.rs\ttest_e\towed\tM1\t-\n"
+                 "tests/x_test.rs\ttest_f\tpaid\t-\tstill expects a failure\n"
                  "two columns only\n")
         tmp_manifest = fh.name
     rows, errs = read_debt_manifest(tmp_manifest)
     os.unlink(tmp_manifest)
-    check("manifest: one good row survives, five errors are named",
-          (len(rows), len(errs)), (1, 5))
+    check("manifest: one good row survives, seven errors are named",
+          (len(rows), len(errs)), (1, 7))
+    check("an owed row with no diagnostic is named as such",
+          any(":7: class=owed needs a diagnostic" in e for e in errs), True)
+    check("a paid row that still expects a failure is named as such",
+          any(":8: class=paid must have diagnostic '-'" in e for e in errs),
+          True)
     rows, errs = read_debt_manifest("/nonexistent/rust-debt-manifest.txt")
     check("a missing manifest is fatal, not empty", (rows, len(errs)), (None, 1))
 
@@ -1119,12 +1346,14 @@ def self_test():
         for f in failures:
             print("  " + f, file=sys.stderr)
         return False
-    print("self-test: 48 checks green (reason lookup incl. same name in two "
+    print("self-test: 61 checks green (reason lookup incl. same name in two "
           "modules and in two targets, shared module, missing and ambiguous "
           "reasons, literal-safe scanning, cargo attribution, verdicts, the "
           "milestone-owner gate incl. its off state, owner agreement between "
           "candidate declarations, the closed debt inventory incl. every route "
-          "out of it, and the producer boundary — a signalled or unpinned cargo "
+          "out of it, the DIAGNOSTIC column — a row failing for an unnamed "
+          "reason is reported distinctly from one failing for its named "
+          "reason — and the producer boundary: a signalled or unpinned cargo "
           "is refused even when its listing parses)")
     return True
 
@@ -1227,7 +1456,8 @@ def main():
     err = build_error(res_run.text)
     if err:
         problems.append(("BUILD", "the ignored set did not build: " + err))
-    obs, unreported = parse_run(res_run.text)
+    obs, unreported, details = parse_run(res_run.text)
+    outcomes = {(t, p): o for t, p, o in obs}
     for t in unreported:
         problems.append(("NO_RESULT", "%s started and never reported a result "
                                       "— it did not run at all" % t))
@@ -1253,10 +1483,12 @@ def main():
     for e in manifest_errors:
         problems.append(("DEBT_MANIFEST", e))
     if rows is None:
-        debt = {"owed": 0, "paid": 0}
+        debt = {"owed": 0, "paid": 0, "diagnostic_checked": 0,
+                "diagnostic_matched": 0}
     else:
         debt, more = reconcile_debt(rows, listed, all_tests,
-                                    state["tags"], state["sites"])
+                                    state["tags"], state["sites"],
+                                    outcomes=outcomes, details=details)
         problems += more
 
     print("==============================================")
@@ -1266,6 +1498,12 @@ def main():
           % len(set(all_tests)))
     print("debt inventory (%s): owed=%d paid=%d"
           % (DEBT_MANIFEST, debt["owed"], debt["paid"]))
+    # The denominator is the finding. "N owed" says nothing about whether those
+    # N are failing for the reasons they name; this line is the only place that
+    # distinction is reported, and printing it even when it is a clean N/N is
+    # what keeps "we check this" from becoming a claim nobody measures.
+    print("owed rows failing for their DECLARED diagnostic: %d of %d checked"
+          % (debt["diagnostic_matched"], debt["diagnostic_checked"]))
     print("declared: xfail=%d slow=%d"
           % (counts["declared_xfail"], counts["declared_slow"]))
     print("ran:      xfail=%d xpass=%d slow_pass=%d"
@@ -1288,6 +1526,8 @@ def main():
         "DEBT_MISSING": "MISSING — declared in the debt inventory, but no such test exists:",
         "DEBT_STATE": "the debt inventory and the #[ignore] attributes disagree about STATE:",
         "DEBT_OWNER": "the debt inventory and the #[ignore] attributes disagree about the OWNER:",
+        "DEBT_DIAGNOSTIC": ("failing, but NOT for the declared reason — an XFAIL that any "
+                            "failure satisfies is not a declaration:"),
         "UNDECLARED_DEBT": "UNDECLARED — an XFAIL that no row of the debt inventory declares:",
         "OWED": ("OWED — still failing and still owed to %s, so that milestone is "
                  "not finished:" % forbid_owner),
@@ -1303,7 +1543,8 @@ def main():
     }
     for kind in ("OWED", "XPASS", "STALE", "UNDECLARED", "SLOWFAIL", "DUPLICATE",
                  "TAG", "DEBT_MANIFEST", "DEBT_MISSING", "DEBT_STATE",
-                 "DEBT_OWNER", "UNDECLARED_DEBT", "NO_RESULT", "BUILD", "CARGO"):
+                 "DEBT_OWNER", "DEBT_DIAGNOSTIC", "UNDECLARED_DEBT",
+                 "NO_RESULT", "BUILD", "CARGO"):
         items = [m for k, m in problems if k == kind]
         if items:
             print()
@@ -1313,8 +1554,9 @@ def main():
 
     if not problems:
         print("✓ every ignored test cargo knows about has a declared reason, "
-              "every declared failure is still failing, and every owed test is "
-              "declared in %s (and still exists)" % DEBT_MANIFEST)
+              "every declared failure is still failing FOR THE DIAGNOSTIC IT "
+              "DECLARES, and every owed test is declared in %s (and still "
+              "exists)" % DEBT_MANIFEST)
         return 0
     sys.stdout.flush()
     print("\n%d problem(s) above." % len(problems), file=sys.stderr)

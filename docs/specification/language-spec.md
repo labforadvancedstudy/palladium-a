@@ -487,11 +487,12 @@ lex → parse → macro expand → resolve imports → typecheck → borrow chec
 ```
 
 The C backend is the real backend. An LLVM text backend exists
-(`src/codegen/llvm_text_backend.rs`, 1442 lines) but is skeletal: `break` and `continue` emit
-`br label %loop_end_placeholder` under a TODO (`src/codegen/llvm_text_backend.rs:914`, `src/codegen/llvm_text_backend.rs:921`), `match` is a TODO if/else chain
-(`src/codegen/llvm_text_backend.rs:933`), and enum construction, `?`, macro invocation and `await` are one unimplemented TODO
+(`src/codegen/llvm_text_backend.rs`, 1442 lines) but is skeletal: `break` and `continue` are refused
+outright, naming the `%loop_end_placeholder` / `%loop_inc_placeholder` the TODO would have emitted
+(`src/codegen/llvm_text_backend.rs:936-938`, `src/codegen/llvm_text_backend.rs:940-942`), `match` is a TODO if/else chain
+(`src/codegen/llvm_text_backend.rs:944-956`), and enum construction, `?`, macro invocation and `await` are one unimplemented TODO
 together (`src/codegen/llvm_text_backend.rs:1379`). It also bails on ordinary code — "Unsupported iterator type in for loop"
-(`src/codegen/llvm_text_backend.rs:820`), "Unsupported binary operator" (`src/codegen/llvm_text_backend.rs:1081`), "Complex function calls not yet supported"
+(`src/codegen/llvm_text_backend.rs:820`), "Unsupported binary operator" (`src/codegen/llvm_text_backend.rs:1113-1117`), "Complex function calls not yet supported"
 (`src/codegen/llvm_text_backend.rs:1222`). No conformance row exercises it.
 
 Generated C is linked against `runtime/palladium_runtime.c`, which supplies 16 file/path symbols.
@@ -626,7 +627,7 @@ enums.
 which was ~250 lines low):
 - generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1774`)
 - reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1485`)
-- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1218`)
+- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1787-1791`)
 
 ### A4.3 Enums
 
@@ -637,7 +638,7 @@ field (`src/parser/mod.rs:786`, `src/ast/mod.rs:139`).
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1225`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1029`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:994-996`, corrected
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1418-1421`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:994-996`, corrected
 from `src/typeck/mod.rs:1226`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1349`, corrected from line 863–897 of the pre-cleanup revision).
@@ -682,7 +683,7 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:2343`, corrected from line 2038 of the pre-cleanup revision) |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:2608`, corrected from line 2038 of the pre-cleanup revision) |
 | `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:2597-2605` (corrected from line 2037–2043 of the pre-cleanup revision) |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
@@ -720,9 +721,10 @@ methods and no `?`. Declaring one does not make `?` work: the operator is reject
 enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
-They are ordinary user enums if you declare them. The only special-casing is that `?` typechecks
-against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2696`, corrected from line 2495 of the pre-cleanup revision) — and
-then generates C for a `struct Result` layout that codegen never emits (see
+They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
+rejected outright by the type checker (`src/typeck/mod.rs:2679`) and again by code generation
+(`src/codegen/mod.rs:3203-3207`). It used to typecheck against a `Generic{name:"Result"}` shape
+and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
 ## A6. Statements and expressions
@@ -772,7 +774,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 - partial: ranges outside a `for` header — codegen error "Range expressions can only be used in
   for loops" (`src/codegen/mod.rs:2627-2630`, corrected from line 2121 of the pre-cleanup revision).
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:2899`, corrected from line 1874 of the pre-cleanup revision).
+  (`src/typeck/mod.rs:3029-3033`, corrected from line 1874 of the pre-cleanup revision).
 
 **partial — precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for
 its right operand (`src/parser/mod.rs:2225`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
@@ -783,7 +785,7 @@ requires `a * -b`.
 
 **unimplemented.** `x.f()` parses as a call whose callee is a field access, and the typechecker
 rejects exactly that: **"Indirect function calls not yet supported"**
-(`src/typeck/mod.rs:1841`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
+(`src/typeck/mod.rs:1868-1873`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
 
 *(v0.2 also claimed a "same guard" in codegen at line 1870 of the pre-cleanup revision.
 `grep -n 'Indirect function calls' src/codegen/mod.rs` returns nothing; there is no such guard in
@@ -836,7 +838,7 @@ syntactic trap is worth stating: a `match` arm that is a block must not be follo
 and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`src/typeck/mod.rs:2679`, `src/typeck/mod.rs:2686`) and again by code
-generation (`src/codegen/mod.rs:2669`, `src/codegen/mod.rs:2681`), which is callable on its own.
+generation (`src/codegen/mod.rs:3203-3207`, `src/codegen/mod.rs:3215-3219`), which is callable on its own.
 
 What they used to do:
 
@@ -949,7 +951,7 @@ pattern = "_"
 (`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
 bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1602`,
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1659-1660`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
 (`src/codegen/mod.rs:2087`, `src/codegen/mod.rs:2108-2119`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
@@ -1249,8 +1251,8 @@ Re-measured from scratch at `abeb665`:
 | `print(p.name); f(p.name); p.n` — field to a builtin, then reused | accepted, prints `abc 3 1` |
 
 None of D6's symptoms reproduce. The call path creates a per-call lifetime and ends its borrows
-when the call finishes: `src/ownership/borrow_checker.rs:519` (`let call_lifetime =
-self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:525` (`self.context.end_borrows(&call_lifetime);`), with the
+when the call finishes: `src/ownership/borrow_checker.rs:544` (`let call_lifetime =
+self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:550` (`self.context.end_borrows(&call_lifetime);`), with the
 contract stated at `src/ownership/borrow_checker.rs:43-44` — "the caller-side borrow always lasts exactly for the call
 expression".
 

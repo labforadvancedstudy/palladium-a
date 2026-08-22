@@ -1076,6 +1076,22 @@ for line, want, why in [
     ("obj.`x`_out = 1", False,
      "deleting the span joined `obj.` to `_out` and reported an access that "
      "is not written anywhere on the line"),
+    # THE COST OF THE NARROWING, MADE EXECUTABLE. The exempt shape is a
+    # backticked BARE DOTTED NAME, so a backticked mention carrying anything
+    # else — a call, a subscript — is NOT exempt and IS flagged. That is a
+    # deliberate false positive on legitimate prose, and the fix for an author
+    # who hits it is the last row: backtick the bare name and leave the call or
+    # the index outside. Widening the grammar to admit `(…)` or `[…]` would
+    # readmit the class this guard exists for, because a call is exactly where a
+    # live access lives. Recorded as rows rather than as a sentence: a boundary
+    # a reader has to infer from a regex is one the next round re-litigates.
+    ("# see `Run._out()` for the raw bytes", True,
+     "a backticked CALL is not a bare name, so it is flagged"),
+    ("# see `Run._out[index]` for the raw bytes", True,
+     "a backticked SUBSCRIPT is not a bare name either, for the same reason"),
+    ("# see `Run._out`() for the raw bytes", False,
+     "and the documented fix works: the bare name is backticked, the call is "
+     "not"),
 ]:
     got = flagged(line)
     if got != want:

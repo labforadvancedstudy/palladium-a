@@ -1595,6 +1595,110 @@ fn a_user_written_return_zero_in_a_unit_function_is_refused() {
 // and the typeck/codegen agreement about shadowing — both fixed, because both
 // are consequences of a diagnostic this branch added.
 
+/// THE BORROW CHECKER NEVER HEARS ABOUT THE IMPORTED PROGRAM, SO CALLING AN
+/// IMPORTED FUNCTION IS "USE OF UNINITIALIZED VALUE".
+///
+/// THIS IS UPSTREAM OF THE TWO ROWS BELOW, and it is declared first for that
+/// reason: every module-system test that CALLS an imported function stops here,
+/// so a row further down could stay green on a failure that has nothing to do
+/// with what it declares. (Whether one actually did is now a measurement rather
+/// than a worry — see the diagnostic column in tests/rust-debt-manifest.txt.)
+///
+/// The chain, read in the code rather than inferred from the message:
+///
+///   src/driver/mod.rs:104-107   the resolver's output goes to the type
+///                               checker via `set_imported_modules`.
+///   src/driver/mod.rs:137-138   `BorrowChecker::new()` is constructed and
+///                               `check_program(&ast)` is called.
+///                               `resolved_modules` is LIVE in that scope and
+///                               is not passed. That omission is the whole
+///                               mechanism.
+///   src/ownership/borrow_checker.rs:114-118
+///                               `functions` is seeded from `BUILTINS` and
+///                               nothing else.
+///   src/ownership/borrow_checker.rs:156-176
+///                               `check_program` walks `program.items` only.
+///                               `Program.imports` (src/ast/mod.rs:9) is never
+///                               read, and `Item` (src/ast/mod.rs:24-32) has no
+///                               `Import` variant, so nothing in the local AST
+///                               could have carried the imported signatures
+///                               either.
+///   src/ownership/borrow_checker.rs:535 -> :502 -> :527
+///                               `Expr::Call` checks its callee expression;
+///                               `Expr::Ident` misses `functions`, falls
+///                               through to the ownership table, finds no
+///                               place, and returns `UseOfUninitializedValue`.
+///
+/// Measured on this tree: `pub fn helper() -> i64 { return 5; }` in lib.pd,
+/// imported by `fn main() { print_int(helper()); }`, is refused with
+/// "Use of uninitialized value: helper" AFTER the type checker has said "All
+/// types check out". A program that type-checks is rejected by the pass that
+/// exists to check ownership, for a name that is not a value at all.
+///
+/// NOT FIXED HERE, and deliberately not: the fix is a driver-level decision
+/// about what the imported program is — the same shared definition the two rows
+/// below need — and it is being made on its own branch. What this row buys is
+/// that the wall is DECLARED, with its mechanism, so it cannot go on being the
+/// silent explanation for somebody else's green.
+#[test]
+#[ignore = "XFAIL: the borrow checker is never told about imported modules. src/driver/mod.rs:104-107 hands the resolver's output to the type checker, but :137-138 constructs BorrowChecker::new() and calls check_program(&ast) without it, although resolved_modules is live in that scope. src/ownership/borrow_checker.rs:114-118 seeds `functions` from BUILTINS only and :156-176 walks program.items only (Program.imports, src/ast/mod.rs:9, is never read and Item has no Import variant), so an imported callee misses at :502 and :527 reports UseOfUninitializedValue. Measured: a program that type-checks clean is refused with `Use of uninitialized value: helper`. Needs the same shared definition of the imported program the two rows below need (owned by M4)"]
+fn an_imported_function_is_visible_to_the_borrow_checker() {
+    let out = compile_and_run_with_import(
+        "pub fn helper() -> i64 { return 5; }\n",
+        "import lib;\n\nfn main() { print_int(helper()); }\n",
+        "d3b_import_borrowck",
+    );
+    // The compiler's own output is the payload, not a bare "it failed": this
+    // row's job is to name WHICH refusal, and the debt manifest matches on it.
+    assert_eq!(
+        out.as_deref().map(str::trim),
+        Ok("5"),
+        "calling an imported function must reach code generation; the borrow \
+         checker rejects it instead:\n{}",
+        out.clone().err().unwrap_or_default()
+    );
+}
+
+/// A LOCAL `fn f` SHADOWING AN IMPORTED `pub async fn f` STILL TYPES THE CALL
+/// AS A FUTURE.
+///
+/// What a program can do today that it should not: emit `f_Future v = f();`
+/// beside `long long f()`. `CodeGenerator.async_functions`
+/// (src/codegen/mod.rs:180-193) is INSERT-ONLY — unlike `functions`, which the
+/// main-program pass overwrites entry by entry — so an imported `pub async fn f`
+/// leaves `f` in the set even when a local ordinary `fn f` replaces it, and
+/// `try_infer_expr_type` (src/codegen/mod.rs:277) reads the set rather than
+/// asking `crate::ast::local_definition_shadows_import`.
+///
+/// Measured: gcc reports `use of undeclared identifier 'f_Future'` against C
+/// the programmer never wrote, after the compiler has already printed
+/// "Compilation successful".
+///
+/// WHY IT IS A ROW AND NOT A FIX, and why the owed count moved. This is the
+/// same class as the prototype-loop defect — a decision about the imported
+/// program made without asking the shared predicate — one container over, and
+/// it belongs to the module system. It was previously recorded only as a
+/// comment on the field, because declaring it would move an `owed=43` that
+/// several receipts had already quoted. A receipt is a measurement, not a
+/// budget: preserving the number by omitting known debt is precisely what a
+/// closed inventory exists to prevent, so the row is here and the number moved.
+#[test]
+#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:180-193) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:277) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
+fn a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future() {
+    let out = compile_and_run_with_import(
+        "pub async fn f() { print_int(1); }\n",
+        "import lib;\n\nfn f() -> i64 { return 3; }\n\nfn main() { let v = f(); print_int(v); }\n",
+        "d3b_shadowed_async",
+    );
+    assert_eq!(
+        out.as_deref().map(str::trim),
+        Ok("3"),
+        "the local `fn f` is the one that is called and the one that is \
+         emitted, so its call must be typed as `long long`:\n{}",
+        out.clone().err().unwrap_or_default()
+    );
+}
+
 /// SELECTIVE IMPORT DOES NOT EXCLUDE ANYTHING FROM THE CONSUMERS.
 ///
 /// What a program can do today that it should not: `import lib::{helper}` names
@@ -1649,23 +1753,47 @@ fn selective_import_excludes_a_symbol_from_the_consumers() {
 /// and code generation iterates `self.imported_modules.values()` — a `HashMap`,
 /// so in arbitrary order.
 ///
-/// Measured, six identical compilations of one program whose two modules export
-/// `dup` with different return types:
-///
-/// ```text
-///    3 int dup()
-///    3 long long dup()
-/// ```
-///
 /// Nondeterministic output from identical input is worse than a wrong answer,
 /// because no transcript can pin it. There is no defined semantics to appeal to
 /// — reject the collision, first-wins, or require qualification are all
 /// defensible, and choosing is module-system design.
+///
+/// WHAT THE DECLARATION USED TO SAY, AND WHY IT NO LONGER DOES. This row was
+/// written around a measurement — "six identical compilations produced
+/// `int dup()` three times and `long long dup()` three times" — that the test
+/// cannot observe and the compiler no longer produces. Both `dup` bodies are
+/// now emitted into one translation unit, so gcc refuses the program with
+/// `conflicting types for 'dup'` and `out.status.success()` is false on every
+/// run: `compiled` stays 0 and the assertion that fires is the PRECONDITION,
+/// not the claim. The row was green on a failure it did not describe, which is
+/// what the manifest's diagnostic column now makes impossible to repeat. The
+/// nondeterminism is still real — which body is registered and which is emitted
+/// is still HashMap order — it is simply no longer the first thing that goes
+/// wrong.
+///
+/// THE SCOPE OF THIS ROW ALSO COVERS DECLARATION IDENTITY, and it is bounded
+/// here rather than fixed. Imported generics are stored by BARE NAME
+/// (`TypeChecker.generic_functions`), and the deferred-refusal lists that
+/// src/typeck/mod.rs:1062-1080 filters carry `(name, span)` and nothing else.
+/// So with two same-named imported generic `async fn`s, the refusal is raised
+/// off whichever declaration was RECORDED and the body that would have been
+/// emitted is whichever won a `HashMap`: THE REFUSAL MAY NAME A DECLARATION
+/// THAT IS NOT THE ONE IN THE OUTPUT, and its message carries no module
+/// identity with which a reader could tell. That is exhibited by
+/// `the_generic_async_refusal_carries_no_declaration_identity` below, which is
+/// an ordinary test because the behaviour it pins is what happens TODAY.
+/// Fixing it means deciding the same collision semantics this row is about, so
+/// it is one debt, not two.
 #[test]
-#[ignore = "XFAIL: two imported modules exporting the same name have no defined semantics — src/typeck/mod.rs set_imported_modules overwrites the unqualified name in a HashMap and src/codegen/mod.rs iterates imported_modules.values() (also a HashMap), so both the registered signature and the emitted body are chosen by iteration order. Measured: six identical compilations of one program produced `int dup()` three times and `long long dup()` three times. Needs a decision — reject the collision, first-wins, or require qualification — and both layers honouring it (owned by M4)"]
+#[ignore = "XFAIL: two imported modules exporting the same name have no defined semantics — src/typeck/mod.rs set_imported_modules overwrites the unqualified name in a HashMap and src/codegen/mod.rs iterates imported_modules.values() (also a HashMap), so both the registered signature and the emitted body are chosen by iteration order. Measured today: both bodies are emitted and gcc refuses the program with `conflicting types for 'dup'`, so the fixture never links and the nondeterminism sits behind that. Also bounded here: imported generics are keyed by bare name and the deferred refusals carry only (name, span), so with two same-named imported generic async fns the refusal may name a declaration other than the one that would have been emitted, with no module identity in the message — exhibited by the_generic_async_refusal_carries_no_declaration_identity. Needs a decision — reject the collision, first-wins, or require qualification — and both layers honouring it (owned by M4)"]
 fn two_modules_exporting_one_name_are_deterministic() {
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut compiled = 0;
+    // WHY THE COMPILER'S OUTPUT IS KEPT. Without it the precondition failed
+    // with "the collision fixture never compiled, so this proves nothing" —
+    // true, and useless: it named no mechanism, so the row could not say which
+    // defect it was failing on, and neither could the debt manifest.
+    let mut last_refusal = String::new();
     for i in 0..6 {
         let dir = TempDir::new().unwrap();
         fs::write(dir.path().join("a.pd"), "pub fn dup() -> i64 { 1 }\n").unwrap();
@@ -1681,6 +1809,11 @@ fn two_modules_exporting_one_name_are_deterministic() {
             .output()
             .expect("failed to run pdc");
         if !out.status.success() {
+            last_refusal = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
             continue;
         }
         compiled += 1;
@@ -1697,7 +1830,9 @@ fn two_modules_exporting_one_name_are_deterministic() {
     }
     assert!(
         compiled > 0,
-        "the collision fixture never compiled, so this proves nothing"
+        "the collision fixture never compiled, so the nondeterminism this row \
+         declares cannot even be reached. The compiler said:\n{}",
+        last_refusal
     );
     assert_eq!(
         seen.len(),
@@ -1707,6 +1842,102 @@ fn two_modules_exporting_one_name_are_deterministic() {
         compiled,
         seen
     );
+}
+
+/// CONTROL for the identity bound recorded on
+/// `two_modules_exporting_one_name_are_deterministic`: the generic-async
+/// refusal names a SYMBOL, not a DECLARATION.
+///
+/// WHY THIS IS AN ORDINARY TEST AND NOT AN XFAIL. It does not assert what the
+/// compiler ought to do — it pins what it DOES, so that the bound written into
+/// that row is a measurement a reader can re-run rather than a caveat they have
+/// to take on trust. When declaration identity is carried, this test goes red
+/// and points at the row that has to be transitioned.
+///
+/// THE SHAPE. Two imported modules both export a generic `async fn agen<T>`.
+/// Only `a.pd`'s returns a value, so only `a.pd`'s is recorded in
+/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:552-563), and the
+/// refusal is raised for it at src/typeck/mod.rs:1062-1080 once the call site
+/// has instantiated the name. But `generic_functions` is keyed by BARE NAME and
+/// `set_imported_modules` iterates a `HashMap`, so WHICH module's body that key
+/// holds — and therefore which body `get_instantiations` would have handed to
+/// code generation — is iteration order. The refusal fires either way, and:
+///
+///   * it names `agen` and nothing else — no module, no path, so the message
+///     cannot distinguish the two declarations;
+///   * its span renders against `app.pd`, which declares neither of them.
+///
+/// That is the exhibit: on the runs where `b.pd`'s harmless body won the key,
+/// the compiler refused a program over a declaration that would not have been
+/// in it. The refusal is not wrong to exist — an offending declaration IS
+/// reachable — but which one it is about is not something it can say.
+#[test]
+fn the_generic_async_refusal_carries_no_declaration_identity() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("a.pd"),
+        "pub async fn agen<T>(x: T) -> i64 { return 42; }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("b.pd"),
+        "pub async fn agen<T>(x: T) { print_int(1); }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("app.pd"),
+        "import a;\nimport b;\n\nfn main() { agen(1); }\n",
+    )
+    .unwrap();
+
+    // Six runs, because the thing being pinned is that the VERDICT does not
+    // vary while the winning body does. One run could not tell them apart.
+    for i in 0..6 {
+        let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+            .args(["compile", "app.pd", "-o", &format!("d3b_agen_{}", i)])
+            .current_dir(dir.path())
+            .output()
+            .expect("failed to run pdc");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !out.status.success(),
+            "run {}: an imported generic `async fn` with a value return is \
+             refused, whichever module supplied the body:\n{}",
+            i,
+            text
+        );
+        assert!(
+            text.contains("a `return` with a value inside an `async fn` (imported: `agen`)"),
+            "run {}: the refusal must be the imported-async one:\n{}",
+            i,
+            text
+        );
+        // THE POINT. `a.pd` is the file that declares the offending `agen`, and
+        // `b.pd` the one that does not. Neither is named, so the diagnostic
+        // cannot say which declaration it refused — and the span it does print
+        // belongs to `app.pd`, which declares neither.
+        assert!(
+            !text.contains("a.pd") && !text.contains("b.pd"),
+            "run {}: the refusal names a module, so declaration identity is \
+             now carried — transition the bound recorded on \
+             `two_modules_exporting_one_name_are_deterministic`:\n{}",
+            i,
+            text
+        );
+        // The `-->` marker and the path are separated by colour escapes, so the
+        // path alone is what can be matched without a terminal-aware reader.
+        assert!(
+            text.contains("app.pd:1:"),
+            "run {}: the span is expected to render against the importing \
+             file, which declares neither `agen`:\n{}",
+            i,
+            text
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -65,7 +65,7 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
   tuple is constructible.
 - Generic types in struct fields — error at `src/codegen/mod.rs:1774`.
 - Reference types in struct fields — error at `src/codegen/mod.rs:1202`.
-- Returning an array from a function — error at `src/codegen/mod.rs:1218`.
+- Returning an array from a function — error at `src/codegen/mod.rs:2004-2008`.
 - `f32`/`f64`, `char`, `str`, `u8`, `usize` — no such primitives (`src/parser/mod.rs:2572-2578`).
 - Trait bounds (`<T: Display>`) — a parse error; `parse_generic_params` accepts bare names only.
 - `Option<T>` / `Result<T,E>` as built-ins — they do not exist. Declaring your own does not
@@ -159,7 +159,7 @@ precedence.
 | Construct | Why |
 |---|---|
 | `if` / `match` / block as an *expression* | parsed only as statements (`src/parser/mod.rs:1797`, `src/parser/mod.rs:1803`) |
-| method call `x.f()` | typeck rejects: "Indirect function calls not yet supported" (`src/typeck/mod.rs:1887`). Call `Type::method(receiver, …)` instead. |
+| method call `x.f()` | typeck rejects: "Indirect function calls not yet supported" (`src/typeck/mod.rs:1868-1873`). Call `Type::method(receiver, …)` instead. |
 | `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:2679`). It used to emit C referencing an undefined `struct Result`. |
 | `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:2686`). It used to emit a `poll` member call that is never generated. |
 | closures | no closure token path, no closure AST node |

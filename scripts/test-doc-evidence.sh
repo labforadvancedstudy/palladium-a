@@ -1041,6 +1041,105 @@ index undeclared unimplemented \
 expect_red undeclared "an undeclared fixture is rejected" "not declared in"
 
 echo
+echo "== a citation pin must point at something, or it can never be wrong =="
+
+# CASES 33-36. THE LAUNDERING THE MOVEMENT CHECK CANNOT SEE.
+#
+# A pin proves a cited range has not MOVED. It says nothing about a citation whose LINE
+# NUMBERS change, because the line numbers are part of the pin key: edit `foo.rs:100` to
+# `foo.rs:120`, run `--update`, and the old key is dropped while a new one is added.
+# Neither is a MOVED. That is how two citations in this repository came to rest on an
+# empty line and on a bare `}` while `--update` reported `MOVED 0` — and a sweep for the
+# shape found 25 of them across 220 citations.
+#
+# The probe is a real document under docs/ citing a real file, because the citation
+# collector globs the tree; the generated files are pointed at throwaways so the control
+# cannot rewrite the tracked ones.
+PROBE_DIR=docs/.test-doc-evidence-tmp
+rm -rf "$PROBE_DIR"
+mkdir -p "$PROBE_DIR" || exit 2
+trap 'rm -rf "$TMP" "$INREPO" "$PROBE_DIR"' EXIT
+
+pin_probe() {  # pin_probe <cited-line>  -> sets RC and OUT
+  printf 'Calls take a per-call lifetime (`%s/target.rs:%s`).\n' \
+    "$PROBE_DIR" "$1" > "$PROBE_DIR/probe.md"
+  # The pin file `--update` WOULD have written for that citation: the real pins,
+  # plus this one, fingerprinted exactly as the generator fingerprints it. That is
+  # what makes the red cases below FAITHFUL — under the previous scheme they are
+  # green, because the fingerprint matches and nothing has moved.
+  cp docs/citation-pins.tsv "$TMP/pins.tsv"
+  python3 - "$PROBE_DIR" "$1" >> "$TMP/pins.tsv" <<'PYEOF'
+import hashlib, sys
+d, line = sys.argv[1], int(sys.argv[2])
+body = open(f"{d}/target.rs", encoding="utf-8").read().split("\n")[line - 1]
+norm = " ".join(body.split())
+print("%s/target.rs\t%d-%d\t%s/probe.md\t%s\t%s"
+      % (d, line, line, d, hashlib.sha256(norm.encode()).hexdigest()[:12], norm))
+PYEOF
+  OUT=$(python3 scripts/check_doc_evidence.py --pins-only --pins "$TMP/pins.tsv" 2>&1)
+  RC=$?
+}
+
+pin_case() {  # pin_case <case> <expected-rc> [substring the message MUST contain]...
+  local case=$1 want=$2; shift 2
+  local ok=1 s
+  [ "$RC" -eq "$want" ] || ok=0
+  for s in "$@"; do printf '%s' "$OUT" | grep -qF -- "$s" || ok=0; done
+  if [ "$ok" -eq 1 ]; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$case"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$case"
+    printf '         (expected exit %s, got %s)\n' "$want" "$RC"
+    printf '%s\n' "$OUT" | sed 's/^/         | /' | head -12
+    fail=$((fail+1))
+  fi
+}
+
+# CASE 33. THE GREEN CONTROL, and it is fatal: a citation on a line that carries code,
+# pinned to that line, passes. Without it every "detected!" below could be the probe
+# document itself being malformed.
+printf 'let call_lifetime = self.context.new_lifetime();\n}\n' > "$PROBE_DIR/target.rs"
+pin_probe 1
+pin_case "a citation on a line that carries code is accepted" 0
+if [ "$RC" -ne 0 ]; then
+  echo "${RED}the citation-pin probe is broken -- aborting${NC}"
+  printf '%s\n' "$OUT" | sed 's/^/  | /' | head -20
+  exit 1
+fi
+
+# CASE 34. THE LAUNDERING. The same document, its line number moved onto the bare `}`,
+# with the pin `--update` would have recorded for it. Under the previous scheme this is
+# GREEN: the fingerprint matches, so there is no MOVED and no failure of any kind. It is
+# now refused, and refused BY NAME rather than by a generic mismatch.
+pin_probe 2
+pin_case "a pin relocated onto a bare '}' is refused" 1 \
+  "NON-SEMANTIC" "carries no content" "'}'"
+
+# CASE 35. And the empty line, which is the other half of what was measured. Same shape:
+# fingerprint-stable, matching pin, no movement — and no content.
+printf 'let call_lifetime = self.context.new_lifetime();\n\n' > "$PROBE_DIR/target.rs"
+pin_probe 2
+pin_case "a pin relocated onto an EMPTY line is refused" 1 \
+  "NON-SEMANTIC" "carries no content"
+
+# CASE 36. `--update` must not RECORD one either, or the rule would only notice the
+# laundering after it had been written down. Nothing is generated while one exists — so
+# the throwaway pin file must come back byte-identical.
+before=$(shasum -a 256 < "$TMP/pins.tsv")
+OUT=$(python3 scripts/check_doc_evidence.py --update --pins "$TMP/pins.tsv" \
+        --allow "$TMP/allow.txt" 2>&1)
+RC=$?
+after=$(shasum -a 256 < "$TMP/pins.tsv")
+if [ "$before" != "$after" ]; then
+  RC=0   # it rewrote the pins: that IS the laundering, whatever it printed
+  OUT="$OUT"$'\n(the pin file was rewritten)'
+fi
+pin_case "--update refuses to record a content-free pin, and writes nothing" 1 \
+  "REFUSED" "Nothing was written"
+
+rm -rf "$PROBE_DIR"
+
+echo
 echo "=============================================="
 if [ "$fail" -eq 0 ]; then
   echo "${GREEN}doc-evidence gate probe green${NC} -- $pass case(s): the gate passes a true"

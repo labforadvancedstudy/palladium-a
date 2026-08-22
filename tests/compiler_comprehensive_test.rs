@@ -666,7 +666,7 @@ fn test_complex_programs() {
 }
 
 #[test]
-#[ignore = "XFAIL: `&self` receivers and method-call syntax — grammar.ebnf:220 'Method-call syntax x.f() parses but the type checker rejects it: \"Indirect function calls not yet supported\"' (owned by M4, 'Traits with real dispatch' / a real reference type)"]
+#[ignore = "XFAIL: an `impl` block's `Self` is not a known type — this fixture is refused with 'Unknown struct type: Self' before it reaches the `&self` receiver and the method-call syntax (`x.f()`, grammar.ebnf:220, rejected as \"Indirect function calls not yet supported\") it was written for. All three are owed; this is the one that fires (owned by M4, 'Traits with real dispatch' / a real reference type)"]
 fn test_struct_with_methods() {
     compile_and_verify(
         r#"

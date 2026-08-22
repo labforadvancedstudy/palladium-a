@@ -299,12 +299,14 @@ scheduler.
 no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 (`docs/specification/grammar.ebnf:58-59`).
 
-**7. `.await` generates C that references a member no part of the compiler emits.**
-Codegen for an await expression emits `while (!<tmp>.poll(&<tmp>)) { }`
-(`src/codegen/mod.rs:2764-2771`) and then reads `<tmp>.result` (`src/codegen/mod.rs:2773-2775`). Nothing generates a
-`poll` member on the produced C type. This is not an error at any earlier stage — it is silent
-breakage discovered by the C compiler, and it is the failure mode `language-spec.md` §6.5 already
-recorded. The parallel defect for `?` is at `src/codegen/mod.rs:2708-2729`, which emits a
+**7. `.await` is refused by code generation, because the C it used to emit referenced a member
+no part of the compiler emits.** The await arm now returns `CompileError::await_unimplemented`
+(`src/codegen/mod.rs:3215-3219`). It previously emitted `while (!<tmp>.poll(&<tmp>)) { }` and then
+read `<tmp>.result`, while nothing generates a `poll` member on the produced C type — the poll
+routine that IS generated is the free function `<name>_poll`. That was not an error at any
+earlier stage: it was silent breakage discovered by the C compiler, which is the failure mode
+`language-spec.md` §6.5 recorded. The parallel defect for `?` was the same shape and is refused
+at the same place (`src/codegen/mod.rs:3203-3207`); it used to emit a
 `struct Result { int is_ok; union { ... } data; }` layout that codegen never defines.
 
 Direction of travel: making `.await` a hard compile error is *consistent* with this document,
