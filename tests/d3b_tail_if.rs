@@ -109,6 +109,16 @@ enum NetA {
     ///      its single use in `tail_match_arms_are_lowered_to_returns`.
     ///   3. `src/parser/mod.rs`, the NOTE inside `returns_on_every_path` that
     ///      records this residual — it stops being a residual.
+    ///   4. AND THEN THE FLAG. `-Werror=return-type` is deliberately absent
+    ///      from the shared gcc invocation (src/linker.rs:73-86 passes only
+    ///      `-O<n>`, `-I <runtime>`, `-o`) for ONE reason: this defect would
+    ///      fail every compilation today. That is a temporary position, not a
+    ///      steady state. Once the final `else` lands, the flag belongs in that
+    ///      invocation, and Net A's role changes with it — from the primary
+    ///      structural boundary to ATTRIBUTION, which is what it is better at
+    ///      (it names the function and the line without needing a compiler, and
+    ///      it runs on C that never links). Do not add the flag before the
+    ///      `else`; do not leave it out after.
     ///
     /// `tests/conformance-manifest.txt` needs NO change: its
     /// `tests/stdlib/stdlib_tail_match.pd` row is `run`/`expected` and pins the
@@ -692,7 +702,8 @@ fn main() {
 /// which is what found this line.
 ///
 /// What actually happens: constant folding rewrites the comparison to `true`
-/// (src/optimizer/constant_folding.rs, `BinOp::Eq`) before code generation, so
+/// (src/optimizer/constant_folding.rs:154, the `BinOp::Eq` arm, which assigns
+/// `*expr = Expr::Bool(*l == *r)`) before code generation, so
 /// the emitted C is `while (1)` and `scripts/check-c-returns.py` WOULD call it
 /// infinite. The two analyses disagree here — in the SAFE direction, because
 /// the parser is the stricter one and refuses the program before any C exists.
@@ -1118,7 +1129,7 @@ fn main() {
     // MEASURED, AND NOT WHAT AN EARLIER COMMENT IN THIS REPO CLAIMED:
     // `while 1 == 1` ALSO emits `while (1)`, because constant folding runs
     // before code generation and rewrites the comparison to `Expr::Bool(true)`
-    // (src/optimizer/constant_folding.rs, `BinOp::Eq`). The two analyses
+    // (src/optimizer/constant_folding.rs:154, `BinOp::Eq`). The two analyses
     // therefore disagree about this program — but in the SAFE direction: the
     // parser reads the UNFOLDED ast, does not call the loop infinite, and
     // REFUSES the program (see

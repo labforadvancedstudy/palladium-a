@@ -62,7 +62,7 @@ spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
   "cmd: grep -rn 'region\\|Region' src/ --include='*.rs' -> exit 1, 0 lines",
-  "src: src/parser/mod.rs:957 lifetime_params, populated by the parser",
+  "src: src/parser/mod.rs:958 lifetime_params, populated by the parser",
   "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> 0 real readers; every hit is `lifetime_params: vec![]` in an src/lsp or src/optimizer test fixture",
 ]
 
@@ -109,7 +109,7 @@ description = "Restricted unsafe with side-channel protection; forbidden in #![t
 spec = "../../specification/language-spec.md#n12-memory-model"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:1761 Token::Unsafe => self.parse_unsafe()",
+  "src: src/parser/mod.rs:1762 Token::Unsafe => self.parse_unsafe()",
   "src: src/driver/mod.rs:164 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/11_unsafe_blocks.pd PASS (placeholder: only prints that the feature is unimplemented)",
@@ -132,7 +132,7 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/codegen/mod.rs:1663 'Generic types in structs not yet supported'",
-  "src: src/parser/mod.rs:2566-2576 all-uppercase name inside <...> reclassified as a const argument",
+  "src: src/parser/mod.rs:2567-2577 all-uppercase name inside <...> reclassified as a const argument",
   "cmd: pdc compile 'fn f<T: Clone>(x: T) {} fn main(){}' -> error: expected '>' after generic parameters, found ':'",
   "conformance: tests/08_generics_basic.pd PASS (placeholder: only prints that generics are unimplemented)",
 ]
@@ -143,10 +143,10 @@ description = "Trait definitions, impls, bounds on generics, associated types."
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/parser/mod.rs:1156 fn parse_trait — traits do parse",
+  "src: src/parser/mod.rs:1157 fn parse_trait — traits do parse",
   "src: src/codegen/mod.rs:1013 Item::Trait(_) => emits nothing",
   "src: src/typeck/mod.rs:795-797 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
-  "src: src/parser/mod.rs:1280 trait-method parameter loop, which has no self_param branch",
+  "src: src/parser/mod.rs:1281 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd PASS (placeholder: only prints that traits are unimplemented)",
 ]
 note = "Design detail: ../../design/trait_system_design.md"
@@ -156,7 +156,7 @@ description = "Compile-time generic parameters; arrays with generic sizes."
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:436-438 the const-parameter branch of parse_generic_params",
+  "src: src/parser/mod.rs:437-439 the const-parameter branch of parse_generic_params",
   "src: src/codegen/mod.rs:1058 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
   "src: src/codegen/mod.rs:1059 ArraySize::Expr(_) => \"0\".to_string()",
 ]
@@ -191,8 +191,8 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
   "conformance: tests/04_control_flow_if.pd PASS",
-  "src: src/parser/mod.rs:1909 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
-  "src: src/parser/mod.rs:1755 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
+  "src: src/parser/mod.rs:1910 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
+  "src: src/parser/mod.rs:1756 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
 ]
 
 [core_language.functions.function_definitions]
@@ -230,7 +230,7 @@ description = "File-based modules, nested paths, visibility, `import`."
 spec = "../../specification/language-spec.md#n11-modules"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:554 while self.check(&Token::Import) — imports are drained before items",
+  "src: src/parser/mod.rs:555 while self.check(&Token::Import) — imports are drained before items",
   "cmd: grep -rn 'Item::Module\\|Token::Mod' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/12_modules_imports.pd PASS (placeholder: only prints that modules are unimplemented)",
   "conformance: tests/projects/hello_pdm/src/main.pd PASS",
@@ -272,7 +272,7 @@ spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
   "src: src/lexer/token.rs:111 #[token(\"async\")] — one of the two things the definition removes",
-  "src: src/parser/mod.rs:969 effects: None, // Effects will be inferred during analysis",
+  "src: src/parser/mod.rs:970 effects: None, // Effects will be inferred during analysis",
   "src: src/driver/mod.rs:59 the analyser's result is println!ed and nothing else",
   "src: src/effects/mod.rs:283 'If function is unknown, we conservatively assume it's pure' — the unsound direction",
   "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> 1 line, src/driver/mod.rs:147",
@@ -360,7 +360,7 @@ implementation = "partial"
 evidence = [
   "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
   "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
-  "src: src/parser/mod.rs:1678 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
+  "src: src/parser/mod.rs:1679 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
 ]
 
 [advanced_features.macro_system.hygiene]

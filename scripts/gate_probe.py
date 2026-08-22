@@ -64,14 +64,26 @@ be possible — it is a design choice, not an impossibility. It is declined:
     a producer's text never reaches a stream a verdict is read from, and that
     is a property of what is PRINTED, not of what is retained.
 
-So the guarantee is narrower than "cannot", and it is MECHANICAL: the honest
-path is the easy path, the dishonest one requires reaching for a private name,
-and scripts/test-gate-probe.sh fails if any consumer outside this module writes
-one, if `Malfunction` grows a `text` attribute, if `Withheld`'s `repr`/`str`
-starts carrying the bytes, or if this file's prose re-grows the overclaim.
-That last check reads the WHOLE file — an earlier version scanned only the text
-above this heading, which is how the docstrings on `Run` and `classify` went on
-asserting the retracted version for a round.
+So the guarantee is narrower than "cannot", and it is MECHANICAL.
+scripts/test-gate-probe.sh fails if `Malfunction` grows a `text` attribute, if
+`Withheld`'s `repr`/`str` starts carrying the bytes, if `spill()` reports a
+write it did not complete, or if this file's prose re-grows the overclaim (that
+check reads the WHOLE file — an earlier version scanned only the text above this
+heading, which is how the docstrings on `Run` and `classify` went on asserting
+the retracted version for a round).
+
+AND THE SCOPE OF THE PRIVATE-NAME RULE, STATED AT ITS TRUE SIZE. The gate greps
+EVERY GIT-TRACKED FILE (binaries skipped) for the literal spellings `._out`,
+`._b` and `.withheld._`, outside this module and the enforcer itself, ignoring
+comment lines. That is the whole of it. It is a LEXICAL CONVENTION GUARD:
+`getattr(x, "_b")`, a name assembled from tokens, `vars(x)["_b"]`, anything
+built at runtime, and an untracked file all walk past it. It does not stop a
+determined caller and nothing in Python would; what it does is make the
+ORDINARY way of writing the shortcut visible to a gate, so taking it has to be
+deliberate and in a form a reviewer notices. An earlier version of this
+paragraph described the rule as covering every consumer everywhere, which was
+wider than anything any gate checked — the promise is now the same sentence as
+the mechanism, and a re-widening is itself a checked phrase.
 
 TOTALITY
 --------
@@ -117,6 +129,14 @@ HERE = Path(__file__).resolve().parent
 TIMEOUT_S = 300
 
 
+def _unlink(path: Path) -> None:
+    """Remove a temporary that must not be mistaken for a finished spill."""
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 class Withheld:
     """Output of a process that did not conclude. Not evidence.
 
@@ -133,8 +153,11 @@ class Withheld:
     and the alternative to that channel is not "no leak", it is somebody
     re-running the producer with an ad-hoc capture and no boundary at all.
 
-    The rule that IS enforced lives in scripts/test-gate-probe.sh: no consumer
-    outside this module may name `._b` or `._out`.
+    The rule that IS enforced lives in scripts/test-gate-probe.sh: a grep over
+    every git-tracked file for the literal spellings `._b` and `._out`, outside
+    this module and the enforcer, comment lines excluded. That is a convention
+    guard, not access control — see the module docstring for exactly what walks
+    past it.
     """
 
     __slots__ = ("_b",)
@@ -167,18 +190,43 @@ class Withheld:
         still be emitted — losing the report as well as the bytes helps nobody —
         but it must be announced. `report_malfunction` prints `WITHHELD_LOST`
         instead of `WITHHELD_AT`, and says why.
+
+        EXISTENCE IS NOT PRESERVATION — the second correction. The first fix
+        asked `path.is_file()`, which passes on a STALE file left by an earlier
+        run and on a PARTIALLY written one, so `WITHHELD_AT` could still name
+        something that is not this producer's output. The guarantee is now the
+        whole of it: the bytes go to a temporary sibling, are READ BACK AND
+        COMPARED BYTE FOR BYTE, and only then renamed into place. `os.replace`
+        is atomic within a filesystem, so after a successful spill the target
+        holds the complete output of THIS run, and after a failed one it is
+        never a half-written file — it is whatever was there before, which the
+        caller is told about explicitly.
         """
+        data = self._b.encode("utf-8", "replace")
+        tmp = path.with_name(f"{path.name}.partial.{os.getpid()}")
         try:
-            path.write_text(self._b, errors="replace")
-        except (OSError, UnicodeError) as exc:
-            return path, f"{type(exc).__name__}: {exc}"
-        # Confirm rather than assume. A write that raised nothing but left no
-        # readable file is the same lie in a different costume.
-        try:
-            if not path.is_file():
-                return path, "write raised nothing but no file is there"
+            tmp.write_bytes(data)
         except OSError as exc:
-            return path, f"cannot stat what was just written: {exc}"
+            _unlink(tmp)
+            return path, f"{type(exc).__name__}: {exc}"
+        # Read back. A short write, a full disk, or a filesystem that accepted
+        # the call and kept less than it was given, all look like success from
+        # write_bytes() alone.
+        try:
+            back = tmp.read_bytes()
+        except OSError as exc:
+            _unlink(tmp)
+            return path, f"cannot read back what was just written: {exc}"
+        if back != data:
+            _unlink(tmp)
+            return path, (f"read-back differs: wrote {len(data)} byte(s), read "
+                          f"back {len(back)}; that file would not have been the "
+                          f"output")
+        try:
+            os.replace(tmp, path)
+        except OSError as exc:
+            _unlink(tmp)
+            return path, f"cannot move the spill into place: {exc}"
         return path, None
 
 
@@ -207,14 +255,21 @@ class Run:
     an ordinary attribute behind a naming convention — reachable, and not
     pretended otherwise. See the module docstring for what is actually
     guaranteed, and scripts/test-gate-probe.sh for the rule that is enforced.
+
+    `capture_error` is set when the OUTPUT could not be obtained, whatever the
+    producer's exit status was. It is a separate field rather than a smuggled
+    exit code so that the rule is legible where it is enforced, in `classify()`:
+    a run whose evidence was not captured is a malfunction even if the producer
+    exited 0.
     """
 
-    __slots__ = ("argv", "rc", "_out")
+    __slots__ = ("argv", "rc", "_out", "capture_error")
 
-    def __init__(self, argv, rc: int, out: str) -> None:
+    def __init__(self, argv, rc: int, out: str, capture_error=None) -> None:
         self.argv = list(argv)
         self.rc = rc
         self._out = out
+        self.capture_error = capture_error
 
     @property
     def signal_number(self):
@@ -231,6 +286,14 @@ class Run:
         return None
 
     def describe(self) -> str:
+        if self.capture_error is not None:
+            # The producer's own status is reported too, because "it exited 0"
+            # is exactly the fact that would otherwise have been mistaken for a
+            # verdict. It is context, not a conclusion.
+            s = self.signal_number
+            how = f"killed by signal {s}" if s is not None else f"exit {self.rc}"
+            return (f"{how}, but its output could not be captured "
+                    f"({self.capture_error}), so nothing it printed was read")
         s = self.signal_number
         return f"killed by signal {s}" if s is not None else f"exit {self.rc}"
 
@@ -299,11 +362,32 @@ def run(argv, cwd=None, env=None) -> Run:
         except subprocess.TimeoutExpired:
             pass
 
+        # THE CAPTURE IS EVIDENCE, AND A CAPTURE THAT FAILED IS NOT EVIDENCE.
+        # This used to swallow the OSError, substitute b"", and hand back the
+        # PRODUCER'S exit code — so a producer that exited 0 whose output could
+        # not be read became `Concluded("")`: a semantic verdict built on
+        # evidence nobody ever saw, inside the module that exists to stop
+        # exactly that. It is now a capture error, and `classify()` turns it
+        # into a Malfunction whatever the producer did.
+        out, capture_error = b"", None
         try:
             sink.seek(0)
             out = sink.read()
-        except OSError:
-            out = b""
+        except OSError as exc:
+            capture_error = f"{type(exc).__name__}: {exc}"
+        else:
+            # Read what is there, and confirm it is all of it. A short read
+            # leaves a plausible prefix, which is worse than no output at all:
+            # a prefix parses.
+            try:
+                size = os.fstat(sink.fileno()).st_size
+            except OSError as exc:
+                capture_error = f"cannot size the capture: {exc}"
+            else:
+                if len(out) != size:
+                    capture_error = (f"short read: {len(out)} of {size} byte(s); "
+                                     f"a prefix of a producer's output parses "
+                                     f"and is not its output")
     finally:
         try:
             sink.close()
@@ -312,8 +396,9 @@ def run(argv, cwd=None, env=None) -> Run:
 
     text = out.decode("utf-8", "replace") if isinstance(out, bytes) else str(out)
     if timed_out:
-        return Run(argv, 124, f"timed out after {TIMEOUT_S}s\n{text}")
-    return Run(argv, proc.returncode, text)
+        return Run(argv, 124, f"timed out after {TIMEOUT_S}s\n{text}",
+                   capture_error)
+    return Run(argv, proc.returncode, text, capture_error)
 
 
 def classify(r: Run, reject_codes=(1,)):
@@ -323,7 +408,15 @@ def classify(r: Run, reject_codes=(1,)):
     reading the output of a producer that did not conclude cannot happen BY
     ACCIDENT. It can still happen on purpose, via `Run._out`; that is a naming
     convention plus the grep in scripts/test-gate-probe.sh, not a barrier.
+
+    TWO WAYS TO HAVE NO EVIDENCE, AND THEY ARE THE SAME VERDICT. A producer
+    that did not conclude has no readable text; a capture that did not conclude
+    has no readable text either, and the producer's exit code says nothing
+    about the second. So the capture is checked FIRST: `Concluded` means the
+    producer finished at a pinned code AND its output was read in full.
     """
+    if r.capture_error is not None:
+        return Malfunction(r.describe(), Withheld(r._out))
     if r.rc == 0:
         return Concluded(r._out, r.rc, True)
     if r.signal_number is None and r.rc in reject_codes:
@@ -362,8 +455,14 @@ def report_malfunction(what: str, m: Malfunction, spill_to=None) -> int:
         if err is None:
             print(f"WITHHELD_AT {path}")
         else:
-            print(f"WITHHELD_LOST could not write the withheld output to "
-                  f"{path}: {err}. It is gone; re-run the producer to see it.")
+            # NOT "it is gone" — the spill is written to a temporary and renamed,
+            # so a failure leaves whatever was at `path` BEFORE this run, which
+            # may be a stale file from an earlier one. Telling an operator the
+            # output is gone while a plausible file sits there is the same class
+            # of lie this whole path was fixed for.
+            print(f"WITHHELD_LOST the withheld output was NOT written to "
+                  f"{path}: {err}. Anything at that path is from an earlier "
+                  f"run, not this one; re-run the producer to see its output.")
     else:
         print("WITHHELD output of a process that did not conclude is not evidence "
               "and is not reproduced here")

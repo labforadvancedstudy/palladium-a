@@ -158,6 +158,28 @@ printf 'long long g(long long n) {\n    if (n) {\n#ifdef X\n        return 1;\n#
 $PROBE generated-c "$TMP/cpp_nested.c" >"$TMP/o" 2>&1
 check "Net A, a directive nested inside a compound" 2 $?
 
+# `switch` IS THE CONSTRUCT THE DOCSTRING NAMES as an example of something this
+# reader does not model — and it was not fail-closed. Line numbers were threaded
+# through compound items and then never read for the compound itself, so a
+# switch header was never inspected: it only made `item_terminates` answer
+# False, and `terminates()` scans with `any`, so a later `return` overrode it.
+# Measured at d801042: `switch (n) { } return 0;` exited 0, CLEAN.
+printf 'long long f(long long n) {\n    switch (n) {\n    }\n    return 0;\n}\n' >"$TMP/switch_then_return.c"
+$PROBE generated-c "$TMP/switch_then_return.c" >"$TMP/o" 2>&1
+check "Net A, a switch followed by a return is not read as clean" 2 $?
+grep -q 'a `switch`' "$TMP/o"
+check "  and the malfunction names the construct" 0 $?
+# The empty switch alone was a FINDING (loud, but the wrong verdict: it is not a
+# defect in the C, it is a shape this reader cannot judge).
+printf 'long long g(long long n) {\n    switch (n) {\n    }\n}\n' >"$TMP/switch_empty.c"
+$PROBE generated-c "$TMP/switch_empty.c" >"$TMP/o" 2>&1
+check "Net A, an empty switch is a malfunction, not a finding" 2 $?
+# ...and the same rule generalises: any compound header this reader does not
+# model stops the file, rather than silently answering "does not terminate".
+printf 'long long h(long long n) {\n    __unknown_construct (n) {\n        return 1;\n    }\n    return 0;\n}\n' >"$TMP/unknown_header.c"
+$PROBE generated-c "$TMP/unknown_header.c" >"$TMP/o" 2>&1
+check "Net A, an unmodelled compound header stops the file" 2 $?
+
 # The other direction: unreachable code after a `return` must NOT be reported as
 # a fall-through. The parser accepts this shape (src/parser/mod.rs,
 # already_terminates), so a Net A that refused it would go red on valid output.
@@ -320,17 +342,86 @@ except TypeError:
 
 # 4. The honest channel must keep working, or people route around it — AND it
 #    must report its own failure. It used to swallow the OSError and return the
-#    path anyway, so `WITHHELD_AT <path>` was printed over a file that does not
-#    exist: the designed channel failing silently exactly when it is needed.
+#    path anyway (`WITHHELD_AT` over a file that does not exist); then it
+#    checked `is_file()`, which passes on a STALE file from an earlier run and
+#    on a PARTIAL one. EXISTENCE IS NOT PRESERVATION.
 with tempfile.TemporaryDirectory() as d:
-    path, err = v.withheld.spill(pathlib.Path(d) / "spilled")
-    if err is not None or path.read_text() != "SECRET":
+    d = pathlib.Path(d)
+    path, err = v.withheld.spill(d / "spilled")
+    if err is not None or path.read_bytes() != b"SECRET":
         bad.append("spill() no longer writes the output it withheld (%s)" % err)
-    path, err = v.withheld.spill(pathlib.Path(d) / "no-such-dir" / "x")
+
+    # a target that cannot be written at all
+    path, err = v.withheld.spill(d / "no-such-dir" / "x")
     if err is None:
         bad.append("spill() reports success for a write that did not happen")
     if path.exists():
         bad.append("the failing-spill fixture is not actually failing")
+
+    # A PRE-EXISTING FILE AT THE TARGET. `is_file()` was satisfied by the stale
+    # one, so a spill that wrote nothing could still be announced as WITHHELD_AT.
+    stale = d / "stale"
+    stale.write_bytes(b"OUTPUT FROM AN EARLIER RUN")
+    path, err = v.withheld.spill(stale)
+    if err is not None or path.read_bytes() != b"SECRET":
+        bad.append("spill() over a pre-existing file did not replace it (%s)"
+                   % err)
+
+    # A PARTIAL WRITE: the filesystem accepts the call and keeps less than it
+    # was given. Injected by truncating the read-back.
+    real_read = pathlib.Path.read_bytes
+    pathlib.Path.read_bytes = lambda self: real_read(self)[:2]
+    try:
+        _, err = v.withheld.spill(d / "short")
+    finally:
+        pathlib.Path.read_bytes = real_read
+    if err is None:
+        bad.append("spill() accepted a write whose read-back was short")
+    if (d / "short").exists():
+        bad.append("a failed spill left a file at the target path")
+
+# 6. A CAPTURE THAT DID NOT CONCLUDE IS NOT EVIDENCE EITHER. `run()` used to
+#    swallow a seek/read failure on its capture file, substitute empty output,
+#    and hand back the PRODUCER'S exit code — so a producer that exited 0 whose
+#    output could not be read became Concluded(""): a semantic verdict built on
+#    evidence nobody saw, inside the module that exists to prevent that.
+real_tmpfile = tempfile.TemporaryFile
+
+
+class UnreadableSink:
+    """A real file the child can write to; unreadable by the parent."""
+
+    def __init__(self):
+        self._f = real_tmpfile()
+
+    def fileno(self):
+        return self._f.fileno()
+
+    def seek(self, *a):
+        raise OSError("injected capture read failure")
+
+    def read(self, *a):
+        raise OSError("injected capture read failure")
+
+    def close(self):
+        self._f.close()
+
+
+gp.tempfile.TemporaryFile = lambda *a, **k: UnreadableSink()
+try:
+    broken = gp.run(["sh", "-c", "echo REAL OUTPUT; exit 0"])
+finally:
+    gp.tempfile.TemporaryFile = real_tmpfile
+verdict = gp.classify(broken)
+if broken.rc != 0:
+    bad.append("the capture-failure fixture did not have the producer exit 0")
+if not isinstance(verdict, gp.Malfunction):
+    bad.append("a producer that exited 0 with an unreadable capture was "
+               "classified %s, not Malfunction" % type(verdict).__name__)
+if hasattr(verdict, "text"):
+    bad.append("the capture-failure verdict carries text")
+if "could not be captured" not in getattr(verdict, "how", ""):
+    bad.append("the capture-failure verdict does not say the capture failed")
 
 # 5. RETRACTED CLAIMS MAY NOT BE REASSERTED — ANYWHERE IN THE FILE.
 #    The first version of this check read only the text before the
@@ -361,6 +452,13 @@ CLAIMS = [
      "same"),
     (["scripts/gate_probe.py"], "the only way to the bytes",
      "spill() is the intended way, not the only one"),
+    # The PROMISE, not just the mechanism: this wording described the
+    # private-name rule as covering everything, while the grep covered three
+    # directories and three extensions. Stating a limit inside the enforcer does
+    # not repair a promise made in the module docstring.
+    (["scripts/gate_probe.py"], "any consumer outside this module",
+     "the grep covers git-tracked files with the literal spellings, comment "
+     "lines excluded — say that, or broaden the mechanism to match"),
     # Measured in round 2 and contradicted inside the same test file for a
     # round: constant folding rewrites `1 == 1` to true, so BOTH spellings emit
     # `while (1)`. tests/d3b_tail_if.rs pins that count at 2.
@@ -382,16 +480,21 @@ PY
 check "the boundary's promises match its code" 0 $?
 grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
 
-# WHAT THIS CHECK IS, SAID PLAINLY — the same discipline the Withheld repr got.
-# It is a LEXICAL CONVENTION GUARD, not access control. It reads `.py`, `.sh`
-# and `.rs` files under scripts/, tests/ and src/ and looks for the literal
-# attribute spellings. Every one of these walks past it: `getattr(x, "_b")`, a
-# name built from tokens, a consumer living outside those three directories, a
-# file with another extension, and anything written at runtime. It is worth
-# having anyway — it makes the ordinary way of reaching for the bytes visible to
-# a gate, so the shortcut has to be taken deliberately and in a form a reviewer
-# will notice — but it does not stop a determined caller, and nothing in Python
-# would.
+# WHAT THIS CHECK IS, SAID PLAINLY — the same discipline the Withheld repr got,
+# applied to the promise as well as to the mechanism.
+#
+# SCOPE, BROADENED so the promise and the enforcement can be the same sentence:
+# every file git tracks (`git ls-files`), binaries skipped by `grep -I`. It used
+# to read only `.py`/`.sh`/`.rs` under scripts/, tests/ and src/, so "any
+# consumer" in the module docstring was wider than what any gate checked. The
+# docstring now states this scope, and this is it.
+#
+# WHAT STILL WALKS PAST IT, because a guard that is described as more than it is
+# becomes the next round's defect: `getattr(x, "_b")`, a name assembled from
+# tokens, `vars(x)["_b"]`, anything constructed at runtime, and an untracked
+# file. It is a LEXICAL CONVENTION GUARD, not access control. Its value is that
+# the ORDINARY way of writing the shortcut is visible to a gate, so taking it
+# has to be deliberate and in a form a reviewer notices.
 #
 # Two files are exempt and both are load-bearing rather than convenient:
 # gate_probe.py OWNS the slots, and this file is the ENFORCER — it must spell
@@ -405,8 +508,8 @@ grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
 # A rule that forbade writing the truth down would push the truth back out of
 # the comments, which is the failure mode. Access is what is forbidden, and
 # access cannot hide on a line that begins with `#` or `//`.
-leaks=$(grep -rnE '\._out\b|\._b\b|\.withheld\._' scripts tests src \
-          --include='*.py' --include='*.sh' --include='*.rs' 2>/dev/null \
+leaks=$(git ls-files -z \
+        | xargs -0 grep -InE '\._out\b|\._b\b|\.withheld\._' 2>/dev/null \
         | grep -v '^scripts/gate_probe.py:' \
         | grep -v '^scripts/test-gate-probe.sh:' \
         | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' || true)

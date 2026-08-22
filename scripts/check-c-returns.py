@@ -115,9 +115,38 @@ a fixture happens to print. Net B (`-Werror=return-type`) exists solely inside
 `gate_probe.py` `cmd_generated_c`, invoked by scripts/stdlib-gate.sh on the 7
 stdlib drivers.
 
-Does that matter today? Measured 2026-08-22, by compiling every conformance
+Does that matter today? Measured 2026-08-22 by compiling every conformance
 fixture whose class is run/untranscribed/vacuous (51 of them) and running this
-analyser over the emitted C:
+analyser over the emitted C. THE COMMAND, so the number is reproducible rather
+than quoted:
+
+    python3 - <<'EOF'
+    import subprocess, os, re, importlib.util, io, contextlib, collections
+    spec = importlib.util.spec_from_file_location("neta","scripts/check-c-returns.py")
+    neta = importlib.util.module_from_spec(spec); spec.loader.exec_module(neta)
+    rows = [l.split("\t") for l in open("tests/conformance-manifest.txt")
+            if l.strip() and not l.startswith("#")]
+    res = collections.Counter()
+    for r in rows:
+        path, cls = r[0], r[1]
+        if cls in ("xfail", "reject", "skip"):
+            continue
+        out = "confprobe_" + re.sub(r"[^A-Za-z0-9]", "_", path)
+        p = subprocess.run(["./target/release/pdc", "compile", path, "-o", out],
+                           capture_output=True, text=True)
+        cfile = "build_output/%s.c" % os.path.basename(path)[:-3]
+        if p.returncode != 0 or not os.path.exists(cfile):
+            res["did-not-compile"] += 1
+            continue
+        with contextlib.redirect_stdout(io.StringIO()):
+            v, h, rec = neta.check_file(cfile)
+        res["UNACCOUNTED" if h else ("FINDING" if v else "clean")] += 1
+    print(dict(res))
+    EOF
+
+The same loop over `glob.glob("build_output/*.c")`, summing the three returned
+counters, is what produces the whole-emitted-corpus figure quoted in the commit
+log (`harness=0`, with `recognised` the total definition count). It reported:
 
     clean 50 · finding 1 · UNACCOUNTED 0
 
@@ -130,8 +159,11 @@ So: the gap is real, and it is currently empty. It is NOT closed here on
 purpose. The natural home for a structural verdict on those fixtures is a
 column in tests/conformance-manifest.txt — that runner's design is that every
 row declares its own expectation and an undeclared one fails
-(scripts/conformance.sh:10-13, :495 UNDECLARED, :713 MISSING). Bolting a second,
-undeclared verdict source onto it from elsewhere would recreate the two-
+(scripts/conformance.sh:10-13 lists the four failure directions, :63-77 the six
+columns every row must supply, :495 UNDECLARED and :713 MISSING are the two
+reconciliation directions; tests/conformance-manifest.txt:1-4 says the same in
+its own header). Bolting a second, undeclared verdict source onto it from
+elsewhere would recreate the two-
 inventories-that-disagree problem this branch spent itself removing. It is a
 change to that manifest's design, not a patch, and it is handed off as one.
 
@@ -184,6 +216,15 @@ CPP_COND_RE = re.compile(r"^#\s*(?:if|ifdef|ifndef|elif|else|endif)\b")
 # below would not see it, and the result would be a silent "terminates".
 GOTO_RE = re.compile(r"^goto\b")
 LABEL_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*[ \t]*:(?!:)")
+
+# Compound headers whose control flow `item_terminates` actually models:
+#   if       both arms must terminate
+#   while    may not run at all, so it falls through — unless it is `while (1)`
+#   for      same, unless it is `for (;;)`
+#   do       runs its body at least once, so it terminates if the body does
+# A bare block (`{`) is modelled too and has an empty header. ANYTHING ELSE is
+# unmodelled and must stop the file — see unmodelled_construct().
+MODELLED_HEADER_RE = re.compile(r"^(?:if|while|for|do)\b")
 
 
 # `} else if (...) {` — an else branch that is itself one compound statement.
@@ -324,9 +365,10 @@ def item_terminates(item):
         # Needs BOTH arms; an `if` with no `else` always has a fall-through path.
         return else_items is not None and terminates(then_items) and terminates(else_items)
     if h.startswith("switch"):
-        # Not analysed: a switch without `default` falls through, and proving
-        # otherwise needs case analysis. Report as non-terminating so it is
-        # examined rather than silently trusted.
+        # Belt and braces. unmodelled_construct() stops the file before this is
+        # reached, because "non-terminating" is NOT fail-closed here: `terminates`
+        # scans with `any`, so a later `return` in the same list would override
+        # this answer and the switch would never be looked at.
         return False
     # A bare block `{ ... }` terminates if its contents do.
     if h in ("", "do"):
@@ -378,7 +420,26 @@ def unmodelled_construct(items):
                         "a label (%s) — it is a jump target, so control can "
                         "arrive here from anywhere" % text[:40])
             continue
-        _, _, then_items, else_items, _ln = item
+        _, header, then_items, else_items, lineno = item
+        # THE HEADER ITSELF, which this walk used to skip entirely. Line numbers
+        # were threaded through compounds and then never read for the compound,
+        # so a `switch` — the construct the docstring names as the example of
+        # something this reader does not model — was never a HARNESS at all. It
+        # merely made `item_terminates` return False, and `terminates()` scans
+        # with `any`, so `switch (n) { } return 0;` came back CLEAN. Measured
+        # before this fix: exit 0. That contradicted the fail-closed claim, and
+        # the claim is what makes "the generator's invariants are enforced"
+        # defensible when codegen changes.
+        h = header.rstrip("{").strip()
+        if h.startswith("switch"):
+            return (lineno,
+                    "a `switch` (%s) — whether it can fall through needs case "
+                    "analysis, including whether a `default` exists, which this "
+                    "reader does not do" % h[:40])
+        if h and not MODELLED_HEADER_RE.match(h):
+            return (lineno,
+                    "a compound statement whose header this reader does not "
+                    "model (%s)" % h[:40])
         found = unmodelled_construct(then_items)
         if found:
             return found

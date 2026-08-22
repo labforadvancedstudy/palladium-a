@@ -183,8 +183,9 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///                                 the exact spelling that case recognises.
 ///                                 ONE KNOWN, MEASURED DIVERGENCE: `while
 ///                                 1 == 1` is folded to `Expr::Bool(true)` by
-///                                 src/optimizer/constant_folding.rs (`BinOp::
-///                                 Eq`) and so ALSO emits `while (1)`, while
+///                                 src/optimizer/constant_folding.rs:154
+///                                 (`BinOp::Eq`) and so ALSO emits `while (1)`,
+///                                 while
 ///                                 this analysis reads the UNFOLDED ast and
 ///                                 does not call it infinite. The divergence is
 ///                                 in the safe direction — this side refuses a
