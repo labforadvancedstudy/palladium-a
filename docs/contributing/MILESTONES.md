@@ -167,13 +167,13 @@ generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec ex
 `bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
 subset it implements"*). Both exclusions mattered because there were **two independent unordered
 emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:161`) emitted by iterating
-`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:121-125`,
-`src/typeck/mod.rs:121-125`) emitted by iterating `.keys()`.
+`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:437`,
+`src/typeck/mod.rs:445`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: modules at `src/codegen/mod.rs:161` and `src/typeck/mod.rs:121-125`,
-the two later codegen walks off one sorted local (`src/codegen/mod.rs:161`), and the
-instantiation keys at `src/typeck/mod.rs:121-125` and `src/typeck/mod.rs:121-125`. Pinned by
+sites sorts before it emits: modules at `src/codegen/mod.rs:1217` and `src/typeck/mod.rs:558`,
+the two later codegen walks off one sorted local (`src/codegen/mod.rs:1302`), and the
+instantiation keys at `src/typeck/mod.rs:3381` and `src/typeck/mod.rs:3442`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -570,13 +570,13 @@ imported must be an error, or visibility is decoration), and all four import for
 on one footing.
 
 1. **Give the analysis a consumer** (N7-03, N7-08). The driver runs the analyser
-   (`src/driver/mod.rs:172`) and prints the result (`src/driver/mod.rs:172-172`); nothing downstream
+   (`src/driver/mod.rs:172`) and prints the result (`src/driver/mod.rs:176-182`); nothing downstream
    reads it, so it cannot reject a program, change codegen or schedule anything.
 2. **Make propagation a fixed point** (N7-04, N7-05, N7-06). It is a single forward pass whose
    fallback is "If function is unknown, we conservatively assume it's pure"
    (`src/effects/mod.rs:280-284`) — the unsound direction.
 3. **Analyse methods** (N7-07). The driver's loop matches only `crate::ast::Item::Function`
-   (`src/driver/mod.rs:172-172`).
+   (`src/driver/mod.rs:173-174`).
 4. **Delete `async` and `await` from the language** (N7-01, N7-02) — the two things N7 says the
    language does not have are the two the implementation has. The producer died at M2; the keywords
    die here.
@@ -765,11 +765,11 @@ owner's.
 
 ### F11. The async producer is alive, and violates N7 today
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:161-161` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3243-3247` returns
 `CompileError::await_unimplemented`. The **producer** was not touched.
-`src/codegen/mod.rs:161-161` still dispatches on `func.is_async` into
+`src/codegen/mod.rs:2166-2171` still dispatches on `func.is_async` into
 `generate_async_function_with_name`, which emits a `Future` struct and a poll routine
-(`src/codegen/mod.rs:161-161`, commented "Simplified async - immediately ready").
+(`src/codegen/mod.rs:3290-3298`, commented "Simplified async - immediately ready").
 
 It is reachable, not dead code. Measured at `7484bac`:
 

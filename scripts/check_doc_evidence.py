@@ -345,6 +345,43 @@ def collect_citations() -> list[tuple[str, str, str, str, str]]:
     return sorted(set(out))
 
 
+# Two citations to ONE range inside ONE enumeration.
+#
+# A `0 MOVED` gate cannot see this: it compares each pin to its own target, and two
+# citations rewritten to the same place agree with their pins perfectly. The failure it
+# misses is a REPAIR that collapsed two claims onto one location -- which is what a
+# key-based relocation does whenever its key is not injective. Measured on this branch:
+# a merge repair keyed on (target, citing-doc) collapsed 170 pairs, and the ledger was
+# `0 MOVED, 0 NON-SEMANTIC` the whole time.
+#
+# The rule is decidable without reading any claim: a document that lists several
+# citations in one breath is asserting several DISTINCT sites, so if two of them are
+# equal at most one is right. "In one breath" is a 240-character window, which is the
+# span of a citation list that reads as one sentence.
+#
+# WHY NOT THE OBVIOUS CHECK. "The same document cites the same range twice" is far too
+# coarse: measured over this corpus it flags 41 groups, EVERY ONE of them legitimate --
+# a claim stated in prose and restated in an `#[ignore]` reason, hundreds of characters
+# apart. Narrowing to one enumeration takes the false positives to zero over 400
+# citations while still catching both real cases, including one that a diff against
+# every earlier revision of this branch did not.
+ENUM_WINDOW = 240
+
+
+def collect_enumeration_repeats() -> list[tuple[str, int, str]]:
+    """-> (citing-doc, line, citation) for a citation repeated inside one enumeration."""
+    out = []
+    for rel, text in citing_sources():
+        ms = [(m.start(), m.group(0)) for m in CITATION.finditer(text)]
+        for i in range(len(ms)):
+            for j in range(i + 1, len(ms)):
+                if ms[j][0] - ms[i][0] > ENUM_WINDOW:
+                    break
+                if ms[i][1] == ms[j][1]:
+                    out.append((rel, text[: ms[i][0]].count("\n") + 1, ms[i][1]))
+    return out
+
+
 def collect_continuations() -> list[tuple[str, str]]:
     """Citation shorthands that cannot be pinned. -> (citing-doc, matched-text)
 
@@ -1559,6 +1596,7 @@ def main() -> int:
     cites = collect_citations()
     fences = collect_fences()
     conts = collect_continuations()
+    enum_repeats = collect_enumeration_repeats()
     violations = collect_normative_violations()
 
     if update:
@@ -1702,6 +1740,13 @@ def main() -> int:
         fail.append(f"unpinnable citation shorthand in {rel}: ...{ctx} — write the full path; "
                     f"a bare `:LINE` gets no pin and no movement check")
 
+    for rel, line, cit in enum_repeats:
+        fail.append(f"{rel}:{line} cites {cit} twice inside one enumeration — a list of "
+                    f"citations asserts that many DISTINCT sites, so at most one of these "
+                    f"can be right. This is the shape a relocation leaves behind when its "
+                    f"key is not injective; the movement check cannot see it, because both "
+                    f"citations agree with the pin they were rewritten to.")
+
     problems, nrows, how, counts = check_index(receipts)
     fail.extend(problems)
 
@@ -1709,6 +1754,7 @@ def main() -> int:
     print(f"citations pinned:   {len(cites)} (whole cited range fingerprinted)")
     print(f"no-compile fences:  {sum(n for _, n in fences)} across {len(fences)} file(s)")
     print(f"unpinnable shorthands: {len(conts)}")
+    print(f"citations repeated in one enumeration: {len(enum_repeats)}")
     print(f"normative-surface violations: {len(violations)}")
     print(f"feature-index rows: {nrows} via {how}"
           + (", all evidence tagged and resolved" if not problems

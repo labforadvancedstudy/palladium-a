@@ -211,7 +211,7 @@ impl CompileError {
     /// — `3?` and `unknown()?` reach here too. It also may not imply that the
     /// `match` alternative generalises further than it does: code generation
     /// skips generic enum definitions entirely (`src/codegen/mod.rs:1244-1245`,
-    /// `src/codegen/mod.rs:1244-1245`, `src/codegen/mod.rs:1244-1245`), so `Result<T, E>` is
+    /// `src/codegen/mod.rs:1245`, `src/codegen/mod.rs:1281`), so `Result<T, E>` is
     /// not a compilable replacement and the help says so rather than leaving the
     /// reader to discover it.
     ///

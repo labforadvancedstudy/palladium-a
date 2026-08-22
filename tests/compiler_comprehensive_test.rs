@@ -6,13 +6,13 @@
 //
 //   1. `int`/`string` in the expected C. The integer type lowers to
 //      `long long` (`int` is only a source-level alias for `i64`,
-//      `src/parser/mod.rs:2608`) and `print` lowers to `__pd_print`, not
+//      `src/parser/mod.rs:2022`) and `print` lowers to `__pd_print`, not
 //      `printf`.
 //   2. Fragments with no `fn main`. The driver rejects a program without one
 //      ("No main function found"), so a declaration-only snippet cannot be
 //      compiled at all.
 //   3. Constant folding. The optimizer runs by default
-//      (`src/driver/mod.rs:188-191`), so `1 + 2` never reaches the C as
+//      (`src/driver/mod.rs:198-201`), so `1 + 2` never reaches the C as
 //      `(1 + 2)`. Operator tests therefore use variables, which is what they
 //      meant to test anyway: that the operator survives, not that folding is off.
 //

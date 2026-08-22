@@ -215,7 +215,7 @@ compiles and links. So the annotation burden the design deletes is currently the
 spelling.
 
 **3. Nothing consumes the lifetimes it parses.** `Function.lifetime_params` is populated
-(`src/parser/mod.rs:1499`) and, outside the parser, appears only as `vec![]` in test and LSP
+(`src/parser/mod.rs:1026`) and, outside the parser, appears only as `vec![]` in test and LSP
 fixtures — `grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser'` returns
 nothing else. There is no region inference of any kind: `grep -rn 'region\|Region' src/
 --include='*.rs'` returns nothing.
@@ -237,14 +237,14 @@ The counter is a plain `u32` depth, and it is deliberately not routed through `L
 `Lifetime::Scope` is a declared variant that nothing ever constructs, so while `exit_scope` was
 written to release borrows by comparing against it, it released none and `borrows` accumulated for
 the whole compilation. Ending a borrow at its scope is now decided by the recorded depth
-(`src/ownership/mod.rs:27`) rather than by a lifetime value — which is the point of this
+(`src/ownership/mod.rs:148`) rather than by a lifetime value — which is the point of this
 document restated from the other side: the pass has scopes, and it has never had regions.
 
 *A previous version of this paragraph asserted a live defect here — that a call argument is
 borrowed as `Lifetime::Named("fn")` and never released, so a value cannot be passed twice. That is
 false and is retracted: the defect was real, it is D6, and it was fixed in commit `191f8c1`, before
 this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:891`) and end
-its borrows when the call finishes (`src/ownership/borrow_checker.rs:891`). Five probes are in
+its borrows when the call finishes (`src/ownership/borrow_checker.rs:897`). Five probes are in
 [`language-spec.md` A9.4](../../../specification/language-spec.md#a94-defect-d6-retracted). This
 paragraph then named `&mut` of an immutable local as the defect that WAS live; that one is fixed
 too, and re-measured it is refused for struct, array and scalar referents alike

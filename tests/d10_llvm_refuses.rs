@@ -265,7 +265,7 @@ fn main() {
 ///
 /// `439b241` made the type checker refuse both, which runs before backend
 /// selection in `Driver::compile_string` (typecheck at `src/driver/mod.rs:109`,
-/// backend selection at `src/driver/mod.rs:109-109`). So under `--llvm` these two
+/// backend selection at `src/driver/mod.rs:210-211`). So under `--llvm` these two
 /// report the type checker's
 /// diagnostic, not the backend's.
 ///
