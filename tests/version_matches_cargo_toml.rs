@@ -52,12 +52,25 @@
 //!   * 46 if the shape is narrowed to what a package version actually looks
 //!     like — `\d+.\d+.\d+`, or `v` followed by two or three components — which
 //!     drops `§9.2`, `jsonrpc "2.0"`, `1000.0` and `const PI = 3.14`;
-//!   * and all 46 of those live under `src/package/`, the package manager,
-//!     where a version literal is a fixture describing SOME OTHER package.
+//!   * and all of those live under `src/package/`, the package manager, where a
+//!     version literal is a fixture describing SOME OTHER package.
 //!
-//! So the exemption list below has one entry, adjudicated by directory, and the
-//! test fails if it ever suppresses nothing — a dead exemption is deleted rather
-//! than inherited. What it does NOT cover is stated where it is granted.
+//! THAT 46 IS A HAND COUNT FROM AN EARLIER ROUND AND THIS TEST NOW PRINTS 42.
+//! The two were produced by different means and only the second is reproducible
+//! — empty the table below and `cargo test --release --test
+//! version_matches_cargo_toml` lists all 42, one per line — so 42 is what the
+//! exemption table is built from. The 46 is left standing above rather than
+//! quietly corrected, because it is what the previous round reported and the
+//! delta is not re-derivable from what was written down.
+//!
+//! AND THE EXEMPTION IS NOT A DIRECTORY, WHICH IS THIS ROUND'S RETRACTION. It
+//! was: one prefix, `src/package/`, plus an assertion that the prefix suppressed
+//! SOMETHING. That reads like default-deny and is not — a new literal under the
+//! prefix is suppressed AND makes the non-vacuity counter go up, so the check
+//! becomes more satisfied by exactly the thing it exists to catch. The grain is
+//! now the FINDING: 15 adjudicated `(path, token, exact count)` rows covering all
+//! 42, and anything not on a row is red. What that still does not cover is
+//! stated where the rows are.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -100,22 +113,77 @@ fn version_flag_matches_cargo_package_version() {
 // regex, only one of them in force) is not repeated here.
 // ---------------------------------------------------------------------------
 
-/// Directories whose version literals are adjudicated as legitimate, with the
-/// reason, because a suppression nobody has to justify is a hole nobody sees.
+/// The directories a suppression may be granted in at all, with the reason,
+/// because a suppression nobody has to justify is a hole nobody sees.
 ///
-/// GRANTED AT DIRECTORY GRAIN, and that is a real cost: a hardcoded compiler
-/// version inside `src/package/` would be suppressed too. What makes it
-/// acceptable is that nothing under `src/package/` states this compiler's
-/// identity — `--version` is `src/cli.rs`, the banner is `src/main.rs`, and both
-/// are scanned — and that per-literal rows would be a 46-entry inventory that
-/// has to be edited every time a package-manager test changes.
+/// THIS IS THE OUTER BOUND, NOT THE EXEMPTION. It says where an adjudicated
+/// finding is allowed to live; `ADJUDICATED` below says which findings those
+/// are. A directory prefix alone was the previous version and it was NOT
+/// default-deny, which is the defect this round retracts — see the comment on
+/// `ADJUDICATED`.
 const EXEMPT: &[(&str, &str)] = &[(
     "src/package/",
     "the package manager. Every version literal under it describes SOME OTHER \
      package: Version::parse(\"1.2.3\"), a lockfile entry, a registry response, \
-     the default manifest `pdc new` writes. 46 measured on this tree. Nothing \
-     here prints this compiler's own version.",
+     the default manifest `pdc new` writes. Nothing here prints this compiler's \
+     own version.",
 )];
+
+/// EVERY suppressed finding, at FINDING GRAIN: `(path, token, exact count)`.
+///
+/// WHY THIS EXISTS, AND WHAT IT REPLACES. The previous version suppressed by
+/// DIRECTORY PREFIX and then asserted that each prefix `suppressed` something.
+/// That reads like default-deny and is not: plant a NEW compiler-identity
+/// literal under `src/package/` — `println!("pdc v0.4.0")` — and `findings_in`
+/// finds it, the prefix hides it, and the non-vacuity counter goes N to N+1, so
+/// the assertion becomes MORE satisfied. It could only ever fire if the package
+/// manager stopped holding version literals entirely, which for a package
+/// manager will not happen. The check was true as written and vacuous as
+/// operated, and it was defended by its stated intent rather than by its
+/// mechanism.
+///
+/// So the grain moved to the finding. A suppression is now something a human
+/// wrote down ONE AT A TIME, and anything not on this list is a finding — the
+/// new literal above goes red until someone adds a row for it, which is the
+/// adjudication the directory grant only claimed to be.
+///
+/// THE KEY IS (path, token) AND NOT (path, line, token), deliberately: moving a
+/// literal within its file is not a new claim about this compiler's version, and
+/// pinning line numbers would make every unrelated edit under `src/package/` red.
+/// The COUNT is exact in both directions — one more occurrence is unadjudicated,
+/// one fewer is a dead row to delete — so a swap (delete one literal, add
+/// another with the same token in the same file) is the one move this table does
+/// not see. That is stated rather than left to the next round: it is a smaller
+/// hole than the directory grant by 42 literals to 1, not zero.
+///
+/// WHAT WAS ADJUDICATED, once, when this table was written: all 42 are semver
+/// FIXTURES — `Version::parse("1.2.3")` in a resolver unit test, lockfile
+/// entries for a package called `http`, a registry response, and the `0.1.0`
+/// that `pdc new` writes into the manifest of the package it is CREATING. The
+/// package's own version is 0.3.0 and no row states it.
+///
+/// AND THERE IS DELIBERATELY NO "no row may equal env!(CARGO_PKG_VERSION)"
+/// CHECK. It would add no detection — a literal stating this compiler's version
+/// is a NEW literal, so it is already unadjudicated and already red — while
+/// guaranteeing a false alarm at the bump to 1.0.0, where thirteen unrelated
+/// `http` fixtures would suddenly read as compiler identity.
+const ADJUDICATED: &[(&str, &str, usize)] = &[
+    ("src/package/dependency.rs", "0.1.0", 1),
+    ("src/package/dependency.rs", "1.0.0", 3),
+    ("src/package/dependency.rs", "1.1.0", 2),
+    ("src/package/dependency.rs", "1.2.0", 2),
+    ("src/package/dependency.rs", "1.2.3", 3),
+    ("src/package/dependency.rs", "1.3.0", 1),
+    ("src/package/dependency.rs", "2.0.0", 5),
+    ("src/package/lockfile.rs", "1.0.0", 8),
+    ("src/package/lockfile.rs", "1.1.0", 4),
+    ("src/package/lockfile.rs", "2.0.0", 1),
+    ("src/package/mod.rs", "0.1.0", 1),
+    ("src/package/registry.rs", "0.1.0", 2),
+    ("src/package/registry.rs", "1.0.0", 5),
+    ("src/package/registry.rs", "1.1.0", 3),
+    ("src/package/registry.rs", "2.0.0", 1),
+];
 
 /// A string literal that is nothing but a pre-release tail.
 ///
@@ -347,37 +415,109 @@ fn short(s: &str) -> String {
     }
 }
 
-/// Every reason `src` may not be committed as it stands, as `path:line: why`.
-fn findings_in(path: &str, src: &str) -> Vec<String> {
+/// One reason a source file may not be committed as it stands.
+///
+/// STRUCTURED RATHER THAN FORMATTED, because the exemption is now keyed on
+/// `(path, token)` and a formatted string carries the line number inside it —
+/// keying on that would make every unrelated edit under an exempt directory red.
+#[derive(Clone)]
+struct Finding {
+    path: String,
+    line: usize,
+    /// The version-shaped token, or the bare pre-release tail, that was found.
+    /// The two are lexically disjoint, so this alone says which rule fired.
+    token: String,
+    message: String,
+}
+
+impl Finding {
+    fn describe(&self) -> String {
+        format!("{}:{}: {}", self.path, self.line, self.message)
+    }
+}
+
+/// Every reason `src` may not be committed as it stands.
+fn findings_in(path: &str, src: &str) -> Vec<Finding> {
     let c: Vec<char> = src.chars().collect();
     let mut out = Vec::new();
     for (at, lit) in string_literals(&c) {
         let line = line_of(&c, at);
         for token in version_tokens(&lit) {
-            out.push(format!(
-                "{}:{}: the string literal \"{}\" states a version by hand ({}). \
-                 Derive it — `#[command(version)]` or env!(\"CARGO_PKG_VERSION\") — \
-                 or this drifts at the next bump, as 0.1.0-alpha did for two releases.",
-                path,
+            out.push(Finding {
+                path: path.to_string(),
                 line,
-                short(&lit),
-                token
-            ));
+                message: format!(
+                    "the string literal \"{}\" states a version by hand ({}). \
+                     Derive it — `#[command(version)]` or env!(\"CARGO_PKG_VERSION\") — \
+                     or this drifts at the next bump, as 0.1.0-alpha did for two releases.",
+                    short(&lit),
+                    token
+                ),
+                token,
+            });
         }
         if let Some(tail) = bare_prerelease_tail(&lit) {
-            out.push(format!(
-                "{}:{}: the string literal \"{}\" is a bare pre-release tail ({}). \
-                 Glued onto a derived version it manufactures a version the package \
-                 does not have — that is what src/lib.rs's VERSION_STRING rendered \
-                 as v0.3.0-alpha until it was deleted.",
-                path,
+            out.push(Finding {
+                path: path.to_string(),
                 line,
-                short(&lit),
-                tail
-            ));
+                token: tail.to_string(),
+                message: format!(
+                    "the string literal \"{}\" is a bare pre-release tail ({}). \
+                     Glued onto a derived version it manufactures a version the package \
+                     does not have — that is what src/lib.rs's VERSION_STRING rendered \
+                     as v0.3.0-alpha until it was deleted.",
+                    short(&lit),
+                    tail
+                ),
+            });
         }
     }
     out
+}
+
+/// Split `findings` against `ADJUDICATED`, returning `(unadjudicated, stale)`.
+///
+/// `unadjudicated` = a finding no row covers, or the (N+1)th occurrence of a row
+/// that adjudicated N. Those are the ones that must go red: a new version
+/// literal is a new claim, and a claim nobody has looked at is the whole defect.
+///
+/// `stale` = a row that matched FEWER times than it declares, including zero. A
+/// dead row is deleted rather than inherited — the one property the directory
+/// grant did have, kept, and now at the grain where it means something.
+fn adjudicate(findings: &[Finding]) -> (Vec<String>, Vec<String>) {
+    let mut remaining: Vec<usize> = ADJUDICATED.iter().map(|(_, _, n)| *n).collect();
+    let mut unadjudicated = Vec::new();
+    for f in findings {
+        match ADJUDICATED
+            .iter()
+            .position(|(path, token, _)| *path == f.path && *token == f.token)
+        {
+            Some(i) if remaining[i] > 0 => remaining[i] -= 1,
+            Some(_) => unadjudicated.push(format!(
+                "{}  [more occurrences than the adjudicated row (\"{}\", \"{}\", …) allows]",
+                f.describe(),
+                f.path,
+                f.token
+            )),
+            None => unadjudicated.push(f.describe()),
+        }
+    }
+    let stale = ADJUDICATED
+        .iter()
+        .zip(&remaining)
+        .filter(|(_, left)| **left > 0)
+        .map(|((path, token, want), left)| {
+            format!(
+                "(\"{}\", \"{}\", {}) matched only {} time(s) — delete it or fix the count. \
+                 A suppression that hides nothing is hiding whatever lands there next.",
+                path,
+                token,
+                want,
+                want - left
+            )
+        })
+        .collect();
+    (unadjudicated, stale)
 }
 
 fn rust_sources(dir: &Path, root: &Path, out: &mut Vec<(String, String)>) {
@@ -423,35 +563,61 @@ fn no_source_file_hardcodes_the_version() {
         );
     }
 
-    let mut findings: Vec<String> = Vec::new();
-    let mut suppressed = vec![0usize; EXEMPT.len()];
+    let mut all: Vec<Finding> = Vec::new();
     for (rel, src) in &files {
-        for f in findings_in(rel, src) {
-            match EXEMPT
-                .iter()
-                .position(|(prefix, _)| rel.starts_with(prefix))
-            {
-                Some(i) => suppressed[i] += 1,
-                None => findings.push(f),
-            }
-        }
+        all.extend(findings_in(rel, src));
     }
 
+    // Every row must lie under a directory a suppression may be granted in at
+    // all. Checked before the rows are used, so a suppression cannot be smuggled
+    // into src/cli.rs — the file the whole defect shipped in — by adding a line
+    // to a table that is otherwise about the package manager.
+    for (path, token, _) in ADJUDICATED {
+        assert!(
+            EXEMPT.iter().any(|(prefix, _)| path.starts_with(prefix)),
+            "the adjudicated row (\"{}\", \"{}\") is outside every directory a \
+             suppression may be granted in ({}). A version literal there is the \
+             defect this file exists for.",
+            path,
+            token,
+            EXEMPT
+                .iter()
+                .map(|(p, _)| *p)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
+    let (unadjudicated, stale) = adjudicate(&all);
+
     assert!(
-        findings.is_empty(),
-        "{} source file(s) state a version by hand:\n  {}",
-        findings.len(),
-        findings.join("\n  ")
+        unadjudicated.is_empty(),
+        "{} version literal(s) nobody has adjudicated:\n  {}\n\n\
+         If one of these is legitimate — a fixture describing SOME OTHER \
+         package — add its (path, token, count) to ADJUDICATED with the reason \
+         in the commit. Do not widen the directory list: a directory grant \
+         suppresses the NEXT literal too, including one that states this \
+         compiler's own version.",
+        unadjudicated.len(),
+        unadjudicated.join("\n  ")
     );
 
-    // A dead exemption is deleted, not inherited: if the directory stops holding
-    // the literals the exemption was granted for, the grant is now covering
-    // something nobody adjudicated.
-    for (i, (prefix, why)) in EXEMPT.iter().enumerate() {
+    assert!(
+        stale.is_empty(),
+        "{} adjudicated row(s) no longer match the tree:\n  {}",
+        stale.len(),
+        stale.join("\n  ")
+    );
+
+    // And a directory that no longer holds a single adjudicated finding has no
+    // business bounding anything.
+    for (prefix, why) in EXEMPT {
         assert!(
-            suppressed[i] > 0,
-            "the exemption for `{}` suppressed nothing on this tree, so it is \
-             hiding whatever lands there next. Delete it. It was granted because: {}",
+            ADJUDICATED
+                .iter()
+                .any(|(path, _, _)| path.starts_with(prefix)),
+            "the directory `{}` bounds no adjudicated finding on this tree. \
+             Delete it. It was granted because: {}",
             prefix,
             why
         );
@@ -569,7 +735,10 @@ fn the_source_scan_flags_literals_and_nothing_else() {
                 got.len(),
                 want,
                 why,
-                got.join("\n      ")
+                got.iter()
+                    .map(|f| f.describe())
+                    .collect::<Vec<_>>()
+                    .join("\n      ")
             ));
         }
     }
@@ -577,5 +746,128 @@ fn the_source_scan_flags_literals_and_nothing_else() {
         bad.is_empty(),
         "the scanner does not do what its rows say:\n  {}",
         bad.join("\n  ")
+    );
+}
+
+/// AND THE EXEMPTION IS FAULT-INJECTED, which the previous one was not.
+///
+/// The directory-prefix version was asserted to be "red if it ever suppresses
+/// nothing". That sentence is true and operationally vacuous: a NEW literal
+/// under the exempt directory made the counter go UP, so the assertion got more
+/// satisfied by exactly the thing it was supposed to catch. It could only fire
+/// if `src/package/` stopped holding version literals, which for a package
+/// manager will not happen.
+///
+/// The rows below are the four moves that distinguish the two designs, run
+/// against `adjudicate` — the function the tree walk calls — on a SYNTHETIC
+/// finding set rather than on the tree, so they measure the mechanism and do not
+/// go red when someone edits the package manager.
+#[test]
+fn the_exemption_is_default_deny() {
+    // The finding set a tree exactly matching the table would produce.
+    let exactly_the_table = |extra: Vec<Finding>, drop_first: bool| -> Vec<Finding> {
+        let mut v = Vec::new();
+        for (i, (path, token, count)) in ADJUDICATED.iter().enumerate() {
+            let n = if drop_first && i == 0 {
+                count - 1
+            } else {
+                *count
+            };
+            for line in 0..n {
+                v.push(Finding {
+                    path: path.to_string(),
+                    line: line + 1,
+                    token: token.to_string(),
+                    message: "synthetic".to_string(),
+                });
+            }
+        }
+        v.extend(extra);
+        v
+    };
+
+    // 0. BASELINE: a tree that matches the table is silent both ways. Without
+    //    this the rows below would pass for an `adjudicate` that reports
+    //    everything, and the table would be inert.
+    let (unadj, stale) = adjudicate(&exactly_the_table(Vec::new(), false));
+    assert!(
+        unadj.is_empty() && stale.is_empty(),
+        "the table does not accept its own contents: {:?} / {:?}",
+        unadj,
+        stale
+    );
+
+    // 1. THE MOVE THE DIRECTORY GRANT COULD NOT SEE. A new compiler-identity
+    //    literal, planted in the most-exempt file there is. Under the prefix
+    //    design it was suppressed AND incremented the non-vacuity counter; here
+    //    it is a finding, and stays one until someone writes a row for it.
+    let (path0, _, _) = ADJUDICATED[0];
+    let planted = findings_in(path0, "    println!(\"pdc v9.9.9\");\n");
+    assert_eq!(
+        planted.len(),
+        1,
+        "the scanner did not see the planted literal at all, so this row measures nothing"
+    );
+    let (unadj, stale) = adjudicate(&exactly_the_table(planted, false));
+    assert_eq!(
+        unadj.len(),
+        1,
+        "a version literal on no adjudicated row was suppressed anyway. That is \
+         the directory-grant defect: a hardcoded compiler version under `{}` \
+         ships silently.",
+        path0
+    );
+    assert!(
+        stale.is_empty(),
+        "and it must not disturb the other rows: {:?}",
+        stale
+    );
+
+    // 2. A row that matches FEWER times than it declares is stale, including the
+    //    zero case the old check covered — and only that row.
+    let (unadj, stale) = adjudicate(&exactly_the_table(Vec::new(), true));
+    assert!(
+        unadj.is_empty(),
+        "shrinking a row must not invent findings: {:?}",
+        unadj
+    );
+    assert_eq!(
+        stale.len(),
+        1,
+        "a row that no longer matches its declared count was not reported stale — \
+         a suppression that has outlived its literals hides whatever lands next"
+    );
+    assert!(
+        stale[0].contains(path0),
+        "the stale report must name the row that went dead, got: {}",
+        stale[0]
+    );
+
+    // 3. And one occurrence MORE than a row allows is unadjudicated, not
+    //    absorbed. This is the whole difference between a count and a boolean,
+    //    and it is what stops a new literal hiding behind a token that already
+    //    appears in the same file.
+    let (path, token, count) = ADJUDICATED[0];
+    let extra = vec![Finding {
+        path: path.to_string(),
+        line: 999,
+        token: token.to_string(),
+        message: "synthetic".to_string(),
+    }];
+    let (unadj, stale) = adjudicate(&exactly_the_table(extra, false));
+    assert_eq!(
+        unadj.len(),
+        1,
+        "occurrence {} of an adjudicated ({}, {}) was absorbed by a row that \
+         adjudicated {}",
+        count + 1,
+        path,
+        token,
+        count
+    );
+    assert!(
+        stale.is_empty(),
+        "a fully-matched row must not also be stale: {:?}",
+        stale
     );
 }
