@@ -12,9 +12,9 @@ whole goal, and every milestone ships.
 `async` or `await` — still reaching a byte-identical stage1/stage2 fixed point, with a second
 witness program meeting the same conditions.**
 
-That gate is in the repository now, and it is **RED: 1 green, 21 RED** over the 22 rows it
+That gate is in the repository now, and it is **RED: 1 green, 23 RED** over the 24 rows it
 evaluates, plus `D1-01`, which cites the gate as its own evidence and is therefore the
-aggregate rather than a member — it is answered by the summary ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
+aggregate rather than a member — 25 `thesis` rows in total, answered by the summary ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
 [`scripts/thesis_exit.py`](../../scripts/thesis_exit.py)). It is committed red on purpose: the
 definition of 1.0 has to live here as a command, because prose drifts and commands do not.
 
@@ -55,6 +55,25 @@ a release**.
 | 3 | per differentiator, a **reject twin** — a `#[total]` whose proof fails, a `ref` whose region is ambiguous, an ungated effect escape: each a compile error, and the region one must *name the ambiguity* |
 | 4 | a **second witness program** — the JSON parser — meeting the same three conditions |
 
+### What `make thesis-exit` green would mean today — and what it would not
+
+Stated here, and printed by the command itself on every run, because a green command called
+"the definition of Palladium 1.0" that meant less than its name is the worst available outcome.
+
+**It would mean**: every differentiator's construct exists in both witnesses; each has a
+non-vacuous conformance fixture and a reject twin refused at its declared fingerprint; and
+`bootstrap/pdc.pd` still reaches a byte-identical fixed point.
+
+**It would not mean** that any differentiator is used on a path the program runs — liveness is
+not asserted, after three lexical reachability models each failed open. **Nor** that a refusal
+was the one its row names — `grep -qF` over the whole log lets incidental text satisfy a
+fingerprint, which is measured, not argued.
+
+Those two gaps are **GI-11** and **GI-12**, and both are now `thesis` rows, so **green is
+unreachable until they land**. Until then this is a **fail-closed scaffold, not a language
+certificate** — which is the only form in which a weaker gate is defensible, and it is why the
+safeguards had to become preconditions rather than scheduled work.
+
 **What the gate asserts, and what it deliberately does not.** After three reachability heuristics
 each shipped a fail-open path, the differentiator probes stopped guessing: a green TH-03/TH-04/TH-05
 means the construct **exists in the source**, and a RED may additionally mean it sits in a function
@@ -77,7 +96,7 @@ does not become the definition of the language.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| `thesis` | 25 | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
+| `thesis` | 25 (24 evaluated + `D1-01`, the aggregate) | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
 | `1.0` | 161 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
@@ -166,7 +185,7 @@ figures are from this revision.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 93 cases — 59 drive the gate end to end against an injected repository state, 34 exercise a helper | `make test-thesis-runner` |
+| Thesis gate itself | 103 cases — 61 drive the gate end to end against an injected repository state, 42 exercise a helper | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 232 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
@@ -638,8 +657,8 @@ Six more probes of the same family, each now with a control that fails on revert
 And the self-test itself, for the second time: it called the probe helpers directly, so deleting
 the production wiring left every case green. It now builds a temporary repository — requirements
 TSV, witnesses, conformance verdicts, `make` results, effect reports — and drives `main()`,
-asserting the **exit code**. Ninety-three cases, of which six drop the injection entirely and drive
-the real subprocess boundary — including one where conformance, `pdc` and `make` all run and
+asserting the **exit code** and, for the disclaimers, its **output**. A hundred and three cases,
+of which six drop the injection entirely and drive the real subprocess boundary — including one where conformance, `pdc` and `make` all run and
 conclude successfully, so the *green* path is exercised and not only the failures. The one probe
 group with no negative control (the real `make` subprocess) is a **disclosure pinned verbatim**:
 emptying *or rewording* it fails the self-test. It is not a derived check, and says so — nothing

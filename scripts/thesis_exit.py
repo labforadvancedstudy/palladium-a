@@ -126,6 +126,20 @@ AGGREGATE_ROW = "D1-01"          # cites this command as its evidence: it is the
 # at a different fixture, or blank its required fingerprint back to `-` — which made
 # `p_verdict` skip the fingerprint comparison entirely and reopened the exact hole the
 # ninth column was added to close. id -> (kind, evidence, fingerprint).
+# MF5: the requirement TEXT is pinned for the rows whose text IS the contract. Pinning
+# only (kind, evidence, fingerprint) left GI-11's detailed acceptance criteria — the thing
+# that makes it more than a name — weakenable with no harness error.
+PINNED_ACCEPTANCE = {
+    "GI-11": ("scoped call-site identities", "source-order-independent fixed point",
+              "provenance tied to the compiled unit", "may-complete/divergence per edge",
+              "conditions/initializers/return expressions",
+              "unresolved target = HARNESS FAILURE distinct from omission",
+              "fault injection", "feasible ordered paths from declared roots",
+              "DERIVES TH-03/04/05"),
+    "GI-12": ("stable diagnostic CODE", "pins a CODE not a phrase",
+              "Adjudicated OUTSIDE the substring matcher it replaces"),
+}
+
 EXPECTED_THESIS_CONTRACT = {
     "D1-01": ("gate", "make thesis-exit", "-"),
     "N7-01": ("reject", "tests/reject/async_fn.pd", "there is no `async` keyword"),
@@ -157,8 +171,9 @@ EXPECTED_THESIS_CONTRACT = {
     # thesis rows now: 1.0 cannot be declared with either outstanding.
     "GI-11": ("observable",
               "tests/n10_callgraph.rs::call_graph_meets_its_acceptance_contract", "-"),
-    "GI-12": ("reject", "tests/reject/incidental_diagnostic.pd",
-              "PD-CODE pinned, not a phrase"),
+    # NOT a `reject` row: a reject row is adjudicated by the substring matcher this
+    # requirement exists to replace, so it could never have proved itself.
+    "GI-12": ("gate", "make check-diagnostic-codes", "-"),
 }
 EXPECTED_THESIS_IDS = frozenset(EXPECTED_THESIS_CONTRACT)
 
@@ -423,7 +438,11 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
 # while this weaker model is in use. The anti-ornament property is not abandoned; it is
 # moved to a mechanism that can prove it and made a precondition of 1.0.
 
-CLOSURE_ANY = re.compile(r"\|[^|\n]*\|")
+# grammar.ebnf:353 is `closure = [ "move" ] "|" [ params_untyped ] "|" ( expression | block )`
+# and a parameter list may span lines, so excluding newlines let a multiline closure
+# through the check that claims to reject ANY form. Bounded to keep a stray `||` or a pair
+# of unrelated pipes from matching half a file.
+CLOSURE_ANY = re.compile(r"\|[^|]{0,200}\|")
 FN_TYPE_PARAM = re.compile(r":\s*fn\s*\(")
 METHOD_CALL = re.compile(r"\.\s*[A-Za-z_][A-Za-z_0-9]*\s*\(")
 
@@ -476,20 +495,30 @@ def require_modellable(src: str, what: str) -> None:
 
 
 def provably_dead(bodies: dict[str, str], name: str) -> bool:
-    """P2. True only when NOTHING in the unit names this function.
+    """P2, NARROWED. True only when no other body mentions this name AT ALL.
 
-    Sound in the direction used: no syntactic reference, and no indirect dispatch (R4 has
-    already refused that), means nothing can call it. `main` is an entry root.
+    The earlier wording claimed "nothing in the unit names this function" while deciding
+    it by searching for `name(` — a CALL. A bare reference used as a function value, an
+    alias, a callback argument or a macro argument names the function and can invoke it,
+    and every one of those was refuted as dead. Function types are 1.0 (requirement
+    N4-14), so that is not post-1.0 syntax.
+
+    So the search is now for the NAME, in any position. A refutation must be sound, and
+    the conservative direction for a refutation is to refuse to fire: a bare mention is
+    treated as possible use, not as absence. What this decides is therefore narrower than
+    reachability and narrower than the old wording — it is "no other function body
+    mentions this identifier", nothing more. `main` is an entry root and is never dead.
     """
     if name == "main":
         return False
     for other, body in bodies.items():
-        if other != name and re.search(rf"(?<![A-Za-z_0-9]){re.escape(name)}\s*\(", body):
+        if other != name and re.search(rf"(?<![A-Za-z_0-9]){re.escape(name)}(?![A-Za-z_0-9])",
+                                       body):
             return False
     return True
 
 def p_total_on_fn(src: str) -> tuple[bool, str]:
-    """A `#[total]` on a function REACHABLE FROM `main`.
+    """A `#[total]` on a function that is not provably dead (P1 existence + P2).
 
     "Appears in some body" was not reachability: a dead caller satisfied it, and so did
     the function's own recursive call. Both are the ornament class one level in.
@@ -547,7 +576,7 @@ def p_effect_is_transitive(report: str, src: str) -> tuple[bool, str]:
                 return True, (f"`{caller}` performs no IO itself -> calls `{callee}` -> "
                               f"`{sorted(io)[0]}`; reported {reported[caller]}")
     named = ", ".join(sorted(reported))
-    return False, (f"no caller CERTAINLY REACHED FROM MAIN (R2) exhibits the edge caller -> "
+    return False, (f"no live caller exhibits the edge caller -> "
                    f"callee -> "
                    f"IO builtin; every function reported with an IO effect ({named}) "
                    f"either performs IO directly, is unreachable, is not defined here, or "
@@ -568,6 +597,7 @@ class Context:
     verdicts_text: str | None = None               # injected conformance output
     make_results: dict[str, int] | None = None     # injected `make <target>` exit codes
     effect_reports: dict[str, str] | None = None   # injected `pdc compile` output
+    observable_results: dict[str, int] | None = None   # injected `cargo test` exit codes
 
 
 def _probe(argv, cwd):
@@ -647,7 +677,14 @@ def p_verdict(ctx, verdicts, path, kind, want_fp) -> tuple[bool, str]:
 
 
 def p_observable(ctx: Context, locator: str) -> tuple[bool, str]:
-    """`path::test_name` — the test must exist, be un-ignored, and pass."""
+    """`path::test_name` — the test must exist, be un-ignored, AND PASS.
+
+    It used to search for a matching function and stop. An EMPTY function with the right
+    name satisfied it, so GI-11 could have gone green with no call graph, no contract
+    assertion and nothing consumed — the promotion that was supposed to close MF5 would
+    have changed scheduling and proved nothing. Presence is now a precondition for
+    running it, not a substitute.
+    """
     if "::" not in locator:
         raise HarnessError(f"observable locator {locator!r} is not `path::test_name`")
     rel, name = locator.split("::", 1)
@@ -659,7 +696,23 @@ def p_observable(ctx: Context, locator: str) -> tuple[bool, str]:
         return False, f"DECLARED, ABSENT — {rel} has no `fn {name}`"
     if re.search(rf"#\[ignore[^\]]*\][^#]*fn\s+{re.escape(name)}\s*\(", text):
         return False, f"{rel}::{name} exists but is #[ignore]d"
-    return True, f"{rel}::{name} present and not ignored"
+    if ctx.observable_results is not None:            # self-test injection point
+        rc = ctx.observable_results.get(locator)
+        if rc is None:
+            return False, f"DECLARED, ABSENT — no result for {locator}"
+        return rc == 0, f"{locator} exit {rc}"
+    target = Path(rel).stem
+    res = _probe(["cargo", "test", "--release", "--test", target, "--",
+                  "--exact", name, "--nocapture"], ctx.root)
+    if not hasattr(res, "text"):
+        raise HarnessError(f"`cargo test --test {target} -- --exact {name}` did not "
+                           f"conclude ({res.how})")
+    if not res.succeeded:
+        return False, f"{locator} RAN AND FAILED (cargo exit {res.rc})"
+    if "1 passed" not in res.text:
+        return False, (f"{locator} — cargo exited 0 but did not report a passing test; "
+                       f"a filter that matches nothing also exits 0")
+    return True, f"{locator} ran and passed"
 
 
 def p_make_target(ctx: Context, target: str) -> tuple[bool, str]:
@@ -740,6 +793,12 @@ def thesis_rows(ctx: Context) -> list[dict]:
                 f"{r['id']}: the thesis contract changed, which changes the DEFINITION OF "
                 f"1.0. pinned {want}, manifest has {got}. Update EXPECTED_THESIS_CONTRACT "
                 "in this file in the same commit, deliberately.")
+        for phrase in PINNED_ACCEPTANCE.get(r["id"], ()):
+            if phrase not in r["req"]:
+                raise HarnessError(
+                    f"{r['id']}: its acceptance text lost {phrase!r}. That text IS the "
+                    "contract for this row — weakening it changes what 1.0 requires, so "
+                    "it is pinned. Update PINNED_ACCEPTANCE in the same commit.")
         if r["kind"] == "reject" and (not r["fp"] or r["fp"] == "-"):
             raise HarnessError(
                 f"{r['id']}: a thesis `reject` row with no required fingerprint. Any "
@@ -862,7 +921,19 @@ def main(ctx: Context | None = None) -> int:
             print(f"        {GREY}{detail}{OFF}")
 
     red = [r for r in results if not r[1]]
-    print("\n" + "=" * 78)
+    print("\n" + "-" * 78)
+    print("  WHAT A GREEN VERDICT MEANS, AND WHAT IT DOES NOT")
+    print("  Would mean: every differentiator's construct EXISTS in both witnesses, each")
+    print("    has a non-vacuous fixture and a reject twin refused at its declared")
+    print("    fingerprint, and the self-hosting compiler still reaches a fixed point.")
+    print("  Would NOT mean: that any differentiator is used on a path the program runs.")
+    print("    Liveness is NOT asserted — three lexical reachability models each failed")
+    print("    open, so the gate stopped guessing. That obligation is GI-11.")
+    print("  Would NOT mean: that a refusal was the one its row names. `grep -qF` over the")
+    print("    whole log lets incidental text satisfy a fingerprint. That is GI-12.")
+    print("  GI-11 and GI-12 are THESIS rows, so green is unreachable until both land.")
+    print("  Until then this is a fail-closed SCAFFOLD, not a language certificate.")
+    print("=" * 78)
     print(f"  thesis: {len(results) - len(red)} green, {RED}{len(red)} RED{OFF}"
           f"   ({len(results)} evaluated rows + {AGGREGATE_ROW}, the aggregate)")
     if not red:
@@ -900,6 +971,40 @@ _UNCOVERED_AS_REVIEWED = (
     "target-absent and nonzero-exit paths ARE covered, by injection.",
 )
 
+# BANNED-LIST-BEGIN (excluded from the check, or it would flag its own examples)
+# --- RETRACTED CLAIMS, BANNED BY NAME ------------------------------------------------
+#
+# Deleting code is not deleting claims. Round 7 removed `reachable_from_main`,
+# `certainly_reached_from_main`, `top_level_calls` and `strip_false_blocks`, and three
+# sentences asserting what they had computed survived the deletion — a docstring saying
+# "REACHABLE FROM `main`", a verdict line saying "CERTAINLY REACHED FROM MAIN", and a
+# self-test heading claiming an edge relation applied to BOTH ends after the callee half
+# had been deleted for being vacuous.
+#
+# Each phrase below was retracted by a specific round. The check is whole-file and by
+# name, so re-asserting one fails as itself rather than waiting for a reviewer. Adding a
+# phrase here is how a retraction is made durable; removing one is a claim that the thing
+# is true again, and it is a diff a reviewer can see.
+RETRACTED_CLAIMS = (
+    ("REACHABLE FROM", "round 7 — reachability is not computed; P1 is existence"),
+    ("CERTAINLY REACHED", "round 7 — certain-reachability had three fail-open paths"),
+    ("certainly reached from main", "round 7 — same"),
+    ("applies to BOTH ends", "round 7 — the callee half is vacuous and was deleted"),
+    ("the safe direction for a gate", "round 6 — over-approximation fails OPEN here"),
+    ("no longer expressible", "round 4 — Python has no access control"),
+    ("not reachable, rather than merely discouraged", "round 4 — same"),
+    ("cannot grep what was never printed", "round 4 — same"),
+)
+
+
+# BANNED-LIST-END
+
+
+def stale_claims(text: str) -> list[str]:
+    """Retracted wording still present. Whole-file, by name."""
+    return [f"{phrase!r} ({why})" for phrase, why in RETRACTED_CLAIMS if phrase in text]
+
+
 BASE_ROWS = [
     ("D1-01", "M9", "gate", "make thesis-exit", "-"),
     ("N7-01", "M5", "reject", "tests/reject/async_fn.pd", "there is no `async` keyword"),
@@ -926,8 +1031,7 @@ BASE_ROWS = [
     ("WT-02", "M9", "fixture", "tests/witness/json_parser.pd", "-"),
     ("GI-11", "M3-start", "observable",
      "tests/n10_callgraph.rs::call_graph_meets_its_acceptance_contract", "-"),
-    ("GI-12", "M2", "reject", "tests/reject/incidental_diagnostic.pd",
-     "PD-CODE pinned, not a phrase"),
+    ("GI-12", "M2", "gate", "make check-diagnostic-codes", "-"),
 ]
 
 
@@ -936,13 +1040,16 @@ def _rows(drop=None, retype=None, repoint=None, blank_fp=None, extra=""):
     for rid, ms, kind, ev, fp in BASE_ROWS:
         if rid == drop:
             continue
+        req = f"req {rid}"
+        if rid in PINNED_ACCEPTANCE:
+            req = req + " :: " + " ; ".join(PINNED_ACCEPTANCE[rid])
         if retype and rid == retype[0]:
             kind, ev = retype[1], retype[2]
         if repoint and rid == repoint[0]:
             ev = repoint[1]
         if rid == blank_fp:
             fp = "-"
-        out.append(f"{rid}\t{ms}\tsrc\treq {rid}\t{kind}\t{ev}\towed\tthesis\t{fp}\n")
+        out.append(f"{rid}\t{ms}\tsrc\t{req}\t{kind}\t{ev}\towed\tthesis\t{fp}\n")
     return "".join(out) + extra
 
 
@@ -962,7 +1069,9 @@ ALL_VERDICTS = "\n".join(
     f"{ev} {'REJECTED' if kind == 'reject' else 'PASS_VERIFIED'}"
     for kind, ev, _fp in _C.values() if kind in ("reject", "fixture"))
 WITNESS2 = _C["WT-02"][1]
-GOOD_MAKE = {"selfhost": 0, "selfhost-corpus": 0, "thesis-exit": 0}
+GOOD_MAKE = {"selfhost": 0, "selfhost-corpus": 0, "thesis-exit": 0,
+             "check-diagnostic-codes": 0}
+GOOD_OBSERVABLE = {EXPECTED_THESIS_CONTRACT["GI-11"][1]: 0}
 
 
 def mutate(text: str, old: str, new: str, expect: int = 1) -> str:
@@ -1038,7 +1147,7 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
            report=GOOD_REPORT, report_b=None, fingerprints=None, drop_witness_b=False,
            omit_report_b=False, real_conformance=None, real_pdc=None,
            unreadable_requirements=False, unreadable_makefile=False,
-           real_make=False, drop_observable=False) -> int:
+           real_make=False, drop_observable=False, observables=None) -> int:
     """Run the WHOLE gate against an injected repository state."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
@@ -1081,7 +1190,9 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
         ctx = Context(root=tmp, requirements=req, conformance_manifest=cm,
                       witnesses=("a.pd", WITNESS2), verdicts_text=verdicts,
                       make_results=None if real_make else (GOOD_MAKE if make is None else make),
-                      effect_reports=reports)
+                      effect_reports=reports,
+                      observable_results=(None if drop_observable
+                                          else (observables or GOOD_OBSERVABLE)))
         if real_make:
             (tmp / "Makefile").write_text(
                 "".join(f"{tgt}:\n\t@true\n" for tgt in GOOD_MAKE))
@@ -1093,12 +1204,20 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
             ctx = Context(root=tmp, requirements=req, conformance_manifest=cm,
                           witnesses=("a.pd", WITNESS2), verdicts_text=verdicts,
                           make_results=None,   # force the real Makefile read
-                          effect_reports=reports)
+                          effect_reports=reports,
+                      observable_results=(None if drop_observable
+                                          else (observables or GOOD_OBSERVABLE)))
+        buf = io.StringIO()
         try:
-            with redirect_stdout(io.StringIO()):
-                return main(ctx)
+            with redirect_stdout(buf):
+                rc = main(ctx)
         except HarnessError:
-            return 2
+            rc = 2
+        _drive.last_output = buf.getvalue()
+        return rc
+
+
+_drive.last_output = ""
 
 
 def self_test() -> int:
@@ -1236,7 +1355,7 @@ def self_test() -> int:
         case(f"a closure with a {label} is a HARNESS ERROR",
              _drive(witness_b=GOOD_WITNESS + f"fn hof(mut c: C) {{ let f = {form}; }}\n"), 2)
 
-    print("\n  TH-05 — the edge relation applies to BOTH ends")
+    print("\n  TH-05 — P2 applies to the caller (on the callee it is vacuous)")
     case("a caller nothing names cannot supply the exhibited edge (P2 on the caller)",
          _drive(witness_b="fn ghost_io(mut c: C) { file_write(c.out, \"x\"); }\n"
                           "fn orphan(mut c: C) { ghost_io(c); }\n"
@@ -1248,6 +1367,29 @@ def self_test() -> int:
     print("\n  TH-04 — a FUNCTION-level attribute, not the crate-level one")
     case("a witness carrying only `#![total]` does not satisfy TH-04",
          _drive(witness_b=mutate(GOOD_WITNESS, "#[total]", "#![total]")), 1)
+
+    print("\n  retracted claims stay retracted, and the disclaimers are pinned to OUTPUT")
+    _self = (ROOT / "scripts/thesis_exit.py").read_text()
+    # Exclude this table itself, or the check would flag its own banned list.
+    _b, _e = "# BANNED-LIST-" + "BEGIN", "# BANNED-LIST-" + "END"
+    assert _b in _self and _e in _self, "banned-list sentinels missing"
+    _body = _self.split(_b)[0] + _self.split(_e)[1]
+    case("no retracted claim survives anywhere in this file",
+         stale_claims(_body), [], drives_main=False)
+    case("the phrase check CATCHES a re-asserted claim",
+         len(stale_claims("a docstring saying " + "REACHABLE" + " FROM main")), 1,
+         drives_main=False)
+    for doc in ("docs/contributing/MILESTONES.md", "scripts/thesis-exit.sh"):
+        case(f"no retracted claim survives in {doc}",
+             stale_claims((ROOT / doc).read_text()), [], drives_main=False)
+    _drive()
+    out = _drive.last_output
+    case("a green run SAYS liveness is not asserted, in its own output",
+         "liveness is NOT asserted" in out, True, drives_main=False)
+    case("a green run names the obligation that carries it",
+         "GI-11" in out, True, drives_main=False)
+    case("a green run states what green does and does not mean",
+         "WHAT A GREEN VERDICT MEANS" in out, True, drives_main=False)
 
     print("\n  the safeguards for this gate's weaknesses BLOCK green (MUST-FIX 5)")
     _req = (ROOT / "docs/contributing/1.0-requirements.tsv").read_text().split("\n")
@@ -1262,8 +1404,14 @@ def self_test() -> int:
          ["GI-11", "GI-12"], drives_main=False)
     case("GI-11 absent -> the gate cannot be green, however good the witness is",
          _drive(drop_observable=True), 1)
-    case("GI-12's reject twin accepted by the compiler -> not green",
-         _drive(verdicts=_verdict("GI-12", "REJECT_ACCEPTED")), 1)
+    case("GI-12's gate failing -> not green",
+         _drive(make={**GOOD_MAKE, "check-diagnostic-codes": 1}), 1)
+    case("GI-12's gate absent -> not green (declared, absent)",
+         _drive(make={k: v for k, v in GOOD_MAKE.items() if k != "check-diagnostic-codes"}), 1)
+    case("GI-12 is NOT a reject row — it cannot be judged by the matcher it replaces",
+         _C["GI-12"][0] != "reject", True, drives_main=False)
+    case("an observable that merely EXISTS is not enough — it must run and pass",
+         _drive(observables={EXPECTED_THESIS_CONTRACT["GI-11"][1]: 1}), 1)
 
     print("\n  R4 — the detected set, and the name collision reviewers found")
     case("two functions sharing a name are a HARNESS ERROR, not a silent overwrite",
