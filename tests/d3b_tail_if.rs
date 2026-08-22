@@ -1535,20 +1535,35 @@ fn a_value_carrying_return_inside_an_async_fn_is_refused() {
         );
     }
 
-    // The shape that remains accepted has no `Stmt::Return` at all — no
-    // annotation, so the parser does no tail lowering — and its poll function
-    // must carry exactly one readiness return, not the duplicate that the
-    // replacement used to add.
-    let c = compile_to_c(
+    // TRANSITIONED, NOT DELETED. This block used to read "the shape that
+    // remains accepted has no `Stmt::Return` at all" and asserted that
+    // `async fn f() { print_int(1) }` COMPILED, with exactly one
+    // `return 1; // Ready` in its poll function. That was the last async shape
+    // reaching code generation, and emitting a poll function for it is the
+    // N7-18 normative violation: §N7 says effect tracking has no runtime
+    // representation, and an `f_Future` struct with a `state` field is one.
+    //
+    // It is refused now, by the general `async fn` arm rather than by this
+    // file's value-return arm, so the assertion inverts. The property this
+    // block still carries for THIS test is the second one: the value-return
+    // refusal must not be what fires, because this body has no value to
+    // return. `tests/m2_async_producer.rs` owns the rest.
+    let err = compile_to_c(
         "async fn f() { print_int(1) }\n\nfn main() { f(); }\n",
         "d3b_async_accepted",
     )
-    .expect("the unannotated async unit function compiles");
-    assert_eq!(
-        c.matches("return 1; // Ready").count(),
-        1,
-        "the poll function should mark ready once:\n{}",
-        c
+    .expect_err("the unannotated async unit function is the N7-18 producer");
+    assert!(
+        err.contains("`async fn` is not implemented"),
+        "the plainest async spelling must be refused as the construct itself, \
+         not as one of its sub-cases:\n{}",
+        err
+    );
+    assert!(
+        !err.contains("`return` with a value"),
+        "this body has no value return; naming one would be a diagnostic about \
+         something that is not in the program:\n{}",
+        err
     );
 }
 
@@ -1673,10 +1688,10 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 ///
 /// What a program can do today that it should not: emit `f_Future v = f();`
 /// beside `long long f()`. `CodeGenerator.async_functions`
-/// (src/codegen/mod.rs:181-194) is INSERT-ONLY — unlike `functions`, which the
+/// (src/codegen/mod.rs:186-199) is INSERT-ONLY — unlike `functions`, which the
 /// main-program pass overwrites entry by entry — so an imported `pub async fn f`
 /// leaves `f` in the set even when a local ordinary `fn f` replaces it, and
-/// `try_infer_expr_type` (src/codegen/mod.rs:315) reads the set rather than
+/// `try_infer_expr_type` (src/codegen/mod.rs:320-320) reads the set rather than
 /// asking `crate::ast::local_definition_shadows_import`.
 ///
 /// Measured: gcc reports `use of undeclared identifier 'f_Future'` against C
@@ -1692,7 +1707,7 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 /// budget: preserving the number by omitting known debt is precisely what a
 /// closed inventory exists to prevent, so the row is here and the number moved.
 #[test]
-#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:181-194) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:315) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
+#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:186-199) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:320-320) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
 fn a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future() {
     let out = compile_and_run_with_import(
         "pub async fn f() { print_int(1); }\n",
@@ -1783,7 +1798,7 @@ fn selective_import_excludes_a_symbol_from_the_consumers() {
 /// THE SCOPE OF THIS ROW ALSO COVERS DECLARATION IDENTITY, and it is bounded
 /// here rather than fixed. Imported generics are stored by BARE NAME
 /// (`TypeChecker.generic_functions`), and the deferred-refusal lists that
-/// src/typeck/mod.rs:1169-1187 filters carry `(name, span)` and nothing else.
+/// src/typeck/mod.rs:1259-1280 filters carry `(name, span)` and nothing else.
 /// So with two same-named imported generic `async fn`s, the refusal is raised
 /// off whichever declaration was RECORDED and the body that would have been
 /// emitted is whichever won a `HashMap`: THE REFUSAL MAY NAME A DECLARATION
@@ -1865,8 +1880,8 @@ fn two_modules_exporting_one_name_are_deterministic() {
 ///
 /// THE SHAPE. Two imported modules both export a generic `async fn agen<T>`.
 /// Only `a.pd`'s returns a value, so only `a.pd`'s is recorded in
-/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:591-602), and the
-/// refusal is raised for it at src/typeck/mod.rs:1169-1187 once the call site
+/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:626-637), and the
+/// refusal is raised for it at src/typeck/mod.rs:1219-1225 once the call site
 /// has instantiated the name. But `generic_functions` is keyed by BARE NAME and
 /// `set_imported_modules` iterates a `HashMap`, so WHICH module's body that key
 /// holds — and therefore which body `get_instantiations` would have handed to
