@@ -94,14 +94,18 @@ correct answers are already fixed**. GI-11 requires **two things, neither substi
 [`tests/liveness-differential.tsv`](../../tests/liveness-differential.tsv) — 20 programs whose
 liveness answers are fixed by review, including the real witness's own shape (`compile_file`
 inside an `else`, genuinely reachable) and six metamorphic variants under alpha-renaming,
-reordering and inert whitespace — which proves the model's **verdicts**; and its acceptance
-observable, which proves the model's **contract** (scoped call-site identities, entry roots, an
-order-independent fixed point, per-edge completion, indirect targets resolved-or-declared). The
-corpus touches none of the second, so making it the whole precondition would let GI-11 clear
-with the structure it contracted for unbuilt. The wired lexical model **fails 7 of the 20**, and
+reordering and inert whitespace — which proves the model's **verdicts**; and
+[`tests/callgraph-differential.tsv`](../../tests/callgraph-differential.tsv) — five programs
+whose **graph outputs** are fixed by review (scoped call-site identities, declared entry roots,
+an order-independent fixed point, per-edge completion, indirect targets resolved-or-declared) —
+which proves the model's **structure**. The acceptance *observable* cannot carry that: measured,
+an empty `#[test]` reports `1 passed`, so a body of `{}` satisfied the entire structural
+contract. Two clauses — provenance tied to the compiled unit, and fault injection — are
+properties of the artifact rather than of any program's graph, and are named in the gate's own
+output as **discharged by human review** when GI-11 lands, rather than implied away. The wired lexical model **fails 7 of the 20**, and
 answering `live` everywhere, answering `dead` everywhere, and a renamed wrapper around the probe
 all fail it too. The corpus is itself closed — id set both ways, full digest over
-(id, answer, subject, source) — because it carries the whole liveness precondition. While either precondition is outstanding **no verdict is computed at all**. Until
+(id, answer, subject, source) — because it carries the verdict half of GI-11. While either precondition is outstanding **no verdict is computed at all**. Until
 then this is a **fail-closed scaffold, not a language certificate** — which is the only form in which a weaker gate is defensible, and it is why the
 safeguards had to become preconditions rather than scheduled work.
 
@@ -215,7 +219,7 @@ Measured at this revision; every row names the command that produced it.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 126 unique cases, **checked** — a duplicate label is a harness error and the set is digest-pinned; 59 drive the gate end to end | `make test-thesis-runner` |
+| Thesis gate itself | 132 unique cases, **checked** — duplicate labels and constant-assertion predicates are harness errors, and the set is digest-pinned; 59 drive the gate end to end | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 239 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |

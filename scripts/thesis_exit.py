@@ -170,7 +170,8 @@ PRECONDITIONS = (
 LIVENESS_CORPUS = ROOT / "tests/liveness-differential.tsv"
 
 # THE CORPUS IS CLOSED, in the sense EXPECTED_THESIS_CONTRACT is closed. It carries the
-# ENTIRE liveness precondition, and production validated only that it was non-empty — so a
+# VERDICT half of GI-11's precondition — the structural half is
+# tests/callgraph-differential.tsv — and production validated only that it was non-empty, so a
 # reduced or weakened corpus cleared GI-11 in the release command, which made the least
 # closed thing in this file the one holding the most. Same mechanism as the thesis rows:
 # the id set both ways, and a full digest over (id, answer, subject, source) — the four
@@ -185,6 +186,73 @@ EXPECTED_LIVENESS_IDS = frozenset({
 })
 EXPECTED_LIVENESS_SHA = \
     "b52d9589773b5e009f4a2738101304c156dd8da6522ecf5ea325d827ddf727cc"
+
+# The STRUCTURAL half of GI-11, pinned the same way. See tests/callgraph-differential.tsv
+# for why an `observable` could not carry it: an empty `#[test]` reports `1 passed`.
+CALLGRAPH_CORPUS = ROOT / "tests/callgraph-differential.tsv"
+EXPECTED_CALLGRAPH_IDS = frozenset({
+    "completion-diverges", "entry-roots", "indirect-declared", "order-independent",
+    "scoped-identity",
+})
+EXPECTED_CALLGRAPH_SHA = \
+    "0d483bdd01a66cb0c9ceb1c3f3410c16dc10255ea0c8c1e2a9df20c3cf5aa4c2"
+
+# Clauses of GI-11's contract that NO corpus of program outputs can pin, because they are
+# properties of the artifact rather than of any program's graph. Named here and printed by
+# the gate, so the boundary is disclosed rather than implied away.
+GI11_HUMAN_REVIEW_RESIDUE = (
+    "provenance tied to the compiled unit",
+    "fault injection proving each verdict changes when its edge is removed",
+)
+
+
+def callgraph_provider(source: str, prop: str):
+    """The wired graph's answer for one property, or None if no graph is wired.
+
+    Today nothing is wired, so every row fails — which is correct and is the property an
+    `observable` lacked: there is no artifact whose mere existence satisfies this.
+    """
+    if LIVENESS_MODEL != "call-graph":
+        return None
+    raise HarnessError("LIVENESS_MODEL is `call-graph` but no callgraph_provider is wired")
+
+
+def callgraph_differential() -> tuple[list[tuple[str, str, str]], int]:
+    """-> (failures as (id, expected, got), total). Closed, like the liveness corpus."""
+    if not CALLGRAPH_CORPUS.is_file():
+        raise HarnessError(f"{CALLGRAPH_CORPUS} is missing — it IS the structural half of "
+                           "GI-11's acceptance, so its absence is not a pass")
+    parsed, failures = [], []
+    for n, line in enumerate(CALLGRAPH_CORPUS.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        f = line.split("\t")
+        if len(f) != 6:
+            raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: {len(f)} columns, want 6")
+        rid, prop, source, expect, _why, _prov = f
+        if prop not in ("edges", "roots", "completion", "indirect", "identical-to"):
+            raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: unknown property {prop!r}")
+        parsed.append((rid, prop, source, expect))
+    ids = {r[0] for r in parsed}
+    if ids != EXPECTED_CALLGRAPH_IDS:
+        raise HarnessError(
+            "the call-graph corpus changed. "
+            f"added={sorted(ids - EXPECTED_CALLGRAPH_IDS) or 'none'} "
+            f"removed={sorted(EXPECTED_CALLGRAPH_IDS - ids) or 'none'}. Re-pin "
+            "EXPECTED_CALLGRAPH_IDS and EXPECTED_CALLGRAPH_SHA in the same commit.")
+    digest = hashlib.sha256(
+        "\n".join("\t".join(r) for r in sorted(parsed)).encode()).hexdigest()
+    if digest != EXPECTED_CALLGRAPH_SHA:
+        raise HarnessError(
+            f"a call-graph expectation changed (digest {digest}, pinned "
+            f"{EXPECTED_CALLGRAPH_SHA}). Those values are the contract; re-pin deliberately.")
+    for rid, prop, source, expect in parsed:
+        got = callgraph_provider(source, prop)
+        if got is None:
+            failures.append((rid, expect, "no call graph is wired"))
+        elif got != expect:
+            failures.append((rid, expect, str(got)))
+    return failures, len(parsed)
 
 
 def liveness_oracle(src: str, subject: str) -> str:
@@ -235,7 +303,7 @@ def liveness_differential() -> tuple[list[tuple[str, str, str]], int]:
     ids = {r[0] for r in parsed}
     if ids != EXPECTED_LIVENESS_IDS:
         raise HarnessError(
-            "the liveness corpus changed, and it carries the whole liveness precondition. "
+            "the liveness corpus changed, and it carries the VERDICT half of GI-11. "
             f"added={sorted(ids - EXPECTED_LIVENESS_IDS) or 'none'} "
             f"removed={sorted(EXPECTED_LIVENESS_IDS - ids) or 'none'}. Re-pin "
             "EXPECTED_LIVENESS_IDS and EXPECTED_LIVENESS_SHA in the same commit.")
@@ -285,6 +353,31 @@ def wiring_matches_declaration(source: str) -> list[str]:
     return problems
 
 
+def constant_assertions(source: str) -> list[str]:
+    """`case(...)` arguments that are compile-time constants — they cannot fail.
+
+    Reads the file with `ast`, so it sees the EXPRESSION, not its value. This is the choke
+    point the review asked about: `all(... or True ...)` is `BoolOp(or)` with a literal
+    `True` operand, and no evaluation can reveal that.
+    """
+    import ast as _ast
+    bad = []
+    tree = _ast.parse(source)
+    for node in _ast.walk(tree):
+        if not (isinstance(node, _ast.Call) and getattr(node.func, "id", "") == "case"):
+            continue
+        if len(node.args) < 2:
+            continue
+        got = node.args[1]
+        for sub in _ast.walk(got):
+            if isinstance(sub, _ast.BoolOp) and isinstance(sub.op, _ast.Or):
+                if any(isinstance(v, _ast.Constant) and v.value is True for v in sub.values):
+                    label = node.args[0]
+                    text = label.value if isinstance(label, _ast.Constant) else "<computed>"
+                    bad.append(f"line {node.lineno}: {str(text)[:60]!r} — `… or True`")
+    return bad
+
+
 def ctx_for_observable() -> "Context":
     """A real Context for the precondition check — never the self-test's injected one."""
     return Context()
@@ -306,17 +399,20 @@ def incomplete_definition() -> list[tuple[str, str]]:
     on twelve scalar verdicts while the structure it contracted for was unbuilt.
     """
     out = []
-    obs_locator = EXPECTED_THESIS_CONTRACT["GI-11"][1]
     try:
-        obs_ok, obs_detail = p_observable(ctx_for_observable(), obs_locator)
+        cg_fail, cg_total = callgraph_differential()
     except HarnessError as e:
-        obs_ok, obs_detail = False, f"could not be run: {e}"
-    if not obs_ok:
-        out.append(("GI-11", f"its acceptance observable does not pass — {obs_detail}. The "
-                             f"corpus proves the model's VERDICTS; this proves its "
-                             f"CONTRACT (scoped call-site identities, entry roots, "
-                             f"order-independent fixed point, per-edge completion, "
-                             f"indirect targets resolved-or-declared). Neither substitutes"))
+        out.append(("GI-11", f"the call-graph differential could not be run: {e}"))
+        cg_fail, cg_total = [("(unrun)", "", "")], 0
+    if cg_fail:
+        shown = ", ".join(f"{rid}: want {want}, got {got}" for rid, want, got in cg_fail[:2])
+        out.append(("GI-11",
+                    f"the wired graph fails {len(cg_fail)} of {cg_total} STRUCTURAL cases in "
+                    f"tests/callgraph-differential.tsv — {shown}"
+                    f"{' …' if len(cg_fail) > 2 else ''}. This pins what the graph RETURNS "
+                    f"(scoped identities, roots, order-independence, per-edge completion, "
+                    f"indirect resolved-or-declared); an `observable` could not, because an "
+                    f"empty #[test] reports `1 passed`"))
     try:
         failures, total = liveness_differential()
     except HarnessError as e:
@@ -1131,6 +1227,9 @@ def main(ctx: Context | None = None) -> int:
     results = evaluate(ctx, rows)
     by_id = {r["id"]: r for r in rows}
 
+    # ONE evaluation, reused. It ran twice — opening banner and closing report — so a
+    # mutable workspace could produce two different answers in one run, and the corpora
+    # were walked twice for nothing.
     blocked_early = [] if ctx.assume_definition_complete else incomplete_definition()
     print("=" * 78)
     print("  make thesis-exit — the definition of Palladium 1.0")
@@ -1152,7 +1251,7 @@ def main(ctx: Context | None = None) -> int:
                   f"{'' if ok else 'owed by ' + owner}")
             print(f"        {GREY}{detail}{OFF}")
 
-    blocked = [] if ctx.assume_definition_complete else incomplete_definition()
+    blocked = blocked_early
     red = [r for r in results if not r[1]]
     if blocked:
         print("\n" + "=" * 78)
@@ -1167,6 +1266,12 @@ def main(ctx: Context | None = None) -> int:
         print("  a check on a not-yet-existing artifact degenerated to 'something by that")
         print("  name did not fail': an empty #[test] satisfied one, `@true` satisfied the")
         print("  next. There is nothing here to satisfy by naming it.")
+        print()
+        print("  WHAT NO CORPUS HERE ESTABLISHES, so it is not implied away:")
+        for item in GI11_HUMAN_REVIEW_RESIDUE:
+            print(f"    - {item}")
+        print("    Both are properties of the artifact, not of any program's graph. They")
+        print("    are discharged by HUMAN REVIEW at the point GI-11 lands.")
         print()
         print("  A green run is not merely unreached — it is UNAVAILABLE, and will stay so")
         print("  until the two models above are replaced. `1.0 is not reached yet` is a")
@@ -1214,7 +1319,19 @@ HDR = "# id\tmilestone\tsource\trequirement\tkind\tevidence\tstatus\tdisposition
 # moment this list is longer than one entry.
 # The self-test's own case inventory, pinned like everything else it polices. Set to "" to
 # print the digest for a deliberate re-pin.
-EXPECTED_CASE_SHA = "ddaeb0cf9256569b275267faf80db36d2707eab46049802fea094a4eecbe320d"
+# Each metamorphic variant and the base it must be scored identically to. Pinned as a
+# RELATION, because the digest detects an edit to a row but not that a variant has drifted
+# into being a different program from its base.
+VARIANT_OF_BASE = {
+    "diverging-if": "mm-diverging-if-renamed",
+    "while-true": "mm-while-true-reordered",
+    "false-branch": "mm-false-branch-reordered",
+    "direct": "mm-direct-spaced",
+    "via-callee": "mm-via-callee-renamed",
+    "inside-else": "mm-inside-else-renamed",
+}
+
+EXPECTED_CASE_SHA = "e6ae73d707e3f430a1a4c41dcc6856671049e7b1f90c441010975999957d56f3"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -1256,6 +1373,10 @@ RETRACTED_CLAIMS = (
     # the file — MILESTONES.md is in CLAIM_SCANNED, so the lint now covers both.
     ("liveness is\nnot asserted, after three lexical", "round 11 — derive it, do not fix it"),
     ("Would NOT mean: that any differentiator is used", "round 11 — same"),
+    # Round 12: the corpus was made the WHOLE precondition in round 10 and restored to one
+    # of two halves in round 11; this wording survived the restoration in three places.
+    ("ENTIRE liveness precondition", "round 12 — the corpus is the VERDICT half only"),
+    ("whole liveness precondition", "round 12 — same"),
 )
 
 
@@ -1270,6 +1391,17 @@ def stale_claims(text: str) -> list[str]:
     a PARAPHRASE ("the function main can reach it"), a string assembled at runtime, and
     wording in a file not passed to it. It catches the exact retracted phrases, which is
     what stopped three of them surviving a deletion, and nothing more.
+
+    AND THE STANDING QUESTION — is there a shape that keeps the entries current, or is
+    this intrinsically a per-round human act? IT IS A PER-ROUND HUMAN ACT, and the record
+    says so: the entries have now failed to catch a retraction TWICE, in rounds 11 and 12,
+    both times because they named the phrases of an earlier round while the claim came
+    back in new words. Deriving them would require knowing which sentences a future
+    retraction will invalidate, which is the retraction itself. So the honest statement is
+    that this lint prevents the exact wording from returning silently, and that noticing a
+    PARAPHRASE is a reviewer's job — which is why the round that retracts something must
+    add its wording here in the same commit, and why the success message says "no exact
+    banned phrase" rather than "no retracted claim".
     """
     return [f"{phrase!r} ({why})" for phrase, why in RETRACTED_CLAIMS if phrase in text]
 
@@ -1742,6 +1874,27 @@ def self_test() -> int:
     case("the real run never assumes the definition is complete",
          Context().assume_definition_complete, False, drives_main=False)
 
+    print("\n  a control that cannot fail is a harness error")
+    case("no `case(...)` in this file asserts a compile-time constant",
+         constant_assertions((ROOT / "scripts/thesis_exit.py").read_text()), [],
+         drives_main=False)
+    case("the lint catches a planted `… or True`",
+         len(constant_assertions('case("x", all(y or True for y in z), True)')), 1,
+         drives_main=False)
+
+    print("\n  the CALL-GRAPH STRUCTURAL DIFFERENTIAL — GI-11's other half")
+    _cg_fail, _cg_total = callgraph_differential()
+    case("it pins graph OUTPUTS, which an empty #[test] cannot produce",
+         _cg_total >= 5, True, drives_main=False)
+    case("every structural row fails with no graph wired",
+         len(_cg_fail), _cg_total, drives_main=False)
+    case("it covers scoped identities, roots, order-independence, completion and indirect",
+         sorted(EXPECTED_CALLGRAPH_IDS),
+         ["completion-diverges", "entry-roots", "indirect-declared", "order-independent",
+          "scoped-identity"], drives_main=False)
+    case("the residue it cannot pin is NAMED, not implied away",
+         len(GI11_HUMAN_REVIEW_RESIDUE), 2, drives_main=False)
+
     print("\n  the LIVENESS DIFFERENTIAL — the escape from the fifth rung")
     _fails, _total = liveness_differential()
     case("the corpus is non-trivial", _total >= 12, True, drives_main=False)
@@ -1753,11 +1906,15 @@ def self_test() -> int:
          ["dead-caller", "diverging-if", "false-branch", "mm-diverging-if-renamed",
           "mm-false-branch-reordered", "mm-while-true-reordered", "while-true"],
          drives_main=False)
-    case("a metamorphic variant fails wherever its original does — no source fingerprint "
-         "saves it",
-         all(f"mm-{base}" in {r for r, _w, _g in _fails} or True
-             for base in ("diverging-if", "while-true", "false-branch")), True,
-         drives_main=False)
+    # A REAL relation: for each variant that names a base, the two must be scored the same
+    # way. The predecessor of this case was `X or True` — always true, asserting nothing,
+    # written in the round that added the mechanism it was meant to prove. Ninth sighting.
+    _failed = {r for r, _w, _g in _fails}
+    case("every metamorphic variant is scored exactly as its base — no source fingerprint",
+         sorted(b for b in ("diverging-if", "while-true", "false-branch", "direct",
+                            "via-callee", "inside-else")
+                if (b in _failed) != (VARIANT_OF_BASE[b] in _failed)),
+         [], drives_main=False)
     _diff_rows = [l.split("\t") for l in LIVENESS_CORPUS.read_text().splitlines()
                   if l.strip() and not l.startswith("#")]
 
