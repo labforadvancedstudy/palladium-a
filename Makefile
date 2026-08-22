@@ -295,6 +295,15 @@ check-doc-evidence: ## Pin doc citations, the no-compile allowlist, and RUN ever
 test-doc-evidence: ## Prove the evidence gate goes RED on a deliberately false cmd: item
 	@bash scripts/test-doc-evidence.sh
 
+# NOT in `gates`: it rewrites scripts/check_doc_evidence.py sixteen times and restores it
+# from git, so it refuses to run against a dirty checker — which is the normal state while
+# someone is working on one. It runs in CI, where the tree is always clean, and on demand.
+# "44 of 44 controls pass" only says the controls agree with the code; this says they would
+# NOTICE if the code stopped working, which is the number worth having.
+.PHONY: test-doc-evidence-coverage
+test-doc-evidence-coverage: ## Revert each evidence-gate fix and count the controls that catch it
+	@bash scripts/test-doc-evidence-coverage.sh
+
 # `gate:` evidence cannot be validated by the doc lint: check-docs is a step of `gates`,
 # and the gates the index cites are conformance and selfhost, so the lint would recurse
 # into its own caller. Static linting and receipt collection are therefore separate
@@ -318,7 +327,7 @@ test-gate-probe: build ## Fault-inject every producer the stdlib gate reads as e
 	@bash scripts/test-gate-probe.sh
 
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs test-doc-evidence gate-receipts selfhost stdlib-gate test-gate-probe ## Run every language-level gate
+gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------

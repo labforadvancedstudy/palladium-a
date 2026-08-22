@@ -42,18 +42,43 @@ cd "$(dirname "$0")/.." || exit 2
 OUT=build_output/gate-receipts
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 
-# A cited command must be one this file is willing to run. The index can name any Make
-# target, and `make` is how a gate is spelled here, but an arbitrary shell string arriving
-# from a document and being executed is not something a gate should do quietly.
+# A cited command is A STRING FROM A DOCUMENT, and it used to be checked by PREFIX and
+# then handed to `eval`. `make ` and `cargo test` are prefixes, so anything at all could
+# follow them — an operator, a substitution, a redirection — and the document controlled
+# the shell. That is the same defect the `cmd:` executor exists to prevent, in the file
+# that validates it.
+#
+# Now: every character must come from a set that contains no shell syntax, the whole
+# string must match a fixed shape, and it is run as ARGV with no shell anywhere.
 allowed() {
   case "$1" in
-    "make "*|"cargo build"*|"cargo test"*) return 0 ;;
-    *) return 1 ;;
+    *[!A-Za-z0-9\ ._:=-]*) return 1 ;;   # anything outside this set, metacharacters included
   esac
+  case "$1" in
+    "make "[a-z0-9-]*)     return 0 ;;
+    "cargo build"*)        return 0 ;;
+    "cargo test"*)         return 0 ;;
+  esac
+  return 1
+}
+
+# No shell: split the validated string on whitespace and exec the words. `read -ra` is
+# bash 3.2-safe; the character-set check above is what makes the split safe, since no
+# token can contain a quote, a glob or an operator.
+run_cited() {   # run_cited <command-string> <output-file>
+  local argv
+  read -ra argv <<< "$1"
+  "${argv[@]}" > "$2" 2>&1
 }
 
 rm -rf "$OUT" || exit 2
 mkdir -p "$OUT" || exit 2
+
+# A fresh id per invocation, written beside the receipts and passed to the checker, so a
+# receipt directory left behind by an earlier run cannot satisfy this one. Only the
+# invocation that wrote these files knows the id.
+RUN_ID="$(date -u +%Y%m%dT%H%M%S)-$$-${RANDOM:-0}${RANDOM:-0}"
+printf '%s\n' "$RUN_ID" > "$OUT/RUN_ID"
 
 # `mapfile` is bash 4; macOS ships bash 3.2 and every other script here reads with a
 # while loop for exactly that reason. A gate that only runs on the maintainer's shell is
@@ -78,15 +103,16 @@ n=0
 for cmd in "${COMMANDS[@]}"; do
   n=$((n+1))
   if ! allowed "$cmd"; then
-    printf '  %sFAIL%s %-24s refused: a gate: command must be `make <target>` or `cargo build`\n' \
+    printf '  %sFAIL%s %-24s refused: a gate: command must be `make <target>`, `cargo build...`\n' \
       "$RED" "$NC" "$cmd"
+    printf '       %-24s or `cargo test...`, built only from letters, digits and ._:=-\n' ""
     failures=$((failures+1))
     continue
   fi
   slug="receipt_$(printf '%s' "$cmd" | tr -c 'A-Za-z0-9' '_').out"
   # Combined stream: a gate's verdict banner may go to either, and the receipt is the
   # whole of what it said.
-  eval "$cmd" > "$OUT/$slug" 2>&1
+  run_cited "$cmd" "$OUT/$slug"
   rc=$?
   printf '%s\t%s\t%s\n' "$cmd" "$rc" "$slug" >> "$OUT/index.tsv"
   if [ "$rc" -eq 0 ]; then
@@ -107,7 +133,8 @@ fi
 
 echo
 echo "validating every gate: result against the output above"
-python3 scripts/check_doc_evidence.py --index-only --gate-receipts "$OUT"
+python3 scripts/check_doc_evidence.py --index-only \
+        --gate-receipts "$OUT" --gate-run-id "$RUN_ID"
 rc=$?
 echo "=============================================="
 if [ "$rc" -eq 0 ]; then

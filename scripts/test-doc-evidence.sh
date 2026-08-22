@@ -164,6 +164,14 @@ index missing_dir_ok unimplemented \
   "cmd: grep -rn zzz_no_such_identifier_anywhere src/lexer/ --include='*.rs' -> exit 1, 0 lines"
 expect_green missing_dir_ok "the same shape over an EXISTING path still passes"
 
+# CASE 4d. Inversion was stripped from the L3 probe only as a whole token, so a legitimate
+# item written with a short cluster kept `-v` in the probe, matched nothing, and was
+# REJECTED. Fail-closed rather than a false green, but it made an honest observation
+# unwritable -- which is its own kind of pressure to write a worse one.
+index clustered_invert unimplemented \
+  "cmd: grep -rvn zzz_no_such_identifier_anywhere src/lexer/ --include='*.rs' -> exit 0, $(/usr/bin/grep -rvn zzz_no_such_identifier_anywhere src/lexer/ --include='*.rs' | wc -l | tr -d ' ') lines"
+expect_green clustered_invert "a clustered -rvn item is not falsely rejected by its own probe"
+
 # CASE 5. Prose in the result position. This is the pre-2026-08-22 spelling: it is exactly
 # what the old shape check accepted, so it must now be named as unrunnable.
 index prose_result unimplemented \
@@ -262,6 +270,36 @@ index downstream_path unimplemented \
 expect_red downstream_path "a downstream segment naming a path is refused" \
   "downstream of a pipe but also names the path"
 
+# CASE 20b. find's L3 probe used to delete the whole expression and run `find <paths>`,
+# which prints the directory itself. So `find empty-dir -type f` returned nothing while
+# its probe printed `empty-dir`, and the empty scope passed: L3 was a proof for grep and
+# NOT for find, under a claim that said "if that finds nothing, the command reads
+# nothing". The probe now keeps the traversal and neutralises only the matching predicate.
+index find_empty_scope unimplemented \
+  "cmd: find $INREPO/empty -type f -> exit 0, 0 lines"
+expect_red find_empty_scope "an absence over an empty scope is refused for FIND too" \
+  "produces NOTHING even when asked to match everything"
+
+echo
+echo "== a find expression is forwarded to a real process, so it is enumerated =="
+
+# CASES 21a-c. The expression was passed through unchecked, so a declared hermetic
+# OBSERVATION could execute a program of the document's choosing or alter the checkout.
+# Neither is caught by the tool checks, because the program being run really is find.
+index find_exec unimplemented \
+  "cmd: find src -name '*.rs' -exec /bin/sh -c id {} + -> exit 0, 0 lines"
+expect_red find_exec "find -exec is refused: it runs a program of the document's choosing" \
+  "-exec" "observation set"
+
+index find_delete unimplemented \
+  "cmd: find $INREPO/empty -delete -> exit 0, 0 lines"
+expect_red find_delete "find -delete is refused: an observation may not alter the tree" \
+  "-delete"
+
+index find_negation unimplemented \
+  "cmd: find src -not -name zzz -> exit 0, 0 lines"
+expect_red find_negation "find negation is refused: it would invert the L3 probe" "-not"
+
 echo
 echo "== 'no shell' must be a property of the process, not a claim in a comment =="
 
@@ -289,11 +327,30 @@ chmod +x "$TMP/hijack/grep" "$TMP/hijack/ls"
 OUT=$(PATH="$TMP/hijack:$PATH" python3 scripts/check_doc_evidence.py \
         --index-only --index "$TMP/truth.toml" 2>&1); RC=$?
 if [ "$RC" -eq 0 ] && ! printf '%s\n' "$OUT" | grep -qF HIJACKED; then
-  printf '  %sok%s   %s\n' "$GREEN" "$NC" "a hijacked PATH does not change what the gate runs"
+  printf '  %sok%s   %s\n' "$GREEN" "$NC" "a hijacked PATH does not change WHICH BINARY runs"
   pass=$((pass+1))
 else
   printf '  %sFAIL%s %s -- exit %s\n' "$RED" "$NC" \
-    "a hijacked PATH does not change what the gate runs" "$RC"
+    "a hijacked PATH does not change WHICH BINARY runs" "$RC"
+  printf '%s\n' "$OUT" | sed 's/^/         | /' | head -10
+  fail=$((fail+1))
+fi
+
+# CASE 23b. And the child's ENVIRONMENT is pinned too, which is a different mechanism
+# from resolving the binary and needs its own control — the coverage script found this
+# gap by reverting the env pinning and watching every control stay green. `GREP_OPTIONS`
+# is honoured by the grep on this platform, so an inherited environment would let whoever
+# invoked make change what the gate measures: with it set to -c, the true item below
+# returns 3 counted lines instead of 6 matched ones.
+OUT=$(GREP_OPTIONS=-c python3 scripts/check_doc_evidence.py \
+        --index-only --index "$TMP/truth.toml" 2>&1); RC=$?
+if [ "$RC" -eq 0 ]; then
+  printf '  %sok%s   %s\n' "$GREEN" "$NC" \
+    "an inherited GREP_OPTIONS does not change WHAT THE TOOL DOES"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s %s -- exit %s\n' "$RED" "$NC" \
+    "an inherited GREP_OPTIONS does not change WHAT THE TOOL DOES" "$RC"
   printf '%s\n' "$OUT" | sed 's/^/         | /' | head -10
   fail=$((fail+1))
 fi
@@ -335,6 +392,17 @@ seg_case "an upstream segment exiting 137 (shell convention) is a MALFUNCTION" \
 seg_case "an upstream segment exiting 1 (grep: no match) still concludes" \
   'exit 1' 'err=None'
 
+# INTEGRATION, through the real allowlist. I argued in the previous round that a
+# non-final failure was unreachable with only grep/ls/find/sort/wc downstream. That was
+# WRONG, and review said so: `grep -q` terminates at its first match, so a sufficiently
+# productive upstream is killed by SIGPIPE. Measured here, end to end, with two ordinary
+# allowlisted greps -- no injection. The last segment exits 0 and prints nothing, which is
+# indistinguishable from a true absence unless the upstream's status is also read.
+index sigpipe unimplemented \
+  "cmd: grep -rn e src/ --include='*.rs' | grep -q fn -> exit 0, 0 lines"
+expect_red sigpipe "a real SIGPIPE from a downstream grep -q is caught (not white-box)" \
+  "MALFUNCTIONED" "signal 13"
+
 echo
 echo "== gate: outcomes must come from a run, not from a memory =="
 
@@ -345,31 +413,64 @@ index gate_prose implemented \
 expect_red gate_prose "a gate: result with no checkable token is refused" \
   "nothing checkable"
 
-# CASE 29. A checkable token the gate did not print. Validated against THIS run's receipt,
-# which scripts/gate-receipts.sh collects; without receipts the count says so and the
-# lint does not pretend otherwise.
-if [ -f build_output/gate-receipts/index.tsv ]; then
-  index gate_stale implemented \
-    "gate: make conformance -> verified=99999 fixtures=99999"
-  run_gate() {
-    OUT=$(python3 scripts/check_doc_evidence.py --index-only --index "$TMP/gate_stale.toml" \
-            --gate-receipts build_output/gate-receipts 2>&1); RC=$?
-  }
-  run_gate
-  if [ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -qF "did not print in this run"; then
-    printf '  %sok%s   %s\n' "$GREEN" "$NC" "a gate: number the gate did not print is refused"
-    pass=$((pass+1))
-  else
-    printf '  %sFAIL%s %s -- exit %s\n' "$RED" "$NC" \
-      "a gate: number the gate did not print is refused" "$RC"
-    printf '%s\n' "$OUT" | sed 's/^/         | /' | head -8
-    fail=$((fail+1))
+# CASES 29-33. Receipt validation, tested against receipts THIS SCRIPT WRITES.
+#
+# The first version read build_output/gate-receipts, i.e. whatever a previous target had
+# left on disk. That is the defect this repository is named for, inside the gate built to
+# close it: on a clean checkout there are no receipts, the case failed, and `make gates`
+# could not have passed — it passed for me only because a manual run had left its output
+# behind. Now the control mints its own receipt directory, so it is order-independent,
+# clean-tree-safe, and unable to be satisfied by state from another run.
+RCPT=$TMP/receipts
+mkdir -p "$RCPT"
+printf 'fixtures=70 evaluated=70 verified=46 vacuous=7 reject=14 failures=0\nall gates green\n' \
+  > "$RCPT/fake.out"
+printf 'make conformance\t0\tfake.out\n' > "$RCPT/index.tsv"
+printf 'RUNID-THIS-RUN\n' > "$RCPT/RUN_ID"
+
+# gate_receipt <index-name> <run-id> -> sets RC and OUT
+gate_receipt() {
+  OUT=$(python3 scripts/check_doc_evidence.py --index-only --index "$TMP/$1.toml" \
+          --gate-receipts "$RCPT" --gate-run-id "$2" 2>&1); RC=$?
+}
+gate_case() {  # gate_case <index-name> <run-id> <expect green|red> <case> [fragment]
+  local name=$1 rid=$2 want=$3 case=$4 frag=${5:-}
+  gate_receipt "$name" "$rid"
+  if [ "$want" = green ]; then
+    if [ "$RC" -eq 0 ]; then
+      printf '  %sok%s   %s\n' "$GREEN" "$NC" "$case"; pass=$((pass+1)); return
+    fi
+  elif [ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -qF -- "$frag"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$case"; pass=$((pass+1)); return
   fi
-else
-  printf '  %sFAIL%s %s\n' "$RED" "$NC" \
-    "gate: receipt validation UNTESTED -- no receipts on disk; run make gate-receipts first"
+  printf '  %sFAIL%s %s -- exit %s\n' "$RED" "$NC" "$case" "$RC"
+  printf '%s\n' "$OUT" | sed 's/^/         | /' | head -10
   fail=$((fail+1))
-fi
+}
+
+# The green side first, so the four reds below cannot be the harness misfiring.
+index gate_true implemented "gate: make conformance -> verified=46 fixtures=70"
+gate_case gate_true RUNID-THIS-RUN green "a gate: result the run DID print validates"
+
+# THE TRUNCATION HOLE. Tokens were compared by containment, so `verified=4` was found
+# inside `verified=46`. A number could drift downward and still validate, in the one
+# mechanism whose whole purpose is that a number cannot drift.
+index gate_truncated implemented "gate: make conformance -> verified=4 fixtures=7"
+gate_case gate_truncated RUNID-THIS-RUN red \
+  "a TRUNCATED number (verified=4 vs verified=46) is refused" "the run printed verified=46"
+
+index gate_absent implemented "gate: make conformance -> verified=99999"
+gate_case gate_absent RUNID-THIS-RUN red \
+  "a number the gate did not print is refused" "the run printed verified=46"
+
+# STALENESS. Same receipts, different run. Evidence is about the tree as it is now.
+gate_case gate_true RUNID-SOME-OTHER-RUN red \
+  "receipts from a DIFFERENT run cannot validate this one" "from a DIFFERENT run"
+
+rm -f "$RCPT/RUN_ID"
+gate_case gate_true RUNID-THIS-RUN red \
+  "receipts with no RUN_ID at all are refused" "carry no RUN_ID"
+printf 'RUNID-THIS-RUN\n' > "$RCPT/RUN_ID"
 
 echo
 echo "== a claim about what the compiler DOES needs evidence from a run =="

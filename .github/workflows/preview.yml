@@ -46,14 +46,25 @@ jobs:
       # where every `cmd:` item is executed and every `gate:` outcome is checked against
       # a receipt. Cheapest first: the probe proves the gate can still fail, the gate
       # then runs, and the receipts runner re-runs the cited gates last.
-      - name: Evidence gate probe (must be able to go red)
-        run: bash scripts/test-doc-evidence.sh
-
       - name: Documentation evidence
         run: bash scripts/check-doc-evidence.sh
 
       - name: Gate receipts
         run: bash scripts/gate-receipts.sh
+
+      # After the receipts, not before. The probe used to read whatever a previous
+      # target had left in build_output/, so on a clean checkout it failed — and it
+      # passed locally only because an earlier manual run's output was still there.
+      # It now mints its own receipts and is order-independent; the order is fixed
+      # here anyway, because a certifying path should not depend on that being true.
+      - name: Evidence gate probe (must be able to go red)
+        run: bash scripts/test-doc-evidence.sh
+
+      # Proves the probe above is not a suite of vacuous assertions: each fix is
+      # reverted in turn and the controls must notice. Needs a clean checkout of the
+      # file it mutates, which CI always has and a working tree often does not.
+      - name: Evidence gate probe coverage
+        run: bash scripts/test-doc-evidence-coverage.sh
 
       - id: id
         run: echo "tag=preview-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"

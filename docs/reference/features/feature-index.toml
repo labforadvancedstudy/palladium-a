@@ -66,10 +66,25 @@
 #                                         `PASS (placeholder: only prints that the feature is
 #                                         unimplemented)` -- the manifest's `vacuous` class
 #                                         wearing the word PASS.
-#   gate: <make target> -> <result>       a project gate and its outcome. NOT EXECUTED by this
-#                                         gate: running `make conformance` from inside
-#                                         `make check-docs` is recursive. These results are
-#                                         hand-recorded and are the weakest evidence class here.
+#   gate: <make target> -> <result>       a project gate and its outcome, EXECUTED and checked
+#                                         against a receipt from that run by
+#                                         `make gate-receipts`. Every key=value in the result
+#                                         is compared to the gate's own output BY VALUE (not
+#                                         containment, which let `verified=4` validate against
+#                                         a run printing `verified=46`), and a result with no
+#                                         key=value and no quoted span is prose and rejected.
+#                                         Receipts carry a run id, so output left over from an
+#                                         earlier run cannot satisfy a later one. `make
+#                                         check-docs` alone prints `gate=N, NONE validated`:
+#                                         a gate needs a build and that target is a lint, so
+#                                         the seam is counted and named rather than silent.
+#
+#   THE BOUNDARY THIS SCHEMA DOES NOT MECHANISE. A quoted span is checked as a substring of
+#   the gate's output, because requiring it to be a whole output line would make many honest
+#   rows unwritable. So a row can satisfy validation with a ubiquitous quoted span and put an
+#   unsupported conclusion in the prose beside it. That prose is READ BY A HUMAN, exactly like
+#   the excerpt beside a citation pin, and it is recorded here as a limit rather than left to
+#   be discovered. The same applies to `note`, which is never load-bearing by construction.
 #
 # WHY A PROGRAM IS NOT A `cmd:`. Sixteen items used to read `cmd: pdc compile '<a whole .pd
 # program>' -> <diagnostic or behaviour>`. Those are conformance fixtures written in prose.
@@ -109,11 +124,12 @@ evidence = [
   "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> exit 0, 83 lines -- and they are REAL readers, not test fixtures: src/typeck/mod.rs clones the list into its own records and src/codegen/mod.rs branches on `lifetime_params.is_empty()` before emitting a type",
   "conformance: tests/regression/lifetimes_uninferred.pd run",
   "conformance: tests/reject/uncalled_body_is_checked.pd reject",
+  "gate: make conformance -> reject=14 verified=46 -- the pair above is in the corpus that number counts",
   "src: src/ownership/borrow_checker.rs:404-407 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
   "src: src/ownership/mod.rs:329-333 add_constraint, the only way an outlives relation could be recorded",
   "cmd: grep -rn add_constraint src/ --include='*.rs' -> exit 0, 1 line -- that definition. Nothing calls it, so the constraint list is written by no one and read by no one",
 ]
-note = "Two corrections, one of them to an argument this file made while correcting others. (1) The row used to rest on \"0 real readers; every hit is `lifetime_params: vec![]` in a test fixture\". Executed, that is false: 83 hits across 13 files, of which typeck and codegen are load-bearing. Explicit lifetime lists are parsed and carried end to end -- which is the annotation burden this feature exists to remove. (2) It then argued that nothing could INFER a lifetime because `grep -rn 'region|Region'` was empty. That does not follow, and it was written in the same row that had just found 83 readers: the absence of two identifier spellings is not a statement about behaviour. The claim is now behavioural. tests/regression/lifetimes_uninferred.pd returns a reference to a local that dies at the closing brace -- the canonical lifetime error -- and it compiles, links and runs. Its paired reject fixture shows the borrow checker DOES read the body of a function nothing calls, so that is a statement about lifetimes rather than about dead code being skipped. The code path agrees: the return arm carries a TODO instead of a check, and add_constraint is referenced exactly once in the whole tree, by its own definition."
+note = "Two corrections, one of them to an argument this file made while correcting others. (1) The row used to rest on \"0 real readers; every hit is `lifetime_params: vec![]` in a test fixture\". Executed, that is false: 83 hits across 13 files, of which typeck and codegen are load-bearing. Explicit lifetime lists are parsed and carried end to end -- which is the annotation burden this feature exists to remove. (2) It then argued that nothing could INFER a lifetime because `grep -rn 'region|Region'` was empty. That does not follow, and it was written in the same row that had just found 83 readers: the absence of two identifier spellings is not a statement about behaviour. The claim is now behavioural, and stated at the width it is proved to. tests/regression/lifetimes_uninferred.pd returns a reference to a local that dies at the closing brace -- the canonical lifetime error -- and it compiles, links and runs. Its paired reject fixture shows the borrow checker DOES read the body of a function nothing calls, so that is a statement about lifetimes rather than about dead code being skipped. The code path agrees: the return arm carries a TODO where the check would be, and add_constraint -- the only way an outlives relation could be recorded -- is referenced exactly once in the tree, by its own definition. WHAT THAT ESTABLISHES, PRECISELY: there is no return-lifetime or outlives checking, which is what this feature requires and is why it is unimplemented. It does NOT establish that no limited lifetime reasoning exists anywhere in the compiler -- borrow_checker.rs does mint per-call lifetimes and end argument borrows with the call, which is how defect D6 came to be retracted. Absent is the relation BETWEEN lifetimes, not every notion of one."
 
 [core_language.memory_management.reference_syntax]
 description = "ref / ref mut instead of & and &mut."
