@@ -12,9 +12,17 @@ whole goal, and every milestone ships.
 `async` or `await` — still reaching a byte-identical stage1/stage2 fixed point, with a second
 witness program meeting the same conditions.**
 
-That gate is in the repository now, and it is **RED: 3 green, 11 RED**
-([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh)). It is committed red on purpose. The
+That gate is in the repository now, and it is **RED: 1 green, 22 RED** over the 23 rows it
+reads ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
+[`scripts/thesis_exit.py`](../../scripts/thesis_exit.py)). It is committed red on purpose: the
 definition of 1.0 has to live here as a command, because prose drifts and commands do not.
+
+It does not read the manifest's *text*. Conditions 2 and 3 are delegated to
+`scripts/conformance.sh`, which compiles, links, runs, diffs stdout against a recorded
+transcript, checks the declared failure stage, matches the declared diagnostic fingerprint, and
+reports `REJECT_ACCEPTED` when a negative test is accepted. A fixture the gate names and the
+corpus does not run is reported **DECLARED, ABSENT** — loudly, not as a pass
+([F13](#f13-the-first-thesis-gate-was-blind-in-the-way-m1-spent-itself-curing)).
 
 ### Why not an inventory
 
@@ -54,14 +62,14 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **189 rows, 31 satisfied · 150 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **190 rows, 31 satisfied · 151 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
 | Disposition | Count | Meaning |
 |---|---|---|
 | `thesis` | 23 | `make thesis-exit` reads it directly. These rows *are* the definition |
-| `1.0` | 160 | the witnesses exercise it, or a `thesis` row rests on it |
+| `1.0` | 161 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
 Nothing is dropped silently. A requirement the thesis does not exercise is marked `post-1.0` in
@@ -144,17 +152,17 @@ Measured at `7484bac`, not read from the previous version of this file.
 
 | | | Command |
 |---|---|---|
-| **The thesis** | **3 green, 11 RED** | `make thesis-exit` |
+| **The thesis** | **1 green, 22 RED** over 23 rows | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 6 cases — a char literal is not a lifetime, `ref<'a>` is legal, `fn f<'a>` is not | `make test-thesis-runner` |
+| Thesis gate itself | 29 fault-injection cases; two probe groups named as having no negative control | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 232 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 38 builtins accounted against a normative 34 | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 31 satisfied · 150 owed · 8 blocked, over 189 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 31 satisfied · 151 owed · 8 blocked, over 190 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -318,7 +326,7 @@ in order not to be **designed twice** — the effect system is a typing judgment
 bound exists you must say what the effect of a bounded method is. And the thesis requires a
 bootstrap compiler that can grow: 991 lines, no abstraction.
 
-**Owns 23 requirement rows** and the 18 `#[ignore]` rows tagged M4 in the old numbering, plus the
+**Owns 24 requirement rows** and the 18 `#[ignore]` rows tagged M4 in the old numbering, plus the
 vacuous `07_traits_basic` and `08_generics_basic`.
 
 1. **Generics that work** (N10-01…N10-05, N4-15, N4-21). Inside `<…>` any all-uppercase name is
@@ -333,7 +341,12 @@ vacuous `07_traits_basic` and `08_generics_basic`.
    property, and one milestone should not claim both.
 4. **Closures, function types, slices** (N5-08, N4-14, N4-11, N6-06) — and with them the first real
    instance of effect polymorphism, which is why M5 comes after this and not before.
-5. `Result`-returning builtin signatures (N14-03), now that `Result` exists.
+5. **Function types and signatures reserve a latent effect variable** (N10-11). *This is a
+   condition on the reorder's own argument, not a nicety.* Moving abstraction ahead of effects is
+   justified by avoiding a redesign; if M3 builds effect-blind function types, M5 redesigns them
+   anyway and the justification evaporates. So M3 is not done until a function type carries an
+   effect slot — unpopulated is fine, absent is not.
+6. `Result`-returning builtin signatures (N14-03), now that `Result` exists.
 
 **Exit**: `make m3-exit`, including N10-09 as an observable — a bounded call must emit no vtable,
 because "abstraction costs nothing at runtime" is a claim about generated code that no stdout can
@@ -470,8 +483,8 @@ rather than as another prerelease.
 4. **Witness 2 in the dialect** (WT-02, TH-06).
 5. **Parity with `src/`, not retirement.**
 
-**Exit**: `make thesis-exit`. It reports 3 green and 11 RED today; every RED line names the
-milestone that owes it.
+**Exit**: `make thesis-exit`. It reports **1 green and 22 RED** today; every RED line names the
+milestone that owes it, and every absent fixture says `DECLARED, ABSENT` rather than passing.
 
 ## Scope: what is in 1.0, and what is not
 
@@ -583,19 +596,58 @@ refuse `async fn` at codegen exactly as `.await` already is, ahead of M5 deletin
 Companion: `src/async_runtime/mod.rs` (498 lines, sole referrer `src/lib.rs:5`) is N7-19 and
 decision **D5**. Not deleted here.
 
+### F13. The first thesis gate was blind in the way M1 spent itself curing
+
+The command that defines 1.0 shipped, in `8acfd48`, checking **manifest text**. Its `row_is` asked
+whether an editable line said `run` or `reject`; it ran nothing. So a missing fixture, a malformed
+row, **a reject twin the compiler happily accepted**, or a rejection for an entirely unrelated
+reason all reported green — inside condition 3, which exists because *for an inference feature the
+rejection is the product*. Two external reviewers rejected it and found six more probes of the same
+shape. Counting F12, that is the thirteenth occurrence of this repository's signature defect, at the
+highest-stakes location it has yet occupied.
+
+The repair was not more text validation. `scripts/conformance.sh` already compiles, links, runs,
+diffs stdout against a recorded transcript, checks the declared failure *stage*, matches the declared
+*diagnostic fingerprint*, reports `REJECT_ACCEPTED`, and reports `MISSING`. The gate now delegates
+to it and reads only its verdicts — the same move as replacing a hand-rolled module scanner with
+`cargo test --list`.
+
+Six further probes were blind. Each fix has a negative control that fails when the fix is reverted:
+
+| Probe | What it accepted | Now |
+|---|---|---|
+| TH-02 | `sed "s/ref<'…>/ref/"` had no identifier boundary, so `fn myref<'a>(…)` became `fn my(…)` and a forbidden lifetime list passed | the exemption is anchored; three negative cases, including `myref<'a>` |
+| TH-05 | any output containing `has effects` and an IO spelling — and `bootstrap/pdc.pd:49-51` calls `file_write` **directly**, so it passed on a direct effect while claiming propagation | it names a caller that performs no IO itself, the callee it reaches, and the builtin that callee calls |
+| TH-03 | any `: ref T` anywhere, including a struct field or a local annotation | it parses each `fn` parameter list; a field and a local are both negative cases |
+| TH-04 | the bare text `#[total` plus a whole-file compile, so an unused trivial function satisfied it | an attribute token attached to a `fn` that is actually called |
+| TH-06 | a manifest label plus lexical decoration; it never ran the witness | witness 2 must be `PASS_VERIFIED` **and** pass every source probe |
+| `--self-test` | called the helpers directly, so deleting the production wiring left all six cases green; no control at all for TH-03/04/05, SH-*, C2, C3, C4 | 29 fault-injection cases, and the two probe groups that still have no negative control are **named in the output** instead of left silent |
+
+Two harness defects of the same shape are closed with them: an unreadable file made the scanner
+yield the empty string, so TH-01/TH-02 reported **green** — a failure to measure read as a passing
+measurement, the `total=0, exit 0` class `conformance.sh` already fixed once; and `MANIFEST` was
+assigned and never read, so 1.0 had two definitions and only one was checked. A harness error now
+exits 2 and says it is not a verdict, and the gate reads the 23 `thesis` rows out of the manifest
+rather than restating them.
+
+**The RED count went from 11 to 22, and that increase is the deliverable.** TH-01 and TH-02 were
+green only because `bootstrap/pdc.pd` happens to contain no `async` and no lifetimes — a prohibition
+satisfied by absence — while the second witness the same condition covers does not exist at all.
+They are now honestly red.
+
 ### F12. The thesis gate's first lexer could not fail on what it checked
 
-Worth recording because it is the defect this whole plan is organised against, committed by me, in
-the gate that defines 1.0. The first version of `strip_literals` in
-[`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) treated every `'` as a quote. In
-`fn f<'a>(x: ref String)` the tick has no partner, so the scanner consumed from it to end of file —
-and **TH-02 could never fire.** A green line that cannot go red.
+The first `strip_literals` treated every `'` as a quote. In `fn f<'a>(x: ref String)` the tick has
+no partner, so the scanner consumed from it to end of file, and **TH-02 could never fire** — a green
+line that could not go red, in the gate that defines 1.0. Caught by writing the self-test, not by
+reading the code; it is F13's first instance and the reason the rest were looked for.
 
-It was caught by writing the self-test, not by reading the code. `make test-thesis-runner` now pins
-six cases: a char literal `'<'` is not a lifetime; `ref<'a> T` is permitted by N9 and must not trip
-the check; `fn f<'a>(…)` must trip it; `async` in a comment is not a token; a real `async fn` and a
-real `.await` are. The gate is red where it should be red *and* provably able to become red where it
-is currently green.
+One deliberate consequence survives: the gate's scanner treats block comments as **non-nesting**,
+because `bootstrap/pdc.pd:164-175` shows the compiler scanning for the first `*/` and breaking, with
+no depth counter. [N2](../specification/language-spec.md#n2-lexical-structure) requires nesting and
+the compiler does not implement it (F10, requirement N2-08). A gate that nested would disagree with
+the compiler about whether a real `async` is commented out, so it matches the implementation, and a
+self-test case pins that behaviour — it fails when N2-08 lands, forcing the two to flip in lockstep.
 
 ### F2. M1 shipped three of its own declared failures, and its exit command could not see them
 

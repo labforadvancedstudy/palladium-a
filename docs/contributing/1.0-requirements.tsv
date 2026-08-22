@@ -230,6 +230,7 @@ N10-07	M3	N10	Trait method defaults	fixture	tests/07_trait_defaults.pd	owed	1.0
 N10-08	M3	N10	Associated types	fixture	tests/07_associated_types.pd	owed	1.0
 N10-09	M3	N10	Static dispatch through bounds — abstraction costs nothing at run time	observable	tests/n10_traits.rs::no_vtable_in_generated_c_for_a_bounded_call	owed	1.0
 N10-10	M3	N10	Associated constants	fixture	tests/07_associated_consts.pd	owed	1.0
+N10-11	M3	N7+N10	Function types and signatures reserve a LATENT EFFECT VARIABLE, so M5 does not redesign them	observable	tests/n10_effect_variable.rs::fn_type_carries_an_effect_slot	owed	1.0
 
 # --- N11 Modules -----------------------------------------------------------------
 N11-01	M4	N11	File-based modules with nested paths	fixture	tests/12_modules_imports.pd	owed	1.0

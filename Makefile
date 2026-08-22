@@ -321,6 +321,10 @@ test-xfail: ## Run the #[ignore]d tests and fail if a declared failure now passe
 thesis-exit: build ## The definition of Palladium 1.0. RED until M9.
 	@bash scripts/thesis-exit.sh
 
+# Fault injection, not a call to the helpers: for every probe that reads source or
+# a verdict, a state that VIOLATES the property must go RED and a state that
+# satisfies it must go green. Probe groups with no negative control are named in
+# the output rather than left silent.
 .PHONY: test-thesis-runner
-test-thesis-runner: ## Prove the thesis gate's source probes can still go RED
+test-thesis-runner: ## Fault-inject every thesis probe and prove it can still go RED
 	@bash scripts/thesis-exit.sh --self-test
