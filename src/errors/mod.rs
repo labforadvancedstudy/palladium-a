@@ -227,8 +227,8 @@ impl CompileError {
     /// Raised without inspecting the operand, so the wording may not assume one
     /// — `3?` and `unknown()?` reach here too. It also may not imply that the
     /// `match` alternative generalises further than it does: code generation
-    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1293-1294`,
-    /// `src/codegen/mod.rs:1294`, `src/codegen/mod.rs:1330`), so `Result<T, E>` is
+    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1298-1299`,
+    /// `src/codegen/mod.rs:1299-1299`, `src/codegen/mod.rs:1335-1335`), so `Result<T, E>` is
     /// not a compilable replacement and the help says so rather than leaving the
     /// reader to discover it.
     ///
@@ -295,6 +295,91 @@ impl CompileError {
                     .to_string(),
             span: Some(span),
         }
+    }
+
+    /// N7-18: `async fn` ITSELF, whatever its body does.
+    ///
+    /// The two refusals above are its named sub-cases — the entry point, and a
+    /// value-carrying return — and both predate this one. What was left over is
+    /// the plainest spelling of all, and it was the live normative violation.
+    /// MEASURED at acda322:
+    ///
+    /// ```text
+    /// async fn g() { print("x"); }
+    /// fn main() { print_int(1); }
+    /// ```
+    ///
+    /// compiled clean and the emitted C carried
+    /// `typedef struct g_Future { int state; } g_Future;`,
+    /// `int g_poll(g_Future *future)` and `g_Future g()`.
+    /// §N7 of `docs/specification/language-spec.md` is explicit that effect
+    /// tracking "has no runtime representation": a struct with a `state` field,
+    /// emitted into the program's own C, is one. Nothing calls `g_poll`, so the
+    /// body never runs either — the D3 family, one function over.
+    ///
+    /// WHY A REFUSAL AND NOT A LOWERING, and why the whole construct rather
+    /// than the emission. Making `async fn` mean anything needs a runtime to
+    /// drive the future, and §N7 says there is none; deleting only the Future
+    /// struct would leave `async` a keyword the compiler silently ignores,
+    /// which is the class M1 exists to remove, not a fix. The keyword itself
+    /// dies at M5.
+    ///
+    /// WHAT THIS DOES NOT REJECT — the polarity that has already cost this
+    /// compiler two valid programs (see `async_main_unimplemented` and the
+    /// entry-point exemption in `TypeChecker::check`):
+    ///   * an ordinary `fn`, whatever its name, body or return type. The
+    ///     predicate is `Function::is_async`, which only the `async` keyword
+    ///     sets (`src/parser/mod.rs`, `parse_item`).
+    ///   * `.await`, `Future<T>` as a written type, or a function named
+    ///     `poll` — none of them set `is_async`, and each keeps whatever
+    ///     diagnostic it had.
+    ///   * an imported `async fn` that is NOT part of the emitted program: a
+    ///     private one (never registered), one a local definition shadows, and
+    ///     a generic one that is never instantiated. Refusing those would
+    ///     diagnose a declaration the output cannot contain.
+    ///
+    /// Receipted in `tests/m2_async_producer.rs`.
+    pub fn async_fn_unimplemented(span: Span) -> Self {
+        CompileError::Unimplemented {
+            construct: "`async fn`".to_string(),
+            consequence:
+                "code generation would emit a `<name>_Future` struct with a `state` field and \
+                 an `<name>_poll` function — a runtime representation of an effect, which the \
+                 language does not have (§N7) — and nothing would ever call the poll routine, \
+                 so the body would not run"
+                    .to_string(),
+            workaround:
+                "delete the `async` keyword and write an ordinary `fn`. There is no async \
+                 runtime to drive a future, so `async` cannot change what the function does; \
+                 if the body returns a `Future<T>`, that declaration has to become `T` as well"
+                    .to_string(),
+            span: Some(span),
+        }
+    }
+
+    /// The same refusal for a SET of offending imported declarations.
+    ///
+    /// The wording is `async_fn_unimplemented`'s, for the same reason
+    /// `async_value_return_unimplemented_in_imports` reuses its singular form:
+    /// it is one refusal about one construct, and only the locations differ.
+    ///
+    /// # Panics
+    /// If `offenders` is empty — an error that names no offender is a claim with
+    /// no referent, and every caller already knows its list is non-empty.
+    pub fn async_fn_unimplemented_in_imports(offenders: &[(String, Span)]) -> Self {
+        let (_, first_span) = offenders
+            .first()
+            .expect("a refusal must name at least one offending declaration");
+        let names = offenders
+            .iter()
+            .map(|(name, _)| format!("`{}`", name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut err = Self::async_fn_unimplemented(*first_span);
+        if let CompileError::Unimplemented { construct, .. } = &mut err {
+            *construct = format!("{} (imported: {})", construct, names);
+        }
+        err
     }
 
     /// The same refusal for a SET of offending imported declarations.

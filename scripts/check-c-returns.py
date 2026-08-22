@@ -494,7 +494,17 @@ def unmodelled_construct(items):
             # body ends with `;` or is a comment", measured over 400 files):
             # the sample had no async output in it, because no fixture produced
             # any. The claim is now "…ends with `;`, possibly followed by a line
-            # comment, or is a comment", and it is checked on async output too.
+            # comment, or is a comment".
+            # THE ASYNC HALF OF THAT SENTENCE IS NO LONGER CHECKABLE, and the
+            # rule is kept anyway. `generate_async_function_with_name` is
+            # deleted (N7-18: `async fn` is refused, and a Future/poll emission
+            # is a runtime representation of an effect that N7 forbids), so pdc
+            # emits no `return 1; // Ready` any more and no fixture can produce
+            # one. The rule stays because it is about C SYNTAX, not about async:
+            # a trailing line comment is legal after any statement, and a reader
+            # that stops on one is wrong whether or not something currently
+            # emits one. What is lost is the live sample, which is why this
+            # paragraph says so instead of continuing to claim coverage.
             #
             # Stripping is only attempted when the line does NOT already end in
             # `;`, so a `//` inside a string literal — which is always followed

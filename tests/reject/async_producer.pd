@@ -1,0 +1,29 @@
+// NEGATIVE TEST -- the async PRODUCER (N7-18), which is the plainest spelling
+// of `async fn` and was the last one still reaching code generation.
+//
+// `tests/reject/async_fn.pd` beside this file covers the CONSUMER-shaped case:
+// a body carrying a value-returning `return`, refused with a more specific
+// diagnostic that arrives first. Neither fixture covers this one, and that is
+// exactly why it survived -- measured at acda322, this program compiled clean
+// and the emitted C carried
+//
+//     typedef struct g_Future { int state; } g_Future;
+//     int g_poll(g_Future *future) { ... }
+//     g_Future g() { ... }
+//
+// Nothing calls g_poll, so the body never ran either. N7 says effect tracking
+// "is entirely static and has no runtime representation"; a struct with a
+// `state` field emitted into the program's own C is one, so this was a live
+// normative violation rather than a missing feature.
+//
+// Refused, not silently lowered: dropping the Future struct and compiling the
+// body as an ordinary function would leave `async` a keyword the compiler
+// ignores. The keyword itself is removed at M5.
+
+async fn g() {
+    print("x");
+}
+
+fn main() {
+    print_int(1);
+}
