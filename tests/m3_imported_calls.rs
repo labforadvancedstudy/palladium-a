@@ -771,11 +771,21 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 //
 // THE OWNER IS M4, AND IT WAS M3 UNTIL THIS BRANCH MERGED `d2d5bd4`. That merge
 // restructured the milestones and split modules out into their own
-// (`docs/contributing/MILESTONES.md:537-546`, "M4 — Modules", which claims the
+// (`docs/contributing/MILESTONES.md:625-631`, "M4 — Modules", which claims the
 // module rows explicitly: "plus the corpus's one `xfail` … cross-file imports
 // — and the vacuous `12_modules_imports`"). M3 is now traits and generics
-// (`docs/contributing/MILESTONES.md:499`), which is not what these rows are
+// (`docs/contributing/MILESTONES.md:591`), which is not what these rows are
 // about.
+//
+// BOTH CITATIONS ABOVE WERE WRONG BEFORE THEY WERE MOVED, and are corrected
+// rather than re-pinned. At `acda322` the first resolved to M3's items 3-6 and
+// the second to M2's builtin item — each off by the height of the M2 section,
+// against sentences that say "M4 — Modules" and "traits and generics". The pin
+// file held the fingerprint of whatever was on those lines, which is exactly how
+// a citation that points at the wrong thing survives a review: `--update`
+// re-pins whatever occupies the line. They now name the `## M4 — Modules`
+// section and the `## M3 — Traits and generics` heading, which is what the
+// sentences claim.
 //
 // The file is still named `m3_imported_calls.rs`. Renaming it would move every
 // citation that points into it, so the name is left as a historical artefact and

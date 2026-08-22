@@ -30,6 +30,16 @@
 //
 // The tests at the bottom of this file make that class of drift impossible to
 // reintroduce: every consumer's view is compared against `BUILTINS` by set equality.
+//
+// History, part 3 (the table stopped being a second definition of the language).
+// This table held 38 names against N14's normative 34; the four extra were
+// `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex`, none of
+// them callable and none of them reachable from any `.pd` file in the tree. A
+// registry that carries names the specification does not define is a second
+// definition of the builtin surface, and it can only be seen by someone reading
+// both documents. The four are gone (see the note where they used to sit), and
+// the set is now pinned against N14 itself — the specification, not a count —
+// by `test_registry_is_exactly_the_normative_builtin_set`.
 
 /// Type of a built-in parameter or return value.
 ///
@@ -551,59 +561,54 @@ pub const BUILTINS: &[Builtin] = &[
         effects: IO,
         doc: "Move the read/write position of an open file",
     },
-    // ---- Enhanced file operations with mode support ----
-    Builtin {
-        name: "file_open_ex",
-        params: &[p("path", Str, Borrow), p("mode", I64, ByCopy)],
-        ret: I64,
-        ret_mode: ReturnMode::Copy,
-        support: Support::Unsupported(
-            "returns an opaque FileHandle (typedef void*), which no Palladium type can hold, and its `mode` narrows to int; a call does not compile. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
-        ),
-        effects: IO,
-        doc: "Open a file with an explicit mode and return a handle",
-    },
-    Builtin {
-        name: "file_close_ex",
-        params: &[p("handle", I64, ByCopy)],
-        ret: I64,
-        ret_mode: ReturnMode::Copy,
-        support: Support::Unsupported(
-            "takes an opaque FileHandle (typedef void*), while a Palladium handle is an i64; a call does not compile. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
-        ),
-        effects: IO,
-        doc: "Close a handle opened with file_open_ex",
-    },
-    Builtin {
-        name: "file_read_ex",
-        params: &[
-            p("handle", I64, ByCopy),
-            p("buffer", Str, ByCopy),
-            p("len", I64, ByCopy),
-        ],
-        ret: I64,
-        ret_mode: ReturnMode::Copy,
-        support: Support::Unsupported(
-            "takes an opaque FileHandle, and its destination is a writable char* buffer that Palladium can only supply as an immutable String; a call does not compile, and could not be made memory-safe by casting. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
-        ),
-        effects: IO,
-        doc: "Read up to `len` bytes from an open file into `buffer`",
-    },
-    Builtin {
-        name: "file_write_ex",
-        params: &[
-            p("handle", I64, ByCopy),
-            p("buffer", Str, ByCopy),
-            p("len", I64, ByCopy),
-        ],
-        ret: I64,
-        ret_mode: ReturnMode::Copy,
-        support: Support::Unsupported(
-            "takes an opaque FileHandle (typedef void*), while a Palladium handle is an i64, and its length narrows to an unsigned size_t; a call does not compile. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
-        ),
-        effects: IO,
-        doc: "Write `len` bytes from `buffer` to an open file",
-    },
+    // The section that was here — "Enhanced file operations with mode support" —
+    // IS GONE, 2026-08-23. Its `// ---- … ----` marker is deliberately not left
+    // behind: scripts/gen-builtin-docs.py tracks those markers to build the
+    // reference's sections, and an empty one would print a heading over nothing.
+    //
+    // `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex` were
+    // registered here, and this comment is the record of their deletion.
+    //
+    // THEY ARE NOT PART OF THE LANGUAGE. N14 enumerates the normative builtin
+    // surface and names thirty-four identifiers; none of the four is among them
+    // (docs/specification/language-spec.md, "The normative set, enumerated").
+    // They were the whole of `implemented − normative`.
+    //
+    // MEASURED BEFORE DELETING, because a disposition in MILESTONES.md is a
+    // document and a document is not evidence about code. All four, compiled at
+    // `acda322` with the probe bodies tests/stdlib/BUILTINS.tsv records:
+    //
+    //   $ pdc compile file_open_ex.pd -o x.out
+    //   error: Built-in file_open_ex is registered but not callable: returns an
+    //   opaque FileHandle (typedef void*), which no Palladium type can hold …
+    //   $ echo $?
+    //   1
+    //
+    // — refused at typecheck, all four, and `grep -rn --include=*.pd` over the
+    // whole tree finds ZERO callers. Nothing could reach them, nothing did, and
+    // none of the four was quietly working.
+    //
+    // WHY DELETION AND NOT `Support::Unsupported`. `Unsupported` says "the
+    // language has this and this implementation cannot compile it yet": the type
+    // checker prints the reason and the LSP still describes the name. That is
+    // right for `file_flush` and `file_seek` above, which N14 does define. It is
+    // wrong here — keeping a name the language does not define, reserved and
+    // described, makes this table a second definition of Palladium's surface,
+    // which is the mistake N14 records having made once already when it
+    // delegated its list to `docs/reference/builtins.md`.
+    //
+    // THE C WRAPPERS ARE STILL EMITTED, AND THAT IS OWED. `src/codegen/mod.rs`
+    // writes `__pd_file_open_ex`, `__pd_file_close_ex`, `__pd_file_read_ex` and
+    // `__pd_file_write_ex` into the prelude of every generated program, and
+    // `runtime/pd_prelude.h` carries them for the bootstrap compiler. They are
+    // now unreachable — nothing in the language can name them — but they are
+    // dead C, not absent C, and no test below looks at a wrapper whose builtin
+    // is gone, because every test below iterates `BUILTINS`. Removing them is a
+    // codegen edit; it was not made here and is not claimed.
+    //
+    // The name set is pinned against N14 by
+    // `test_registry_is_exactly_the_normative_builtin_set`, so re-adding any of
+    // the four is a red test rather than a review miss.
 ];
 
 /// Look up a built-in by name.
@@ -679,6 +684,113 @@ mod tests {
             .filter(|b| b.support.is_callable())
             .map(|b| b.name.to_string())
             .collect()
+    }
+
+    /// The names N14 enumerates, read out of the specification itself.
+    ///
+    /// The table is `| `name` | `signature` | effects |`, introduced by a
+    /// `| Name | Signature | Effects |` header inside the `## N14.` section. The
+    /// scan is anchored on the section heading rather than on the first table in
+    /// the file, so an unrelated table gaining a `Name` column cannot redirect it.
+    fn normative_names() -> (BTreeSet<String>, String) {
+        let spec = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/docs/specification/language-spec.md"
+        ))
+        .expect("docs/specification/language-spec.md");
+        let start = spec
+            .find("\n## N14.")
+            .expect("the spec has no `## N14.` section");
+        let section = &spec[start..];
+        let end = section[1..]
+            .find("\n## ")
+            .map(|i| i + 1)
+            .unwrap_or(section.len());
+        let section = &section[..end];
+
+        let header = section
+            .find("| Name | Signature | Effects |")
+            .expect("N14 has no normative-set table");
+        let mut names = BTreeSet::new();
+        for line in section[header..].lines().skip(2) {
+            let line = line.trim();
+            if !line.starts_with('|') {
+                break;
+            }
+            let cell = line
+                .trim_matches('|')
+                .split('|')
+                .next()
+                .expect("a table row has a first cell")
+                .trim();
+            let name = cell.trim_matches('`').trim();
+            assert!(
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "N14's normative table has a row whose first cell is not a builtin name: {:?}",
+                cell
+            );
+            assert!(
+                names.insert(name.to_string()),
+                "N14 lists {} twice",
+                name
+            );
+        }
+        (names, section.to_string())
+    }
+
+    /// THE DURABLE GATE THAT POINTS AT THE LANGUAGE, not at another copy of the
+    /// compiler's opinion: `BUILTINS` must be exactly the set N14 enumerates.
+    ///
+    /// Every other set test in this file compares one pass against `BUILTINS`,
+    /// which keeps the compiler internally consistent and says nothing about
+    /// whether the table describes Palladium. It did not: the table held 38
+    /// names against N14's 34, and the four extra (`file_open_ex`,
+    /// `file_close_ex`, `file_read_ex`, `file_write_ex`) were visible only to
+    /// someone reading both documents at once. A registry that can name what the
+    /// specification does not define is a second definition of the language.
+    ///
+    /// This is the control for that removal: putting any of the four back turns
+    /// this red, and so does adding a thirty-fifth name of any kind.
+    ///
+    /// DIRECTION MATTERS AND BOTH ARE CHECKED. `normative − implemented` is a
+    /// missing capability; `implemented − normative` is an invented one. A test
+    /// that only checked the first would have been green throughout the four
+    /// years those names existed.
+    #[test]
+    fn test_registry_is_exactly_the_normative_builtin_set() {
+        let (normative, section) = normative_names();
+
+        // The spec states its own count in prose. Pinning it here is what stops
+        // the table being weakened to match the compiler: deleting a row to make
+        // this test pass leaves the sentence disagreeing with the table.
+        assert!(
+            section.contains("Thirty-four names."),
+            "N14 no longer states its own count; the table and the prose can now drift"
+        );
+        assert_eq!(
+            normative.len(),
+            34,
+            "N14's table lists {} names but the section says thirty-four",
+            normative.len()
+        );
+
+        let implemented = canonical();
+        let invented: Vec<&String> = implemented.difference(&normative).collect();
+        let missing: Vec<&String> = normative.difference(&implemented).collect();
+        assert!(
+            invented.is_empty(),
+            "src/builtins.rs registers {:?}, which N14 does not define. A builtin \
+             the language does not have is a second definition of the builtin \
+             surface — remove it from the table, or add it to N14 and say why \
+             the language grew",
+            invented
+        );
+        assert!(
+            missing.is_empty(),
+            "N14 requires {:?}, which src/builtins.rs does not register. A \
+             conforming implementation provides all of them",
+            missing
+        );
     }
 
     /// THE DURABLE GATE: a fresh type checker must know exactly the canonical set.
@@ -775,8 +887,15 @@ mod tests {
         }
     }
 
-    /// The 19 built-ins that used to be missing from the effect analyzer. 18 of
-    /// them do file or console I/O and were analyzed as pure.
+    /// The built-ins that used to be missing from the effect analyzer. There
+    /// were 19, 18 of which do file or console I/O and were analyzed as pure.
+    ///
+    /// FIFTEEN ARE LISTED, NOT NINETEEN, and the four absentees are named here
+    /// rather than silently dropped: `file_open_ex`, `file_close_ex`,
+    /// `file_read_ex` and `file_write_ex` left `BUILTINS` altogether (see the
+    /// note in the table). A historical list is a record of a regression, so
+    /// shrinking one has to be accounted for — this shrank because the names no
+    /// longer exist, not because the regression stopped mattering for them.
     #[test]
     fn test_previously_effect_free_builtins_have_effects() {
         const PREVIOUSLY_MISSING: &[&str] = &[
@@ -795,10 +914,6 @@ mod tests {
             "write_string_to_file",
             "file_flush",
             "file_seek",
-            "file_open_ex",
-            "file_close_ex",
-            "file_read_ex",
-            "file_write_ex",
         ];
         let ea = crate::effects::EffectAnalyzer::new();
         for name in PREVIOUSLY_MISSING {
@@ -1343,13 +1458,23 @@ mod tests {
 
     /// The built-ins whose C wrapper contradicts this table today.
     ///
-    /// All six take or return the *enhanced* file API's handle, which is
-    /// `FileHandle` (`typedef void*`, a cast FILE*), while this table types every
-    /// handle as `I64`. They pass the type checker and the borrow checker and then
-    /// fail to compile:
+    /// TWO NOW, AND IT WAS SIX. Both take the *enhanced* file API's handle, which
+    /// is `FileHandle` (`typedef void*`, a cast FILE*), while this table types
+    /// every handle as `I64`. They pass the type checker and the borrow checker
+    /// and then fail to compile:
     ///
     ///   incompatible integer to pointer conversion passing 'long long'
     ///   to parameter of type 'FileHandle' (aka 'void *')
+    ///
+    /// The other four — the `*_ex` names — are not on this list because they are
+    /// not in `BUILTINS` any more, and this list is DERIVED by the test below
+    /// from `BUILTINS` × the emitted prelude. **Nothing was fixed.** Their
+    /// wrappers are still emitted with the same contradictory C types; they are
+    /// simply no longer named by anything the language can call. Do not read the
+    /// six-to-two change as six-minus-four-repaired: `file_flush` and
+    /// `file_seek` are the two that are normative, still broken, and still owed
+    /// a re-base onto the `long long` handle table the rest of the file API uses
+    /// (`__pd_file_handles` in src/codegen/mod.rs).
     ///
     /// Every way in which the C prelude contradicts this table today, one entry per
     /// *dimension* — not one per function.
@@ -1370,17 +1495,9 @@ mod tests {
     /// This list states a known defect; it is not permission. Fixing any dimension
     /// must delete its line, and the test fails if it does not.
     const PRELUDE_TYPE_MISMATCHES: &[&str] = &[
-        "file_close_ex param 0 (handle): i64 -> opaque pointer",
         "file_flush param 0 (handle): i64 -> opaque pointer",
-        "file_open_ex param 1 (mode): i64 -> i32",
-        "file_open_ex return: opaque pointer -> i64",
-        "file_read_ex param 0 (handle): i64 -> opaque pointer",
-        "file_read_ex param 1 (buffer): const char* -> char* (writable)",
-        "file_read_ex param 2 (len): i64 -> u64",
         "file_seek param 0 (handle): i64 -> opaque pointer",
         "file_seek param 1 (whence): i64 -> u8",
-        "file_write_ex param 0 (handle): i64 -> opaque pointer",
-        "file_write_ex param 2 (len): i64 -> u64",
     ];
 
     /// THE SEAM GATE: for every built-in, the C wrapper the compiler emits must be
@@ -1787,6 +1904,42 @@ mod tests {
                 detail
             );
         }
+    }
+
+    /// The generated user-facing reference must not go stale either, and it had.
+    ///
+    /// Same shape as `test_generated_prelude_header_matches_the_compiler` above:
+    /// a file in the tree is produced from this table by a script, and nothing
+    /// noticed when the two stopped agreeing. Measured at `acda322`:
+    /// `scripts/gen-builtin-docs.py` read `p(Ty, Mode)` while this table has
+    /// written `p("name", Ty, Mode)` since `BuiltinParam` gained its name field,
+    /// so it matched 0 of 51 parameters — running the generator turned
+    /// `print(String)` into `print()` for every builtin in the reference. The
+    /// committed file was correct and OLDER THAN ITS OWN GENERATOR, which is the
+    /// one state a "GENERATED — do not edit by hand" banner cannot survive.
+    ///
+    /// The generator does the comparison (`--check`) rather than this test
+    /// re-implementing the rendering: a second renderer here would agree with
+    /// the file and disagree with the script, which is the defect one level over.
+    #[test]
+    fn test_generated_builtin_reference_is_not_stale() {
+        use std::process::Command;
+
+        let root = env!("CARGO_MANIFEST_DIR");
+        let output = Command::new("python3")
+            .arg("scripts/gen-builtin-docs.py")
+            .arg("--check")
+            .current_dir(root)
+            .output()
+            .expect("python3 must be available: the gate scripts in this repo are python");
+
+        assert!(
+            output.status.success(),
+            "docs/reference/builtins.md disagrees with src/builtins.rs — \
+             regenerate it with `python3 scripts/gen-builtin-docs.py`:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     /// THE BEHAVIOURAL GATE for hover: a real hover request over a call to any

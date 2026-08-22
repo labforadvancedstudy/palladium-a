@@ -24,7 +24,7 @@ in them bore a salvageable relationship to the implementation.
 | [Language specification](specification/language-spec.md) | two parts: Part I defines the language, Part II records what `pdc` implements, construct by construct, with a source location for every row |
 | [Grammar](specification/grammar.ebnf) | EBNF; Part A is derived from `src/parser/mod.rs`, Part B lists the normative productions the parser does not accept |
 | [Bootstrap subset (PBS-1)](specification/bootstrap-subset.md) | the subset the self-hosting compiler is written in *and* implements; the self-hosting gate; the open-defect table |
-| [Builtins](reference/builtins.md) | all 38, generated from `src/builtins.rs` |
+| [Builtins](reference/builtins.md) | all 34, generated from `src/builtins.rs`; two of them (`file_flush`, `file_seek`) are registered and not callable |
 
 Read the annex's **partial** rows before trusting anything. `?`, `.await` and un-annotated `let`
 used to pass the type checker and then emit C that does not compile — or, worse, C that runs and is

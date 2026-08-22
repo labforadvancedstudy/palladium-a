@@ -358,7 +358,7 @@ a `main` is a library.
 
 ## N14. Builtins and the standard library
 
-<sub>Non-normative pointer, not part of the definition: **implementation status → [A8 — partial: 38 builtins exist, 4 of them outside the normative set; stdlib/ does not parse](#a8-builtins)**</sub>
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A8 — partial: the registry is exactly these 34 names, but `file_flush` and `file_seek` cannot be called; stdlib/ does not parse](#a8-builtins)**</sub>
 
 A **builtin** is an operation the compiler knows intrinsically: it is in scope without an import,
 its name is reserved, and it has no Palladium definition a program could read or replace. The
@@ -416,23 +416,35 @@ conforming implementation provides all of them with these signatures.
 Thirty-four names. `File`, `OpenMode`, `SeekFrom`, `IoError` and `ParseError` are prelude types
 ([N4](#n4-types)); a `File` is an opaque handle, not an integer.
 
-> **Reconciliation against `src/builtins.rs`, name by name.** The implementation defines **38**
+> **Reconciliation against `src/builtins.rs`, name by name.** The implementation defines **34**
 > names; this table defines **34**. Set arithmetic, computed from the table above and the compiler's
 > own registry:
 >
 > - normative − implemented = **none**. Every one of the 34 names exists in `pdc`.
-> - implemented − normative = **exactly four**: `file_open_ex`, `file_close_ex`, `file_read_ex`,
->   `file_write_ex`. They are a parallel handle API that exists because `OpenMode` does not, and
->   they are not part of the language.
+> - implemented − normative = **none**, since 2026-08-23.
 >
-> 34 + 4 = 38, so the accounting closes. What does *not* match is signatures: the filesystem
-> builtins return `i64`/`bool` handles rather than `Result`, and `string_char_at` returns `i64`
-> rather than `char` because `char` is not a type yet. Itemised in [A8](#a8-builtins).
+> The two sets are equal, and that equality is now **a check rather than a paragraph**:
+> `src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set` parses the table above out
+> of this file and compares it against the registry in both directions, so a thirty-fifth builtin
+> is a red test and not a reader's job.
+>
+> *(Until 2026-08-23 the implementation defined **38**, and `implemented − normative` was
+> `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex` — a parallel handle API that
+> existed because `OpenMode` does not. None of the four was callable, all four were refused at
+> typecheck, and no `.pd` file in the tree named one. They were REMOVED FROM THE REGISTRY rather
+> than repaired: a compiler table that carries names this section does not define is a second
+> definition of the builtin surface. Their C wrappers are still emitted — dead code in
+> `src/codegen/mod.rs`, recorded as owed in [A8](#a8-builtins) and not as done.)*
+>
+> What does *not* match is **signatures**, and closing the name sets did nothing about that: the
+> filesystem builtins return `i64`/`bool` handles rather than `Result`; `string_char_at` returns
+> `i64` rather than `char` because `char` is not a type yet; and `file_flush` and `file_seek` are
+> registered but **cannot be called at all**, because their C wrappers take an opaque `FileHandle`
+> that no Palladium type can hold. Itemised in [A8](#a8-builtins).
 >
 > *(A previous version of this annex said "36 builtins", inherited from the pre-cleanup
-> specification's section heading. It was never right: `src/builtins.rs` has had 38 since
-> `191f8c1` made it the single table, and the generated `reference/builtins.md` says 38. Corrected
-> at every site.)*
+> specification's section heading. It was never right: `src/builtins.rs` had 38 from `191f8c1`,
+> which made it the single table, until the four `*_ex` names left it. Corrected at every site.)*
 >
 > This table is the definition, and it is written independently of the generated one on purpose —
 > an earlier draft delegated to it, which would have let `pdc` redefine Palladium by adding a row.
@@ -475,7 +487,7 @@ command that was run.
 | [N11 Modules](#n11-modules) | partial | [A3](#a3-program-structure) — `import` works; no `mod` item |
 | [N12 Memory model](#n12-memory-model) | partial | [A9](#a9-memory-model) — checked but not typed; `String` is Copy; array parameters [A9.2](#a92-array-parameters); `&mut` of an immutable local refused [A9.3](#a93-mut-of-an-immutable-local-is-refused-was-accepted) |
 | [N13 Execution model](#n13-execution-model) | implemented | [A10](#a10-execution-model) |
-| [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtins) — 38 builtins exist against a normative 34; signatures differ; `stdlib/` does not parse |
+| [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtins) — the registry is exactly the normative 34, but 2 of them are not callable; signatures differ; `stdlib/` does not parse |
 
 ## A1. Pipeline and backends
 
@@ -962,20 +974,40 @@ Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else`
 
 ## A8. Builtins
 
-**partial.** 38 builtins exist and work — the 34 that [N14](#n14-builtins-and-the-standard-library)
-defines, plus `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex`, which are not
-part of the language. They are evidence about the implementation, not the
-definition of the builtin surface — that is [N14](#n14-builtins-and-the-standard-library).
-The generated table [`docs/reference/builtins.md`](../reference/builtins.md) is produced by
+**partial.** 34 builtins are registered — exactly the 34 that
+[N14](#n14-builtins-and-the-standard-library) defines — and **32 of them can be called**. Registry
+membership and callability are different claims and the earlier wording ("38 builtins exist and
+work") conflated them; `file_flush` and `file_seek` have never been callable at all. The generated
+table [`docs/reference/builtins.md`](../reference/builtins.md) is produced by
 `scripts/gen-builtin-docs.py` from `src/builtins.rs` and is the authoritative record of *what
-`pdc` provides today*.
+`pdc` provides today*; it is checked against the registry on every test run
+(`src/builtins.rs::test_generated_builtin_reference_is_not_stale`), which it was not when it went
+four names stale.
 
-Measured against N14: every normative name is present (`normative − implemented = none`), and
-four extra names are not (`implemented − normative = the four *_ex names`). Two signature-level
-divergences: **filesystem builtins return `i64`/`bool` handles rather than `Result`**, because
-`Result` is not built in ([A5.1](#a51-option-and-result)); and `string_char_at` returns `i64`
-rather than `char`, because `char` is not a type ([A5](#a5-types)). **N14's effect classification
-is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
+Measured against N14: the name sets are **equal in both directions** — `normative − implemented =
+none` and `implemented − normative = none` — and that is a test, not a reading
+(`src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`). *(Until 2026-08-23 there
+were 38, the extra four being `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex`;
+see the reconciliation note under [N14](#n14-builtins-and-the-standard-library).)*
+
+Three divergences remain, none of them touched by closing the name sets:
+
+- **`file_flush` and `file_seek` cannot be compiled.** Both are declared over an `i64` handle here
+  and over an opaque `FileHandle` (`typedef void*`) in the emitted C prelude, and `file_seek`'s
+  `whence` additionally narrows to `uint8_t` (measured: `256` arrives as `0`). The type checker
+  refuses the call with that reason rather than letting gcc fail on generated code. **Owed**: a
+  re-base onto the `long long` handle table the rest of the file API already uses
+  (`__pd_file_handles` in `src/codegen/mod.rs`).
+- **Dead C wrappers.** `__pd_file_open_ex`, `__pd_file_close_ex`, `__pd_file_read_ex` and
+  `__pd_file_write_ex` are still written into the prelude of every generated program, and into
+  `runtime/pd_prelude.h`, although no builtin names them any more. **Owed**: their removal from
+  `src/codegen/mod.rs`.
+- **Signatures.** Filesystem builtins return `i64`/`bool` handles rather than `Result`, because
+  `Result` is not built in ([A5.1](#a51-option-and-result)); and `string_char_at` returns `i64`
+  rather than `char`, because `char` is not a type ([A5](#a5-types)).
+
+**N14's effect classification is unenforced**, because effects gate nothing
+([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:479`) and so does the borrow
@@ -996,10 +1028,8 @@ became the SSOT; it is no longer the mechanism.)*
 
 **File I/O (handle = i64)**: `file_open(String)->i64`, `file_read_all(i64)->String`,
 `file_read_line(i64)->String`, `file_write(i64,String)->bool`, `file_close(i64)->bool`,
-`file_exists(String)->bool`, `file_flush(i64)->i64`, `file_seek(i64,i64,i64)->i64`
-
-**Extended handle API**: `file_open_ex(String,i64)->i64`, `file_close_ex`, `file_read_ex`,
-`file_write_ex`
+`file_exists(String)->bool`, and — **registered but not callable** —
+`file_flush(i64)->i64`, `file_seek(i64,i64,i64)->i64`
 
 **Paths and directories**: `path_exists`, `path_is_file`, `path_is_dir`, `create_dir`,
 `create_dir_all`, `remove_file`, `remove_dir`, `remove_dir_all`
@@ -1009,9 +1039,14 @@ became the SSOT; it is no longer the mechanism.)*
 
 `String` also supports `+` for concatenation.
 
-> The `*_ex`, path, and directory builtins are thin wrappers over `extern` symbols supplied at
-> link time by `runtime/palladium_runtime.c`. Before that file existed, every one of these — and
-> in fact every Palladium program — failed to link.
+*(An "Extended handle API" section stood here listing `file_open_ex`, `file_close_ex`,
+`file_read_ex` and `file_write_ex`. Those names left `src/builtins.rs` on 2026-08-23 and no
+Palladium program can name them; the section is deleted rather than marked, because a builtin
+listing is a list of what a program may call.)*
+
+> The path and directory builtins are thin wrappers over `extern` symbols supplied at link time by
+> `runtime/palladium_runtime.c`. Before that file existed, every one of these — and in fact every
+> Palladium program — failed to link.
 
 **The standard library above them is unimplemented, and unshipped.** Measured at `abeb665`:
 

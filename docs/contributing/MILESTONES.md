@@ -243,9 +243,14 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **192 rows, 31 satisfied · 153 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **193 rows, 34 satisfied · 151 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
+
+*(This line and the status table below said "192 rows, 31 satisfied" and were wrong on `main`:
+the file held 193 rows and 32 `satisfied` at `acda322`, so the count had already drifted by one
+before M2 changed anything. Counts written by hand drift; these are now the output of a script
+over the file and should be re-derived, not adjusted.)*
 
 | Disposition | Count | Meaning |
 |---|---|---|
@@ -287,7 +292,7 @@ wins over the previous graph, and the previous graph was wrong on this edge.**
 
 **Correction 2 — effects can ship before abstraction, and should not.** The previous draft said
 basic effect gating needs neither C1 nor C0. That is true as a statement about *capability*: the
-builtin registry already classifies every builtin (`src/builtins.rs:182`), the analyser already
+builtin registry already classifies every builtin (`src/builtins.rs:192`), the analyser already
 unions effects, and effect polymorphism has no instance today because there are no function types
 and no closures ([A5](../specification/language-spec.md#a5-types)). It is false as a statement about
 *sequencing*, for two reasons the previous graph did not model:
@@ -341,9 +346,9 @@ Measured at this revision; every row names the command that produced it.
 | Documentation | every snippet compiles; 243 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
-| `stdlib/` | 0 of 21 files compile; 38 builtins accounted against a normative 34 | `make stdlib-gate` |
+| `stdlib/` | 0 of 21 files compile; 34 builtins accounted, and the registry is now exactly N14's normative 34 | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 31 satisfied · 153 owed · 8 blocked, over 192 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 34 satisfied · 151 owed · 8 blocked, over 193 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -404,10 +409,16 @@ artifact.** Three lines of Makefile each:
 
 ```make
 m5-exit: build
-	@REQ_MILESTONE=M5 bash scripts/requirements.sh
+	@REQ_MILESTONE=M5 python3 scripts/requirements.py
 ```
 
-`scripts/requirements.sh` does not exist yet. It is specified precisely enough to write.
+**`scripts/requirements.py` now exists** (it was specified here as `requirements.sh`; it is the
+same contract with the parsing in Python, following `thesis-exit.sh` → `thesis_exit.py`) **and
+implements steps 1, 2 and 5 of the five below.** `make m2-exit` runs it as inventory four, and its
+exit code is three-valued for `thesis-exit`'s reason: 0 CLEAR, 1 OWED, **2 NO_VERDICT**. Steps 3
+and 4 are NOT implemented, are named in the output of every run, and are why a milestone whose rows
+are all `satisfied` exits 2 rather than 0 — "no row says owed" is a statement about a status
+column, and a gate that returned 0 for it would be the M1 defect in a new inventory.
 (`make thesis-exit` is the same shape and already exists — note that it both reads the
 manifest *and* carries a version-controlled copy of the thesis contract to compare against
 it. That duplication is a reviewed cross-check, not a second definition: the pin catches an
@@ -430,6 +441,15 @@ edit to the manifest, and the pin's own validator catches a defect in the pin.)
    goes RED for it. A filter nobody has watched fail is not a filter — which is why
    `make test-thesis-runner` already exists for the thesis gate and caught a real defect in it
    ([F12](#f12-the-thesis-gates-first-lexer-could-not-fail-on-what-it-checked)).
+   **Done (GI-09):** 29 cases in `scripts/test-requirements-runner.sh`, and it grew a second half
+   this specification did not ask for. Half one is the filter: planted `owed`, planted `blocked`,
+   another milestone's row, a milestone with no rows, an unset and a typo'd `REQ_MILESTONE`, and
+   every structural check of step 1. Half two is the **target**: `make -n m2-exit` must still name
+   all four inventories against M2 and must not redirect the manifest. Without it, deleting one
+   line of the exit recipe is invisible — the dropped inventory simply stops being consulted and
+   every other gate in the repo stays green. Both halves are re-proved by reverting: removing
+   inventory four from `m2-exit` fails the runner's own self-test, and removing
+   `test-requirements-runner` from `gates` fails case 26.
 
 **Why an aggregate and not an owner filter.** `CONFORMANCE_FORBID_OWNER` clears only *tagged
 proxies*: it proves no declared failure still names the milestone. It cannot prove the feature
@@ -457,7 +477,7 @@ Receipts:
 | **D7** an un-annotated `let` was emitted as `long long` regardless of its initializer | Fixed in `04104c5` |
 | **D6** was not a defect | Retracted with five re-run probes ([A9.4](../specification/language-spec.md#a94-defect-d6-retracted)) |
 | The LLVM backend fabricated rather than lowered at 14 sites, seven of them silently | `--llvm` refuses unconditionally. `tests/d10_llvm_refuses.rs`, 9 tests |
-| `stdlib/` had no coverage at all | `make stdlib-gate`: 21 files pinned per file, 38 builtins accounted, generated C checked structurally. The premise was wrong and is recorded as such — **0 of 21 compile** ([`stdlib/STATUS.md`](../../stdlib/STATUS.md)) |
+| `stdlib/` had no coverage at all | `make stdlib-gate`: 21 files pinned per file, 38 builtins accounted (34 since M2 removed the four `*_ex` names), generated C checked structurally. The premise was wrong and is recorded as such — **0 of 21 compile** ([`stdlib/STATUS.md`](../../stdlib/STATUS.md)) |
 | A green exit code was counted as a correct program | Every `run` fixture is diffed against a recorded transcript; there is no exit-code-only class |
 | Seven fixtures proved nothing while counting as coverage | Declared `vacuous`, each naming the feature it fails to cover. Seven of 53, on the summary line of every run |
 | The gates could not fail | `make test-conformance-runner` (96 cases), `make test-gate-probe` (every evidence producer fault-injected) |
@@ -473,8 +493,10 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
 
-**Owns 45 requirement rows**, seventeen declared `#[ignore]` failures (fourteen tagged M2, three
-tagged M1), and the vacuous `tests/02_types_enums.pd`.
+**Owns 46 requirement rows, 43 of them still owed**, seventeen declared `#[ignore]` failures
+(fourteen tagged M2, three tagged M1), and the vacuous `tests/02_types_enums.pd`. *(It read "45
+rows" while GI-06 was `owed`; GI-06, GI-09 and N14-01 are now `satisfied`, and 46 is the count of
+rows owned, not of rows outstanding — the two were being used interchangeably.)*
 
 1. **The M1 debt is PAID, and it was the live miscompile.** A tail `if` was not lowered to a return
    — `fib(10)` printed `8261746944` (N3-02); the missing-return diagnostic landed with it (N3-03),
@@ -495,16 +517,68 @@ tagged M1), and the vacuous `tests/02_types_enums.pd`.
    comments** ([F10](#f10-block-comments-do-not-nest-and-nothing-said-so)), and **the `#` attribute
    token** — the token only. An attribute that lexes and is then ignored would recreate the class M1
    removed, so N2-11 makes an unknown attribute a compile error from the day `#` lexes.
-6. **The six builtins that cannot compile** (N14-01, N14-04): the four `*_ex` names are not part of
-   the language and leave `BUILTINS`; `file_flush` and `file_seek` are normative and get re-based.
+6. **The six builtins that cannot compile** (N14-01): the four `*_ex` names are not part of the
+   language and leave `BUILTINS`; `file_flush` and `file_seek` are normative and get re-based.
+   **HALF DONE, and the half that is done is the removal.** The four `*_ex` names are out of
+   `src/builtins.rs` — measured before deleting, rather than deleted on this paragraph's authority:
+   all four were refused at typecheck (`Built-in file_open_ex is registered but not callable`,
+   exit 1) and `grep -rn --include=*.pd` over the tree found **zero callers**, so none of them was
+   quietly working and the disposition above was accurate. **N14-01 is now `satisfied`**: the
+   registry is exactly N14's thirty-four names in both directions, pinned by
+   `src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`, which parses the
+   normative table out of the specification instead of restating a count.
+   **STILL OWED, and both live in `src/codegen/mod.rs`**: (a) the `file_flush` / `file_seek`
+   re-base onto the `long long` handle table (`__pd_file_handles`), which is the only thing that
+   makes either callable — they are still `Support::Unsupported` and still refused; and (b) four
+   now-unreachable C wrappers, `__pd_file_open_ex`, `__pd_file_close_ex`, `__pd_file_read_ex` and
+   `__pd_file_write_ex`, still emitted into every generated program and into
+   `runtime/pd_prelude.h`. `PRELUDE_TYPE_MISMATCHES` going from eleven dimensions to three is a
+   **deletion, not a repair**: the C that produced the other eight is unchanged, it is merely
+   unreachable.
+   *(This item cited `N14-04` as well. `N14-04` is `string_char_at returns char`, which needs the
+   `char` type and belongs to item 4; nothing about the six builtins bears on it. Corrected rather
+   than quietly dropped.)*
 7. **Witness 1** (WT-01): a JSON parser written with no workarounds, added to the corpus. It becomes
    the thesis gate's second witness at M9.
-8. **Gate integrity** (GI-06, GI-08, GI-09). **GI-06 CLOSED on the integrated tree.** `make gates`
-   (`Makefile:473-474`) now runs `test-honest` (`Makefile:316-321`), so a non-ignored compiler
-   regression can no longer coexist with a green gate. GI-08 and GI-09 — the milestone-exit target
-   and its self-test — still ship before anything depends on them.
-   *(This paragraph previously read "GI-06 adds it and is STILL OWED, a one-word change nobody has
-   made", and was correct on `main` when it was written. `fix/d3b-tail-if` made the change while
+8. **Gate integrity** (GI-06, GI-08, GI-09). **GI-06 and GI-09 CLOSED; GI-08 STILL OWED, and the
+   residual is stated below rather than glossed.**
+   GI-06: `make gates` (`Makefile:556`) runs `test-honest` (`Makefile:388-393`), so a non-ignored
+   compiler regression can no longer coexist with a green gate.
+   **`make m2-exit` now exists** (`Makefile:312-368`), and before this it did not: the Exit line
+   below named a target that `grep "^m2-exit:" Makefile` could not find, so M2 had no exit
+   criterion at all. That is exactly how v0.3.0 shipped under M1's name while `make m1-exit` was
+   RED. It reads **four** inventories — `m1-exit`'s three with the owner changed to M2, plus
+   `docs/contributing/1.0-requirements.tsv` through `scripts/requirements.py`. The fourth is what
+   closes the hole in the other three: all three are registers of *declared failures*, so a
+   requirement nobody has started on leaves every one of them clean.
+   **GI-09 is CLOSED: `make test-requirements-runner`** plants a row for the milestone under test
+   and requires the runner to go RED for it, refuses a filter with no subject, and requires
+   `make -n m2-exit` to still read all four inventories — weakening the exit target is otherwise
+   invisible to every other gate in the repo. It is in `gates`; `m2-exit` is not, for
+   `thesis-exit`'s reason: a target that is RED by design can never be in that list.
+   **GI-08 stays `owed`, and the residual is one sentence: `make m1-exit` does not read inventory
+   four.** GI-08 says *every* milestone exit reads both debt inventories **and this manifest**, and
+   one of the two that exist does not. That is deliberate rather than forgotten — the requirement
+   manifest has **zero** rows owned by M1, so adding the inventory there would make the gate
+   abstain (NO_VERDICT, nonzero) and turn a legitimately green target RED for a reason that says
+   nothing about M1. Closing GI-08 means deciding what a milestone with no rows means, which is a
+   question rather than a line of Make. Its own row's evidence, `make m2-exit`, also cannot exit 0
+   until items 1–7 land, so the row is measured by neither thing today.
+   **`m2-exit` is RED and that is the correct state.** It reports 43 rows `OWED_TO_M2` — items 1–7
+   of this list — and a green `m2-exit` before M2 is done would be the defect.
+   **What it does NOT yet do**: steps 3 and 4 of the specification below — resolve each evidence
+   locator and *run* it, and reconcile the Rust debt inventory by `req:` id. Both are named in the
+   output of every run, and a milestone whose rows are all `satisfied` therefore exits **2
+   (NO_VERDICT)** rather than 0, because "no row says owed" is a statement about a status column
+   and not about the compiler.
+   *(N14-01's evidence changed kind with item 6, and that is a contract transition: it was
+   `gate make stdlib-gate`, which compares the registry against `tests/stdlib/BUILTINS.tsv` — a
+   second copy of the compiler's own opinion — and is now
+   `observable src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`, which
+   compares it against N14's table in the specification. The old evidence could not have gone red
+   on the defect the row is about.)*
+   *(GI-06's paragraph previously read "GI-06 adds it and is STILL OWED, a one-word change nobody
+   has made", and was correct on `main` when it was written. `fix/d3b-tail-if` made the change while
    closing an unrelated hole: `version-source-gate` needed a path to the umbrella, and the same
    reasoning — a target reachable only from `m1-exit`, which is RED by design, is never evidence
    that anything passed — applied to `test-honest`, which was measured green before it was added. The
@@ -512,7 +586,7 @@ tagged M1), and the vacuous `tests/02_types_enums.pd`.
    grew the list independently and the conflict was resolved as a union. Both relocations were
    re-derived from content; neither was `--update`d onto whatever occupied the old line.)*
 
-**Exit**: `make m2-exit`.
+**Exit**: `make m2-exit` (`Makefile:312-368`) — four inventories, RED until items 1–7 land.
 
 ## M3 — Traits and generics (v0.5.0)
 

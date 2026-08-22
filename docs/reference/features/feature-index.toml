@@ -590,7 +590,7 @@ description = "Core types and traits, memory utilities, iterator protocol."
 spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
 implementation = "unimplemented"
 evidence = [
-  "gate: make stdlib-gate -> \"21 stdlib files pinned\", \"38 builtins accounted for\" -- 0 of the 21 compile, each re-proved at its recorded stage and blocker against stdlib/MANIFEST.tsv, and the forced-import probe (PALLADIUM_PATH=stdlib/std, import option) still fails with that same blocker",
+  "gate: make stdlib-gate -> \"21 stdlib files pinned\", \"34 builtins accounted for\" -- 0 of the 21 compile, each re-proved at its recorded stage and blocker against stdlib/MANIFEST.tsv, and the forced-import probe (PALLADIUM_PATH=stdlib/std, import option) still fails with that same blocker",
   "src: stdlib/MANIFEST.tsv:1 the pinned per-file verdict and blocker the gate above recomputes",
   "src: src/resolver/mod.rs:51 the resolver reads PALLADIUM_PATH, so this is not a dead-resolver problem",
   "cmd: grep -rn stdlib .github/ -> exit 1, 0 lines -- stdlib is not packaged by any workflow, and neither Homebrew formula installs it",

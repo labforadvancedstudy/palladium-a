@@ -309,6 +309,78 @@ m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1
 	fi; \
 	exit $$rc
 
+# M2's exit criterion, as a command — GI-08. THIS TARGET DID NOT EXIST, and
+# docs/contributing/MILESTONES.md named it as M2's Exit line, so the milestone
+# had no exit criterion at all. That is the same hole M1 shipped through: v0.3.0
+# was released under M1's name while `make m1-exit` was RED, and the reason
+# nobody saw it is that a milestone whose exit criterion is a sentence rather
+# than a command is measured by whoever is reading the sentence.
+#
+# It ships FIRST, before the rest of M2, for that reason and only that reason.
+#
+# IT IS RED TODAY AND THAT IS THE CORRECT STATE. A green `m2-exit` on a branch
+# that has not done M2 would be the defect, not the achievement.
+#
+# FOUR INVENTORIES, WHICH IS ONE MORE THAN `m1-exit`. The first three are
+# m1-exit's, character for character, with the owner changed:
+#   tests/conformance-manifest.txt          owns .pd fixtures (`owner` column)
+#   tests/rust-debt-manifest.txt            owns Rust tests, cross-checked
+#                                           against #[ignore = "… (owned by M<n>)"]
+#   the ordinary Rust suite                 owns everything not ignored
+# and every one of them is a register of DECLARED FAILURES. That is the hole
+# GI-08 names: a declared failure is a proxy that exists only where somebody
+# already wrote a red test, so a requirement nobody has started on leaves all
+# three clean. `docs/contributing/1.0-requirements.tsv` is the inventory that
+# enumerates what is OWED rather than what has been observed to break, and
+# GI-08 is one sentence — "Every milestone exit reads BOTH debt inventories and
+# this manifest". Inventory four is that clause.
+#
+# `m1-exit` DOES NOT GET INVENTORY FOUR, and this is not an oversight: the
+# manifest has ZERO rows owned by M1 (measured: `awk -F'\t' '$$2=="M1"'` prints
+# nothing), so the requirement gate would abstain — NO_VERDICT, nonzero — and
+# turn a target that is legitimately green RED for a reason that says nothing
+# about M1. The absence of M1 rows is itself worth knowing and is recorded here
+# rather than fixed by retagging rows into a shipped milestone.
+#
+# All four run even when an earlier one is red, for m1-exit's reason: stopping
+# at the first failure reports part of the debt and costs a round trip to
+# discover the rest.
+.PHONY: m2-exit
+m2-exit: build ## M2's exit criterion: nothing in ANY inventory still owed to M2
+	@rc=0; \
+	echo "$(YELLOW)== inventory one of four: .pd fixtures (tests/conformance-manifest.txt) ==$(NC)"; \
+	CONFORMANCE_FORBID_OWNER=M2 bash scripts/conformance.sh tests examples || rc=1; \
+	echo; \
+	echo "$(YELLOW)== inventory two of four: Rust debt (tests/rust-debt-manifest.txt + #[ignore] reasons) ==$(NC)"; \
+	TEST_XFAIL_FORBID_OWNER=M2 python3 scripts/test-xfail.py || rc=1; \
+	echo; \
+	echo "$(YELLOW)== inventory three of four: the ordinary Rust suite (nothing here is allowed to fail) ==$(NC)"; \
+	$(CARGO) test --release --no-fail-fast || rc=1; \
+	echo; \
+	echo "$(YELLOW)== inventory four of four: requirements (docs/contributing/1.0-requirements.tsv) ==$(NC)"; \
+	REQ_MILESTONE=M2 python3 scripts/requirements.py || rc=1; \
+	echo; \
+	if [ $$rc -eq 0 ]; then \
+	  echo "$(GREEN)✓ M2 exit criterion met — nothing in any inventory is owed to M2$(NC)"; \
+	else \
+	  echo "$(RED)✗ M2 is NOT finished — see the OWED_TO_M2 / failure line(s) above$(NC)"; \
+	fi; \
+	exit $$rc
+
+# GI-09, and it is the reason `m2-exit` is allowed to be believed. An owner
+# filter nobody has watched fail is not a filter: `CONFORMANCE_FORBID_OWNER` has
+# its negative controls in scripts/test-conformance-runner.sh (item7) and
+# `TEST_XFAIL_FORBID_OWNER` has its own in scripts/test-xfail.py, so inventory
+# four arrived owing the same proof.
+#
+# It plants a row for the milestone under test and requires the runner to go RED
+# for it — and, the half that is easy to leave out, it requires `make m2-exit`
+# to still READ all four inventories. Weakening the exit target is otherwise
+# invisible: deleting one line of the recipe leaves every other gate green.
+.PHONY: test-requirements-runner
+test-requirements-runner: ## Plant a row for the milestone under test and prove the gate goes RED
+	@bash scripts/test-requirements-runner.sh
+
 .PHONY: selfhost
 selfhost: build ## Run the self-hosting fixed-point gate (bootstrap/pdc.pd)
 	@bash scripts/selfhost.sh
@@ -470,7 +542,18 @@ version-source-gate: ## Require that no source file states this compiler's versi
 # Both are updated in this same commit: a requirement whose status changes in a merge and
 # is not written down in that merge is a claim measured against a state that no longer
 # exists.
-gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate version-source-gate check-retracted-claims test-thesis-runner test-xfail test-honest ## Run every language-level gate
+#
+# `test-requirements-runner` IS HERE (GI-09) and `m2-exit` IS NOT (GI-08), and the split is
+# the same one `thesis-exit` / `test-thesis-runner` already draws: the exit target is RED by
+# design, so it can never be in this list; its self-test is green by design, and leaving it
+# out would put the only proof that inventory four can go RED behind a target nobody on the
+# certifying path runs. That is the argument this repo has now made three times, for
+# `test-xfail`, for `version-source-gate` and for `test-honest`.
+#
+# COST, MEASURED THE WAY THOSE TWO ENTRIES INSIST ON — `make gates` back to back without and
+# with this entry: 1m54s -> 1m56s. It builds nothing (no `build` prerequisite; it reads two
+# text files and shells out to `make -n`), so the 2s is its own runtime and not a rebuild.
+gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate version-source-gate check-retracted-claims test-thesis-runner test-xfail test-requirements-runner test-honest ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # `make gates` GREEN IS A STATEMENT ABOUT THIS WORKTREE, AND THAT IS NOT THE TREE

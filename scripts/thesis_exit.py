@@ -1296,11 +1296,17 @@ WITNESSES = ("bootstrap/pdc.pd", "tests/witness/json_parser.pd")
 
 # N14's effectful set. `string_*`, `char_*` and `int_to_string` are pure and deliberately
 # absent: a caller of those is not evidence of an IO effect.
+#
+# `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex` WERE members and
+# are gone, 2026-08-23. They were never N14's — this comment said "N14's effectful set"
+# while four of its members were names the specification does not define — and they have
+# now left src/builtins.rs as well, so nothing can call one. A name here that no program
+# can name classifies nothing; leaving it would make this set the place a deleted builtin
+# lives on.
 IO_BUILTINS = frozenset({
     "print", "print_int", "panic",
     "file_open", "file_read_all", "file_read_line", "file_write", "file_close",
     "file_exists", "file_flush", "file_seek",
-    "file_open_ex", "file_close_ex", "file_read_ex", "file_write_ex",
     "path_exists", "path_is_file", "path_is_dir",
     "create_dir", "create_dir_all", "remove_file", "remove_dir", "remove_dir_all",
     "read_file_to_string", "write_string_to_file", "arg_count", "arg_at",
@@ -3061,10 +3067,17 @@ def self_test() -> int:
     case("no THESIS row is an `observable`, so `make thesis-exit` cannot reach that dispatch",
          [f[0] for f in _kinds if f[7] == "thesis" and f[4] == "observable"], [],
          drives_main=False)
+    # 18 -> 19 on 2026-08-23: N14-01 ("the builtin set is exactly the 34 normative names")
+    # changed evidence-kind from `gate make stdlib-gate` to
+    # `observable src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`. Its
+    # old evidence compared the registry against tests/stdlib/BUILTINS.tsv — a second copy
+    # of the compiler's own opinion — and so could not have gone red on the defect the row
+    # is about. The count is a DEMAND figure, and this one is real demand: the row is
+    # `satisfied` today by a test `make v1-exit` would have to dispatch.
     case("the manifest carries `observable` rows nothing dispatches yet — DEMAND for the "
          "1.0 gate GI-10 owes, not evidence that this code is live; retention is debt "
          "against that row, and an empty set here makes it a deletion",
-         len([f for f in _kinds if f[4] == "observable"]), 18, drives_main=False)
+         len([f for f in _kinds if f[4] == "observable"]), 19, drives_main=False)
     case("...and the gate that would dispatch them does not exist yet, which is what makes "
          "this debt rather than liveness",
          (ROOT / "Makefile").read_text().count("\nv1-exit:"), 0, drives_main=False)
@@ -3736,12 +3749,19 @@ def self_test() -> int:
     # the first place.
     _measured_tokens = {f"{ok}/{tot}" for ok, tot in _MEASURED.values()}
     _scan = score_bearing_files()
+    # `scripts/requirements.py` JOINED THIS SET on 2026-08-23, and its membership is the
+    # review this pin exists to force. It is the milestone-exit inventory reader (GI-08) and
+    # it cites `make thesis-exit` twice on purpose: once to say what it is NOT (it answers
+    # "does milestone X still owe a row", never "is 1.0 real"), and once because it copies
+    # this gate's three-valued exit contract, where NO_VERDICT is a distinct code from
+    # FALSE. It carries no adversary score, so the backstop below has nothing to find in it.
     case("the scanned set is DERIVED from the tree, and is the reviewed one — a hand list "
          "of four was missing three files that cite this gate",
          _scan,
          ["Makefile", "docs/contributing/1.0-requirements.tsv",
-          "docs/contributing/MILESTONES.md", "scripts/thesis-exit.sh",
-          "scripts/thesis_exit.py", "tests/callgraph-differential.tsv",
+          "docs/contributing/MILESTONES.md", "scripts/requirements.py",
+          "scripts/thesis-exit.sh", "scripts/thesis_exit.py",
+          "tests/callgraph-differential.tsv",
           "tests/liveness-differential.tsv"], drives_main=False)
 
     def _outside_block(text):
