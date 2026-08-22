@@ -978,10 +978,17 @@ impl Parser {
         //
         // So the lowering still runs for `-> ()`, and CODE GENERATION handles
         // the void case: `src/codegen/mod.rs`, `Stmt::Return(Some(expr))` under
-        // `current_fn_is_void`, emits the expression as a statement followed by
-        // a bare `return;` rather than `return <void expression>;`. The
+        // `current_fn_unit_return`, emits the expression as a statement followed
+        // by that function's unit return (`return;`, or `return 0;` for `main`,
+        // whose C type is `int`) rather than `return <void expression>;`. The
         // constraint violation is gone, the diagnostic is kept, and the two
-        // spellings differ only by that inert `return;`.
+        // spellings differ only by that inert return.
+        //
+        // (This comment named `current_fn_is_void` for two rounds after that
+        // field was replaced — the second stale mechanism reference on this
+        // branch. Both were found by review, not by a check; a name that no
+        // longer exists is greppable, and if a third appears it is worth
+        // mechanising rather than fixing by hand again.)
         if return_type.is_some() {
             if returns_on_every_path(&body, &body_tail) {
                 lower_tail_to_return(&mut body, &body_tail);

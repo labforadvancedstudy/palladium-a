@@ -62,7 +62,7 @@ spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
   "cmd: grep -rn 'region\\|Region' src/ --include='*.rs' -> exit 1, 0 lines",
-  "src: src/parser/mod.rs:1019 lifetime_params, populated by the parser",
+  "src: src/parser/mod.rs:1026 lifetime_params, populated by the parser",
   "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> 0 real readers; every hit is `lifetime_params: vec![]` in an src/lsp or src/optimizer test fixture",
 ]
 
@@ -109,7 +109,7 @@ description = "Restricted unsafe with side-channel protection; forbidden in #![t
 spec = "../../specification/language-spec.md#n12-memory-model"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:1823 Token::Unsafe => self.parse_unsafe()",
+  "src: src/parser/mod.rs:1830 Token::Unsafe => self.parse_unsafe()",
   "src: src/driver/mod.rs:164 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/11_unsafe_blocks.pd PASS (placeholder: only prints that the feature is unimplemented)",
@@ -122,7 +122,7 @@ implementation = "partial"
 evidence = [
   "conformance: examples/tutorial/01_variables.pd PASS",
   "cmd: grep -rn 'HindleyMilner\\|unify\\|Substitution' src/typeck/ --include='*.rs' -> exit 1, 0 lines",
-  "src: src/typeck/mod.rs:2735 'Cannot infer type from empty array'",
+  "src: src/typeck/mod.rs:2807 'Cannot infer type from empty array'",
 ]
 note = "Local `let` inference works (the i64 default was replaced by real inference in 04104c5). There is no unification engine and no polymorphic generalisation, so it is not Hindley-Milner."
 
@@ -132,7 +132,7 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/codegen/mod.rs:1689 'Generic types in structs not yet supported'",
-  "src: src/parser/mod.rs:2628-2638 all-uppercase name inside <...> reclassified as a const argument",
+  "src: src/parser/mod.rs:2635-2645 all-uppercase name inside <...> reclassified as a const argument",
   "cmd: pdc compile 'fn f<T: Clone>(x: T) {} fn main(){}' -> error: expected '>' after generic parameters, found ':'",
   "conformance: tests/08_generics_basic.pd PASS (placeholder: only prints that generics are unimplemented)",
 ]
@@ -143,10 +143,10 @@ description = "Trait definitions, impls, bounds on generics, associated types."
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/parser/mod.rs:1218 fn parse_trait — traits do parse",
+  "src: src/parser/mod.rs:1225 fn parse_trait — traits do parse",
   "src: src/codegen/mod.rs:1039 Item::Trait(_) => emits nothing",
-  "src: src/typeck/mod.rs:795-797 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
-  "src: src/parser/mod.rs:1342 trait-method parameter loop, which has no self_param branch",
+  "src: src/typeck/mod.rs:822-824 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
+  "src: src/parser/mod.rs:1349 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd PASS (placeholder: only prints that traits are unimplemented)",
 ]
 note = "Design detail: ../../design/trait_system_design.md"
@@ -169,7 +169,7 @@ implementation = "partial"
 evidence = [
   "conformance: tests/06_pattern_matching.pd PASS",
   "src: src/ast/mod.rs:313 pub enum Pattern — three variants only",
-  "src: src/typeck/mod.rs:1362 exhaustiveness runs only when the scrutinee is an enum",
+  "src: src/typeck/mod.rs:1434 exhaustiveness runs only when the scrutinee is an enum",
   "src: src/codegen/mod.rs:1982 match lowers to an if/else-if chain",
 ]
 note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
@@ -191,8 +191,8 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
   "conformance: tests/04_control_flow_if.pd PASS",
-  "src: src/parser/mod.rs:1971 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
-  "src: src/parser/mod.rs:1817 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
+  "src: src/parser/mod.rs:1978 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
+  "src: src/parser/mod.rs:1824 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
 ]
 
 [core_language.functions.function_definitions]
@@ -242,7 +242,7 @@ description = "Built-in Result<T, E> with Ok/Err."
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "unimplemented"
 evidence = [
-  "src: src/typeck/mod.rs:2383 the type checker refuses `?` outright with CompileError::question_unimplemented",
+  "src: src/typeck/mod.rs:2455 the type checker refuses `?` outright with CompileError::question_unimplemented",
   "cmd: grep -rn 'prelude' src/driver/ --include='*.rs' -> exit 1, 0 lines (stdlib/prelude.pd is never loaded)",
 ]
 note = "Result and Option are ordinary user enums if you declare them."
@@ -272,7 +272,7 @@ spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
   "src: src/lexer/token.rs:111 #[token(\"async\")] — one of the two things the definition removes",
-  "src: src/parser/mod.rs:1031 effects: None, // Effects will be inferred during analysis",
+  "src: src/parser/mod.rs:1038 effects: None, // Effects will be inferred during analysis",
   "src: src/driver/mod.rs:59 the analyser's result is println!ed and nothing else",
   "src: src/effects/mod.rs:283 'If function is unknown, we conservatively assume it's pure' — the unsound direction",
   "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> 1 line, src/driver/mod.rs:147",
@@ -360,7 +360,7 @@ implementation = "partial"
 evidence = [
   "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
   "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
-  "src: src/parser/mod.rs:1740 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
+  "src: src/parser/mod.rs:1747 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
 ]
 
 [advanced_features.macro_system.hygiene]

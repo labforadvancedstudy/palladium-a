@@ -236,6 +236,49 @@ impl CompileError {
         }
     }
 
+    /// A value-carrying `return` inside an `async fn` has nowhere to put its
+    /// value.
+    ///
+    /// MEASURED at 7d2fc0d. The type space is wider than the spellings:
+    /// typeck gives an async function the return type `Future<declared>`, and
+    /// an ORDINARY function may declare `Future<()>`, so
+    ///
+    /// ```text
+    /// fn g() -> Future<()> { panic("x"); }
+    /// async fn f() -> () { g() }
+    /// ```
+    ///
+    /// type-checks. The parser lowers that tail to `Stmt::Return(Some(..))`,
+    /// and the poll function it lands in returns an `int` readiness flag with
+    /// no slot for a value — so the value was evaluated and DROPPED, and the
+    /// emitted C carried a duplicate `return 1; // Ready`. The same shape with
+    /// a non-unit output (`async fn f() -> i64 { g() }`, `g() -> Future<i64>`)
+    /// emitted `return <struct>;` from an `int` function and gcc refused it.
+    ///
+    /// Refused rather than lowered, for the same reason `async fn main` is:
+    /// giving the value somewhere to live means a future with a result slot
+    /// and something to drive it, which is the async runtime §N7 says does not
+    /// exist. The async producer as a whole is recorded as a normative
+    /// violation of §N7 owned by M2; this removes the silent value-drop
+    /// underneath it.
+    pub fn async_value_return_unimplemented(span: Span) -> Self {
+        CompileError::Unimplemented {
+            construct: "a `return` with a value inside an `async fn`".to_string(),
+            consequence:
+                "the body is emitted into a poll function that returns only an `int` \
+                 readiness flag, so there is nowhere to put the value: it would be \
+                 evaluated and discarded, and for a non-unit output the emitted C does \
+                 not compile at all"
+                    .to_string(),
+            workaround:
+                "make the function ordinary (`fn`) and return the value directly. There \
+                 is no async runtime, so a future's result has nowhere to live and \
+                 nothing to deliver it"
+                    .to_string(),
+            span: Some(span),
+        }
+    }
+
     /// `async fn main` compiles to an entry point nothing can call.
     ///
     /// MEASURED at d0eebbf: `async fn main() { print_int(7) }` produced no

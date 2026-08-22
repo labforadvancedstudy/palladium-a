@@ -3166,18 +3166,22 @@ impl CodeGenerator {
 
         // Generate the actual function body.
         //
-        // THIS PATH ALSO FEEDS `generate_statement`, so it must set the unit
-        // replacement or it becomes a second, path-keyed exception of exactly
-        // the shape `name != "main"` was. An async function's poll body returns
-        // `int` (the readiness flag), so a Palladium `return <expr>;` inside it
-        // must not become C `return <expr>;`. Async IS reachable: measured,
-        // `async fn f() { print_int(1) }` compiles and links today.
-        self.current_fn_unit_return = if matches!(func.return_type, None | Some(Type::Unit))
-        {
-            Some("        return 1; // Ready\n")
-        } else {
-            None
-        };
+        // WHAT THIS ASSIGNMENT IS FOR, now that "defensive and unreachable" is
+        // not the answer: it is PER-FUNCTION STATE RESET, the same protocol as
+        // the `mutable_params`/`variables`/`array_bindings` clears above — this
+        // path feeds `generate_statement`, and without it a value left by the
+        // previously generated function would still be in the field.
+        //
+        // It is `None` rather than a replacement because an async body cannot
+        // contain a value-carrying `return` at all: typeck refuses it
+        // (src/typeck/mod.rs, `async_value_return_unimplemented`). Round 11
+        // had this set to `Some("return 1; // Ready")`, which WAS reached —
+        // `fn g() -> Future<()> { … }` with `async fn f() -> () { g() }` type-
+        // checks, and the emission carried a duplicate `return 1;` while the
+        // value was silently dropped. That is now a refusal, so there is
+        // nothing left to replace, and leaving a stale replacement here would
+        // be worse than none.
+        self.current_fn_unit_return = None;
         self.output
             .push_str("        // Execute async function body\n");
         for stmt in &func.body {

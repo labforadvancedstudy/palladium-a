@@ -607,8 +607,8 @@ self_param = [ "&" ] [ "mut" ] "self" ;
 **unimplemented**: default parameter values, pattern parameters, varargs, `where` clauses.
 
 **unimplemented — effect clauses.** `![io]` does not exist in the surface syntax.
-`Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:1031`, corrected from
-v0.2's `src/parser/mod.rs:1015`, which is where the `Function` literal opens). Effects are *inferred* afterwards
+`Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:1038`, corrected from
+v0.2's `src/parser/mod.rs:1022`, which is where the `Function` literal opens). Effects are *inferred* afterwards
 (`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:151`, corrected
 from `src/driver/mod.rs:139-145`); they gate nothing. `crate::effects::` is referenced from exactly one place in
 the compiler, `src/driver/mod.rs:147`.
@@ -636,11 +636,11 @@ field (`src/parser/mod.rs:786`, `src/ast/mod.rs:139`).
 
 ### A4.4 Traits
 
-**unimplemented.** Traits parse (`src/parser/mod.rs:1218`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1039`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:795-797`, corrected
-from `src/typeck/mod.rs:960`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+**unimplemented.** Traits parse (`src/parser/mod.rs:1225`, corrected from line 736–960 of the pre-cleanup revision) and then
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1039`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:822-824`, corrected
+from `src/typeck/mod.rs:1032`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
-(`src/parser/mod.rs:1342`, corrected from line 863–897 of the pre-cleanup revision).
+(`src/parser/mod.rs:1349`, corrected from line 863–897 of the pre-cleanup revision).
 
 So `trait Display { fn fmt(&self) -> String; }` does not parse, and
 [N10](#n10-traits-and-generics) has no implementation at all.
@@ -656,7 +656,7 @@ impl_block = "impl" [ generic_params ] [ type "for" ] type "{" { function } "}" 
 **implemented**: methods become mangled free functions `__pd_Type_method`
 (`src/codegen/mod.rs:1053-1059`, corrected from line 1861 of the pre-cleanup revision).
 **unimplemented**: associated constants and associated types are rejected — an impl body may
-contain only `fn` (`src/parser/mod.rs:1511-1517`, corrected from line 1030 of the pre-cleanup revision).
+contain only `fn` (`src/parser/mod.rs:1518-1524`, corrected from line 1030 of the pre-cleanup revision).
 **partial**: methods cannot be called with `.` syntax — see [A6.4](#a64-method-calls). Call them
 as `Type::method(receiver, args)`.
 
@@ -664,7 +664,7 @@ as `Type::method(receiver, args)`.
 
 **partial.** User macros (`macro name!(a, b) { … }`) parse into a raw token stream that is lossily
 converted; unlisted tokens degrade into `AstToken::Ident` of a debug string
-(`src/parser/mod.rs:1740`, corrected from line 1258 of the pre-cleanup revision).
+(`src/parser/mod.rs:1747`, corrected from line 1258 of the pre-cleanup revision).
 
 Four builtin macros exist (`src/macros/mod.rs:41`), each taking **exactly one** expression:
 
@@ -682,8 +682,8 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:2472`, corrected from line 2038 of the pre-cleanup revision) |
-| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:2590-2598` (corrected from line 2037–2043 of the pre-cleanup revision) |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:2343`, corrected from line 2038 of the pre-cleanup revision) |
+| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:2597-2605` (corrected from line 2037–2043 of the pre-cleanup revision) |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
@@ -698,7 +698,7 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 | `<T: Bound>`, `where` | unimplemented | `parse_generic_params` accepts bare names only; the `:` is a parse error |
 
 **partial — generic argument bug**: inside `<…>`, any identifier whose characters are all
-uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:2628-2638`,
+uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:2635-2645`,
 corrected from line 2054–2079 of the pre-cleanup revision). So `Foo<T>` yields a const-generic `T`, not a type argument. Only
 mixed-case names like `Vec<Item>` reach the type branch.
 
@@ -721,7 +721,7 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing is that `?` typechecks
-against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2534`, corrected from line 2495 of the pre-cleanup revision) — and
+against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2606`, corrected from line 2495 of the pre-cleanup revision) — and
 then generates C for a `struct Result` layout that codegen never emits (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -730,14 +730,14 @@ then generates C for a `struct Result` layout that codegen never emits (see
 ### A6.1 Statements
 
 `let`, assignment, `if`/`else`, `while`, `for … in`, `match`, `return`, `break`, `continue`,
-`unsafe { }`, expression statements (`src/parser/mod.rs:1813`).
+`unsafe { }`, expression statements (`src/parser/mod.rs:1820`).
 
 - implemented: `let [mut] x [: T] = e;` — **the initializer is mandatory**
-  (`src/parser/mod.rs:1897`, corrected from line 1411 of the pre-cleanup revision); the binding must be a plain identifier
+  (`src/parser/mod.rs:1904`, corrected from line 1411 of the pre-cleanup revision); the binding must be a plain identifier
   (no patterns).
 - implemented: assignment targets — identifier, index, field, deref.
 - **unimplemented: `else if`** — after `else` the parser requires `{`
-  (`src/parser/mod.rs:1971`, corrected from line 1441 of the pre-cleanup revision). Verified: `if a {} else if b {}` →
+  (`src/parser/mod.rs:1978`, corrected from line 1441 of the pre-cleanup revision). Verified: `if a {} else if b {}` →
   `Expected '{' after else`. Use a nested `if` inside the `else`.
 - **unimplemented: `loop`** — not a keyword. Use `while true`.
 - unimplemented: compound assignment (`i += 1`) — verified: `Expected expression, but found '='`.
@@ -764,7 +764,7 @@ implemented: literals, identifiers, struct literals, array literals `[a,b,c]` an
 indexing, field access, calls, enum construction, unary `- ! & *`, binary operators.
 
 - **unimplemented: `if`, `match`, and blocks are statements, not expressions**
-  (`src/parser/mod.rs:1817`, `src/parser/mod.rs:1822`). `let x = if c { 1 } else { 2 };` does not parse. This is a
+  (`src/parser/mod.rs:1824`, `src/parser/mod.rs:1829`). `let x = if c { 1 } else { 2 };` does not parse. This is a
   direct contradiction of [N5](#n5-statements-and-expressions).
 - unimplemented: closures — no closure token path and no closure AST node.
 - unimplemented: tuple expressions and `.0` indexing.
@@ -772,10 +772,10 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 - partial: ranges outside a `for` header — codegen error "Range expressions can only be used in
   for loops" (`src/codegen/mod.rs:2522-2525`, corrected from line 2121 of the pre-cleanup revision).
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:2735`, corrected from line 1874 of the pre-cleanup revision).
+  (`src/typeck/mod.rs:2807`, corrected from line 1874 of the pre-cleanup revision).
 
 **partial — precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for
-its right operand (`src/parser/mod.rs:2349`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
+its right operand (`src/parser/mod.rs:2225`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
 Write `a * (0 - b)` or bind the negation to a variable. [N5](#n5-statements-and-expressions)
 requires `a * -b`.
 
@@ -783,7 +783,7 @@ requires `a * -b`.
 
 **unimplemented.** `x.f()` parses as a call whose callee is a field access, and the typechecker
 rejects exactly that: **"Indirect function calls not yet supported"**
-(`src/typeck/mod.rs:1575`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
+(`src/typeck/mod.rs:1647`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
 
 *(v0.2 also claimed a "same guard" in codegen at line 1870 of the pre-cleanup revision.
 `grep -n 'Indirect function calls' src/codegen/mod.rs` returns nothing; there is no such guard in
@@ -835,7 +835,7 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`src/typeck/mod.rs:2369`, `src/typeck/mod.rs:2376`) and again by code
+The refusal is raised by the type checker (`src/typeck/mod.rs:2441`, `src/typeck/mod.rs:2448`) and again by code
 generation (`src/codegen/mod.rs:2564`, `src/codegen/mod.rs:2576`), which is callable on its own.
 
 What they used to do:
@@ -949,7 +949,7 @@ pattern = "_"
 (`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
 bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1362`,
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1434`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
 (`src/codegen/mod.rs:1982`, `src/codegen/mod.rs:2003-2014`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
@@ -974,7 +974,7 @@ rather than `char`, because `char` is not a type ([A5](#a5-types)). **N14's effe
 is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
-checker derives its signature table from it (`src/typeck/mod.rs:365`) and so does the borrow
+checker derives its signature table from it (`src/typeck/mod.rs:370`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
 (`src/codegen/mod.rs:2226`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:520`, corrected from line 251–575 of the pre-cleanup revision).
@@ -1048,7 +1048,7 @@ v0.2 sentence is retracted; the surviving borrow-checker defect is
 **[N9](#n9-references-and-lifetimes) is unimplemented in full.** `ref` is not a keyword; the
 implemented spelling is Rust's `&`/`&mut` **with** `'a` parameter lists — the exact annotation
 burden the definition removes. `fn f<'a>(x: &'a String) -> &'a String { return x; }` compiles.
-`Function.lifetime_params` is parsed (`src/parser/mod.rs:1019`) and read nowhere outside test and
+`Function.lifetime_params` is parsed (`src/parser/mod.rs:1026`) and read nowhere outside test and
 LSP fixtures. There is no region inference: `grep -rn 'region\|Region' src/ --include='*.rs'`
 returns nothing.
 

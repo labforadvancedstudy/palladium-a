@@ -2,7 +2,7 @@
 // "Ensuring legends are logically sound"
 
 use crate::ast::{AssignTarget, UnaryOp, *};
-use crate::errors::{CompileError, Result};
+use crate::errors::{CompileError, Result, Span};
 use std::collections::HashMap;
 
 mod suggestions;
@@ -313,6 +313,11 @@ pub struct StructInstantiation {
 }
 
 pub struct TypeChecker {
+    /// An imported `pub async fn main`, recorded at import-registration time
+    /// and raised by `check`. Imported functions never reach `check_function`,
+    /// where the refusal lives, so without this an imported one reached code
+    /// generation and emitted a `main_Future main()` entry point.
+    deferred_async_main: Option<Span>,
     /// Function signatures
     functions: HashMap<String, CheckerType>,
     /// Generic function definitions
@@ -374,6 +379,7 @@ impl TypeChecker {
             .collect();
 
         Self {
+            deferred_async_main: None,
             functions,
             generic_functions: HashMap::new(),
             instantiations: HashMap::new(),
@@ -414,6 +420,19 @@ impl TypeChecker {
             for item in &module_info.ast.items {
                 match item {
                     crate::ast::Item::Function(func) => {
+                        // AN IMPORTED `pub async fn main` BYPASSED THE REFUSAL.
+                        // Only LOCAL functions go through `check_function`,
+                        // where it lives, but imported functions are registered
+                        // under their unqualified name too — so an imported
+                        // `pub async fn main` satisfied the main-existence check
+                        // and reached code generation. Measured at 7d2fc0d: the
+                        // emitted entry point was `main_Future main()`, the
+                        // program linked, ran, exited 0 and printed nothing.
+                        // Recorded rather than returned, because this setter
+                        // has no fallible signature; `check` raises it.
+                        if func.is_async && func.name == "main" {
+                            self.deferred_async_main = Some(func.span);
+                        }
                         // Only process exported (public) functions
                         if matches!(func.visibility, crate::ast::Visibility::Public) {
                             let qualified_name = format!("{}::{}", module_name, func.name);
@@ -563,6 +582,14 @@ impl TypeChecker {
 
     /// Type check a program
     pub fn check(&mut self, program: &Program) -> Result<()> {
+        // Raised here because `set_imported_modules` cannot fail: an imported
+        // `pub async fn main` is registered under its unqualified name and so
+        // satisfies the main-existence check, but never passes through
+        // `check_function`.
+        if let Some(span) = self.deferred_async_main {
+            return Err(CompileError::async_main_unimplemented(span));
+        }
+
         // First pass: collect all function signatures and struct definitions
         for item in &program.items {
             match item {
@@ -937,6 +964,41 @@ impl TypeChecker {
     }
 
     /// Type check a function
+    /// Does `body` contain a `return <value>` anywhere?
+    ///
+    /// Walks nested blocks because the parser's tail lowering puts the return
+    /// inside whichever branch was the tail — an `if` arm or a `match` arm, not
+    /// necessarily the top level.
+    fn has_value_return(body: &[Stmt]) -> bool {
+        for stmt in body {
+            let found = match stmt {
+                Stmt::Return(Some(_)) => return true,
+                Stmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::has_value_return(then_branch)
+                        || else_branch
+                            .as_ref()
+                            .is_some_and(|b| Self::has_value_return(b))
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                    Self::has_value_return(body)
+                }
+                Stmt::Unsafe { body, .. } => Self::has_value_return(body),
+                Stmt::Match { arms, .. } => {
+                    arms.iter().any(|a| Self::has_value_return(&a.body))
+                }
+                _ => false,
+            };
+            if found {
+                return true;
+            }
+        }
+        false
+    }
+
     fn check_function(&mut self, func: &Function) -> Result<()> {
         // `async fn main` has no entry point that anything can call. Refused
         // here, before code generation, because codegen would emit
@@ -949,6 +1011,16 @@ impl TypeChecker {
         // hypothetical `async fn main<T>` cannot slip past it.
         if func.is_async && func.name == "main" {
             return Err(CompileError::async_main_unimplemented(func.span));
+        }
+
+        // A value-carrying `return` inside an async function has nowhere to go:
+        // the poll function it is emitted into returns an `int` readiness flag.
+        // See `CompileError::async_value_return_unimplemented` for the
+        // measurement — including the ORDINARY function returning `Future<()>`
+        // that makes this reachable, which no enumeration of async *spellings*
+        // would have found.
+        if func.is_async && Self::has_value_return(&func.body) {
+            return Err(CompileError::async_value_return_unimplemented(func.span));
         }
 
         // Skip generic functions - they'll be checked when instantiated

@@ -273,7 +273,7 @@ document says the language does not have: an `async` marker and an await operato
 
 **2. Effects are inferred, but the result is print-only — it gates nothing.**
 The parser hardcodes `Function.effects` to `None`, commented "Effects will be inferred during
-analysis" (`src/parser/mod.rs:1031`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
+analysis" (`src/parser/mod.rs:1038`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
 `Effect` enum at `src/effects/mod.rs:16-29`, `analyze_function` at `src/effects/mod.rs:151`) and it does union effects across
 statements and calls (`src/effects/mod.rs:263`). But `crate::effects::` is referenced from exactly one place in
 the compiler — `src/driver/mod.rs:147` — and all the driver does with the result is `println!` it

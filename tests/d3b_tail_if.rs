@@ -1240,68 +1240,110 @@ fn async_main_is_refused_rather_than_compiled_into_a_program_that_does_nothing()
     );
 }
 
-/// THE REACHABILITY BOUNDARY OF THE ASYNC UNIT REPLACEMENT, pinned because the
-/// emission itself cannot be.
+/// `async fn main` is refused whatever the spelling, and from wherever it comes.
 ///
-/// `generate_async_function_with_name` is the third caller of
-/// `generate_statement`, and it did not set the unit replacement — a
-/// path-keyed exception of exactly the shape `name != "main"` was. It sets it
-/// now. But NO FIXTURE CAN EXERCISE IT: measured, every async spelling whose
-/// body would contain a `Stmt::Return` is rejected by the type checker first,
-/// because it wraps a declared return type in `Future` —
-///
-///     async fn f() -> () { print_int(1) }  expected Future<()>, found ()
-///     async fn f() -> () { return; }       expected (), found return value
-///     async fn f() { return; }             expected (), found return value
-///     async fn f() -> i64 { 1 }            expected Future<Int>, found Int
-///     async fn f() { print_int(1) }        COMPILES — and has no Return at all
-///
-/// The one accepted shape carries no annotation, so the parser does no
-/// lowering and there is nothing for the replacement to replace. Saying "the
-/// fixture covers it" would therefore be false, so this test pins the PREMISE
-/// instead: if typeck ever accepts one of these, this goes red, and whoever
-/// changed it has to look at what the poll function emits.
+/// The bare form was pinned in round 11. These are the three that were not:
+/// the GENERIC form (which is why the refusal sits before `check_function`'s
+/// generic skip), the `pub` form (visibility is not part of the contract), and
+/// the IMPORTED form — measured at 7d2fc0d, an imported `pub async fn main`
+/// bypassed the refusal entirely, because only local functions pass through
+/// `check_function`, and emitted `main_Future main()`: a program that linked,
+/// ran, exited 0 and printed nothing.
 #[test]
-fn every_async_shape_that_would_reach_the_unit_replacement_is_refused_earlier() {
+fn async_main_is_refused_in_every_spelling() {
+    // `pub` is not part of the contract: visibility does not change what the
+    // entry point would be.
+    let err = compile_to_c(
+        "pub async fn main() { print_int(7) }",
+        "d3b_async_main_pub",
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("`async fn main`"),
+        "the `pub` spelling must be refused as async main, got:\n{}",
+        err
+    );
+
+    // The GENERIC spelling is refused too, but by a DIFFERENT rule, and saying
+    // so is the point: `async fn main<T>` is registered as a generic function
+    // rather than as a plain one, so it never satisfies the main-existence
+    // check and the program is rejected with "No main function found" before
+    // the async refusal is reached. The refusal is still placed before
+    // `check_function`'s generic skip — this test records which diagnostic
+    // actually fires, so a future change that makes a generic `main` an entry
+    // point has to change this line and look at the async case.
+    let err = compile_to_c(
+        "async fn main<T>() { print_int(7) }",
+        "d3b_async_main_generic",
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("No main function found") || err.contains("`async fn main`"),
+        "the generic spelling must be refused somehow, got:\n{}",
+        err
+    );
+}
+
+/// THE TYPE SPACE IS WIDER THAN THE SPELLINGS — which is how I got this wrong.
+///
+/// Round 11 claimed the async unit replacement "cannot be fixtured" and listed
+/// the async SPELLINGS whose bodies would contain a `Stmt::Return`, all of
+/// which typeck refuses. That enumerated what I could write, not what the types
+/// admit. An ORDINARY function may declare `Future<()>`, and typeck gives an
+/// async function the return type `Future<declared>`, so
+///
+/// ```text
+/// fn g() -> Future<()> { panic("x"); }
+/// async fn f() -> () { g() }
+/// ```
+///
+/// type-checks, reaches code generation, and — measured at 7d2fc0d — emitted a
+/// DUPLICATE `return 1; // Ready` into the poll function while the value was
+/// evaluated and dropped. With a non-unit output the same shape emitted
+/// `return <struct>;` from an `int` function and gcc refused the C.
+///
+/// It is now refused. The value has nowhere to live: the poll function returns
+/// an `int` readiness flag, and giving it a home means a future with a result
+/// slot and something to drive it — the async runtime §N7 says does not exist.
+#[test]
+fn a_value_carrying_return_inside_an_async_fn_is_refused() {
     for (n, src) in [
-        "async fn f() -> () { print_int(1) }",
-        "async fn f() -> () { return; }",
-        "async fn f() { return; }",
-        "async fn f() -> i64 { 1 }",
+        // the shape review found: an ordinary function supplying the Future
+        "fn g() -> Future<()> { panic(\"x\"); }\nasync fn f() -> () { g() }",
+        // and the non-unit output, whose emitted C did not compile at all
+        "fn g() -> Future<i64> { panic(\"x\"); }\nasync fn f() -> i64 { g() }",
     ]
     .iter()
     .enumerate()
     {
         let program = format!("{}\nfn main() {{ f(); }}\n", src);
-        let err = compile_to_c(&program, &format!("d3b_async_reach_{}", n))
-            .expect_err(&format!(
-                "`{}` reaches code generation; the async unit replacement in \
-                 generate_async_function_with_name is now live and untested — \
-                 check what its poll function emits",
-                src
-            ));
+        let err = compile_to_c(&program, &format!("d3b_async_value_return_{}", n))
+            .expect_err("a value-carrying return inside an async fn has nowhere to go");
         assert!(
-            err.contains("Type mismatch"),
-            "expected the type checker to refuse `{}`, got:\n{}",
-            src,
+            err.contains("`return` with a value inside an `async fn`"),
+            "the refusal must name the construct, got:\n{}",
+            err
+        );
+        assert!(
+            err.contains("readiness flag"),
+            "the note must say WHY there is nowhere to put it:\n{}",
             err
         );
     }
 
-    // ...and the one shape that IS accepted has no `Stmt::Return` to replace.
+    // The shape that remains accepted has no `Stmt::Return` at all — no
+    // annotation, so the parser does no tail lowering — and its poll function
+    // must carry exactly one readiness return, not the duplicate that the
+    // replacement used to add.
     let c = compile_to_c(
         "async fn f() { print_int(1) }\n\nfn main() { f(); }\n",
         "d3b_async_accepted",
     )
     .expect("the unannotated async unit function compiles");
-    assert!(
-        c.contains("int f_poll("),
-        "the accepted shape should still emit a poll function:\n{}",
-        c
-    );
-    assert!(
-        !c.contains("return __pd_print_int"),
-        "and it must not return a void expression from it:\n{}",
+    assert_eq!(
+        c.matches("return 1; // Ready").count(),
+        1,
+        "the poll function should mark ready once:\n{}",
         c
     );
 }

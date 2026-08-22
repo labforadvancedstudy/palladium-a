@@ -857,6 +857,18 @@ def definition_time(node):
     if args is not None:
         out += [d for d in (args.defaults or []) if d is not None]
         out += [d for d in (getattr(args, "kw_defaults", None) or []) if d is not None]
+        # PARAMETER ANNOTATIONS TOO — every flavour. `visit` skips the whole
+        # `ast.arguments` node on the way in (so the defaults above are not
+        # walked twice), and the first version of this function collected only
+        # defaults and the RETURN annotation, so a private load written into a
+        # parameter annotation was invisible to the table entirely.
+        for group in ("posonlyargs", "args", "kwonlyargs"):
+            for a in getattr(args, group, None) or []:
+                if a.annotation is not None:
+                    out.append(a.annotation)
+        for a in (getattr(args, "vararg", None), getattr(args, "kwarg", None)):
+            if a is not None and a.annotation is not None:
+                out.append(a.annotation)
     ret = getattr(node, "returns", None)
     if ret is not None:
         out.append(ret)
