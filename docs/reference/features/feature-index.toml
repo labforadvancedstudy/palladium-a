@@ -330,6 +330,7 @@ note = "The blocker is lexical: there is no '#' token, so attributes fail one le
 description = "Types carrying predicates, checked at compile time."
 spec = "PALLADIUM_V1_FEATURES.md#41-verification"
 implementation = "unimplemented"
+milestone = "post-1.0"
 evidence = [
   "cmd: grep -rn 'Refinement\\|Predicate' src/ --include='*.rs' -> exit 1, 0 lines",
   "cmd: grep -nE '#\\[token\\(\"where\"\\)\\]' src/lexer/token.rs -> exit 1, 0 lines",
@@ -339,6 +340,7 @@ evidence = [
 description = "Export machine-checkable proofs to Lean/Coq."
 spec = "PALLADIUM_V1_FEATURES.md#41-verification"
 implementation = "unimplemented"
+milestone = "post-1.0"
 evidence = [
   "cmd: grep -rn 'Coq\\|Lean\\|Isabelle\\|Proof' src/ --include='*.rs' -> 2 lines, both the marketing tagline \"Turing's Proofs Meet von Neumann's Performance\" at src/main.rs:100 and src/cli.rs:14",
   "cmd: find . -name '*.v' -o -name '*.thy' -o -name '*.lean' -not -path './target/*' -> exit 0, 0 lines",
@@ -349,6 +351,7 @@ note = "Depends on totality_checking, which is also unimplemented."
 description = "Constant-time guarantees for cryptographic code."
 spec = "PALLADIUM_V1_FEATURES.md#41-verification"
 implementation = "unimplemented"
+milestone = "post-1.0"
 evidence = [
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
 ]
@@ -442,6 +445,7 @@ note = "The subset it implements is PBS-1, deliberately smaller than what pdc ac
 description = "pdfmt — automatic code formatting."
 spec = "PALLADIUM_V1_FEATURES.md#72-development-tools"
 implementation = "unimplemented"
+milestone = "post-1.0"
 evidence = [
   "src: Cargo.toml:45 the first of three [[bin]] declarations — pdc, pdm, pls",
   "cmd: grep -rn 'pdfmt' src/ Cargo.toml -> exit 1, 0 lines",
@@ -451,6 +455,7 @@ evidence = [
 description = "pls — completion, go-to-definition, diagnostics."
 spec = "PALLADIUM_V1_FEATURES.md#72-development-tools"
 implementation = "partial"
+milestone = "post-1.0"
 evidence = [
   "src: Cargo.toml:53 [[bin]] for pls",
   "cmd: ls src/lsp/ -> completion.rs, diagnostics.rs and their tests",
@@ -461,6 +466,7 @@ note = "No conformance or integration row covers it."
 description = "GDB/LLDB integration, source-level debugging."
 spec = "PALLADIUM_V1_FEATURES.md#72-development-tools"
 implementation = "unimplemented"
+milestone = "post-1.0"
 evidence = [
   "cmd: grep -rn 'DWARF\\|debug_info\\|#line\\|gimli' src/ --include='*.rs' -> exit 1, 0 lines",
   "cmd: grep -c '#line' build_output/01_lexical_comments.c -> 0, exit 1 (generated C carries no line directives)",
@@ -480,6 +486,7 @@ evidence = [
 description = "Central package registry with version management."
 spec = "PALLADIUM_V1_FEATURES.md#73-package-management"
 implementation = "unimplemented"
+milestone = "post-1.0"
 evidence = [
   "cmd: grep -rnE 'reqwest|ureq|hyper|curl|isahc' Cargo.toml -> exit 1, 0 lines — no HTTP client is a dependency, so no registry can be contacted",
   "src: src/package/lockfile.rs:341 url: \"https://packages.palladium-lang.org\" — a hardcoded default with no client behind it",
@@ -522,6 +529,7 @@ note = "See reference/builtins.md, generated from src/builtins.rs."
 description = "Call Rust from Palladium, share data structures."
 spec = "PALLADIUM_V1_FEATURES.md#8-interoperability"
 implementation = "unimplemented"
+milestone = "post-1.0"
 evidence = [
   "cmd: grep -rn 'Extern\\|ExternBlock' src/ast/mod.rs src/parser/mod.rs -> exit 1, 0 lines",
   "cmd: pdc compile 'extern \"C\" { fn puts(s: String) -> i64; } fn main(){}' -> error: Expected function, struct, enum, trait, type, impl, or macro declaration",
@@ -532,6 +540,7 @@ note = "The extern \"C\" symbols in src/runtime/ are the compiler's own runtime,
 description = "C ABI compatibility; call C libraries and export to C."
 spec = "PALLADIUM_V1_FEATURES.md#8-interoperability"
 implementation = "partial"
+milestone = "1.0"
 evidence = [
   "src: src/driver/mod.rs:185 // Phase 4: Code generation — output is C, which gcc then links, so the ABI is C by construction",
   "cmd: grep -rn 'Extern\\|ExternBlock' src/ast/mod.rs src/parser/mod.rs -> exit 1, 0 lines — no syntax for importing a C symbol",
@@ -541,6 +550,7 @@ evidence = [
 description = "WASM target with WASI support."
 spec = "PALLADIUM_V1_FEATURES.md#8-interoperability"
 implementation = "unimplemented"
+milestone = "post-1.0"
 evidence = [
   "cmd: grep -rniE 'wasm|WebAssembly|wasi' src/ --include='*.rs' -> exit 1, 0 lines",
   "cmd: ls src/codegen/ -> mod.rs and llvm_text_backend.rs only; there is no third backend",

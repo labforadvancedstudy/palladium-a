@@ -311,3 +311,16 @@ gates: conformance test-conformance-runner check-docs selfhost stdlib-gate test-
 .PHONY: test-xfail
 test-xfail: ## Run the #[ignore]d tests and fail if a declared failure now passes
 	@python3 scripts/test-xfail.py
+
+# --- The definition of 1.0, as a command -----------------------------------
+# Committed RED on purpose. See scripts/thesis-exit.sh and
+# docs/contributing/MILESTONES.md: 1.0 is the thesis proven on the self-hosting
+# compiler, not an inventory with no unmet rows.
+
+.PHONY: thesis-exit
+thesis-exit: build ## The definition of Palladium 1.0. RED until M9.
+	@bash scripts/thesis-exit.sh
+
+.PHONY: test-thesis-runner
+test-thesis-runner: ## Prove the thesis gate's source probes can still go RED
+	@bash scripts/thesis-exit.sh --self-test

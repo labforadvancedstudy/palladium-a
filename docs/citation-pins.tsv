@@ -21,6 +21,8 @@ grammar.ebnf	130-130	docs/reference/features/core-language/implicit-lifetimes.md
 grammar.ebnf	145-145	docs/reference/features/core-language/implicit-lifetimes.md	27eae3e7e3c5	reference = '&' [ "'" identifier ] [ "mut" ] type ;
 grammar.ebnf	58-59	docs/reference/features/core-language/implicit-lifetimes.md	41773243f31f	# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
 grammar.ebnf	66-67	docs/reference/features/advanced/totality-checking.md	445c16d1a73f	punctuation = '(' | ')' | '{' | '}' | '[' | ']' | ';' | ',' | ':' | '.' | ".." | "->" | "::" | '_' | "=>" | '\'' | '?' ;
+scripts/check_doc_evidence.py	317-318	docs/contributing/MILESTONES.md	3a10012f6bf1	elif item.startswith("cmd:") and not CMD_EVIDENCE.match(item): problems.append(f"{name}: `cmd:` shows no result — an absence needs its "
+scripts/check_doc_evidence.py	50-50	docs/contributing/MILESTONES.md	7809e429688b	CMD_EVIDENCE = re.compile(r"^cmd:\s+(.+?)\s*->\s*\S")
 scripts/conformance.sh	211-211	docs/reference/features/feature-index.toml	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
 scripts/conformance.sh	211-211	docs/specification/language-spec.md	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
 scripts/test-xfail.py	74-74	docs/contributing/MILESTONES.md	bc1dbc4ba757	OWNER_RE = re.compile(r"\(owned by (M[1-9]|unscheduled)([,;: )]|$)")
@@ -72,6 +74,7 @@ src/codegen/mod.rs	1956-1956	docs/specification/language-spec.md	13b4cf93b10f	"c
 src/codegen/mod.rs	1977-1988	docs/specification/language-spec.md	ce03910b3003	} } _ => { return Err(CompileError::Generic( "Unsupported type in reference p ... r".to_string(), )); } } sig.push_str(&param.name); } _ => { // For other types
 src/codegen/mod.rs	1981-1981	docs/reference/features/feature-index.toml	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
 src/codegen/mod.rs	1981-1981	docs/specification/language-spec.md	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
+src/codegen/mod.rs	2007-2012	docs/contributing/MILESTONES.md	e711343c947e	fn generate_function_with_name(&mut self, func: &Function, name: &str) -> Res ... _async { self.generate_async_function_with_name(func, name)?; return Ok(()); }
 src/codegen/mod.rs	2121-2121	docs/specification/bootstrap-subset.md	5e71679bdf3f	/// how long each array is, and a flat function-wide map let an inner
 src/codegen/mod.rs	2160-2160	docs/specification/bootstrap-subset.md	1abc8c2a15b6	/// `for` variable and a match binding are written into these maps *before*
 src/codegen/mod.rs	2186-2186	docs/specification/language-spec.md	226586ca8ba7	Stmt::Expr(expr) => {
@@ -89,6 +92,8 @@ src/codegen/mod.rs	2590-2590	docs/specification/language-spec.md	e923217334ec	fo
 src/codegen/mod.rs	2604-2611	docs/reference/features/async-system/async-as-effect.md	ca7c8fc91ec6	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... ing) return Err(CompileError::Generic( "Pattern type mismatch in enum variant"
 src/codegen/mod.rs	2604-2615	docs/specification/language-spec.md	3e8e873e271c	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... eError::Generic( "Pattern type mismatch in enum variant" .to_string(), )); } }
 src/codegen/mod.rs	2613-2615	docs/reference/features/async-system/async-as-effect.md	0ada7a203994	)); } }
+src/codegen/mod.rs	3055-3059	docs/contributing/MILESTONES.md	c86405b6532b	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	3102-3110	docs/contributing/MILESTONES.md	602a5a4dee29	// Generate poll function self.output .push_str(&format!("// Poll function fo ...  if (future->state == 0) {\n"); self.output.push_str(" future->state = 1;\n");
 src/codegen/mod.rs	424-424	docs/specification/language-spec.md	23a7d0452793	/// `"long long[3][2]"`.
 src/codegen/mod.rs	494-494	docs/specification/language-spec.md	b825c1675d27	match form {
 src/codegen/mod.rs	841-841	docs/specification/language-spec.md	18f2890fc7c6	self.output.push_str(" size_t len = strlen(str);\n");
@@ -127,6 +132,7 @@ src/lexer/token.rs	12-30	docs/specification/bootstrap-subset.md	454b4aa8fe39	#[r
 src/lexer/token.rs	26-26	docs/specification/bootstrap-subset.md	d88acb4bceb1	#[regex(r"-?[0-9]+", |lex| lex.slice().parse().ok())]
 src/lexer/token.rs	33-33	docs/reference/features/feature-index.toml	b97e219c157c	#[token("fn")]
 src/lexer/token.rs	33-33	docs/specification/language-spec.md	b97e219c157c	#[token("fn")]
+src/lib.rs	5-5	docs/contributing/MILESTONES.md	edf3e84c20a2	pub mod async_runtime;
 src/lib.rs	5-5	docs/reference/features/feature-index.toml	edf3e84c20a2	pub mod async_runtime;
 src/macros/mod.rs	161-161	docs/specification/bootstrap-subset.md	e9048b339b04	Token::LeftBrace,
 src/macros/mod.rs	167-167	docs/reference/features/feature-index.toml	4937b6ff3ab8	Token::Identifier("print_debug".to_string()),
