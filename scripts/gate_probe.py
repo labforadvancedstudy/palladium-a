@@ -114,9 +114,11 @@ import importlib.util
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,6 +129,34 @@ EXIT_MALFUNCTION = 2
 
 HERE = Path(__file__).resolve().parent
 TIMEOUT_S = 300
+# How long to wait for EOF after the producer has exited. Reaching it means a
+# writer outlived the process group, so the capture is not known to be complete.
+DRAIN_JOIN_S = 5
+
+
+def _describe_target(path: Path) -> str:
+    """What is at `path` after a spill that did not happen.
+
+    The message used to say "anything at that path is from an earlier run",
+    which is one guess out of several: a pre-existing DIRECTORY is the most
+    likely reason `os.replace` refused, and it is not an earlier-run artifact.
+    An operator being told the wrong thing about the file in front of them is
+    the same class of defect as being told a file exists when it does not.
+    """
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return "nothing is at that path"
+    except OSError as exc:
+        return f"and that path cannot be inspected either ({exc})"
+    if stat.S_ISDIR(st.st_mode):
+        return "a DIRECTORY is at that path, which is why the move was refused"
+    if stat.S_ISLNK(st.st_mode):
+        return "a symbolic link is at that path"
+    if stat.S_ISREG(st.st_mode):
+        return (f"a {st.st_size}-byte file is at that path and this invocation "
+                f"did not write it")
+    return "a non-regular file is at that path"
 
 
 def _unlink(path: Path) -> None:
@@ -191,6 +221,14 @@ class Withheld:
         but it must be announced. `report_malfunction` prints `WITHHELD_LOST`
         instead of `WITHHELD_AT`, and says why.
 
+        AND WHAT IS WRITTEN IS BYTES. `Withheld` holds the producer's raw
+        output; this writes it verbatim. It used to hold a
+        UTF-8-with-replacement DECODING which this method re-encoded, so a
+        producer that emitted `b"A\xffB"` was spilled as `b"A\xef\xbf\xbdB"`
+        while `WITHHELD_AT` promised the run's complete output. An operator
+        debugging a producer that emits binary was being handed a different
+        file and told it was the same one.
+
         EXISTENCE IS NOT PRESERVATION — the second correction. The first fix
         asked `path.is_file()`, which passes on a STALE file left by an earlier
         run and on a PARTIALLY written one, so `WITHHELD_AT` could still name
@@ -202,10 +240,25 @@ class Withheld:
         never a half-written file — it is whatever was there before, which the
         caller is told about explicitly.
         """
-        data = self._b.encode("utf-8", "replace")
-        tmp = path.with_name(f"{path.name}.partial.{os.getpid()}")
+        data = self._b if isinstance(self._b, bytes) else str(self._b).encode(
+            "utf-8", "surrogateescape")
+        # EXCLUSIVE CREATION, in the target's own directory. A predictable
+        # `.partial.<pid>` opened with ordinary write semantics can be
+        # pre-created as a SYMLINK by anyone who can write that directory, and
+        # the write would then follow it and truncate whatever it points at.
+        # mkstemp() uses O_CREAT|O_EXCL|O_NOFOLLOW semantics and an unguessable
+        # name; the same directory keeps the later rename on one filesystem, so
+        # it stays atomic.
         try:
-            tmp.write_bytes(data)
+            fd, tmpname = tempfile.mkstemp(dir=str(path.parent),
+                                           prefix=f".{path.name}.partial.",
+                                           suffix=".tmp")
+        except OSError as exc:
+            return path, f"{type(exc).__name__}: {exc}"
+        tmp = Path(tmpname)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
         except OSError as exc:
             _unlink(tmp)
             return path, f"{type(exc).__name__}: {exc}"
@@ -232,7 +285,15 @@ class Withheld:
 
 @dataclass(frozen=True)
 class Concluded:
-    """The experiment finished at a pinned exit code. `text` IS evidence."""
+    """The experiment finished at a pinned exit code. `text` IS evidence.
+
+    `text` is a UTF-8-with-replacement rendering of what the producer wrote,
+    because every consumer of it greps for diagnostics. For a producer that
+    emitted bytes which are not valid UTF-8 it is therefore LOSSY, and it is the
+    only lossy thing here: the raw bytes survive on the `Run` and, for a
+    malfunction, in `Withheld` — which is what `spill()` writes and what
+    `WITHHELD_AT` promises.
+    """
 
     text: str
     rc: int
@@ -261,14 +322,31 @@ class Run:
     exit code so that the rule is legible where it is enforced, in `classify()`:
     a run whose evidence was not captured is a malfunction even if the producer
     exited 0.
+
+    `_out` holds RAW BYTES. It used to hold a UTF-8-with-replacement decoding,
+    which silently destroys any byte a producer emitted that is not valid UTF-8
+    — and `spill()` then re-encoded that string, so the "designed channel" for a
+    malfunction's output delivered a lossy rendering while `WITHHELD_AT` promised
+    this run's complete output. Measured: a producer emitting `b"A\xffB"` spilled
+    as `b"A\xef\xbf\xbdB"`. Bytes in, bytes out; the decoding happens once, at
+    `classify()`, and only for `Concluded.text`, which is what callers grep.
+
+    `_rc` is private for the same reason `_out` is, and it was made private
+    BECAUSE it was read outside the boundary: `cmd_calibrate` compared raw exit
+    codes and never looked at `capture_error`, so two producers whose captures
+    failed while their statuses matched still printed `OUTCOME success`. A raw
+    status read outside `classify()` is how a verdict gets built on evidence
+    nobody established.
     """
 
-    __slots__ = ("argv", "rc", "_out", "capture_error")
+    __slots__ = ("argv", "_rc", "_out", "capture_error")
 
-    def __init__(self, argv, rc: int, out: str, capture_error=None) -> None:
+    def __init__(self, argv, rc: int, out, capture_error=None) -> None:
         self.argv = list(argv)
-        self.rc = rc
-        self._out = out
+        self._rc = rc
+        # Callers (and self-tests) may hand a str; store bytes either way, so
+        # there is exactly one representation to reason about.
+        self._out = out if isinstance(out, bytes) else str(out).encode("utf-8", "surrogateescape")
         self.capture_error = capture_error
 
     @property
@@ -279,10 +357,10 @@ class Run:
         never fires: subprocess reports a signal-killed child as NEGATIVE (-9),
         a POSIX shell reports 128+signum (137). Both are recognised.
         """
-        if self.rc < 0:
-            return -self.rc
-        if self.rc > 128:
-            return self.rc - 128
+        if self._rc < 0:
+            return -self._rc
+        if self._rc > 128:
+            return self._rc - 128
         return None
 
     def describe(self) -> str:
@@ -291,114 +369,134 @@ class Run:
             # is exactly the fact that would otherwise have been mistaken for a
             # verdict. It is context, not a conclusion.
             s = self.signal_number
-            how = f"killed by signal {s}" if s is not None else f"exit {self.rc}"
+            how = f"killed by signal {s}" if s is not None else f"exit {self._rc}"
             return (f"{how}, but its output could not be captured "
                     f"({self.capture_error}), so nothing it printed was read")
         s = self.signal_number
-        return f"killed by signal {s}" if s is not None else f"exit {self.rc}"
+        return f"killed by signal {s}" if s is not None else f"exit {self._rc}"
 
 
 def run(argv, cwd=None, env=None) -> Run:
     """Run a process. Every failure mode becomes a Run, never an exception.
 
-    The child gets its own process group so a timeout kills DESCENDANTS too: a
-    grandchild holding the output open would otherwise outlive the timeout.
+    "READ IN FULL" IS ESTABLISHED BY EOF, NOT BY A SIZE COMPARISON.
+    Three designs have stood here and the first two each traded one hole for
+    another:
 
-    THE OUTPUT GOES TO A TEMPORARY FILE, NOT A PIPE — and that is not a style
-    choice. WAIT ON THE CHILD, NOT ON THE PIPE (measured: a grandchild running
-    `sleep 600` kept a pipe read blocked for the full timeout even though the
-    direct child had exited) means nobody drains the pipe while the child runs,
-    and a pipe holds only one buffer — 64 KiB here. A producer that writes more
-    than that BLOCKS in write(2) forever, the parent blocks in wait(), and the
-    harness reports `timed out after 300s`: a MALFUNCTION VERDICT MANUFACTURED
-    BY THE HARNESS ITSELF, indistinguishable from a producer that really hung.
+      1. a pipe, read AFTER waiting on the child. A producer writing more than
+         one pipe buffer (64 KiB) blocks in write(2) forever while the parent
+         blocks in wait(): the harness manufactured its own `timed out` verdict.
+         Measured on a 78 KiB producer: 300s, exit 124.
+      2. a shared temporary FILE, sized with fstat() and compared against the
+         length read. That removed the deadlock and introduced a TOCTOU:
+         `killpg` delivery is ASYNCHRONOUS, descendants are never reaped, and a
+         descendant that calls setsid() escapes the group kill entirely while
+         still holding the inherited fd. Both the size and the bytes are sampled
+         from a file somebody else may still be writing, so agreement between
+         them establishes nothing.
 
-    Measured, 2026-08-22: `cargo test --release --no-fail-fast -- --ignored`
-    emits 78296 bytes. Through the old pipe form it took the full 300s and
-    returned 124; through a file it takes 45s and returns 101, its real verdict.
-    Every current caller stayed under 64 KiB, which is why this never fired —
-    the bound was on the INPUTS, not on the harness.
+    So: a pipe again, but DRAINED CONCURRENTLY by a reader thread. EOF on that
+    pipe is not a sample — it is the operating system reporting that every
+    writer has closed, which is precisely the fact "the capture is complete"
+    needs. There is no buffer to overflow because the drain never stops, and
+    there is nothing to compare because nothing is sampled.
 
-    A file has no such bound, cannot block the writer, and cannot be held open
-    by a descendant in a way that stalls the reader.
+    And when EOF does NOT arrive — the escaped-descendant case — the drain
+    thread is still running after the bounded join below, and that becomes a
+    `capture_error`. That is the honest answer: a capture that cannot be known
+    to be complete is not evidence, and `classify()` turns it into a
+    Malfunction. The old design answered `Concluded` there.
     """
     merged = dict(os.environ)
     if env:
         merged.update(env)
-    sink = tempfile.TemporaryFile()
     try:
-        try:
-            proc = subprocess.Popen(
-                list(argv),
-                cwd=cwd,
-                env=merged,
-                stdout=sink,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-        except OSError as exc:
-            # FileNotFoundError, PermissionError, ENOEXEC, IsADirectoryError ...
-            return Run(argv, 126, f"cannot execute: {exc}")
-        except Exception as exc:  # noqa: BLE001
-            return Run(argv, 125, f"launch failed: {exc!r}")
+        proc = subprocess.Popen(
+            list(argv),
+            cwd=cwd,
+            env=merged,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        # FileNotFoundError, PermissionError, ENOEXEC, IsADirectoryError ...
+        return Run(argv, 126, f"cannot execute: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        return Run(argv, 125, f"launch failed: {exc!r}")
 
-        # start_new_session makes the child a process-group leader, so its pid is
-        # the pgid and stays usable after the child itself is reaped.
-        pgid = proc.pid
-        timed_out = False
-        try:
-            proc.wait(timeout=TIMEOUT_S)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+    chunks: list = []
+    drain_error: list = []
 
-        # Kill the group whatever happened: a descendant still writing would
-        # otherwise keep appending to the file we are about to read.
+    def drain() -> None:
         try:
-            os.killpg(pgid, signal.SIGKILL)
-        except OSError:
+            while True:
+                block = proc.stdout.read(65536)
+                if not block:
+                    return                      # EOF: every writer has closed
+                chunks.append(block)
+        except (OSError, ValueError) as exc:    # ValueError: fd closed under us
+            drain_error.append(f"{type(exc).__name__}: {exc}")
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+
+    # start_new_session makes the child a process-group leader, so its pid is
+    # the pgid and stays usable after the child itself is reaped.
+    pgid = proc.pid
+    timed_out = False
+    try:
+        proc.wait(timeout=TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+
+    # Kill the group so ordinary descendants stop writing. This is best-effort
+    # by construction — delivery is asynchronous and a descendant in its own
+    # session is not in the group at all — which is exactly why completeness is
+    # decided by the join below rather than by this call appearing to succeed.
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+    capture_error = None
+    reader.join(DRAIN_JOIN_S)
+    if reader.is_alive():
+        capture_error = (
+            f"the output stream did not reach EOF within {DRAIN_JOIN_S}s of the "
+            f"producer exiting: something still holds it open, so the capture "
+            f"cannot be known to be complete")
+    elif drain_error:
+        capture_error = drain_error[0]
+
+    if capture_error is None:
+        try:
+            proc.stdout.close()
+        except (OSError, ValueError):
             pass
+    else:
+        # DO NOT close through the buffered reader while the drain thread is
+        # still blocked inside it: close() waits for that thread's lock, which
+        # is held until the writer that never reached EOF finally goes away.
+        # Measured: 55 further seconds on a grandchild sleeping 60. The whole
+        # point of the bounded join is to decide promptly, so the raw descriptor
+        # is closed instead — that unblocks the reader with a bad-fd error it
+        # has nowhere to report, which is correct, because the verdict is
+        # already a malfunction and its output is already not evidence.
         try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+            os.close(proc.stdout.fileno())
+        except (OSError, ValueError):
             pass
 
-        # THE CAPTURE IS EVIDENCE, AND A CAPTURE THAT FAILED IS NOT EVIDENCE.
-        # This used to swallow the OSError, substitute b"", and hand back the
-        # PRODUCER'S exit code — so a producer that exited 0 whose output could
-        # not be read became `Concluded("")`: a semantic verdict built on
-        # evidence nobody ever saw, inside the module that exists to stop
-        # exactly that. It is now a capture error, and `classify()` turns it
-        # into a Malfunction whatever the producer did.
-        out, capture_error = b"", None
-        try:
-            sink.seek(0)
-            out = sink.read()
-        except OSError as exc:
-            capture_error = f"{type(exc).__name__}: {exc}"
-        else:
-            # Read what is there, and confirm it is all of it. A short read
-            # leaves a plausible prefix, which is worse than no output at all:
-            # a prefix parses.
-            try:
-                size = os.fstat(sink.fileno()).st_size
-            except OSError as exc:
-                capture_error = f"cannot size the capture: {exc}"
-            else:
-                if len(out) != size:
-                    capture_error = (f"short read: {len(out)} of {size} byte(s); "
-                                     f"a prefix of a producer's output parses "
-                                     f"and is not its output")
-    finally:
-        try:
-            sink.close()
-        except OSError:
-            pass
-
-    text = out.decode("utf-8", "replace") if isinstance(out, bytes) else str(out)
+    out = b"".join(chunks)
     if timed_out:
-        return Run(argv, 124, f"timed out after {TIMEOUT_S}s\n{text}",
+        return Run(argv, 124, b"timed out after %ds\n" % TIMEOUT_S + out,
                    capture_error)
-    return Run(argv, proc.returncode, text, capture_error)
+    return Run(argv, proc.returncode, out, capture_error)
 
 
 def classify(r: Run, reject_codes=(1,)):
@@ -417,10 +515,15 @@ def classify(r: Run, reject_codes=(1,)):
     """
     if r.capture_error is not None:
         return Malfunction(r.describe(), Withheld(r._out))
-    if r.rc == 0:
-        return Concluded(r._out, r.rc, True)
-    if r.signal_number is None and r.rc in reject_codes:
-        return Concluded(r._out, r.rc, False)
+    # The ONE decoding in this module, and it is lossy by design: callers grep
+    # `Concluded.text` for diagnostics, which must be a str. The exact bytes are
+    # never destroyed — `Withheld` keeps them, and `spill()` writes them
+    # verbatim — so the byte-for-byte guarantee lives where it is promised.
+    text = r._out.decode("utf-8", "replace")
+    if r._rc == 0:
+        return Concluded(text, r._rc, True)
+    if r.signal_number is None and r._rc in reject_codes:
+        return Concluded(text, r._rc, False)
     return Malfunction(r.describe(), Withheld(r._out))
 
 
@@ -461,8 +564,8 @@ def report_malfunction(what: str, m: Malfunction, spill_to=None) -> int:
             # output is gone while a plausible file sits there is the same class
             # of lie this whole path was fixed for.
             print(f"WITHHELD_LOST the withheld output was NOT written to "
-                  f"{path}: {err}. Anything at that path is from an earlier "
-                  f"run, not this one; re-run the producer to see its output.")
+                  f"{path}: {err}. {_describe_target(path)}; re-run the "
+                  f"producer to see its output.")
     else:
         print("WITHHELD output of a process that did not conclude is not evidence "
               "and is not reproduced here")
@@ -524,25 +627,34 @@ def cmd_calibrate(args) -> int:
         emit(outcome="malfunction", reason=f"cannot prepare calibration inputs: {exc}")
         return EXIT_MALFUNCTION
 
-    r_ok = run([args.pdc, "compile", str(good), "-o", "cal_ok"])
-    r_bad = run([args.pdc, "compile", str(bad), "-o", "cal_bad"])
+    # THROUGH `classify()`, like everything else. This used to compare raw
+    # `Run.rc` values and never look at `capture_error`, so two producers whose
+    # OUTPUT could not be read still calibrated as `OUTCOME success` provided
+    # their exit codes matched — the module's own rule ("an unreadable capture
+    # is a Malfunction") broken by the subcommand whose job is to establish that
+    # the platform behaves as the module assumes.
+    v_ok = classify(run([args.pdc, "compile", str(good), "-o", "cal_ok"]))
+    v_bad = classify(run([args.pdc, "compile", str(bad), "-o", "cal_bad"]))
     problems = []
-    if r_ok.rc != 0:
-        problems.append(f"a VALID program did not exit 0 ({r_ok.describe()})")
-    if r_bad.rc == 0:
+    if isinstance(v_ok, Malfunction):
+        problems.append(f"a VALID program did not conclude ({v_ok.how})")
+    elif not v_ok.succeeded:
+        problems.append(f"a VALID program did not exit 0 (exit {v_ok.rc})")
+    if isinstance(v_bad, Malfunction):
+        problems.append(
+            f"a rejection did not conclude at the pinned exit 1 ({v_bad.how}) — "
+            "update the pinned reject code, or this platform is unsupported")
+    elif v_bad.succeeded:
         problems.append(
             "an INVALID program exited 0 — on this platform a rejection is "
             "indistinguishable from success, so every verdict below would be wrong")
-    elif r_bad.signal_number is not None or r_bad.rc != 1:
-        problems.append(
-            f"a rejection gave {r_bad.describe()}, not the pinned exit 1 — update the "
-            "pinned reject code, or this platform is unsupported")
     if problems:
         emit(outcome="malfunction", reason="pdc exit contract does not hold here")
         for p in problems:
             print(f"WITHHELD_NOTE {p}")
         return EXIT_MALFUNCTION
-    emit(outcome="success", success_exit=r_ok.rc, reject_exit=r_bad.rc, platform=sys.platform)
+    emit(outcome="success", success_exit=v_ok.rc, reject_exit=v_bad.rc,
+         platform=sys.platform)
     return EXIT_OK
 
 

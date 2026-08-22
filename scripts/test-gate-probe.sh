@@ -180,6 +180,24 @@ printf 'long long h(long long n) {\n    __unknown_construct (n) {\n        retur
 $PROBE generated-c "$TMP/unknown_header.c" >"$TMP/o" 2>&1
 check "Net A, an unmodelled compound header stops the file" 2 $?
 
+# A HEADER SPLIT ACROSS LINES presents no header at all. `parse_block` records
+# `if (n)` as an ordinary statement and `{` as a modelled BARE BLOCK, so the
+# `return` inside reads as unconditional and a function that falls through when
+# the condition is false was reported CLEAN. Measured at 6ab9b9c: exit 0.
+# `MODELLED_HEADER_RE` could not see this — the generalisation was about header
+# text and this shape has none. The property is about the STATEMENT: every
+# statement this generator emits inside a body ends with `;` or is a comment
+# (measured over 400 generated files, no exceptions), so anything else stops.
+printf 'long long f(long long n) {\n    if (n)\n    {\n        return 1;\n    }\n}\n' >"$TMP/split_header.c"
+$PROBE generated-c "$TMP/split_header.c" >"$TMP/o" 2>&1
+check "Net A, a header split across lines is not read as a bare block" 2 $?
+grep -q 'does not end in' "$TMP/o"
+check "  and the malfunction says why" 0 $?
+# A macro invocation expanding to control flow has the same shape.
+printf 'long long g(long long n) {\n    RETURN_IF(n)\n    {\n        return 1;\n    }\n    return 0;\n}\n' >"$TMP/macro_header.c"
+$PROBE generated-c "$TMP/macro_header.c" >"$TMP/o" 2>&1
+check "Net A, a macro invocation before a block stops the file" 2 $?
+
 # The other direction: unreachable code after a `return` must NOT be reported as
 # a fall-through. The parser accepts this shape (src/parser/mod.rs,
 # already_terminates), so a Net A that refused it would go red on valid output.
@@ -271,6 +289,45 @@ fi
 pkill -f "sleep 600" 2>/dev/null || true
 
 echo
+echo "== a writer that outlives the process group must not read as concluded =="
+# THE TOCTOU THIS REPLACED. The previous capture wrote to a shared temporary
+# FILE and established completeness by comparing `len(read())` against
+# `fstat().st_size`. Both are samples taken from a file somebody else may still
+# be writing: `killpg` delivery is ASYNCHRONOUS, descendants are never reaped,
+# and a descendant that calls setsid() is not in the group at all. Agreement
+# between two samples of a moving file establishes nothing.
+#
+# This producer forks a grandchild, puts it in its OWN SESSION, and exits 0
+# while the grandchild holds the inherited stdout for a minute. EOF therefore
+# never arrives. The honest answer is that the capture cannot be known to be
+# complete — a MALFUNCTION — and it has to arrive promptly rather than after the
+# full 300s timeout, because the producer itself finished.
+mk pdc_escapee "#!/bin/sh
+$(command -v python3) -c 'import os, sys, time
+if os.fork() == 0:
+    os.setsid()
+    time.sleep(60)
+    os._exit(0)
+sys.stdout.write(\"error: No main function found\\n\")
+sys.stdout.flush()
+os._exit(0)'
+"
+start=$(date +%s)
+$PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_escapee" --out t_esc >"$TMP/o" 2>&1
+rc=$?; elapsed=$(( $(date +%s) - start ))
+check "a stream that never reaches EOF is a malfunction, not a verdict" 2 $rc
+grep -q 'did not reach EOF' "$TMP/o"
+check "  and it says the capture could not be known to be complete" 0 $?
+if [ "$elapsed" -lt 60 ]; then
+  printf '  %sok%s   and it decided promptly (%ss), not at the 300s timeout\n' "$GREEN" "$NC" "$elapsed"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s it waited %ss — the drain join is not bounded\n' "$RED" "$NC" "$elapsed"
+  fail=$((fail+1))
+fi
+pkill -f "time.sleep(60)" 2>/dev/null || true
+
+echo
 echo "== a producer noisier than one pipe buffer must still conclude =="
 # THE HARNESS MUST NOT MANUFACTURE ITS OWN MALFUNCTION. `run()` waits on the
 # CHILD rather than draining its output, which is right — a grandchild can hold
@@ -310,7 +367,7 @@ echo "== the boundary must promise only what it delivers =="
 # checks keep prose and code in step: each fails if a future edit re-grows a
 # promise the class cannot keep, or lets the bytes back onto a parsed stream.
 python3 - >"$TMP/o" 2>&1 <<'PY'
-import pathlib, sys, tempfile
+import os, pathlib, subprocess, sys, tempfile
 sys.path.insert(0, "scripts")
 import gate_probe as gp
 
@@ -381,40 +438,48 @@ with tempfile.TemporaryDirectory() as d:
         bad.append("a failed spill left a file at the target path")
 
 # 6. A CAPTURE THAT DID NOT CONCLUDE IS NOT EVIDENCE EITHER. `run()` used to
-#    swallow a seek/read failure on its capture file, substitute empty output,
-#    and hand back the PRODUCER'S exit code — so a producer that exited 0 whose
-#    output could not be read became Concluded(""): a semantic verdict built on
+#    swallow a read failure on its capture, substitute empty output, and hand
+#    back the PRODUCER'S exit code — so a producer that exited 0 whose output
+#    could not be read became Concluded(""): a semantic verdict built on
 #    evidence nobody saw, inside the module that exists to prevent that.
-real_tmpfile = tempfile.TemporaryFile
+real_popen = subprocess.Popen
 
 
-class UnreadableSink:
-    """A real file the child can write to; unreadable by the parent."""
+class UnreadablePipe:
+    """A Popen whose captured stream cannot be read."""
 
-    def __init__(self):
-        self._f = real_tmpfile()
+    def __init__(self, *a, **k):
+        self._p = real_popen(*a, **k)
+        self.pid = self._p.pid
 
-    def fileno(self):
-        return self._f.fileno()
+    class _Stream:
+        def read(self, *a):
+            raise OSError("injected capture read failure")
 
-    def seek(self, *a):
-        raise OSError("injected capture read failure")
+        def fileno(self):
+            return os.open(os.devnull, os.O_RDONLY)
 
-    def read(self, *a):
-        raise OSError("injected capture read failure")
+        def close(self):
+            pass
 
-    def close(self):
-        self._f.close()
+    stdout = _Stream()
+
+    def wait(self, timeout=None):
+        return self._p.wait(timeout=timeout)
+
+    @property
+    def returncode(self):
+        return self._p.returncode
 
 
-gp.tempfile.TemporaryFile = lambda *a, **k: UnreadableSink()
+gp.subprocess.Popen = UnreadablePipe
 try:
     broken = gp.run(["sh", "-c", "echo REAL OUTPUT; exit 0"])
 finally:
-    gp.tempfile.TemporaryFile = real_tmpfile
+    gp.subprocess.Popen = real_popen
 verdict = gp.classify(broken)
-if broken.rc != 0:
-    bad.append("the capture-failure fixture did not have the producer exit 0")
+if broken.signal_number is not None:
+    bad.append("the capture-failure fixture producer was signalled, not exit 0")
 if not isinstance(verdict, gp.Malfunction):
     bad.append("a producer that exited 0 with an unreadable capture was "
                "classified %s, not Malfunction" % type(verdict).__name__)
@@ -423,21 +488,42 @@ if hasattr(verdict, "text"):
 if "could not be captured" not in getattr(verdict, "how", ""):
     bad.append("the capture-failure verdict does not say the capture failed")
 
-# 5. RETRACTED CLAIMS MAY NOT BE REASSERTED — ANYWHERE IN THE FILE.
-#    The first version of this check read only the text before the
-#    "WHAT THIS IS NOT" heading, on the theory that a retraction has to quote
-#    what it retracts. Consequence, found in review one round later:
-#    `Run.__doc__` ("its output has no accessor") and `classify.__doc__`
-#    ("there is no other route to the output") went on asserting the retracted
-#    version BELOW that heading for a whole round. A check whose SCOPE was
-#    narrower than the property it claimed — the exact defect this suite exists
-#    to find, inside the control built to close it.
+# 7. BYTES, NOT A RENDERING. `Run` used to hold a UTF-8-with-replacement decode
+#    and `spill()` re-encoded it, so a producer emitting invalid UTF-8 was
+#    spilled as something else while WITHHELD_AT promised its complete output.
+#    An ASCII fixture cannot tell the two apart — which is why this one is not
+#    ASCII.
+binary = gp.run([sys.executable, "-c",
+                 "import sys,os; sys.stdout.buffer.write(b'A\\xffB'); "
+                 "sys.stdout.flush(); os._exit(9)"])
+bin_verdict = gp.classify(binary)
+if not isinstance(bin_verdict, gp.Malfunction):
+    bad.append("the binary fixture did not malfunction (exit 9 is unpinned)")
+else:
+    with tempfile.TemporaryDirectory() as d:
+        p2, e2 = bin_verdict.withheld.spill(pathlib.Path(d) / "bin")
+        if e2 is not None:
+            bad.append("spilling invalid UTF-8 failed: %s" % e2)
+        elif p2.read_bytes() != b"A\xffB":
+            bad.append("spill() rewrote the producer's bytes: %r != %r"
+                       % (p2.read_bytes(), b"A\xffB"))
+
+# 5. RETRACTED CLAIMS MAY NOT BE REASSERTED — ANYWHERE IN THE FILE, AND IN
+#    EVERY FILE THAT MAKES THE CLAIM.
 #
-#    So the scope is the whole file, and the retraction is worded not to
-#    reproduce these strings. WHAT THIS IS: a lexical guard over wordings
-#    MEASURED FALSE in this repository. It is not a claim detector and cannot
-#    recognise a fresh way of saying the same thing; what it does is make a
-#    known false claim unrepeatable.
+#    Two histories are compressed here. The check first read only the text
+#    before the "WHAT THIS IS NOT" heading, so `Run.__doc__` and
+#    `classify.__doc__` went on asserting the retracted version BELOW it for a
+#    round: a check whose SCOPE was narrower than the property it claimed.
+#    Then gate_probe.py's docstring was corrected while scripts/test-xfail.py
+#    kept the wider promise for two more rounds: a claim retracted in one file
+#    and left standing in another. Hence: whole files, and a file list per
+#    claim, which any new file describing these rules must join.
+#
+#    WHAT THIS IS: a lexical guard over wordings MEASURED FALSE in this
+#    repository. Not a claim detector — it cannot recognise a fresh way of
+#    saying the same thing. What it buys is that a KNOWN false claim cannot be
+#    repeated.
 CLAIMS = [
     # (files, forbidden lowercase substring, why it is false)
     (["scripts/gate_probe.py"], "no accessor",
@@ -452,25 +538,23 @@ CLAIMS = [
      "same"),
     (["scripts/gate_probe.py"], "the only way to the bytes",
      "spill() is the intended way, not the only one"),
-    # The PROMISE, not just the mechanism: this wording described the
-    # private-name rule as covering everything, while the grep covered three
-    # directories and three extensions. Stating a limit inside the enforcer does
-    # not repair a promise made in the module docstring.
-    (["scripts/gate_probe.py"], "any consumer outside this module",
-     "the grep covers git-tracked files with the literal spellings, comment "
-     "lines excluded — say that, or broaden the mechanism to match"),
+    # THE PROMISE, in every file that states it. The grep covers git-tracked
+    # files, literal spellings, comment lines excluded — say that, or broaden
+    # the mechanism to match.
+    (["scripts/gate_probe.py", "scripts/test-xfail.py"], "any consumer outside",
+     "the enforced scope is git-tracked files and literal spellings only"),
     # Measured in round 2 and contradicted inside the same test file for a
     # round: constant folding rewrites `1 == 1` to true, so BOTH spellings emit
     # `while (1)`. tests/d3b_tail_if.rs pins that count at 2.
     (["tests/d3b_tail_if.rs", "src/parser/mod.rs", "scripts/check-c-returns.py"],
      "while ((1 == 1))",
-     "constant folding (src/optimizer/constant_folding.rs, BinOp::Eq) turns it "
-     "into `while (1)`; measured, both spellings emit the same C"),
+     "constant folding (src/optimizer/constant_folding.rs:154, BinOp::Eq) turns "
+     "it into `while (1)`; measured, both spellings emit the same C"),
 ]
 for files, phrase, why in CLAIMS:
     for f in files:
-        p = pathlib.Path(f)
-        if p.exists() and phrase in p.read_text().lower():
+        fp = pathlib.Path(f)
+        if fp.exists() and phrase in fp.read_text().lower():
             bad.append("%s reasserts a claim measured false: %r (%s)"
                        % (f, phrase, why))
 
@@ -509,7 +593,7 @@ grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
 # the comments, which is the failure mode. Access is what is forbidden, and
 # access cannot hide on a line that begins with `#` or `//`.
 leaks=$(git ls-files -z \
-        | xargs -0 grep -InE '\._out\b|\._b\b|\.withheld\._' 2>/dev/null \
+        | xargs -0 grep -InE '\._out\b|\._b\b|\._rc\b|\.withheld\._' 2>/dev/null \
         | grep -v '^scripts/gate_probe.py:' \
         | grep -v '^scripts/test-gate-probe.sh:' \
         | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' || true)

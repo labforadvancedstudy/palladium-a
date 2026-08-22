@@ -109,9 +109,16 @@ import sys
 #     `Malfunction` — has no `.text`. Writing `res.text` on something that might
 #     be a malfunction is an AttributeError rather than a silent empty string,
 #     so the ACCIDENT is caught by the interpreter.
-#   * Getting the bytes anyway takes a private name, and
-#     scripts/test-gate-probe.sh fails if any consumer outside gate_probe.py
-#     writes one. That is the part that is mechanically enforced.
+#   * Getting the bytes anyway takes a private name, and there is a gate for
+#     the ordinary way of writing one: scripts/test-gate-probe.sh greps every
+#     GIT-TRACKED file for the literal spellings `._out`, `._b`, `._rc` and
+#     `.withheld._`, outside gate_probe.py and the enforcer, comment lines
+#     excluded. That is the whole of the mechanism. `getattr(x, "_b")`, a name
+#     assembled at runtime, and an untracked file all walk past it — it is a
+#     convention guard, not access control. (This comment said "any consumer
+#     outside gate_probe.py" for two rounds after gate_probe.py's own docstring
+#     was corrected: a promise retracted in one file and left standing in
+#     another.)
 #
 # It matters exactly here: this file replaced a hand-written Rust module scanner
 # with `cargo test --list` to get "cargo versus cargo", and that argument only

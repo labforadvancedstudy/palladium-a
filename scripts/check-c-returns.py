@@ -419,6 +419,34 @@ def unmodelled_construct(items):
                 return (lineno,
                         "a label (%s) — it is a jump target, so control can "
                         "arrive here from anywhere" % text[:40])
+            # A STATEMENT THAT DOES NOT END IN `;`. This is the general form of
+            # a hole that `MODELLED_HEADER_RE` could not see, because the shape
+            # never presents a header at all:
+            #
+            #     if (n)
+            #     {
+            #         return 1;
+            #     }
+            #
+            # `parse_block` records `if (n)` as an ordinary statement and `{` as
+            # a modelled BARE BLOCK, so the `return` inside reads as
+            # unconditional and a function that falls through when the condition
+            # is false was reported CLEAN. A macro invocation that expands to
+            # control flow has exactly the same shape.
+            #
+            # The property is not about header text, it is about the statement:
+            # every statement pdc emits inside a body ends with `;` or is a
+            # comment. Measured over 400 generated files: NOT ONE exception. So
+            # anything else is a construct this reader is not reading correctly,
+            # whatever it turns out to be, and it stops the file.
+            if not text.endswith(";") and not text.startswith("//") \
+                    and not text.startswith("/*"):
+                return (lineno,
+                        "a statement that does not end in `;` (%s) — every "
+                        "statement this generator emits does, so this is either "
+                        "a control-flow header whose brace is on the next line "
+                        "(making the block that follows look like a plain scope) "
+                        "or something else this reader is misreading" % text[:40])
             continue
         _, header, then_items, else_items, lineno = item
         # THE HEADER ITSELF, which this walk used to skip entirely. Line numbers

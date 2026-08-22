@@ -164,6 +164,34 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 
 /// Does this statement list have a path to its closing brace at all?
 ///
+/// WHERE THE WHOLE TERMINATION ANALYSIS LIVES, for a reader who cannot open a
+/// 4,000-line file: it is five functions and one call site, and nothing else in
+/// this file participates.
+///
+///   `src/parser/mod.rs:35-97`    `BlockTail` — the shape of the block's final
+///                                statement as the parser SAW it, plus
+///                                `writes_a_value()`, which decides whether a
+///                                refusal is owed at all
+///   `src/parser/mod.rs:116-163`  `returns_on_every_path` — the decision, with
+///                                the NOTE at :151-159 recording the one
+///                                declared residual (a `match` lowers to an
+///                                if/else-if chain with no final `else`)
+///   `src/parser/mod.rs:238-240`  `already_terminates` — `any`, not "the last
+///                                statement", because anything after an
+///                                unconditional terminator is unreachable
+///   `src/parser/mod.rs:243-266`  `stmt_terminates` — the four cases, each
+///                                paired with its counterpart in
+///                                scripts/check-c-returns.py by the table above
+///   `src/parser/mod.rs:294-326`  `contains_escaping_break` +
+///                                `stmt_contains_escaping_break` — reachable
+///                                breaks only, mirroring `contains_break`
+///   `src/parser/mod.rs:952-976`  the only caller: the refusal and the lowering
+///
+/// The agreement between this side and the C-side reader is not asserted by
+/// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
+/// which runs scripts/check-c-returns.py over the C emitted for every program
+/// those tests accept.
+///
 /// WHERE THIS AND `scripts/check-c-returns.py` MUST AGREE
 /// -----------------------------------------------------
 /// The two analyses answer the same question on either side of code

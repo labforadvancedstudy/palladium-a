@@ -82,3 +82,4 @@ tests/compiler_comprehensive_test.rs	test_top_level_static	owed	M2
 tests/compiler_comprehensive_test.rs	test_trait_declaration_emits_code	owed	M4
 tests/compiler_comprehensive_test.rs	test_type_alias_emits_typedef	owed	M4
 tests/e2e_test.rs	test_c_keyword_identifier_still_links	owed	M1
+tests/d3b_tail_if.rs	the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end	owed	unscheduled

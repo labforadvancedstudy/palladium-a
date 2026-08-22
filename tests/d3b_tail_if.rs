@@ -118,7 +118,11 @@ enum NetA {
     ///      structural boundary to ATTRIBUTION, which is what it is better at
     ///      (it names the function and the line without needing a compiler, and
     ///      it runs on C that never links). Do not add the flag before the
-    ///      `else`; do not leave it out after.
+    ///      `else`; do not leave it out after. THAT OBLIGATION IS TRACKED, not
+    ///      merely written here: `the_linker_will_ask_gcc_to_reject_a_function_
+    ///      that_falls_off_its_end` in this file is an #[ignore]d XFAIL with a
+    ///      row in tests/rust-debt-manifest.txt, so `make test-xfail` requires
+    ///      it to keep existing and the two declarations to agree.
     ///
     /// `tests/conformance-manifest.txt` needs NO change: its
     /// `tests/stdlib/stdlib_tail_match.pd` row is `run`/`expected` and pins the
@@ -1068,6 +1072,52 @@ fn main() {
         err.contains("expected Int") && err.contains("found ()"),
         "the type checker must catch this before codegen, got:\n{}",
         err
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The obligation that outlives this branch, tracked rather than commented
+// ---------------------------------------------------------------------------
+
+/// `-Werror=return-type` belongs in the shared gcc invocation, and does not
+/// belong there YET.
+///
+/// WHY IT IS ABSENT: the open missing-`else` defect (see
+/// `NetA::StillFindsTheOpenMatchDefect`) makes gcc reject the C emitted for any
+/// tail `match`, so turning the flag on today breaks every such program. That
+/// is a temporary position.
+///
+/// WHY IT IS A TEST AND NOT A COMMENT: a comment in a handoff cannot make
+/// anybody do anything. When someone flips that expectation to `Accepts`, the
+/// missing `else` is fixed and this flag is the next step — and nothing was
+/// mechanically asking for it. This branch built a closed debt inventory for
+/// exactly this shape of obligation, so the obligation goes in it:
+/// `tests/rust-debt-manifest.txt` declares this row, `make test-xfail` requires
+/// the row and the `#[ignore]` to agree, and deleting either is a gate failure
+/// rather than a tidy-up.
+///
+/// WHEN IT PASSES: delete the `#[ignore]` and transition the manifest row to
+/// `paid`. Net A does not go away — its role changes, from the primary
+/// structural boundary to ATTRIBUTION (it names the function and the line
+/// without a compiler, and reads C that never links).
+#[test]
+#[ignore = "XFAIL: the shared gcc invocation (src/linker.rs:73-86) omits -Werror=return-type, so a generated function that falls off its end links silently and only scripts/check-c-returns.py objects. It cannot be added until codegen emits a final `else` for `match` — that defect makes gcc reject every tail-`match` program today (pinned by tests/stdlib/DRIVERS.tsv:31, known_violation:area_code,sides, and by NetA::StillFindsTheOpenMatchDefect in this file). Add the flag in the same change that lands the `else`. (owned by unscheduled: it is sequenced behind the exhaustive-match defect, which no milestone currently owns)"]
+fn the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end() {
+    let cmd = link_command(
+        Path::new("/tmp/x.c"),
+        Path::new("/tmp/x"),
+        OptLevel::Default,
+    )
+    .expect("runtime should resolve in a dev checkout");
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        args.iter().any(|a| a == "-Werror=return-type"),
+        "gcc is invoked without -Werror=return-type, so C that falls off the \
+         end of a non-void function links silently: {:?}",
+        args
     );
 }
 
