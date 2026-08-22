@@ -12,6 +12,7 @@ Makefile	303-305	docs/contributing/MILESTONES.md	85b59b3fa81e	.PHONY: gates gate
 benchmarks/palladium/bubble_sort.pd	11-11	docs/specification/language-spec.md	df0f5c145b7b	fn bubble_sort(mut arr: [i64; 45000], n: i64) {
 bootstrap/pdc.pd	164-175	docs/contributing/MILESTONES.md	ab895892cab8	if n == 42 { i = i + 2; while i + 1 < len { if string_char_at(c.src, i) == 42 ... ing_char_at(c.src, i + 1) == 47 { i = i + 2; break; } } i = i + 1; } continue;
 bootstrap/pdc.pd	49-51	docs/contributing/MILESTONES.md	2176e84e9bc4	fn emit(mut c: C, s: String) { file_write(c.out, s); }
+bootstrap/pdc.pd	8-8	docs/contributing/MILESTONES.md	a673bb7b309d	// This file is written in exactly the subset it implements. That is the whole
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
@@ -64,7 +65,10 @@ src/codegen/mod.rs	1059-1059	docs/reference/features/feature-index.toml	e3b0c442
 src/codegen/mod.rs	1086-1089	docs/specification/bootstrap-subset.md	7ff1cf9e0168	self.output.push_str("int __pd_remove_dir(const char* path) {\n"); self.outpu ...  return pd_remove_dir(path, strlen(path));\n"); self.output.push_str("}\n\n");
 src/codegen/mod.rs	1086-1089	docs/specification/language-spec.md	7ff1cf9e0168	self.output.push_str("int __pd_remove_dir(const char* path) {\n"); self.outpu ...  return pd_remove_dir(path, strlen(path));\n"); self.output.push_str("}\n\n");
 src/codegen/mod.rs	1109-1109	docs/specification/bootstrap-subset.md	1651cd25c677	self.output.push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");
+src/codegen/mod.rs	1114-1114	docs/contributing/MILESTONES.md	f225a843a945	for module_info in self.imported_modules.values() {
 src/codegen/mod.rs	1150-1150	docs/specification/bootstrap-subset.md	d10b36aa74a5	}
+src/codegen/mod.rs	1193-1193	docs/contributing/MILESTONES.md	71e399bc76a4	for module_info in imported_modules.values() {
+src/codegen/mod.rs	1278-1278	docs/contributing/MILESTONES.md	71e399bc76a4	for module_info in imported_modules.values() {
 src/codegen/mod.rs	1336-1336	docs/specification/bootstrap-subset.md	b32551e9b7f4	Ok(())
 src/codegen/mod.rs	1362-1362	docs/specification/language-spec.md	985045f1c057	} else {
 src/codegen/mod.rs	1374-1374	docs/specification/language-spec.md	35b1d18c2084	format!("{}*", self.type_to_c(inner))
@@ -103,6 +107,7 @@ src/codegen/mod.rs	3055-3059	docs/contributing/MILESTONES.md	c86405b6532b	Expr::
 src/codegen/mod.rs	3102-3110	docs/contributing/MILESTONES.md	602a5a4dee29	// Generate poll function self.output .push_str(&format!("// Poll function fo ...  if (future->state == 0) {\n"); self.output.push_str(" future->state = 1;\n");
 src/codegen/mod.rs	424-424	docs/specification/language-spec.md	23a7d0452793	/// `"long long[3][2]"`.
 src/codegen/mod.rs	494-494	docs/specification/language-spec.md	b825c1675d27	match form {
+src/codegen/mod.rs	81-81	docs/contributing/MILESTONES.md	796fe95556b7	imported_modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
 src/codegen/mod.rs	841-841	docs/specification/language-spec.md	18f2890fc7c6	self.output.push_str(" size_t len = strlen(str);\n");
 src/codegen/mod.rs	905-909	docs/specification/language-spec.md	6823ecddafb7	// file_open self.output .push_str("long long __pd_file_open(const char* path) {\n"); self.output
 src/codegen/mod.rs	929-929	docs/specification/language-spec.md	424a9daec629	self.output.push_str(" fseek(f, 0, SEEK_SET);\n");
@@ -231,6 +236,10 @@ src/typeck/mod.rs	2370-2370	docs/reference/features/feature-index.toml	4ac6233df
 src/typeck/mod.rs	2521-2521	docs/specification/language-spec.md	efe7d8d7b500	CheckerType::Generic { name, args } if name == enum_name => {
 src/typeck/mod.rs	2722-2722	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
 src/typeck/mod.rs	2722-2722	docs/specification/language-spec.md	917b6d488770	"Cannot infer type from empty array".to_string(),
+src/typeck/mod.rs	2931-2931	docs/contributing/MILESTONES.md	fec4a1c10d7a	for instantiation in self.instantiations.keys() {
+src/typeck/mod.rs	2948-2948	docs/contributing/MILESTONES.md	4107d1d32cf5	for instantiation in self.struct_instantiations.keys() {
+src/typeck/mod.rs	321-321	docs/contributing/MILESTONES.md	f2727a84bd5d	instantiations: HashMap<FunctionInstantiation, CheckerType>,
+src/typeck/mod.rs	329-329	docs/contributing/MILESTONES.md	ab6613350d50	struct_instantiations: HashMap<StructInstantiation, CheckerType>,
 src/typeck/mod.rs	352-527	docs/specification/bootstrap-subset.md	602390ba423f	} impl Default for TypeChecker { fn default() -> Self { Self::new() } } impl  ... ty::Public) { // Store trait information // TODO: Implement trait tracking } }
 src/typeck/mod.rs	365-365	docs/specification/language-spec.md	25d1c4d5945e	let functions: HashMap<String, CheckerType> = crate::builtins::BUILTINS
 src/typeck/mod.rs	795-795	docs/design/trait_system_design.md	78074ff85f28	Item::Trait(_) => {

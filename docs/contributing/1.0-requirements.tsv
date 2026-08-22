@@ -9,6 +9,19 @@
 # effects and no async/await — still reaching a byte-identical stage1/stage2
 # fixed point, with a second witness program meeting the same conditions.
 #
+# WHAT `satisfied` MEANS, AND THE QUESTION THAT CATCHES A ROW WHOSE TRUTH IS
+# CONDITIONAL. `satisfied` means WITNESSED BY THE CITED EVIDENCE — an instance —
+# never "holds for every program". The useful test on any row is not "is this true
+# today" but: WHAT WOULD HAVE TO BE TRUE OF THE PROGRAM UNDER TEST, AND DOES THIS
+# ROW SAY IT? A row that survives only because no witness exercises an excluded
+# feature has the same defect as one that is simply wrong, and it is harder to see.
+#
+# The instance that produced this paragraph: SH-01's byte-identical fixed point is
+# green because PBS-1 excludes BOTH imports and generics, and there are two
+# independent unordered emission sources — one per exclusion, separated by
+# measurement, not inference. The row asserted the property and stated neither
+# condition. It states both now, and SH-05 carries both obligations.
+#
 # WHY NOT "the inventory has no unmet rows". Because that is a COMPLETENESS
 # criterion, and completeness criteria are what this repository spent M1 burning
 # out: `progress: 85%`, "Bootstrap 100% Complete", "Self-Hosting 100%". Draw the
@@ -139,7 +152,7 @@ N4-05	-	N4	String	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
 N4-06	-	N4	unit ()	fixture	tests/03_functions_basic.pd	satisfied	1.0	-
 N4-07	-	N4	int is an alias for i64	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
 N4-08	M7	N4	str and usize are named normatively — add them or rewrite the sites	decision	D3	blocked	1.0	-
-N4-09	-	N4	Arrays [T; N]	fixture	tests/02_types_arrays.pd	satisfied	1.0	-
+N4-09	-	N4	Arrays [T; N] - WITNESSED FOR CONCRETE ELEMENT TYPES ONLY ([i64; 5], an inferred [i64; 3], [String; 3]). PBS-1 excludes generics, so no witness can exercise a parameterised T; the row is an instance claim, not a claim about every T	fixture	tests/02_types_arrays.pd	satisfied	1.0	-
 N4-10	M2	N4	Nested arrays [[T; M]; N], as locals and as parameters	fixture	tests/02_types_nested_arrays.pd	owed	1.0	-
 N4-11	M3	N4	Slices [T]	fixture	tests/02_types_slices.pd	owed	1.0	-
 N4-12	M2	N4	Tuples (A, B) with construction and .0 access	fixture	tests/02_types_tuples.pd	owed	1.0	-
@@ -303,7 +316,8 @@ FFI-02	M8	V1-8	A Palladium function can be exported to C and called from it	obse
 FFI-03	M8	V1-8	The FFI boundary is effect-classified, not a hole in N7	reject	tests/reject/ffi_escapes_effects.pd	owed	1.0	-
 
 # --- Self-hosting: the project's own claim about pdc -------------------------------------
-SH-01	-	A12	bootstrap/pdc.pd compiles itself to a byte-identical fixed point over PBS-1	gate	make selfhost	satisfied	thesis	-
+SH-01	-	A12	bootstrap/pdc.pd compiles itself to a byte-identical fixed point over PBS-1 - MEASURED UNDER TWO EXCLUSIONS THIS ROW NOW STATES, NOT ONE: the unit imports NOTHING (grep -c '^import' bootstrap/pdc.pd = 0) and uses NO GENERICS (grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd = 0; docs/specification/bootstrap-subset.md:76 excludes them from PBS-1), and pdc.pd:8 states the exclusion as a virtue - 'This file is written in exactly the subset it implements'. So THIS ROW IS EVIDENCE THAT PBS-1 AVOIDS BOTH UNORDERED EMISSION SOURCES, NOT THAT THE COMPILER IS DETERMINISTIC. Byte identity for a unit that imports OR is generic is SH-05	gate	make selfhost	satisfied	thesis	-
+SH-05	M9	src/codegen/mod.rs:81	Module emission AND generic-instantiation emission are ORDER-DETERMINISTIC, so the fixed point survives the rewrite. TWO INDEPENDENT SOURCES, SEPARATED BY MEASUREMENT AND NOT BY INFERENCE. (a) MODULES: imported modules live in a HashMap (src/codegen/mod.rs:81) emitted by iterating .values() (src/codegen/mod.rs:1114, :1193, :1278); measured, 8 compiles of one unchanged two-module program produced 2 distinct SHA-1s, 4 each - a pure ordering swap of two function bodies. (b) GENERICS: instantiations live in HashMaps (src/typeck/mod.rs:321, :329) emitted by iterating .keys() (src/typeck/mod.rs:2931, :2948) and consumed at src/codegen/mod.rs:1285, :1774; measured, six generics with ZERO imports produced 30 distinct outputs in 30 compiles - generics alone break byte-stability with no module in sight, and six modules with no generics was byte-identical. NEITHER HALF DISCHARGES THE OTHER: ordering the module iteration leaves (b) standing, and ordering the instantiation iteration leaves (a) standing. NEITHER IS A DEFECT REPORT FILED AGAINST SOMEONE ELSE: repairing a mechanism retires no part of this row, because the requirement is that byte identity survive the REWRITE of pdc.pd into the differentiated dialect, which uses imports and generics both. This row is satisfied only by a rewritten unit that exercises both and still reaches the fixed point	gate	make selfhost-determinism	owed	thesis	-
 SH-02	M9	A12	bootstrap/pdc.pd compiles EVERY fixture in the conformance corpus	gate	make selfhost-corpus	owed	thesis	-
 SH-03	M9	A12	Its output matches the Rust compiler's on every fixture, acceptances and refusals alike	gate	make selfhost-corpus	owed	thesis	-
 SH-04	M9	A12	PBS-1 is the whole 1.0 language, not a subset	gate	make selfhost-corpus	owed	thesis	-

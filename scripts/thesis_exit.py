@@ -1021,6 +1021,12 @@ EXPECTED_THESIS_CONTRACT = {
     "SH-02": ("gate", "make selfhost-corpus", "-"),
     "SH-03": ("gate", "make selfhost-corpus", "-"),
     "SH-04": ("gate", "make selfhost-corpus", "-"),
+    # SH-05 joins the definition because SH-01 — the ONE thesis row that asserts a RESULT
+    # rather than an obligation — is true under a condition the table did not state: the
+    # self-hosting unit imports nothing, so the unspecified emission order of imported
+    # modules never reaches the output. The thesis is that the fixed point survives the
+    # REWRITE, and a rewrite in the differentiated dialect will use modules.
+    "SH-05": ("gate", "make selfhost-determinism", "-"),
     "TH-01": ("gate", "make thesis-exit", "-"),
     "TH-02": ("gate", "make thesis-exit", "-"),
     "TH-03": ("gate", "make thesis-exit", "-"),
@@ -1520,6 +1526,12 @@ class Context:
     make_results: dict[str, int] | None = None     # injected `make <target>` exit codes
     effect_reports: dict[str, str] | None = None   # injected `pdc compile` output
     observable_results: dict[str, int] | None = None   # injected `cargo test` exit codes
+    # THE INPUT THIS CLASS DID NOT COVER WHILE CLAIMING TO COVER EVERY INPUT. `main()` read
+    # the gate's own source straight off ROOT for the wiring check, so no injected state
+    # could reach it and the drift branch was undrivable — the one path that decides
+    # whether the command may compute a verdict at all. None means "the real file", which
+    # is what the release path must use.
+    gate_source: str | None = None
     # SELF-TEST ONLY. Lets the scoring machinery be exercised as if GI-11 and GI-12 had
     # landed. A case asserts the REAL run never sets it, so this cannot become the fifth
     # existence check by another name.
@@ -1830,7 +1842,9 @@ GROUPS = [
 
 def main(ctx: Context | None = None) -> int:
     ctx = ctx or Context()
-    drift = wiring_matches_declaration((ROOT / "scripts/thesis_exit.py").read_text())
+    drift = wiring_matches_declaration(
+        ctx.gate_source if ctx.gate_source is not None
+        else (ROOT / "scripts/thesis_exit.py").read_text())
     if drift:
         raise HarnessError("the gate's declared models do not match its wiring: "
                            + "; ".join(drift))
@@ -1944,7 +1958,7 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "2b0a0323006ff3975b57e122c2f6edb4e0fe4d885b40d11eff29069d3f175799"
+EXPECTED_CASE_SHA = "1f67f4d2dbeb2086e6f7df5b7ef73a74bc53fc5e351a0a7966e7ab0bdf0338d7"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -2142,6 +2156,7 @@ BASE_ROWS = [
     ("SH-02", "M9", "gate", "make selfhost-corpus", "-"),
     ("SH-03", "M9", "gate", "make selfhost-corpus", "-"),
     ("SH-04", "M9", "gate", "make selfhost-corpus", "-"),
+    ("SH-05", "M9", "gate", "make selfhost-determinism", "-"),
     ("TH-01", "M9", "gate", "make thesis-exit", "-"),
     ("TH-02", "M9", "gate", "make thesis-exit", "-"),
     ("TH-03", "M9", "gate", "make thesis-exit", "-"),
@@ -2186,8 +2201,8 @@ ALL_VERDICTS = "\n".join(
     f"{ev} {'REJECTED' if kind == 'reject' else 'PASS_VERIFIED'}"
     for kind, ev, _fp in _C.values() if kind in ("reject", "fixture"))
 WITNESS2 = _C["WT-02"][1]
-GOOD_MAKE = {"selfhost": 0, "selfhost-corpus": 0, "thesis-exit": 0,
-             "check-diagnostic-codes": 0}
+GOOD_MAKE = {"selfhost": 0, "selfhost-corpus": 0, "selfhost-determinism": 0,
+             "thesis-exit": 0, "check-diagnostic-codes": 0}
 GOOD_OBSERVABLE: dict[str, int] = {}   # no thesis row is an `observable` now
 
 
@@ -2265,7 +2280,7 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
            omit_report_b=False, real_conformance=None, real_pdc=None,
            unreadable_requirements=False, unreadable_makefile=False,
            real_make=False, drop_observable=False, observables=None,
-           definition_incomplete=False) -> int:
+           definition_incomplete=False, gate_source=None) -> int:
     """Run the WHOLE gate against an injected repository state."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
@@ -2312,7 +2327,8 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
                       effect_reports=reports,
                       observable_results=(None if drop_observable
                                           else (observables or GOOD_OBSERVABLE)),
-                      assume_definition_complete=not definition_incomplete)
+                      assume_definition_complete=not definition_incomplete,
+                      gate_source=gate_source)
         if real_make:
             (tmp / "Makefile").write_text(
                 "".join(f"{tgt}:\n\t@true\n" for tgt in GOOD_MAKE))
@@ -2327,7 +2343,8 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
                           effect_reports=reports,
                       observable_results=(None if drop_observable
                                           else (observables or GOOD_OBSERVABLE)),
-                      assume_definition_complete=not definition_incomplete)
+                      assume_definition_complete=not definition_incomplete,
+                      gate_source=gate_source)
         buf = io.StringIO()
         # THE REASON A HARNESS ERROR CARRIES IS ON stderr, and only stdout was captured —
         # so a case asserting WHY the gate refused could not see the why at all, and the
@@ -2340,10 +2357,12 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
             buf.write(f"\nharness error: {exc}\n")
             rc = 2
         _drive.last_output = buf.getvalue()
+        _drive.calls += 1
         return rc
 
 
 _drive.last_output = ""
+_drive.calls = 0
 
 
 def self_test() -> int:
@@ -2363,6 +2382,18 @@ def self_test() -> int:
         eleventh. Now a repeated label stops the run.
         """
         nonlocal fails, cases, driven
+        # DECLARED vs MEASURED. `drives_main` was a flag the caller set, and the summary
+        # reported the sum of those flags as if it were an observation — "59 drive main()
+        # end to end" was a claim nothing checked. Measured when that was asked: one case
+        # was mis-declared. `_drive` counts its own invocations, so the flag is now
+        # compared against what happened.
+        drove = _drive.calls > case.mark
+        case.mark = _drive.calls
+        if drove != drives_main:
+            raise HarnessError(
+                f"self-test: case {name!r} declares drives_main={drives_main} but "
+                f"main() was {'' if drove else 'NOT '}driven. The split in the summary is "
+                "an observation, not a label; fix the declaration or the case.")
         if name in seen_names:
             raise HarnessError(
                 f"self-test: duplicate case label {name!r}. A count that grows by copying "
@@ -2376,6 +2407,30 @@ def self_test() -> int:
             print(f"  {RED}FAIL{OFF} {name} (got {got!r}, want {want!r})")
             fails += 1
 
+    def _why(code):
+        """WHICH failure, not that one: `<code> RED=<ids>` / `BLOCKED=<ids>` / `HARNESS=<reason>`.
+
+        `_drive(...) == 1` says "some row went red" and `== 2` says "some harness error
+        happened" — and EVERY red row, or every harness error, satisfies it. That is the
+        shape that let one upstream wall discharge three declared debts on a sibling
+        branch, and it was the assertion of 44 cases here. This reads the run's own output
+        and names the failure, so a case that goes red for a new reason stops passing.
+        """
+        out = re.sub(r"\x1b\[[0-9;]*m", "", _drive.last_output)
+        # The synthetic repository lives in a fresh mkdtemp, so its path is different on
+        # every run: a signature carrying one would pin the temp directory, not the reason.
+        out = re.sub(r"(/[^\s'\"]+)+", lambda m: ("<tmp>" if "/var/" in m.group(0)
+                                                   or "/tmp/" in m.group(0)
+                                                   else m.group(0)), out)
+        m = re.search(r"harness error: (.+)", out)
+        if m:
+            return f"{code} HARNESS={m.group(1).strip()[:44]}"
+        blocked = sorted(set(re.findall(r"^\s*([A-Z]+-\d+) outstanding", out, re.M)))
+        if blocked:
+            return f"{code} BLOCKED={','.join(blocked)}"
+        reds = sorted(set(re.findall(r"^\s*RED\s+([A-Z][A-Z0-9]*-\d+)", out, re.M)))
+        return f"{code} RED={','.join(reds)}"
+
     def _because(code, needle):
         """(exit code, does the output NAME the reason?).
 
@@ -2387,6 +2442,9 @@ def self_test() -> int:
         implied away.
         """
         return (code, needle in _drive.last_output)
+
+    case.mark = _drive.calls
+    _me_for_drive = (ROOT / "scripts/thesis_exit.py").read_text()
 
     def _raises_harness(fn):
         try:
@@ -2403,25 +2461,25 @@ def self_test() -> int:
     print("\n  the gate must be capable of BOTH answers")
     case("an all-green repository state reaches EXIT 0", _drive(), 0)
     case("one RED row makes it exit 1",
-         _drive(verdicts=_verdict("N9-01", "OUTPUT_MISMATCH")), 1)
+         _why(_drive(verdicts=_verdict("N9-01", "OUTPUT_MISMATCH"))), '1 RED=N9-01')
     case("a conformance run with no parsable verdicts is exit 2, not a verdict",
-         _drive(verdicts="nothing parsable here"), 2)
+         _why(_drive(verdicts="nothing parsable here")), '2 HARNESS=scripts/conformance.sh produced no verdict l')
 
     print("\n  conditions 2 and 3 — verdicts come from the harness that RUNS things")
     case("a reject twin the compiler ACCEPTED goes RED",
-         _drive(verdicts=_verdict("N8-08", "REJECT_ACCEPTED")), 1)
+         _why(_drive(verdicts=_verdict("N8-08", "REJECT_ACCEPTED"))), '1 RED=N8-08')
     case("a fixture whose stdout differs goes RED",
-         _drive(verdicts=_verdict("N8-01", "OUTPUT_MISMATCH")), 1)
+         _why(_drive(verdicts=_verdict("N8-01", "OUTPUT_MISMATCH"))), '1 RED=N8-01')
     case("a DECLARED, ABSENT fixture goes RED — silence is not a pass",
-         _drive(verdicts=_verdict("N9-03", "")), 1)
+         _why(_drive(verdicts=_verdict("N9-03", ""))), '1 RED=N9-03')
     # ONE real pinned path is mutated and the other five keep their correct declarations,
     # so the only thing that can turn this red is the fingerprint comparison. The previous
     # version handed in a map for a path that is not in the contract at all: all six real
     # rows then had no declaration, the run went red for THAT, and deleting the comparison
     # outright would not have turned it green.
     case("REJECTED for the WRONG reason goes RED (incidental unsupported syntax)",
-         _drive(fingerprints=mutate_fp("N9-06",
-                                       "Unsupported type in reference parameter")), 1)
+         _why(_drive(fingerprints=mutate_fp("N9-06",
+                                       "Unsupported type in reference parameter"))), '1 RED=N9-06')
     case("the other declarations are untouched by that mutation",
          len(GOOD_FP), sum(1 for k, _e, f in _C.values() if k == "reject" and f != "-"),
          drives_main=False)
@@ -2429,34 +2487,34 @@ def self_test() -> int:
 
     print("\n  condition 1 — the witnesses, and the gates beneath them")
     case("a real `async fn` in a witness goes RED",
-         _drive(witness_b=GOOD_WITNESS + "async fn g() { }\n"), 1)
+         _why(_drive(witness_b=GOOD_WITNESS + "async fn g() { }\n")), '1 RED=TH-01,TH-06')
     case("`fn q<'a>` goes RED",
-         _drive(witness_b=GOOD_WITNESS + "fn q<'a>(x: i64) -> i64 { return x; }\n"), 1)
+         _why(_drive(witness_b=GOOD_WITNESS + "fn q<'a>(x: i64) -> i64 { return x; }\n")), '1 RED=TH-02,TH-06')
     case("`fn q< 'a>` SPACED goes RED — grammar.ebnf:129, and it compiles today",
-         _drive(witness_b=GOOD_WITNESS + "fn q< 'a>(x: i64) -> i64 { return x; }\n"), 1)
+         _why(_drive(witness_b=GOOD_WITNESS + "fn q< 'a>(x: i64) -> i64 { return x; }\n")), '1 RED=TH-02,TH-06')
     case("`myref<'a>` goes RED — the ref<'…> exemption needs an identifier boundary",
-         _drive(witness_b=GOOD_WITNESS + "fn myref<'a>(x: i64) -> i64 { return x; }\n"), 1)
+         _why(_drive(witness_b=GOOD_WITNESS + "fn myref<'a>(x: i64) -> i64 { return x; }\n")), '1 RED=TH-02,TH-06')
     case("`ref<'a> T` is PERMITTED by N9 and stays green",
          _drive(witness_b=mutate(GOOD_WITNESS, "x: ref String", "x: ref<'a> String")), 0)
     case("no `ref` PARAMETER (a struct field only) goes RED",
-         _drive(witness_b="struct S { x: ref String }\n" + mutate(
+         _why(_drive(witness_b="struct S { x: ref String }\n" + mutate(
              mutate(GOOD_WITNESS, "fn drive(x: ref String, mut c: C)", "fn drive(mut c: C)"),
-             "drive(s, c)", "drive(c)")), 1)
+             "drive(s, c)", "drive(c)"))), '1 RED=TH-03,TH-06')
     # These two keep the REST of witness 2 green, so the only thing that can turn the run
     # red is the property under test. An earlier draft mutated the witness so heavily that
     # TH-05 failed too, and the cases passed for the wrong reason.
     case("a `ref` parameter only on an UNREACHABLE fn goes RED",
-         _drive(witness_b=mutate(
+         _why(_drive(witness_b=mutate(
              mutate(GOOD_WITNESS, "fn drive(x: ref String, mut c: C)", "fn drive(mut c: C)"),
              "drive(s, c)", "drive(c)")
-             + "fn ornament(x: ref String) -> i64 { return 1; }\n"), 1)
+             + "fn ornament(x: ref String) -> i64 { return 1; }\n")), '1 RED=TH-03,TH-06')
     case("an effect chain only on UNREACHABLE functions goes RED",
-         _drive(witness_b="fn emit(mut c: C, s: String) { file_write(c.out, s); }\n"
+         _why(_drive(witness_b="fn emit(mut c: C, s: String) { file_write(c.out, s); }\n"
                           "fn header(mut c: C) { emit(c, \"x\"); }\n"
                           "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
                           "fn drive(x: ref String) -> i64 { return depth(1); }\n"
                           "fn main() { drive(s); }\n",
-                report_b="Function 'header' has effects: [Io]\n"), 1)
+                report_b="Function 'header' has effects: [Io]\n")), '1 RED=TH-05')
     case("a GENERIC function is visible to the model, not silently invisible (R3)",
          _drive(witness_b=mutate(GOOD_WITNESS, "fn drive(x: ref String, mut c: C)",
                                  "fn drive<T>(x: ref String, mut c: C)")), 0)
@@ -2475,20 +2533,22 @@ def self_test() -> int:
          _drive(witness_b=mutate(GOOD_WITNESS, "return depth(1);", "return 1;")
                           + "fn dead() -> i64 { return depth(2); }\n"), 0)
     case("`#[total]` on a self-recursive-only fn goes RED (a self-edge is not a name)",
-         _drive(witness_b=mutate(
+         _why(_drive(witness_b=mutate(
              mutate(GOOD_WITNESS, "fn depth(n: i64) -> i64 { return n; }",
                     "fn depth(n: i64) -> i64 { return depth(n); }"),
-             "return depth(1);", "return 1;")), 1)
+             "return depth(1);", "return 1;"))), '1 RED=TH-04,TH-06')
     case("a missing witness is a FINDING (exit 1), not a malfunction",
-         _drive(drop_witness_b=True), 1)
+         _why(_drive(drop_witness_b=True)), '1 RED=TH-01,TH-02,TH-03,TH-04,TH-05,TH-06')
     case("TH-05 reads before it compiles, so an ABSENT witness is a finding not a malfunction",
-         _drive(drop_witness_b=True, omit_report_b=True), 1)
+         _why(_drive(drop_witness_b=True, omit_report_b=True)), '1 RED=TH-01,TH-02,TH-03,TH-04,TH-05,TH-06')
     case("a witness that EXISTS but cannot be measured is exit 2, not a red row",
-         _drive(omit_report_b=True), 2)
+         _why(_drive(omit_report_b=True)), '2 HARNESS=no injected effect report for tests/witness/')
     case("`make selfhost` failing goes RED",
-         _drive(make={"selfhost": 1, "selfhost-corpus": 0, "thesis-exit": 0}), 1)
+         _why(_drive(make={"selfhost": 1, "selfhost-corpus": 0, "thesis-exit": 0})),
+         '1 RED=SH-01,SH-05')
     case("an absent make target goes RED",
-         _drive(make={"selfhost": 0, "thesis-exit": 0}), 1)
+         _why(_drive(make={"selfhost": 0, "thesis-exit": 0})),
+         '1 RED=SH-02,SH-03,SH-04,SH-05')
 
     print("\n  P1/P2 — what a green verdict now means, and what it deliberately does not")
     _orn = ("fn ornament(x: ref String) -> i64 { return 1; }\n"
@@ -2505,11 +2565,11 @@ def self_test() -> int:
          _drive(witness_b=_orn + "fn main() { if true { okpath(c); } else "
                                  "{ ornament(s); depth(1); } }\n"), 0)
     case("a decoration NOTHING names IS refuted — P2 is sound in that direction",
-         _drive(witness_b="fn ornament(x: ref String) -> i64 { return 1; }\n"
+         _why(_drive(witness_b="fn ornament(x: ref String) -> i64 { return 1; }\n"
                           "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
                           "fn emit(mut c: C, s: String) { file_write(c.out, s); }\n"
                           "fn header(mut c: C) { emit(c, \"x\"); }\n"
-                          "fn main() { header(c); }\n"), 1)
+                          "fn main() { header(c); }\n")), '1 RED=TH-03,TH-04,TH-06')
     case("the three control-flow shapes that broke the last model are now moot",
          _drive(witness_b=_orn + "fn main() { if true { return; } okpath(c); "
                                  "ornament(s); depth(1); }\n"), 0)
@@ -2530,20 +2590,20 @@ def self_test() -> int:
          "carries none of the R4 reason — which is why the cases above assert the reason",
          _because(_drive(real_conformance="#!/bin/sh\necho 'f/ref.pd PASS_VERIFIED'\n"
                                           "kill -9 $$\n"),
-                  "a closure in any form"), (2, False), drives_main=False)
+                  "a closure in any form"), (2, False))
 
     print("\n  TH-05 — P2 applies to the caller (on the callee it is vacuous)")
     case("a caller nothing names cannot supply the exhibited edge (P2 on the caller)",
-         _drive(witness_b="fn ghost_io(mut c: C) { file_write(c.out, \"x\"); }\n"
+         _why(_drive(witness_b="fn ghost_io(mut c: C) { file_write(c.out, \"x\"); }\n"
                           "fn orphan(mut c: C) { ghost_io(c); }\n"
                           "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
                           "fn drive(x: ref String, mut c: C) -> i64 { return depth(1); }\n"
                           "fn main() { drive(s, c); }\n",
-                report_b="Function 'orphan' has effects: [Io]\n"), 1)
+                report_b="Function 'orphan' has effects: [Io]\n")), '1 RED=TH-05')
 
     print("\n  TH-04 — a FUNCTION-level attribute, not the crate-level one")
     case("a witness carrying only `#![total]` does not satisfy TH-04",
-         _drive(witness_b=mutate(GOOD_WITNESS, "#[total]", "#![total]")), 1)
+         _why(_drive(witness_b=mutate(GOOD_WITNESS, "#[total]", "#![total]"))), '1 RED=TH-04,TH-06')
 
     print("\n  retracted claims stay retracted, and the disclaimers are pinned to OUTPUT")
     _self = (ROOT / "scripts/thesis_exit.py").read_text()
@@ -2630,6 +2690,7 @@ def self_test() -> int:
          "this debt rather than liveness",
          (ROOT / "Makefile").read_text().count("\nv1-exit:"), 0, drives_main=False)
     _drive()
+    case.mark = _drive.calls          # a free-standing drive belongs to no case
     out = _drive.last_output
     case("a green run SAYS liveness is not asserted, in its own output",
          "liveness is NOT asserted" in out, True, drives_main=False)
@@ -2643,10 +2704,11 @@ def self_test() -> int:
 
     print("\n  the definition is INCOMPLETE, so no verdict is offered at all")
     case("with GI-11/GI-12 outstanding the gate REFUSES — exit 2, not a RED verdict",
-         _drive(definition_incomplete=True), 2)
+         _why(_drive(definition_incomplete=True)), '2 BLOCKED=GI-11,GI-12')
     case("it refuses even when every scored row would pass",
-         _drive(definition_incomplete=True), 2)
+         _why(_drive(definition_incomplete=True)), '2 BLOCKED=GI-11,GI-12')
     _drive(definition_incomplete=True)
+    case.mark = _drive.calls          # likewise
     _out = _drive.last_output
     case("the refusal says the DEFINITION is incomplete, not that 1.0 is unreached",
          "THE DEFINITION OF 1.0 IS INCOMPLETE" in _out, True, drives_main=False)
@@ -3424,6 +3486,37 @@ def self_test() -> int:
          (LIVENESS_CORPUS == _real_corpus, liveness_differential()[1]),
          (True, len(EXPECTED_LIVENESS_IDS)), drives_main=False)
 
+    print("\n  THE SELF-TEST HARNESS — the region every other control runs through")
+    # Round 20. `_drive`, `case`, `mutate`, `mutate_fp`, `_verdict`. A defect here does not
+    # make a case fail; it makes a case MEAN LESS, which is invisible in a green run.
+    case("the failure signature DISCRIMINATES: the same exit code with a DIFFERENT red row "
+         "is a different signature, which `== 1` could not distinguish",
+         (_why(_drive(verdicts=_verdict("N9-01", "OUTPUT_MISMATCH"))),
+          _why(_drive(verdicts=_verdict("N8-01", "OUTPUT_MISMATCH")))),
+         ("1 RED=N9-01", "1 RED=N8-01"))
+    case("...and a harness error names its reason, so one malfunction cannot discharge a "
+         "case written for another",
+         _why(_drive(witness_b=GOOD_WITNESS + "fn m(s: S) { s.len(); }\n")).startswith(
+             "2 HARNESS=TH-03 / `ref` parameter: this gate cannot"), True)
+    case("the signature does not carry the synthetic repository's path, which changes "
+         "every run and would pin the temp directory instead of the reason",
+         "/var/folders" in _why(_drive(unreadable_requirements=True)), False)
+
+    # `Context` claimed to be "every input the gate reads" and did not cover the gate's own
+    # source, so the drift branch — the one that decides whether a verdict may be computed
+    # at all — could not be driven by any injected state.
+    case("the WIRING SOURCE is an injected input now: a source whose declaration and "
+         "dispatch disagree drives the gate to exit 2, naming the drift",
+         _why(_drive(gate_source=mutate(
+             _me_for_drive, '\nLIVENESS_MODEL = "lexical"',
+             '\nLIVENESS_MODEL = "call-graph"'))).startswith(
+                 "2 HARNESS=the gate's declared models do not match"), True)
+    case("...and the real run still reads the real file, because None means the file",
+         Context().gate_source, None, drives_main=False)
+    case("the drives_main split is MEASURED, not declared — `_drive` counts its own "
+         "invocations and `case()` compares",
+         isinstance(_drive.calls, int) and _drive.calls > 0, True, drives_main=False)
+
     print("\n  THE LEXICAL PROBE FAMILY — its own prose, audited against its own code")
     # Round 19. Every claim below was separated from the code by CONSTRUCTION, and the
     # construction is the case: a claim nobody can separate is either sound or untestable,
@@ -3597,17 +3690,17 @@ def self_test() -> int:
 
     print("\n  R4 — the detected set, and the name collision reviewers found")
     case("two functions sharing a name are a HARNESS ERROR, not a silent overwrite",
-         _drive(witness_b=GOOD_WITNESS + "fn header(mut c: C) { emit(c, \"y\"); }\n"), 2)
+         _why(_drive(witness_b=GOOD_WITNESS + "fn header(mut c: C) { emit(c, \"y\"); }\n")), '2 HARNESS=TH-03 / `ref` parameter: this gate cannot se')
 
     print("\n  TH-05 — the effect must be TRANSITIVE, and the edge must be exhibited")
-    case("a DIRECT-only effect goes RED", _drive(report=GOOD_REPORT.splitlines()[0]), 1)
+    case("a DIRECT-only effect goes RED", _why(_drive(report=GOOD_REPORT.splitlines()[0])), '1 RED=TH-05')
     case("a reported function that CALLS NOTHING goes RED",
-         _drive(witness_b=GOOD_WITNESS + "fn ghost() { }\n",
-                report_b="Function 'ghost' has effects: [Io]\n"), 1)
+         _why(_drive(witness_b=GOOD_WITNESS + "fn ghost() { }\n",
+                report_b="Function 'ghost' has effects: [Io]\n")), '1 RED=TH-05')
     case("a report naming a function not defined here goes RED",
-         _drive(report="Function 'nowhere' has effects: [Io]\n"), 1)
+         _why(_drive(report="Function 'nowhere' has effects: [Io]\n")), '1 RED=TH-05')
     case("no IO reported at all goes RED",
-         _drive(report="Function 'pure' has effects: [Memory]\n"), 1)
+         _why(_drive(report="Function 'pure' has effects: [Memory]\n")), '1 RED=TH-05')
 
     print("\n  the REAL subprocess boundary — no injection, so gate_probe decides")
     case("conformance, pdc and make all RUN and conclude successfully -> exit 0",
@@ -3616,13 +3709,13 @@ def self_test() -> int:
                 real_pdc="#!/bin/sh\necho \"Function 'header' has effects: [Io]\"\nexit 0\n",
                 real_make=True), 0)
     case("conformance that prints verdicts and then FAILS is exit 2, not a verdict",
-         _drive(real_conformance="#!/bin/sh\necho 'f/ref.pd PASS_VERIFIED'\nexit 3\n"), 2)
+         _why(_drive(real_conformance="#!/bin/sh\necho 'f/ref.pd PASS_VERIFIED'\nexit 3\n")), '2 HARNESS=scripts/conformance.sh did not conclude (exi')
     case("conformance that prints verdicts and is then KILLED is exit 2",
-         _drive(real_conformance="#!/bin/sh\necho 'f/ref.pd PASS_VERIFIED'\nkill -9 $$\n"), 2)
+         _why(_drive(real_conformance="#!/bin/sh\necho 'f/ref.pd PASS_VERIFIED'\nkill -9 $$\n")), '2 HARNESS=scripts/conformance.sh did not conclude (kil')
     case("a pdc that prints an effect line and then FAILS is exit 2",
-         _drive(real_pdc="#!/bin/sh\necho \"Function 'header' has effects: [Io]\"\nexit 1\n"), 2)
+         _why(_drive(real_pdc="#!/bin/sh\necho \"Function 'header' has effects: [Io]\"\nexit 1\n")), '2 HARNESS=pdc rejected a.pd (exit 1); an effect report')
     case("a pdc that prints an effect line and is then KILLED is exit 2",
-         _drive(real_pdc="#!/bin/sh\necho \"Function 'header' has effects: [Io]\"\nkill -9 $$\n"), 2)
+         _why(_drive(real_pdc="#!/bin/sh\necho \"Function 'header' has effects: [Io]\"\nkill -9 $$\n")), '2 HARNESS=pdc did not conclude while compiling a.pd (k')
 
     print("\n  a failure to MEASURE never wears the exit code of a finding")
     with tempfile.TemporaryDirectory() as d:
@@ -3657,9 +3750,9 @@ def self_test() -> int:
     case("the shell wrapper preserves the code (exec, no re-mapping)",
          rc_sh, 2, drives_main=False)
     case("an unreadable requirements file is exit 2",
-         _drive(rows=None, unreadable_requirements=True), 2)
+         _why(_drive(rows=None, unreadable_requirements=True)), '2 HARNESS=cannot read <tmp> [Errno 21] Is a directory:')
     case("an unreadable Makefile is exit 2, not a red `make` row",
-         _drive(make=None, unreadable_makefile=True), 2)
+         _why(_drive(make=None, unreadable_makefile=True)), '2 HARNESS=cannot read <tmp> [Errno 2] No such file or ')
 
     print("\n  a mutation that mutates nothing is caught, not silently passed")
 
@@ -3757,25 +3850,25 @@ def self_test() -> int:
 
     print("\n  the row set is CLOSED")
     case("ADDING a thesis row is a harness error (exit 2)",
-         _drive(rows=_rows(extra="ZZ-99\tM9\tsrc\tsneaked in\tfixture\tx.pd\towed\tthesis\t-\n")), 2)
-    case("REMOVING a thesis row is a harness error", _drive(rows=_rows(drop="N9-06")), 2)
+         _why(_drive(rows=_rows(extra="ZZ-99\tM9\tsrc\tsneaked in\tfixture\tx.pd\towed\tthesis\t-\n"))), '2 HARNESS=the thesis row set changed, and that is a ch')
+    case("REMOVING a thesis row is a harness error", _why(_drive(rows=_rows(drop="N9-06"))), '2 HARNESS=the thesis row set changed, and that is a ch')
     case("RETYPING a row out of dispatch is a harness error, not a silent skip",
-         _drive(rows=_rows(retype=("N8-08", "observable", "t.rs::x"))), 2)
+         _why(_drive(rows=_rows(retype=("N8-08", "observable", "t.rs::x")))), '2 HARNESS=N8-08: the thesis contract changed, which ch')
     # The control above only exercises a kind that falls OUT of dispatch. The dangerous
     # retype is into another DISPATCHED kind: reject -> fixture turns a negative test
     # into a positive one and the row set still looks intact.
     case("retyping reject -> FIXTURE (still dispatched) is a harness error",
-         _drive(rows=_rows(retype=("N8-08", "fixture", _C["N8-08"][1]))), 2)
+         _why(_drive(rows=_rows(retype=("N8-08", "fixture", _C["N8-08"][1])))), '2 HARNESS=N8-08: the thesis contract changed, which ch')
     case("repointing a row at a different fixture is a harness error",
-         _drive(rows=_rows(repoint=("N9-01", "tests/somewhere_else.pd"))), 2)
+         _why(_drive(rows=_rows(repoint=("N9-01", "tests/somewhere_else.pd")))), '2 HARNESS=N9-01: the thesis contract changed, which ch')
     case("BLANKING a thesis reject fingerprint to `-` is a harness error",
-         _drive(rows=_rows(blank_fp="N9-06")), 2)
+         _why(_drive(rows=_rows(blank_fp="N9-06"))), '2 HARNESS=N9-06: the thesis contract changed, which ch')
     case("an unknown evidence kind is a harness error",
-         _drive(rows=_rows(retype=("N8-08", "vibes", "x"))), 2)
+         _why(_drive(rows=_rows(retype=("N8-08", "vibes", "x")))), "2 HARNESS=req.tsv:9: unknown evidence kind 'vibes'")
     case("a duplicate id is a harness error",
-         _drive(rows=_rows(extra="N9-06\tM7\tsrc\tdup\treject\tx.pd\towed\tthesis\t-\n")), 2)
+         _why(_drive(rows=_rows(extra="N9-06\tM7\tsrc\tdup\treject\tx.pd\towed\tthesis\t-\n"))), '2 HARNESS=req.tsv:28: duplicate id N9-06')
     case("a short row is a harness error",
-         _drive(rows=_rows(extra="BAD\tM9\tsrc\tonly six\tgate\tx\n")), 2)
+         _why(_drive(rows=_rows(extra="BAD\tM9\tsrc\tonly six\tgate\tx\n"))), '2 HARNESS=req.tsv:28: 6 columns, want 9')
 
     print("\n  the lexer")
     case("a char literal '<' is not a lifetime",

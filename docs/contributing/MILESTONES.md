@@ -15,7 +15,7 @@ witness program meeting the same conditions.**
 That gate is in the repository now, and **it refuses to answer**. `make thesis-exit` exits 2:
 two of its 25 `thesis` rows — GI-11 and GI-12 — are not scored rows at all but
 **preconditions on the command's ability to compute a verdict**, and both are outstanding.
-It still prints every row's state (1 of 22 evaluated rows would pass), labelled as
+It still prints every row's state (1 of 23 evaluated rows would pass), labelled as
 information rather than a verdict ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
 [`scripts/thesis_exit.py`](../../scripts/thesis_exit.py)). It is committed red on purpose: the
 definition of 1.0 has to live here as a command, because prose drifts and commands do not.
@@ -161,6 +161,27 @@ all fail it too. The corpus is itself closed — id set both ways, full digest o
 then this is a **fail-closed scaffold, not a language certificate** — which is the only form in which a weaker gate is defensible, and it is why the
 safeguards had to become preconditions rather than scheduled work.
 
+**`make selfhost`'s fixed point is green under TWO conditions the table did not state.** The
+self-hosting unit **imports nothing** (`grep -c '^import' bootstrap/pdc.pd` = 0) **and uses no
+generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec excludes them, and
+`bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
+subset it implements"*). Both exclusions matter because there are **two independent unordered
+emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:81`) emitted by iterating
+`.values()` (`src/codegen/mod.rs:1114`, `src/codegen/mod.rs:1193`, `src/codegen/mod.rs:1278`), and
+generic instantiations in `HashMap`s (`src/typeck/mod.rs:321`, `src/typeck/mod.rs:329`) emitted by
+iterating `.keys()` (`src/typeck/mod.rs:2931`, `src/typeck/mod.rs:2948`).
+
+They were separated **by measurement, not inference**: six modules with no generics was
+byte-identical, while **six generics with zero imports produced 30 distinct outputs in 30
+compiles** — generics alone break byte-stability with no module in sight — and a two-module
+program produced **2 distinct SHA-1s over 8 compiles**. So **today's fixed point is not evidence
+that the compiler is deterministic; it is evidence that PBS-1 avoids both sources.** SH-01 now
+states both exclusions and **SH-05** carries both obligations, worded so that repairing one
+iteration retires neither: the thesis is that byte identity survives the **rewrite**, and the
+differentiated dialect uses imports and generics both. SH-01 is also the **only** thesis row
+asserting a result rather than an obligation, which is why it was the one carrying unstated
+conditions.
+
 **When this branch meets the receipt gates on `main`** (`make gate-receipts`), two things are
 decided and not open: the `gates:` target keeps `check-retracted-claims` in the union, and
 **`make thesis-exit` is never exposed as a `gate:` receipt.** It exits 2, a generic receipt runner
@@ -298,12 +319,12 @@ Measured at this revision; every row names the command that produced it.
 
 | | | Command |
 |---|---|---|
-| **The thesis** | **exit 2 — no verdict available**; 1 of 22 evaluated rows would pass | `make thesis-exit` |
+| **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 243 unique cases, **checked** and digest-pinned; 70 exercise the fault-injection branch, **16 adversaries on a generated label → score scoreboard (above) that rejects duplicate labels**, and **14 cases assert the exact failing row set and the stage (`original`/`mutation`) each row failed at**. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 239 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
+| Thesis gate itself | 249 unique cases, **checked** and digest-pinned; 70 exercise the fault-injection branch, **16 adversaries on a generated label → score scoreboard (above) that rejects duplicate labels**, and **14 cases assert the exact failing row set and the stage (`original`/`mutation`) each row failed at**. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
+| Documentation | every snippet compiles; 243 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 38 builtins accounted against a normative 34 | `make stdlib-gate` |
