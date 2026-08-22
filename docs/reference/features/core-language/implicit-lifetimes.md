@@ -235,8 +235,8 @@ inferred lifetimes.
 *A previous version of this paragraph asserted a live defect here — that a call argument is
 borrowed as `Lifetime::Named("fn")` and never released, so a value cannot be passed twice. That is
 false and is retracted: the defect was real, it is D6, and it was fixed in commit `191f8c1`, before
-this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:519`) and end
-its borrows when the call finishes (`src/ownership/borrow_checker.rs:525`). Five probes are in
+this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:597`) and end
+its borrows when the call finishes (`src/ownership/borrow_checker.rs:603`). Five probes are in
 [`language-spec.md` A9.4](../../../specification/language-spec.md#a94-defect-d6-retracted). The
 defect that IS live is `&mut` of an immutable local, which the borrow checker accepts for struct
 types ([A9.3](../../../specification/language-spec.md#a93-mut-of-an-immutable-local-is-accepted)).*

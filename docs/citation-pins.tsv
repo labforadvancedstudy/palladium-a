@@ -90,18 +90,18 @@ src/codegen/mod.rs	494-494	docs/specification/language-spec.md	b825c1675d27	matc
 src/codegen/mod.rs	841-841	docs/specification/language-spec.md	18f2890fc7c6	self.output.push_str(" size_t len = strlen(str);\n");
 src/codegen/mod.rs	905-909	docs/specification/language-spec.md	6823ecddafb7	// file_open self.output .push_str("long long __pd_file_open(const char* path) {\n"); self.output
 src/codegen/mod.rs	929-929	docs/specification/language-spec.md	424a9daec629	self.output.push_str(" fseek(f, 0, SEEK_SET);\n");
-src/driver/mod.rs	139-145	docs/specification/language-spec.md	760f04349e68	let borrow_time = borrow_start.elapsed(); println!( " Memory safety verified! ({:.2}ms)", borrow_time.as_secs_f64() * 1000.0 ); // Phase 3.6: Effect analysis
-src/driver/mod.rs	147-147	docs/reference/features/async-system/async-as-effect.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
-src/driver/mod.rs	147-147	docs/reference/features/feature-index.toml	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
-src/driver/mod.rs	147-147	docs/specification/language-spec.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
-src/driver/mod.rs	148-149	docs/reference/features/async-system/async-as-effect.md	cd67d9d37d37	for item in &ast.items { if let crate::ast::Item::Function(func) = item {
-src/driver/mod.rs	151-151	docs/reference/features/async-system/async-as-effect.md	ee0a89753716	if !effects.is_pure() {
-src/driver/mod.rs	151-151	docs/specification/language-spec.md	ee0a89753716	if !effects.is_pure() {
-src/driver/mod.rs	164-164	docs/reference/features/feature-index.toml	cec9e49f3460	// Phase 3.7: Unsafe checking
-src/driver/mod.rs	164-172	docs/specification/language-spec.md	0a20c11de2ec	// Phase 3.7: Unsafe checking println!("⚠️ Checking unsafe operations..."); l ... e_checker.check_function(func)?; } } println!(" Unsafe operations verified!");
-src/driver/mod.rs	174-174	docs/reference/features/feature-index.toml	6632d08a5576	// Phase 3.8: Optimization (optional but enabled by default)
-src/driver/mod.rs	185-185	docs/reference/features/feature-index.toml	5d3dcfb7f3f5	// Phase 4: Code generation
-src/driver/mod.rs	261-261	docs/specification/bootstrap-subset.md	9174e5f7f673	let build_dir = PathBuf::from("target/build");
+src/driver/mod.rs	149-155	docs/specification/language-spec.md	760f04349e68	let borrow_time = borrow_start.elapsed(); println!( " Memory safety verified! ({:.2}ms)", borrow_time.as_secs_f64() * 1000.0 ); // Phase 3.6: Effect analysis
+src/driver/mod.rs	157-157	docs/reference/features/async-system/async-as-effect.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
+src/driver/mod.rs	157-157	docs/reference/features/feature-index.toml	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
+src/driver/mod.rs	157-157	docs/specification/language-spec.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
+src/driver/mod.rs	158-159	docs/reference/features/async-system/async-as-effect.md	cd67d9d37d37	for item in &ast.items { if let crate::ast::Item::Function(func) = item {
+src/driver/mod.rs	161-161	docs/reference/features/async-system/async-as-effect.md	ee0a89753716	if !effects.is_pure() {
+src/driver/mod.rs	161-161	docs/specification/language-spec.md	ee0a89753716	if !effects.is_pure() {
+src/driver/mod.rs	174-174	docs/reference/features/feature-index.toml	cec9e49f3460	// Phase 3.7: Unsafe checking
+src/driver/mod.rs	174-182	docs/specification/language-spec.md	0a20c11de2ec	// Phase 3.7: Unsafe checking println!("⚠️ Checking unsafe operations..."); l ... e_checker.check_function(func)?; } } println!(" Unsafe operations verified!");
+src/driver/mod.rs	184-184	docs/reference/features/feature-index.toml	6632d08a5576	// Phase 3.8: Optimization (optional but enabled by default)
+src/driver/mod.rs	195-195	docs/reference/features/feature-index.toml	5d3dcfb7f3f5	// Phase 4: Code generation
+src/driver/mod.rs	271-271	docs/specification/bootstrap-subset.md	9174e5f7f673	let build_dir = PathBuf::from("target/build");
 src/driver/mod.rs	49-49	docs/reference/features/feature-index.toml	9ec5ae2ed903	pub fn compile_string(&self, source: &str, filename: &str) -> Result<PathBuf> {
 src/driver/mod.rs	49-49	docs/specification/language-spec.md	9ec5ae2ed903	pub fn compile_string(&self, source: &str, filename: &str) -> Result<PathBuf> {
 src/driver/mod.rs	53-53	docs/reference/features/feature-index.toml	56f8f09ac839	// Phase 1: Lexing
@@ -127,21 +127,21 @@ src/macros/mod.rs	41-41	docs/reference/features/feature-index.toml	8922f12cdd4a	
 src/macros/mod.rs	41-41	docs/specification/language-spec.md	8922f12cdd4a	fn register_builtin_macros(&mut self) {
 src/main.rs	100-100	docs/reference/features/feature-index.toml	701dcf50c0cc	"Turing's Proofs Meet von Neumann's Performance"
 src/main.rs	114-114	docs/reference/features/feature-index.toml	c6a8c537cf38	if llvm {
-src/ownership/borrow_checker.rs	179-185	docs/specification/bootstrap-subset.md	534ae550da38	for item in &program.items { match item { Item::Function(func) => { self.chec ... (func)?; } Item::Impl(impl_block) => { // Check method bodies from impl blocks
-src/ownership/borrow_checker.rs	184-190	docs/specification/language-spec.md	4f479bc9111b	Item::Impl(impl_block) => { // Check method bodies from impl blocks for method in &impl_block.methods { self.check_function(method)?; } } _ => {}
-src/ownership/borrow_checker.rs	210-210	docs/specification/language-spec.md	9bc58cbf9fff	// whatever the type is. Classifying `mut x: i64` or
-src/ownership/borrow_checker.rs	224-224	docs/specification/language-spec.md	1b5d3f823599	// keeps using the array afterwards — see the parameter
-src/ownership/borrow_checker.rs	241-241	docs/specification/language-spec.md	af0940c0792c	ParamOwnership::Borrow
-src/ownership/borrow_checker.rs	404-407	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
-src/ownership/borrow_checker.rs	43-44	docs/specification/language-spec.md	52913fa77a92	/// Return value ownership #[allow(dead_code)]
-src/ownership/borrow_checker.rs	470-515	docs/specification/bootstrap-subset.md	57ab3c20ee5b	// Bind pattern variables self.bind_pattern(&arm.pattern)?; self.check_block_ ... ip::Ownership::Borrowed { .. }) => { // Value is borrowed but still accessible
-src/ownership/borrow_checker.rs	48-48	docs/specification/language-spec.md	d6fcadd1772d	/// How a callee takes each parameter.
-src/ownership/borrow_checker.rs	519-519	docs/reference/features/core-language/implicit-lifetimes.md	d10b36aa74a5	}
-src/ownership/borrow_checker.rs	519-519	docs/reference/features/feature-index.toml	d10b36aa74a5	}
-src/ownership/borrow_checker.rs	519-519	docs/specification/language-spec.md	d10b36aa74a5	}
-src/ownership/borrow_checker.rs	525-525	docs/reference/features/core-language/implicit-lifetimes.md	d10b36aa74a5	}
-src/ownership/borrow_checker.rs	525-525	docs/reference/features/feature-index.toml	d10b36aa74a5	}
-src/ownership/borrow_checker.rs	525-525	docs/specification/language-spec.md	d10b36aa74a5	}
+src/ownership/borrow_checker.rs	257-263	docs/specification/bootstrap-subset.md	534ae550da38	for item in &program.items { match item { Item::Function(func) => { self.chec ... (func)?; } Item::Impl(impl_block) => { // Check method bodies from impl blocks
+src/ownership/borrow_checker.rs	262-268	docs/specification/language-spec.md	4f479bc9111b	Item::Impl(impl_block) => { // Check method bodies from impl blocks for method in &impl_block.methods { self.check_function(method)?; } } _ => {}
+src/ownership/borrow_checker.rs	288-288	docs/specification/language-spec.md	9bc58cbf9fff	// whatever the type is. Classifying `mut x: i64` or
+src/ownership/borrow_checker.rs	302-302	docs/specification/language-spec.md	1b5d3f823599	// keeps using the array afterwards — see the parameter
+src/ownership/borrow_checker.rs	319-319	docs/specification/language-spec.md	af0940c0792c	ParamOwnership::Borrow
+src/ownership/borrow_checker.rs	482-485	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
+src/ownership/borrow_checker.rs	54-55	docs/specification/language-spec.md	52913fa77a92	/// Return value ownership #[allow(dead_code)]
+src/ownership/borrow_checker.rs	548-593	docs/specification/bootstrap-subset.md	57ab3c20ee5b	// Bind pattern variables self.bind_pattern(&arm.pattern)?; self.check_block_ ... ip::Ownership::Borrowed { .. }) => { // Value is borrowed but still accessible
+src/ownership/borrow_checker.rs	59-59	docs/specification/language-spec.md	d6fcadd1772d	/// How a callee takes each parameter.
+src/ownership/borrow_checker.rs	597-597	docs/reference/features/core-language/implicit-lifetimes.md	d10b36aa74a5	}
+src/ownership/borrow_checker.rs	597-597	docs/reference/features/feature-index.toml	d10b36aa74a5	}
+src/ownership/borrow_checker.rs	597-597	docs/specification/language-spec.md	d10b36aa74a5	}
+src/ownership/borrow_checker.rs	603-603	docs/reference/features/core-language/implicit-lifetimes.md	d10b36aa74a5	}
+src/ownership/borrow_checker.rs	603-603	docs/reference/features/feature-index.toml	d10b36aa74a5	}
+src/ownership/borrow_checker.rs	603-603	docs/specification/language-spec.md	d10b36aa74a5	}
 src/ownership/mod.rs	107-118	docs/specification/bootstrap-subset.md	d2bfec889bd9	/// Exit a scope, invalidating borrows pub fn exit_scope(&mut self) { let sco ... n this scope // TODO: Implement proper drop semantics self.current_scope -= 1;
 src/ownership/mod.rs	109-109	docs/reference/features/core-language/implicit-lifetimes.md	8103577ec368	let scope_lifetime = Lifetime::Scope(self.current_scope);
 src/ownership/mod.rs	109-113	docs/reference/features/feature-index.toml	489189178b91	let scope_lifetime = Lifetime::Scope(self.current_scope); // Remove borrows t ... h this scope self.borrows .retain(|borrow| borrow.lifetime != scope_lifetime);

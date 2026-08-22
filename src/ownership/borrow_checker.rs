@@ -33,6 +33,17 @@ pub struct BorrowChecker {
     /// temporary `&x` / `&mut x` references written in argument position — gets
     /// this lifetime and is released when the call completes.
     call_lifetime: Option<Lifetime>,
+    /// Modules the resolver loaded for this compilation, keyed by the name the
+    /// importing program refers to them by (the alias, if there was one).
+    ///
+    /// This pass used to have no channel at all by which an imported signature
+    /// could arrive: it was handed the *pre-resolution* AST, and `Program.imports`
+    /// carries only paths, never the loaded module. So every call to an imported
+    /// function died as "Use of uninitialized value", because the callee was not
+    /// in `functions` and was then looked up as a variable. The type checker has
+    /// had this channel since it was written (`TypeChecker::set_imported_modules`);
+    /// this is the same channel, and the driver fills both from one resolver run.
+    imported_modules: HashMap<String, crate::resolver::ModuleInfo>,
 }
 
 /// Function signature for ownership analysis
@@ -125,6 +136,7 @@ impl Default for BorrowChecker {
             unsafe_depth: 0,
             struct_fields: HashMap::new(),
             call_lifetime: None,
+            imported_modules: HashMap::new(),
         }
     }
 }
@@ -145,6 +157,68 @@ impl BorrowChecker {
         self.functions.keys().cloned().collect()
     }
 
+    /// Hand this pass the modules the resolver loaded, so that a call to an
+    /// imported function can be checked at all.
+    ///
+    /// Takes exactly what `TypeChecker::set_imported_modules` takes
+    /// (`src/typeck/mod.rs:408`), because the driver has one resolver result and
+    /// two passes that need it; a second shape here would be a second thing to
+    /// keep in sync. Registration itself is deferred to `check_program`, which is
+    /// where the ordering against local definitions is decided.
+    pub fn set_imported_modules(
+        &mut self,
+        modules: HashMap<String, crate::resolver::ModuleInfo>,
+    ) {
+        self.imported_modules = modules;
+    }
+
+    /// Register the public functions of every imported module.
+    ///
+    /// SHADOWING: a local definition wins, and it wins by *order* — this runs
+    /// before the walk over `program.items`, so a local `fn helper` overwrites an
+    /// imported `helper` in `functions`. That direction is the only one that can
+    /// be right here: the local definition is the one whose body this pass will
+    /// go on to check, and whose signature codegen will emit, so registering the
+    /// import over it would make the borrow checker reason about a *different*
+    /// function from the one that runs. It also matches what the type checker
+    /// already does — it fills its table from imports in `set_imported_modules`
+    /// and then overwrites from local items during `check` — so the two passes
+    /// agree about which `helper` is meant.
+    ///
+    /// Modules are visited in sorted key order rather than `HashMap` order: when
+    /// two modules export the same name, the winner must not depend on the hash
+    /// seed. Which of the two wins is still arbitrary and is a real ambiguity the
+    /// language does not yet diagnose (M3), but it is at least the same one twice.
+    ///
+    /// Both the bare name and `module::name` are registered, matching the type
+    /// checker, so a qualified call is not rejected by a pass the unqualified one
+    /// passes.
+    fn register_imported_functions(&mut self) {
+        let modules = std::mem::take(&mut self.imported_modules);
+        let mut names: Vec<&String> = modules.keys().collect();
+        names.sort();
+
+        for module_name in names {
+            let module_info = &modules[module_name];
+            for item in &module_info.ast.items {
+                if let Item::Function(func) = item {
+                    // Private items of a module are not callable from outside it,
+                    // so registering them would let this pass accept a program the
+                    // type checker rejects — the two passes must refuse the same
+                    // programs, not merely overlap.
+                    if !matches!(func.visibility, crate::ast::Visibility::Public) {
+                        continue;
+                    }
+                    self.collect_function_sig(func);
+                    let qualified_name = format!("{}::{}", module_name, func.name);
+                    self.collect_function_sig_with_name(func, &qualified_name);
+                }
+            }
+        }
+
+        self.imported_modules = modules;
+    }
+
     /// Check if we're currently in an unsafe context
     #[allow(dead_code)]
     fn in_unsafe_context(&self) -> bool {
@@ -153,6 +227,10 @@ impl BorrowChecker {
 
     /// Check a program for ownership violations
     pub fn check_program(&mut self, program: &Program) -> Result<()> {
+        // Imported signatures first, so that the walk below - the local
+        // definitions - overwrites them. See `register_imported_functions`.
+        self.register_imported_functions();
+
         // First pass: collect function signatures and struct layouts
         for item in &program.items {
             match item {

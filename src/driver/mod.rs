@@ -135,6 +135,16 @@ impl Driver {
         println!("🔒 Borrow checking...");
         let borrow_start = Instant::now();
         let mut borrow_checker = BorrowChecker::new();
+
+        // Same resolver result and same guard as the type checker above. Without
+        // this the borrow checker sees a single-file program: every call to an
+        // imported function was rejected as "Use of uninitialized value", because
+        // the callee was absent from its function table and was then looked up as
+        // a variable.
+        if !resolved_modules.is_empty() {
+            borrow_checker.set_imported_modules(resolved_modules.clone());
+        }
+
         borrow_checker.check_program(&ast)?;
         let borrow_time = borrow_start.elapsed();
         println!(
