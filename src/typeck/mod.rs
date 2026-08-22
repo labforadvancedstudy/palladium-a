@@ -312,6 +312,32 @@ pub struct StructInstantiation {
     pub type_args: Vec<String>, // Concrete types like "i64", "String"
 }
 
+/// WHERE THIS PASS DECIDES THE THINGS REVIEW KEEPS ASKING ABOUT
+/// ------------------------------------------------------------
+/// This file is ~4,000 lines and has exceeded three reviewers' read limits in a
+/// row. The decisions that recent review turns on are these, and nothing else
+/// in the file participates:
+///
+///   `set_imported_modules`      registration of imported items, and the two
+///                               deferred refusals recorded there (async main,
+///                               async value return). Public-only, and
+///                               non-generic-only — both conditions matter and
+///                               both are commented at the site.
+///   `check`, opening lines      where those deferrals are RAISED, after the
+///                               entry point is knowable. Uses
+///                               `crate::ast::local_definition_shadows_import`.
+///   `check`, "Check for main"   the main-existence rule the entry-point
+///                               question resolves against.
+///   `has_value_return`          the statement walk behind the async refusal;
+///                               descends `if`/`match`/`while`/`for`/`unsafe`.
+///   `check_function`, opening   the LOCAL refusals: `async fn main`, and a
+///                               value-carrying return in any async function.
+///
+/// MEMBERSHIP AND SHADOWING ARE NOT DECIDED HERE. They are decided once, in
+/// `crate::ast::local_definition_shadows_import`, which code generation calls
+/// too — see src/codegen/mod.rs's imported-function loop. That is deliberate:
+/// the two passes asked different questions about generics for a round, and a
+/// program was diagnosed against a declaration the output never contained.
 pub struct TypeChecker {
     /// A PUBLIC imported `async fn main`, recorded at import-registration time
     /// and raised by `check` — but only if it is the EFFECTIVE ENTRY POINT.
@@ -319,13 +345,19 @@ pub struct TypeChecker {
     /// lives, so without this an imported one reached code generation and
     /// emitted a `main_Future main()` entry point.
     deferred_async_main: Option<Span>,
-    /// A PUBLIC imported `async fn` whose body contains a value-carrying
-    /// `return`, with its NAME, recorded for the same reason:
-    /// `set_imported_modules` performs no equivalent of `check_function`'s
-    /// validation, so the class refused there was still declarable through an
-    /// import. The name is kept because the raise has to ask whether a local
-    /// definition shadows it — see `check`.
-    deferred_async_value_return: Option<(String, Span)>,
+    /// EVERY public imported `async fn` whose body contains a value-carrying
+    /// `return`, with its name, recorded because `set_imported_modules`
+    /// performs no equivalent of `check_function`'s validation, so the class
+    /// refused there was still declarable through an import. The name is kept
+    /// because the raise has to ask whether a local definition shadows it.
+    ///
+    /// A `Vec`, NOT an `Option`. As an `Option` each qualifying import
+    /// overwrote the previous one and `check` validated only the survivor, so
+    /// two bad exports in one module whose SECOND was locally shadowed let the
+    /// first through — measured. A rule that is right about the construct,
+    /// applied through a container that can only hold one, is wrong about the
+    /// program.
+    deferred_async_value_returns: Vec<(String, Span)>,
     /// Function signatures
     functions: HashMap<String, CheckerType>,
     /// Generic function definitions
@@ -388,7 +420,7 @@ impl TypeChecker {
 
         Self {
             deferred_async_main: None,
-            deferred_async_value_return: None,
+            deferred_async_value_returns: Vec::new(),
             functions,
             generic_functions: HashMap::new(),
             instantiations: HashMap::new(),
@@ -443,13 +475,21 @@ impl TypeChecker {
                             // Measured at fbcfc39: a private imported
                             // `async fn main` killed compilation of a program
                             // whose own `main` was perfectly good.
-                            if func.is_async && func.name == "main" {
+                            // GENERIC IMPORTS ARE SKIPPED BY CODE GENERATION
+                            // (src/codegen/mod.rs's imported-function loop
+                            // requires `type_params.is_empty()`), so recording
+                            // one here would reject a declaration the output can
+                            // never contain — the same over-approximation as the
+                            // shadowing case, in the other axis.
+                            if !func.type_params.is_empty() {
+                                // registered as a generic below; nothing emitted
+                            } else if func.is_async && func.name == "main" {
                                 self.deferred_async_main = Some(func.span);
                             } else if func.is_async
                                 && Self::has_value_return(&func.body)
                             {
-                                self.deferred_async_value_return =
-                                    Some((func.name.clone(), func.span));
+                                self.deferred_async_value_returns
+                                    .push((func.name.clone(), func.span));
                             }
                             let qualified_name = format!("{}::{}", module_name, func.name);
 
@@ -612,8 +652,9 @@ impl TypeChecker {
         //
         // So both passes now ask the same question: is this imported
         // declaration shadowed by a local one?
-        if let Some((name, span)) = self.deferred_async_value_return.clone() {
-            if !Self::shadowed_by_a_local_definition(program, &name) {
+        // EVERY offender, not the last one recorded.
+        for (name, span) in self.deferred_async_value_returns.clone() {
+            if !crate::ast::local_definition_shadows_import(program, &name) {
                 return Err(CompileError::async_value_return_unimplemented(span));
             }
         }
@@ -630,7 +671,7 @@ impl TypeChecker {
         // is the mirror of accepting what cannot be honoured; both are the
         // compiler making a claim it has not established.
         if let Some(span) = self.deferred_async_main {
-            if !Self::shadowed_by_a_local_definition(program, "main") {
+            if !crate::ast::local_definition_shadows_import(program, "main") {
                 return Err(CompileError::async_main_unimplemented(span));
             }
         }
@@ -1009,23 +1050,6 @@ impl TypeChecker {
     }
 
     /// Type check a function
-    /// Is `name` defined locally, so that an imported definition of it is
-    /// shadowed and never emitted?
-    ///
-    /// THE ONE PLACE THIS QUESTION IS ANSWERED for the type checker. Code
-    /// generation asks the same question in its imported-function loop; the two
-    /// must not drift, because a disagreement means a program is diagnosed
-    /// against a declaration the output does not contain (or, the other way,
-    /// emitted without being checked).
-    ///
-    /// Generic definitions are excluded: they are registered separately and do
-    /// not shadow an ordinary imported function.
-    fn shadowed_by_a_local_definition(program: &Program, name: &str) -> bool {
-        program.items.iter().any(|item| {
-            matches!(item, Item::Function(f) if f.name == name && f.type_params.is_empty())
-        })
-    }
-
     /// Does `body` contain a `return <value>` anywhere?
     ///
     /// Walks nested blocks because the parser's tail lowering puts the return

@@ -246,6 +246,27 @@ pub enum Type {
     Tuple(Vec<Type>),
 }
 
+/// Does a LOCAL definition of `name` replace an imported one?
+///
+/// THE ONE DEFINITION OF THAT QUESTION, called by the type checker and by code
+/// generation, because they were asking two.
+///
+/// Typeck said a local GENERIC does not shadow an ordinary import (a generic is
+/// registered in a separate table and only materialises when instantiated).
+/// Codegen's own list said it does, and therefore suppressed the imported body —
+/// leaving a call resolved by typeck to the imported function with no definition
+/// emitted for it. Typeck's rule is the correct one, because it describes what
+/// actually replaces the imported body: a local generic emits nothing unless it
+/// is instantiated, so it replaces nothing.
+///
+/// It lives here rather than in either pass so that "both passes ask one
+/// question" is a fact about the call graph and not a claim in a comment.
+pub fn local_definition_shadows_import(program: &Program, name: &str) -> bool {
+    program.items.iter().any(|item| {
+        matches!(item, Item::Function(f) if f.name == name && f.type_params.is_empty())
+    })
+}
+
 /// Statements
 #[derive(Debug, Clone)]
 pub enum Stmt {

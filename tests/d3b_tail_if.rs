@@ -1371,6 +1371,57 @@ fn async_main_is_refused_only_when_it_is_the_entry_point() {
     );
 }
 
+/// EVERY offending import is validated, not the last one recorded.
+///
+/// `deferred_async_value_return` was an `Option`, so each qualifying import
+/// overwrote the previous one and `check` validated only the survivor. Measured
+/// at 37004bf with two bad exports whose SECOND is locally shadowed: the first
+/// escaped diagnosis entirely and gcc choked on the emitted C instead.
+#[test]
+fn every_offending_imported_async_export_is_validated_not_just_the_last() {
+    let err = compile_and_run_with_import(
+        "fn g() -> Future<()> { panic(\"x\"); }\n\
+         pub async fn bad1() -> () { g() }\n\
+         pub async fn bad2() -> () { g() }\n",
+        "import lib;\n\nfn bad2() { print_int(2); }\nfn main() { bad2(); }\n",
+        "d3b_two_offenders",
+    )
+    .expect_err("bad1 is not shadowed and must still be refused");
+    assert!(
+        err.contains("`return` with a value inside an `async fn`"),
+        "the FIRST offender must be diagnosed even though the second is \
+         shadowed; got:\n{}",
+        err
+    );
+}
+
+/// An imported GENERIC async violation is not diagnosed, because code
+/// generation never emits an imported generic.
+///
+/// The mirror of the shadowing case in the other axis: typeck recorded the
+/// violation before the generic branch while codegen's imported-function loop
+/// requires `type_params.is_empty()`, so a declaration the output can never
+/// contain was rejected. Whatever this program fails for, it must not be the
+/// async rule.
+#[test]
+fn an_imported_generic_async_violation_is_not_diagnosed() {
+    let err = compile_and_run_with_import(
+        "fn g() -> Future<()> { panic(\"x\"); }\n\
+         pub async fn gen<T>() -> () { g() }\n\
+         pub fn ok() { print_int(1); }\n",
+        "import lib;\n\nfn main() { ok(); }\n",
+        "d3b_imported_generic_async",
+    )
+    .err()
+    .unwrap_or_default();
+    assert!(
+        !err.contains("`return` with a value inside an `async fn`"),
+        "an imported generic is never emitted, so refusing it rejects a \
+         declaration the output cannot contain; got:\n{}",
+        err
+    );
+}
+
 /// An imported `pub async fn` with a value-carrying return is refused too.
 ///
 /// Same route as the entry-point case, one function over: only local functions

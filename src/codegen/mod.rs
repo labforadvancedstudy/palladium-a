@@ -64,6 +64,27 @@ struct ArrayBinding {
     storage: ArrayStorage,
 }
 
+/// WHERE THIS PASS DECIDES THE THINGS REVIEW KEEPS ASKING ABOUT
+/// ------------------------------------------------------------
+/// Same problem as the type checker: ~4,300 lines, past three reviewers' read
+/// limits. The decisions recent review turns on:
+///
+///   `current_fn_unit_return`    the field, and its per-function reset in
+///                               `generate_function_with_name` — BOTH spellings
+///                               of the unit type, and `main`'s `return 0;`
+///                               because its C type is `int`.
+///   `generate_statement`,       the two `Stmt::Return` arms that consume it.
+///   `generate_function_with_name`, `generate_block`,
+///   `generate_async_function_with_name`
+///                               the ONLY three callers of `generate_statement`;
+///                               the first and third set the reset, the second
+///                               inherits it.
+///   the imported-function loop  which imported bodies are emitted: public,
+///                               non-generic, and not shadowed — the last via
+///                               `crate::ast::local_definition_shadows_import`,
+///                               the same function the type checker calls.
+///   `function_signature`        the `actual_return_type` special case that
+///                               rewrites `main` to `int`.
 pub struct CodeGenerator {
     module_name: String,
     output: String,
@@ -1311,21 +1332,20 @@ impl CodeGenerator {
         // AND `int main(int, char**)`, and gcc refused it. It only became visible
         // once typeck stopped rejecting that program outright, which it should
         // never have been doing.
-        let local_names: std::collections::HashSet<&str> = program
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Function(f) => Some(f.name.as_str()),
-                _ => None,
-            })
-            .collect();
+        // THROUGH THE SHARED DEFINITION. This loop used to build its own name
+        // set, which counted a local GENERIC as shadowing — so an imported body
+        // was suppressed while the type checker went on resolving calls to it,
+        // leaving a name typeck accepted with no definition emitted. The one
+        // definition lives in src/ast/mod.rs and both passes call it, which is
+        // what makes "both passes ask one question" a fact about the call graph
+        // rather than a claim in a comment.
         for module_info in imported_modules.values() {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     // Only generate public, non-generic, non-shadowed functions
                     if matches!(func.visibility, crate::ast::Visibility::Public)
                         && func.type_params.is_empty()
-                        && !local_names.contains(func.name.as_str())
+                        && !crate::ast::local_definition_shadows_import(program, &func.name)
                     {
                         self.generate_function(func)?;
                     }

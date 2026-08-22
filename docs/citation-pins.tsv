@@ -21,10 +21,10 @@ grammar.ebnf	66-67	docs/reference/features/advanced/totality-checking.md	445c16d
 scripts/conformance.sh	211-211	docs/reference/features/feature-index.toml	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
 scripts/conformance.sh	211-211	docs/specification/language-spec.md	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
 src/ast/mod.rs	139-139	docs/specification/language-spec.md	f2408be09ac1	pub struct EnumDef {
-src/ast/mod.rs	313-313	docs/reference/features/advanced/totality-checking.md	8a1bdbb2637d	pub enum Pattern {
-src/ast/mod.rs	313-313	docs/reference/features/feature-index.toml	8a1bdbb2637d	pub enum Pattern {
-src/ast/mod.rs	313-313	docs/specification/language-spec.md	8a1bdbb2637d	pub enum Pattern {
-src/ast/mod.rs	313-323	docs/specification/bootstrap-subset.md	1eddf7da482f	pub enum Pattern { /// Wildcard pattern (_) Wildcard, /// Identifier pattern  ... numPattern { enum_name: String, variant: String, data: Option<PatternData>, },
+src/ast/mod.rs	334-334	docs/reference/features/advanced/totality-checking.md	8a1bdbb2637d	pub enum Pattern {
+src/ast/mod.rs	334-334	docs/reference/features/feature-index.toml	8a1bdbb2637d	pub enum Pattern {
+src/ast/mod.rs	334-334	docs/specification/language-spec.md	8a1bdbb2637d	pub enum Pattern {
+src/ast/mod.rs	334-344	docs/specification/bootstrap-subset.md	1eddf7da482f	pub enum Pattern { /// Wildcard pattern (_) Wildcard, /// Identifier pattern  ... numPattern { enum_name: String, variant: String, data: Option<PatternData>, },
 src/builtins.rs	1-1	docs/reference/features/feature-index.toml	b2040a84f342	// Built-in function registry for Palladium
 src/cli.rs	19-19	docs/reference/features/feature-index.toml	701dcf50c0cc	"Turing's Proofs Meet von Neumann's Performance"
 src/codegen/llvm_text_backend.rs	1081-1081	docs/specification/language-spec.md	d10b36aa74a5	}
@@ -38,57 +38,56 @@ src/codegen/llvm_text_backend.rs	820-820	docs/specification/language-spec.md	2c9
 src/codegen/llvm_text_backend.rs	914-914	docs/specification/language-spec.md	df3982fd6101	};
 src/codegen/llvm_text_backend.rs	921-921	docs/specification/language-spec.md	b0177824bb72	" store {} {}, {}* {}\n",
 src/codegen/llvm_text_backend.rs	933-933	docs/specification/language-spec.md	d10b36aa74a5	}
-src/codegen/mod.rs	1039-1039	docs/design/trait_system_design.md	e27e67ec8902	self.output.push_str("extern int pd_file_close(FileHandle handle);\n");
-src/codegen/mod.rs	1039-1039	docs/reference/features/feature-index.toml	e27e67ec8902	self.output.push_str("extern int pd_file_close(FileHandle handle);\n");
-src/codegen/mod.rs	1039-1039	docs/specification/language-spec.md	e27e67ec8902	self.output.push_str("extern int pd_file_close(FileHandle handle);\n");
-src/codegen/mod.rs	1053-1059	docs/specification/language-spec.md	e6576fd963b2	self.output.push_str("extern int pd_write_string_to_file(const char* path, si ... rn pd_file_open(path, strlen(path), mode);\n"); self.output.push_str("}\n\n");
-src/codegen/mod.rs	1060-1060	docs/reference/features/feature-index.toml	e3b0c44298fc	
-src/codegen/mod.rs	1081-1081	docs/specification/language-spec.md	0a5066da4d3b	// pd_file_flush wrapper
-src/codegen/mod.rs	1083-1085	docs/specification/language-spec.md	d184f6270b9e	self.output.push_str(" return pd_file_flush(handle);\n"); self.output.push_str("}\n\n");
-src/codegen/mod.rs	1111-1114	docs/specification/bootstrap-subset.md	7ff1cf9e0168	self.output.push_str("int __pd_remove_dir(const char* path) {\n"); self.outpu ...  return pd_remove_dir(path, strlen(path));\n"); self.output.push_str("}\n\n");
-src/codegen/mod.rs	1111-1114	docs/specification/language-spec.md	7ff1cf9e0168	self.output.push_str("int __pd_remove_dir(const char* path) {\n"); self.outpu ...  return pd_remove_dir(path, strlen(path));\n"); self.output.push_str("}\n\n");
-src/codegen/mod.rs	1135-1135	docs/specification/bootstrap-subset.md	1651cd25c677	self.output.push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");
-src/codegen/mod.rs	1151-1151	docs/specification/bootstrap-subset.md	d10b36aa74a5	}
-src/codegen/mod.rs	1151-1151	docs/specification/language-spec.md	d10b36aa74a5	}
-src/codegen/mod.rs	1381-1381	docs/specification/bootstrap-subset.md	b32551e9b7f4	Ok(())
-src/codegen/mod.rs	1407-1407	docs/specification/language-spec.md	985045f1c057	} else {
-src/codegen/mod.rs	1419-1419	docs/specification/language-spec.md	35b1d18c2084	format!("{}*", self.type_to_c(inner))
-src/codegen/mod.rs	1708-1708	docs/reference/features/advanced/totality-checking.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1708-1708	docs/reference/features/feature-index.toml	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1708-1708	docs/specification/bootstrap-subset.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1708-1708	docs/specification/language-spec.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1723-1723	docs/specification/bootstrap-subset.md	eac9f4b0ef4d	"Tuple types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1955-1958	docs/reference/features/feature-index.toml	1c161afbcc5b	Type::Array(elem_type, size) => { // In C, array parameters are passed as poi ... arity, though it decays to pointer sig.push_str(&Self::array_param_declarator(
-src/codegen/mod.rs	1967-1967	docs/reference/features/feature-index.toml	3b1dedd1cb30	sig.push_str(&format!("{}* {}", c_type, param.name));
-src/codegen/mod.rs	1975-1985	docs/reference/features/feature-index.toml	51328d533ce6	// itself - C decays both to a pointer to the first element - // so `&[T; N]` ...  size, &param.name, !*mutable, )?); continue; } // Handle reference parameters
-src/codegen/mod.rs	1977-1978	docs/reference/features/feature-index.toml	5ac98f2e0a74	// Without this case the whole parameter was rejected, which // is why examples/practical/simple_sort.pd did not compile.
-src/codegen/mod.rs	2001-2001	docs/reference/features/feature-index.toml	13b4cf93b10f	"const unsigned int* "
-src/codegen/mod.rs	2001-2001	docs/specification/language-spec.md	13b4cf93b10f	"const unsigned int* "
-src/codegen/mod.rs	2022-2033	docs/specification/language-spec.md	ce03910b3003	} } _ => { return Err(CompileError::Generic( "Unsupported type in reference p ... r".to_string(), )); } } sig.push_str(&param.name); } _ => { // For other types
-src/codegen/mod.rs	2026-2026	docs/specification/language-spec.md	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
-src/codegen/mod.rs	2180-2180	docs/specification/bootstrap-subset.md	5e71679bdf3f	/// how long each array is, and a flat function-wide map let an inner
-src/codegen/mod.rs	2219-2219	docs/specification/bootstrap-subset.md	1abc8c2a15b6	/// `for` variable and a match binding are written into these maps *before*
-src/codegen/mod.rs	2245-2245	docs/specification/language-spec.md	226586ca8ba7	Stmt::Expr(expr) => {
-src/codegen/mod.rs	2282-2282	docs/specification/bootstrap-subset.md	9b66c55c534f	Type::Array(elem_type, size) => {
-src/codegen/mod.rs	2541-2544	docs/specification/language-spec.md	f6bd8fe92350	self.output.push_str(" }\n"); } }
-src/codegen/mod.rs	2583-2583	docs/specification/language-spec.md	44f4caca8484	// Generate pattern matching condition
-src/codegen/mod.rs	2591-2596	docs/reference/features/feature-index.toml	57a680eabfc5	self.output.push_str("1) {\n"); self.output.push_str(&format!( " long long {} = _match_expr;\n", name )); let arm_scope = self.open_binding_scope();
-src/codegen/mod.rs	2595-2595	docs/specification/language-spec.md	0c049cf1444b	));
-src/codegen/mod.rs	2596-2596	docs/specification/bootstrap-subset.md	77c07d279457	let arm_scope = self.open_binding_scope();
-src/codegen/mod.rs	2622-2643	docs/reference/features/async-system/async-as-effect.md	94ee2664c02c	if let Some(enum_def) = self.enums.get(enum_name) { // Find the variant if le ... ariant.to_lowercase(), i )); // The binding is a real // variable; type it for
-src/codegen/mod.rs	2622-2643	docs/specification/language-spec.md	94ee2664c02c	if let Some(enum_def) = self.enums.get(enum_name) { // Find the variant if le ... ariant.to_lowercase(), i )); // The binding is a real // variable; type it for
-src/codegen/mod.rs	2623-2623	docs/specification/bootstrap-subset.md	93a7f122ad55	// Find the variant
-src/codegen/mod.rs	2643-2643	docs/reference/features/feature-index.toml	af750a79ff49	// variable; type it for
-src/codegen/mod.rs	2664-2664	docs/specification/language-spec.md	e923217334ec	for (field_name, pattern) in field_patterns {
-src/codegen/mod.rs	2678-2685	docs/reference/features/async-system/async-as-effect.md	ca7c8fc91ec6	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... ing) return Err(CompileError::Generic( "Pattern type mismatch in enum variant"
-src/codegen/mod.rs	2678-2689	docs/specification/language-spec.md	3e8e873e271c	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... eError::Generic( "Pattern type mismatch in enum variant" .to_string(), )); } }
-src/codegen/mod.rs	2687-2689	docs/reference/features/async-system/async-as-effect.md	0ada7a203994	)); } }
+src/codegen/mod.rs	1074-1080	docs/specification/language-spec.md	e6576fd963b2	self.output.push_str("extern int pd_write_string_to_file(const char* path, si ... rn pd_file_open(path, strlen(path), mode);\n"); self.output.push_str("}\n\n");
+src/codegen/mod.rs	1102-1102	docs/specification/language-spec.md	0a5066da4d3b	// pd_file_flush wrapper
+src/codegen/mod.rs	1104-1106	docs/specification/language-spec.md	d184f6270b9e	self.output.push_str(" return pd_file_flush(handle);\n"); self.output.push_str("}\n\n");
+src/codegen/mod.rs	1132-1135	docs/specification/bootstrap-subset.md	7ff1cf9e0168	self.output.push_str("int __pd_remove_dir(const char* path) {\n"); self.outpu ...  return pd_remove_dir(path, strlen(path));\n"); self.output.push_str("}\n\n");
+src/codegen/mod.rs	1132-1135	docs/specification/language-spec.md	7ff1cf9e0168	self.output.push_str("int __pd_remove_dir(const char* path) {\n"); self.outpu ...  return pd_remove_dir(path, strlen(path));\n"); self.output.push_str("}\n\n");
+src/codegen/mod.rs	1156-1156	docs/specification/bootstrap-subset.md	1651cd25c677	self.output.push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");
+src/codegen/mod.rs	1172-1172	docs/specification/bootstrap-subset.md	d10b36aa74a5	}
+src/codegen/mod.rs	1172-1172	docs/specification/language-spec.md	d10b36aa74a5	}
+src/codegen/mod.rs	1401-1401	docs/specification/bootstrap-subset.md	b32551e9b7f4	Ok(())
+src/codegen/mod.rs	1427-1427	docs/specification/language-spec.md	985045f1c057	} else {
+src/codegen/mod.rs	1439-1439	docs/specification/language-spec.md	35b1d18c2084	format!("{}*", self.type_to_c(inner))
+src/codegen/mod.rs	1728-1728	docs/reference/features/advanced/totality-checking.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1728-1728	docs/reference/features/feature-index.toml	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1728-1728	docs/specification/bootstrap-subset.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1728-1728	docs/specification/language-spec.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1743-1743	docs/specification/bootstrap-subset.md	eac9f4b0ef4d	"Tuple types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1975-1978	docs/reference/features/feature-index.toml	1c161afbcc5b	Type::Array(elem_type, size) => { // In C, array parameters are passed as poi ... arity, though it decays to pointer sig.push_str(&Self::array_param_declarator(
+src/codegen/mod.rs	1987-1987	docs/reference/features/feature-index.toml	3b1dedd1cb30	sig.push_str(&format!("{}* {}", c_type, param.name));
+src/codegen/mod.rs	1995-2005	docs/reference/features/feature-index.toml	51328d533ce6	// itself - C decays both to a pointer to the first element - // so `&[T; N]` ...  size, &param.name, !*mutable, )?); continue; } // Handle reference parameters
+src/codegen/mod.rs	1997-1998	docs/reference/features/feature-index.toml	5ac98f2e0a74	// Without this case the whole parameter was rejected, which // is why examples/practical/simple_sort.pd did not compile.
+src/codegen/mod.rs	2021-2021	docs/reference/features/feature-index.toml	13b4cf93b10f	"const unsigned int* "
+src/codegen/mod.rs	2021-2021	docs/specification/language-spec.md	13b4cf93b10f	"const unsigned int* "
+src/codegen/mod.rs	2042-2053	docs/specification/language-spec.md	ce03910b3003	} } _ => { return Err(CompileError::Generic( "Unsupported type in reference p ... r".to_string(), )); } } sig.push_str(&param.name); } _ => { // For other types
+src/codegen/mod.rs	2046-2046	docs/specification/language-spec.md	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
+src/codegen/mod.rs	2200-2200	docs/specification/bootstrap-subset.md	5e71679bdf3f	/// how long each array is, and a flat function-wide map let an inner
+src/codegen/mod.rs	2239-2239	docs/specification/bootstrap-subset.md	1abc8c2a15b6	/// `for` variable and a match binding are written into these maps *before*
+src/codegen/mod.rs	2265-2265	docs/specification/language-spec.md	226586ca8ba7	Stmt::Expr(expr) => {
+src/codegen/mod.rs	2302-2302	docs/specification/bootstrap-subset.md	9b66c55c534f	Type::Array(elem_type, size) => {
+src/codegen/mod.rs	2561-2564	docs/specification/language-spec.md	f6bd8fe92350	self.output.push_str(" }\n"); } }
+src/codegen/mod.rs	2603-2603	docs/specification/language-spec.md	44f4caca8484	// Generate pattern matching condition
+src/codegen/mod.rs	2611-2616	docs/reference/features/feature-index.toml	57a680eabfc5	self.output.push_str("1) {\n"); self.output.push_str(&format!( " long long {} = _match_expr;\n", name )); let arm_scope = self.open_binding_scope();
+src/codegen/mod.rs	2615-2615	docs/specification/language-spec.md	0c049cf1444b	));
+src/codegen/mod.rs	2616-2616	docs/specification/bootstrap-subset.md	77c07d279457	let arm_scope = self.open_binding_scope();
+src/codegen/mod.rs	2642-2663	docs/reference/features/async-system/async-as-effect.md	94ee2664c02c	if let Some(enum_def) = self.enums.get(enum_name) { // Find the variant if le ... ariant.to_lowercase(), i )); // The binding is a real // variable; type it for
+src/codegen/mod.rs	2642-2663	docs/specification/language-spec.md	94ee2664c02c	if let Some(enum_def) = self.enums.get(enum_name) { // Find the variant if le ... ariant.to_lowercase(), i )); // The binding is a real // variable; type it for
+src/codegen/mod.rs	2663-2663	docs/reference/features/feature-index.toml	af750a79ff49	// variable; type it for
+src/codegen/mod.rs	2663-2663	docs/specification/bootstrap-subset.md	af750a79ff49	// variable; type it for
+src/codegen/mod.rs	2684-2684	docs/specification/language-spec.md	e923217334ec	for (field_name, pattern) in field_patterns {
+src/codegen/mod.rs	2698-2705	docs/reference/features/async-system/async-as-effect.md	ca7c8fc91ec6	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... ing) return Err(CompileError::Generic( "Pattern type mismatch in enum variant"
+src/codegen/mod.rs	2698-2709	docs/specification/language-spec.md	3e8e873e271c	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... eError::Generic( "Pattern type mismatch in enum variant" .to_string(), )); } }
+src/codegen/mod.rs	2707-2709	docs/reference/features/async-system/async-as-effect.md	0ada7a203994	)); } }
 src/codegen/mod.rs	4-7	docs/reference/features/feature-index.toml	e7c89afcb67b	pub mod llvm_backend; pub mod llvm_backend_improved; pub mod llvm_native; pub mod llvm_text_backend;
-src/codegen/mod.rs	450-450	docs/specification/language-spec.md	23a7d0452793	/// `"long long[3][2]"`.
-src/codegen/mod.rs	520-520	docs/specification/language-spec.md	b825c1675d27	match form {
-src/codegen/mod.rs	867-867	docs/specification/language-spec.md	18f2890fc7c6	self.output.push_str(" size_t len = strlen(str);\n");
-src/codegen/mod.rs	931-935	docs/specification/language-spec.md	6823ecddafb7	// file_open self.output .push_str("long long __pd_file_open(const char* path) {\n"); self.output
-src/codegen/mod.rs	955-955	docs/specification/language-spec.md	424a9daec629	self.output.push_str(" fseek(f, 0, SEEK_SET);\n");
+src/codegen/mod.rs	471-471	docs/specification/language-spec.md	23a7d0452793	/// `"long long[3][2]"`.
+src/codegen/mod.rs	541-541	docs/specification/language-spec.md	b825c1675d27	match form {
+src/codegen/mod.rs	888-888	docs/specification/language-spec.md	18f2890fc7c6	self.output.push_str(" size_t len = strlen(str);\n");
+src/codegen/mod.rs	952-956	docs/specification/language-spec.md	6823ecddafb7	// file_open self.output .push_str("long long __pd_file_open(const char* path) {\n"); self.output
+src/codegen/mod.rs	976-976	docs/specification/language-spec.md	424a9daec629	self.output.push_str(" fseek(f, 0, SEEK_SET);\n");
+src/codegen/mod.rs	983-983	docs/design/trait_system_design.md	e3b0c44298fc	
+src/codegen/mod.rs	983-983	docs/reference/features/feature-index.toml	e3b0c44298fc	
+src/codegen/mod.rs	983-983	docs/specification/language-spec.md	e3b0c44298fc	
 src/driver/mod.rs	139-145	docs/specification/language-spec.md	760f04349e68	let borrow_time = borrow_start.elapsed(); println!( " Memory safety verified! ({:.2}ms)", borrow_time.as_secs_f64() * 1000.0 ); // Phase 3.6: Effect analysis
 src/driver/mod.rs	147-147	docs/reference/features/async-system/async-as-effect.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
 src/driver/mod.rs	147-147	docs/reference/features/feature-index.toml	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
@@ -199,28 +198,28 @@ src/parser/mod.rs	786-786	docs/specification/language-spec.md	cc99843703d1	Token
 src/resolver/mod.rs	51-51	docs/reference/features/feature-index.toml	891ba0920fa5	// Check for PALLADIUM_PATH environment variable
 src/resolver/mod.rs	51-52	docs/specification/language-spec.md	07ec7e442f32	// Check for PALLADIUM_PATH environment variable if let Ok(pd_path) = std::env::var("PALLADIUM_PATH") {
 src/runtime/string_ops.rs	398-398	docs/reference/features/advanced/totality-checking.md	b8736fb052c9	fn test_null_termination() {
-src/typeck/mod.rs	1064-1064	docs/specification/language-spec.md	c712593f0f54	fn check_function(&mut self, func: &Function) -> Result<()> {
+src/typeck/mod.rs	1088-1088	docs/specification/language-spec.md	c712593f0f54	fn check_function(&mut self, func: &Function) -> Result<()> {
 src/typeck/mod.rs	121-125	docs/reference/features/core-language/implicit-lifetimes.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	121-125	docs/reference/features/feature-index.toml	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	121-125	docs/specification/language-spec.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
-src/typeck/mod.rs	1466-1466	docs/reference/features/feature-index.toml	df3982fd6101	};
-src/typeck/mod.rs	1466-1466	docs/specification/language-spec.md	df3982fd6101	};
-src/typeck/mod.rs	1679-1679	docs/specification/language-spec.md	6aabd020a028	)));
-src/typeck/mod.rs	1829-1829	docs/specification/bootstrap-subset.md	d10b36aa74a5	}
-src/typeck/mod.rs	1991-1991	docs/specification/bootstrap-subset.md	a9b394d2b620	// Check if we already have a constraint for this type parameter
-src/typeck/mod.rs	2473-2473	docs/specification/bootstrap-subset.md	6d888605c560	expected: "Bool".to_string(),
-src/typeck/mod.rs	2473-2473	docs/specification/language-spec.md	6d888605c560	expected: "Bool".to_string(),
-src/typeck/mod.rs	2480-2480	docs/specification/bootstrap-subset.md	d10b36aa74a5	}
-src/typeck/mod.rs	2480-2480	docs/specification/language-spec.md	d10b36aa74a5	}
-src/typeck/mod.rs	2487-2487	docs/reference/features/feature-index.toml	e3b0c44298fc	
-src/typeck/mod.rs	2638-2638	docs/specification/language-spec.md	d10b36aa74a5	}
-src/typeck/mod.rs	2839-2839	docs/specification/language-spec.md	d10b36aa74a5	}
-src/typeck/mod.rs	2869-2869	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
-src/typeck/mod.rs	376-376	docs/specification/language-spec.md	f28ef1a76718	// src/builtins.rs so that this pass and the borrow checker can never
-src/typeck/mod.rs	376-382	docs/specification/bootstrap-subset.md	db4e2b3c7b6b	// src/builtins.rs so that this pass and the borrow checker can never // drif ... ap(|b| { let params = b.params.iter().map(|p| builtin_type(p.ty)).collect(); (
-src/typeck/mod.rs	854-854	docs/design/trait_system_design.md	e3b0c44298fc	
-src/typeck/mod.rs	854-856	docs/specification/language-spec.md	459dfb6fab18	// Second pass: type check function bodies for item in &program.items {
-src/typeck/mod.rs	867-869	docs/reference/features/feature-index.toml	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
+src/typeck/mod.rs	1464-1464	docs/reference/features/feature-index.toml	df3982fd6101	};
+src/typeck/mod.rs	1464-1464	docs/specification/language-spec.md	df3982fd6101	};
+src/typeck/mod.rs	1703-1703	docs/specification/language-spec.md	6aabd020a028	)));
+src/typeck/mod.rs	1749-1749	docs/specification/bootstrap-subset.md	d10b36aa74a5	}
+src/typeck/mod.rs	2015-2015	docs/specification/bootstrap-subset.md	a9b394d2b620	// Check if we already have a constraint for this type parameter
+src/typeck/mod.rs	2400-2400	docs/specification/bootstrap-subset.md	d10b36aa74a5	}
+src/typeck/mod.rs	2400-2400	docs/specification/language-spec.md	d10b36aa74a5	}
+src/typeck/mod.rs	2416-2416	docs/reference/features/feature-index.toml	e3b0c44298fc	
+src/typeck/mod.rs	2497-2497	docs/specification/bootstrap-subset.md	6d888605c560	expected: "Bool".to_string(),
+src/typeck/mod.rs	2497-2497	docs/specification/language-spec.md	6d888605c560	expected: "Bool".to_string(),
+src/typeck/mod.rs	2558-2558	docs/specification/language-spec.md	d10b36aa74a5	}
+src/typeck/mod.rs	2761-2761	docs/specification/language-spec.md	d10b36aa74a5	}
+src/typeck/mod.rs	2893-2893	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
+src/typeck/mod.rs	408-408	docs/specification/language-spec.md	f28ef1a76718	// src/builtins.rs so that this pass and the borrow checker can never
+src/typeck/mod.rs	408-414	docs/specification/bootstrap-subset.md	db4e2b3c7b6b	// src/builtins.rs so that this pass and the borrow checker can never // drif ... ap(|b| { let params = b.params.iter().map(|p| builtin_type(p.ty)).collect(); (
+src/typeck/mod.rs	774-774	docs/design/trait_system_design.md	e3b0c44298fc	
+src/typeck/mod.rs	895-897	docs/specification/language-spec.md	459dfb6fab18	// Second pass: type check function bodies for item in &program.items {
+src/typeck/mod.rs	908-910	docs/reference/features/feature-index.toml	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
 stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
 tests/regression/lifetimes_uninferred.pd	26-29	docs/reference/features/feature-index.toml	72af1a529f72	fn dangling() -> &i64 { let x: i64 = 5; return &x; }
 tests/reject/uncalled_body_is_checked.pd	21-24	docs/reference/features/feature-index.toml	d225dd41e15a	fn bad() { let v: S = S { x: 0 }; borrow_it(&mut v); }

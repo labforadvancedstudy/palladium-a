@@ -937,52 +937,108 @@ fi
 # WHAT THIS CHECK IS, SAID PLAINLY — the same discipline the Withheld repr got,
 # applied to the promise as well as to the mechanism.
 #
-# SCOPE, BROADENED so the promise and the enforcement can be the same sentence:
-# every file git tracks (`git ls-files`), binaries skipped by `grep -I`. It used
-# to read only `.py`/`.sh`/`.rs` under scripts/, tests/ and src/, so "any
-# consumer" in the module docstring was wider than what any gate checked. The
-# docstring now states this scope, and this is it.
+# SCOPE: every file git tracks (`git ls-files`), binaries skipped. It used to
+# read only `.py`/`.sh`/`.rs` under scripts/, tests/ and src/, so "any consumer"
+# in the module docstring was wider than what any gate checked.
 #
-# WHAT STILL WALKS PAST IT, because a guard that is described as more than it is
-# becomes the next round's defect: `getattr(x, "_b")`, a name assembled from
-# tokens, `vars(x)["_b"]`, anything constructed at runtime, and an untracked
-# file. It is a LEXICAL CONVENTION GUARD, not access control. Its value is that
-# the ORDINARY way of writing the shortcut is visible to a gate, so taking it
-# has to be deliberate and in a form a reviewer notices.
+# PROSE IS EXEMPTED BY SPAN, NOT BY LINE — and that correction matters more than
+# it sounds. The first version dropped any line containing a backtick anywhere,
+# so this was invisible to the guard:
+#
+#     x = r._out  # `debug`
+#
+# live access, exempted by an unrelated word in a trailing comment. The stated
+# cost ("a shell line using backticks for command substitution") was not the
+# cost it had. Backticked spans and comment tails are now removed FROM the line
+# and the pattern is matched against what is left, so prose is exempt and code
+# on the same line is not.
+#
+# WHAT STILL WALKS PAST IT, because a guard described as more than it is becomes
+# the next round's defect: `getattr(x, "_b")`, a name assembled from tokens,
+# `vars(x)["_b"]`, anything constructed at runtime, an untracked file, and a
+# private slot named inside a string literal that is not backticked. It is a
+# LEXICAL CONVENTION GUARD, not access control.
 #
 # Two files are exempt and both are load-bearing rather than convenient:
-# gate_probe.py OWNS the slots, and this file is the ENFORCER — it must spell
-# the names in its pattern in order to search for them. Neither forms a verdict
-# from producer text, which is the thing being prevented; a reviewer checking
-# this rule is reading exactly these two files anyway.
-#
-# COMMENT LINES AND BACKTICKED PROSE ARE EXCLUDED, and that is not a loophole:
-# the retraction this whole section exists to make REQUIRES naming `Run._out`
-# and `Withheld._b` in prose — in gate_probe.py, in test-xfail.py, and (since
-# the merge of fix/cmd-evidence-unexecuted) in check_doc_evidence.py's own
-# docstring, which describes this boundary correctly. A rule that forbade
-# writing the truth down would push the truth back out of the prose, which is
-# the failure mode.
-#
-# The backtick exemption is the same one the intra-module check already used and
-# it has a cost worth naming: a shell line using backticks for command
-# substitution AND touching a private slot would be skipped. No such line exists
-# (the pattern is Python/Rust attribute syntax), and access on a `#`/`//` line
-# or inside backticks is not access.
-leaks=$(git ls-files -z \
-        | xargs -0 grep -InE '\._out\b|\._b\b|\._rc\b|\.withheld\._' 2>/dev/null \
-        | grep -v '^scripts/gate_probe.py:' \
-        | grep -v '^scripts/test-gate-probe.sh:' \
-        | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' \
-        | grep -v '`' || true)
-if [ -z "$leaks" ]; then
+# gate_probe.py OWNS the slots, and this file is the ENFORCER — it must spell the
+# names in its pattern in order to search for them.
+python3 - >"$TMP/leaks.out" 2>&1 <<'LEAKPY'
+import pathlib, re, subprocess, sys
+
+PRIVATE = re.compile(r"\._out\b|\._b\b|\._rc\b|\.withheld\._")
+# A backticked span, a `#` comment tail, or a `//` comment tail. Removed from
+# the line before the pattern is applied: what is left is code.
+PROSE = re.compile(r"`[^`]*`|#.*$|//.*$")
+EXEMPT = {"scripts/gate_probe.py", "scripts/test-gate-probe.sh"}
+
+tracked = subprocess.run(["git", "ls-files", "-z"], capture_output=True).stdout
+leaks = []
+for raw in tracked.split(b"\0"):
+    if not raw:
+        continue
+    name = raw.decode("utf-8", "replace")
+    if name in EXEMPT:
+        continue
+    path = pathlib.Path(name)
+    try:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        continue                      # binary or unreadable: nothing to read
+    for n, line in enumerate(text.split("\n"), 1):
+        if "_out" not in line and "_b" not in line and "_rc" not in line:
+            continue
+        code = PROSE.sub("", line)
+        if PRIVATE.search(code):
+            leaks.append("%s:%d: %s" % (name, n, line.strip()[:100]))
+
+print("\n".join(leaks) if leaks else "ok")
+sys.exit(1 if leaks else 0)
+LEAKPY
+if [ $? -eq 0 ]; then
   printf '  %sok%s   no consumer outside gate_probe.py names a withheld private slot\n' "$GREEN" "$NC"
   pass=$((pass+1))
 else
   printf '  %sFAIL%s a consumer reaches past the boundary for withheld bytes:\n' "$RED" "$NC"
-  printf '%s\n' "$leaks" | sed 's/^/        /'
+  sed 's/^/        /' "$TMP/leaks.out"
   fail=$((fail+1))
 fi
+
+# ...AND THE EXEMPTION ITSELF IS FAULT-INJECTED. A prose mention must stay
+# invisible, and live access must stay visible even when prose shares its line —
+# which is exactly the case the whole-line version missed.
+python3 - >"$TMP/prose.out" 2>&1 <<'PROSEPY'
+import re, sys
+
+PRIVATE = re.compile(r"\._out\b|\._b\b|\._rc\b|\.withheld\._")
+PROSE = re.compile(r"`[^`]*`|#.*$|//.*$")
+
+
+def flagged(line):
+    return bool(PRIVATE.search(PROSE.sub("", line)))
+
+
+bad = []
+for line, want, why in [
+    ("# the bytes survive in `Run._out` and `Withheld._b`", False,
+     "a comment naming the slots is the retraction, not access"),
+    ("    `Run._out`. What IS structural here is that every caller", False,
+     "backticked prose in a docstring"),
+    ("x = r._out  # `debug`", True,
+     "live access with backticked prose on the same line"),
+    ("    return res.withheld._b", True, "plain access"),
+    ("value = obj._rc + 1  // `note`", True, "live access, Rust comment tail"),
+    ("/// See `Withheld._b` for why", False, "a doc comment"),
+]:
+    got = flagged(line)
+    if got != want:
+        bad.append("%r -> flagged=%s, wanted %s (%s)" % (line, got, want, why))
+print("\n".join(bad) if bad else "ok")
+sys.exit(1 if bad else 0)
+PROSEPY
+check "the prose exemption hides prose and not access" 0 $?
+grep -v '^ok$' "$TMP/prose.out" | sed 's/^/        /' || true
 
 echo
 echo "== the malfunction path must not republish producer text =="

@@ -301,10 +301,10 @@ no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 
 **7. `.await` generates C that references a member no part of the compiler emits.**
 Codegen for an await expression emits `while (!<tmp>.poll(&<tmp>)) { }`
-(`src/codegen/mod.rs:2678-2685`) and then reads `<tmp>.result` (`src/codegen/mod.rs:2687-2689`). Nothing generates a
+(`src/codegen/mod.rs:2698-2705`) and then reads `<tmp>.result` (`src/codegen/mod.rs:2707-2709`). Nothing generates a
 `poll` member on the produced C type. This is not an error at any earlier stage — it is silent
 breakage discovered by the C compiler, and it is the failure mode `language-spec.md` §6.5 already
-recorded. The parallel defect for `?` is at `src/codegen/mod.rs:2622-2643`, which emits a
+recorded. The parallel defect for `?` is at `src/codegen/mod.rs:2642-2663`, which emits a
 `struct Result { int is_ok; union { ... } data; }` layout that codegen never defines.
 
 Direction of travel: making `.await` a hard compile error is *consistent* with this document,
