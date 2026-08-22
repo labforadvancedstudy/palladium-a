@@ -71,12 +71,20 @@ GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 #
 # The lesson is the one the `find` grammar taught: when validating the SHAPE of a thing
 # keeps admitting things you did not mean, stop validating the shape and enumerate what
-# you actually need. Five commands are cited by the index today, and these are those five,
-# by exact string. Every one is read-only with respect to anything outside this checkout:
-# they compile, run fixtures, and print.
+# you actually need. Five commands are cited by the index today, and these are those
+# five, by exact string.
 #
-# ADDING ONE IS A DELIBERATE EDIT HERE, and the thing to ask before making it is not "does
-# it look like a gate" but "what does this do that cannot be undone".
+# WHAT THIS BOUNDS, EXACTLY: the IDENTITY of the command that runs. It does not bound
+# its EFFECT. `cargo test --release --lib lsp::` executes whatever test code matches
+# that filter, unsandboxed; `make conformance`, `make selfhost` and `make stdlib-gate`
+# run scripts that compile and execute fixtures. Their transitive behaviour is reviewed
+# the way any code here is reviewed, not constrained by this list. What the list does is
+# make the set of ENTRY POINTS closed and short instead of "every lowercase target in
+# the Makefile" -- which is what let `make publish`, i.e. `cargo publish`, be reachable
+# from a line in a documentation file.
+#
+# ADDING ONE IS A DELIBERATE EDIT HERE, and the thing to ask before making it is not
+# "does it look like a gate" but "what does this do that cannot be undone".
 GATE_COMMANDS='make conformance
 make selfhost
 make stdlib-gate
@@ -126,9 +134,11 @@ n=0
 for cmd in "${COMMANDS[@]}"; do
   n=$((n+1))
   if ! allowed "$cmd"; then
-    printf '  %sFAIL%s %-24s refused: a gate: command must be `make <target>`, `cargo build...`\n' \
+    printf '  %sFAIL%s %-24s refused: not one of the five commands this gate may run.\n' \
       "$RED" "$NC" "$cmd"
-    printf '       %-24s or `cargo test...`, built only from letters, digits and ._:=-\n' ""
+    printf '       %-24s The accepted set is exact, not a shape:\n' ""
+    printf '%s\n' "$GATE_COMMANDS" | sed 's/^/         /'
+    printf '       %-24s Adding one is an edit to GATE_COMMANDS in this file.\n' ""
     failures=$((failures+1))
     continue
   fi

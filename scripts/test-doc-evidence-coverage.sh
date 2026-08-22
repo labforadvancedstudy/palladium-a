@@ -49,9 +49,10 @@ INVENTORY=scripts/doc-evidence-fixes.tsv
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YEL=$'\033[0;33m'; NC=$'\033[0m'
 
 # Every file a mutation may touch. Restored from git after each one, and on exit.
-MUTABLE="scripts/check_doc_evidence.py scripts/gate-receipts.sh .github/workflows/preview.yml"
+MUTABLE="scripts/check_doc_evidence.py scripts/gate-receipts.sh .github/workflows/preview.yml Makefile scripts/test-doc-evidence-coverage.sh scripts/test-doc-evidence.sh"
 
 for f in $MUTABLE; do
+  [ "${1:-}" = --explain-base ] && break   # resolves a scope and exits; mutates nothing
   if ! git diff --quiet -- "$f" || ! git diff --cached --quiet -- "$f"; then
     echo "error: $f has uncommitted changes. This script rewrites it and restores it" >&2
     echo "       from git, which would destroy them. Commit or stash first." >&2
@@ -72,7 +73,35 @@ CONTROLS=scripts/doc-evidence-controls.tsv
 # where `merge-base main HEAD` is HEAD and the diff would be empty); the merge-base with
 # main or origin/main on a feature branch. If none resolves -- a shallow CI checkout has
 # no main ref and no HEAD^ -- the file reconciliation is NOT APPLICABLE and says so.
+# WHAT scripts/doc-evidence-fixes.tsv IS FOR, AND WHERE IT IS A GATE.
+#
+# It answers a BRANCH-REVIEW question: did this branch declare every file it changed, and
+# does every file it declares as machinery carry mutations. That question exists while the
+# branch is under review and stops existing when the branch lands — on main the branch is
+# history, and the next push has a different file set entirely.
+#
+# So it is a gate ON A FEATURE BRANCH ONLY. On main it is NOT APPLICABLE, whatever base is
+# supplied. The previous code decided that from HOW THE BASE ARRIVED — an explicit
+# COVERAGE_BASE meant "branch" — and CI passed github.event.before as COVERAGE_BASE on
+# every main push. The first push after this branch merged that did not touch all 31
+# declared files would have failed with fatal MISSING, and any newly touched file with
+# UNDECLARED. That is a gate that bricks the branch it is merged into, and the divergence
+# was between this file's own description and its code: the description already said
+# "fatal on a feature branch and a printed note elsewhere".
+#
+# POSITION DECIDES. HEAD reachable from main means we are not on a branch under review.
+# The permanent gate that runs everywhere is the CONTROL closure below; it is derived from
+# what the probe prints at runtime and does not depend on git history at all.
 BASE=""; BASE_WHY=""; ON_BRANCH=no
+for _ref in main origin/main; do
+  git rev-parse --verify "$_ref" >/dev/null 2>&1 || continue
+  if git merge-base --is-ancestor HEAD "$_ref" 2>/dev/null; then
+    ON_BRANCH=no        # HEAD is on (or behind) main: not a branch under review
+  else
+    ON_BRANCH=yes
+  fi
+  break
+done
 if [ -n "${COVERAGE_BASE:-}" ]; then
   # AN EXPLICIT REQUEST THAT CANNOT BE HONOURED IS AN ERROR, NOT A SKIP. Previously an
   # invalid COVERAGE_BASE fell through to the same green NOT APPLICABLE as "no base
@@ -100,7 +129,7 @@ if [ -n "${COVERAGE_BASE:-}" ]; then
     echo "       is not one." >&2
     exit 2
   fi
-  BASE_WHY="COVERAGE_BASE"; ON_BRANCH=yes
+  BASE_WHY="COVERAGE_BASE"
 else
   # On a FEATURE BRANCH the base is the merge-base with main. Deliberately preferred over
   # HEAD^1 even when HEAD is a merge: a branch that merges main INTO itself has a first
@@ -120,18 +149,37 @@ else
       BASE=$(git rev-parse --verify 'HEAD^1' 2>/dev/null) || BASE=""
       [ -n "$BASE" ] && BASE_WHY="HEAD is $ref; first parent (a multi-commit push needs COVERAGE_BASE)"
     else
-      BASE=$cand; BASE_WHY="merge-base with $ref"; ON_BRANCH=yes
+      BASE=$cand; BASE_WHY="merge-base with $ref"
     fi
     [ -n "$BASE" ] && break
   done
 fi
 CHANGED=""
-[ -n "$BASE" ] && CHANGED=$(git diff --name-only "$BASE"..HEAD)
+if [ "$ON_BRANCH" = yes ] && [ -n "$BASE" ]; then
+  CHANGED=$(git diff --name-only "$BASE"..HEAD)
+fi
+
+# A mode for the controls: resolve the scope, say what was decided, and stop. Running the
+# whole mutation matrix to test a base decision would cost minutes per case.
+if [ "${1:-}" = "--explain-base" ]; then
+  if [ "$ON_BRANCH" = yes ] && [ -n "$CHANGED" ]; then
+    echo "reconciliation=branch base=$(git rev-parse --short "$BASE") why=$BASE_WHY files=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')"
+  elif [ "$ON_BRANCH" = yes ]; then
+    echo "reconciliation=not-applicable why=no-base"
+  else
+    echo "reconciliation=not-applicable why=head-is-on-main"
+  fi
+  exit 0
+fi
 
 echo "=============================================="
 if [ -z "$CHANGED" ]; then
   echo "file-set reconciliation: NOT APPLICABLE"
-  if [ -z "$BASE" ]; then
+  if [ "$ON_BRANCH" != yes ]; then
+    echo "  HEAD is reachable from main, so this is not a branch under review. The file"
+    echo "  inventory describes ONE BRANCH's changes; on main it would fail on every push"
+    echo "  that did not touch all of them. The control closure below is the gate here."
+  elif [ -z "$BASE" ]; then
     echo "  no base commit resolves (no main/origin/main ref, HEAD is not a merge, and"
     echo "  COVERAGE_BASE is unset) -- a shallow checkout looks like this."
   else
@@ -171,31 +219,17 @@ if [ -n "$CHANGED" ]; then
   done <<EOF2
 $CHANGED
 EOF2
-  # UNDECLARED is fatal everywhere: a file changed NOW with no row is a real gap whoever
-  # is looking. MISSING is fatal only on a feature branch, and here is why the two differ.
-  # The inventory describes ONE BRANCH's changes. Off that branch — on main, after the
-  # merge, for any later push — a declared file the current diff does not touch is not a
-  # defect in the inventory, it is the inventory being scoped to something else. Making it
-  # fatal there would turn every subsequent push red for a reason nobody could act on,
-  # which is how a gate teaches people to disable it.
-  missing_note=0
+  # Both directions are fatal, because this block only runs where the question is
+  # meaningful. An earlier version made MISSING advisory off-branch, which is the shape of
+  # a check that cannot fail: it ran everywhere and meant something in one place.
   while IFS=$'\t' read -r path disp _; do
     case "$path" in ''|'#'*) continue ;; esac
     if ! printf '%s\n' "$CHANGED" | grep -qxF -- "$path"; then
-      if [ "$ON_BRANCH" = yes ]; then
-        printf '  %sMISSING%s       %s -- declared %s, but this branch did not change it\n' \
-          "$RED" "$NC" "$path" "$disp"
-        recon=$((recon+1))
-      else
-        missing_note=$((missing_note+1))
-      fi
+      printf '  %sMISSING%s       %s -- declared %s, but this branch did not change it\n' \
+        "$RED" "$NC" "$path" "$disp"
+      recon=$((recon+1))
     fi
   done < "$INVENTORY"
-  if [ "$missing_note" -gt 0 ]; then
-    printf '  %snote%s          %d declared file(s) are outside this diff. Not an error here:\n' \
-      "$YEL" "$NC" "$missing_note"
-    printf '                the inventory is scoped to a branch and this is not that branch.\n'
-  fi
 fi
 
 # --- control closure: runtime labels vs declared roles, both directions -----------------
@@ -265,10 +299,13 @@ mutate() {
 import pathlib, sys
 w = sys.argv[1]
 FILES = {"py": "scripts/check_doc_evidence.py", "gr": "scripts/gate-receipts.sh",
-         "mk": "Makefile", "ci": ".github/workflows/preview.yml"}
+         "mk": "Makefile", "ci": ".github/workflows/preview.yml",
+         "cov": "scripts/test-doc-evidence-coverage.sh",
+         "probe": "scripts/test-doc-evidence.sh"}
 which = {"gate-argv-grammar": "gr", "gate-private-receipts": "gr",
-         "ci-step-evidence": "ci", "ci-step-receipts": "ci",
-         "ci-step-probe": "ci"}.get(w, "py")
+         "ci-step-evidence": "ci", "ci-step-receipts": "ci", "ci-step-probe": "ci",
+         "branch-scope": "cov", "gates-wiring": "mk", "ci-gating": "probe",
+         "ci-gating-job": "probe"}.get(w, "py")
 p = pathlib.Path(FILES[which])
 t = orig = p.read_text()
 
@@ -279,7 +316,7 @@ elif w == "cmd-referred":      # pdc/cargo/make are not observations
 elif w == "cmd-allowlist":     # only the five observation tools may run
     t = t.replace("        if head not in CMD_ALLOWED:", "        if False:", 1)
 elif w == "cmd-artifact":      # a build artifact is not reproducible from a checkout
-    t = t.replace("            if tok.startswith(CMD_BUILD_ARTIFACT):", "            if False:", 1)
+    t = t.replace("    if first in CMD_BUILD_ARTIFACT_ROOTS:", "    if False:", 1)
 elif w == "cmd-operators":     # a shell operator is not a pipeline
     t = t.replace("        elif tok in CMD_OPERATORS:", "        elif False:", 1)
 elif w == "result-compare":    # the claimed exit status and line count are compared
@@ -350,6 +387,17 @@ elif w == "gate-private-receipts":   # back to a shared, surviving receipts dire
     t = t.replace('OUT=$(mktemp -d "${TMPDIR:-/tmp}/palladium-gate-receipts.XXXXXX") || exit 2\n'
                   'trap \'rm -rf "$OUT"\' EXIT INT TERM',
                   'OUT=build_output/gate-receipts\nrm -rf "$OUT"; mkdir -p "$OUT"', 1)
+elif w == "branch-scope":      # the file inventory is a branch-review gate, only there
+    t = t.replace("    ON_BRANCH=no        # HEAD is on (or behind) main",
+                  "    ON_BRANCH=yes       # HEAD is on (or behind) main", 1)
+elif w == "gates-wiring":      # gate-receipts must be a prerequisite of `gates`
+    t = t.replace("check-docs gate-receipts test-doc-evidence", "check-docs test-doc-evidence", 1)
+elif w == "ci-gating-job":     # a JOB that cannot fail the run does not gate
+    t = t.replace('    if (j.get("continue-on-error") or "false").lower() != "false":\n        continue',
+                  '    if False:\n        continue', 1)
+elif w == "ci-gating":         # a STEP that cannot fail the job does not gate
+    t = t.replace('    if (s["continue-on-error"] or "false").lower() != "false":\n        continue',
+                  '    if False:\n        continue', 1)
 elif w.startswith("ci-step-"):
     # ONE MUTATION PER STEP. A single `ci-steps` mutation removed only the first step
     # while THREE controls declared `kill ci-steps`, so two of them were never required
@@ -375,6 +423,10 @@ MUTATIONS="executed|scripts/check_doc_evidence.py
 cmd-referred|scripts/check_doc_evidence.py
 cmd-allowlist|scripts/check_doc_evidence.py
 cmd-artifact|scripts/check_doc_evidence.py
+branch-scope|scripts/test-doc-evidence-coverage.sh
+gates-wiring|Makefile
+ci-gating|scripts/test-doc-evidence.sh
+ci-gating-job|scripts/test-doc-evidence.sh
 cmd-operators|scripts/check_doc_evidence.py
 result-compare|scripts/check_doc_evidence.py
 quote-check|scripts/check_doc_evidence.py

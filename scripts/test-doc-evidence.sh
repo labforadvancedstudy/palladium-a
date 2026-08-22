@@ -634,40 +634,158 @@ fi
 # `if: false` all satisfy. What has to hold is that an ENABLED step runs the script. No
 # YAML library is guaranteed on this host, so the workflow is read by indentation, which
 # is enough for the one shape being asserted.
-ci_runs() {   # ci_runs <script-basename> -> 0 if an ENABLED step runs it
-  python3 - "$1" <<'PYCI'
+ci_runs() {   # ci_runs <script-basename> [workflow] -> 0 if a GATING step runs it
+  python3 - "$1" "${2:-.github/workflows/preview.yml}" <<'PYCI'
 import re, sys
-want = sys.argv[1]
-steps, cur, key = [], None, None
-for line in open(".github/workflows/preview.yml", encoding="utf-8"):
-    if re.match(r"^      - ", line):
-        cur = {"if": None, "run": []}; steps.append(cur); key = None
-        line = "        " + line[8:]
-    if cur is None:
+want, wf = sys.argv[1], sys.argv[2]
+
+# WHAT "CI RUNS IT" HAS TO MEAN. Three weaker things have each been accepted here in turn:
+# the text appearing anywhere (a comment satisfied it), the text inside an enabled step's
+# run block (`echo bash scripts/x` satisfied it), and now — the remaining hole — a step
+# that runs it but cannot fail the job. A step with `continue-on-error: true`, or under a
+# job-level `if`, executes the script and gates nothing.
+#
+# So: an ENABLED step, in a job that is not conditionally skipped, whose run block
+# CONTAINS THE INVOCATION AS A STATEMENT (not as an argument to something else), and which
+# is not exempted from failing the job.
+src = open(wf, encoding="utf-8").read().split("\n")
+
+job_indent, cur_job, jobs = None, None, {}
+steps = []
+for line in src:
+    if re.match(r"^  \w[\w-]*:\s*$", line):
+        cur_job = line.strip().rstrip(":")
+        jobs[cur_job] = {"if": None, "continue-on-error": None}
         continue
+    m = re.match(r"^    (if|continue-on-error):\s*(.*)$", line)
+    if m and cur_job:
+        jobs[cur_job][m.group(1)] = m.group(2).strip()
+    if re.match(r"^      - ", line):
+        steps.append({"job": cur_job, "if": None, "continue-on-error": None,
+                      "working-directory": None, "run": [], "_k": None})
+        line = "        " + line[8:]
+    if not steps:
+        continue
+    s = steps[-1]
     m = re.match(r"^        ([A-Za-z_-]+):[ ]*(.*)$", line)
     if m:
-        key = m.group(1)
-        if key == "if":
-            cur["if"] = m.group(2).strip()
-        elif key == "run":
-            cur["run"].append(m.group(2))
-    elif key == "run" and re.match(r"^          ", line):
-        cur["run"].append(line.strip())
+        s["_k"] = m.group(1)
+        if m.group(1) in ("if", "continue-on-error", "working-directory"):
+            s[m.group(1)] = m.group(2).strip()
+        elif m.group(1) == "run":
+            s["run"].append(m.group(2))
+    elif s["_k"] == "run" and re.match(r"^          ", line):
+        s["run"].append(line.strip())
     elif re.match(r"^        \S", line):
-        key = None
-# A `#` in a run block starts a shell comment, so an "invocation" after one is not an
-# invocation. Without this, `run: echo skip  # bash scripts/check-doc-evidence.sh` passed.
-def live(body):
-    return "\n".join(l.split("#", 1)[0] for l in body.split("\n"))
+        s["_k"] = None
 
-pat = re.compile(r"(^|\s)bash scripts/" + re.escape(want) + r"(\s|$)", re.M)
+
+def statements(body):
+    """Run-block text reduced to the commands it actually executes.
+
+    Shell comments go (a `#` starts one). Heredoc bodies go — text fed to a program is
+    data, not a command. What remains is split on the operators that begin a new command,
+    so `echo bash scripts/x` cannot pass for running it.
+    """
+    out, skip_to = [], None
+    for raw in body.split("\n"):
+        if skip_to is not None:
+            if raw.strip() == skip_to:
+                skip_to = None
+            continue
+        h = re.search(r"<<-?\s*'?\"?([A-Za-z_][A-Za-z0-9_]*)'?\"?", raw)
+        line = raw.split("#", 1)[0]
+        if h:
+            skip_to = h.group(1)
+        out.append(line)
+    return [s.strip() for s in re.split(r"[\n;]|&&|\|\||\|", "\n".join(out))]
+
+
+pat = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*bash\s+scripts/" + re.escape(want)
+                 + r"(\s|$)")
 for s in steps:
-    if pat.search(live("\n".join(s["run"]))) and s["if"] in (None, "", "true"):
+    if s["if"] not in (None, "", "true"):
+        continue                                   # step conditionally skipped
+    if (s["continue-on-error"] or "false").lower() != "false":
+        continue                                   # runs, but cannot fail the job
+    j = jobs.get(s["job"], {})
+    if j.get("if") not in (None, "", "true"):
+        continue                                   # whole job conditionally skipped
+    if (j.get("continue-on-error") or "false").lower() != "false":
+        continue
+    if s["working-directory"] not in (None, "", ".", "./"):
+        continue                                   # not this checkout's root
+    if any(pat.match(x) for x in statements("\n".join(s["run"]))):
         sys.exit(0)
 sys.exit(1)
 PYCI
 }
+# THE EVASIONS, against synthetic workflows. Each runs the script by some spelling that
+# does not gate: the real workflow uses none of them, so without these the detector's
+# rules are unexercised -- the coverage runner reported `ci-gating` UNCOVERED, which is
+# exactly what an unexercised rule looks like from outside.
+wf_case() {   # wf_case <case> <expect runs|no> <yaml body>
+  local name=$1 want=$2 body=$3 f="$TMP/wf_$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '_').yml"
+  mkdir -p "$(dirname "$f")"; printf '%s\n' "$body" > "$f"
+  local got=no; ci_runs check-doc-evidence.sh "$f" && got=runs
+  if [ "$got" = "$want" ]; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$name"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$name"
+    printf '         (detector said %s, wanted %s)\n' "$got" "$want"
+    fail=$((fail+1))
+  fi
+}
+wf_case "a plain enabled step counts as running it" runs \
+'jobs:
+  gates:
+    steps:
+      - name: Documentation evidence
+        run: bash scripts/check-doc-evidence.sh'
+wf_case "a step that cannot fail the job does not count" no \
+'jobs:
+  gates:
+    steps:
+      - name: Documentation evidence
+        continue-on-error: true
+        run: bash scripts/check-doc-evidence.sh'
+wf_case "a job that cannot fail the run does not count" no \
+'jobs:
+  gates:
+    continue-on-error: true
+    steps:
+      - name: Documentation evidence
+        run: bash scripts/check-doc-evidence.sh'
+wf_case "a conditionally skipped job does not count" no \
+'jobs:
+  gates:
+    if: false
+    steps:
+      - name: Documentation evidence
+        run: bash scripts/check-doc-evidence.sh'
+wf_case "an echoed invocation does not count" no \
+'jobs:
+  gates:
+    steps:
+      - name: Documentation evidence
+        run: echo bash scripts/check-doc-evidence.sh'
+wf_case "text inside a heredoc does not count" no \
+'jobs:
+  gates:
+    steps:
+      - name: Documentation evidence
+        run: |
+          cat <<EOF
+          bash scripts/check-doc-evidence.sh
+          EOF'
+wf_case "a step in another working directory does not count" no \
+'jobs:
+  gates:
+    steps:
+      - name: Documentation evidence
+        working-directory: sub
+        run: bash scripts/check-doc-evidence.sh'
+
 for step in check-doc-evidence.sh gate-receipts.sh test-doc-evidence.sh; do
   if ci_runs "$step"; then
     printf '  %sok%s   CI runs scripts/%s\n' "$GREEN" "$NC" "$step"; pass=$((pass+1))
@@ -677,6 +795,78 @@ for step in check-doc-evidence.sh gate-receipts.sh test-doc-evidence.sh; do
     fail=$((fail+1))
   fi
 done
+
+# THE `gates` WIRING, which was exempted on a circular rationale: the Makefile was
+# classified `content` because "a mis-wired target fails that target" — but removing
+# gate-receipts or test-doc-evidence from the prerequisites means the omitted target never
+# runs, so nothing fails and nothing notices. `make -n` resolves the prerequisites for
+# real, which a grep of the prerequisite line would not.
+gates_dry=$(make -n gates 2>/dev/null)
+for req in gate-receipts.sh test-doc-evidence.sh check-doc-evidence.sh; do
+  if printf '%s\n' "$gates_dry" | grep -qF "scripts/$req"; then
+    printf '  %sok%s   make gates runs scripts/%s\n' "$GREEN" "$NC" "$req"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s make gates runs scripts/%s\n' "$RED" "$NC" "$req"
+    printf '         (it does NOT: dropping it from the prerequisites means the omitted\n'
+    printf '          target never runs, so nothing fails and nothing notices)\n'
+    fail=$((fail+1))
+  fi
+done
+
+echo
+echo "== the file inventory is a BRANCH-review gate, and only there =="
+#
+# scripts/doc-evidence-fixes.tsv describes one branch's changes. Treating an explicit base
+# as proof of "branch under review" meant CI, which passed github.event.before on every
+# push to main, made it fatal there — so the first push after this branch merged that did
+# not touch all 31 declared files would have failed with MISSING, and any newly touched
+# file with UNDECLARED. A gate that bricks the branch it is merged into.
+#
+# These build throwaway repositories and ask the runner what scope it would reconcile.
+# `--explain-base` resolves and exits, so a case costs a git init rather than the whole
+# mutation matrix.
+scope_of() {   # scope_of <repo> -> the runner's decision, one line
+  # The COPY inside the throwaway repo, not the original: the runner does
+  # `cd "$(dirname "$0")/.."`, so invoking the original would resolve the scope of THIS
+  # repository and every case would answer about the wrong tree.
+  ( cd "$1" && bash scripts/test-doc-evidence-coverage.sh --explain-base 2>&1 )
+}
+mk_repo() {    # mk_repo <dir>
+  mkdir -p "$1" && cd "$1" || return 1
+  git init -q -b main . && git config user.email t@t && git config user.name t
+  mkdir -p scripts && cp "$REPO_ROOT/scripts/test-doc-evidence-coverage.sh" scripts/
+  cp "$REPO_ROOT/scripts/doc-evidence-fixes.tsv" "$REPO_ROOT/scripts/doc-evidence-controls.tsv" scripts/
+  : > seed && git add -A && git commit -qm seed
+  cd - >/dev/null
+}
+scope_case() { # scope_case <case> <repo> <expected fragment>
+  local got; got=$(scope_of "$2")
+  if printf '%s\n' "$got" | grep -qF -- "$3"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$1"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$1"
+    printf '         (wanted %s, got: %s)\n' "$3" "$got"
+    fail=$((fail+1))
+  fi
+}
+REPO_ROOT=$(pwd)
+mk_repo "$TMP/r1"
+( cd "$TMP/r1" && git checkout -qb feature && echo x > f && git add -A && git commit -qm work )
+scope_case "a feature branch reconciles its own file set" "$TMP/r1" "reconciliation=branch"
+
+# THE STATE THAT BRICKS TODAY: main has moved on, and this push touches something else.
+mk_repo "$TMP/r2"
+( cd "$TMP/r2" && echo a > later && git add -A && git commit -qm "a later, unrelated push" )
+scope_case "a later unrelated push to main does NOT reconcile the branch inventory" \
+  "$TMP/r2" "reconciliation=not-applicable why=head-is-on-main"
+
+# And immediately after a merge, which is still main.
+mk_repo "$TMP/r3"
+( cd "$TMP/r3" && git checkout -qb b && echo y > g && git add -A && git commit -qm w \
+  && git checkout -q main && git merge -q --no-ff b -m merge )
+scope_case "the merge commit itself is main, not a branch under review" \
+  "$TMP/r3" "reconciliation=not-applicable why=head-is-on-main"
+cd "$REPO_ROOT"
 
 echo
 echo "== a claim about what the compiler DOES needs evidence from a run =="

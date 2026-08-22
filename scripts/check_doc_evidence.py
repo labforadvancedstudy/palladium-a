@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -115,7 +116,7 @@ CMD_REFERRED = {
 # whole change removes. Measured: `grep -c '#line' build_output/01_lexical_comments.c`
 # exited 2 ("No such file or directory") on a clean tree and had been recorded as
 # "0, exit 1".
-CMD_BUILD_ARTIFACT = ("target/", "build_output/", "./target/", "./build_output/")
+CMD_BUILD_ARTIFACT_ROOTS = {"target", "build_output"}
 
 # Shell control operators. shlex(punctuation_chars=True) surfaces these as their own
 # tokens ONLY when unquoted, so `grep -nE '#\[token\("(with|effect)"\)\]' f` keeps its
@@ -404,6 +405,7 @@ FIND_TYPE_ARGS = {"f", "d", "l", "p", "s", "b", "c"}
 # buffering it.
 CMD_MAX_BYTES = 4 * 1024 * 1024
 CMD_TIMEOUT_S = 120
+CMD_CLEANUP_S = 10      # for ALL processes together, after the kill
 
 _TOOLS: dict = {}
 
@@ -448,6 +450,18 @@ def contained(rel: str):
         return None, (f"names {rel!r}, which resolves to {real} — outside {ROOT}. The gate "
                       f"would be measuring unversioned content and reporting it as this "
                       f"repository's state")
+    # BUILD ARTIFACTS, DECIDED AFTER RESOLUTION. This used to be a lexical
+    # startswith(("target/", "./target/", ...)) over the raw token, which `target` without
+    # a slash and `docs/../target` both walked straight past — and CI creates target/
+    # before the documentation-evidence step, so generated state could validate
+    # documentation. The question is which directory the path IS IN once resolved, so it
+    # is asked of the resolved, checkout-relative first component.
+    first = real.relative_to(ROOT).parts[0] if real != ROOT else ""
+    if first in CMD_BUILD_ARTIFACT_ROOTS:
+        return None, (f"reads {rel!r}, which resolves into {first}/ — a build artifact. A "
+                      f"`cmd:` item must be reproducible from a clean checkout, so "
+                      f"generated state is evidence only through the gate that generates "
+                      f"it")
     return real, None
 
 
@@ -685,11 +699,6 @@ def split_pipeline(cmd: str):
         exe, err = resolve_tool(head)
         if err:
             return None, err
-        for tok in seg:
-            if tok.startswith(CMD_BUILD_ARTIFACT):
-                return None, (f"reads the build artifact {tok!r}; a `cmd:` item must be "
-                              f"reproducible from a clean checkout, so a generated file "
-                              f"is evidence only through the gate that generates it")
         parsed, err = parse_segment(seg)
         if err:
             return None, err
@@ -757,6 +766,15 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
     rather than a traceback or a leaked process.
     """
     env = {"PATH": SAFE_PATH, "LC_ALL": "C"}   # pinned, not inherited
+    # ONE DEADLINE FOR THE WHOLE PIPELINE. `timeout` used to be spent again in full by the
+    # reader join, by the final wait, and by EVERY upstream wait, and then cleanup added
+    # up to 10s per process on top — so a two-segment pipeline under a 120s "timeout"
+    # could take past 360s and the number bounded nothing. Every wait below gets what is
+    # LEFT of this, and cleanup gets a small documented budget of its own because it runs
+    # after the deadline has already been declared blown.
+    deadline = time.monotonic() + timeout
+    def remaining():
+        return max(0.0, deadline - time.monotonic())
     procs, errfiles, prev = [], [], subprocess.DEVNULL
     try:
         for seg in segments:
@@ -793,7 +811,7 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
 
         reader = threading.Thread(target=_drain, daemon=True)
         reader.start()
-        reader.join(timeout)
+        reader.join(remaining())
         if reader.is_alive():
             return None, "", (f"did not finish within {timeout}s (its output stream was "
                               f"still open)")
@@ -804,13 +822,13 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
             return None, "", (f"produced more than {CMD_MAX_BYTES} bytes. A `cmd:` "
                               f"item is an observation, not a dump; narrow its scope")
         try:
-            procs[-1].wait(timeout=timeout)
+            procs[-1].wait(timeout=remaining())
         except subprocess.TimeoutExpired:
             return None, "", f"did not finish within {timeout}s"
 
         for p in procs[:-1]:
             try:
-                p.wait(timeout=timeout)
+                p.wait(timeout=remaining())
             except subprocess.TimeoutExpired:
                 return None, "", (f"upstream segment `{p.args[0]}` did not finish within "
                                   f"{timeout}s after the pipeline was drained")
@@ -833,6 +851,7 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
                                   f"last command an empty stream")
         return procs[-1].returncode, out.decode("utf-8", "replace"), None
     finally:
+        cleanup_deadline = time.monotonic() + CMD_CLEANUP_S
         # One cleanup path, unconditional: kill then reap. A process left running would
         # hold a pipe open for whoever comes next.
         for p in procs:
@@ -852,7 +871,9 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
             except OSError:
                 pass
             try:
-                p.wait(timeout=10)
+                # CMD_CLEANUP_S total, not per process: this runs after the pipeline has
+                # already been killed, so it is a reaping formality, not a wait for work.
+                p.wait(timeout=max(0.0, cleanup_deadline - time.monotonic()))
             except Exception:               # noqa: BLE001 — cleanup may not raise
                 pass
         for errf in errfiles:

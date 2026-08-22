@@ -92,3 +92,16 @@ the same row passes once it cites a fixture	guard	the dynamic-evidence rule must
 an unimplemented row may still rest on an absence proof	guard	absence proofs stay legal for unimplemented
 a class the manifest disagrees with is rejected	kill	conformance-class
 an undeclared fixture is rejected	kill	conformance-declared
+make gates runs scripts/gate-receipts.sh	kill	gates-wiring
+make gates runs scripts/test-doc-evidence.sh	guard	the probe must stay wired into the certifying target
+make gates runs scripts/check-doc-evidence.sh	guard	the evidence gate must stay wired into the certifying target
+a feature branch reconciles its own file set	guard	the branch case must keep working when main is scoped out
+a later unrelated push to main does NOT reconcile the branch inventory	kill	branch-scope
+the merge commit itself is main, not a branch under review	kill	branch-scope
+a plain enabled step counts as running it	guard	the detector must still accept the real shape
+a step that cannot fail the job does not count	kill	ci-gating
+a job that cannot fail the run does not count	kill	ci-gating-job
+a conditionally skipped job does not count	guard	job-level if is a separate rule from the step-level one
+an echoed invocation does not count	guard	statement position, not occurrence
+text inside a heredoc does not count	guard	heredoc bodies are data, not commands
+a step in another working directory does not count	guard	not this checkout's root
