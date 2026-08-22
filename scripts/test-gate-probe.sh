@@ -40,6 +40,22 @@ check() {  # check <name> <expected_exit> <actual_exit> [detail]
 # Each prints text the gate would otherwise believe, then dies.
 mk() { printf '%s\n' "$2" >"$TMP/$1"; chmod +x "$TMP/$1"; }
 
+# Kill ONLY what this suite spawned.
+#
+# Cleanup used to be `pkill -f "sleep 600"` and two like it — a pattern match
+# over EVERY process on the machine. On a developer box or a shared CI runner
+# that is a loaded gun pointed at unrelated work: any `sleep 600`, anybody's.
+# The producers below now write the pid of the process they leave behind into a
+# file, and this kills that pid and nothing else.
+reap() {   # reap <pidfile>
+  [ -f "$1" ] || return 0
+  while IFS= read -r pid; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill -9 "$pid" 2>/dev/null || true
+  done <"$1"
+  rm -f "$1"
+}
+
 mk pdc_sigkill '#!/bin/sh
 echo "error: No main function found" >&2
 kill -9 $$'
@@ -67,29 +83,47 @@ echo "== a signaled pdc that ALREADY printed the expected diagnostic =="
 # Phase 1 verdict classification.
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_sigkill" --out t_v1 >"$TMP/o" 2>&1
 check "pdc-verdict, SIGKILL (-9)" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and the reason is the signal" 0 $?
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_exit137" --out t_v2 >"$TMP/o" 2>&1
 check "pdc-verdict, shell-reported 137" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and 137 is read as the same signal" 0 $?
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_weird" --out t_v3 >"$TMP/o" 2>&1
 check "pdc-verdict, unpinned exit 42" 2 $?
+grep -q 'exit 42' "$TMP/o"
+check "  and the reason names the unpinned code" 0 $?
 $PROBE pdc-verdict stdlib/std/option.pd --pdc /nonexistent/pdc --out t_v4 >"$TMP/o" 2>&1
 check "pdc-verdict, producer missing" 2 $?
+grep -q 'cannot execute' "$TMP/o"
+check "  and the reason is that it could not be executed" 0 $?
 
 # The forced-import probe and the UNUSABLE probes share pdc-reject.
 $PROBE pdc-reject stdlib/std/option.pd --pdc "$TMP/pdc_blocker_sigkill" --out t_r1 \
   --expect-stage compile --require "Expected 'fn' for method, but found 'pub'" >"$TMP/o" 2>&1
 check "pdc-reject, SIGKILL after the expected blocker" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and the reason is the signal, not the blocker" 0 $?
 $PROBE pdc-reject stdlib/std/option.pd --pdc "$TMP/pdc_gcc_sigkill" --out t_r2 \
   --expect-stage link --require "incompatible integer to pointer conversion" >"$TMP/o" 2>&1
 check "pdc-reject, SIGKILL after the expected link diagnostic" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and the reason is the signal, not the diagnostic" 0 $?
 
 echo
 echo "== a signaled C compiler that ALREADY printed a return-type error =="
 $PROBE generated-c build_output/stdlib_vec_i64.c --cc "$TMP/cc_sigkill" >"$TMP/o" 2>&1
 check "Net B, SIGKILL (-9)" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and the reason is the signal" 0 $?
 $PROBE generated-c build_output/stdlib_vec_i64.c --cc "$TMP/cc_exit137" >"$TMP/o" 2>&1
 check "Net B, shell-reported 137" 2 $?
+grep -q 'killed by signal 9' "$TMP/o"
+check "  and 137 is read as the same signal" 0 $?
 $PROBE generated-c build_output/stdlib_vec_i64.c --cc /nonexistent/cc >"$TMP/o" 2>&1
 check "Net B, compiler missing" 2 $?
+grep -q 'cannot execute' "$TMP/o"
+check "  and the reason is that the compiler could not be executed" 0 $?
 
 echo
 echo "== the Python analysis (Net A) =="
@@ -100,6 +134,8 @@ grep -q 'no function definitions recognised' "$TMP/o"
 check "  and it says so, rather than malfunctioning for some other reason" 0 $?
 $PROBE generated-c /nonexistent/x.c >"$TMP/o" 2>&1
 check "Net A, missing input" 2 $?
+grep -q 'does not exist' "$TMP/o"
+check "  and the reason is the missing input" 0 $?
 printf 'long long deep(long long n) {\n' >"$TMP/deep.c"
 for _ in $(seq 1 4000); do printf '    if (n) {\n' >>"$TMP/deep.c"; done
 printf '    return 1;\n' >>"$TMP/deep.c"
@@ -161,6 +197,8 @@ check "  at the construct's own line, not the definition's" 0 $?
 printf 'long long g(long long n) {\n    if (n) {\n#ifdef X\n        return 1;\n#endif\n        return 3;\n    } else {\n        return 2;\n    }\n}\n' >"$TMP/cpp_nested.c"
 $PROBE generated-c "$TMP/cpp_nested.c" >"$TMP/o" 2>&1
 check "Net A, a directive nested inside a compound" 2 $?
+grep -q 'preprocessor directive' "$TMP/o"
+check "  and the reason names the directive" 0 $?
 
 # `switch` IS THE CONSTRUCT THE DOCSTRING NAMES as an example of something this
 # reader does not model — and it was not fail-closed. Line numbers were threaded
@@ -178,11 +216,15 @@ check "  and the malfunction names the construct" 0 $?
 printf 'long long g(long long n) {\n    switch (n) {\n    }\n}\n' >"$TMP/switch_empty.c"
 $PROBE generated-c "$TMP/switch_empty.c" >"$TMP/o" 2>&1
 check "Net A, an empty switch is a malfunction, not a finding" 2 $?
+grep -q 'a .switch.' "$TMP/o"
+check "  and the reason names the switch" 0 $?
 # ...and the same rule generalises: any compound header this reader does not
 # model stops the file, rather than silently answering "does not terminate".
 printf 'long long h(long long n) {\n    __unknown_construct (n) {\n        return 1;\n    }\n    return 0;\n}\n' >"$TMP/unknown_header.c"
 $PROBE generated-c "$TMP/unknown_header.c" >"$TMP/o" 2>&1
 check "Net A, an unmodelled compound header stops the file" 2 $?
+grep -q 'header this reader does not' "$TMP/o"
+check "  and the reason names the header" 0 $?
 
 # A HEADER SPLIT ACROSS LINES presents no header at all. `parse_block` records
 # `if (n)` as an ordinary statement and `{` as a modelled BARE BLOCK, so the
@@ -201,6 +243,8 @@ check "  and the malfunction says why" 0 $?
 printf 'long long g(long long n) {\n    RETURN_IF(n)\n    {\n        return 1;\n    }\n    return 0;\n}\n' >"$TMP/macro_header.c"
 $PROBE generated-c "$TMP/macro_header.c" >"$TMP/o" 2>&1
 check "Net A, a macro invocation before a block stops the file" 2 $?
+grep -q 'does not end in' "$TMP/o"
+check "  and the reason is the unterminated statement" 0 $?
 
 # MF5's predicate is "every body statement ends in `;` or is a comment", so the
 # shapes it BYPASSES are executable rather than inferred. A valid `do { … }
@@ -224,6 +268,8 @@ check "Net A, a bare empty statement is accepted (it ends in a semicolon)" 0 $?
 printf 'long long k(long long n) {\n    LOOP(n) \\\n        return 1;\n    return 0;\n}\n' >"$TMP/contmacro.c"
 $PROBE generated-c "$TMP/contmacro.c" >"$TMP/o" 2>&1
 check "Net A, a line-continued macro invocation stops the file" 2 $?
+grep -q 'does not end in' "$TMP/o"
+check "  and the reason is the unterminated statement" 0 $?
 
 # The other direction: unreachable code after a `return` must NOT be reported as
 # a fall-through. The parser accepts this shape (src/parser/mod.rs,
@@ -274,26 +320,47 @@ grep -qi 'exec format error\|ENOEXEC\|cannot execute' "$TMP/o"
 check "  and the reason is the exec failure" 0 $?
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP" --out t_p3 >"$TMP/o" 2>&1
 check "producer is a directory" 2 $?
+grep -q 'cannot execute' "$TMP/o"
+check "  and the reason is the exec failure" 0 $?
 
 echo
 echo "== Net A import failure is a malfunction =="
-mv scripts/check-c-returns.py "$TMP/neta.hidden"
+# THE TRACKED ANALYSER IS NEVER MOVED. This block used to `mv`
+# scripts/check-c-returns.py into $TMP and overwrite its path twice, restoring
+# it only on the normal path — so an interrupt inside that window left the EXIT
+# trap to delete $TMP *and the saved original*, with the tracked file missing or
+# replaced by a two-line stub. Same family as a `git checkout` that discards
+# uncommitted work: a sweep that destroys tracked state when interrupted.
+# GATE_PROBE_NET_A injects the path instead, so nothing checked in is touched.
 $PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
+GATE_PROBE_NET_A="$TMP/definitely-absent.py" \
+  $PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
 check "Net A analyser missing" 2 $?
-printf 'def check_file(  # syntax error\n' >scripts/check-c-returns.py
-$PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
+grep -q 'is missing' "$TMP/o"
+check "  and the reason is that the analyser is missing" 0 $?
+printf 'def check_file(  # syntax error\n' >"$TMP/neta_unparsable.py"
+GATE_PROBE_NET_A="$TMP/neta_unparsable.py" \
+  $PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
 check "Net A analyser does not import" 2 $?
-printf 'X = 1\n' >scripts/check-c-returns.py
-$PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
+grep -q 'Net A could not be loaded' "$TMP/o"
+check "  and the reason is the failed import" 0 $?
+printf 'X = 1\n' >"$TMP/neta_no_entry.py"
+GATE_PROBE_NET_A="$TMP/neta_no_entry.py" \
+  $PROBE generated-c build_output/stdlib_vec_i64.c >"$TMP/o" 2>&1
 check "Net A analyser lacks check_file()" 2 $?
-mv "$TMP/neta.hidden" scripts/check-c-returns.py
+grep -q 'defines no check_file' "$TMP/o"
+check "  and the reason is the missing entry point" 0 $?
 
 echo
 echo "== the reconciliation cannot exit 1 without a structured finding =="
 $PROBE reconcile --src /nonexistent/builtins.rs --manifest tests/stdlib/BUILTINS.tsv >"$TMP/o" 2>&1
 check "reconcile, unreadable registry" 2 $?
+grep -q 'cannot read' "$TMP/o"
+check "  and the reason is that the registry could not be read" 0 $?
 $PROBE reconcile --src src/builtins.rs --manifest /nonexistent/BUILTINS.tsv >"$TMP/o" 2>&1
 check "reconcile, unreadable manifest" 2 $?
+grep -q 'cannot read' "$TMP/o"
+check "  and the reason is that the manifest could not be read" 0 $?
 sed 's/name:/ident:/g; s/"\([a-z_0-9]*\) param/"\1 FIELD/g; s/"\([a-z_0-9]*\) return/"\1 FIELD/g' \
   src/builtins.rs >"$TMP/broken_builtins.rs"
 $PROBE reconcile --src "$TMP/broken_builtins.rs" --manifest tests/stdlib/BUILTINS.tsv >"$TMP/o" 2>&1
@@ -309,11 +376,15 @@ echo "== a descendant holding the pipe must not stall the harness =="
 # (this capture never reaches EOF, so it is a malfunction) and the clock.
 mk slow_desc '#!/bin/sh
 sh -c "sleep 600" &
+echo $! >"$SLOW_PIDFILE"
 exit 0'
+SLOW_PIDFILE="$TMP/slow_desc.pid"; export SLOW_PIDFILE
 start=$(date +%s)
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/slow_desc" --out t_d1 >"$TMP/o" 2>&1
 rc=$?; elapsed=$(( $(date +%s) - start ))
 check "a descendant holding the pipe makes it a malfunction, not a verdict" 2 $rc
+grep -q 'did not reach EOF' "$TMP/o"
+check "  and the reason is the missing EOF" 0 $?
 if [ "$elapsed" -lt 60 ]; then
   printf '  %sok%s   and it did not stall (%ss)\n' "$GREEN" "$NC" "$elapsed"
   pass=$((pass+1))
@@ -321,7 +392,7 @@ else
   printf '  %sFAIL%s descendant stalled the harness for %ss\n' "$RED" "$NC" "$elapsed"
   fail=$((fail+1))
 fi
-pkill -f "sleep 600" 2>/dev/null || true
+reap "$TMP/slow_desc.pid"
 
 echo
 echo "== EOF must be awaited BEFORE the writers are killed =="
@@ -340,6 +411,7 @@ echo "== EOF must be awaited BEFORE the writers are killed =="
 mk pdc_ingroup "#!/bin/sh
 $(command -v python3) -c 'import os, sys, time
 if os.fork() == 0:
+    open(os.environ[\"REAP_PIDFILE\"], \"w\").write(str(os.getpid()))
     time.sleep(30)                 # still in the group; killpg WILL reach it
     sys.stdout.write(\"error: No main function found\\n\")
     sys.stdout.flush()
@@ -348,13 +420,13 @@ sys.stdout.write(\"first chunk\\n\")
 sys.stdout.flush()
 os._exit(0)'
 "
-$PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_ingroup" --out t_ing >"$TMP/o" 2>&1
+REAP_PIDFILE="$TMP/ingroup.pid" $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_ingroup" --out t_ing >"$TMP/o" 2>&1
 check "an in-group writer still holding the pipe is not a concluded verdict" 2 $?
 grep -q 'did not reach EOF' "$TMP/o"
 check "  and the reason names the missing EOF, not the exit status" 0 $?
 grep -q 'WITHHELD_PARTIAL\|WITHHELD ' "$TMP/o"
 check "  and what was captured is not announced as the complete output" 0 $?
-pkill -f "time.sleep(30)" 2>/dev/null || true
+reap "$TMP/ingroup.pid"
 
 echo
 echo "== a writer that outlives the process group must not read as concluded =="
@@ -374,6 +446,7 @@ mk pdc_escapee "#!/bin/sh
 $(command -v python3) -c 'import os, sys, time
 if os.fork() == 0:
     os.setsid()
+    open(os.environ[\"REAP_PIDFILE\"], \"w\").write(str(os.getpid()))
     time.sleep(60)
     os._exit(0)
 sys.stdout.write(\"error: No main function found\\n\")
@@ -381,7 +454,7 @@ sys.stdout.flush()
 os._exit(0)'
 "
 start=$(date +%s)
-$PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_escapee" --out t_esc >"$TMP/o" 2>&1
+REAP_PIDFILE="$TMP/escapee.pid" $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_escapee" --out t_esc >"$TMP/o" 2>&1
 rc=$?; elapsed=$(( $(date +%s) - start ))
 check "a stream that never reaches EOF is a malfunction, not a verdict" 2 $rc
 grep -q 'did not reach EOF' "$TMP/o"
@@ -393,7 +466,7 @@ else
   printf '  %sFAIL%s it waited %ss — the drain join is not bounded\n' "$RED" "$NC" "$elapsed"
   fail=$((fail+1))
 fi
-pkill -f "time.sleep(60)" 2>/dev/null || true
+reap "$TMP/escapee.pid"
 
 echo
 echo "== a producer noisier than one pipe buffer must still conclude =="
@@ -637,43 +710,87 @@ grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
 # (`cmd_calibrate` read a raw `Run.rc` and never looked at `capture_error`).
 # A rule whose scope excludes the location of its own defect is not a rule.
 #
-# So every non-comment line INSIDE gate_probe.py that touches a private slot is
-# listed here by content. Moving code does not trip it; adding a reader does.
-# The list is short on purpose: if it grows, the answer is usually to route the
-# new caller through `run_and_classify()` instead.
-cat >"$TMP/allow.txt" <<'ALLOW'
-self._b = b
-data = self._b if isinstance(self._b, bytes) else str(self._b).encode(
-self._rc = rc
-self._out = out if isinstance(out, bytes) else str(out).encode("utf-8", "surrogateescape")
-if self._rc < 0:
-return -self._rc
-if self._rc > 128:
-return self._rc - 128
-how = f"killed by signal {s}" if s is not None else f"exit {self._rc}"
-return f"killed by signal {s}" if s is not None else f"exit {self._rc}"
-return Malfunction(r.describe(), Withheld(r._out, complete=False))
-text = r._out.decode("utf-8", "replace")
-if r._rc == 0:
-return Concluded(text, r._rc, True)
-if r.signal_number is None and r._rc in reject_codes:
-return Concluded(text, r._rc, False)
-return Malfunction(r.describe(), Withheld(r._out, complete=True))
-print(f"WITHHELD_PARTIAL {path} holds the {len(m.withheld._b)} "
-ALLOW
-# Prose inside docstrings mentions these names in backticks; only code lines are
-# candidates, so backticked lines are dropped before comparison.
-internal=$(grep -nE '\._out\b|\._b\b|\._rc\b|\.withheld\._' scripts/gate_probe.py \
-           | grep -vE ':[0-9]+:[[:space:]]*#' \
-           | sed 's/^[0-9]*:[[:space:]]*//' \
-           | grep -v '`' || true)
-unlisted=$(printf '%s\n' "$internal" | grep -vxF -f "$TMP/allow.txt" || true)
-if [ -z "$unlisted" ]; then
-  printf '  %sok%s   every private-slot reader inside gate_probe.py is on the reviewed allowlist\n' "$GREEN" "$NC"
+# IT IS KEYED BY (ENCLOSING FUNCTION, LINE, COUNT), NOT BY LINE TEXT.
+# The first version compared line CONTENT with `grep -vxF`: set membership where
+# accounting was meant. A new raw reader could DUPLICATE an approved line —
+# `if r._rc == 0:` — inside another function and pass unchanged, and identical
+# text in a different scope means a different thing. The table below records
+# which function each reader sits in and how many times it may appear there;
+# any difference, in either direction, is a failure.
+python3 - >"$TMP/allow.out" 2>&1 <<'ALLOWPY'
+import collections, pathlib, re, sys
+
+ALLOWED = collections.Counter({
+    ("Withheld.__init__", "self._b = b"): 1,
+    ("Withheld.spill",
+     'data = self._b if isinstance(self._b, bytes) else str(self._b).encode('): 1,
+    ("Run.__init__", "self._rc = rc"): 1,
+    ("Run.__init__",
+     'self._out = out if isinstance(out, bytes) else str(out).encode("utf-8", "surrogateescape")'): 1,
+    ("Run.signal_number", "if self._rc < 0:"): 1,
+    ("Run.signal_number", "return -self._rc"): 1,
+    ("Run.signal_number", "if self._rc > 128:"): 1,
+    ("Run.signal_number", "return self._rc - 128"): 1,
+    ("Run.describe",
+     'how = f"killed by signal {s}" if s is not None else f"exit {self._rc}"'): 1,
+    ("Run.describe",
+     'return f"killed by signal {s}" if s is not None else f"exit {self._rc}"'): 1,
+    ("classify", "return Malfunction(r.describe(), Withheld(r._out, complete=False))"): 1,
+    ("classify", 'text = r._out.decode("utf-8", "replace")'): 1,
+    ("classify", "if r._rc == 0:"): 1,
+    ("classify", "return Concluded(text, r._rc, True)"): 1,
+    ("classify", "if r.signal_number is None and r._rc in reject_codes:"): 1,
+    ("classify", "return Concluded(text, r._rc, False)"): 1,
+    ("classify", "return Malfunction(r.describe(), Withheld(r._out, complete=True))"): 1,
+    ("report_malfunction",
+     'print(f"WITHHELD_PARTIAL {path} holds the {len(m.withheld._b)} "'): 1,
+})
+
+PRIVATE = re.compile(r"\._out\b|\._b\b|\._rc\b|\.withheld\._")
+src = pathlib.Path("scripts/gate_probe.py").read_text().split("\n")
+
+# "Which function" is answered by indentation, not by the nearest `def` above.
+found = collections.Counter()
+stack = []
+for raw in src:
+    line = raw.strip()
+    if not line:
+        continue
+    indent = len(raw) - len(raw.lstrip())
+    m = re.match(r"(class|def)\s+([A-Za-z_][A-Za-z_0-9]*)", line)
+    if m:
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        stack.append((indent, m.group(2)))
+        continue
+    while stack and stack[-1][0] >= indent:
+        stack.pop()
+    if line.startswith("#") or "`" in line:
+        continue                      # a comment, or docstring prose
+    if not PRIVATE.search(line):
+        continue
+    where = ".".join(n for _, n in stack) or "<module>"
+    found[(where, line)] += 1
+
+problems = []
+for key, want in sorted(ALLOWED.items()):
+    got = found.get(key, 0)
+    if got != want:
+        problems.append("expected %d of %r in %s, found %d"
+                        % (want, key[1], key[0], got))
+for key, got in sorted(found.items()):
+    if key not in ALLOWED:
+        problems.append("UNAPPROVED private-slot reader in %s (x%d): %r"
+                        % (key[0], got, key[1]))
+print("\n".join(problems) if problems else "ok")
+sys.exit(1 if problems else 0)
+ALLOWPY
+if [ $? -eq 0 ]; then
+  printf '  %sok%s   every private-slot reader inside gate_probe.py matches the reviewed (function, line, count) table\n' "$GREEN" "$NC"
   pass=$((pass+1))
 else
-  printf '  %sFAIL%s a new private-slot reader appeared inside gate_probe.py:\n' "$RED" "$NC"
-  printf '%s\n' "$unlisted" | sed 's/^/        /'
+  printf '  %sFAIL%s the private-slot readers inside gate_probe.py no longer match the table:\n' "$RED" "$NC"
+  sed 's/^/        /' "$TMP/allow.out"
   fail=$((fail+1))
 fi
 

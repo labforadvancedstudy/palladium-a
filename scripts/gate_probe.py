@@ -33,6 +33,32 @@ paragraph claimed more than the code delivers:
 
   * ONE BOUNDARY. Every subprocess a gate runs goes through `run()`, so
     "did this producer conclude?" is answered in one place.
+
+WHAT `Concluded` MEANS — AT ITS FINAL WIDTH, after three attempts to state it
+    The producer exited at a pinned code, AND the output stream reached EOF
+    BEFORE this harness killed anything.
+
+    That second clause is the whole of what the capture establishes, and it is
+    narrower than it has twice been written here. EOF is the event "the last
+    write handle closed" — nothing more. It does not mean the producer finished
+    saying what it had to say: a descendant can emit a prefix, then crash or be
+    killed by something outside this process, close the final handle, and EOF
+    arrives on a truncated capture. Neither this nor any observer of a pipe can
+    tell that from an orderly finish; the only thing that could is a
+    completion protocol owned by the producer, which these producers (pdc, gcc,
+    cargo) do not have.
+
+    So the claim is deliberately about PROVENANCE, not completeness: the close
+    was the writers' doing and not the harness's. That excludes the defect that
+    was actually here — `killpg` ran first, so EOF was manufactured by cleanup
+    and proved "every writer is closed after I killed them", which is true of
+    every run.
+
+    WHAT WOULD FALSIFY IT: a run reported `Concluded` whose EOF arrived only
+    after `killpg`. scripts/test-gate-probe.sh drives exactly that, with a
+    descendant that stays in the process group so the kill reaches it, and
+    requires a Malfunction. Measured at 8839613, before the order was fixed:
+    exit 0.
   * THE VERDICT TYPE CARRIES NO TEXT. `classify()` returns `Concluded` or
     `Malfunction`; only `Concluded` has `.text`. Writing `res.text` on a result
     that might be a malfunction raises AttributeError instead of yielding a
@@ -132,6 +158,15 @@ TIMEOUT_S = 300
 # How long to wait for EOF after the producer has exited. Reaching it means a
 # writer outlived the process group, so the capture is not known to be complete.
 DRAIN_JOIN_S = 5
+# A capture that never reaches EOF leaves its descriptor with the reader thread
+# that still owns it (see run()), so each one costs one descriptor for the life
+# of the process. That cost was written down as "a handful of runs" and NOT
+# enforced — while `generated-c` takes an unbounded file list and continues past
+# every malfunction, so a compiler leaving an escaped writer per invocation
+# would accumulate one blocked reader per file until the process ran out. An
+# accepted cost has to be an enforced one, or it is a hope in a comment.
+MAX_ABANDONED_CAPTURES = 8
+_abandoned_captures = 0
 
 
 def _describe_target(path: Path) -> str:
@@ -406,10 +441,17 @@ def run(argv, cwd=None, env=None) -> Run:
          them establishes nothing.
 
     So: a pipe again, but DRAINED CONCURRENTLY by a reader thread. EOF on that
-    pipe is not a sample — it is the operating system reporting that every
-    writer has closed, which is precisely the fact "the capture is complete"
-    needs. There is no buffer to overflow because the drain never stops, and
-    there is nothing to compare because nothing is sampled.
+    pipe is not a sample — it is the operating system reporting that every write
+    handle has closed. There is no buffer to overflow because the drain never
+    stops, and there is nothing to compare because nothing is sampled.
+
+    AND EOF IS EXACTLY THAT EVENT, NO MORE. It says the last writer closed; it
+    does not say the writer had finished, or was even alive. A descendant that
+    emits a prefix and is then killed by somebody else closes the last handle
+    too, and this cannot tell that apart from an orderly finish. What the join
+    below DOES establish is that the close was not caused by THIS harness —
+    which is the defect that was here, and is worth having, and is all that is
+    claimed. See the module docstring, "WHAT `Concluded` MEANS".
 
     And when EOF does NOT arrive — the escaped-descendant case — the drain
     thread is still running after the bounded join below, and that becomes a
@@ -417,6 +459,17 @@ def run(argv, cwd=None, env=None) -> Run:
     to be complete is not evidence, and `classify()` turns it into a
     Malfunction. The old design answered `Concluded` there.
     """
+    global _abandoned_captures
+    if _abandoned_captures >= MAX_ABANDONED_CAPTURES:
+        # Refuse to start another one. This is itself a malfunction — nothing is
+        # established about this producer — and it is the enforcement of the
+        # bound above rather than a diagnosis of this particular input.
+        return Run(argv, 125, b"",
+                   f"refusing to run: {_abandoned_captures} earlier capture(s) "
+                   f"in this process never reached EOF and still own their "
+                   f"descriptors (limit {MAX_ABANDONED_CAPTURES}). Something is "
+                   f"leaving writers behind; fix that rather than raising this")
+
     merged = dict(os.environ)
     if env:
         merged.update(env)
@@ -485,9 +538,9 @@ def run(argv, cwd=None, env=None) -> Run:
     if reader.is_alive():
         capture_error = (
             f"the output stream did not reach EOF within {DRAIN_JOIN_S}s of the "
-            f"producer exiting, while every writer was still alive: something "
-            f"is still holding it open, so what was read is a prefix and the "
-            f"capture cannot be known to be complete")
+            f"producer exiting, and before this harness killed anything: a "
+            f"write handle is still open, so what was read is a prefix of "
+            f"unknown length")
     elif drain_error:
         capture_error = drain_error[0]
 
@@ -521,11 +574,12 @@ def run(argv, cwd=None, env=None) -> Run:
         # is not to try. The descriptor stays with its reader and is reclaimed
         # when the process exits.
         #
-        # The bound this accepts: one leaked descriptor per non-concluding
-        # capture, in a short-lived CLI that performs at most a handful of runs.
-        # Measured callers: three per `scripts/test-xfail.py` invocation, one per
-        # `gate_probe` subcommand.
+        # The bound this accepts is now COUNTED and ENFORCED: see
+        # MAX_ABANDONED_CAPTURES at the top of the file, checked before the next
+        # process is started.
         reader.join(1.0)
+        if reader.is_alive():
+            _abandoned_captures += 1
 
     out = b"".join(chunks)
     if timed_out:
@@ -786,8 +840,18 @@ def cmd_pdc_reject(args) -> int:
 
 
 def _load_net_a():
-    """Import the structural analyser. Any failure RAISES, and main() maps it."""
-    path = HERE / "check-c-returns.py"
+    """Import the structural analyser. Any failure RAISES, and main() maps it.
+
+    `GATE_PROBE_NET_A` overrides the path, and exists for ONE reason: the fault
+    injections in scripts/test-gate-probe.sh must be able to point this at a
+    missing, unparsable or entry-point-less analyser. They used to do that by
+    MOVING the tracked scripts/check-c-returns.py into a temporary directory and
+    overwriting its path — so an interrupt inside that window left the trap to
+    delete the temporary directory AND the only copy of the analyser, with the
+    tracked file missing or a two-line stub. Injecting a path touches nothing
+    that is checked in.
+    """
+    path = Path(os.environ.get("GATE_PROBE_NET_A") or (HERE / "check-c-returns.py"))
     if not path.is_file():
         raise RuntimeError(f"{path} is missing")
     spec = importlib.util.spec_from_file_location("c_returns", path)
@@ -842,6 +906,15 @@ def cmd_generated_c(args) -> int:
         if isinstance(res, Malfunction):
             print(f"HARNESS {path}: Net B — {args.cc} {res.how}, so it proves nothing here")
             harness += 1
+            # A capture that never reached EOF costs a descriptor that this
+            # process cannot reclaim. Marching on through an unbounded file list
+            # accumulates one per file, so this stops: the run is already a
+            # malfunction, and the remaining files would be analysed by a
+            # harness in a worse state than the one that just failed.
+            if "did not reach EOF" in res.how:
+                print(f"HARNESS {path}: stopping — a capture was abandoned, and "
+                      f"each one costs a descriptor this process cannot reclaim")
+                break
             continue
         if res.succeeded:
             continue

@@ -1090,21 +1090,38 @@ fn main() {
 /// is still open, OR the shared linker carries the flag. Today the first arm
 /// holds, so this passes. The moment somebody promotes
 /// `tests/stdlib/DRIVERS.tsv`'s `stdlib_tail_match` row from
-/// `known_violation:…` to `clean` — which is step 1 of the handoff on
-/// `NetA::StillFindsTheOpenMatchDefect`, and which `make stdlib-gate` demands
-/// as soon as the C goes clean — the first arm stops holding and this test
+/// `known_violation:…` to `clean` — the first arm stops holding and this test
 /// fails until the flag is added. It is an ordinary test, so it runs in
 /// `make test-honest` and in `make m1-exit` inventory 3.
+///
+/// THE CROSS-GATE HALF, cited rather than asserted: the promotion is not
+/// optional. `scripts/stdlib-gate.sh:360` enters the `known_violation:*` arm
+/// for that row; `:370-372` turns a CLEAN result into
+/// `note "XPASS: … is recorded known_violation:… but its C is now CLEAN …
+/// promote it to 'clean'"`, and `note` is what makes that gate red. So the
+/// moment codegen emits the final `else`, `make stdlib-gate` fails until the
+/// row is promoted, and promoting it makes THIS test fail until the flag is
+/// added. Neither gate can be satisfied by ignoring the other.
+///
+/// What this does NOT establish: that `stdlib_tail_match` is the ONLY pin that
+/// would have to move. It is the one the handoff names and the one this test
+/// reads; a second fixture pinned on the same defect would need its own row
+/// here.
 #[test]
 fn the_missing_else_may_not_be_fixed_without_arming_the_linker() {
     let drivers = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/stdlib/DRIVERS.tsv"),
     )
     .expect("tests/stdlib/DRIVERS.tsv is the pin for the open match defect");
+    // COLUMN 3, not "somewhere in the row". Scanning the whole line for the
+    // token keeps this green forever once someone writes the word into the
+    // note column — which is exactly where a future reader would explain what
+    // the old `known_violation:` pin used to say.
     let match_defect_open = drivers
         .lines()
         .filter(|l| l.starts_with("stdlib_tail_match\t"))
-        .any(|l| l.contains("known_violation:"));
+        .filter_map(|l| l.split('\t').nth(2))
+        .any(|verdict| verdict.starts_with("known_violation:"));
 
     let cmd = link_command(
         Path::new("/tmp/x.c"),
