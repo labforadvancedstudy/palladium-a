@@ -136,12 +136,43 @@ check "Net A, goto out of while(1) is not read as inescapable" 2 $?
 grep -q 'goto' "$TMP/o"
 check "  and the malfunction names the construct" 0 $?
 
+# A conditional INSIDE a body. The top-level scan never sees it — parse_block
+# records `#if` as an ordinary statement — so the refusal has to be repeated in
+# unmodelled_construct(). Without it the `return` counts and the build with
+# FEATURE off falls off the end while this reader calls the file clean. A
+# refusal enforced only where it was convenient to look is a docstring.
+printf 'long long f(long long n) {\n#if FEATURE\n    return 1;\n#endif\n}\n' >"$TMP/cpp_in_body.c"
+$PROBE generated-c "$TMP/cpp_in_body.c" >"$TMP/o" 2>&1
+check "Net A, #if inside a function body" 2 $?
+grep -q 'preprocessor directive inside a function body' "$TMP/o"
+check "  and the malfunction names it" 0 $?
+# ...including one nested inside a compound, which the statement walk only
+# reaches by recursing into both arms.
+printf 'long long g(long long n) {\n    if (n) {\n#ifdef X\n        return 1;\n#endif\n        return 3;\n    } else {\n        return 2;\n    }\n}\n' >"$TMP/cpp_nested.c"
+$PROBE generated-c "$TMP/cpp_nested.c" >"$TMP/o" 2>&1
+check "Net A, a directive nested inside a compound" 2 $?
+
 # The other direction: unreachable code after a `return` must NOT be reported as
 # a fall-through. The parser accepts this shape (src/parser/mod.rs,
 # already_terminates), so a Net A that refused it would go red on valid output.
 printf 'long long f(long long n) {\n    if (n) {\n        return 1;\n        n = n + 2;\n    } else {\n        return 2;\n    }\n}\n' >"$TMP/unreachable.c"
 $PROBE generated-c "$TMP/unreachable.c" >"$TMP/o" 2>&1
 check "Net A, statements after a return are unreachable, not a fall-through" 0 $?
+
+# REACHABILITY REACHES INTO BREAK DETECTION TOO. `while (1) { return 2; break; }`
+# cannot be left: the `break` is dead text. Counting every syntactically present
+# break made this a FINDING, and the parser refused the Palladium program that
+# produces it — both analyses wrong in the same way, which is the risk of
+# mirroring two hand-written readers.
+printf 'long long f(long long n) {\n    if (n) {\n        return 1;\n    } else {\n        while (1) {\n            return 2;\n            break;\n        }\n    }\n}\n' >"$TMP/dead_break.c"
+$PROBE generated-c "$TMP/dead_break.c" >"$TMP/o" 2>&1
+check "Net A, a break after a return does not make a loop escapable" 0 $?
+# ...and the guard, with the break FIRST: now it runs, the loop IS escapable,
+# and the function really can fall off its end. gcc agrees, so this is a finding
+# from both nets.
+printf 'long long f(long long n) {\n    if (n) {\n        return 1;\n    } else {\n        while (1) {\n            break;\n        }\n    }\n}\n' >"$TMP/live_break.c"
+$PROBE generated-c "$TMP/live_break.c" >"$TMP/o" 2>&1
+check "Net A, a reachable break still makes it a finding" 1 $?
 
 echo
 echo "== unrelated failures must not be read as the expected finding =="
@@ -210,6 +241,36 @@ else
   fail=$((fail+1))
 fi
 pkill -f "sleep 600" 2>/dev/null || true
+
+echo
+echo "== a producer noisier than one pipe buffer must still conclude =="
+# THE HARNESS MUST NOT MANUFACTURE ITS OWN MALFUNCTION. `run()` waits on the
+# CHILD rather than draining its output, which is right — a grandchild can hold
+# a pipe open past the timeout — but with a pipe that means nobody empties the
+# 64 KiB buffer while the child runs, so a producer that writes more BLOCKS in
+# write(2), the parent blocks in wait(), and the harness reports "timed out
+# after 300s". That verdict is indistinguishable from a producer that really
+# hung, and it is false.
+#
+# Measured at fcbabca: `cargo test --release --no-fail-fast -- --ignored` emits
+# 78296 bytes; through the pipe form it took the full 300s and returned 124,
+# through the file form 45s and its real 101. Every caller until then stayed
+# under 64 KiB, so the bound was on the INPUTS, not on the harness — which is
+# why this case exists rather than a comment saying "outputs are small".
+mk pdc_verbose '#!/bin/sh
+awk "BEGIN{for(i=0;i<40000;i++) print \"noise line, wider than one pipe buffer in total\"}"
+echo "error: No main function found" >&2
+exit 1'
+start=$(date +%s)
+$PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_verbose" --out t_noisy >"$TMP/o" 2>&1
+rc=$?; elapsed=$(( $(date +%s) - start ))
+check "1.7MB of producer output is classified, not timed out" 0 $rc
+if [ "$elapsed" -lt 60 ]; then
+  printf '  %sok%s   and it did not stall (%ss)\n' "$GREEN" "$NC" "$elapsed"; pass=$((pass+1))
+else
+  printf '  %sFAIL%s the harness blocked for %ss on its own capture buffer\n' "$RED" "$NC" "$elapsed"
+  fail=$((fail+1))
+fi
 
 echo
 echo "== the malfunction path must not republish producer text =="

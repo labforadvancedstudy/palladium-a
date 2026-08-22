@@ -80,6 +80,34 @@ them this reader says HARNESS instead of guessing. In particular `goto` would
 defeat `contains_break()` below silently — it would read an escapable loop as
 non-fallthrough — which is why its absence is checked rather than trusted.
 
+ENFORCED WHERE THE CONSTRUCT CAN APPEAR, NOT WHERE IT WAS CONVENIENT TO LOOK.
+The first version of this refusal lived only in the top-level scan, so a
+`#if`/`#endif` written INSIDE a body walked straight past it as an ordinary
+statement (see unmodelled_construct). "Enforced" now means both levels.
+
+AND THE CLAIM IS FALSIFIABLE — here is exactly what turns red when codegen
+starts emitting a shape this reader does not model:
+
+  * `make stdlib-gate` runs this analyser over the C of all 7 stdlib drivers
+    (scripts/stdlib-gate.sh, `$PROBE generated-c "$cfile"`). A HARNESS is a
+    malfunction there, and the gate is red.
+  * `cargo test --test d3b_tail_if` runs this analyser over the C that the
+    parser and codegen emit for every program those tests accept
+    (`assert_net_a_accounts_for` in tests/d3b_tail_if.rs). That is the
+    end-to-end pin: it is the ONLY check that reads real generated C through
+    this reader on the same inputs the parser's own termination analysis just
+    decided, so parser/checker disagreement, and any new emitted shape,
+    surface as a test failure rather than as a claim in this comment. It runs
+    inside `make test-honest` and inside `make m1-exit` (inventory 3 of 3).
+  * `make test-gate-probe` fault-injects the shapes themselves
+    (scripts/test-gate-probe.sh, "Net A coverage must be CLOSED"), so the
+    refusals cannot be deleted without a red gate.
+
+What is NOT covered, said plainly: `make conformance` compiles 54 fixtures and
+does not pass any of them through this analyser, so a shape that appears only
+in a conformance fixture is caught by gcc's `-Wreturn-type` (Net B) and not by
+this reader.
+
 EXIT TAXONOMY — a finding and a malfunction must not share an exit code.
     0  every function analysed, none can fall off its end
     1  at least one genuine FINDING, and nothing malfunctioned
@@ -191,23 +219,38 @@ def parse_block(lines, i):
 
 
 def contains_break(items, depth=0):
-    """Is there a `break` that escapes THIS loop?
+    """Is there a REACHABLE `break` that escapes THIS loop?
 
     A `break` inside a nested loop or a `switch` binds to that construct, not to
     ours, so only breaks at loop-depth 0 count.
+
+    REACHABILITY. The scan stops at the first item that cannot fall through,
+    because a `break` after one is dead text:
+
+        while (1) { return 2; break; }
+
+    the `return` leaves the function, so the `break` never runs, so this loop
+    has no exit edge. Counting every syntactically present `break` called it
+    escapable and reported the enclosing function as a fall-through. The parser
+    side (`contains_escaping_break` in src/parser/mod.rs) stops at the same
+    place for the same reason; the two must agree or a program one accepts is
+    flagged by the other.
     """
     for item in items:
         if item[0] == "stmt":
             if depth == 0 and re.match(r"^break\b", item[1]):
                 return True
-            continue
-        _, header, then_items, else_items = item
-        h = header.rstrip("{").strip()
-        nested = depth + 1 if re.match(r"^(while|for|do|switch)\b", h) else depth
-        if contains_break(then_items, nested):
-            return True
-        if else_items is not None and contains_break(else_items, depth):
-            return True
+        else:
+            _, header, then_items, else_items = item
+            h = header.rstrip("{").strip()
+            nested = depth + 1 if re.match(r"^(while|for|do|switch)\b", h) else depth
+            if contains_break(then_items, nested):
+                return True
+            if else_items is not None and contains_break(else_items, depth):
+                return True
+        if item_terminates(item):
+            # Everything after this point is unreachable, breaks included.
+            return False
     return False
 
 
@@ -264,10 +307,31 @@ def unmodelled_construct(items):
     module docstring). Checking rather than assuming is the point: the moment
     codegen grows one of them, this says HARNESS instead of quietly returning a
     verdict its analysis no longer supports.
+
+    THIS IS WHERE THE TOP-LEVEL REFUSAL WAS INCOMPLETE. check_file() refuses a
+    conditional preprocessor directive at column 0, but `parse_block` records
+    one written INSIDE a body as an ordinary statement, and this function used
+    to walk past it. So
+
+        long long f(long long n) {
+        #if FEATURE
+            return 1;
+        #endif
+        }
+
+    read as "there is a return, so it terminates" while the build with FEATURE
+    off falls off the end. A refusal that holds only where the reader happened
+    to look is a docstring, not an invariant — so directives are refused
+    wherever they can appear.
     """
     for item in items:
         if item[0] == "stmt":
             text = item[1]
+            if text.startswith("#"):
+                return ("a preprocessor directive inside a function body (%s) — "
+                        "text it selects may or may not be compiled, so which "
+                        "statements this body HAS is not a question this reader "
+                        "can answer" % text[:40])
             if GOTO_RE.match(text):
                 return ("a `goto` (%s) — a jump can leave a loop that "
                         "`contains_break` would call inescapable" % text[:40])

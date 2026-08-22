@@ -70,6 +70,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -158,59 +159,76 @@ def run(argv, cwd=None, env=None) -> Run:
     """Run a process. Every failure mode becomes a Run, never an exception.
 
     The child gets its own process group so a timeout kills DESCENDANTS too: a
-    grandchild holding the merged pipe open would otherwise outlive the timeout
-    and the read would block past it.
+    grandchild holding the output open would otherwise outlive the timeout.
+
+    THE OUTPUT GOES TO A TEMPORARY FILE, NOT A PIPE — and that is not a style
+    choice. WAIT ON THE CHILD, NOT ON THE PIPE (measured: a grandchild running
+    `sleep 600` kept a pipe read blocked for the full timeout even though the
+    direct child had exited) means nobody drains the pipe while the child runs,
+    and a pipe holds only one buffer — 64 KiB here. A producer that writes more
+    than that BLOCKS in write(2) forever, the parent blocks in wait(), and the
+    harness reports `timed out after 300s`: a MALFUNCTION VERDICT MANUFACTURED
+    BY THE HARNESS ITSELF, indistinguishable from a producer that really hung.
+
+    Measured, 2026-08-22: `cargo test --release --no-fail-fast -- --ignored`
+    emits 78296 bytes. Through the old pipe form it took the full 300s and
+    returned 124; through a file it takes 45s and returns 101, its real verdict.
+    Every current caller stayed under 64 KiB, which is why this never fired —
+    the bound was on the INPUTS, not on the harness.
+
+    A file has no such bound, cannot block the writer, and cannot be held open
+    by a descendant in a way that stalls the reader.
     """
     merged = dict(os.environ)
     if env:
         merged.update(env)
+    sink = tempfile.TemporaryFile()
     try:
-        proc = subprocess.Popen(
-            list(argv),
-            cwd=cwd,
-            env=merged,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    except OSError as exc:
-        # FileNotFoundError, PermissionError, ENOEXEC, IsADirectoryError ...
-        return Run(argv, 126, f"cannot execute: {exc}")
-    except Exception as exc:  # noqa: BLE001
-        return Run(argv, 125, f"launch failed: {exc!r}")
+        try:
+            proc = subprocess.Popen(
+                list(argv),
+                cwd=cwd,
+                env=merged,
+                stdout=sink,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            # FileNotFoundError, PermissionError, ENOEXEC, IsADirectoryError ...
+            return Run(argv, 126, f"cannot execute: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            return Run(argv, 125, f"launch failed: {exc!r}")
 
-    # start_new_session makes the child a process-group leader, so its pid is
-    # the pgid and stays usable after the child itself is reaped.
-    pgid = proc.pid
-    timed_out = False
-    try:
-        proc.wait(timeout=TIMEOUT_S)
-    except subprocess.TimeoutExpired:
-        timed_out = True
+        # start_new_session makes the child a process-group leader, so its pid is
+        # the pgid and stays usable after the child itself is reaped.
+        pgid = proc.pid
+        timed_out = False
+        try:
+            proc.wait(timeout=TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            timed_out = True
 
-    # WAIT ON THE CHILD, NOT ON THE PIPE. `communicate()` waits for EOF, which a
-    # DESCENDANT can withhold indefinitely: measured, a grandchild running
-    # `sleep 600` kept the read blocked for the full 300s timeout even though
-    # the direct child had already exited. Killing the group here means the only
-    # remaining pipe writers are dead, so the read below returns at once.
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except OSError:
-        pass
-    try:
-        out = proc.stdout.read() if proc.stdout else b""
-    except OSError:
-        out = b""
+        # Kill the group whatever happened: a descendant still writing would
+        # otherwise keep appending to the file we are about to read.
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+
+        try:
+            sink.seek(0)
+            out = sink.read()
+        except OSError:
+            out = b""
     finally:
-        if proc.stdout:
-            try:
-                proc.stdout.close()
-            except OSError:
-                pass
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        pass
+        try:
+            sink.close()
+        except OSError:
+            pass
 
     text = out.decode("utf-8", "replace") if isinstance(out, bytes) else str(out)
     if timed_out:

@@ -95,8 +95,23 @@ Usage: scripts/test-xfail.py [--self-test]
 
 import os
 import re
-import subprocess
 import sys
+
+# THE PROCESS BOUNDARY IS NOT RE-IMPLEMENTED HERE.
+# scripts/gate_probe.py already owns it, in the one shape a later edit cannot
+# quietly undo: `Run` exposes no accessor for its output, `classify()` is the
+# only route to it, and the failure result — `Malfunction` — HAS NO `text`
+# ATTRIBUTE AT ALL. So "do not read the output of a producer that did not
+# conclude" stops being a rule someone has to remember and becomes an
+# AttributeError. That matters exactly here: this file replaced a hand-written
+# Rust module scanner with `cargo test --list` to get "cargo versus cargo", and
+# that argument only holds if cargo's VERDICT is read, not merely its stdout.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# `classify` is imported under a distinct name: this file already has a
+# `classify(site)` for #[ignore] tags, and a silent shadow there would have
+# turned every process verdict into a tag verdict.
+from gate_probe import Malfunction, classify as classify_process  # noqa: E402
+from gate_probe import run as run_process  # noqa: E402
 
 # Reviewed allowlist of tests that may be #[ignore]d for cost alone. Keyed by
 # the SAME identity reconciliation uses — (target, full module path) — because
@@ -1043,34 +1058,100 @@ def self_test():
     rows, errs = read_debt_manifest("/nonexistent/rust-debt-manifest.txt")
     check("a missing manifest is fatal, not empty", (rows, len(errs)), (None, 1))
 
+    # 14. THE PRODUCER'S VERDICT, NOT JUST ITS STDOUT. A cargo that was killed
+    #     after printing a complete-looking listing must not be believed: a
+    #     SHORT listing is indistinguishable from a repo with fewer ignored
+    #     tests, so the gate would report a smaller debt and pass.
+    from gate_probe import Run
+
+    parsable = ("     Running tests/x_test.rs (target/release/deps/x_test-cd)\n"
+                "a::test_dup: test\n")
+    check("a listing that concluded is read",
+          read_listing(classify_process(Run(["cargo"], 0, parsable), reject_codes=()),
+                       "listing")[0],
+          [("tests/x_test.rs", "a::test_dup")])
+    for rc, label in ((-9, "SIGKILL (-9)"), (137, "shell-reported 137"),
+                      (101, "unpinned exit 101"), (1, "unpinned exit 1")):
+        listed_, problem = read_listing(
+            classify_process(Run(["cargo"], rc, parsable), reject_codes=()), "listing")
+        check("a listing from a producer that died — %s — is refused" % label,
+              (listed_, problem is not None and "did not conclude" in problem),
+              (None, True))
+    # And the refusal is structural, not a rule to remember: there is no route
+    # from a Malfunction to the text at all.
+    check("Malfunction exposes no text",
+          hasattr(classify_process(Run(["cargo"], -9, parsable), reject_codes=()), "text"),
+          False)
+    # The RUN pins 101 (libtest's "a test failed"), which IS a conclusion.
+    res = classify_process(Run(["cargo"], 101, "test x ... FAILED\n"), reject_codes=(101,))
+    check("the ignored run treats 101 as a conclusion, not a malfunction",
+          (isinstance(res, Malfunction), res.succeeded), (False, False))
+    check("...but a signal is a malfunction even at the same output",
+          isinstance(classify_process(Run(["cargo"], -9, "test x ... FAILED\n"),
+                              reject_codes=(101,)), Malfunction),
+          True)
+
     if failures:
         print("self-test FAILED:", file=sys.stderr)
         for f in failures:
             print("  " + f, file=sys.stderr)
         return False
-    print("self-test: 41 checks green (reason lookup incl. same name in two "
+    print("self-test: 48 checks green (reason lookup incl. same name in two "
           "modules and in two targets, shared module, missing and ambiguous "
           "reasons, literal-safe scanning, cargo attribution, verdicts, the "
           "milestone-owner gate incl. its off state, owner agreement between "
-          "candidate declarations, and the closed debt inventory incl. every "
-          "route out of it)")
+          "candidate declarations, the closed debt inventory incl. every route "
+          "out of it, and the producer boundary — a signalled or unpinned cargo "
+          "is refused even when its listing parses)")
     return True
 
 
 # --------------------------------------------------------------------------
 
-def run_cargo(extra):
-    """cargo test with the two streams merged BY THE OS.
+def run_cargo(extra, reject_codes=()):
+    """cargo test with the two streams merged BY THE OS, and its STATUS READ.
 
     Cargo prints `Running <target>` to stderr and test lines to stdout, and it
     is their interleaving that says which target a test belongs to. Capturing
     the two separately and concatenating puts every target header after every
-    result, and everything parses with target None.
+    result, and everything parses with target None. `gate_probe.run` merges
+    them at the OS level for the same reason.
+
+    -> Concluded | Malfunction. `reject_codes` are the exit codes that mean
+    "this producer finished and said no", measured for the two shapes used here:
+
+        cargo test -- --list [--ignored]   exit 0            (a listing)
+        cargo test -- --ignored            exit 101 on fail  (libtest's code)
+
+    So a LISTING passes `reject_codes=()` — only exit 0 concludes, because a
+    listing that did not finish is not a listing — and the RUN passes
+    `reject_codes=(101,)`. Anything else, and every signal, is a Malfunction
+    whose text cannot be reached.
     """
-    proc = subprocess.run(
-        ["cargo", "test", "--release", "--no-fail-fast", "--"] + extra,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    return proc.returncode, proc.stdout
+    return classify_process(
+        run_process(["cargo", "test", "--release", "--no-fail-fast", "--"]
+                    + list(extra)),
+        reject_codes=reject_codes)
+
+
+def read_listing(res, what):
+    """-> (listed, problem). Exactly one is None.
+
+    THE FAILURE THIS EXISTS TO STOP: a producer that was signalled, or exited
+    for an unpinned reason, having ALREADY printed a complete-looking listing.
+    Its stdout parses. Believing it is the family M1 spent itself on — trusting
+    parsable output from a process that did not finish — and it is worse here
+    than elsewhere, because a SHORT listing is indistinguishable from a repo
+    with fewer ignored tests: the gate would report a smaller debt and pass.
+    """
+    if isinstance(res, Malfunction):
+        return None, ("%s did not conclude (%s). Nothing was established: its "
+                      "output may look like a complete listing and is not "
+                      "evidence, so it has not been read." % (what, res.how))
+    err = build_error(res.text)
+    if err:
+        return None, "%s did not build: %s" % (what, err)
+    return parse_list(res.text), None
 
 
 def build_error(out):
@@ -1092,34 +1173,42 @@ def main():
 
     problems = []
 
-    _, out_list = run_cargo(["--list", "--ignored"])
-    err = build_error(out_list)
+    listed, err = read_listing(run_cargo(["--list", "--ignored"]),
+                               "the ignored listing (cargo test -- --list --ignored)")
     if err:
-        print("error: the ignored set did not build: " + err, file=sys.stderr)
+        print("error: " + err, file=sys.stderr)
         return 1
-    listed = parse_list(out_list)
 
     # The full listing, not just the ignored subset. This is the ONLY way to
     # tell "the #[ignore] came off" from "the test is gone" — and the second is
     # the escape hatch the debt manifest exists to close.
-    _, out_all = run_cargo(["--list"])
-    err = build_error(out_all)
+    all_tests, err = read_listing(run_cargo(["--list"]),
+                                  "the full listing (cargo test -- --list)")
     if err:
-        print("error: the test listing did not build: " + err, file=sys.stderr)
+        print("error: " + err, file=sys.stderr)
         return 1
-    all_tests = parse_list(out_all)
 
-    rc_run, out_run = run_cargo(["--ignored"])
-    err = build_error(out_run)
+    # 101 is libtest's "a test failed", which is the NORMAL outcome here: 40
+    # declared expected failures fail. Anything else — a signal, a build abort,
+    # a code nobody pinned — means the run did not conclude, so there is no
+    # observation set and reconciling against one would invent STALE rows for
+    # every test that never got to run.
+    res_run = run_cargo(["--ignored"], reject_codes=(101,))
+    if isinstance(res_run, Malfunction):
+        print("error: the ignored run did not conclude (%s). Nothing was "
+              "established, so no verdict is issued; its output has not been "
+              "read." % res_run.how, file=sys.stderr)
+        return 1
+    err = build_error(res_run.text)
     if err:
         problems.append(("BUILD", "the ignored set did not build: " + err))
-    obs, unreported = parse_run(out_run)
+    obs, unreported = parse_run(res_run.text)
     for t in unreported:
         problems.append(("NO_RESULT", "%s started and never reported a result "
                                       "— it did not run at all" % t))
-    if rc_run != 0 and not any(o[2] == "FAILED" for o in obs):
+    if not res_run.succeeded and not any(o[2] == "FAILED" for o in obs):
         problems.append(("CARGO", "cargo exited %d with no failing test to "
-                                  "explain it" % rc_run))
+                                  "explain it" % res_run.rc))
 
     forbid_owner = os.environ.get("TEST_XFAIL_FORBID_OWNER", "").strip() or None
     if forbid_owner and not re.fullmatch(r"M[1-9]|unscheduled", forbid_owner):

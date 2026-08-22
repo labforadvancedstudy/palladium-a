@@ -180,10 +180,18 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///   no escaping `break`           `contains_break`. `Expr::Bool(true)` is
 ///                                 emitted as the literal `1`
 ///                                 (src/codegen/mod.rs, `Expr::Bool`), which is
-///                                 the exact spelling that case recognises —
-///                                 `while 1 == 1` emits `while ((1 == 1))` and
-///                                 is deliberately NOT treated as infinite on
-///                                 either side.
+///                                 the exact spelling that case recognises.
+///                                 ONE KNOWN, MEASURED DIVERGENCE: `while
+///                                 1 == 1` is folded to `Expr::Bool(true)` by
+///                                 src/optimizer/constant_folding.rs (`BinOp::
+///                                 Eq`) and so ALSO emits `while (1)`, while
+///                                 this analysis reads the UNFOLDED ast and
+///                                 does not call it infinite. The divergence is
+///                                 in the safe direction — this side refuses a
+///                                 program the C-side reader would have
+///                                 accepted — and it is pinned by
+///                                 `codegen_spellings_the_generated_c_invariant_
+///                                 depends_on` in tests/d3b_tail_if.rs.
 ///   `if`/`else`, both arms    <-> the `h.startswith("if")` case
 ///
 /// `any` rather than "the last statement": anything written after a statement
@@ -228,14 +236,47 @@ fn stmt_terminates(stmt: &Stmt) -> bool {
     }
 }
 
-/// Is there a `break` that escapes the loop whose body is `stmts`?
+/// Is there a REACHABLE `break` that escapes the loop whose body is `stmts`?
 ///
 /// Mirrors `contains_break` in `scripts/check-c-returns.py`: a `break` written
 /// inside a nested loop binds to that loop, so it does not let control out of
 /// ours. Palladium has no labelled break (`Stmt::Break` carries only a span),
 /// so nesting is the whole rule.
+///
+/// REACHABILITY, AND WHY IT HAD TO COME DOWN HERE TOO
+/// The scan stops at the first statement that cannot fall through, because a
+/// `break` written after one is dead text:
+///
+/// ```text
+/// if c { 1 } else { while true { return 2; break; } }
+/// ```
+///
+/// The `return` leaves the function, so the `break` never runs, so the loop has
+/// no exit edge and the `else` branch cannot fall through — the program is
+/// correct. Counting every SYNTACTICALLY PRESENT break called that loop
+/// escapable and refused it (measured before this fix). `already_terminates`
+/// above was already reachability-aware after the first round; this is the same
+/// rule one level down, and the two have to move together or a program is
+/// accepted by one and refused by the other.
+///
+/// The mutual recursion (`stmt_terminates` asks about breaks in a loop body,
+/// this asks whether a statement terminates) descends into strictly smaller
+/// statement trees on every step, so it is well founded.
 fn contains_escaping_break(stmts: &[Stmt]) -> bool {
-    stmts.iter().any(|stmt| match stmt {
+    for stmt in stmts {
+        if stmt_contains_escaping_break(stmt) {
+            return true;
+        }
+        if stmt_terminates(stmt) {
+            // Everything after this point is unreachable, breaks included.
+            return false;
+        }
+    }
+    false
+}
+
+fn stmt_contains_escaping_break(stmt: &Stmt) -> bool {
+    match stmt {
         Stmt::Break { .. } => true,
         Stmt::If {
             then_branch,
@@ -252,7 +293,7 @@ fn contains_escaping_break(stmts: &[Stmt]) -> bool {
         // A `break` in here belongs to THAT loop, not to ours.
         Stmt::While { .. } | Stmt::For { .. } => false,
         _ => false,
-    })
+    }
 }
 
 /// Which path has no value, phrased for the diagnostic. Names the *first*

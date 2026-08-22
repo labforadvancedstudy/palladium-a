@@ -10,6 +10,34 @@ and no machine does it. A review of 24 pinned targets found 21 supporting their 
 stores a readable excerpt beside the hash so a spot-check needs no source checkout, and
 `--update` prints the old and new excerpt for every changed pin, so a reviewer judges
 meaning rather than a hex string.
+
+HOW TO RELOCATE PINS AFTER AN EDIT SHIFTS A CITED FILE — the procedure, so a reviewer can
+re-derive it instead of trusting that it was done. `--update` on its own is a LAUNDERING
+MACHINE: it will happily record a fingerprint for whatever now sits at `path:line`, and
+"0 MOVED" afterwards proves only that the pins agree with the docs, never that the docs
+point at the right code. So the doc citations are corrected FIRST, by content, and only
+then is `--update` run.
+
+  1. Run the check. It names every citation whose fingerprint no longer matches.
+  2. For each, take the OLD text of the cited range (`git show <base>:<path>`, lines
+     start..end) and search the WORKING TREE file for that exact line sequence.
+       * exactly one match  -> rewrite the citation in the citing doc to the new line
+         numbers. Content equality is what justifies the move, not proximity.
+       * zero or several matches -> the text is not unique (`}`, `true`, `ty,`). Do NOT
+         guess. Establish a uniform offset instead: prove that every line from the first
+         unedited one onwards satisfies `old[i] == new[i + delta]` for a single delta,
+         which makes the relocation an identity rather than a search, then apply it and
+         re-verify each moved range by FINGERPRINT EQUALITY against the pin file.
+  3. Re-run the check. It should now report only "unpinned (run --update)" — i.e. new
+     keys — with no MOVED.
+  4. Run `--update` and read its MOVED list. It should be empty.
+
+MOVED > 0 AFTER STEP 4 IS NOT AUTOMATICALLY A DEFECT, and here is the one benign case,
+recorded because it happened: pin keys are `(path, lines, doc)`, so when citation A shifts
+onto the line number citation B used to occupy, the key survives with different content and
+is reported as MOVED. That is a KEY COLLISION, not a laundering. Resolve it by reading both
+citations and confirming each names the code its prose describes — and say in the commit
+message which keys collided, so the reviewer checks the same two lines you did.
 """
 from __future__ import annotations
 

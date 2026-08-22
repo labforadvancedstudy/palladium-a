@@ -29,16 +29,138 @@
 use palladium::linker::{link_command, OptLevel};
 use palladium::{CompileError, Driver};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-/// Run the full driver over `source`, returning the emitted C file's contents.
-fn compile_to_c(source: &str, name: &str) -> Result<String, String> {
+/// Run the full driver over `source`, returning the path of the emitted C.
+fn compile_to_c_path(source: &str, name: &str) -> Result<PathBuf, String> {
     let dir = TempDir::new().unwrap();
     let src = dir.path().join(format!("{}.pd", name));
     fs::write(&src, source).unwrap();
-    let c_file = Driver::new().compile_file(&src).map_err(rendered)?;
+    Driver::new().compile_file(&src).map_err(rendered)
+}
+
+/// Run the full driver over `source`, returning the emitted C file's contents.
+///
+/// Every accepted program also goes through the generated-C invariant; see
+/// [`assert_net_a_accounts_for`].
+fn compile_to_c(source: &str, name: &str) -> Result<String, String> {
+    compile_to_c_expecting(source, name, NetA::Accepts)
+}
+
+fn compile_to_c_expecting(source: &str, name: &str, expect: NetA) -> Result<String, String> {
+    let c_file = compile_to_c_path(source, name)?;
+    assert_net_a(&c_file, name, expect);
     fs::read_to_string(&c_file).map_err(|e| format!("reading {}: {}", c_file.display(), e))
+}
+
+/// Run `scripts/check-c-returns.py` over C THIS BUILD just emitted.
+///
+/// WHY THIS EXISTS, AND WHY IT IS THE MOST IMPORTANT ASSERTION IN THIS FILE
+/// The parser decides "does this branch fall through?" over Palladium
+/// statements; `scripts/check-c-returns.py` decides the same question over the
+/// C those statements become. Two hand-written analyses of one property drift,
+/// and their drift is silent in both directions: a shape the parser accepts and
+/// the checker flags turns a gate red on valid code, and the reverse ships a
+/// miscompile under a green gate. Round 1 kept them in step by DISCIPLINE — a
+/// comment naming each pair — and round 2 found the same defect in both at
+/// once (an unreachable `break` counted as an escape), which is exactly what
+/// discipline buys you.
+///
+/// So agreement is no longer asserted, it is EXECUTED: every program these
+/// tests accept is handed to the real checker, as a process, with its exit
+/// status read. A disagreement is a failing test rather than a claim, and any
+/// NEW shape codegen starts emitting turns this red too — which is the thing
+/// that makes "the generator's invariants are enforced" falsifiable.
+///
+/// Exit codes are the checker's own taxonomy: 0 clean, 1 a finding, 2 a
+/// malfunction. Only 0 is acceptable for a program the parser accepted —
+/// except for the one declared, owned disagreement below.
+#[derive(Clone, Copy)]
+enum NetA {
+    /// The parser and the checker agree: the emitted C returns on every path.
+    Accepts,
+    /// THE ONE DECLARED DISAGREEMENT, and it is an OPEN DEFECT, not an excuse.
+    ///
+    /// The parser accepts a tail `match` whose arms all return. Codegen lowers
+    /// `match` to an `if`/`else if` chain with NO FINAL `else`
+    /// (src/codegen/mod.rs), so the emitted C can fall past the last arm and
+    /// the checker is right to flag it — gcc's `-Wreturn-type` agrees. The
+    /// defect is match exhaustiveness, tracked separately from D3b and pinned
+    /// in the conformance corpus by tests/stdlib/stdlib_tail_match.pd
+    /// (`known_violation:area_code,sides`).
+    ///
+    /// It is spelled as a REQUIRED finding rather than an exemption so that it
+    /// cannot go stale: when the final `else` lands, the checker returns 0, THIS
+    /// ASSERTION FAILS, and whoever fixed it is told to change the expectation
+    /// to `Accepts`. That is the same XPASS handoff scripts/conformance.sh uses.
+    StillFindsTheOpenMatchDefect,
+}
+
+fn assert_net_a(c_file: &Path, what: &str, expect: NetA) {
+    match expect {
+        NetA::Accepts => assert_net_a_accounts_for(c_file, what),
+        NetA::StillFindsTheOpenMatchDefect => {
+            let (code, text) = net_a_verdict(c_file);
+            assert_eq!(
+                code,
+                Some(1),
+                "`{}` emits a tail `match`, whose C has no final `else`, so the \
+                 generated-C invariant must still report a finding. If it now \
+                 returns 0 the missing-`else` defect is FIXED: change this \
+                 expectation to NetA::Accepts (and retire the `known_violation` \
+                 pin on tests/stdlib/stdlib_tail_match.pd). Got exit {:?}:\n{}",
+                what,
+                code,
+                text
+            );
+            assert!(
+                text.contains("FINDING") && text.contains("may fall off its end"),
+                "exit 1 must be corroborated by the well-formed finding, not by \
+                 arbitrary output:\n{}",
+                text
+            );
+        }
+    }
+}
+
+fn net_a_verdict(c_file: &Path) -> (Option<i32>, String) {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/check-c-returns.py");
+    let out = Command::new("python3")
+        .arg(&script)
+        .arg(c_file)
+        .output()
+        .unwrap_or_else(|e| {
+            panic!(
+                "could not run {} (the generated-C invariant is a hard dependency \
+                 of this suite, as it is of `make stdlib-gate`): {}",
+                script.display(),
+                e
+            )
+        });
+    (
+        out.status.code(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+fn assert_net_a_accounts_for(c_file: &Path, what: &str) {
+    let (code, text) = net_a_verdict(c_file);
+    assert_eq!(
+        code,
+        Some(0),
+        "the generated-C invariant does not accept the C emitted for `{}`, which \
+         the parser DID accept — the two analyses disagree.\n\
+         exit {:?} (0 clean, 1 finding, 2 malfunction)\n{}",
+        what,
+        code,
+        text
+    );
 }
 
 /// Headline + notes + suggestions, i.e. everything the user is shown.
@@ -58,6 +180,14 @@ fn rendered(e: CompileError) -> String {
 /// Uses `link_command` rather than a bare `cc` so the runtime and prelude are
 /// resolved exactly as `pdc compile` resolves them.
 fn compile_and_run(source: &str, name: &str) -> Result<String, String> {
+    compile_and_run_expecting(source, name, NetA::Accepts)
+}
+
+fn compile_and_run_expecting(
+    source: &str,
+    name: &str,
+    expect: NetA,
+) -> Result<String, String> {
     let dir = TempDir::new().unwrap();
     let src = dir.path().join(format!("{}.pd", name));
     let exe = dir.path().join(name);
@@ -66,6 +196,7 @@ fn compile_and_run(source: &str, name: &str) -> Result<String, String> {
     let c_file = Driver::new()
         .compile_file(&src)
         .map_err(|e| format!("compilation failed: {}", rendered(e)))?;
+    assert_net_a(&c_file, name, expect);
 
     let out = link_command(&c_file, &exe, OptLevel::Default)
         .map_err(|e| format!("link_command: {}", e))?
@@ -321,6 +452,169 @@ fn main() {
     assert!(c.contains("return 1;"), "{}", c);
 }
 
+/// A `break` written after a `return` never runs, so it does not give the loop
+/// an exit edge and the branch still cannot fall through.
+///
+/// MEASURED AT fcbabca, BEFORE THIS FIX: refused. Round 1 made
+/// `already_terminates` reachability-aware but that reachability did not reach
+/// into break detection — the same defect one level down, in both analyses at
+/// once.
+#[test]
+fn a_branch_whose_only_break_is_unreachable_is_not_refused() {
+    let out = compile_and_run(
+        r#"
+fn pick(c: bool) -> i64 {
+    if c { 1 } else { while true { return 2; break; } }
+}
+
+fn main() {
+    print_int(pick(true));
+    print_int(pick(false));
+}
+"#,
+        "d3b_unreachable_break",
+    )
+    .expect("a `break` after a `return` cannot escape the loop");
+    assert_eq!(out.trim(), "1\n2");
+}
+
+/// The order matters, and this is the guard: with the `break` FIRST it is
+/// reachable, the loop can be left, and the branch does fall through. A fix
+/// that just ignored breaks near returns would accept this too.
+#[test]
+fn a_reachable_break_before_a_return_still_escapes() {
+    let err = compile_to_c(
+        r#"
+fn pick(c: bool) -> i64 {
+    if c { 1 } else { while true { break; return 2; } }
+}
+
+fn main() {
+    print_int(pick(true));
+}
+"#,
+        "d3b_reachable_break",
+    )
+    .expect_err("the `break` runs on the first iteration");
+    assert!(
+        err.contains("the `else` branch"),
+        "the note must name the branch that falls through, got:\n{}",
+        err
+    );
+}
+
+/// A `break` under a nested `if` is still ours: an `if` is not a loop, so the
+/// break binds to the enclosing `while`. `contains_escaping_break` recurses
+/// through both arms, mirroring `contains_break`'s treatment of a compound with
+/// an `if` header.
+#[test]
+fn a_break_under_a_nested_if_still_escapes_the_loop() {
+    let err = compile_to_c(
+        r#"
+fn pick(c: bool, d: bool) -> i64 {
+    if c {
+        1
+    } else {
+        while true {
+            if d {
+                break;
+            }
+        }
+    }
+}
+
+fn main() {
+    print_int(pick(true, true));
+}
+"#,
+        "d3b_break_under_if",
+    )
+    .expect_err("a break under an `if` still leaves the loop");
+    assert!(err.contains("the `else` branch"), "{}", err);
+}
+
+/// `unsafe { … }` is a scope, not a loop or a function: a `return` inside it
+/// terminates the enclosing branch, and a `break` inside it still escapes the
+/// enclosing loop. Both sides model it as a bare block — codegen emits exactly
+/// that (`// unsafe block` then `{`), so `check-c-returns.py` reads it through
+/// its `h in ("", "do")` case.
+#[test]
+fn an_unsafe_block_that_returns_terminates_its_branch() {
+    let out = compile_and_run(
+        r#"
+fn pick(c: bool) -> i64 {
+    if c {
+        1
+    } else {
+        unsafe {
+            return 2;
+        }
+    }
+}
+
+fn main() {
+    print_int(pick(true));
+    print_int(pick(false));
+}
+"#,
+        "d3b_unsafe_returns",
+    )
+    .expect("a `return` inside an `unsafe` block still returns");
+    assert_eq!(out.trim(), "1\n2");
+}
+
+#[test]
+fn a_break_inside_an_unsafe_block_still_escapes_the_loop() {
+    let err = compile_to_c(
+        r#"
+fn pick(c: bool) -> i64 {
+    if c {
+        1
+    } else {
+        while true {
+            unsafe {
+                break;
+            }
+        }
+    }
+}
+
+fn main() {
+    print_int(pick(true));
+}
+"#,
+        "d3b_unsafe_break",
+    )
+    .expect_err("an `unsafe` scope does not capture a `break`");
+    assert!(err.contains("the `else` branch"), "{}", err);
+}
+
+/// THE AGREEMENT BOUNDARY, PINNED. Only the literal `while true` is treated as
+/// infinite, because only it emits the literal `while (1)` that
+/// `scripts/check-c-returns.py` recognises. `while 1 == 1` emits
+/// `while ((1 == 1))`, which neither side calls infinite — so the program is
+/// refused here rather than accepted here and flagged there.
+///
+/// This is a deliberate limit, not an oversight: widening one side without the
+/// other is how the two analyses drift apart.
+#[test]
+fn a_loop_that_is_infinite_but_not_spelled_true_is_refused() {
+    let err = compile_to_c(
+        r#"
+fn pick(c: bool) -> i64 {
+    if c { 1 } else { while 1 == 1 { print("spinning"); } }
+}
+
+fn main() {
+    print_int(pick(true));
+}
+"#,
+        "d3b_not_literal_true",
+    )
+    .expect_err("only the literal `while true` is modelled as infinite");
+    assert!(err.contains("the `else` branch"), "{}", err);
+}
+
 /// Statements written after a `return` are unreachable, so the branch they are
 /// in cannot fall through either.
 ///
@@ -365,9 +659,18 @@ fn main() {
 /// This is the only match arm form that can carry a value; a block-bodied arm
 /// parses with `parse_statement` and so demands a `;`, making `Circle => { 1 }`
 /// a parse error.
+///
+/// AND IT IS THE ONE PLACE THE TWO ANALYSES DISAGREE — declared, not exempted.
+/// The parser lowers every arm to a `return`; codegen lowers the `match` to an
+/// `if`/`else if` chain with no final `else`, so the emitted C can still fall
+/// past the last arm and `scripts/check-c-returns.py` correctly says so. That
+/// is the open missing-`else` defect, separate from D3b. See
+/// `NetA::StillFindsTheOpenMatchDefect` for why this is spelled as a REQUIRED
+/// finding: when the defect is fixed, this line goes red and asks to be changed
+/// rather than rotting into a silent exemption.
 #[test]
 fn tail_match_arms_are_lowered_to_returns() {
-    let out = compile_and_run(
+    let out = compile_and_run_expecting(
         r#"
 enum Shape {
     Circle,
@@ -387,6 +690,7 @@ fn main() {
 }
 "#,
         "d3b_match",
+        NetA::StillFindsTheOpenMatchDefect,
     )
     .expect("must compile, link and run");
     assert_eq!(out.trim(), "1\n2", "each arm returns its own value");
@@ -538,8 +842,17 @@ fn main() {
 // ---------------------------------------------------------------------------
 
 /// A unit function's tail value is discarded, not returned. Lowering it would
-/// emit `return __pd_print_int(n);` from a `void` function, which gcc rejects.
-/// This is the regression guard on the `return_type.is_some()` condition.
+/// emit `return __pd_print_int(n);` from a `void` function.
+///
+/// Be precise about what that costs, because an earlier version of this comment
+/// said "which gcc rejects" and the test two screens down measures the
+/// opposite: returning a VOID expression from a void function is a constraint
+/// violation that both gcc and clang accept as an extension (see
+/// `an_explicit_unit_return_type_with_a_unit_tail_still_runs`, which compiles,
+/// links and runs exactly that C). So this is not a build failure waiting to
+/// happen — it is C nobody should be emitting on purpose, and the guard below
+/// is on the `return_type.is_some()` condition that keeps the OMITTED-return-
+/// type case out of the lowering.
 #[test]
 fn a_unit_functions_tail_if_is_not_lowered() {
     let c = compile_to_c(
@@ -641,6 +954,118 @@ fn main() {
         "the type checker must catch this before codegen, got:\n{}",
         err
     );
+}
+
+// ---------------------------------------------------------------------------
+// The exact C spellings the generated-C invariant depends on
+// ---------------------------------------------------------------------------
+
+/// `scripts/check-c-returns.py` recognises constructs by their TEXT. Its
+/// docstring names the codegen sites those spellings come from, but a comment
+/// cannot go red: change `Expr::Bool` to emit `true` (with `<stdbool.h>`) and
+/// every `while true` silently stops being an infinite loop to that reader,
+/// while the parser goes on treating it as one. That is a silent divergence in
+/// the dangerous direction, and this test is what stops it.
+///
+/// Each assertion below names the regex or branch in the checker that consumes
+/// the spelling.
+#[test]
+fn codegen_spellings_the_generated_c_invariant_depends_on() {
+    let c = compile_to_c(
+        r#"
+fn spin(c: bool) -> i64 {
+    if c {
+        1
+    } else {
+        while true {
+            unsafe {
+                print("x");
+            }
+        }
+    }
+}
+
+fn checked(n: i64) -> i64 {
+    if n > 0 { n } else { panic("no"); }
+}
+
+fn nearly(c: bool) {
+    while 1 == 1 {
+        print("y");
+    }
+}
+
+fn main() {
+    print_int(spin(true));
+    print_int(checked(1));
+}
+"#,
+        "d3b_spellings",
+    )
+    .expect("must compile");
+
+    // `while true` -> `while (1)`: the `while\s*\(\s*1\s*\)` case of
+    // item_terminates(). This is the whole infinite-loop agreement.
+    assert!(
+        c.contains("while (1) {"),
+        "`while true` must emit `while (1)`:\n{}",
+        c
+    );
+    // MEASURED, AND NOT WHAT AN EARLIER COMMENT IN THIS REPO CLAIMED:
+    // `while 1 == 1` ALSO emits `while (1)`, because constant folding runs
+    // before code generation and rewrites the comparison to `Expr::Bool(true)`
+    // (src/optimizer/constant_folding.rs, `BinOp::Eq`). The two analyses
+    // therefore disagree about this program — but in the SAFE direction: the
+    // parser reads the UNFOLDED ast, does not call the loop infinite, and
+    // REFUSES the program (see
+    // `a_loop_that_is_infinite_but_not_spelled_true_is_refused`), so the
+    // checker never gets a chance to be more permissive on a program that
+    // shipped. A refusal costs a valid program; the reverse would cost a
+    // miscompile.
+    assert_eq!(
+        c.matches("while (1) {").count(),
+        2,
+        "constant folding turns `while 1 == 1` into `while (1)` too; if this \
+         ever becomes 1, the parser and the checker have swapped which of them \
+         is stricter and the direction of the divergence must be re-judged:\n{}",
+        c
+    );
+    // `panic(...)` -> `__pd_panic(`: NORETURN_RE.
+    assert!(
+        c.contains("__pd_panic("),
+        "`panic` must emit `__pd_panic(` so NORETURN_RE matches:\n{}",
+        c
+    );
+    // `unsafe { … }` -> a bare block: the `h in ("", "do")` case.
+    assert!(
+        c.contains("// unsafe block"),
+        "`unsafe` must emit a bare block:\n{}",
+        c
+    );
+    // A `return` statement starts the line: RETURN_RE is anchored.
+    assert!(
+        c.lines().any(|l| l.trim_start().starts_with("return ")),
+        "a return must start its statement: {}",
+        c
+    );
+    // THE STRUCTURAL ONE: every definition's `{` is the LAST character of its
+    // line. check_file()'s top-level scan refuses any other shape outright, so
+    // a codegen change here does not merely weaken the reader — it stops it.
+    for line in c.lines() {
+        let is_def = !line.starts_with(char::is_whitespace)
+            && line.contains('(')
+            && line.contains(')')
+            && line.contains('{')
+            && !line.trim_start().starts_with("//");
+        if is_def {
+            assert!(
+                line.ends_with('{'),
+                "a definition whose `{{` is not last on its line is refused by \
+                 scripts/check-c-returns.py: {:?}",
+                line
+            );
+        }
+    }
 }
 
 /// An `if` that is not the last statement of the body is an ordinary
