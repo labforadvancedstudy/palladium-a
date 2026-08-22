@@ -273,6 +273,97 @@ else
 fi
 
 echo
+echo "== the boundary must promise only what it delivers =="
+# THE CLAIM THAT WAS TOO BIG. gate_probe.py said reading the output of a producer
+# that did not conclude was structurally unexpressible, and Withheld's repr said
+# the same. It is not: `r._out` and `v.withheld._b` both hold the bytes —
+# deliberately, because `spill()` needs them and because `run()` must hand them
+# back before `classify()` can read them. The prose now says exactly that. These
+# checks keep prose and code in step: each fails if a future edit re-grows a
+# promise the class cannot keep, or lets the bytes back onto a parsed stream.
+python3 - >"$TMP/o" 2>&1 <<'PY'
+import pathlib, sys, tempfile
+sys.path.insert(0, "scripts")
+import gate_probe as gp
+
+bad = []
+r = gp.Run(["x"], -9, "SECRET")
+v = gp.classify(r, reject_codes=())
+
+# 1. The verdict type carries no text, so `res.text` on a possible malfunction
+#    is an AttributeError rather than a silent empty string.
+if not isinstance(v, gp.Malfunction) or hasattr(v, "text"):
+    bad.append("Malfunction has a `text` attribute again")
+
+# 2. No formatting path may carry the bytes: interpolation into a printed line
+#    is exactly how output reaches a stream a shell greps.
+for how, s in (("repr", repr(v.withheld)), ("str", str(v.withheld)),
+               ("f-string", f"{v.withheld}"), ("format", "{}".format(v.withheld)),
+               ("Malfunction repr", repr(v))):
+    if "SECRET" in s:
+        bad.append("%s of a withheld value carries the bytes" % how)
+
+# 3. It must not behave like a string by accident.
+if isinstance(v.withheld, str):
+    bad.append("Withheld is a str")
+try:
+    iter(v.withheld)
+    bad.append("Withheld is iterable")
+except TypeError:
+    pass
+
+# 4. The honest channel must keep working, or people route around it.
+with tempfile.TemporaryDirectory() as d:
+    if v.withheld.spill(pathlib.Path(d) / "spilled").read_text() != "SECRET":
+        bad.append("spill() no longer writes the output it withheld")
+
+# 5. And the prose must not re-grow the claim. Only the text BEFORE the
+#    "WHAT THIS IS NOT" section is checked: that section names these phrases in
+#    order to retract them.
+head = pathlib.Path("scripts/gate_probe.py").read_text().split("WHAT THIS IS NOT")[0]
+for phrase in ("no accessor", "unexpressible", "cannot be reached",
+               "impossible to read", "the only way to the bytes"):
+    if phrase in head.lower():
+        bad.append("gate_probe.py claims %r again" % phrase)
+
+print("\n".join(bad) if bad else "ok")
+sys.exit(1 if bad else 0)
+PY
+check "the boundary's promises match its code" 0 $?
+grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
+
+# THE RULE THAT IS ENFORCED, since unreachability is not enforceable in Python:
+# reaching for the bytes takes a private name, and no consumer outside
+# gate_probe.py may write one. A grep is the whole point — the dishonest path
+# has to appear somewhere a gate can see it.
+#
+# Two files are exempt and both are load-bearing rather than convenient:
+# gate_probe.py OWNS the slots, and this file is the ENFORCER — it must spell
+# the names in its pattern in order to search for them. Neither forms a verdict
+# from producer text, which is the thing being prevented; a reviewer checking
+# this rule is reading exactly these two files anyway.
+#
+# COMMENT LINES ARE EXCLUDED, and that is not a loophole: the retraction this
+# whole section exists to make REQUIRES naming `Run._out` and `Withheld._b` in
+# prose, in gate_probe.py and in test-xfail.py, to say that they hold the bytes.
+# A rule that forbade writing the truth down would push the truth back out of
+# the comments, which is the failure mode. Access is what is forbidden, and
+# access cannot hide on a line that begins with `#` or `//`.
+leaks=$(grep -rnE '\._out\b|\._b\b|\.withheld\._' scripts tests src \
+          --include='*.py' --include='*.sh' --include='*.rs' 2>/dev/null \
+        | grep -v '^scripts/gate_probe.py:' \
+        | grep -v '^scripts/test-gate-probe.sh:' \
+        | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' || true)
+if [ -z "$leaks" ]; then
+  printf '  %sok%s   no consumer outside gate_probe.py names a withheld private slot\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s a consumer reaches past the boundary for withheld bytes:\n' "$RED" "$NC"
+  printf '%s\n' "$leaks" | sed 's/^/        /'
+  fail=$((fail+1))
+fi
+
+echo
 echo "== the malfunction path must not republish producer text =="
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_sigkill" --out t_w1 >"$TMP/o" 2>&1
 if grep -q "No main function found" "$TMP/o"; then

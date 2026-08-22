@@ -87,14 +87,29 @@ enum NetA {
     /// `match` to an `if`/`else if` chain with NO FINAL `else`
     /// (src/codegen/mod.rs), so the emitted C can fall past the last arm and
     /// the checker is right to flag it — gcc's `-Wreturn-type` agrees. The
-    /// defect is match exhaustiveness, tracked separately from D3b and pinned
-    /// in the conformance corpus by tests/stdlib/stdlib_tail_match.pd
-    /// (`known_violation:area_code,sides`).
+    /// defect is match exhaustiveness, tracked separately from D3b.
     ///
     /// It is spelled as a REQUIRED finding rather than an exemption so that it
     /// cannot go stale: when the final `else` lands, the checker returns 0, THIS
-    /// ASSERTION FAILS, and whoever fixed it is told to change the expectation
-    /// to `Accepts`. That is the same XPASS handoff scripts/conformance.sh uses.
+    /// ASSERTION FAILS, and whoever fixed it is told what to update. That is the
+    /// same XPASS handoff scripts/conformance.sh uses.
+    ///
+    /// THE HANDOFF, BY NAME — the rows that change together when the final
+    /// `else` is emitted, so nobody has to go looking:
+    ///
+    ///   1. `tests/stdlib/DRIVERS.tsv`, row `stdlib_tail_match`: column 3 is
+    ///      `known_violation:area_code,sides`; promote it to `clean`.
+    ///      `make stdlib-gate` announces that transition itself — it prints
+    ///      "XPASS: … is recorded known_violation:… but its C is now CLEAN"
+    ///      (scripts/stdlib-gate.sh) and stays red until the row is promoted.
+    ///   2. This expectation: `StillFindsTheOpenMatchDefect` -> `Accepts`, at
+    ///      its single use in `tail_match_arms_are_lowered_to_returns`.
+    ///   3. `src/parser/mod.rs`, the NOTE inside `returns_on_every_path` that
+    ///      records this residual — it stops being a residual.
+    ///
+    /// `tests/conformance-manifest.txt` needs NO change: its
+    /// `tests/stdlib/stdlib_tail_match.pd` row is `run`/`expected` and pins the
+    /// VALUES the program prints, which a final `else` does not alter.
     StillFindsTheOpenMatchDefect,
 }
 

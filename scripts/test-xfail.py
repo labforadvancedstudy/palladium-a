@@ -98,14 +98,24 @@ import re
 import sys
 
 # THE PROCESS BOUNDARY IS NOT RE-IMPLEMENTED HERE.
-# scripts/gate_probe.py already owns it, in the one shape a later edit cannot
-# quietly undo: `Run` exposes no accessor for its output, `classify()` is the
-# only route to it, and the failure result — `Malfunction` — HAS NO `text`
-# ATTRIBUTE AT ALL. So "do not read the output of a producer that did not
-# conclude" stops being a rule someone has to remember and becomes an
-# AttributeError. That matters exactly here: this file replaced a hand-written
-# Rust module scanner with `cargo test --list` to get "cargo versus cargo", and
-# that argument only holds if cargo's VERDICT is read, not merely its stdout.
+# scripts/gate_probe.py owns it. What that buys, stated no larger than it is —
+# an earlier version of this comment said reading a non-concluding producer's
+# output "stops being a rule someone has to remember and becomes an
+# AttributeError", and that was false. The bytes survive in `Run._out` and
+# `Withheld._b`, deliberately, so `spill()` can put them in a file for a human.
+# What is true:
+#
+#   * `classify()` is the route to the output, and the failure result —
+#     `Malfunction` — has no `.text`. Writing `res.text` on something that might
+#     be a malfunction is an AttributeError rather than a silent empty string,
+#     so the ACCIDENT is caught by the interpreter.
+#   * Getting the bytes anyway takes a private name, and
+#     scripts/test-gate-probe.sh fails if any consumer outside gate_probe.py
+#     writes one. That is the part that is mechanically enforced.
+#
+# It matters exactly here: this file replaced a hand-written Rust module scanner
+# with `cargo test --list` to get "cargo versus cargo", and that argument only
+# holds if cargo's VERDICT is read, not merely its stdout.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # `classify` is imported under a distinct name: this file already has a
 # `classify(site)` for #[ignore] tags, and a silent shadow there would have
@@ -1077,8 +1087,11 @@ def self_test():
         check("a listing from a producer that died — %s — is refused" % label,
               (listed_, problem is not None and "did not conclude" in problem),
               (None, True))
-    # And the refusal is structural, not a rule to remember: there is no route
-    # from a Malfunction to the text at all.
+    # The verdict type carries no text, so `res.text` on a possible malfunction
+    # is an AttributeError rather than a silent empty string. That catches the
+    # ACCIDENT; it does not make the bytes unreachable (they are still in
+    # `Withheld`, for `spill()`), and the grep in scripts/test-gate-probe.sh is
+    # what stops a consumer reaching for them on purpose.
     check("Malfunction exposes no text",
           hasattr(classify_process(Run(["cargo"], -9, parsable), reject_codes=()), "text"),
           False)
@@ -1125,8 +1138,8 @@ def run_cargo(extra, reject_codes=()):
 
     So a LISTING passes `reject_codes=()` — only exit 0 concludes, because a
     listing that did not finish is not a listing — and the RUN passes
-    `reject_codes=(101,)`. Anything else, and every signal, is a Malfunction
-    whose text cannot be reached.
+    `reject_codes=(101,)`. Anything else, and every signal, is a Malfunction,
+    which has no `.text` for this file to read.
     """
     return classify_process(
         run_process(["cargo", "test", "--release", "--no-fail-fast", "--"]

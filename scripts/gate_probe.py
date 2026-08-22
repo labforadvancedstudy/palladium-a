@@ -28,16 +28,46 @@ convention, not a barrier.
 
 Of the two options offered in review — do not republish, or republish as a
 distinct type that cannot be pattern-matched for a verdict — **this module does
-not republish**:
+not republish**. Exactly what that is worth, because an earlier version of this
+paragraph claimed more than the code delivers:
 
-  * `Run` keeps its output in a private slot with no accessor.
-  * `classify()` returns `Concluded` or `Malfunction`. Only `Concluded` has a
-    `.text`. `Malfunction` has NO text attribute — there is nothing to
-    pattern-match, in Python or downstream.
-  * The malfunction path prints no producer text on stdout. The bytes are
-    spilled to a side file and only its PATH is announced, so the stream a shell
-    parses can never carry a diagnostic from a run that did not conclude. A
-    caller cannot grep what was never printed.
+  * ONE BOUNDARY. Every subprocess a gate runs goes through `run()`, so
+    "did this producer conclude?" is answered in one place.
+  * THE VERDICT TYPE CARRIES NO TEXT. `classify()` returns `Concluded` or
+    `Malfunction`; only `Concluded` has `.text`. Writing `res.text` on a result
+    that might be a malfunction raises AttributeError instead of yielding a
+    silent empty string, so the ACCIDENT is caught by the interpreter.
+  * NOTHING REACHES THE PARSED STREAM. The malfunction path prints no producer
+    text on stdout; the bytes go to a side file whose PATH is announced
+    (`WITHHELD_AT`). Gates grep stdout, so this is the property that actually
+    blocks the failure mode — a caller cannot grep what was never printed.
+
+WHAT THIS IS NOT — STATED BECAUSE IT WAS PREVIOUSLY OVERSTATED, HERE AND IN
+BRIEFS QUOTING THIS FILE
+The bytes are not destroyed, and Python cannot make them unreachable. They
+survive in `Run._out` and in `Withheld._b`; underscores are convention, not
+access control. "Reading the output of a producer that did not conclude is
+structurally unexpressible" was false — measured, it is `r._out` or
+`v.withheld._b`. A false claim in the module whose entire job is "do not certify
+what you did not establish" is the disease it exists to treat.
+
+The bytes are kept ON PURPOSE, and discarding them would not have closed it:
+
+  * `spill()` is the DESIGNED channel for a malfunction's output — to a file,
+    for a human, never to the stream a shell parses. Delete it and the next
+    person debugging a malfunction re-runs the producer under their own ad-hoc
+    capture, which is the failure mode with no boundary at all.
+  * `run()` must hand the bytes back for `classify()` to read them, so
+    `Run._out` exists BEFORE any classification. Discarding at classification
+    time would leave the hole open one line earlier, and a promise that fails
+    just out of shot is not a promise.
+
+So the honest claim is narrower, and it is MECHANICAL: the honest path is the
+easy path, and the dishonest one requires reaching for a private name. That is
+enforceable even though unreachability is not, and scripts/test-gate-probe.sh
+enforces it — the gate fails if any consumer outside this module names `._out`,
+`._b` or `.withheld._b`, if `Malfunction` grows a `text` attribute, or if
+`Withheld`'s `repr`/`str` starts carrying the bytes.
 
 TOTALITY
 --------
@@ -84,11 +114,23 @@ TIMEOUT_S = 300
 
 
 class Withheld:
-    """Output of a process that did not conclude. Deliberately opaque.
+    """Output of a process that did not conclude. Not evidence.
 
-    Not a string and not iterable; its repr says so. The only way to the bytes
-    is `spill()`, which names a file for a human — never the stream a caller
-    parses for a verdict.
+    WHAT THIS TYPE DOES: it stops the bytes from being printed, formatted or
+    concatenated BY ACCIDENT. It is not a string and not iterable, and `str()`
+    and f-string interpolation give the repr below rather than the output — so
+    `print(f"{m.withheld}")`, the shape by which a diagnostic reaches a stream a
+    shell greps, cannot leak it.
+
+    WHAT IT DOES NOT DO: hide the bytes. `_b` is a Python convention, not access
+    control, and the earlier repr ("<withheld: …>") implied a barrier this class
+    cannot provide. The bytes are kept because `spill()` is the intended way to
+    get a malfunction's output to a HUMAN — a named file, announced as a path —
+    and the alternative to that channel is not "no leak", it is somebody
+    re-running the producer with an ad-hoc capture and no boundary at all.
+
+    The rule that IS enforced lives in scripts/test-gate-probe.sh: no consumer
+    outside this module may name `._b` or `._out`.
     """
 
     __slots__ = ("_b",)
@@ -97,7 +139,8 @@ class Withheld:
         self._b = b
 
     def __repr__(self) -> str:
-        return "<withheld: output of a process that did not conclude; not evidence>"
+        return ("<output of a process that did not conclude; not evidence — "
+                "spill(path) writes it out for a human to read>")
 
     __str__ = __repr__
 

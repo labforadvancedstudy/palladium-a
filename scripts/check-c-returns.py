@@ -100,8 +100,9 @@ starts emitting a shape this reader does not model:
     surface as a test failure rather than as a claim in this comment. It runs
     inside `make test-honest` and inside `make m1-exit` (inventory 3 of 3).
   * `make test-gate-probe` fault-injects the shapes themselves
-    (scripts/test-gate-probe.sh, "Net A coverage must be CLOSED"), so the
-    refusals cannot be deleted without a red gate.
+    (scripts/test-gate-probe.sh, "Net A coverage must be CLOSED"), so deleting
+    a refusal turns that gate red unless its probe is deleted in the same
+    commit — which is a visible edit to a reviewed file, not a silent one.
 
 What is NOT covered, said plainly: `make conformance` compiles 54 fixtures and
 does not pass any of them through this analyser, so a shape that appears only
