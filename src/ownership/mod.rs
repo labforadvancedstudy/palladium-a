@@ -303,6 +303,42 @@ impl OwnershipContext {
             .cloned()
     }
 
+    /// Move out of `from`, naming no destination.
+    ///
+    /// SPLIT OUT OF `move_value` BECAUSE THE DESTINATION WRITE CAN CANCEL THE
+    /// SOURCE WRITE. `move_value` marks the source `Moved` and then marks the
+    /// destination `Owned`, and a `Place` is just a name: in `let s: S = s;` the
+    /// two are the SAME key, so the second insert overwrote the first and the
+    /// move vanished. Nested in a block that shadows an outer `s`, that made the
+    /// outer binding survive its own move — accepted, while the identical program
+    /// using a different inner name was correctly refused.
+    ///
+    /// A binder that wants both halves does them in order: move out of the source
+    /// first, record what the binding shadows second (so it snapshots the
+    /// POST-move state), initialize the new binding third.
+    pub fn move_out_of(&mut self, from: Place, span: Span) -> Result<()> {
+        match self.effective_ownership(&from) {
+            Some(Ownership::Owned) => {
+                self.ownership.insert(from, Ownership::Moved);
+                Ok(())
+            }
+            Some(Ownership::Borrowed { .. }) => {
+                Err(CompileError::CannotMoveOutOfBorrowedContent { span: Some(span) })
+            }
+            Some(Ownership::BorrowedMut { .. }) => {
+                Err(CompileError::CannotMoveOutOfBorrowedContent { span: Some(span) })
+            }
+            Some(Ownership::Moved) => Err(CompileError::UseOfMovedValue {
+                name: from.to_string(),
+                span: Some(span),
+            }),
+            None => Err(CompileError::UseOfUninitializedValue {
+                name: from.to_string(),
+                span: Some(span),
+            }),
+        }
+    }
+
     /// Move a value from one place to another
     pub fn move_value(&mut self, from: Place, to: Place, span: Span) -> Result<()> {
         // Check if the source can be moved

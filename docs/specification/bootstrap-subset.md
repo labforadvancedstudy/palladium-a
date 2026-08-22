@@ -97,7 +97,7 @@ unimplementable in a single-pass translator.
    A `mut` parameter of struct type becomes `struct S*` in C, so mutations propagate to the
    caller — verified: `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` struct or
    array parameter is classified as a *move* by the borrow checker
-   (`src/ownership/borrow_checker.rs:451`) and can never be used again by the caller.
+   (`src/ownership/borrow_checker.rs:494`) and can never be used again by the caller.
 
 4. **Struct literals appear only as `let` initializers.** They translate to a C99 designated
    initializer, `S { a: 1 }` → `(struct S){ .a = 1 }`.
@@ -193,7 +193,7 @@ These are tracked because PBS-1 code cannot be written safely without them.
 
 | # | Defect | Location | Status |
 |---|---|---|---|
-| D1 | `runtime/palladium_runtime.c` was referenced by the driver but absent from the repo, so nothing could ever link. It had never been committed: `.gitignore` carried a blanket `*.c` | `src/driver/mod.rs:271`, `.gitignore` | **fixed** — runtime written, `.gitignore` negated for `runtime/` |
+| D1 | `runtime/palladium_runtime.c` was referenced by the driver but absent from the repo, so nothing could ever link. It had never been committed: `.gitignore` carried a blanket `*.c` | `src/driver/mod.rs:284`, `.gitignore` | **fixed** — runtime written, `.gitignore` negated for `runtime/` |
 | D2 | 11 builtins registered in typeck but not in the borrow checker, so `string_len`, `string_eq`, `string_char_at`, `string_from_char`, `char_is_digit/alpha/whitespace`, `file_read_all`, `file_read_line`, `file_write` and `panic` failed with `Use of uninitialized value` | `src/ownership/borrow_checker.rs` vs `src/typeck/mod.rs:352-553` | **fixed** — `src/builtins.rs` is now the single table both passes derive from, with drift tests |
 | D3 | a tail expression in a value-returning function emitted no `return`, so `fn add(a,b) -> i64 { a + b }` compiled clean and returned garbage. All of `stdlib/` was affected | `src/parser/mod.rs:1263`, `src/codegen/mod.rs:1353` | **fixed** — lowered to `Stmt::Return` in the parser |
 | D6 | call-argument borrows were registered with `Lifetime::Named("fn")` while `exit_scope` released only `Lifetime::Scope(n)`, so every argument stayed borrowed forever; and `String`/array parameters were classified `Move` although codegen passes pointers and never frees | `src/ownership/borrow_checker.rs` `collect_function_sig_with_name` / `check_call_args`; `src/ownership/mod.rs:141-178` | **fixed** — borrows end with the call; `String` is Copy (language-spec §9.1); array params are borrows. The `Lifetime::Scope(n)` half of the description was worse than it read: that variant is constructed nowhere, so `exit_scope` released nothing of any lifetime and `borrows` grew for the whole compilation. It now releases by recorded scope depth |

@@ -145,6 +145,19 @@ impl Driver {
             borrow_checker.set_imported_modules(resolved_modules.clone());
         }
 
+        // The instantiation list computed above, so that the walk over imported
+        // bodies covers the generic ones codegen MONOMORPHIZES. Skipping every
+        // generic body instead — on the reasoning that codegen emits only
+        // non-generic imported functions, which is true of the direct path and
+        // false of monomorphization — let a use-after-move inside an imported
+        // `fn bad<T>` compile, emit `bad__i64`, link and print 7.
+        borrow_checker.set_instantiated_generics(
+            instantiations
+                .iter()
+                .map(|(name, _, _)| name.clone())
+                .collect(),
+        );
+
         borrow_checker.check_program(&ast)?;
         let borrow_time = borrow_start.elapsed();
         println!(

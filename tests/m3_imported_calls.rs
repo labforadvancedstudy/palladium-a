@@ -12,15 +12,15 @@
 //! The type checker was handed the resolver's output (`src/driver/mod.rs:104-107`,
 //! `type_checker.set_imported_modules(...)`), so `helper` type-checked. The borrow
 //! checker was constructed with `BorrowChecker::new()` and handed the *pre-resolution*
-//! AST (`src/driver/mod.rs:137`, `src/driver/mod.rs:148`) while `resolved_modules` sat
+//! AST (`src/driver/mod.rs:137`, `src/driver/mod.rs:161`) while `resolved_modules` sat
 //! live and unused in the same scope. Its function table was seeded from
 //! `crate::builtins::BUILTINS` and nothing else
-//! (`src/ownership/borrow_checker.rs:123-126`), and its first pass walks
+//! (`src/ownership/borrow_checker.rs:131-134`), and its first pass walks
 //! `program.items` only — `Program.imports` (`src/ast/mod.rs:9`) is never read, and
 //! `Item` (`src/ast/mod.rs:24-32`) has no `Import` variant, so no walk over items could
 //! have reached one. `helper()` therefore fell out of the function table at
-//! `Expr::Ident` (`src/ownership/borrow_checker.rs:730`), was looked up as a *value*,
-//! was not found, and died at `src/ownership/borrow_checker.rs:783` as
+//! `Expr::Ident` (`src/ownership/borrow_checker.rs:784`), was looked up as a *value*,
+//! was not found, and died at `src/ownership/borrow_checker.rs:837` as
 //! `UseOfUninitializedValue`.
 //!
 //! The pass was not wrong; it was structurally single-file. These tests drive the real
@@ -395,6 +395,177 @@ fn test_a_move_out_of_an_enclosing_binding_survives_the_block() {
     );
 }
 
+/// The name is not the binding, and this is what proves the scope machinery
+/// knows it.
+///
+/// `Place::Local` is a NAME. In `let s: S = s;` the source and the destination
+/// are therefore the same key, and `move_value` writes `Moved` to the source
+/// and then `Owned` to the destination — the second write cancelling the first.
+/// Nested in a block that shadows an outer `s`, the binder had already
+/// snapshotted the outer `Owned`, so scope exit restored it and the outer
+/// binding survived being moved out of.
+///
+/// Measured before the fix, and the pair is the whole point — the ONLY
+/// difference between these two programs is whether the inner binding reuses
+/// the outer's name:
+///
+///     if true { let s: S = s; }  then use outer s  ->  ACCEPTED
+///     if true { let u: S = s; }  then use outer s  ->  Use of moved value: s
+///
+/// The differently-named half already had a control
+/// (`test_a_move_out_of_an_enclosing_binding_survives_the_block`), which is
+/// exactly why this went unseen: every move test in this file happened to avoid
+/// the one case where the name collides.
+#[test]
+fn test_a_same_named_shadow_does_not_launder_the_move() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[],
+        "struct S { v: i64 }\n\n\
+         fn main() {\n    \
+         let s: S = S { v: 1 };\n    \
+         if true { let s: S = s; print_int(s.v); }\n    \
+         print_int(s.v);\n}\n",
+    );
+    assert!(
+        !compiled,
+        "an inner binding that REUSES the outer name moved out of it and the \
+         outer binding survived; it printed {:?}",
+        stdout
+    );
+    assert!(
+        output.contains("Use of moved value"),
+        "expected the move checker's refusal; compiler said:\n{}",
+        output
+    );
+}
+
+/// The guard for the test above: shadowing itself must stay legal.
+///
+/// A fix that refused every same-named inner binding would pass the test above
+/// and break this one. Here the inner `s` is initialized from a FRESH value, so
+/// the outer `s` is never moved out of and must still be usable after the block.
+#[test]
+fn test_a_same_named_shadow_of_a_fresh_value_leaves_the_outer_binding_alone() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[],
+        "struct S { v: i64 }\n\n\
+         fn main() {\n    \
+         let s: S = S { v: 1 };\n    \
+         if true { let s: S = S { v: 2 }; print_int(s.v); }\n    \
+         print_int(s.v);\n}\n",
+    );
+    assert!(
+        compiled,
+        "shadowing with a fresh value was refused; compiler said:\n{}",
+        output
+    );
+    assert_eq!(
+        stdout.as_deref(),
+        Some("2\n1\n"),
+        "expected the inner binding then the untouched outer one; compiler said:\n{}",
+        output
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The imported bodies that get EMITTED are the ones that get CHECKED
+// ---------------------------------------------------------------------------
+//
+// The third pass below skipped every generic imported body, on the stated
+// ground that codegen emits only public NON-GENERIC imported functions
+// (`src/codegen/mod.rs:1299-1301`) and so a skipped body "produces no C". That
+// is true of the DIRECT imported-emission path and FALSE of monomorphization,
+// which is a separate path emitting `name__T` from the same template. The
+// guarantee was read off the stated reason instead of off the mechanism, and
+// the result was a fail-open.
+//
+// The predicate is now the emission set itself: a generic imported body is
+// checked exactly when the compilation instantiates it, which is the list
+// codegen monomorphizes from (`TypeChecker::get_instantiations`, handed over
+// in `src/driver/mod.rs`).
+
+/// A plain use-after-move inside an imported GENERIC body.
+///
+/// Measured under the skip-all-generics guard: compiled, emitted `bad__i64`
+/// three times, linked, and printed `7`.
+#[test]
+fn test_a_use_after_move_in_an_instantiated_imported_generic_is_refused() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[(
+            "g.pd",
+            "pub struct S { v: i64 }\n\
+             pub fn bad<T>(x: T) -> i64 { let a: S = S{v:7}; let b: S = a; let c: S = a; return c.v; }\n",
+        )],
+        "import g;\n\nfn main() { print_int(bad(1)); }\n",
+    );
+    assert!(
+        !compiled,
+        "a use-after-move inside an imported generic body was accepted, \
+         monomorphized and run; it printed {:?}",
+        stdout
+    );
+    assert!(
+        output.contains("Use of moved value"),
+        "expected the move checker's refusal; compiler said:\n{}",
+        output
+    );
+}
+
+/// The LOCAL twin, which is what makes the test above a statement about
+/// imports rather than about generics.
+///
+/// This one is refused on `main` too. If it ever stops being refused, the test
+/// above is no longer measuring an import-specific hole.
+#[test]
+fn test_the_local_twin_of_the_generic_use_after_move_is_also_refused() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[],
+        "struct S { v: i64 }\n\
+         fn bad<T>(x: T) -> i64 { let a: S = S{v:7}; let b: S = a; let c: S = a; return c.v; }\n\n\
+         fn main() { print_int(bad(1)); }\n",
+    );
+    assert!(
+        !compiled,
+        "the local generic twin was accepted; it printed {:?}",
+        stdout
+    );
+    assert!(
+        output.contains("Use of moved value"),
+        "expected the move checker's refusal; compiler said:\n{}",
+        output
+    );
+}
+
+/// The guard on the other side, and the reason the predicate is "instantiated"
+/// rather than "check every generic body".
+///
+/// Imported ASTs are never macro-expanded — the driver expands the top-level
+/// AST before it resolves modules — so walking a generic body that holds a
+/// macro reports the internal "macros should be expanded before this phase".
+/// Checking every generic body unconditionally turned a compilation `main`
+/// COMPLETES into a hard error, on a module function nothing calls.
+///
+/// Nothing emits this body either, so skipping it is the emission rule and not
+/// an exception to it. Instantiating the same body fails in both trees, so the
+/// rule costs no accepted program.
+#[test]
+fn test_an_uninstantiated_imported_generic_with_a_macro_still_compiles() {
+    let (compiled, output, _stdout) = compile_and_run(
+        &[(
+            "g2.pd",
+            "pub fn gen<T>(x: T) -> T { let v = vec!(7); return x; }\n",
+        )],
+        "import g2;\n\nfn main() { print_int(1); }\n",
+    );
+    assert!(
+        compiled,
+        "a generic imported body nothing instantiates was walked anyway, and its \
+         unexpanded macro killed a compilation that emits none of it; \
+         compiler said:\n{}",
+        output
+    );
+}
+
 // ---------------------------------------------------------------------------
 // What is behind this wall
 // ---------------------------------------------------------------------------
@@ -501,7 +672,7 @@ fn test_local_twin_of_the_unchecked_import_is_rejected() {
 /// Walking imported bodies is only half of the job; the walk has to be handed the
 /// same ENVIRONMENT the local walk gets. It was not. `register_imported_functions`
 /// registered signatures and nothing else, so `struct_fields` — the map that
-/// `place_type` (`src/ownership/borrow_checker.rs:1201`) consults to decide
+/// `place_type` (`src/ownership/borrow_checker.rs:1255`) consults to decide
 /// whether `p.x` is Copy — held local struct layouts only. An imported struct's
 /// `i64` field therefore had no resolvable type, `is_expr_copy` fell into its
 /// conservative `false` default, and the FIRST read of the field MOVED it:
@@ -754,6 +925,57 @@ fn test_use_after_move_is_rejected_without_a_type_annotation() {
         !compiled,
         "a use-after-move was accepted because neither binding was annotated; \
          it printed {:?}",
+        stdout
+    );
+    assert!(
+        output.contains("Use of moved value"),
+        "expected the move checker's refusal; compiler said:\n{}",
+        output
+    );
+}
+
+/// `local_types` is per-FUNCTION where the language is per-BLOCK, so a shadow
+/// inside an `if` changes how the enclosing binding is classified after it.
+///
+/// The map is cleared in `check_function` and written by every binder, but
+/// nothing restores it at block exit — unlike `mutable_bindings`, which has
+/// `open_mutability_scope`/`close_mutability_scope` (and even that is only
+/// applied to `for` and `match`, not to `if`/`while`/`unsafe`). So an inner
+/// `let s: i64` overwrites the outer `s: S`, `is_expr_copy` then answers true
+/// for a struct, and the move that should follow never happens:
+///
+///     let s: S = S { v: 7 };
+///     if true { let s: i64 = 1; print_int(s); }
+///     let t: S = s;          // classified Copy, so `s` is not moved out of
+///     print_int(s.v);        // accepted, and prints 7
+///
+/// Its control is the same program with the inner block deleted, which IS
+/// refused with "Use of moved value: s" — so the `if` body is doing the whole
+/// of it.
+///
+/// PRE-EXISTING: reproduces identically on `main` (measured), and this branch
+/// neither introduced nor widened it. It is a row rather than a note because a
+/// note cannot fail — nothing would notice this getting worse, and nothing
+/// would notice it being fixed. The scope machinery for `ownership` landed on
+/// this branch; doing the same for `local_types` is a narrowing change to a
+/// classification every pass reads, which is its own unit of work.
+#[test]
+#[ignore = "XFAIL: local_types is per-function where the language is per-block — src/ownership/borrow_checker.rs clears it in check_function and no block restores it (unlike mutable_bindings, which has open/close_mutability_scope, itself applied only to `for` and `match`), so an inner `let s: i64` inside an `if` leaves the outer `s: S` classified as i64, is_expr_copy answers true for the struct, and the following `let t: S = s` does not move: `print_int(s.v)` after it is accepted and prints 7, while the same program without the inner block is refused with \"Use of moved value: s\"; reproduces on main (owned by M4, the type model the ownership pass reads)"]
+fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[],
+        "struct S { v: i64 }\n\n\
+         fn main() {\n    \
+         let s: S = S { v: 7 };\n    \
+         if true { let s: i64 = 1; print_int(s); }\n    \
+         let t: S = s;\n    \
+         print_int(s.v);\n    \
+         print_int(t.v);\n}\n",
+    );
+    assert!(
+        !compiled,
+        "an inner `let s: i64` made the outer struct `s` look Copy, so the move \
+         into `t` never happened and `s` was read after it; it printed {:?}",
         stdout
     );
     assert!(

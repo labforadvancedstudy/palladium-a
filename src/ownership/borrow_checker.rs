@@ -42,6 +42,14 @@ pub struct BorrowChecker {
     /// had this channel since it was written (`TypeChecker::set_imported_modules`);
     /// this is the same channel, and the driver fills both from one resolver run.
     imported_modules: HashMap<String, crate::resolver::ModuleInfo>,
+    /// Names of the generic functions this compilation actually instantiates,
+    /// as reported by `TypeChecker::get_instantiations`.
+    ///
+    /// This is the set codegen monomorphizes from, and it is here so that the
+    /// walk over imported bodies can check exactly what gets emitted rather
+    /// than deciding from the shape of the declaration. See the third pass in
+    /// `check_program` for the fail-open that came of deciding from the shape.
+    instantiated_generics: std::collections::HashSet<String>,
 }
 
 /// Function signature for ownership analysis
@@ -134,6 +142,7 @@ impl Default for BorrowChecker {
             struct_fields: HashMap::new(),
             call_lifetime: None,
             imported_modules: HashMap::new(),
+            instantiated_generics: std::collections::HashSet::new(),
         }
     }
 }
@@ -167,6 +176,22 @@ impl BorrowChecker {
         modules: HashMap<String, crate::resolver::ModuleInfo>,
     ) {
         self.imported_modules = modules;
+    }
+
+    /// Tell this pass which generic functions the compilation instantiates.
+    ///
+    /// Takes the names out of `TypeChecker::get_instantiations`, which the driver
+    /// already computes between type checking and this pass (`src/driver/mod.rs:117`)
+    /// and which is the same list codegen monomorphizes from. Supplying it is what
+    /// lets the walk over imported bodies check the set that is EMITTED instead of
+    /// the set that is non-generic — the difference between those two was a
+    /// use-after-move that compiled, linked and ran.
+    ///
+    /// Not supplying it is safe in the only direction that matters: the set is then
+    /// empty, generic imported bodies are skipped, and this pass is back to where it
+    /// was rather than checking bodies against a set it does not have.
+    pub fn set_instantiated_generics(&mut self, names: std::collections::HashSet<String>) {
+        self.instantiated_generics = names;
     }
 
     /// Register the public functions *and struct layouts* of every imported module.
@@ -369,35 +394,53 @@ impl BorrowChecker {
                     if !matches!(func.visibility, crate::ast::Visibility::Public) {
                         continue;
                     }
-                    // GENERIC BODIES ARE SKIPPED, because the other two passes
-                    // skip them and this pass being the odd one out is a REGRESSION,
-                    // not extra rigour. `TypeChecker::check_function` returns
-                    // immediately on a non-empty `type_params`
-                    // (`src/typeck/mod.rs:1003-1005`), and codegen emits only public
-                    // NON-generic imported functions (`src/codegen/mod.rs:1299-1301`).
+                    // A GENERIC BODY IS CHECKED EXACTLY WHEN IT IS INSTANTIATED,
+                    // because that is exactly when codegen emits one.
                     //
-                    // Without this, a public generic imported function whose body
-                    // holds a macro killed the compilation: imported ASTs are never
+                    // THE PREVIOUS VERSION OF THIS GUARD SKIPPED EVERY GENERIC BODY
+                    // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
+                    // "produces no C, because the codegen guard is the same
+                    // predicate". That is true of the DIRECT imported-emission path
+                    // (`src/codegen/mod.rs:1299-1301`, public and non-generic) and
+                    // false of MONOMORPHIZATION, which is a different path and emits
+                    // `name__T` from the same template. Measured on the guard:
+                    //
+                    //     lib: pub fn bad<T>(x: T) -> i64 {
+                    //              let a: S = S{v:7}; let b: S = a; let c: S = a;
+                    //              return c.v; }
+                    //     main: import lib; fn main() { print_int(bad(1)); }
+                    //
+                    // compiled, emitted `bad__i64`, linked and PRINTED 7 — a plain
+                    // use-after-move that runs. The byte-identical LOCAL generic is
+                    // refused, by this same pass, which is the "refuses it in one
+                    // file, accepts it in two" defect this third pass exists to
+                    // close, reopened for generics.
+                    //
+                    // Reading a guarantee off the stated reason instead of off the
+                    // mechanism is the recurrence family here: ONE COMPILER PASS
+                    // SKIPS CODE ANOTHER PASS EMITS. So the predicate is now the
+                    // emission set itself — `instantiated_generics` comes from
+                    // `TypeChecker::get_instantiations`, which the driver already
+                    // computes before this pass runs and which is the same list
+                    // codegen monomorphizes from.
+                    //
+                    // The uninstantiated case still has to be skipped, and that is
+                    // not this defect wearing a hat: imported ASTs are never
                     // macro-expanded (the driver expands the top-level AST before it
-                    // resolves modules), so the walk reached `Expr::MacroInvocation`
-                    // and returned "Unexpected macro invocation in borrow checking -
-                    // macros should be expanded before this phase". Measured: a
-                    // module holding `pub fn gen<T>(x: T) -> T { let v = vec!(7);
-                    // return x; }` compiles on `main` and died here, on a program
-                    // whose `main` never calls `gen`.
-                    //
-                    // WHAT THIS LEAVES UNCHECKED, and why it is not the fail-open
-                    // this third pass exists to close: a body skipped here also
-                    // produces no C, because the codegen guard above is the same
-                    // predicate. So there is no "accepted but unchecked code that
-                    // runs" — the case the unguarded walk was catching was code that
-                    // could not reach the output at all. Generic imported bodies are
-                    // checked when a real instantiation is, which is the same
-                    // contract local generics already have. The macro asymmetry
-                    // underneath is declared in `tests/m3_imported_calls.rs`
+                    // resolves modules), so walking `pub fn gen<T>(..) { vec!(7) }`
+                    // that nothing calls turned a compilation `main` COMPLETES into
+                    // "Unexpected macro invocation in borrow checking". Nothing emits
+                    // that body either, so skipping it is the emission rule, not an
+                    // exception to it. When the same body IS instantiated the
+                    // compilation already fails in codegen with the macro error, so
+                    // checking it here moves the phase and not the verdict. The
+                    // underlying asymmetry is declared in
+                    // `tests/m3_imported_calls.rs`
                     // (`test_a_macro_in_an_imported_body_is_never_expanded`); the
-                    // honest fix is expanding module ASTs, not a guard.
-                    if !func.type_params.is_empty() {
+                    // honest fix is expanding module ASTs.
+                    if !func.type_params.is_empty()
+                        && !self.instantiated_generics.contains(&func.name)
+                    {
                         continue;
                     }
                     self.check_function(func)?;
@@ -540,26 +583,37 @@ impl BorrowChecker {
                 // Initialize the new variable
                 let place = Place::Local(name.clone());
 
-                // Recorded before the move/copy decision so that the binding is
-                // retired at the end of THIS scope, but without pre-setting any
-                // state: `declare` only remembers what it shadowed. Writing
-                // `Owned` here instead would make `let s: S = s;` accept a use
-                // of an `s` that was already moved out.
-                self.context.declare(&place);
-
-                // Check if value is moved or copied
+                // THE ORDER OF THESE THREE STEPS IS THE WHOLE POINT, because a
+                // `Place` is a NAME and `let s: S = s;` gives the source and the
+                // destination the same one.
+                //
+                // It used to be declare -> move_value, and `move_value` writes
+                // `Moved` to the source and then `Owned` to the destination. With
+                // one key those are the same slot, so the second write cancelled
+                // the first and the move never happened; `declare` had already
+                // snapshotted the outer `Owned`, so scope exit restored it and an
+                // outer binding survived being moved out of. Measured: the
+                // shadowing form was ACCEPTED and the identical program using a
+                // different inner name was refused, the name being the only
+                // difference between them.
+                //
+                //   1. move out of the SOURCE, naming no destination. This is also
+                //      where an already-moved or borrowed source is refused, so it
+                //      must run before anything writes to the name.
+                //   2. record what this binder shadows — now the POST-move state,
+                //      so scope exit restores `Moved` rather than resurrecting the
+                //      outer value.
+                //   3. give the new binding its own ownership.
+                //
+                // A Copy source skips step 1 and keeps both bindings usable, which
+                // is what Copy means.
                 if let Some(from_place) = expr_to_place(value) {
-                    if self.is_expr_copy(value) {
-                        // Copy types don't move
-                        self.context.init_owned(place);
-                    } else {
-                        // Move ownership
-                        self.context.move_value(from_place, place, value.span())?;
+                    if !self.is_expr_copy(value) {
+                        self.context.move_out_of(from_place, value.span())?;
                     }
-                } else {
-                    // Temporary value (like string literal), take ownership
-                    self.context.init_owned(place);
                 }
+                self.context.declare(&place);
+                self.context.init_owned(place);
             }
 
             Stmt::Assign {

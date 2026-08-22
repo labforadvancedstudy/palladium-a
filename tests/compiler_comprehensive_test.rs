@@ -12,7 +12,7 @@
 //      ("No main function found"), so a declaration-only snippet cannot be
 //      compiled at all.
 //   3. Constant folding. The optimizer runs by default
-//      (`src/driver/mod.rs:173-176`), so `1 + 2` never reaches the C as
+//      (`src/driver/mod.rs:186-189`), so `1 + 2` never reaches the C as
 //      `(1 + 2)`. Operator tests therefore use variables, which is what they
 //      meant to test anyway: that the operator survives, not that folding is off.
 //

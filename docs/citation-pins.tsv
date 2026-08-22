@@ -100,6 +100,7 @@ src/codegen/mod.rs	1295-1295	src/codegen/mod.rs	c16b3aef8dee	for (_, module_info
 src/codegen/mod.rs	1295-1295	tests/m3_imported_calls.rs	c16b3aef8dee	for (_, module_info) in &imported_modules {
 src/codegen/mod.rs	1297-1297	src/ownership/borrow_checker.rs	2a0ba7bdbc1c	if let Item::Function(func) = item {
 src/codegen/mod.rs	1299-1301	src/ownership/borrow_checker.rs	9f12c356aeb8	if matches!(func.visibility, crate::ast::Visibility::Public) && func.type_params.is_empty() {
+src/codegen/mod.rs	1299-1301	tests/m3_imported_calls.rs	9f12c356aeb8	if matches!(func.visibility, crate::ast::Visibility::Public) && func.type_params.is_empty() {
 src/codegen/mod.rs	1308-1317	tests/m3_imported_calls.rs	e71c9cc35725	// Generate functions from main program for item in &program.items { match it ... if !func.type_params.is_empty() { continue; } self.generate_function(func)?; }
 src/codegen/mod.rs	1353-1353	docs/specification/bootstrap-subset.md	b32551e9b7f4	Ok(())
 src/codegen/mod.rs	1369-1369	docs/reference/features/feature-index.toml	0b77a4dad597	ArraySize::ConstParam(name) => name.clone(),
@@ -153,23 +154,24 @@ src/codegen/mod.rs	905-909	docs/specification/language-spec.md	6823ecddafb7	// f
 src/codegen/mod.rs	929-929	docs/specification/language-spec.md	424a9daec629	self.output.push_str(" fseek(f, 0, SEEK_SET);\n");
 src/driver/mod.rs	104-107	tests/m3_imported_calls.rs	47ed61cc361f	// Pass resolved modules to type checker if !resolved_modules.is_empty() { type_checker.set_imported_modules(resolved_modules.clone()); }
 src/driver/mod.rs	109-109	tests/d10_llvm_refuses.rs	f4efbeeb4ae6	type_checker.check(&ast)?;
+src/driver/mod.rs	117-117	src/ownership/borrow_checker.rs	c5819e3e590a	let instantiations = type_checker.get_instantiations();
 src/driver/mod.rs	137-137	tests/m3_imported_calls.rs	4ecb79ebef95	let mut borrow_checker = BorrowChecker::new();
-src/driver/mod.rs	148-148	tests/m3_imported_calls.rs	2b3c3c17c0e5	borrow_checker.check_program(&ast)?;
-src/driver/mod.rs	149-155	docs/specification/language-spec.md	760f04349e68	let borrow_time = borrow_start.elapsed(); println!( " Memory safety verified! ({:.2}ms)", borrow_time.as_secs_f64() * 1000.0 ); // Phase 3.6: Effect analysis
-src/driver/mod.rs	157-157	docs/reference/features/async-system/async-as-effect.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
-src/driver/mod.rs	157-157	docs/reference/features/feature-index.toml	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
-src/driver/mod.rs	157-157	docs/specification/language-spec.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
-src/driver/mod.rs	158-159	docs/reference/features/async-system/async-as-effect.md	cd67d9d37d37	for item in &ast.items { if let crate::ast::Item::Function(func) = item {
-src/driver/mod.rs	161-161	docs/reference/features/async-system/async-as-effect.md	ee0a89753716	if !effects.is_pure() {
-src/driver/mod.rs	161-161	docs/specification/language-spec.md	ee0a89753716	if !effects.is_pure() {
-src/driver/mod.rs	173-176	tests/compiler_comprehensive_test.rs	4b23674b86fb	// Phase 3.7: Unsafe checking println!("⚠️ Checking unsafe operations..."); let mut unsafe_checker = crate::unsafe_ops::UnsafeChecker::new();
-src/driver/mod.rs	174-174	docs/reference/features/feature-index.toml	cec9e49f3460	// Phase 3.7: Unsafe checking
-src/driver/mod.rs	174-182	docs/specification/language-spec.md	0a20c11de2ec	// Phase 3.7: Unsafe checking println!("⚠️ Checking unsafe operations..."); l ... e_checker.check_function(func)?; } } println!(" Unsafe operations verified!");
-src/driver/mod.rs	184-184	docs/reference/features/feature-index.toml	6632d08a5576	// Phase 3.8: Optimization (optional but enabled by default)
-src/driver/mod.rs	195-195	docs/reference/features/feature-index.toml	5d3dcfb7f3f5	// Phase 4: Code generation
-src/driver/mod.rs	195-196	tests/d10_llvm_refuses.rs	70bde96f2002	// Phase 4: Code generation let output_path = if self.use_llvm {
-src/driver/mod.rs	259-259	tests/e2e_test.rs	a8c61e90d4e4	reporter.report(&diagnostic);
-src/driver/mod.rs	271-271	docs/specification/bootstrap-subset.md	9174e5f7f673	let build_dir = PathBuf::from("target/build");
+src/driver/mod.rs	161-161	tests/m3_imported_calls.rs	2b3c3c17c0e5	borrow_checker.check_program(&ast)?;
+src/driver/mod.rs	162-168	docs/specification/language-spec.md	760f04349e68	let borrow_time = borrow_start.elapsed(); println!( " Memory safety verified! ({:.2}ms)", borrow_time.as_secs_f64() * 1000.0 ); // Phase 3.6: Effect analysis
+src/driver/mod.rs	170-170	docs/reference/features/async-system/async-as-effect.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
+src/driver/mod.rs	170-170	docs/reference/features/feature-index.toml	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
+src/driver/mod.rs	170-170	docs/specification/language-spec.md	e43db400c0be	let mut effect_analyzer = crate::effects::EffectAnalyzer::new();
+src/driver/mod.rs	171-172	docs/reference/features/async-system/async-as-effect.md	cd67d9d37d37	for item in &ast.items { if let crate::ast::Item::Function(func) = item {
+src/driver/mod.rs	174-174	docs/reference/features/async-system/async-as-effect.md	ee0a89753716	if !effects.is_pure() {
+src/driver/mod.rs	174-174	docs/specification/language-spec.md	ee0a89753716	if !effects.is_pure() {
+src/driver/mod.rs	186-189	tests/compiler_comprehensive_test.rs	4b23674b86fb	// Phase 3.7: Unsafe checking println!("⚠️ Checking unsafe operations..."); let mut unsafe_checker = crate::unsafe_ops::UnsafeChecker::new();
+src/driver/mod.rs	187-187	docs/reference/features/feature-index.toml	cec9e49f3460	// Phase 3.7: Unsafe checking
+src/driver/mod.rs	187-195	docs/specification/language-spec.md	0a20c11de2ec	// Phase 3.7: Unsafe checking println!("⚠️ Checking unsafe operations..."); l ... e_checker.check_function(func)?; } } println!(" Unsafe operations verified!");
+src/driver/mod.rs	197-197	docs/reference/features/feature-index.toml	6632d08a5576	// Phase 3.8: Optimization (optional but enabled by default)
+src/driver/mod.rs	208-208	docs/reference/features/feature-index.toml	5d3dcfb7f3f5	// Phase 4: Code generation
+src/driver/mod.rs	208-209	tests/d10_llvm_refuses.rs	70bde96f2002	// Phase 4: Code generation let output_path = if self.use_llvm {
+src/driver/mod.rs	272-272	tests/e2e_test.rs	a8c61e90d4e4	reporter.report(&diagnostic);
+src/driver/mod.rs	284-284	docs/specification/bootstrap-subset.md	9174e5f7f673	let build_dir = PathBuf::from("target/build");
 src/driver/mod.rs	49-49	docs/reference/features/feature-index.toml	9ec5ae2ed903	pub fn compile_string(&self, source: &str, filename: &str) -> Result<PathBuf> {
 src/driver/mod.rs	49-49	docs/specification/language-spec.md	9ec5ae2ed903	pub fn compile_string(&self, source: &str, filename: &str) -> Result<PathBuf> {
 src/driver/mod.rs	53-53	docs/reference/features/feature-index.toml	56f8f09ac839	// Phase 1: Lexing
@@ -200,24 +202,24 @@ src/main.rs	114-114	docs/reference/features/feature-index.toml	c6a8c537cf38	if l
 src/main.rs	114-116	tests/d10_llvm_refuses.rs	d4347d793f49	if llvm { driver = driver.with_llvm(); }
 src/main.rs	149-151	tests/d10_llvm_refuses.rs	d4347d793f49	if llvm { driver = driver.with_llvm(); }
 src/optimizer/dead_code.rs	35-70	src/optimizer/dead_code_test.rs	8b72f3893594	// A constant condition tells us exactly which arm runs, so the // other arm  ... ation: saying // "can continue" when it cannot only leaves dead code in place,
-src/ownership/borrow_checker.rs	1049-1049	docs/specification/language-spec.md	4ef9eeaa9fba	fn check_mutable_borrow_allowed(
-src/ownership/borrow_checker.rs	1201-1201	tests/m3_imported_calls.rs	8ae3bb2c2768	Type::Unit => true,
-src/ownership/borrow_checker.rs	123-126	tests/m3_imported_calls.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
-src/ownership/borrow_checker.rs	430-431	docs/specification/language-spec.md	172c4fe4ee57	if param.mutable { params.push(ParamOwnership::BorrowMut);
-src/ownership/borrow_checker.rs	451-451	docs/specification/bootstrap-subset.md	b484e3bde772	Type::Custom(_) => ParamOwnership::Move,
-src/ownership/borrow_checker.rs	451-451	docs/specification/language-spec.md	b484e3bde772	Type::Custom(_) => ParamOwnership::Move,
-src/ownership/borrow_checker.rs	466-466	docs/specification/language-spec.md	3975922a5a94	ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))
-src/ownership/borrow_checker.rs	491-494	src/codegen/mod.rs	c391c84ab4c9	for param in &func.params { let place = Place::Local(param.name.clone()); self.context.declare(&place); self.context.init_owned(place);
-src/ownership/borrow_checker.rs	52-53	docs/specification/language-spec.md	52913fa77a92	/// Return value ownership #[allow(dead_code)]
-src/ownership/borrow_checker.rs	633-636	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
-src/ownership/borrow_checker.rs	730-730	tests/m3_imported_calls.rs	3ca7efc9179c	Expr::Ident(name) => {
-src/ownership/borrow_checker.rs	783-783	tests/m3_imported_calls.rs	e4a8f92b213a	return Err(CompileError::UseOfUninitializedValue {
-src/ownership/borrow_checker.rs	800-800	docs/reference/features/core-language/implicit-lifetimes.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	800-800	docs/reference/features/feature-index.toml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	800-800	docs/specification/language-spec.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	806-806	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/borrow_checker.rs	806-806	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/borrow_checker.rs	806-806	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	1103-1103	docs/specification/language-spec.md	4ef9eeaa9fba	fn check_mutable_borrow_allowed(
+src/ownership/borrow_checker.rs	1255-1255	tests/m3_imported_calls.rs	8ae3bb2c2768	Type::Unit => true,
+src/ownership/borrow_checker.rs	131-134	tests/m3_imported_calls.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
+src/ownership/borrow_checker.rs	473-474	docs/specification/language-spec.md	172c4fe4ee57	if param.mutable { params.push(ParamOwnership::BorrowMut);
+src/ownership/borrow_checker.rs	494-494	docs/specification/bootstrap-subset.md	b484e3bde772	Type::Custom(_) => ParamOwnership::Move,
+src/ownership/borrow_checker.rs	494-494	docs/specification/language-spec.md	b484e3bde772	Type::Custom(_) => ParamOwnership::Move,
+src/ownership/borrow_checker.rs	509-509	docs/specification/language-spec.md	3975922a5a94	ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))
+src/ownership/borrow_checker.rs	534-537	src/codegen/mod.rs	c391c84ab4c9	for param in &func.params { let place = Place::Local(param.name.clone()); self.context.declare(&place); self.context.init_owned(place);
+src/ownership/borrow_checker.rs	60-61	docs/specification/language-spec.md	52913fa77a92	/// Return value ownership #[allow(dead_code)]
+src/ownership/borrow_checker.rs	687-690	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
+src/ownership/borrow_checker.rs	784-784	tests/m3_imported_calls.rs	3ca7efc9179c	Expr::Ident(name) => {
+src/ownership/borrow_checker.rs	837-837	tests/m3_imported_calls.rs	e4a8f92b213a	return Err(CompileError::UseOfUninitializedValue {
+src/ownership/borrow_checker.rs	854-854	docs/reference/features/core-language/implicit-lifetimes.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	854-854	docs/reference/features/feature-index.toml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	854-854	docs/specification/language-spec.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	860-860	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	860-860	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	860-860	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
 src/ownership/mod.rs	101-126	docs/reference/features/feature-index.toml	087766658e2c	constraints: Vec<LifetimeConstraint>, /// Places *declared* by each open scop ... ] pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime,
 src/ownership/mod.rs	141-178	docs/specification/bootstrap-subset.md	670019bc9327	pub fn exit_scope(&mut self) { // End every borrow this scope (or anything ne ...  } None => { self.ownership.remove(&place); } } } } self.current_scope -= 1; }
 src/ownership/mod.rs	147-148	docs/reference/features/feature-index.toml	6bb90e116f0c	let closing = self.current_scope; self.release_borrows(|borrow| borrow.scope >= closing);
@@ -225,7 +227,7 @@ src/ownership/mod.rs	148-148	docs/reference/features/core-language/implicit-life
 src/ownership/mod.rs	205-207	docs/reference/features/feature-index.toml	c9585753caf3	pub fn end_borrows(&mut self, lifetime: &Lifetime) { self.release_borrows(|borrow| &borrow.lifetime == lifetime); }
 src/ownership/mod.rs	27-27	docs/reference/features/core-language/implicit-lifetimes.md	e06a29f1a329	pub enum Lifetime {
 src/ownership/mod.rs	27-36	docs/reference/features/feature-index.toml	18724d81de84	pub enum Lifetime { /// Static lifetime ('static) Static, /// Named lifetime  ... s lifetime Anonymous(u32), /// Scope lifetime (for local scopes) Scope(u32), }
-src/ownership/mod.rs	415-418	docs/reference/features/feature-index.toml	48b89e0647ff	pub fn add_constraint(&mut self, longer: Lifetime, shorter: Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
+src/ownership/mod.rs	451-454	docs/reference/features/feature-index.toml	48b89e0647ff	pub fn add_constraint(&mut self, longer: Lifetime, shorter: Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
 src/ownership/mod.rs	71-71	docs/reference/features/core-language/implicit-lifetimes.md	58cffd430bf7	pub scope: u32,
 src/ownership/mod.rs	95-95	docs/reference/features/core-language/implicit-lifetimes.md	a067fdd308d7	current_scope: u32,
 src/package/lockfile.rs	341-341	docs/reference/features/feature-index.toml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),
@@ -290,7 +292,6 @@ src/resolver/mod.rs	51-51	docs/reference/features/feature-index.toml	891ba0920fa
 src/resolver/mod.rs	51-52	docs/specification/language-spec.md	07ec7e442f32	// Check for PALLADIUM_PATH environment variable if let Ok(pd_path) = std::env::var("PALLADIUM_PATH") {
 src/resolver/mod.rs	70-95	tests/m3_imported_calls.rs	0d3c6a68fb4b	pub fn resolve_program(&mut self, program: &Program) -> Result<HashMap<String ... alias.clone() } else { module_name }; resolved.insert(key, filtered_info); } }
 src/runtime/string_ops.rs	398-398	docs/reference/features/advanced/totality-checking.md	b8736fb052c9	fn test_null_termination() {
-src/typeck/mod.rs	1003-1005	src/ownership/borrow_checker.rs	874620f84e61	if !func.type_params.is_empty() { return Ok(()); }
 src/typeck/mod.rs	1008-1008	docs/specification/language-spec.md	b283b5e48b13	self.symbols.enter_scope();
 src/typeck/mod.rs	121-125	docs/reference/features/core-language/implicit-lifetimes.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	121-125	docs/reference/features/feature-index.toml	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }

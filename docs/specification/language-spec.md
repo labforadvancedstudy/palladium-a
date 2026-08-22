@@ -601,9 +601,9 @@ self_param = [ "&" ] [ "mut" ] "self" ;
 **unimplemented — effect clauses.** `![io]` does not exist in the surface syntax.
 `Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:565`, corrected from
 v0.2's `src/parser/mod.rs:549`, which is where the `Function` literal opens). Effects are *inferred* afterwards
-(`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:161`, corrected
-from `src/driver/mod.rs:149-155`); they gate nothing. `crate::effects::` is referenced from exactly one place in
-the compiler, `src/driver/mod.rs:157`.
+(`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:174`, corrected
+from `src/driver/mod.rs:162-168`); they gate nothing. `crate::effects::` is referenced from exactly one place in
+the compiler, `src/driver/mod.rs:170`.
 
 `async fn` is accepted and typechecked: `async fn g() -> i64 { return 1; }` fails with
 "Type mismatch: expected Future<Int>, found Int", i.e. the return type is wrapped in a `Future`.
@@ -739,7 +739,7 @@ because the paragraph above is the correction.*
 - unimplemented: bare nested blocks as statements; `try { }` blocks.
 - implemented: `break` / `continue`, unlabeled, valueless.
 
-`unsafe { }` parses and `src/unsafe_ops` runs (`src/driver/mod.rs:174-182`), but raw pointer types
+`unsafe { }` parses and `src/unsafe_ops` runs (`src/driver/mod.rs:187-195`), but raw pointer types
 and `unsafe fn` do not exist, so [N12](#n12-memory-model)'s restricted-unsafe is unimplemented.
 `tests/11_unsafe_blocks.pd` PASSES while only printing that.
 
@@ -1186,7 +1186,7 @@ how a whole section came to be stale without any reader noticing it was there.
 
 [N12](#n12-memory-model) requires that `&mut` be takeable only of a `mut` binding, and the
 implementation now enforces it for every referent kind. The check is
-`check_mutable_borrow_allowed` (`src/ownership/borrow_checker.rs:1049`), which reads the
+`check_mutable_borrow_allowed` (`src/ownership/borrow_checker.rs:1103`), which reads the
 `mutable_bindings` map described in [A9.2](#a92-array-parameters); a name no binder
 registered is refused rather than permitted.
 
@@ -1217,11 +1217,11 @@ A previous version of this annex, and of
 borrowed as `Lifetime::Named("fn")` and released against `Lifetime::Scope(n)`, so the borrow is
 never released and a value cannot be passed twice. That claim cited a line of
 `src/ownership/borrow_checker.rs` whose content is at
-`src/ownership/borrow_checker.rs:466` today. The old number is deliberately not repeated here:
+`src/ownership/borrow_checker.rs:509` today. The old number is deliberately not repeated here:
 a bare `path:line` naming a revision this tree no longer has is unpinnable, and an unpinnable
 citation cannot be told from one that has silently drifted.
 
-**The claim is false and the citation was wrong.** `src/ownership/borrow_checker.rs:466` is
+**The claim is false and the citation was wrong.** `src/ownership/borrow_checker.rs:509` is
 `ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))` — the ownership classification for a
 function's **borrowed return value**, which has nothing to do with argument lifetimes. The citation
 had a green fingerprint the whole time, which is exactly the gate's limit: a pin proves a line has
@@ -1238,9 +1238,9 @@ Re-measured from scratch at `abeb665`:
 | `print(p.name); f(p.name); p.n` — field to a builtin, then reused | accepted, prints `abc 3 1` |
 
 None of D6's symptoms reproduce. The call path creates a per-call lifetime and ends its borrows
-when the call finishes: `src/ownership/borrow_checker.rs:800` (`let call_lifetime =
-self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:806` (`self.context.end_borrows(&call_lifetime);`), with the
-contract stated at `src/ownership/borrow_checker.rs:52-53` — "the caller-side borrow always lasts exactly for the call
+when the call finishes: `src/ownership/borrow_checker.rs:854` (`let call_lifetime =
+self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:860` (`self.context.end_borrows(&call_lifetime);`), with the
+contract stated at `src/ownership/borrow_checker.rs:60-61` — "the caller-side borrow always lasts exactly for the call
 expression".
 
 D6 was **fixed in commit `191f8c1`** ("fix(compiler): five defects that made the language
@@ -1253,9 +1253,9 @@ into documentation written after the fix landed.
 Two rejections do still occur, and both are correct rather than defects:
 
 - `take2(p, p)` where `p` is a **struct** — `Use of moved value: p`. Struct parameters are moves
-  (`src/ownership/borrow_checker.rs:451`), so this is move semantics working.
+  (`src/ownership/borrow_checker.rs:494`), so this is move semantics working.
 - `sum2(v, v)` with two `mut [i64; 3]` parameters — `Conflicting borrows`. A `mut` array parameter
-  is a mutable borrow (`src/ownership/borrow_checker.rs:430-431`), so passing the same array as two
+  is a mutable borrow (`src/ownership/borrow_checker.rs:473-474`), so passing the same array as two
   simultaneous mutable borrows is refused. **This is expected under the current aliasing
   convention, not unconditionally correct**: it follows from Option B's reading of
   [N12.1](#n121-array-parameters-open-decision), which is still open. Under Option A a `[T; N]`

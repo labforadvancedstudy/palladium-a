@@ -133,10 +133,10 @@ evidence = [
   "conformance: tests/reject/uncalled_body_is_checked.pd reject",
   "src: tests/reject/uncalled_body_is_checked.pd:21-24 \"fn bad()\" is called by nothing and still refused, which is what makes the fixture above a statement about lifetimes",
   "gate: make conformance -> reject=14 verified=46 -- the pair above is in the corpus those numbers count",
-  "src: src/ownership/borrow_checker.rs:633-636 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
+  "src: src/ownership/borrow_checker.rs:687-690 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
   "src: src/ownership/mod.rs:27-36 \"pub enum Lifetime\" -- the four variants a lifetime can be, none of which carries a relation to another",
   "src: src/ownership/mod.rs:101-126 \"constraints: Vec<LifetimeConstraint>\" at :101 and \"pub struct LifetimeConstraint\" at :124 with its longer/shorter pair -- the only type in the module that RELATES two lifetimes",
-  "src: src/ownership/mod.rs:415-418 add_constraint, the only writer of that vector",
+  "src: src/ownership/mod.rs:451-454 add_constraint, the only writer of that vector",
   "cmd: grep -rn LifetimeConstraint src/ --include='*.rs' -> exit 0, 3 lines -- the field, the struct, and the push inside add_constraint. Nothing constructs one elsewhere and nothing reads the vector",
   "cmd: grep -rn add_constraint src/ --include='*.rs' -> exit 0, 1 line -- its own definition; no other occurrence of that spelling in src/",
   "cmd: grep -rn '\\.constraints' src/ --include='*.rs' -> exit 0, 1 line -- the push inside add_constraint; no other member access to it under that spelling",
@@ -178,8 +178,8 @@ evidence = [
   "conformance: tests/05_ownership_basic.pd run",
   "conformance: tests/05_borrowing_references.pd run",
   "src: src/typeck/mod.rs:121-125 Type::Reference maps to its inner type — 'TODO: Proper reference type handling'",
-  "src: src/ownership/borrow_checker.rs:800 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",
-  "src: src/ownership/borrow_checker.rs:806 self.context.end_borrows(&call_lifetime) — argument borrows end with the call",
+  "src: src/ownership/borrow_checker.rs:854 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",
+  "src: src/ownership/borrow_checker.rs:860 self.context.end_borrows(&call_lifetime) — argument borrows end with the call",
   "conformance: tests/regression/param_reused_after_call.pd run",
   "conformance: tests/reject/mut_borrow_of_immutable.pd reject",
 ]
@@ -191,7 +191,7 @@ spec = "../../specification/language-spec.md#n12-memory-model"
 implementation = "partial"
 evidence = [
   "src: src/parser/mod.rs:1331 Token::Unsafe => self.parse_unsafe()",
-  "src: src/driver/mod.rs:174 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
+  "src: src/driver/mod.rs:187 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/11_unsafe_blocks.pd vacuous",
 ]
@@ -362,7 +362,7 @@ evidence = [
   "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> exit 0, 8 lines -- 1 in src/driver/mod.rs (the analyser is run) and 7 in src/builtins.rs (each builtin declares an effect set, and the analyser's own unit tests live there); no phase after the driver reads the result",
   "conformance: tests/09_effects_system.pd vacuous",
 ]
-note = "The `effects::` probe used to read \"1 line, src/driver/mod.rs:157\". Executed, it is 8. The extra 7 are src/builtins.rs, which does declare an effect set per builtin -- so the analyser has real INPUT. What it does not have is an output path: the driver prints the analysis and no later phase consumes it, which is what makes async-as-an-effect unimplemented rather than partial."
+note = "The `effects::` probe used to read \"1 line, src/driver/mod.rs:170\". Executed, it is 8. The extra 7 are src/builtins.rs, which does declare an effect set per builtin -- so the analyser has real INPUT. What it does not have is an output path: the driver prints the analysis and no later phase consumes it, which is what makes async-as-an-effect unimplemented rather than partial."
 
 [async_and_effects.no_await_syntax]
 description = "No await operator; the compiler places async boundaries."
@@ -504,7 +504,7 @@ description = "Inlining, const propagation, dead code elimination."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "partial"
 evidence = [
-  "src: src/driver/mod.rs:184 Phase 3.8, enabled by default",
+  "src: src/driver/mod.rs:197 Phase 3.8, enabled by default",
   "conformance: tests/integration/test_optimizations.pd run",
 ]
 note = "gcc receives an explicit -O level since commit e72c39b."
@@ -625,7 +625,7 @@ description = "C ABI compatibility; call C libraries and export to C."
 spec = "PALLADIUM_V1_FEATURES.md#8-interoperability"
 implementation = "partial"
 evidence = [
-  "src: src/driver/mod.rs:195 // Phase 4: Code generation — output is C, which gcc then links, so the ABI is C by construction",
+  "src: src/driver/mod.rs:208 // Phase 4: Code generation — output is C, which gcc then links, so the ABI is C by construction",
   "cmd: grep -rn 'Extern\\|ExternBlock' src/ast/mod.rs src/parser/mod.rs -> exit 1, 0 lines -- no syntax for importing a C symbol",
   "conformance: tests/03_functions_basic.pd run",
 ]
