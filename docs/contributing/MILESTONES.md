@@ -166,14 +166,14 @@ self-hosting unit **imports nothing** (`grep -c '^import' bootstrap/pdc.pd` = 0)
 generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec excludes them, and
 `bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
 subset it implements"*). Both exclusions mattered because there were **two independent unordered
-emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:162`) emitted by iterating
-`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:437`,
-`src/typeck/mod.rs:445`) emitted by iterating `.keys()`.
+emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:167-167`) emitted by iterating
+`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:471-471`,
+`src/typeck/mod.rs:479-479`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: modules at `src/codegen/mod.rs:1266` and `src/typeck/mod.rs:558`,
-the two later codegen walks off one sorted local (`src/codegen/mod.rs:1351`), and the
-instantiation keys at `src/typeck/mod.rs:3381` and `src/typeck/mod.rs:3442`. Pinned by
+sites sorts before it emits: modules at `src/codegen/mod.rs:1271-1271` and `src/typeck/mod.rs:593-593`,
+the two later codegen walks off one sorted local (`src/codegen/mod.rs:1356-1356`), and the
+instantiation keys at `src/typeck/mod.rs:3499-3499` and `src/typeck/mod.rs:3560-3560`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -249,8 +249,19 @@ does not become the definition of the language.
 
 *(This line and the status table below said "192 rows, 31 satisfied" and were wrong on `main`:
 the file held 193 rows and 32 `satisfied` at `acda322`, so the count had already drifted by one
-before M2 changed anything. Counts written by hand drift; these are now the output of a script
-over the file and should be re-derived, not adjusted.)*
+before M2 changed anything. Every figure here that is a COUNT OVER THAT FILE is now derived and
+GATED — `python3 scripts/requirements.py --check-ledger`, which `make test-requirements-runner`
+runs: this line, and the three disposition counts below. A wrong number is red, and so is
+rewriting the sentence it sits in, because a rewritten sentence is exactly when the number inside
+it stops being checked.*
+
+*The rows of the status table that are RECEIPTS OF OTHER GATES — how many Rust tests passed, how
+many self-test cases ran, what conformance verified — are **not** covered by it and cannot be:
+they are not derivable from any tracked file. They are re-measured by hand, they drift, and they
+had — each stated figure against what its command actually printed: `620 pass` against `764`,
+`42 ignored` against `55`, `41 xfail` against `54`, `243 citations` against `404`, and `256`
+thesis-gate cases against `291`. Treat every one of them as stale until the named
+command has been re-run.)*
 
 | Disposition | Count | Meaning |
 |---|---|---|
@@ -340,11 +351,11 @@ Measured at this revision; every row names the command that produced it.
 |---|---|---|
 | **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
-| Conformance | `verified=48 untranscribed=0 vacuous=7 xfail=1 reject=15 skip=2 failures=0` over 73 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one) | `make conformance` |
+| Conformance | `verified=48 untranscribed=0 vacuous=7 xfail=1 reject=16 skip=2 failures=0` over 74 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro) | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 291 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 224 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 404 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
-| Rust tests | 746 pass, **0 fail**, 55 ignored (534 lib + 212 integration, 22 binaries) | `make test-honest` |
+| Rust tests | 764 pass, **0 fail**, 55 ignored (534 lib + 230 integration, 23 binaries) | `make test-honest` |
 | Declared failures | 54 `xfail` + 1 `slow`, none passing; 54 of 54 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, and the registry is now exactly N14's normative 34 | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
@@ -385,7 +396,7 @@ by the requirement manifest; this is the reading list.
 | Defect | Where | Requirement |
 |---|---|---|
 | D3b — a tail `if` is not lowered to a `return`; `fib(10)` prints `8261746944` and exits 0 | [A6.6](../specification/language-spec.md#a66-tail-expressions) | N3-02, N3-03 |
-| **The async producer is live** — `async fn g() { … }` compiles and emits a `Future` struct with a `state` field and a `_poll` function, which N7 forbids outright | [F11](#f11-the-async-producer-is-alive-and-violates-n7-today) | N7-18 |
+| The async producer — `async fn g() { … }` compiled and emitted a `Future` struct with a `state` field and a `_poll` function, which N7 forbids outright. **CLOSED**: `async fn` is refused at the construct in typeck and again in codegen, and the emitter is deleted; receipts in `tests/m2_async_producer.rs` | [F11](#f11-the-async-producer-was-alive-and-violated-n7--closed) | N7-18 |
 | C-keyword identifiers — `fn double` emitted `long long double(…)`. **CLOSED**: escaped on the way into code generation, `src/codegen/c_ident.rs:440`; the `#[ignore]` is gone and the debt row is `paid` | `tests/e2e_test.rs:277` | N3-01 |
 | No missing-return diagnostic — `fn f() -> int { }` compiled silently. **CLOSED**: the parser already decided "returns on every path" and now refuses when it does not, `src/parser/mod.rs:1039-1068`; the `#[ignore]` is gone and the debt row is `paid` | `tests/compiler_comprehensive_test.rs:583` | N3-03 |
 | Block comments do not nest, which N2 requires | [F10](#f10-block-comments-do-not-nest-and-nothing-said-so) | N2-08 |
@@ -399,7 +410,7 @@ by the requirement manifest; this is the reading list.
 | `String` is a Copy handle, contradicting N12 — no drop glue | [A9.1](../specification/language-spec.md#a91-string-is-a-copyable-handle-decision-2026-08-21) | N12-03, N12-04 |
 | Effects gate nothing; propagation assumes unknown callees pure; `impl` methods unanalysed | [A4.1](../specification/language-spec.md#a41-functions) | N7-03…N7-08 |
 | Attributes do not lex — `#[total]` fails at the character `#` | [A2](../specification/language-spec.md#a2-lexical-structure) | N2-10, N2-11 |
-| `src/async_runtime/mod.rs` — 498 lines, one referrer (`src/lib.rs:5`), no consumer | [F11](#f11-the-async-producer-is-alive-and-violates-n7-today) | N7-19, decision **D5** |
+| `src/async_runtime/mod.rs` — 498 lines, one referrer (`src/lib.rs:5`), no consumer | [F11](#f11-the-async-producer-was-alive-and-violated-n7--closed) | N7-19, decision **D5** |
 
 ## How a milestone exits
 
@@ -483,7 +494,7 @@ Receipts:
 
 | What | Evidence |
 |---|---|
-| **D5** `?` and `.await` emitted C referencing a `struct Result` layout and a `poll` member codegen never generates | Both refused at typecheck with the consequence and a workaround; old lowerings deleted. `tests/d5_unimplemented_constructs.rs`, 12 tests. **The `.await` consumer only — the `async fn` producer is still alive, see [F11](#f11-the-async-producer-is-alive-and-violates-n7-today)** |
+| **D5** `?` and `.await` emitted C referencing a `struct Result` layout and a `poll` member codegen never generates | Both refused at typecheck with the consequence and a workaround; old lowerings deleted. `tests/d5_unimplemented_constructs.rs`, 12 tests. **The `.await` consumer only. The `async fn` producer was still alive and is now closed too — see [F11](#f11-the-async-producer-was-alive-and-violated-n7--closed)** |
 | **D4** `for` over an array *parameter* used `sizeof` on a decayed pointer | The bound comes from the declared length; an unresolvable length is a compile error, not a wrong bound. `tests/regression/for_over_array_param.pd` |
 | **D9** `&[T; N]` / `&mut [T; N]` parameters rejected in codegen | Lowered; a write that reaches the caller can only come from a spelling that declared it ([A9.2](../specification/language-spec.md#a92-array-parameters)). `examples/practical/simple_sort.pd` runs |
 | **D7** an un-annotated `let` was emitted as `long long` regardless of its initializer | Fixed in `04104c5` |
@@ -515,11 +526,17 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
    as `tests/compiler_comprehensive_test.rs:583` says it must; and C-keyword identifier escaping
    (N3-01) landed with those. All three `#[ignore]`s are gone, their rows in
    `tests/rust-debt-manifest.txt` are `paid`, and `make m1-exit` exits **0**.
-2. **The async producer** (N7-18). `async fn g() { print("x"); }` compiles today and emits
+2. **The async producer is CLOSED** (N7-18). `async fn g() { print("x"); }` compiled and emitted
    `typedef struct g_Future { int state; }` plus `int g_poll(g_Future *future)`. N7 says the
-   language has **no runtime representation** of effects, so this is a live normative violation and
-   it is cheap to close: refuse `async fn` at codegen exactly as `.await` already is. The keyword
-   itself dies at M5.
+   language has **no runtime representation** of effects, so it was a live normative violation.
+   `async fn` is now refused at the construct — in the type checker and again at the defect in code
+   generation, exactly as `?` and `.await` are — and the Future/poll emitter is deleted rather than
+   left unreachable ([F11](#f11-the-async-producer-was-alive-and-violated-n7--closed)). It was NOT
+   as cheap as this line said: the refusal had to reach three ingresses the repro does not touch
+   (imported bodies, monomorphised instantiations, and `monomorphize_function`'s `is_async: false`,
+   which made "monomorphized functions are not async" true by erasing it), and it had to leave
+   alone the imported declarations that are not part of the emitted program. The keyword itself
+   still dies at M5.
 3. **Statements and expressions** (N5-03…N5-17): `if`, `match` and blocks become expressions;
    `else if`; `loop` with a value-carrying `break`; compound assignment; bitwise operators; ranges;
    `as` casts; `a * -b`; method call syntax; top-level `const` and `static`.
@@ -860,32 +877,52 @@ owner's.
 
 ## Findings
 
-### F11. The async producer is alive, and violates N7 today
+### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3292-3296` returns
-`CompileError::await_unimplemented`. The **producer** was not touched.
-`src/codegen/mod.rs:2215-2220` still dispatches on `func.is_async` into
-`generate_async_function_with_name`, which emits a `Future` struct and a poll routine
-(`src/codegen/mod.rs:3339-3347`, commented "Simplified async - immediately ready").
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3298-3302` returns
+`CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
+on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
+poll routine commented "Simplified async - immediately ready".
 
-It is reachable, not dead code. Measured at `7484bac`:
+It was reachable, not dead code. Measured at `7484bac`, and unchanged at `acda322`:
 
 ```text
 async fn g() { print("x"); }
 fn main() { print("ok"); }
 ```
 
-compiles, links, runs, and the generated C contains
+compiled, linked, ran, and the generated C contained
 `typedef struct g_Future { int state; } g_Future;`, `int g_poll(g_Future *future)`, and
-`g_Future g()`. A *returning* `async fn` is caught earlier by the type checker — "expected
-Future<Int>, found Int" — which is why this survived: the shape that reaches codegen is the
-unit-returning one, and nothing tested it.
+`g_Future g()`. A *returning* `async fn` was caught earlier by the type checker — "expected
+Future<Int>, found Int" — which is why this survived: the shape that reached code generation was
+the unit-returning one, and nothing tested it.
 
 [N7](../specification/language-spec.md#n7-effects-and-asynchrony) is explicit: *"There is no async
 runtime and no `Future` boxing. Effect tracking is entirely static and has no runtime
 representation."* A `struct` with a `state` field, emitted into the program's own C, is a runtime
-representation. **This is a normative violation shipping today**, it is N7-18, and it is M2 work —
-refuse `async fn` at codegen exactly as `.await` already is, ahead of M5 deleting the keyword.
+representation.
+
+**CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:2220-2226`), the
+same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
+unreachable: a private method nothing calls is one edit away from being called again. No line of
+`src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and
+`tests/m2_async_producer.rs` asserts that by deriving the site list from the source when it runs
+rather than from this paragraph.
+
+Two things came with it, because the refusal has to cover every route into the output and not only
+the route the repro took. `monomorphize_function` hardcoded `is_async: false` under the comment
+"monomorphized functions are not async", which made the comment true by **erasing** the property:
+an instantiated `async fn g<T>` emitted an ordinary `g__i64`, and every downstream `is_async` guard
+on an instantiation was dead code. The flag travels on `typeck::GenericFunction` now. And an
+imported `pub async fn` is refused only when it is genuinely part of the emitted program — not when
+it is private, not when a local definition shadows it, and not when it is a generic that nothing
+instantiates — because over-approximating this exact rule has already rejected valid programs
+twice.
+
+Refused rather than lowered: dropping the Future struct and compiling the body as an ordinary
+function would leave `async` a keyword the compiler silently ignores, which is the class M1 exists
+to remove. The keyword itself dies at M5.
 
 Companion: `src/async_runtime/mod.rs` (498 lines, sole referrer `src/lib.rs:5`) is N7-19 and
 decision **D5**. Not deleted here.
@@ -1052,7 +1089,7 @@ plain sight for several rounds. Root `CLAUDE.md` requires a fact conflict to be 
 than left to coexist, and this one was not.
 
 *Resolved by measurement, not by choosing a sentence.* On the integrated tree the runner evaluates
-15 of them: `reject=15` over 73 fixtures. The refusals a second implementation must reproduce are
+16 of them: `reject=16` over 74 fixtures. The refusals a second implementation must reproduce are
 in the corpus, not only in `tests/d5_unimplemented_constructs.rs` and `tests/d10_llvm_refuses.rs`,
 which the bootstrap compiler will never run.
 

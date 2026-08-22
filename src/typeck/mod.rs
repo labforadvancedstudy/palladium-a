@@ -251,6 +251,17 @@ impl SymbolTable {
 }
 
 /// Information about a generic function
+///
+/// THIS IS THE ONLY THING CODE GENERATION LEARNS ABOUT A GENERIC. It is handed
+/// the template by `get_instantiations` and monomorphises from it, so a
+/// property of the source function that is not a field here is a property
+/// codegen cannot see. `is_async` was such a property: `monomorphize_function`
+/// hardcoded `is_async: false` under the comment "monomorphized functions are
+/// not async", which made that TRUE BY ERASURE — an `async fn g<T>` that was
+/// instantiated emitted an ordinary synchronous `g__i64`, silently dropping the
+/// keyword, and codegen's own `if concrete_func.is_async` guards could never
+/// fire. The flag and the span travel with the template now so that the N7-18
+/// refusal covers this ingress like the other three.
 #[derive(Debug, Clone)]
 pub struct GenericFunction {
     pub lifetime_params: Vec<String>,
@@ -258,6 +269,12 @@ pub struct GenericFunction {
     pub params: Vec<(String, crate::ast::Type)>,
     pub return_type: Option<crate::ast::Type>,
     pub body: Vec<crate::ast::Stmt>,
+    /// Whether the source declaration carried the `async` keyword.
+    pub is_async: bool,
+    /// The source declaration's span, so a refusal raised against a
+    /// monomorphised copy can still point at code the programmer wrote rather
+    /// than at the synthetic `Span::new(0, 0, 0, 0)` monomorphisation invents.
+    pub span: Span,
 }
 
 /// Generic enum definition
@@ -418,6 +435,23 @@ pub struct TypeChecker {
     /// is knowable only after the body walk — hence a second list raised at the
     /// END of `check` rather than at its opening.
     deferred_generic_async_value_returns: Vec<(String, Span)>,
+    /// EVERY public imported generic `async fn`, for the N7-18 refusal — the
+    /// superset of the list above, raised after it.
+    ///
+    /// It is a second list rather than a widened predicate on the first because
+    /// the two carry DIFFERENT WORDING for the same rule, exactly as
+    /// `check_function`'s three arms do, and the more specific one must win.
+    /// Merging them would either lose the value-return diagnostic (whose text
+    /// `tests/conformance-manifest.txt` fingerprints for
+    /// `tests/reject/async_fn.pd`) or make one list report two messages.
+    ///
+    /// NON-GENERIC imported async functions need no list at all: `check`'s
+    /// third pass hands every public, non-generic, unshadowed imported function
+    /// to `check_function`, which is where the refusal lives. Generics are
+    /// skipped there — walking one raises at DECLARATION, and an uninstantiated
+    /// generic is emitted by nobody — so this list exists for precisely the
+    /// functions that pass cannot see.
+    deferred_generic_async_imports: Vec<(String, Span)>,
     /// Function signatures
     functions: HashMap<String, CheckerType>,
     /// Generic function definitions
@@ -493,6 +527,7 @@ impl TypeChecker {
             deferred_async_main: None,
             deferred_async_value_returns: Vec::new(),
             deferred_generic_async_value_returns: Vec::new(),
+            deferred_generic_async_imports: Vec::new(),
             functions,
             generic_functions: HashMap::new(),
             generic_function_origin: HashMap::new(),
@@ -532,8 +567,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:627-628`, `src/typeck/mod.rs:652`,
-    /// `src/typeck/mod.rs:667`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:674-675`, `src/typeck/mod.rs:699-699`,
+    /// `src/typeck/mod.rs:714-714`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -601,6 +636,16 @@ impl TypeChecker {
                                     self.deferred_generic_async_value_returns
                                         .push((func.name.clone(), func.span));
                                 }
+                                // N7-18, the superset of the line above and
+                                // recorded unconditionally on `is_async`. Same
+                                // `name != "main"` exemption for the same
+                                // reason: a generic `main` is not an entry
+                                // point, so it is never called, never
+                                // instantiated and never emitted.
+                                if func.is_async && func.name != "main" {
+                                    self.deferred_generic_async_imports
+                                        .push((func.name.clone(), func.span));
+                                }
                             } else if func.is_async && func.name == "main" {
                                 self.deferred_async_main = Some(func.span);
                             } else if func.is_async
@@ -623,6 +668,8 @@ impl TypeChecker {
                                         .collect(),
                                     return_type: func.return_type.clone(),
                                     body: func.body.clone(),
+                                    is_async: func.is_async,
+                                    span: func.span,
                                 };
                                 self.generic_functions
                                     .insert(func.name.clone(), generic_func);
@@ -834,6 +881,8 @@ impl TypeChecker {
                                 .collect(),
                             return_type: func.return_type.clone(),
                             body: func.body.clone(),
+                            is_async: func.is_async,
+                            span: func.span,
                         };
                         self.generic_functions
                             .insert(func.name.clone(), generic_func);
@@ -1006,6 +1055,8 @@ impl TypeChecker {
                                     .collect(),
                                 return_type: method.return_type.clone(),
                                 body: method.body.clone(),
+                                is_async: method.is_async,
+                                span: method.span,
                             };
                             self.generic_function_origin
                                 .insert(method_name.clone(), None);
@@ -1106,7 +1157,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:667`), and walking an imported
+        // return (`src/typeck/mod.rs:714-714`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -1165,8 +1216,52 @@ impl TypeChecker {
         // `local_definition_shadows_import` sense, is the exemption here: an
         // ordinary local `fn agen` does NOT displace an imported `agen<T>`,
         // because the call site consults `generic_functions` first.
-        let mut generic_offenders: Vec<(String, Span)> = self
-            .deferred_generic_async_value_returns
+        let generic_offenders =
+            self.emitted_generic_offenders(program, &self.deferred_generic_async_value_returns);
+        if !generic_offenders.is_empty() {
+            return Err(CompileError::async_value_return_unimplemented_in_imports(
+                &generic_offenders,
+            ));
+        }
+
+        // N7-18, the superset. Same filter, applied through the SAME function
+        // so the two cannot answer "is this import part of the emitted
+        // program?" differently, and raised second so that the more specific
+        // wording above wins when a declaration earns both.
+        let generic_async_offenders =
+            self.emitted_generic_offenders(program, &self.deferred_generic_async_imports);
+        if !generic_async_offenders.is_empty() {
+            return Err(CompileError::async_fn_unimplemented_in_imports(
+                &generic_async_offenders,
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Which of `deferred` are actually part of the emitted program.
+    ///
+    /// Two conditions, and both are exemptions that exist because refusing
+    /// without them rejected valid programs:
+    ///   * INSTANTIATED. An imported generic that nothing instantiates is
+    ///     emitted by nobody, so a diagnostic against it names a declaration
+    ///     the output cannot contain.
+    ///   * NOT DISPLACED BY A LOCAL GENERIC. `get_instantiations` pairs each
+    ///     key with whatever `self.generic_functions` holds, and a local
+    ///     generic definition OVERWRITES the imported entry, so the emitted
+    ///     body is the local one — which `check_function` already validated.
+    ///     An ordinary local `fn agen` does NOT displace an imported
+    ///     `agen<T>`: the call site consults `generic_functions` first.
+    ///
+    /// Sorted by (name, span) before it is returned, because it is built from
+    /// `imported_modules`, a `HashMap`, and WHICH offender a diagnostic points
+    /// at must be a function of the program rather than of the hash seed.
+    fn emitted_generic_offenders(
+        &self,
+        program: &Program,
+        deferred: &[(String, Span)],
+    ) -> Vec<(String, Span)> {
+        let mut offenders: Vec<(String, Span)> = deferred
             .iter()
             .filter(|(name, _)| self.instantiations.keys().any(|k| &k.name == name))
             .filter(|(name, _)| {
@@ -1176,18 +1271,12 @@ impl TypeChecker {
             })
             .cloned()
             .collect();
-        generic_offenders.sort_by(|a, b| {
+        offenders.sort_by(|a, b| {
             a.0.cmp(&b.0)
                 .then(a.1.start.cmp(&b.1.start))
                 .then(a.1.end.cmp(&b.1.end))
         });
-        if !generic_offenders.is_empty() {
-            return Err(CompileError::async_value_return_unimplemented_in_imports(
-                &generic_offenders,
-            ));
-        }
-
-        Ok(())
+        offenders
     }
 
     /// Convert AST type to CheckerType considering context (struct vs enum)
@@ -1352,6 +1441,35 @@ impl TypeChecker {
         // would have found.
         if func.is_async && Self::has_value_return(&func.body) {
             return Err(CompileError::async_value_return_unimplemented(func.span));
+        }
+
+        // N7-18: AND `async fn` ITSELF, whatever the body does.
+        //
+        // The two arms above are named sub-cases of this one and are kept only
+        // because their wording is more specific — the entry point says what
+        // the emitted `main` would have looked like, the value return says
+        // where the value would have gone. They fire first for that reason and
+        // for no other; this arm is what makes "no `async fn` reaches code
+        // generation" a property of the predicate `is_async` rather than of an
+        // enumeration of async SPELLINGS, which is exactly how the plainest one
+        // survived three rounds of refusals (`async fn g() { print("x"); }`
+        // compiled clean at acda322 and emitted `g_Future`/`g_poll`).
+        //
+        // WHAT IT DOES NOT REJECT. Only `Function::is_async` — nothing about
+        // the name, the return type, the body, or a written `Future<T>`. An
+        // ordinary `fn` is untouched, and so is every diagnostic those other
+        // shapes already had.
+        //
+        // Checked BEFORE the generic skip below, like the two arms above, so a
+        // local `async fn g<T>` is refused at its declaration rather than at
+        // whichever call site happens to instantiate it. That is deliberate
+        // ASYMMETRY with imported generics, which are refused only when
+        // instantiated: a local declaration is the programmer's own source and
+        // the construct cannot be honoured wherever it sits, while an imported
+        // one that nothing instantiates is not part of the emitted program at
+        // all. See `check`'s closing lines.
+        if func.is_async {
+            return Err(CompileError::async_fn_unimplemented(func.span));
         }
 
         // Skip generic functions - they'll be checked when instantiated
@@ -3349,7 +3467,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:3523-3587`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:3430-3494`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that

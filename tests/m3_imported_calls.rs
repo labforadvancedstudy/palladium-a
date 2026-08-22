@@ -473,7 +473,7 @@ fn test_a_same_named_shadow_of_a_fresh_value_leaves_the_outer_binding_alone() {
 //
 // The third pass below skipped every generic imported body, on the stated
 // ground that codegen emits only public NON-GENERIC imported functions
-// (`src/codegen/mod.rs:1267`) and so a skipped body "produces no C". That
+// (`src/codegen/mod.rs:1272-1272`) and so a skipped body "produces no C". That
 // is true of the DIRECT imported-emission path and FALSE of monomorphization,
 // which is a separate path emitting `name__T` from the same template. The
 // guarantee was read off the stated reason instead of off the mechanism, and
@@ -771,10 +771,10 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 //
 // THE OWNER IS M4, AND IT WAS M3 UNTIL THIS BRANCH MERGED `d2d5bd4`. That merge
 // restructured the milestones and split modules out into their own
-// (`docs/contributing/MILESTONES.md:647-653`, "M4 — Modules", which claims the
+// (`docs/contributing/MILESTONES.md:664-670`, "M4 — Modules", which claims the
 // module rows explicitly: "plus the corpus's one `xfail` … cross-file imports
 // — and the vacuous `12_modules_imports`"). M3 is now traits and generics
-// (`docs/contributing/MILESTONES.md:613`), which is not what these rows are
+// (`docs/contributing/MILESTONES.md:630`), which is not what these rows are
 // about.
 //
 // BOTH CITATIONS ABOVE WERE WRONG BEFORE THEY WERE MOVED, and are corrected
@@ -786,6 +786,13 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 // re-pins whatever occupies the line. They now name the `## M4 — Modules`
 // section and the `## M3 — Traits and generics` heading, which is what the
 // sentences claim.
+//
+// AND IT HAPPENED AGAIN IN THE MERGE THAT FOLLOWED. `fix/m2-async-producer`
+// carried these two citations forward with line numbers shifted to track its own
+// edits, and they still resolved to M3's items and to M2's builtin item. Both
+// sides of the conflict were therefore "correct" against their own tree and only
+// one was correct about the CONTENT — which is the whole argument for
+// re-deriving a moved citation instead of re-pinning it.
 //
 // The file is still named `m3_imported_calls.rs`. Renaming it would move every
 // citation that points into it, so the name is left as a historical artefact and
@@ -1201,9 +1208,9 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// `filter_module_info` (`src/resolver/mod.rs:105-118`) narrows the `exports`
 /// set and leaves `ast` complete — and `.exports` is read nowhere but its own
 /// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consumer
-/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:558`,
-/// `src/codegen/mod.rs:1267`, `src/codegen/mod.rs:1352`,
-/// `src/codegen/mod.rs:1457`, `src/codegen/mod.rs:1948`, and the borrow checker's
+/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:593-593`,
+/// `src/codegen/mod.rs:1272-1272`, `src/codegen/mod.rs:1357-1357`,
+/// `src/codegen/mod.rs:1462-1462`, `src/codegen/mod.rs:1953-1953`, and the borrow checker's
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
 /// module.
 #[test]
@@ -1226,8 +1233,8 @@ fn test_selective_import_does_not_import_the_rest() {
 /// A local definition that shadows an import is decided correctly by both
 /// checkers (the local one wins; see `register_imported_functions`) and then
 /// contradicted by codegen, which emits every public imported function
-/// (`src/codegen/mod.rs:1267`) and then every local one
-/// (`src/codegen/mod.rs:1471-1480`) with no shadowing check at all. The front
+/// (`src/codegen/mod.rs:1272-1272`) and then every local one
+/// (`src/codegen/mod.rs:1476-1485`) with no shadowing check at all. The front
 /// end's answer is right and unenforceable.
 #[test]
 fn test_a_local_definition_shadows_an_imported_one() {
@@ -1284,13 +1291,13 @@ fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
 }
 
 /// A qualified call cannot be written. `src/parser/mod.rs:3100-3141` turns any
-/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:2591-2596`
+/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:2709-2714`
 /// then reports `Undefined enum type: lib2`. The same holds for an alias
 /// (`import lib2 as m;` → `Undefined enum type: m`), which makes `alias`
 /// unusable too. `register_imported_functions` registers `module::name` for
 /// parity with the type checker, but nothing can currently reach it.
 #[test]
-#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:3100-3141 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:2591-2596 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:3100-3141 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:2709-2714 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
 fn test_a_qualified_call_reaches_the_imported_function() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1331,8 +1338,8 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// An imported name can shadow a built-in in the checkers but never in codegen,
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
-/// (`src/codegen/mod.rs:2959-2962`), while the type checker
-/// (`src/typeck/mod.rs:652`) and `register_imported_functions` both insert
+/// (`src/codegen/mod.rs:2965-2968`), while the type checker
+/// (`src/typeck/mod.rs:699-699`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
 /// With a matching signature the imported definition is merely silent dead code.
@@ -1341,7 +1348,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:652 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:2959-2962 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:699-699 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:2965-2968 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],
@@ -1460,9 +1467,9 @@ fn emitted_c_over_runs(n: usize) -> Vec<String> {
 ///
 /// This is deliberately narrower than the whole file. It isolates the two
 /// emission sites that produce DEFINITIONS — imported struct definitions
-/// (`src/codegen/mod.rs:1352-1374`) and imported function bodies
-/// (`src/codegen/mod.rs:1457-1469`) — from the prototype block
-/// (`src/codegen/mod.rs:1950-1961`), which is a fourth site and emits
+/// (`src/codegen/mod.rs:1357-1379`) and imported function bodies
+/// (`src/codegen/mod.rs:1462-1474`) — from the prototype block
+/// (`src/codegen/mod.rs:1955-1966`), which is a fourth site and emits
 /// declarations, not definitions. All four are ordered now, so the narrowing no
 /// longer isolates a fixed site from a broken one; it survives because the two
 /// assertions answer different questions, and this one localises a regression to
@@ -1542,10 +1549,10 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// Auditing codegen for what else could put the hash seed into the output
 /// turned up a second, independent source: monomorphized generic
 /// instantiations. `TypeChecker::get_instantiations` builds its `Vec` by
-/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:3380`), which is a
+/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:3498-3498`), which is a
 /// `HashMap`, and `get_struct_instantiations` does the same
-/// (`src/typeck/mod.rs:3442`). Codegen then emits in that Vec's order
-/// (`src/codegen/mod.rs:1427`, `src/codegen/mod.rs:1965`).
+/// (`src/typeck/mod.rs:3560-3560`). Codegen then emits in that Vec's order
+/// (`src/codegen/mod.rs:1432-1432`, `src/codegen/mod.rs:1970-1970`).
 ///
 /// This program imports NOTHING, which is how the two sources were told apart:
 /// with all four `imported_modules` sites ordered, a six-module program with no
@@ -1565,7 +1572,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// `(name, type_args)`.
 ///
 /// NOT COVERED by any test: the sibling sort in `get_struct_instantiations`
-/// (`src/typeck/mod.rs:3442`). Generic *structs* cannot be compiled at all right
+/// (`src/typeck/mod.rs:3560-3560`). Generic *structs* cannot be compiled at all right
 /// now — `struct Box<T> { v: T }` lowers to `void*` and gcc rejects
 /// "initializing 'void *' with an expression of incompatible type
 /// 'struct Box_alpha_i64'" — so there is no program whose output that ordering

@@ -75,11 +75,15 @@ struct ArrayBinding {
 ///                               of the unit type, and `main`'s `return 0;`
 ///                               because its C type is `int`.
 ///   `generate_statement`,       the two `Stmt::Return` arms that consume it.
-///   `generate_function_with_name`, `generate_block`,
-///   `generate_async_function_with_name`
-///                               the ONLY three callers of `generate_statement`;
-///                               the first and third set the reset, the second
-///                               inherits it.
+///   `generate_function_with_name`, `generate_block`
+///                               the ONLY two callers of `generate_statement`;
+///                               the first sets the reset, the second inherits
+///                               it. There were THREE:
+///                               `generate_async_function_with_name` was the
+///                               other, and it is gone — it was the Future/poll
+///                               emitter N7 forbids (N7-18), and `is_async` is
+///                               now a refusal at the top of
+///                               `generate_function_with_name`.
 ///   `function_signature`        the `actual_return_type` special case that
 ///                               rewrites `main` to `int`.
 ///
@@ -154,9 +158,10 @@ pub struct CodeGenerator {
     /// ```
     ///
     /// A hard failure, in the defect that had just been closed, preserved by a
-    /// name-keyed exception. Set per function alongside `mutable_params`, and
-    /// also in `generate_async_function_with_name`, which is the other path
-    /// that feeds `generate_statement`.
+    /// name-keyed exception. Set per function alongside `mutable_params`, in
+    /// the ONE path that feeds `generate_statement` with a `Function`. There
+    /// was a second — `generate_async_function_with_name` set it too — and it
+    /// is gone with the rest of the Future/poll emitter (N7-18).
     current_fn_unit_return: Option<&'static str>,
     /// Imported modules
     imported_modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
@@ -688,7 +693,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:2676`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:2794-2794`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:548`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -2213,10 +2218,11 @@ impl CodeGenerator {
     }
 
     fn generate_function_with_name(&mut self, func: &Function, name: &str) -> Result<()> {
-        // For async functions, generate a Future-returning wrapper
+        // N7-18. This dispatched into `generate_async_function_with_name`, which
+        // emitted a `<name>_Future` struct and a `<name>_poll` routine. Deleted;
+        // see `CompileError::async_fn_unimplemented`. Same shape as `?`/`.await`.
         if func.is_async {
-            self.generate_async_function_with_name(func, name)?;
-            return Ok(());
+            return Err(CompileError::async_fn_unimplemented(func.span));
         }
 
         // The C entry point takes (argc, argv) so that arg_count()/arg_at() can
@@ -3300,112 +3306,6 @@ impl CodeGenerator {
     }
 
     /// Create a monomorphized version of a generic struct
-    /// Generate code for an async function
-    fn generate_async_function_with_name(&mut self, func: &Function, name: &str) -> Result<()> {
-        // This path never reaches the parameter loop in
-        // generate_function_with_name, so nothing else drops the *previous*
-        // function's array bindings; a stale one here would answer questions
-        // about a different function's parameters.
-        self.array_bindings.clear();
-
-        // For now, we'll generate a simple Future struct
-        let future_name = format!("{}_Future", name);
-        let output_type = func
-            .return_type
-            .as_ref()
-            .map(|t| self.type_to_c(t))
-            .unwrap_or_else(|| "void".to_string());
-
-        // Generate Future struct
-        self.output
-            .push_str(&format!("// Future struct for async function {}\n", name));
-        self.output
-            .push_str(&format!("typedef struct {} {{\n", future_name));
-        self.output.push_str("    int state;\n");
-        if output_type != "void" {
-            self.output
-                .push_str(&format!("    {} result;\n", output_type));
-        }
-
-        // Add fields for parameters
-        for param in &func.params {
-            let param_type = self.type_to_c(&param.ty);
-            self.output
-                .push_str(&format!("    {} {};\n", param_type, param.name));
-        }
-
-        self.output.push_str(&format!("}} {};\n\n", future_name));
-
-        // Generate poll function
-        self.output
-            .push_str(&format!("// Poll function for {}\n", future_name));
-        self.output
-            .push_str(&format!("int {}_poll({} *future) {{\n", name, future_name));
-        self.output
-            .push_str("    // Simplified async - immediately ready\n");
-        self.output.push_str("    if (future->state == 0) {\n");
-        self.output.push_str("        future->state = 1;\n");
-
-        // Generate the actual function body.
-        //
-        // WHAT THIS ASSIGNMENT IS FOR, now that "defensive and unreachable" is
-        // not the answer: it is PER-FUNCTION STATE RESET, the same protocol as
-        // the `mutable_params`/`variables`/`array_bindings` clears above — this
-        // path feeds `generate_statement`, and without it a value left by the
-        // previously generated function would still be in the field.
-        //
-        // It is `None` rather than a replacement because an async body cannot
-        // contain a value-carrying `return` at all: typeck refuses it
-        // (src/typeck/mod.rs, `async_value_return_unimplemented`). Round 11
-        // had this set to `Some("return 1; // Ready")`, which WAS reached —
-        // `fn g() -> Future<()> { … }` with `async fn f() -> () { g() }` type-
-        // checks, and the emission carried a duplicate `return 1;` while the
-        // value was silently dropped. That is now a refusal, so there is
-        // nothing left to replace, and leaving a stale replacement here would
-        // be worse than none.
-        self.current_fn_unit_return = None;
-        self.output
-            .push_str("        // Execute async function body\n");
-        for stmt in &func.body {
-            self.output.push_str("        ");
-            self.generate_statement(stmt)?;
-        }
-
-        self.output.push_str("        return 1; // Ready\n");
-        self.output.push_str("    }\n");
-        self.output.push_str("    return 1; // Already completed\n");
-        self.output.push_str("}\n\n");
-
-        // Generate the function that creates the Future
-        self.output.push_str(&format!("{} {}(", future_name, name));
-
-        // Parameters
-        for (i, param) in func.params.iter().enumerate() {
-            if i > 0 {
-                self.output.push_str(", ");
-            }
-            let param_type = self.type_to_c(&param.ty);
-            self.output
-                .push_str(&format!("{} {}", param_type, param.name));
-        }
-
-        self.output.push_str(") {\n");
-        self.output
-            .push_str(&format!("    {} future;\n", future_name));
-        self.output.push_str("    future.state = 0;\n");
-
-        // Copy parameters to future
-        for param in &func.params {
-            self.output
-                .push_str(&format!("    future.{} = {};\n", param.name, param.name));
-        }
-
-        self.output.push_str("    return future;\n");
-        self.output.push_str("}\n\n");
-
-        Ok(())
-    }
-
     fn monomorphize_struct(
         &self,
         struct_name: &str,
@@ -3492,9 +3392,21 @@ impl CodeGenerator {
         let concrete_body = self.substitute_types_in_body(&generic_func.body, &type_map);
 
         // Create the concrete function
+        //
+        // `is_async` AND `span` COME FROM THE TEMPLATE. This read
+        // `is_async: false, // Monomorphized functions are not async`, which
+        // made the claim true BY ERASING IT: an `async fn g<T>` that was
+        // instantiated arrived here async and left synchronous, so it emitted
+        // an ordinary `g__i64`, the keyword was silently dropped, and every
+        // `is_async` guard downstream — including this file's own
+        // `if concrete_func.is_async { continue; }` in the prototype loop — was
+        // dead code that read as coverage. Monomorphisation substitutes TYPES;
+        // it is not the place that decides an effect question. The span travels
+        // with it so the N7-18 refusal points at the declaration the programmer
+        // wrote rather than at the synthetic `Span { 0, 0, 0, 0 }` this invented.
         Ok(Function {
             name: mangled_name,
-            is_async: false,         // Monomorphized functions are not async
+            is_async: generic_func.is_async,
             lifetime_params: vec![], // No longer generic
             type_params: vec![],     // No longer generic
             const_params: vec![],    // No longer generic
@@ -3502,12 +3414,7 @@ impl CodeGenerator {
             return_type: concrete_return_type,
             body: concrete_body,
             visibility: crate::ast::Visibility::Private, // Monomorphized functions are internal
-            span: Span {
-                start: 0,
-                end: 0,
-                line: 0,
-                column: 0,
-            }, // Synthetic span for generated function
+            span: generic_func.span,
             effects: None, // Effects are not tracked for monomorphized functions yet
         })
     }
@@ -3978,9 +3885,16 @@ mod tests {
     fn test_uninferable_let_is_a_compile_error_not_bad_c() {
         // `await` has no code generation rule; the old catch-all declared the
         // binding as `long long` and emitted C that gcc rejected.
+        //
+        // `work` USED TO BE DECLARED `async fn`, which was incidental to this
+        // test and is now refused first (N7-18), so the assertions below were
+        // measuring the wrong refusal. `.await` is what this test is about, and
+        // it is written on an ordinary call — the operand is not inspected
+        // (`CompileError::await_unimplemented`), and `try_infer_expr_type`
+        // answers `None` for `Expr::Await` whatever the callee is.
         let err = generate(
             r#"
-        async fn work() -> i64 { return 1; }
+        fn work() -> i64 { return 1; }
         fn main() {
             let v = work().await;
         }
