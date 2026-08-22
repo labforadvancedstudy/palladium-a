@@ -301,7 +301,12 @@ test-gate-probe: build ## Fault-inject every producer the stdlib gate reads as e
 	@bash scripts/test-gate-probe.sh
 
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs selfhost stdlib-gate test-gate-probe check-retracted-claims ## Run every language-level gate
+# `thesis-exit` is DELIBERATELY ABSENT and must stay absent: it exits 2 by design, and a
+# green umbrella that swallowed a NO_VERDICT would be the one reading this branch exists to
+# prevent. Its SELF-TEST belongs here, though — every defence this branch built was
+# reachable only from a target outside the umbrella, which is an enforcement gap, not a
+# design choice.
+gates: conformance test-conformance-runner check-docs selfhost stdlib-gate test-gate-probe check-retracted-claims test-thesis-runner test-xfail ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------
@@ -326,7 +331,7 @@ thesis-exit: build ## The definition of Palladium 1.0. RED until M9.
 # satisfies it must go green. Probe groups with no negative control are named in
 # the output rather than left silent.
 .PHONY: test-thesis-runner
-test-thesis-runner: ## Fault-inject every thesis probe and prove it can still go RED
+test-thesis-runner: build ## Fault-inject every thesis probe and prove it can still go RED
 	@bash scripts/thesis-exit.sh --self-test
 
 # The banned-list check belongs on the release path, not only under --self-test:

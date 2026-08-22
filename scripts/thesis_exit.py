@@ -237,7 +237,7 @@ EXPECTED_CALLGRAPH_IDS = frozenset({
     "provenance-binding", "scoped-identity",
 })
 EXPECTED_CALLGRAPH_SHA = \
-    "3d03604e6b46a533c00c98a93fe9582bdd12831f6301431cf1ded23d2acc29e2"
+    "1326d3ec2ab884276f6e85506af4e4035c2e1f16b904d3d31cc438f83c380ff1"
 
 # EVERY SCORE THIS FILE QUOTES IS DERIVED FROM HERE. Four sentences went on quoting the
 # previous corpus size after the corpus grew — including the sentence describing the repair for
@@ -289,6 +289,29 @@ def score_bearing_files() -> list[str]:
             if any(c in text for c in GATE_CITATIONS):
                 out.append(str(q.relative_to(ROOT)))
     return sorted(out)
+
+
+# PROSE FIGURES THAT ARE NOT ADVERSARY SCORES, pinned so a NEW one has to be declared.
+# The backstop saw `9/9` and was blind to a PERCENTAGE and to an `N of M` — the two forms
+# my own round-19 miscount was written in, which is to say it could not see the exact error
+# it was built after. (Written as forms, not as the figures: spelling them here would plant
+# two real undeclared figures in a file this check reads.) These are the legitimate prose figures in the scanned files today: two
+# quotations of claims this repository retracted, and two gate counts that are not scores.
+PINNED_PROSE_FIGURES = frozenset({
+    "85%", "100%",          # quoted, in the passage listing retracted progress claims
+    "1 of 23", "0 of 21",   # gate counts: evaluated thesis rows, stdlib files
+})
+
+
+def prose_figures(text: str) -> set[str]:
+    """`N%` and `N of M` that are not pinned as non-scores.
+
+    NARROW, AND NAMED FOR IT: it sees two prose forms. "roughly half", "most of them" and
+    every other English spelling of a measurement pass, and no list closes that.
+    """
+    found = {m.group(0) for m in re.finditer(r"\b\d+\s*%", text)}
+    found |= {m.group(0) for m in re.finditer(r"\b\d+ of \d+\b", text)}
+    return {f for f in found if f.replace(" %", "%") not in PINNED_PROSE_FIGURES}
 
 
 def score_shaped_tokens(text: str) -> set[str]:
@@ -748,7 +771,11 @@ def callgraph_differential() -> tuple[list[tuple[str, str, str, str]], int]:
                              "it cannot fault-inject anything"))
             continue
         if prop == "identical-to":
-            other = by_id.get(expect.rsplit("_", 1)[0] if "_" in expect else expect)
+            # `<row id>@<edge set>`: equality between the two units AND the pinned value.
+            # Comparing the units only to each other let one constant answer satisfy the
+            # original stage, because two identical wrong answers are identical.
+            ref, _sep, want_edges = expect.partition("@")
+            other = by_id.get(ref.rsplit("_", 1)[0] if "_" in ref else ref)
             if other is None:
                 failures.append((rid, "row", expect, "names no row in this corpus"))
                 continue
@@ -756,11 +783,15 @@ def callgraph_differential() -> tuple[list[tuple[str, str, str, str]], int]:
             a, pa = query(unit, "edges")
             b, pb = query(other_src, "edges")
             if pa or pb:
-                failures.append((rid, "original", f"edges == {expect}'s edges", pa or pb))
+                failures.append((rid, "original", f"edges == {ref}'s edges", pa or pb))
                 continue
             if norm(a) != norm(b):
                 failures.append((rid, "original",
-                                 f"edges == {expect}'s edges ({norm(b)})", str(norm(a))))
+                                 f"edges == {ref}'s edges ({norm(b)})", str(norm(a))))
+                continue
+            if want_edges and norm(a) != norm(want_edges):
+                failures.append((rid, "original",
+                                 f"both units' edges == {want_edges}", str(norm(a))))
                 continue
             after, pm = query(mutated, "edges")
             if pm:
@@ -845,18 +876,25 @@ def _has_fingerprint_comparison(tree) -> bool:
     """
     import ast as _ast
 
-    def strip_call_on(node, name):
-        return (isinstance(node, _ast.Call)
+    def stripped_name(node):
+        """`X.strip()` -> "X", anything else -> None."""
+        if (isinstance(node, _ast.Call)
                 and isinstance(node.func, _ast.Attribute)
                 and node.func.attr == "strip"
-                and isinstance(node.func.value, _ast.Name)
-                and node.func.value.id == name)
+                and isinstance(node.func.value, _ast.Name)):
+            return node.func.value.id
+        return None
 
     for n in _ast.walk(tree):
         if not (isinstance(n, _ast.Compare) and len(n.ops) == 1
                 and isinstance(n.ops[0], _ast.NotEq)):
             continue
-        if strip_call_on(n.left, "want_fp") and strip_call_on(n.comparators[0], "decl"):
+        # AS A SET, BECAUSE `a != b` IS `b != a`. Matching `want_fp` on the LEFT meant a
+        # no-op refactor to `decl.strip() != want_fp.strip()` read as "the substring
+        # adjudicator is gone" — semantically identical code, and GI-12's guard reported
+        # the mechanism retired while `conformance.sh` still matched fingerprints with
+        # `grep -qF`. An operand order is not a fact about what the code does.
+        if {stripped_name(n.left), stripped_name(n.comparators[0])} == {"want_fp", "decl"}:
             return True
     return False
 
@@ -949,7 +987,7 @@ def ctx_for_observable() -> "Context":
     return Context()
 
 
-def incomplete_definition() -> list[tuple[str, str]]:
+def incomplete_definition(gate_source: str | None = None) -> list[tuple[str, str]]:
     """(requirement id, why no verdict is available). Empty means: a verdict is.
 
     GI-11 needs BOTH, and neither substitutes for the other:
@@ -959,7 +997,15 @@ def incomplete_definition() -> list[tuple[str, str]]:
       * the CALL-GRAPH DIFFERENTIAL proves the model's STRUCTURE — scoped call-site
         identities, declared entry roots, a source-order-independent fixed point,
         per-edge completion, indirect targets resolved-or-declared, every answer bound to
-        the digest of the unit it is about — each fault-injected, so a lookup table fails.
+        the digest of the unit it is about — each fault-injected, so AN EXACT-SOURCE TABLE
+        OF ORIGINALS, WITH A CONSTANT OR SILENT FALLBACK, FAILS. Not "a lookup table
+        fails", which this branch had already refuted in
+        tests/callgraph-differential.tsv:98 by measurement: an adversary that normalises
+        identifiers, looks up and re-applies the suffix scores FULL MARKS and satisfies the
+        provenance obligation on the way past. Two files in one branch asserting opposite
+        things about one mechanism, and `check-retracted-claims` could not see it — a
+        banned list is a LEXICAL defence, and the retraction was spelled differently. That
+        is the standing limit of that mechanism, not an oversight in this instance.
         The liveness corpus touches none of that; an `observable` could not carry it
         either, because an empty `#[test]` reports `1 passed`.
 
@@ -967,7 +1013,16 @@ def incomplete_definition() -> list[tuple[str, str]]:
     GI-11 clear on scalar verdicts while the structure it contracted for was unbuilt.
     """
     validate_preconditions()
+    src = (gate_source if gate_source is not None
+           else (ROOT / "scripts/thesis_exit.py").read_text())
+    why = {rid: w for rid, _c, _u, _s, w in PRECONDITIONS}
     out = []
+    # GI-11's CONSTANT HALF, no longer `continue`d past. A precondition whose only test was
+    # its corpora could be declared met by a corpus that passes; the model in use is part
+    # of the stop condition, and a label can only ADD a refusal here — never lift one,
+    # because the corpora below must pass as well.
+    if LIVENESS_MODEL != "call-graph":
+        out.append(("GI-11", why["GI-11"]))
     try:
         cg_fail, cg_total = callgraph_differential()
     except HarnessError as e:
@@ -984,8 +1039,11 @@ def incomplete_definition() -> list[tuple[str, str]]:
                     f"{' …' if len(cg_fail) > 2 else ''}. This pins what the graph RETURNS "
                     f"(scoped identities, roots, order-independence, per-edge completion, "
                     f"indirect resolved-or-declared, every answer carrying the digest of "
-                    f"the unit it is about); an `observable` could not, because an "
-                    f"empty #[test] reports `1 passed`"))
+                    f"the unit it is about), and defeats an exact-source table of "
+                    f"ORIGINALS with a constant or silent fallback — NOT lookup in "
+                    f"general, which the corpus header records as measured and unbeaten; "
+                    f"an `observable` could not, because an empty #[test] reports "
+                    f"`1 passed`"))
     try:
         failures, total = liveness_differential()
     except HarnessError as e:
@@ -999,12 +1057,27 @@ def incomplete_definition() -> list[tuple[str, str]]:
                     f"{' …' if len(failures) > 3 else ''}. Those answers are fixed by "
                     f"review, so a model that disagrees with them is wrong, whatever it "
                     f"is called"))
-    for rid, const, unsound, sound, why in PRECONDITIONS:
-        if rid == "GI-11":
-            continue
-        if globals()[const] != sound:
-            out.append((rid, why))
+    # GI-12 IS DECIDED BY THE MECHANISM, NOT BY A LABEL.
+    #
+    # It used to be `globals()[const] != sound`, where `sound` is the fourth field of a
+    # tuple in this file and `validate_preconditions()` compared it against a pin in the
+    # same file — PIN AGAINST PIN. Dual-edit both to "substring" and GI-12 read as MET
+    # while the substring adjudicator was still the thing deciding every reject row. "Met"
+    # meant TWO LABELS AGREE, which is not a fact about the gate.
+    #
+    # The physical stop condition instead: GI-12 is unmet for as long as the substring
+    # fingerprint comparator is still present as an EXPRESSION in this gate's source. No
+    # constant participates, so no edit to a constant can retire it; the declaration is
+    # still checked against the same physical fact by `wiring_matches_declaration`, which
+    # is what makes a mismatched label a harness error rather than a silent lift.
+    if _has_fingerprint_comparison(_ast_module().parse(src)):
+        out.append(("GI-12", why["GI-12"]))
     return out
+
+
+def _ast_module():
+    import ast as _ast
+    return _ast
 
 
 AGGREGATE_ROW = "D1-01"          # cites this command as its evidence: it is the summary
@@ -1581,11 +1654,43 @@ class Context:
     assume_definition_complete: bool = False
 
 
-def _probe(argv, cwd):
+# Environment variables that change WHICH corpus a delegated run measures, or whether it
+# measures at all. `conformance.sh` documents them at :88-94.
+CORPUS_ENV_OVERRIDES = ("CONFORMANCE_MANIFEST", "CONFORMANCE_FORBID_OWNER",
+                        "CONFORMANCE_BLESS")
+# The value each takes when the caller does not choose one. `CONFORMANCE_MANIFEST` has no
+# neutral value — a corpus must be named — so it is absent here and stated by the caller.
+CORPUS_ENV_NEUTRAL = {"CONFORMANCE_BLESS": "0", "CONFORMANCE_FORBID_OWNER": ""}
+
+
+def _probe(argv, cwd, reject_codes=(1,), env_overrides=None):
+    """One process, one decision. -> Concluded (has `.text`) | Malfunction (does not).
+
+    `reject_codes` IS PER CALL, because the same number means different things to
+    different producers. It defaults to `(1,)` for a REJECT probe, where exit 1 is a
+    legitimate verdict — the compiler refused a bad program. For `conformance.sh`, exit 1
+    means THE CORPUS RUN FAILED, and inheriting the reject default made a failed run
+    `Concluded`: its partial verdict lines were then parsed and scored. CONCLUDED IS NOT
+    SUCCEEDED, and the boundary's own docstring said so while the caller ignored it.
+
+    THE ENVIRONMENT IS NOT INHERITED BLIND. `CONFORMANCE_MANIFEST=… scripts/thesis-exit.sh`
+    made the delegated run measure one corpus while `declared_fingerprint` read the
+    canonical manifest — two corpora, one verdict — and `CONFORMANCE_BLESS=1` made the
+    delegated run REWRITE the goldens instead of measuring them. The overriding variables
+    are stripped, and a caller that needs one states it explicitly.
+    """
     global GP
     if GP is None:
         GP = _load_gate_probe()
-    return GP.classify(GP.run(argv, cwd=str(cwd)))
+    # OVERRIDDEN, NOT UNSET, and the difference is a fact about the boundary rather than a
+    # choice: `gate_probe.run` MERGES its `env` into `os.environ`, so nothing here can
+    # remove a variable — it can only supply a value that wins. `conformance.sh` reads
+    # `${CONFORMANCE_BLESS:-0}` and `${CONFORMANCE_FORBID_OWNER:-}`, so these two values
+    # are the neutral ones; the manifest has no neutral value and is STATED by the caller
+    # that cares, which is the same corpus `declared_fingerprint` reads.
+    env = dict(CORPUS_ENV_NEUTRAL)
+    env.update(env_overrides or {})
+    return GP.classify(GP.run(argv, cwd=str(cwd), env=env), reject_codes=reject_codes)
 
 
 def conformance_verdicts(ctx: Context) -> dict[str, str]:
@@ -1600,8 +1705,12 @@ def conformance_verdicts(ctx: Context) -> dict[str, str]:
     if ctx.verdicts_text is not None:
         text = ctx.verdicts_text
     else:
+        # reject_codes=(): for THIS producer a non-zero exit is a failed measurement, not a
+        # verdict. The manifest is stated rather than inherited, so the corpus the delegate
+        # measures is the corpus `declared_fingerprint` reads.
         res = _probe(["bash", str(ctx.root / "scripts/conformance.sh"), "tests", "examples"],
-                     ctx.root)
+                     ctx.root, reject_codes=(),
+                     env_overrides={"CONFORMANCE_MANIFEST": str(ctx.conformance_manifest)})
         if not hasattr(res, "text"):
             raise HarnessError(f"scripts/conformance.sh did not conclude ({res.how}); "
                                "its output is not evidence")
@@ -1885,9 +1994,9 @@ GROUPS = [
 
 def main(ctx: Context | None = None) -> int:
     ctx = ctx or Context()
-    drift = wiring_matches_declaration(
-        ctx.gate_source if ctx.gate_source is not None
-        else (ROOT / "scripts/thesis_exit.py").read_text())
+    gate_src = (ctx.gate_source if ctx.gate_source is not None
+                else (ROOT / "scripts/thesis_exit.py").read_text())
+    drift = wiring_matches_declaration(gate_src)
     if drift:
         raise HarnessError("the gate's declared models do not match its wiring: "
                            + "; ".join(drift))
@@ -1898,7 +2007,8 @@ def main(ctx: Context | None = None) -> int:
     # ONE evaluation, reused. It ran twice — opening banner and closing report — so a
     # mutable workspace could produce two different answers in one run, and the corpora
     # were walked twice for nothing.
-    blocked_early = [] if ctx.assume_definition_complete else incomplete_definition()
+    blocked_early = ([] if ctx.assume_definition_complete
+                     else incomplete_definition(gate_src))
     print("=" * 78)
     print("  make thesis-exit — the definition of Palladium 1.0")
     print(f"  {len(rows)} `thesis` rows from {ctx.requirements.name}; "
@@ -2001,7 +2111,7 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "5de5c3dd905ae493566b89a34dd3463bc4dce4a8409a6b414f8a68dc0389cad7"
+EXPECTED_CASE_SHA = "7b6fbb6d6d9507f95a82d0adcb726f8517fc57f1ec51951700790ed7a0f0c4db"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -2063,6 +2173,12 @@ RETRACTED_CLAIMS = (
     # the reason the entry says what the code decides instead of only what it does not.
     ("PARAMETER on a function reachable from", "round 19 — it decides `mentioned`, not `reachable`"),
     ("is unreachable, is not defined here", "round 19 — the verdict line claimed reachability"),
+    # Round 22: the corpus header retracted "a lookup table fails" BY MEASUREMENT in this
+    # same branch, and the docstring went on asserting it. The phrase is banned so the
+    # unqualified form cannot come back — and the general problem is named rather than
+    # implied solved: a banned list is lexical, this retraction was spelled differently,
+    # and nothing here detects two files asserting opposite things about one mechanism.
+    ("so a lookup table fails", "round 22 — refuted by the corpus header's own measurement"),
 )
 
 # Mechanisms that NO LONGER EXIST, as EXACT TOKENS, matched CASE-INSENSITIVELY.
@@ -2488,6 +2604,10 @@ def self_test() -> int:
 
     case.mark = _drive.calls
     _me_for_drive = (ROOT / "scripts/thesis_exit.py").read_text()
+    # Assembled at run time; written whole each would occur twice and `mutate()` refuses an
+    # ambiguous anchor.
+    _fp_anchor = "if want_fp" + ".strip() != decl.strip():"
+    _disp_anchor = "return p_effect_is_" + "transitive(effect_report(ctx, w), src)"
 
     def _raises_harness(fn):
         try:
@@ -2993,15 +3113,29 @@ def self_test() -> int:
                     if g.startswith("silence —")), _ids, drives_main=False)
 
         # A CONSTANT and a SILENT graph never reach the mutation branch, and the exact map
-        # says so rather than a total hiding it. `order-independent` is the exception and
-        # it is not noise: two identical wrong answers ARE identical, so a constant clears
-        # the identical-to comparison and only dies on the mutation.
+        # says so rather than a total hiding it. `order-independent` USED TO BE the
+        # exception — two identical wrong answers are identical, so a constant cleared the
+        # identical-to comparison and only died on the mutation. Measured by review with
+        # the literal `CONST`, and closed by pinning an edge set on that row rather than
+        # only equality between the two units. Every row dies at the ORIGINAL stage now.
         _const = _bound(lambda s, p: "main>x")
         _score(_const, "a constant graph")
-        case("a constant graph fails every row, all but one at the ORIGINAL stage",
-             _stages(_const),
-             {rid: ("mutation" if rid == "order-independent" else "original")
-              for rid in _ids}, drives_main=False)
+        case("a constant graph fails EVERY row at the ORIGINAL stage — the identical-to row "
+             "no longer passes on equality between two identical wrong answers",
+             _stages(_const), {rid: "original" for rid in _ids}, drives_main=False)
+        # THE CONTROL FOR THAT FIX: equality alone is not an answer. A provider returning
+        # ONE constant for both units of the identical-to row satisfies `a == b`; the pinned
+        # edge set is what refuses it.
+        def _equal_but_wrong(s):
+            got = _honest(s)
+            if got is None:
+                return None
+            return (got[0], {**got[1], "edges": "CONST"})
+        case("a provider answering ONE CONSTANT for both units of the identical-to row is "
+             "refused at the ORIGINAL stage — measured to pass when only equality was "
+             "compared",
+             _stages(_equal_but_wrong).get("order-independent"), "original",
+             drives_main=False)
         _silent = lambda s: None                                          # noqa: E731
         _score(_silent, "a silent graph")
         case("a silent graph fails every row at the ORIGINAL stage, for want of a graph",
@@ -3454,6 +3588,25 @@ def self_test() -> int:
     case("...and that check would see a planted one",
          sorted(score_shaped_tokens(f"the adversary scored {_planted_score}")
                 - _measured_tokens), [_planted_score], drives_main=False)
+    # NICE-TO-HAVE 2 of round 22: the backstop could not see the two forms the miscount it
+    # was built after was written in. Both are assembled at run time, for the same reason
+    # the planted score token is.
+    _planted_pct = "52" + "%"
+    _planted_of = "125" + " of " + "236"
+    case("the prose-figure scan sees a PERCENTAGE and an `N of M`, the two forms the "
+         "score-token backstop was blind to",
+         sorted(prose_figures(f"we measured {_planted_pct} and {_planted_of} cases")),
+         sorted([_planted_of, _planted_pct]), drives_main=False)
+    case("...and no UNDECLARED prose figure survives in any file that cites this gate",
+         {rel: sorted(prose_figures((ROOT / rel).read_text()))
+          for rel in _scan if prose_figures((ROOT / rel).read_text())}, {},
+         drives_main=False)
+    case("the pinned prose figures are the two quoted retractions and the two gate counts",
+         sorted(PINNED_PROSE_FIGURES), ["0 of 21", "1 of 23", "100" + "%", "85" + "%"],
+         drives_main=False)
+    case("the scan is NARROW and says so: an English spelling of a measurement passes",
+         sorted(prose_figures("roughly half of the cases, most of them")), [],
+         drives_main=False)
     case("the non-score EXPRESSIONS are exactly the requirement-id lists",
          sorted(NON_SCORE_EXPRESSIONS),
          ["N7-13" + "/" + "15" + "/" + "17", "TH-03" + "/" + "04" + "/" + "05"],
@@ -3561,20 +3714,35 @@ def self_test() -> int:
     case("as committed, both safeguards are outstanding and BOTH refuse",
          _no_check, ["GI-11", "GI-12"], drives_main=False)
 
-    # F3. THE SATISFIED BRANCH OF THAT LOOP WAS NEVER DRIVEN — the self-test bypassed the
-    # whole function with `assume_definition_complete` instead, so "the refusal lifts when
-    # the constant is sound" was asserted nowhere.
+    # F3/MF2. WHAT "MET" MEANS. It used to mean two labels agree: the decision read
+    # `globals()[const] != sound`, and `validate_preconditions()` compared `sound` against
+    # a pin in the SAME FILE — pin against pin. Dual-edit both and GI-12 read as met while
+    # the substring adjudicator was still deciding every reject row. The decision is
+    # physical now, and these cases drive both directions.
     _saved_attr = ATTRIBUTION_MODEL
     try:
         globals()["ATTRIBUTION_MODEL"] = "code"
-        _lifted = sorted({r for r, _w in incomplete_definition()})
+        _label_only = sorted({r for r, _w in incomplete_definition(_me_for_drive)})
     finally:
         globals()["ATTRIBUTION_MODEL"] = _saved_attr
-    case("the GI-12 refusal LIFTS when its constant becomes sound — the branch that says "
-         "a precondition can be met, driven for the first time",
-         _lifted, ["GI-11"], drives_main=False)
-    case("...and GI-11 keeps refusing on its own two grounds, so lifting one lifts one",
-         len([r for r, _w in incomplete_definition() if r == "GI-11"]), 2, drives_main=False)
+    case("editing the LABEL does not lift GI-12 — `met` is not `two labels agree`, and a "
+         "dual edit of the tuple and its pin was the whole attack",
+         _label_only, ["GI-11", "GI-12"], drives_main=False)
+    case("the GI-12 refusal LIFTS when the substring COMPARATOR is physically gone — the "
+         "branch that says a precondition can be met, decided by the mechanism",
+         sorted({r for r, _w in incomplete_definition(mutate(
+             _me_for_drive, _fp_anchor,
+             "if want_fp.casefold() not in decl.casefold():"))}),
+         ["GI-11"], drives_main=False)
+    case("...and a NO-OP OPERAND SWAP does not lift it: `a != b` is `b != a`, and matching "
+         "one order read a semantically identical refactor as the mechanism being retired",
+         sorted({r for r, _w in incomplete_definition(mutate(
+             _me_for_drive, _fp_anchor, "if decl.strip() != want_fp.strip():"))}),
+         ["GI-11", "GI-12"], drives_main=False)
+    case("GI-11 refuses on THREE grounds now — the model in use, and each corpus — so a "
+         "corpus that passes cannot declare the model replaced",
+         len([r for r, _w in incomplete_definition(_me_for_drive) if r == "GI-11"]), 3,
+         drives_main=False)
 
     # F2. `_validate_contract` names the defect "a reject row with no required fingerprint";
     # a whitespace one reached that state without tripping it.
@@ -3585,6 +3753,76 @@ def self_test() -> int:
     case("...while a real fingerprint still validates",
          _raises_harness(lambda: _validate_contract(
              {"X-01": ("reject", "x.pd", "declared pure")})), False, drives_main=False)
+
+    print("\n  THE PROCESS BOUNDARY — concluded is not succeeded, and env is not inherited")
+    # MF3. `classify(r, reject_codes=(1,))` exists because for a REJECT probe exit 1 is a
+    # verdict. For `conformance.sh` exit 1 means the corpus run FAILED, and the reject
+    # default was inherited: a failed run was `Concluded`, and its partial verdict lines
+    # were parsed and scored.
+    case("a conformance run that prints verdicts and EXITS 1 is refused — the reject "
+         "default made a failed corpus run read as evidence",
+         _why(_drive(real_conformance="#!/bin/sh\necho 'f/ref.pd PASS_VERIFIED'\nexit 1\n"))
+         .startswith("2 HARNESS=scripts/conformance.sh did not conclude"), True)
+    case("...and exit 0 with verdicts is still read",
+         _why(_drive(real_conformance="#!/bin/sh\n" + "".join(
+             f"echo '{ln}'\n" for ln in ALL_VERDICTS.splitlines()) + "exit 0\n",
+             real_pdc="#!/bin/sh\necho \"Function 'header' has effects: [Io]\"\nexit 0\n",
+             real_make=True)), "0 RED=")
+
+    # MF4. `_probe` inherited the environment, so `CONFORMANCE_MANIFEST=… thesis-exit.sh`
+    # made the delegate measure one corpus while `declared_fingerprint` read another — two
+    # corpora, one verdict — and `CONFORMANCE_BLESS=1` made it rewrite goldens instead of
+    # measuring them.
+    _saved_env = {k: os.environ.get(k) for k in CORPUS_ENV_OVERRIDES}
+    try:
+        for k in CORPUS_ENV_OVERRIDES:
+            os.environ[k] = "hostile"
+        _seen = _probe(["sh", "-c", "echo B=${CONFORMANCE_BLESS} "
+                        "F=[${CONFORMANCE_FORBID_OWNER}]"], ROOT).text.strip()
+        _stated = _probe(["sh", "-c", "echo M=${CONFORMANCE_MANIFEST-unset}"], ROOT,
+                         env_overrides={"CONFORMANCE_MANIFEST": "chosen"}).text.strip()
+    finally:
+        for k, v in _saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    case("the corpus-selecting environment is OVERRIDDEN for a delegated run, so an "
+         "exported variable cannot make it rewrite goldens or filter the corpus — "
+         "overridden and not unset, because the boundary merges into os.environ",
+         _seen, "B=0 F=[]", drives_main=False)
+    case("...and a caller that needs one states it, rather than inheriting it",
+         _stated, "M=chosen", drives_main=False)
+
+    # MF5. The block's own documented regeneration path did nothing: the flag was read
+    # inside `self_test()` and the dispatch only entered `self_test()` for `--self-test`.
+    _entry_src = __import__("ast").get_source_segment(
+        _me_for_drive, next(n for n in __import__("ast").parse(_me_for_drive).body
+                            if getattr(n, "name", "") == "_entry"))
+    case("`--update-scoreboard` is read by the DISPATCH, not only inside the function it "
+         "drives — the documented regeneration path was inert, which is a claim that the "
+         "generated block is maintained",
+         _entry_src.count("--update-scoreboard") >= 2, True, drives_main=False)
+    case("...and it suppresses the verdict line, because regenerating a table is not a "
+         "measurement of the thesis",
+         "--update-scoreboard" in _entry_src.split("def finish")[1].split("return code")[0],
+         True, drives_main=False)
+
+    # MF6. A mandatory case recorded `skipped (pdc not built)` on a clean checkout.
+    _mk = (ROOT / "Makefile").read_text()
+    case("`test-thesis-runner` declares its `build` prerequisite, like every other target "
+         "that runs the compiler — without it a clean checkout records a SKIP where a "
+         "REJECTED is mandatory",
+         "test-thesis-runner: build" in _mk, True, drives_main=False)
+    case("`make gates` runs this gate's own self-test and the xfail gate — every defence "
+         "here was reachable only from outside the umbrella",
+         all(x in _mk.split("gates:")[1].split("\n")[0]
+             for x in ("test-thesis-runner", "test-xfail", "check-retracted-claims")),
+         True, drives_main=False)
+    case("...and `make gates` does NOT run `thesis-exit`, which exits 2 by design: a green "
+         "umbrella swallowing a NO_VERDICT is the reading this branch exists to prevent",
+         "thesis-exit" in _mk.split("gates:")[1].split("\n")[0].replace(
+             "test-thesis-runner", ""), False, drives_main=False)
 
     print("\n  THE SELF-TEST HARNESS — the region every other control runs through")
     # Round 20. `_drive`, `case`, `mutate`, `mutate_fp`, `_verdict`. A defect here does not
@@ -3683,7 +3921,7 @@ def self_test() -> int:
     print("\n  the machine contract Make cannot carry")
     _rc = subprocess.run([sys.executable, str(ROOT / "scripts/thesis_exit.py")],
                          capture_output=True, text=True, cwd=ROOT)
-    case("the script emits a typed result line", 
+    case("the script emits a typed result line",
          _rc.stdout.strip().splitlines()[-1].startswith("THESIS_RESULT "), True,
          drives_main=False)
     case("the line names the same code the script exits with",
@@ -3703,7 +3941,7 @@ def self_test() -> int:
          sorted(set(r for r, _w in incomplete_definition())), ["GI-11", "GI-12"],
          drives_main=False)
     case("GI-11 is outstanding for BOTH reasons — the structural AND the liveness corpus",
-         len([r for r, _w in incomplete_definition() if r == "GI-11"]), 2,
+         len([r for r, _w in incomplete_definition() if r == "GI-11"]), 3,
          drives_main=False)
     # Through mutate(), so that when these constants legitimately change the controls
     # fail loudly instead of quietly mutating nothing. Eighth sighting of that class, and
@@ -3730,8 +3968,6 @@ def self_test() -> int:
     # BOTH ANCHORS ARE ASSEMBLED AT RUN TIME. Written whole, each would occur twice in
     # this file — once in the code being mutated and once here — and `mutate()` refuses an
     # ambiguous anchor. That refusal is the same guard, one level down, and it fired.
-    _disp_anchor = "return p_effect_is_" + "transitive(effect_report(ctx, w), src)"
-    _fp_anchor = "if want_fp" + ".strip() != decl.strip():"
     case("DELETING the real TH-05 dispatch makes the check fail — it was satisfied by the "
          "probe name appearing in a tuple, a comment or its own `def`",
          bool(wiring_matches_declaration(mutate(
@@ -4058,7 +4294,12 @@ def _emit_result(code: int) -> None:
     layer as well, so a consumer can parse rather than infer.
     """
     try:
-        print(f"THESIS_RESULT {code} {RESULT_NAMES.get(code, 'HARNESS_ERROR')}")
+        # `.get(code, "HARNESS_ERROR")` implied a FOURTH outcome. There are three, and a
+        # harness error is one of them: it becomes exit 2 / NO_VERDICT by construction, in
+        # `_entry`, so the name was unreachable and told a reader the contract distinguishes
+        # something it does not. An unexpected code is a bug in this file, and saying so is
+        # honest where inventing a category is not.
+        print(f"THESIS_RESULT {code} {RESULT_NAMES.get(code, 'UNSPECIFIED_CODE')}")
     except BaseException:  # noqa: BLE001
         pass
 
@@ -4090,7 +4331,8 @@ def _entry(argv: list[str]) -> int:
             pass
 
     def finish(code: int) -> int:
-        if "--self-test" not in argv and "--check-retracted-claims" not in argv:
+        if not ({"--self-test", "--check-retracted-claims", "--update-scoreboard"}
+                & set(argv)):
             _emit_result(code)
         return code
 
@@ -4104,7 +4346,15 @@ def _entry(argv: list[str]) -> int:
         if "--systemexit-for-self-test" in argv:
             # A dependency calling sys.exit(1) must not be mistaken for a thesis verdict.
             raise SystemExit(1)
-        return finish(self_test() if "--self-test" in argv else main())
+        # `--update-scoreboard` IMPLIES the self-test, because that is where the
+        # measurements it writes are produced. It was read inside `self_test()` while the
+        # dispatch only entered `self_test()` for `--self-test`, so the command the
+        # generated block documents as its regeneration path printed a verdict line and
+        # wrote nothing. A documented path that does nothing is worse than none: it is a
+        # claim that the block is maintained.
+        if "--self-test" in argv or "--update-scoreboard" in argv:
+            return finish(self_test())
+        return finish(main())
     except HarnessError as e:
         report("harness error", str(e))
         return finish(2)

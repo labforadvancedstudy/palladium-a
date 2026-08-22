@@ -153,8 +153,12 @@
 #                 declares. A site that claims `resolved:` and names nothing is a HARNESS
 #                 FAILURE, not a score; a dropped site, a duplicate site key, an ill-formed
 #                 site key and an unparseable entry are wrong ANSWERS and die in the score.
-#   identical-to  the id of another row. The two programs' EDGE SETS are compared to each
-#                 other — an earlier version accepted the literal id string, proving nothing.
+#   identical-to  `<row id>@<edge set>`. The two programs' EDGE SETS are compared to each
+#                 other AND to the pinned value — an earlier version accepted the literal id
+#                 string, proving nothing, and the version after that compared the two units
+#                 to each other and nothing else, so a provider answering one CONSTANT for
+#                 both units passed the original stage (measured: the literal `CONST` did).
+#                 Equality alone is not an answer; the pinned edge set is.
 # mutation: `find=>replace`, applied to the DECODED source. Removing the fact the row is
 #           about must change the provider's answer.
 # expect-mutated: the answer the MUTATED program must produce. `(none)` means the property
@@ -168,7 +172,7 @@
 
 scoped-identity	edges	struct Buf { n: i64 }\nstruct Log { n: i64 }\nimpl Buf { fn len(self) -> i64 { return self.n; } }\nimpl Log { fn len(self) -> i64 { return self.n; } }\nfn main() { let b: Buf = Buf { n: 1 }; let g: Log = Log { n: 2 }; b.len(); }	main>Buf::len	b.len()=>g.len()	main>Log::len	two functions named `len` in different impls. A bare-name graph collapses them and reports an edge into Log::len that does not exist — the defect measured in src/effects/mod.rs:98. Removing the call must remove the edge	reviewed
 entry-roots	roots	fn helper() -> i64 { return 1; }\nfn main() { helper(); }	main	fn main()=>fn start()	(none)	`main` is the only declared entry root. Renaming it away must change the root set	reviewed
-order-independent	identical-to	fn main() { helper(); }\nfn helper() -> i64 { return 1; }	entry-roots	fn main() { helper(); }=>fn extra() -> i64 { return 2; }\nfn main() { helper(); extra(); }	main>extra,main>helper	the same program with its definitions reordered must yield the SAME EDGE SET as `entry-roots`. A single forward pass over source order does not. Removing the call must break the equality	reviewed
+order-independent	identical-to	fn main() { helper(); }\nfn helper() -> i64 { return 1; }	entry-roots@main>helper	fn main() { helper(); }=>fn extra() -> i64 { return 2; }\nfn main() { helper(); extra(); }	main>extra,main>helper	the same program with its definitions reordered must yield the SAME EDGE SET as `entry-roots`. A single forward pass over source order does not. Removing the call must break the equality	reviewed
 completion-diverges	completion	fn stop() { panic("x"); }\nfn main() { stop(); }	main>stop=no	panic("x")=>return	main>stop=yes	the callee diverges, so the edge may not complete. Making it return must flip the fact. `panic` is a builtin, so `stop>panic` is outside the projection this corpus queries — see WHICH EDGES ARE IN SCOPE	reviewed
 completion-returns	completion	fn ok() -> i64 { return 1; }\nfn main() { ok(); }	main>ok=yes	return 1=>panic("x")	main>ok=no	the POSITIVE control the first version lacked: a callee that always returns. Making it diverge must flip the fact	reviewed
 indirect-declared	indirect	fn target() -> i64 { return 1; }\nfn run(f: fn() -> i64) -> i64 { return f(); }\nfn main() { run(target); }	run#1=resolved:target|run#1=unresolved	return f()=>return 1	(none)	the call `f()` has no statically visible target here. The contract permits resolving it OR declaring it unresolved; omitting it silently is the failure this row exists to catch, and `resolved:` naming nothing is a harness failure rather than either. Removing the indirect call must change the answer	reviewed
