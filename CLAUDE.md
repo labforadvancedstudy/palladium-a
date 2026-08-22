@@ -92,9 +92,19 @@ stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fi
 **D6은 결함이 아니었다 (철회).** `CLAUDE.md`가 열린 결함으로 올려뒀으나 `191f8c1`에서 이미 고쳐졌고,
 이 파일의 베이스보다 12커밋 앞선다. 명시된 다섯 프로그램 전부 재실행 — 하나도 재현되지 않는다
 (`t(s); t(s)` → `5 5`, `take2(s,s)` → `10`, `bump(&mut p)` 연속 → `2`, 필드→빌트인 후 재사용 → `abc 3 1`).
-호출 경로 `src/ownership/borrow_checker.rs:585-601`이 per-call lifetime을 만들고 인자 검사 후 끝낸다.
-인용됐던 `:236`은 대여된 **반환값**의 소유권 분류이지 인자 lifetime이 아니다 — green 핀이 붙은 채로
-거짓 주장을 뒷받침하고 있었다.
+호출 경로 `src/ownership/borrow_checker.rs:891-898`이 per-call lifetime을 만들고 인자 검사 후 끝낸다
+(`new_lifetime()` :891 → `check_call_args` :894 → `end_borrows(&call_lifetime)` :897).
+당시 인용됐던 줄은 대여된 **반환값**의 소유권 분류이지 인자 lifetime이 아니다 — green 핀이 붙은 채로
+거짓 주장을 뒷받침하고 있었다. (옛 줄번호는 일부러 적지 않는다: 이 트리에 없는 리비전을 가리키는
+`path:line`은 핀을 붙일 수 없고, 핀을 붙일 수 없는 인용은 조용히 드리프트한 인용과 구별되지 않는다 —
+[`language-spec.md` A9.4](docs/specification/language-spec.md#a94-defect-d6-retracted)와 같은 이유.)
+
+*이 줄의 인용 자체가 같은 병이었다.* 위 범위는 원래 `check_stmt`를 가리키고 있었다 — 주장(호출 경로)과
+무관한 함수다. 언제부터 틀렸는지는 알 수 없다: **`CLAUDE.md`는 doc-evidence 코퍼스 밖이라 핀이 0개이고,
+이 파일의 어떤 인용도 게이트가 검사한 적이 없다.** "핀이 0개"라는 사실은 드리프트가 살아남은 *이유*를
+설명할 뿐 정당화하지 않는다 — 이 브랜치가 더 작은 파일들에 대해 계속 해온 주장("아무도 눈치채지
+못한다")이 가장 크게 적용되는 표면이 바로 이 파일이다. 코퍼스 편입 가능 여부는
+[`docs/contributing/claude-md-coverage.md`](docs/contributing/claude-md-coverage.md)에 측정과 함께 있다.
 
 **허위였던 문서 주장 (교정 완료):** README "Bootstrap 100% Complete", FEATURES "Self-Hosting 100%",
 `bootstrap/v3_incremental/BOOTSTRAP_ACHIEVED.md`. 어떤 Palladium 컴파일러도 자기 자신을 컴파일한
