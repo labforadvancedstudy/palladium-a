@@ -1079,6 +1079,55 @@ fn main() {
 // The obligation that outlives this branch, tracked rather than commented
 // ---------------------------------------------------------------------------
 
+/// THE SEQUENCING CONSTRAINT, as an ordinary invariant rather than a reminder.
+///
+/// The XFAIL below records that the flag is owed. It does not FORCE anything:
+/// fixing the exhaustive-match defect leaves it failing exactly as before, so
+/// someone could land the final `else` and never think about the flag again. A
+/// gated reminder is not a dependency.
+///
+/// This is the dependency, and it is checkable today: EITHER the match defect
+/// is still open, OR the shared linker carries the flag. Today the first arm
+/// holds, so this passes. The moment somebody promotes
+/// `tests/stdlib/DRIVERS.tsv`'s `stdlib_tail_match` row from
+/// `known_violation:…` to `clean` — which is step 1 of the handoff on
+/// `NetA::StillFindsTheOpenMatchDefect`, and which `make stdlib-gate` demands
+/// as soon as the C goes clean — the first arm stops holding and this test
+/// fails until the flag is added. It is an ordinary test, so it runs in
+/// `make test-honest` and in `make m1-exit` inventory 3.
+#[test]
+fn the_missing_else_may_not_be_fixed_without_arming_the_linker() {
+    let drivers = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/stdlib/DRIVERS.tsv"),
+    )
+    .expect("tests/stdlib/DRIVERS.tsv is the pin for the open match defect");
+    let match_defect_open = drivers
+        .lines()
+        .filter(|l| l.starts_with("stdlib_tail_match\t"))
+        .any(|l| l.contains("known_violation:"));
+
+    let cmd = link_command(
+        Path::new("/tmp/x.c"),
+        Path::new("/tmp/x"),
+        OptLevel::Default,
+    )
+    .expect("runtime should resolve in a dev checkout");
+    let linker_armed = cmd
+        .get_args()
+        .any(|a| a.to_string_lossy() == "-Werror=return-type");
+
+    assert!(
+        match_defect_open || linker_armed,
+        "the exhaustive-match defect is no longer pinned in \
+         tests/stdlib/DRIVERS.tsv, so codegen now emits a final `else` — which \
+         is the one thing that was keeping -Werror=return-type out of \
+         src/linker.rs. Add it to link_command in this change, and transition \
+         the debt row for \
+         `the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end` \
+         in tests/rust-debt-manifest.txt from `owed` to `paid`."
+    );
+}
+
 /// `-Werror=return-type` belongs in the shared gcc invocation, and does not
 /// belong there YET.
 ///

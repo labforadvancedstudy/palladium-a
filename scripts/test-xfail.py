@@ -129,6 +129,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # turned every process verdict into a tag verdict.
 from gate_probe import Malfunction, classify as classify_process  # noqa: E402
 from gate_probe import run as run_process  # noqa: E402
+from gate_probe import run_and_classify  # noqa: E402
 
 # Reviewed allowlist of tests that may be #[ignore]d for cost alone. Keyed by
 # the SAME identity reconciliation uses — (target, full module path) — because
@@ -1148,9 +1149,11 @@ def run_cargo(extra, reject_codes=()):
     `reject_codes=(101,)`. Anything else, and every signal, is a Malfunction,
     which has no `.text` for this file to read.
     """
-    return classify_process(
-        run_process(["cargo", "test", "--release", "--no-fail-fast", "--"]
-                    + list(extra)),
+    # `run_and_classify` rather than run()+classify(): a caller that never holds
+    # a `Run` has no raw exit status to read, which is how `cmd_calibrate`
+    # formed a verdict without asking whether the output had been captured.
+    return run_and_classify(
+        ["cargo", "test", "--release", "--no-fail-fast", "--"] + list(extra),
         reject_codes=reject_codes)
 
 

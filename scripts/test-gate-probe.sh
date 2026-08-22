@@ -96,6 +96,8 @@ echo "== the Python analysis (Net A) =="
 printf '// no functions at all\n' >"$TMP/empty.c"
 $PROBE generated-c "$TMP/empty.c" >"$TMP/o" 2>&1
 check "Net A, zero functions recognised" 2 $?
+grep -q 'no function definitions recognised' "$TMP/o"
+check "  and it says so, rather than malfunctioning for some other reason" 0 $?
 $PROBE generated-c /nonexistent/x.c >"$TMP/o" 2>&1
 check "Net A, missing input" 2 $?
 printf 'long long deep(long long n) {\n' >"$TMP/deep.c"
@@ -105,6 +107,8 @@ for _ in $(seq 1 4000); do printf '    }\n' >>"$TMP/deep.c"; done
 printf '}\nint main(void) {\n    return 0;\n}\n' >>"$TMP/deep.c"
 $PROBE generated-c "$TMP/deep.c" >"$TMP/o" 2>&1
 check "Net A, analyser raises (RecursionError)" 2 $?
+grep -q 'RecursionError' "$TMP/o"
+check "  and it really was the analyser raising, not another malfunction" 0 $?
 
 echo
 echo "== Net A coverage must be CLOSED, not sampled =="
@@ -198,6 +202,29 @@ printf 'long long g(long long n) {\n    RETURN_IF(n)\n    {\n        return 1;\n
 $PROBE generated-c "$TMP/macro_header.c" >"$TMP/o" 2>&1
 check "Net A, a macro invocation before a block stops the file" 2 $?
 
+# MF5's predicate is "every body statement ends in `;` or is a comment", so the
+# shapes it BYPASSES are executable rather than inferred. A valid `do { … }
+# while (…);` tail: the closing line ends in `;`, so nothing here fires — and
+# the reader still gets it right, because `item_terminates` models `do` as its
+# body. No false clean was demonstrated, and this pins that.
+printf 'long long f(long long n) {\n    do {\n        return 1;\n    } while (n);\n}\n' >"$TMP/dowhile.c"
+$PROBE generated-c "$TMP/dowhile.c" >"$TMP/o" 2>&1
+check "Net A, a valid do/while tail is accepted, not tripped by the semicolon rule" 0 $?
+# A label, an empty statement and a line-continued macro are all LOUD — the
+# conservative direction. Each is a construct codegen does not emit, so the
+# right answer is "this reader cannot judge it", not a verdict.
+printf 'long long g(long long n) {\n    if (n) {\n        return 1;\n    }\ndone:\n    return 0;\n}\n' >"$TMP/label.c"
+$PROBE generated-c "$TMP/label.c" >"$TMP/o" 2>&1
+check "Net A, a label is a malfunction, not a verdict" 2 $?
+grep -q 'a label' "$TMP/o"
+check "  and it is named as a label" 0 $?
+printf 'long long h(long long n) {\n    ;\n    return 0;\n}\n' >"$TMP/empty.c"
+$PROBE generated-c "$TMP/empty.c" >"$TMP/o" 2>&1
+check "Net A, a bare empty statement is accepted (it ends in a semicolon)" 0 $?
+printf 'long long k(long long n) {\n    LOOP(n) \\\n        return 1;\n    return 0;\n}\n' >"$TMP/contmacro.c"
+$PROBE generated-c "$TMP/contmacro.c" >"$TMP/o" 2>&1
+check "Net A, a line-continued macro invocation stops the file" 2 $?
+
 # The other direction: unreachable code after a `return` must NOT be reported as
 # a fall-through. The parser accepts this shape (src/parser/mod.rs,
 # already_terminates), so a Net A that refused it would go red on valid output.
@@ -238,9 +265,13 @@ echo "== exec-layer faults must be malfunctions, not findings =="
 printf '#!/bin/sh\necho hi\n' >"$TMP/noperm"; chmod 000 "$TMP/noperm"
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/noperm" --out t_p1 >"$TMP/o" 2>&1
 check "producer not executable (PermissionError)" 2 $?
+grep -qi 'permission denied\|PermissionError' "$TMP/o"
+check "  and the reason is the permission, not an unrelated failure" 0 $?
 printf 'not a program\n' >"$TMP/notexec"; chmod +x "$TMP/notexec"
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/notexec" --out t_p2 >"$TMP/o" 2>&1
 check "producer is not executable format (ENOEXEC)" 2 $?
+grep -qi 'exec format error\|ENOEXEC\|cannot execute' "$TMP/o"
+check "  and the reason is the exec failure" 0 $?
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP" --out t_p3 >"$TMP/o" 2>&1
 check "producer is a directory" 2 $?
 
@@ -269,24 +300,61 @@ $PROBE reconcile --src "$TMP/broken_builtins.rs" --manifest tests/stdlib/BUILTIN
 check "reconcile, parsing contract broken" 2 $?
 
 echo
-echo "== a descendant holding the pipe must not outlive the timeout =="
+echo "== a descendant holding the pipe must not stall the harness =="
 # The direct child exits immediately; a grandchild keeps the merged pipe open.
-# Without process-group kill the read blocks past the timeout instead of
-# returning a malfunction.
+# THE ASSERTION USED TO BE THE CLOCK ALONE — "under 30s" — and it printed the
+# exit code without checking it, under a label about not stalling "the read".
+# A control's label is a claim, and an unasserted claim in a control is the same
+# defect as an unasserted claim in prose. Both are asserted now: the verdict
+# (this capture never reaches EOF, so it is a malfunction) and the clock.
 mk slow_desc '#!/bin/sh
 sh -c "sleep 600" &
 exit 0'
 start=$(date +%s)
 $PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/slow_desc" --out t_d1 >"$TMP/o" 2>&1
 rc=$?; elapsed=$(( $(date +%s) - start ))
-if [ "$elapsed" -lt 30 ]; then
-  printf '  %sok%s   descendant does not stall the read (%ss, exit %s)\n' "$GREEN" "$NC" "$elapsed" "$rc"
+check "a descendant holding the pipe makes it a malfunction, not a verdict" 2 $rc
+if [ "$elapsed" -lt 60 ]; then
+  printf '  %sok%s   and it did not stall (%ss)\n' "$GREEN" "$NC" "$elapsed"
   pass=$((pass+1))
 else
-  printf '  %sFAIL%s descendant stalled the read for %ss — process-group kill did not work\n' "$RED" "$NC" "$elapsed"
+  printf '  %sFAIL%s descendant stalled the harness for %ss\n' "$RED" "$NC" "$elapsed"
   fail=$((fail+1))
 fi
 pkill -f "sleep 600" 2>/dev/null || true
+
+echo
+echo "== EOF must be awaited BEFORE the writers are killed =="
+# THE ORDERING DEFECT. `killpg` used to run FIRST and EOF was asked about
+# afterwards — but killing a writer closes its pipe handle, so EOF then arrived
+# BECAUSE OF THE CLEANUP. It proved "all writers are closed after I killed
+# them", which is true of every run.
+#
+# This producer keeps its descendant IN THE PROCESS GROUP (no setsid), so the
+# kill really does reach it. The parent writes a first line and exits 0 while
+# the descendant holds the pipe and would have written more. Under the old
+# order that is `Concluded` with a TRUNCATED capture — a verdict formed from
+# part of a producer's output, with nothing recording that anything was
+# missing. Under the new order EOF has not arrived on its own within the join,
+# so the capture is marked incomplete before anything is killed.
+mk pdc_ingroup "#!/bin/sh
+$(command -v python3) -c 'import os, sys, time
+if os.fork() == 0:
+    time.sleep(30)                 # still in the group; killpg WILL reach it
+    sys.stdout.write(\"error: No main function found\\n\")
+    sys.stdout.flush()
+    os._exit(0)
+sys.stdout.write(\"first chunk\\n\")
+sys.stdout.flush()
+os._exit(0)'
+"
+$PROBE pdc-verdict stdlib/std/option.pd --pdc "$TMP/pdc_ingroup" --out t_ing >"$TMP/o" 2>&1
+check "an in-group writer still holding the pipe is not a concluded verdict" 2 $?
+grep -q 'did not reach EOF' "$TMP/o"
+check "  and the reason names the missing EOF, not the exit status" 0 $?
+grep -q 'WITHHELD_PARTIAL\|WITHHELD ' "$TMP/o"
+check "  and what was captured is not announced as the complete output" 0 $?
+pkill -f "time.sleep(30)" 2>/dev/null || true
 
 echo
 echo "== a writer that outlives the process group must not read as concluded =="
@@ -563,6 +631,51 @@ sys.exit(1 if bad else 0)
 PY
 check "the boundary's promises match its code" 0 $?
 grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
+
+# THE INTRA-MODULE ALLOWLIST — because the grep below exempts all of
+# gate_probe.py, which is exactly where the defect it was built for lived
+# (`cmd_calibrate` read a raw `Run.rc` and never looked at `capture_error`).
+# A rule whose scope excludes the location of its own defect is not a rule.
+#
+# So every non-comment line INSIDE gate_probe.py that touches a private slot is
+# listed here by content. Moving code does not trip it; adding a reader does.
+# The list is short on purpose: if it grows, the answer is usually to route the
+# new caller through `run_and_classify()` instead.
+cat >"$TMP/allow.txt" <<'ALLOW'
+self._b = b
+data = self._b if isinstance(self._b, bytes) else str(self._b).encode(
+self._rc = rc
+self._out = out if isinstance(out, bytes) else str(out).encode("utf-8", "surrogateescape")
+if self._rc < 0:
+return -self._rc
+if self._rc > 128:
+return self._rc - 128
+how = f"killed by signal {s}" if s is not None else f"exit {self._rc}"
+return f"killed by signal {s}" if s is not None else f"exit {self._rc}"
+return Malfunction(r.describe(), Withheld(r._out, complete=False))
+text = r._out.decode("utf-8", "replace")
+if r._rc == 0:
+return Concluded(text, r._rc, True)
+if r.signal_number is None and r._rc in reject_codes:
+return Concluded(text, r._rc, False)
+return Malfunction(r.describe(), Withheld(r._out, complete=True))
+print(f"WITHHELD_PARTIAL {path} holds the {len(m.withheld._b)} "
+ALLOW
+# Prose inside docstrings mentions these names in backticks; only code lines are
+# candidates, so backticked lines are dropped before comparison.
+internal=$(grep -nE '\._out\b|\._b\b|\._rc\b|\.withheld\._' scripts/gate_probe.py \
+           | grep -vE ':[0-9]+:[[:space:]]*#' \
+           | sed 's/^[0-9]*:[[:space:]]*//' \
+           | grep -v '`' || true)
+unlisted=$(printf '%s\n' "$internal" | grep -vxF -f "$TMP/allow.txt" || true)
+if [ -z "$unlisted" ]; then
+  printf '  %sok%s   every private-slot reader inside gate_probe.py is on the reviewed allowlist\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s a new private-slot reader appeared inside gate_probe.py:\n' "$RED" "$NC"
+  printf '%s\n' "$unlisted" | sed 's/^/        /'
+  fail=$((fail+1))
+fi
 
 # WHAT THIS CHECK IS, SAID PLAINLY — the same discipline the Withheld repr got,
 # applied to the promise as well as to the mechanism.

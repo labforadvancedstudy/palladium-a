@@ -188,12 +188,21 @@ class Withheld:
     this module and the enforcer, comment lines excluded. That is a convention
     guard, not access control — see the module docstring for exactly what walks
     past it.
+
+    `complete` records whether the capture reached EOF. It is FALSE exactly when
+    `Run.capture_error` was set, and it is the difference between "here is what
+    the producer wrote" and "here is some of what the producer wrote": without
+    EOF the bytes are a prefix of unknown length. `report_malfunction` prints
+    `WITHHELD_AT` only for a complete one and `WITHHELD_PARTIAL` otherwise,
+    because announcing a prefix under the token that promises the whole output
+    is the same lie as announcing a file that is not there.
     """
 
-    __slots__ = ("_b",)
+    __slots__ = ("_b", "complete")
 
-    def __init__(self, b: str) -> None:
+    def __init__(self, b, complete: bool = True) -> None:
         self._b = b
+        self.complete = complete
 
     def __repr__(self) -> str:
         return ("<output of a process that did not conclude; not evidence — "
@@ -371,7 +380,8 @@ class Run:
             s = self.signal_number
             how = f"killed by signal {s}" if s is not None else f"exit {self._rc}"
             return (f"{how}, but its output could not be captured "
-                    f"({self.capture_error}), so nothing it printed was read")
+                    f"({self.capture_error}), so what it printed is not "
+                    f"established")
         s = self.signal_number
         return f"killed by signal {s}" if s is not None else f"exit {self._rc}"
 
@@ -418,12 +428,19 @@ def run(argv, cwd=None, env=None) -> Run:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            # UNBUFFERED. With Python's default buffering `proc.stdout` is a
+            # BufferedReader, which can pull bytes off the pipe into its own
+            # buffer and hold them there while `read()` is blocked. Those bytes
+            # are off the pipe and not in `chunks`: a prefix that exists nowhere
+            # the verdict can see. bufsize=0 makes `stdout` a raw FileIO, so
+            # what is read is what is appended.
+            bufsize=0,
         )
     except OSError as exc:
         # FileNotFoundError, PermissionError, ENOEXEC, IsADirectoryError ...
-        return Run(argv, 126, f"cannot execute: {exc}")
+        return Run(argv, 126, b"", f"cannot execute: {exc}")
     except Exception as exc:  # noqa: BLE001
-        return Run(argv, 125, f"launch failed: {exc!r}")
+        return Run(argv, 125, b"", f"launch failed: {exc!r}")
 
     chunks: list = []
     drain_error: list = []
@@ -450,10 +467,33 @@ def run(argv, cwd=None, env=None) -> Run:
     except subprocess.TimeoutExpired:
         timed_out = True
 
-    # Kill the group so ordinary descendants stop writing. This is best-effort
-    # by construction — delivery is asynchronous and a descendant in its own
-    # session is not in the group at all — which is exactly why completeness is
-    # decided by the join below rather than by this call appearing to succeed.
+    # THE ORDER IS THE WHOLE POINT, AND IT WAS WRONG.
+    # This used to `killpg` FIRST and ask about EOF afterwards. Killing the
+    # writers closes their pipe handles, so EOF then arrives BECAUSE OF THE
+    # CLEANUP — it proved "all writers are closed after I killed them", which is
+    # true of every run and establishes nothing about the producer having
+    # finished writing. An exit-0 parent with an in-group descendant still
+    # mid-write was reported `Concluded` with a truncated capture.
+    #
+    # So EOF is awaited BEFORE anything is killed. Now it can only mean the
+    # writers closed of their own accord, which is the fact completeness needs.
+    # If it does not arrive, the capture is marked incomplete HERE, and the kill
+    # below is cleanup only — it can no longer create the evidence it is meant
+    # to be judged against.
+    capture_error = None
+    reader.join(DRAIN_JOIN_S)
+    if reader.is_alive():
+        capture_error = (
+            f"the output stream did not reach EOF within {DRAIN_JOIN_S}s of the "
+            f"producer exiting, while every writer was still alive: something "
+            f"is still holding it open, so what was read is a prefix and the "
+            f"capture cannot be known to be complete")
+    elif drain_error:
+        capture_error = drain_error[0]
+
+    # Cleanup, and ONLY cleanup. Best-effort by construction: delivery is
+    # asynchronous and a descendant in its own session is not in the group at
+    # all. Nothing below may change the verdict decided above.
     try:
         os.killpg(pgid, signal.SIGKILL)
     except OSError:
@@ -463,40 +503,55 @@ def run(argv, cwd=None, env=None) -> Run:
     except subprocess.TimeoutExpired:
         pass
 
-    capture_error = None
-    reader.join(DRAIN_JOIN_S)
-    if reader.is_alive():
-        capture_error = (
-            f"the output stream did not reach EOF within {DRAIN_JOIN_S}s of the "
-            f"producer exiting: something still holds it open, so the capture "
-            f"cannot be known to be complete")
-    elif drain_error:
-        capture_error = drain_error[0]
-
     if capture_error is None:
+        # The reader is already finished; closing from here owns no race.
         try:
             proc.stdout.close()
         except (OSError, ValueError):
             pass
     else:
-        # DO NOT close through the buffered reader while the drain thread is
-        # still blocked inside it: close() waits for that thread's lock, which
-        # is held until the writer that never reached EOF finally goes away.
-        # Measured: 55 further seconds on a grandchild sleeping 60. The whole
-        # point of the bounded join is to decide promptly, so the raw descriptor
-        # is closed instead — that unblocks the reader with a bad-fd error it
-        # has nowhere to report, which is correct, because the verdict is
-        # already a malfunction and its output is already not evidence.
-        try:
-            os.close(proc.stdout.fileno())
-        except (OSError, ValueError):
-            pass
+        # Give the reader a moment to notice the kill and exit on its own, and
+        # then LEAVE THE DESCRIPTOR ALONE.
+        #
+        # Closing it from this thread is not cancellation: the daemon thread and
+        # its stream still own that descriptor, a blocked read can outlive the
+        # close, and the number can be reused underneath it — a later read or a
+        # double close would then touch an unrelated file. There is no portable
+        # way to cancel a blocked read from another thread, so the honest thing
+        # is not to try. The descriptor stays with its reader and is reclaimed
+        # when the process exits.
+        #
+        # The bound this accepts: one leaked descriptor per non-concluding
+        # capture, in a short-lived CLI that performs at most a handful of runs.
+        # Measured callers: three per `scripts/test-xfail.py` invocation, one per
+        # `gate_probe` subcommand.
+        reader.join(1.0)
 
     out = b"".join(chunks)
     if timed_out:
         return Run(argv, 124, b"timed out after %ds\n" % TIMEOUT_S + out,
                    capture_error)
     return Run(argv, proc.returncode, out, capture_error)
+
+
+def run_and_classify(argv, cwd=None, env=None, reject_codes=(1,)):
+    """Execute and judge in one call. -> Concluded | Malfunction.
+
+    THE ONLY ENTRY POINT PRODUCTION CODE SHOULD USE, and the reason it exists:
+    `Run` carries a raw exit status, and twice now something read that status
+    without asking whether the output had been captured — `cmd_calibrate` did it
+    inside this module, which is exactly where the private-name grep does not
+    look. Renaming `rc` to `_rc` moved the spelling; it did not remove the
+    reader. Fusing does: a caller of this function never holds a `Run`, so there
+    is no raw status for it to read.
+
+    `run()` and `classify()` remain separate and public because the fault
+    injections in scripts/test-gate-probe.sh must be able to build a `Run` with
+    a chosen status and a broken capture. That is a test surface, and the
+    intra-module allowlist there is what keeps it from becoming a production
+    one.
+    """
+    return classify(run(argv, cwd=cwd, env=env), reject_codes=reject_codes)
 
 
 def classify(r: Run, reject_codes=(1,)):
@@ -514,7 +569,7 @@ def classify(r: Run, reject_codes=(1,)):
     producer finished at a pinned code AND its output was read in full.
     """
     if r.capture_error is not None:
-        return Malfunction(r.describe(), Withheld(r._out))
+        return Malfunction(r.describe(), Withheld(r._out, complete=False))
     # The ONE decoding in this module, and it is lossy by design: callers grep
     # `Concluded.text` for diagnostics, which must be a str. The exact bytes are
     # never destroyed — `Withheld` keeps them, and `spill()` writes them
@@ -524,7 +579,7 @@ def classify(r: Run, reject_codes=(1,)):
         return Concluded(text, r._rc, True)
     if r.signal_number is None and r._rc in reject_codes:
         return Concluded(text, r._rc, False)
-    return Malfunction(r.describe(), Withheld(r._out))
+    return Malfunction(r.describe(), Withheld(r._out, complete=True))
 
 
 ANSI = re.compile(r"\033\[[0-9;]*m")
@@ -546,17 +601,30 @@ def emit(**fields):
 def report_malfunction(what: str, m: Malfunction, spill_to=None) -> int:
     """Announce a malfunction WITHOUT republishing any producer text.
 
-    `WITHHELD_AT <path>` is a promise that the output is at that path, so it is
-    printed only when the write is CONFIRMED. When the spill fails, the
-    distinct token `WITHHELD_LOST` is printed with the reason — never the
-    bytes — so an operator is told the diagnostic is gone rather than sent to a
-    file that is not there.
+    THREE TOKENS, BECAUSE THERE ARE THREE OUTCOMES:
+      WITHHELD_AT       the complete output is at that path, written byte for
+                        byte and confirmed. Requires BOTH a confirmed write and
+                        a capture that reached EOF.
+      WITHHELD_PARTIAL  a prefix is at that path. The write succeeded; the
+                        capture did not complete, so how much is missing is
+                        unknown.
+      WITHHELD_LOST     nothing was written, with the reason and a description
+                        of what is at that path instead.
+    None of them prints the bytes.
     """
     emit(outcome="malfunction", reason=f"{what} {m.how}")
     if spill_to:
         path, err = m.withheld.spill(Path(spill_to))
-        if err is None:
+        if err is None and m.withheld.complete:
             print(f"WITHHELD_AT {path}")
+        elif err is None:
+            # Written, byte for byte — but only of what arrived. Without EOF
+            # there is no way to know how much the producer still had to say, so
+            # this must not borrow the token that promises the whole output.
+            print(f"WITHHELD_PARTIAL {path} holds the {len(m.withheld._b)} "
+                  f"byte(s) that had arrived when the capture was abandoned; "
+                  f"the producer's output never reached EOF, so this is a "
+                  f"prefix of unknown completeness, not its output")
         else:
             # NOT "it is gone" — the spill is written to a temporary and renamed,
             # so a failure leaves whatever was at `path` BEFORE this run, which
@@ -633,8 +701,8 @@ def cmd_calibrate(args) -> int:
     # their exit codes matched — the module's own rule ("an unreadable capture
     # is a Malfunction") broken by the subcommand whose job is to establish that
     # the platform behaves as the module assumes.
-    v_ok = classify(run([args.pdc, "compile", str(good), "-o", "cal_ok"]))
-    v_bad = classify(run([args.pdc, "compile", str(bad), "-o", "cal_bad"]))
+    v_ok = run_and_classify([args.pdc, "compile", str(good), "-o", "cal_ok"])
+    v_bad = run_and_classify([args.pdc, "compile", str(bad), "-o", "cal_bad"])
     problems = []
     if isinstance(v_ok, Malfunction):
         problems.append(f"a VALID program did not conclude ({v_ok.how})")
@@ -659,8 +727,7 @@ def cmd_calibrate(args) -> int:
 
 
 def cmd_pdc_verdict(args) -> int:
-    r = run([args.pdc, "compile", args.file, "-o", args.out])
-    res = classify(r)
+    res = run_and_classify([args.pdc, "compile", args.file, "-o", args.out])
     if isinstance(res, Malfunction):
         return report_malfunction(f"pdc on {args.file}", res, args.spill)
     if res.succeeded:
@@ -691,8 +758,8 @@ def cmd_pdc_reject(args) -> int:
     for pair in args.env or []:
         k, _, v = pair.partition("=")
         env[k] = v
-    r = run([args.pdc, "compile", args.file, "-o", args.out], cwd=args.cwd, env=env)
-    res = classify(r)
+    res = run_and_classify([args.pdc, "compile", args.file, "-o", args.out],
+                           cwd=args.cwd, env=env)
     if isinstance(res, Malfunction):
         return report_malfunction(f"pdc on {args.file}", res, args.spill)
     if res.succeeded:
@@ -770,8 +837,8 @@ def cmd_generated_c(args) -> int:
             continue
         violations += v
 
-        rb = run([args.cc, "-fsyntax-only", "-Werror=return-type", "-I", args.runtime, path])
-        res = classify(rb)
+        res = run_and_classify(
+            [args.cc, "-fsyntax-only", "-Werror=return-type", "-I", args.runtime, path])
         if isinstance(res, Malfunction):
             print(f"HARNESS {path}: Net B — {args.cc} {res.how}, so it proves nothing here")
             harness += 1

@@ -148,6 +148,40 @@ The same loop over `glob.glob("build_output/*.c")`, summing the three returned
 counters, is what produces the whole-emitted-corpus figure quoted in the commit
 log (`harness=0`, with `recognised` the total definition count). It reported:
 
+AND THE STATEMENT-SHAPE SWEEP that `unmodelled_construct` rests on — the claim
+"every statement pdc emits inside a body ends with `;` or is a comment", which
+is EMPIRICAL over N files, not proved from the generator:
+
+    python3 - <<'EOF'
+    import importlib.util, glob, collections
+    spec = importlib.util.spec_from_file_location("neta","scripts/check-c-returns.py")
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    odd = collections.Counter()
+    def walk(items):
+        for it in items:
+            if it[0] == "stmt":
+                t = it[1]
+                if not t.endswith(";") and not t.startswith("//"):
+                    odd[t[:60]] += 1
+            else:
+                walk(it[2]); walk(it[3] or [])
+    for p in sorted(glob.glob("build_output/*.c"))[:400]:
+        lines = open(p, errors="replace").read().splitlines()
+        i = 0
+        while i < len(lines):
+            if m.DEF_RE.match(lines[i]):
+                body, close = m.parse_block(lines, i + 1)
+                walk(body); i = close + 1
+            else:
+                i += 1
+    print(dict(odd) or "none")     # measured 2026-08-22 over 400 files: none
+
+The source-side support is src/codegen/mod.rs:2134-2142 (`generate_block`) and
+src/codegen/mod.rs:2184- (`generate_statement`, leaf arms ending `";\n"` at
+:2186-2190 and :2191-2198). That is a reading of one function rather than a
+proof over every arm, which is why the empirical sweep is the basis and this is
+the corroboration.
+
     clean 50 · finding 1 · UNACCOUNTED 0
 
 and the single finding is the already-declared, already-pinned tail-`match`
@@ -436,9 +470,22 @@ def unmodelled_construct(items):
             #
             # The property is not about header text, it is about the statement:
             # every statement pdc emits inside a body ends with `;` or is a
-            # comment. Measured over 400 generated files: NOT ONE exception. So
-            # anything else is a construct this reader is not reading correctly,
-            # whatever it turns out to be, and it stops the file.
+            # comment.
+            #
+            # HOW THAT IS KNOWN, at both strengths, because one of them reads
+            # stronger than it is. SOURCE SIDE: `generate_block`
+            # (src/codegen/mod.rs:2134-2142) writes an indent and delegates to
+            # `generate_statement` (src/codegen/mod.rs:2184-), whose leaf arms
+            # terminate with `";\n"` — `Stmt::Expr` at :2186-2190, `Stmt::Return`
+            # at :2191-2198 — while compound arms emit their own `{`-terminated
+            # headers. That is a reading of one function, not a proof over every
+            # arm of it. EMPIRICAL SIDE, which is the real basis: over 400
+            # generated files, ZERO non-comment body statements that do not end
+            # in `;`. The command that reproduces it is in the module docstring
+            # under "WHAT IS NOT COVERED", beside the conformance sweep.
+            #
+            # So anything else is a construct this reader is not reading
+            # correctly, whatever it turns out to be, and it stops the file.
             if not text.endswith(";") and not text.startswith("//") \
                     and not text.startswith("/*"):
                 return (lineno,
