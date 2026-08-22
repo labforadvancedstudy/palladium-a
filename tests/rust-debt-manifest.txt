@@ -102,7 +102,7 @@ tests/compiler_comprehensive_test.rs	test_compound_assignment_operators	owed	M2	
 tests/compiler_comprehensive_test.rs	test_else_if_chain	owed	M2	Error: Unexpected token: expected '{' (Expected '{' after else), found 'if'
 tests/compiler_comprehensive_test.rs	test_loop_keyword	owed	M2	Error: Unexpected token: expected ';' (Expected ';' after expression), found '{'
 tests/compiler_comprehensive_test.rs	test_match_on_integer_literal	owed	M2	Error: Unexpected token: expected pattern, found integer 1
-tests/compiler_comprehensive_test.rs	test_missing_return_is_an_error	owed	M1	Expected an error for: fn get_value() -> int { } fn main() { } but it compiled to:
+tests/compiler_comprehensive_test.rs	test_missing_return_is_an_error	paid	-	-
 tests/compiler_comprehensive_test.rs	test_struct_with_methods	owed	M4	Error: Unknown struct type: Self
 tests/compiler_comprehensive_test.rs	test_top_level_const	owed	M2	Error: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
 tests/compiler_comprehensive_test.rs	test_top_level_static	owed	M2	Error: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
@@ -113,7 +113,7 @@ tests/d3b_tail_if.rs	an_imported_function_is_visible_to_the_borrow_checker	paid	
 tests/d3b_tail_if.rs	selective_import_excludes_a_symbol_from_the_consumers	owed	M4	error: `async fn main` is not implemented
 tests/d3b_tail_if.rs	the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end	owed	unscheduled	gcc is invoked without -Werror=return-type
 tests/d3b_tail_if.rs	two_modules_exporting_one_name_are_deterministic	owed	M4	error: conflicting types for 'dup'
-tests/e2e_test.rs	test_c_keyword_identifier_still_links	owed	M1	error: 'long long double' is invalid
+tests/e2e_test.rs	test_c_keyword_identifier_still_links	paid	-	-
 tests/m3_imported_calls.rs	test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class	owed	M4	an inner `let s: i64` made the outer struct `s` look Copy
 tests/m3_imported_calls.rs	test_a_generic_call_resolves_to_its_own_monomorphization	owed	M4	the call was lowered to the wrong monomorphization and gcc is what noticed
 tests/m3_imported_calls.rs	test_a_generic_struct_referenced_by_its_bare_name_is_emitted	owed	M4	a generic struct named without type arguments emitted C for an undefined type

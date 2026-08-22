@@ -113,6 +113,23 @@ pub enum CompileError {
     #[error("Missing semicolon after statement")]
     MissingSemicolon { span: Option<Span> },
 
+    /// A function declares a return type and has a path that reaches its
+    /// closing brace without returning a value.
+    ///
+    /// Its own variant rather than `SyntaxError` or `Unimplemented`: nothing is
+    /// unimplemented here — the program is wrong — and nothing about it is a
+    /// syntax error, which would send a reader looking for a missing token. It
+    /// is also the string the debt inventory keys on, so it has to be stable
+    /// and greppable.
+    #[error("function `{function}` may return without a value: {detail}")]
+    MissingReturn {
+        /// The function whose body falls off its end.
+        function: String,
+        /// Which path has no value, phrased for a reader.
+        detail: String,
+        span: Option<Span>,
+    },
+
     // Invalid function signature
     #[error("Invalid function signature")]
     InvalidFunctionSignature { message: String, span: Option<Span> },
@@ -210,8 +227,8 @@ impl CompileError {
     /// Raised without inspecting the operand, so the wording may not assume one
     /// — `3?` and `unknown()?` reach here too. It also may not imply that the
     /// `match` alternative generalises further than it does: code generation
-    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1244-1245`,
-    /// `src/codegen/mod.rs:1245`, `src/codegen/mod.rs:1281`), so `Result<T, E>` is
+    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1293-1294`,
+    /// `src/codegen/mod.rs:1294`, `src/codegen/mod.rs:1330`), so `Result<T, E>` is
     /// not a compilable replacement and the help says so rather than leaving the
     /// reader to discover it.
     ///
@@ -437,6 +454,39 @@ impl CompileError {
                  expression, as in `if n <= 1 { n } else { n * 2 }` — or drop tail position \
                  entirely and write explicit returns, as in `if n <= 1 { return n; } return n * 2;`"
                     .to_string(),
+            span: Some(span),
+        }
+    }
+
+    /// The other half of the same defect: a function that declares a return
+    /// type and writes NO value in tail position at all, on any path.
+    ///
+    /// `tail_value_not_on_every_path` above refuses the case the parser can
+    /// decide from what was *written* — a value sits in tail position in one
+    /// branch and some sibling path has none. It deliberately did not fire when
+    /// nothing was written anywhere, because that reads as "the author is using
+    /// explicit `return`s" and the refusal had no evidence of intent to lean
+    /// on. Measured, that left the plainest case of all compiling silently:
+    ///
+    /// ```text
+    /// fn get_value() -> i64 { }
+    /// fn main() { print_int(get_value()); }
+    /// ```
+    ///
+    /// emitted `long long get_value() { }`, gcc accepted it (it only *warns*
+    /// under `-Wreturn-type`, which is not on), and the caller printed whatever
+    /// was in the return register. `scripts/check-c-returns.py` names it after
+    /// the fact; nothing refused it. That is exactly what M1 exists to remove.
+    ///
+    /// The evidence this refusal leans on instead is the DECLARED RETURN TYPE.
+    /// A function that says `-> i64` and has a path to its closing brace has no
+    /// honest translation, whatever the author meant — so intent is not needed.
+    /// Unit-returning functions (`-> ()`, and the `None` spelling) are outside
+    /// it: falling off their end is what they are for.
+    pub fn missing_return(function: &str, detail: &str, span: Span) -> Self {
+        CompileError::MissingReturn {
+            function: function.to_string(),
+            detail: detail.to_string(),
             span: Some(span),
         }
     }
@@ -676,6 +726,35 @@ impl CompileError {
                 // rather than of any one construct, inventing a source position
                 // is a small instance of exactly the fabrication these
                 // diagnostics exist to remove.
+                match span {
+                    Some(s) => diag.with_span(*s),
+                    None => diag,
+                }
+            }
+
+            CompileError::MissingReturn {
+                function,
+                detail,
+                span,
+            } => {
+                let diag = Diagnostic::error(format!(
+                    "function `{}` may return without a value: {}",
+                    function, detail
+                ))
+                .with_note(
+                    "the function declares a return type, so C generation would emit a non-void \
+                     function that falls off its end and yields whatever happens to be in the \
+                     return register"
+                        .to_string(),
+                )
+                .with_suggestion(
+                    "return a value on every path — add the missing `else`/arm, or end the body \
+                     with `return <expr>;` or a tail expression, as in \
+                     `if n > 0 { return n; } return 0;`"
+                        .to_string(),
+                    None,
+                )
+                .with_context_lines(1);
                 match span {
                     Some(s) => diag.with_span(*s),
                     None => diag,

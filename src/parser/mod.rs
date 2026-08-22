@@ -185,7 +185,7 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///   `src/parser/mod.rs:294-326`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:952-976`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:982-1006`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -322,6 +322,36 @@ fn stmt_contains_escaping_break(stmt: &Stmt) -> bool {
         // A `break` in here belongs to THAT loop, not to ours.
         Stmt::While { .. } | Stmt::For { .. } => false,
         _ => false,
+    }
+}
+
+/// Does this declared return type oblige the body to produce a value?
+///
+/// BOTH SPELLINGS OF UNIT ARE ONE TYPE, and this is the third place on this
+/// branch that has had to say so: `None` and `Some(Type::Unit)` mean the same
+/// thing, and a rule that tests `return_type.is_some()` treats `fn f() -> ()`
+/// as value-returning. For the refusal below that would mean rejecting
+/// `fn f() -> () { print_int(1); }`, which is a correct program.
+fn returns_a_value(return_type: Option<&Type>) -> bool {
+    !matches!(return_type, None | Some(Type::Unit))
+}
+
+/// The same phrase as `missing_path`, but for a whole function body rather than
+/// a branch of one.
+///
+/// `missing_path` says "this branch" for a `NoValue` tail, which is the right
+/// words one level in and the wrong words at the top: a body that simply ends
+/// has no branch to point at.
+fn missing_path_from_body(stmts: &[Stmt], tail: &BlockTail) -> String {
+    match tail {
+        BlockTail::NoValue => {
+            if stmts.is_empty() {
+                "the body is empty, so it returns whatever is in the return register".to_string()
+            } else {
+                "the body can reach its closing brace without executing a `return`".to_string()
+            }
+        }
+        _ => missing_path(stmts, tail),
     }
 }
 
@@ -1006,12 +1036,43 @@ impl Parser {
                     &missing_path(&body, &body_tail),
                     body_tail.span().unwrap_or(start_span),
                 ));
+            } else if returns_a_value(return_type.as_ref()) {
+                // NOTHING was written in tail position anywhere, and the body
+                // still has a path to its closing brace: `fn f() -> i64 { }`,
+                // `if c { return 1; }` as the last statement, a `while` that
+                // may not be entered. This used to be left alone, on the
+                // reasoning that the parser had no evidence of what the author
+                // meant. The declared return type IS that evidence, and it is
+                // the stronger kind: whatever was meant, a non-void C function
+                // that falls off its end returns the register's contents.
+                //
+                // WHY THE PREDICATE IS THE SAME ONE, AND NOT A SECOND ANALYSIS.
+                // `returns_on_every_path` has already answered this question in
+                // the line above — the two arms differ only in which refusal
+                // they raise. Asking again elsewhere (a pass over the AST in
+                // typeck, say) would be a THIRD copy of the terminator rules
+                // after this one and `scripts/check-c-returns.py`, and the
+                // hazard those two already carry is drifting apart; the C-side
+                // reader is kept in step case-by-case by the table on
+                // `already_terminates` and executed by `assert_net_a`. A third
+                // copy doubles that surface to buy nothing. It also could not
+                // be as precise: tail position is not in the AST at all (see
+                // `BlockTail`'s own comment), so a later pass would be reading
+                // whatever this lowering happened to leave behind.
+                //
+                // POLARITY. This refuses, so its errors fall on VALID programs,
+                // and `returns_on_every_path` is deliberately conservative —
+                // unreachability that depends on evaluating a condition is not
+                // modelled. Everything it does model is receipted from the
+                // accept side in `tests/m1_missing_return.rs`.
+                return Err(CompileError::missing_return(
+                    &name,
+                    &missing_path_from_body(&body, &body_tail),
+                    body_tail.span().unwrap_or(start_span),
+                ));
             }
-            // Otherwise no value was written in tail position anywhere (e.g.
-            // `if c { return 1; }` as the last statement). That is the general
-            // missing-return problem, which needs a flow analysis this parser
-            // does not have, and it is caught downstream by the generated-C
-            // invariant in scripts/check-c-returns.py. Left alone deliberately.
+            // Otherwise the function returns `()` — under either spelling — and
+            // reaching the closing brace with no value is what it is for.
         }
 
         let end_span = self.consume(Token::RightBrace, "Expected '}'")?;

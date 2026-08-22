@@ -1,6 +1,7 @@
 // Code generation for Palladium
 // "Forging legends into machine code"
 
+pub mod c_ident;
 pub mod llvm_backend;
 pub mod llvm_backend_improved;
 pub mod llvm_native;
@@ -229,23 +230,60 @@ impl CodeGenerator {
         &mut self,
         modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
     ) {
-        self.imported_modules = modules;
+        // Imported bodies are emitted into the same translation unit as the
+        // main program, so they need the same escape. Escaping the main program
+        // alone would rename a local call and leave the imported definition it
+        // resolves to spelled the old way.
+        self.imported_modules = modules
+            .into_iter()
+            .map(|(name, mut info)| {
+                info.ast = c_ident::escape_reserved_names(&info.ast);
+                (name, info)
+            })
+            .collect();
     }
 
     /// Set generic function instantiations for code generation
+    ///
+    /// ESCAPED HERE, like the imported ASTs above, and for a sharper reason:
+    /// these templates do not come from the `Program` that `compile` escapes.
+    /// They come from the TYPE CHECKER, which is handed the unescaped AST
+    /// (src/driver/mod.rs:109), and `monomorphize_function` clones their names,
+    /// parameters and bodies straight into `generate_function`. Measured before
+    /// this line existed: `fn pick<T>(register: T) -> T { let static: T = …; }`
+    /// emitted `long long pick__i64(long long register)` and gcc refused it.
+    ///
+    /// The mangled name `mangle_generic_name` builds from the escaped one
+    /// (`pick__i64`) needs no escape of its own: it always contains `__`, and
+    /// nothing in `RESERVED` survives the trailing-underscore strip with an
+    /// embedded one.
     pub fn set_generic_instantiations(
         &mut self,
         instantiations: Vec<(String, Vec<String>, crate::typeck::GenericFunction)>,
     ) {
-        self.generic_instantiations = instantiations;
+        self.generic_instantiations = instantiations
+            .into_iter()
+            .map(|(name, type_args, f)| {
+                let (name, f) = c_ident::escape_generic_function(&name, &f);
+                (name, type_args, f)
+            })
+            .collect();
     }
 
     /// Set generic struct instantiations for code generation
+    ///
+    /// See `set_generic_instantiations` — same source, same bypass, same fix.
     pub fn set_generic_struct_instantiations(
         &mut self,
         instantiations: Vec<(String, Vec<String>, crate::typeck::GenericStruct)>,
     ) {
-        self.generic_struct_instantiations = instantiations;
+        self.generic_struct_instantiations = instantiations
+            .into_iter()
+            .map(|(name, type_args, s)| {
+                let (name, s) = c_ident::escape_generic_struct(&name, &s);
+                (name, type_args, s)
+            })
+            .collect();
     }
 
     /// Infer the C type of an expression, defaulting to `long long` when this
@@ -795,7 +833,18 @@ impl CodeGenerator {
     }
 
     /// Compile an AST to machine code
+    ///
+    /// The escape runs HERE rather than in the driver so it cannot be bypassed:
+    /// every route into code generation goes through this method, and a caller
+    /// that built a `CodeGenerator` directly would otherwise emit C in which
+    /// `fn double(x: i64)` is `long long double(long long x)`. See
+    /// `c_ident::escape_reserved_names` for what it renames and what it leaves.
     pub fn compile(&mut self, program: &Program) -> Result<()> {
+        let program = c_ident::escape_reserved_names(program);
+        self.compile_escaped(&program)
+    }
+
+    fn compile_escaped(&mut self, program: &Program) -> Result<()> {
         // For v0.1, we'll generate a simple C file that we can compile with gcc
         // This is a temporary solution until LLVM integration is complete
 
@@ -1617,7 +1666,7 @@ impl CodeGenerator {
 ",
                                 enum_def.name,
                                 variant.name,
-                                variant.name.to_lowercase()
+                                c_ident::c_enum_payload_member(&variant.name)
                             ));
                         }
                     }
@@ -1627,7 +1676,7 @@ impl CodeGenerator {
 ",
                             enum_def.name,
                             variant.name,
-                            variant.name.to_lowercase()
+                            c_ident::c_enum_payload_member(&variant.name)
                         ));
                     }
                 }
@@ -1692,7 +1741,7 @@ impl CodeGenerator {
                             self.output.push_str(&format!(
                                 "    result.data.{}.field{} = arg{};
 ",
-                                variant.name.to_lowercase(),
+                                c_ident::c_enum_payload_member(&variant.name),
                                 i,
                                 i
                             ));
@@ -1731,7 +1780,7 @@ impl CodeGenerator {
                         self.output.push_str(&format!(
                             "    result.data.{}.{} = {};
 ",
-                            variant.name.to_lowercase(),
+                            c_ident::c_enum_payload_member(&variant.name),
                             field_name,
                             field_name
                         ));
@@ -2751,7 +2800,7 @@ impl CodeGenerator {
                                                         let c_type = self.type_to_c(ty);
                                                         self.output.push_str(&format!(
                                                             "            {} {} = _match_expr.data.{}.field{};\n",
-                                                            c_type, name, variant.to_lowercase(), i
+                                                            c_type, name, c_ident::c_enum_payload_member(variant), i
                                                         ));
                                                         // The binding is a real
                                                         // variable; type it for
@@ -2785,7 +2834,7 @@ impl CodeGenerator {
                                                             let c_type = self.type_to_c(field_type);
                                                             self.output.push_str(&format!(
                                                                 "            {} {} = _match_expr.data.{}.{};\n",
-                                                                c_type, name, variant.to_lowercase(), field_name
+                                                                c_type, name, c_ident::c_enum_payload_member(variant), field_name
                                                             ));
                                                             self.variables
                                                                 .insert(name.clone(), c_type);

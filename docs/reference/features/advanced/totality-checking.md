@@ -321,7 +321,7 @@ There is no recursion analysis, no measure checking, and no proof representation
 **3. The prerequisites are missing too.** Structural recursion is stated over inductive types with
 pattern matching on subterms. Today `match` has exactly three pattern forms
 (`src/ast/mod.rs:353`) — no literal, range, guard or tuple patterns — and generic types do not
-survive codegen (`src/codegen/mod.rs:1794`). A totality checker has nothing to be total over yet.
+survive codegen (`src/codegen/mod.rs:1843`). A totality checker has nothing to be total over yet.
 
 ## Design intent, not measurements
 

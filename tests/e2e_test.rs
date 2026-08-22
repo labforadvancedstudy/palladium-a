@@ -4,7 +4,7 @@
 // compilation they had just asserted succeeded. They were looking in
 // `target/build/`, which only ever holds the linked *executable*
 // (`src/driver/mod.rs:274`); the generated C goes to `build_output/`
-// (`src/codegen/mod.rs:2991-3002`). The path was the whole bug.
+// (`src/codegen/mod.rs:3040-3051`). The path was the whole bug.
 //
 // The file stem is unique per run because `build_output/<stem>.c` is a global
 // name and other test binaries compile programs of their own — see
@@ -256,17 +256,24 @@ fn main() {
     );
 }
 
-// --- M1 defects, pinned -----------------------------------------------------
-// Both of these are silent miscompiles found while repairing this suite. They
-// are #[ignore]d because they do not pass, not because they are unimportant:
-// `make test-xfail` fails the moment either starts passing.
+// --- M1 defects, PAID -------------------------------------------------------
+// This was a silent miscompile found while repairing this suite. It is no
+// longer #[ignore]d and its row in tests/rust-debt-manifest.txt moved
+// `owed M1 …` -> `paid - -`; leaving the attribute on a passing test is an
+// XPASS and `make test-xfail` reports it.
 
-/// `fn double(…)` emits `long long double(long long x)`, which is not valid C —
-/// `double` is a C keyword and the code generator does not mangle identifiers.
-/// Nothing else in the suite can catch this: every other test greps the C text,
-/// and the text is exactly what was asked for. Only handing it to gcc fails.
+/// `fn double(…)` used to emit `long long double(long long x)`, which is not
+/// valid C — `double` is a C type specifier. Nothing else in the suite could
+/// catch it: every other test greps the C text, and the text was exactly what
+/// was asked for. Only handing it to gcc failed, and only `-o` does that.
+///
+/// Fixed by `src/codegen/c_ident.rs`, which renames reserved words on the way
+/// into code generation (`double` -> `double_`). This test is kept as the
+/// END-TO-END statement — the real binary, with `-o`, so gcc actually runs. The
+/// other positions a keyword can appear in, the injectivity of the escape, and
+/// the controls on what must NOT be renamed are in
+/// `tests/m1_c_keyword_idents.rs`.
 #[test]
-#[ignore = "XFAIL: generated identifiers are not mangled against C keywords — `fn double(x: i64)` emits `long long double(long long x)` and gcc rejects it with \"'long long double' is invalid\"; the compiler reports success first, so this is a silent miscompile of exactly the kind M1 exists to remove (owned by M1)"]
 fn test_c_keyword_identifier_still_links() {
     let module = unique_module_name("ckeyword");
     let output = compile_and_link_with_pdc(
