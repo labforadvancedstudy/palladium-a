@@ -150,6 +150,15 @@ EXPECTED_THESIS_CONTRACT = {
     "TH-05": ("gate", "make thesis-exit", "-"),
     "TH-06": ("gate", "make thesis-exit", "-"),
     "WT-02": ("fixture", "tests/witness/json_parser.pd", "-"),
+    # The two safeguards for this gate's OWN weaknesses. They were ordinary `1.0` rows,
+    # so `make thesis-exit` could have gone green while rejection attribution was still
+    # satisfiable by incidental text and while this lexical model was still in use — the
+    # careful placement (M2, M3-start) defeated by not being preconditions. They are
+    # thesis rows now: 1.0 cannot be declared with either outstanding.
+    "GI-11": ("observable",
+              "tests/n10_callgraph.rs::call_graph_meets_its_acceptance_contract", "-"),
+    "GI-12": ("reject", "tests/reject/incidental_diagnostic.pd",
+              "PD-CODE pinned, not a phrase"),
 }
 EXPECTED_THESIS_IDS = frozenset(EXPECTED_THESIS_CONTRACT)
 
@@ -282,8 +291,11 @@ LIFETIME_LIST = re.compile(r"<\s*'")
 FN_HEADER = re.compile(
     r"(?<![A-Za-z_0-9])fn\s+([A-Za-z_][A-Za-z_0-9]*)\s*(<[^(){}]*>)?\s*\(")
 REF_PARAM = re.compile(r":\s*ref(?:\s*<[^>]*>)?(?:\s+mut)?\s+[A-Za-z_\[(]")
+# `#[total]`, NOT `#![total]`. The crate-level form is a different requirement (N8-02);
+# TH-04 and the manifest both ask for a FUNCTION-level attribute, and accepting `#!` let a
+# crate carrying only the crate-level form satisfy it.
 TOTAL_ON_FN = re.compile(
-    r"#!?\[\s*total\s*(?:\([^)]*\))?\s*\]\s*(?:#!?\[[^\]]*\]\s*)*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z_0-9]*)"
+    r"#\[\s*total\s*(?:\([^)]*\))?\s*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z_0-9]*)"
 )
 CALL = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)\s*\(")
 EFFECT_LINE = re.compile(r"Function '([A-Za-z_][A-Za-z_0-9]*)' has effects:\s*(.+)")
@@ -352,126 +364,105 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
     A parameter in dead code is an ornament: it shows the syntax parses, not that the
     compiler is written against references. Same discipline as `p_total_on_fn`.
     """
-    require_modellable(src, "TH-03 / `ref` parameter reachability")
+    require_modellable(src, "TH-03 / `ref` parameter")
     bodies = function_bodies(src)
-    reachable = certainly_reached_from_main(bodies)   # existence check: see R2
-    if not reachable:
-        return False, "no `fn main`, so nothing is certainly reached"
     dead = []
     for m in FN_HEADER.finditer(src):
         if not REF_PARAM.search(balanced_span(src, m.end() - 1)):
             continue
-        if m.group(1) in reachable:
-            return True, f"fn {m.group(1)}, certainly reached from main"
+        if not provably_dead(bodies, m.group(1)):
+            return True, (f"fn {m.group(1)} declares one — P1 existence; liveness is NOT "
+                          f"asserted (GI-11)")
         dead.append(m.group(1))
     if dead:
-        return False, (f"`ref` parameters exist, but on no function CERTAINLY reached from "
-                       f"main (R2): {', '.join(sorted(set(dead)))}")
+        return False, (f"`ref` parameters exist only on provably dead function(s) — nothing "
+                       f"in the unit names them (P2): {', '.join(sorted(set(dead)))}")
     return False, "no `fn` declares a `ref` / `ref mut` PARAMETER"
 
 
-# --- THE STATIC-REACHABILITY CONTRACT ------------------------------------------------
+# --- WHAT THESE PROBES PROVE, AND WHAT THEY DO NOT ----------------------------------
 #
-# All three differentiator probes ask the same question — "is this on a path the program
-# can actually run?" — so the answer needs a written contract rather than whatever a
-# regex happens to do. This is that contract. It is deliberately small and deliberately
-# LOUD at its edges.
+# THIS IS THE FOURTH DESIGN FOR THIS QUESTION AND THE FIRST THAT DOES NOT GUESS.
+# The three before it — over-approximate, fold `if false`, certain-reachability — each
+# shipped with a fail-open path, and the last had three at once:
 #
-#   R1  A CALL is `name(` appearing in a function body, where `name` is a function
-#       defined in the same compilation unit. Self-edges do not count: a function's own
-#       recursive call is not evidence anything reaches it.
+#     if true { return 1; }  ornament();     the `if` diverges; ornament looked certain
+#     while true { }         ornament();     the loop never ends; ornament looked certain
+#     let f = |x| ornament();                an expression-bodied closure has no braces
+#                                            to delete, so its call sat at depth 0
 #
-#   R2  TH-03, TH-04 and TH-05 are EXISTENCE checks — "this differentiator is used on a
-#       path the program runs" — and for an existence check over-approximating
-#       reachability fails OPEN: the more things look reachable, the more decorations
-#       pass. An earlier version of this contract called over-approximation "the safe
-#       direction", which is backwards, and folding `if false { … }` blocked one spelling
-#       while `if true { … } else { ornament(); }` — exactly as cheap to write — sailed
-#       through. Blocking a spelling is not blocking the class.
+# Deleting nested bodies removes their CONTENTS, not their CONTROL-FLOW EFFECT. And
+# divergence is interprocedural: `a(); b();` does not run `b` if `a` panics. A lexical
+# model cannot decide reachability in a language with divergence and closures, and three
+# attempts is enough evidence that a fourth heuristic would have a fourth hole.
 #
-#       So the existence probes do not use reachability at all. They use
-#       CERTAIN REACHABILITY, an UNDER-approximation: a call counts only if it sits at
-#       the top level of a body — inside no conditional, loop or match — and no `return`
-#       or `panic(` precedes it there. `model says certain` then implies `actually runs`,
-#       which is the direction an existence check needs. Everything conditional is
-#       treated as NOT certain, so the gate fails closed on all control flow it does not
-#       model, without enumerating spellings.
+# So these probes no longer claim reachability. They claim two things, and each has a
+# failure direction that is PROVED rather than argued:
 #
-#       The cost is real and is the point: a differentiator used only behind an `if` does
-#       not certify, and the probe says so rather than guessing. GI-11 is what lifts it.
+#   P1  EXISTENCE — what a green verdict means. The construct appears in the source.
+#       That is a question about text, decided lexically. A green TH-03 means "a `ref`
+#       parameter is declared", NOT "a `ref` parameter is on a live path".
 #
-#   R3  An INDIRECT call has no statically visible target: dispatch through a trait bound
-#       (`T::method(…)` where `T` is a type parameter), a `.`-method call, a closure, or a
-#       function value. A GENERIC FUNCTION IS NOT ITSELF INDIRECT — `fn map<T>(x: T)` is
-#       called as `map(…)` and that edge is perfectly visible, which is why the fix for it
-#       was to teach FN_HEADER the optional parameter list, not to give up. What the model
-#       cannot see is the DISPATCH, not the genericity.
+#   P2  REFUTATION — what a RED verdict may additionally mean. If the construct appears
+#       only inside a function whose name occurs nowhere else in the unit, that function
+#       is dead: with no syntactic reference and no indirect dispatch (R4 refuses that
+#       case) nothing can call it. Sound in the direction it is used. The converse —
+#       "referenced, therefore live" — is NOT claimed.
 #
-#   R4  A DETECTED invisible-edge construct is a HARNESS ERROR — exit 2, not a silent
-#       edge and not a silent non-edge. The detected set is exactly: a function-typed
-#       parameter written `: fn(`, a closure written `|…| {` or `|…| expr`, a `.`-method
-#       call, dispatch `T::m(…)` through a declared type parameter, and two functions
-#       sharing a name.
+#   R4  A construct that could create a call this model cannot see is a HARNESS ERROR
+#       (exit 2): a closure in ANY form, a function-typed parameter, a `.`-method call,
+#       `T::m(…)` through a declared type parameter, and two functions sharing a name.
+#       An earlier version left some closure forms undetected and justified it by saying
+#       their bodies were nested and therefore excluded — false for exactly the
+#       expression-bodied form, which has no braces at all.
 #
-#       WHAT IS NOT DETECTED, stated because an earlier version of this line promised
-#       "every" and delivered an enumeration: a closure whose body opens with `(`, `[` or
-#       a unary operator; a function value inferred with no `: fn(` annotation; dispatch
-#       through `impl<T>`; and any construct the grammar gains after this was written.
-#       Those are UNMODELLED, not handled — and because R2's existence probes count only
-#       CERTAIN calls, an unmodelled construct's body is nested and therefore excluded,
-#       so the failure direction is a wrong RED rather than a wrong green.
-#
-#       docs/specification/grammar.ebnf is the authority for what the language can
-#       contain; this list is not derived from it and will drift. GI-11 is the fix, and
-#       it is scheduled at the START of M3 rather than merely owned by it, because M3
-#       constructs must not enter a witness while the model cannot see them.
-#
-#       This matters more than it looks. M3 — the very next milestone — is traits and
-#       generics, moved to second on the argument that bootstrap/pdc.pd is 991 lines
-#       BECAUSE it cannot abstract. Trait-bound dispatch and `.`-methods arrive with it,
-#       and a model that silently under-approximated would falsely reject a legitimate
-#       1.0 compiler for using the features this roadmap schedules first. Failing loudly
-#       turns that into a prompt to replace the model rather than a wrong verdict.
-#
-#   R5  The replacement is not a better regex. `pdc` already builds a call graph for
-#       effect analysis; the gate should consume it. That is requirement GI-11, owned by
-#       M3, so it is scheduled rather than merely regretted.
+# WHAT IS NO LONGER ASSERTED, AND WHERE THAT OBLIGATION NOW LIVES.
+# Liveness. The gate does not certify that a differentiator is used on a path the program
+# runs. That is GI-11 — the compiler exports a release-grade call graph and the gate
+# consumes it — and GI-11 is now a THESIS row, so `make thesis-exit` cannot reach green
+# while this weaker model is in use. The anti-ornament property is not abandoned; it is
+# moved to a mechanism that can prove it and made a precondition of 1.0.
 
-FALSE_BLOCK = re.compile(r"(?<![A-Za-z_0-9])(if|while)\s+false\s*\{")
+CLOSURE_ANY = re.compile(r"\|[^|\n]*\|")
 FN_TYPE_PARAM = re.compile(r":\s*fn\s*\(")
-CLOSURE = re.compile(r"\|[^|\n]*\|\s*(\{|[A-Za-z_0-9])")
 METHOD_CALL = re.compile(r"\.\s*[A-Za-z_][A-Za-z_0-9]*\s*\(")
 
 UNMODELLABLE = (
-    (FN_TYPE_PARAM, "a function-typed parameter — R3/R4"),
-    (CLOSURE, "a closure — R3/R4"),
-    (METHOD_CALL, "a `.`-method call — R3/R4"),
+    (CLOSURE_ANY, "a closure in any form — R4"),
+    (FN_TYPE_PARAM, "a function-typed parameter — R4"),
+    (METHOD_CALL, "a `.`-method call — R4"),
 )
 
-# Dispatch through a type parameter: `T::method(…)` where `T` is bound by the enclosing
-# function's generic list. This is what actually arrives with M3, and it is the case the
-# model must refuse rather than guess at.
 GENERIC_PARAMS = re.compile(
     r"(?<![A-Za-z_0-9])fn\s+[A-Za-z_][A-Za-z_0-9]*\s*<([^(){}]*)>\s*\(")
 
 
+def duplicate_function_names(src: str) -> list[str]:
+    """Names defined more than once. `bodies` is keyed by BARE NAME, so two functions
+    sharing one silently overwrite and every reference to the loser vanishes."""
+    seen, dupes = set(), []
+    for m in FN_HEADER.finditer(src):
+        if m.group(1) in seen:
+            dupes.append(m.group(1))
+        seen.add(m.group(1))
+    return sorted(set(dupes))
+
+
 def unmodellable(src: str) -> list[str]:
-    """Constructs whose call edges R1-R3 cannot see. Non-empty means: do not answer."""
+    """Constructs that could create an invisible call. Non-empty means: do not answer."""
     found = [why for pat, why in UNMODELLABLE if pat.search(src)]
     dupes = duplicate_function_names(src)
     if dupes:
-        found.append(f"two functions sharing a name ({', '.join(dupes)}) — R3/R4")
+        found.append(f"two functions sharing a name ({', '.join(dupes)}) — R4")
     params = set()
     for m in GENERIC_PARAMS.finditer(src):
         for raw in m.group(1).split(","):
             name = raw.split(":")[0].strip().lstrip("'")
-            # A lifetime-only list (`fn f<'a>(…)`) binds no type, so it dispatches
-            # nothing; TH-02 already gives a definitive answer about it.
             if name and not raw.strip().startswith("'"):
                 params.add(name)
     for tp in sorted(params):
         if re.search(rf"(?<![A-Za-z_0-9]){re.escape(tp)}::\s*[A-Za-z_]", src):
-            found.append(f"dispatch through the type parameter `{tp}::…` — R3/R4")
+            found.append(f"dispatch through the type parameter `{tp}::…` — R4")
     return found
 
 
@@ -479,105 +470,23 @@ def require_modellable(src: str, what: str) -> None:
     found = unmodellable(src)
     if found:
         raise HarnessError(
-            f"{what}: this gate's reachability model cannot see the call edges of "
-            + "; ".join(found)
-            + ". Refusing to report reachability it cannot support — see the "
-              "static-reachability contract in scripts/thesis_exit.py (R4), and GI-11, "
-              "which replaces this model with the compiler's own call graph.")
+            f"{what}: this gate cannot see the call edges of " + "; ".join(found)
+            + ". Refusing to answer — see the P1/P2/R4 contract in scripts/thesis_exit.py "
+              "and GI-11, which replaces this model with the compiler's own call graph.")
 
 
-def strip_false_blocks(body: str) -> str:
-    """R2. Remove `if false { … }` / `while false { … }`, braces balanced."""
-    out, i = [], 0
-    while i < len(body):
-        m = FALSE_BLOCK.search(body, i)
-        if not m:
-            out.append(body[i:])
-            break
-        out.append(body[i:m.start()])
-        depth, j = 0, m.end() - 1
-        while j < len(body):
-            if body[j] == "{":
-                depth += 1
-            elif body[j] == "}":
-                depth -= 1
-                if depth == 0:
-                    j += 1
-                    break
-            j += 1
-        i = j
-    return "".join(out)
+def provably_dead(bodies: dict[str, str], name: str) -> bool:
+    """P2. True only when NOTHING in the unit names this function.
 
-
-DIVERGES = re.compile(r"(?<![A-Za-z_0-9])(return|panic\s*\()")
-
-
-def top_level_calls(body: str, exclude: str = "") -> set[str]:
-    """Calls that certainly execute: brace-depth 0, before any divergence.
-
-    Everything inside `{ … }` — the body of any `if`, `else`, `while`, `for` or `match` —
-    is dropped, because this model cannot decide whether it runs. That is the fail-closed
-    direction R2 requires, and it needs no list of control-flow spellings: an unmodelled
-    construct's body is nested, so it is excluded by construction.
+    Sound in the direction used: no syntactic reference, and no indirect dispatch (R4 has
+    already refused that), means nothing can call it. `main` is an entry root.
     """
-    out, depth, i, n = [], 0, 0, len(body)
-    seg = []
-    while i < n:
-        c = body[i]
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth = max(0, depth - 1)
-        elif depth == 0:
-            seg.append(c)
-        i += 1
-    text = "".join(seg)
-    m = DIVERGES.search(text)
-    if m:
-        # Keep the DIVERGING STATEMENT ITSELF and drop what follows it. `return depth(1);`
-        # certainly evaluates `depth(1)` — truncating at the `return` token dropped the
-        # call in the returned expression and produced a false negative, which for an
-        # existence check is a wrong RED rather than a wrong green, but wrong either way.
-        end = text.find(";", m.start())
-        text = text[:len(text) if end < 0 else end + 1]
-    for name in CALL.findall(text):
-        if name != exclude:
-            out.append(name)
-    return set(out)
-
-
-def certainly_reached_from_main(bodies: dict[str, str]) -> set[str]:
-    """The UNDER-approximation the existence probes use. See R2."""
-    if "main" not in bodies:
-        return set()
-    certain, frontier = {"main"}, ["main"]
-    while frontier:
-        cur = frontier.pop()
-        for c in top_level_calls(bodies.get(cur, ""), exclude=cur):
-            if c in bodies and c not in certain:
-                certain.add(c)
-                frontier.append(c)
-    return certain
-
-
-def reachable_from_main(bodies: dict[str, str]) -> set[str]:
-    """Functions the program can actually run, per the contract above.
-
-    The single discipline for all three differentiator probes. Written for `#[total]`
-    and once applied only there, so `fn ornament(x: ref T)` in dead code satisfied the
-    reference probe and an unreachable chain satisfied the effect probe.
-    """
-    if "main" not in bodies:
-        return set()
-    reachable, frontier = {"main"}, ["main"]
-    while frontier:
-        cur = frontier.pop()
-        for c in callees(strip_false_blocks(bodies.get(cur, "")), exclude=cur):
-            if c in bodies and c not in reachable:
-                reachable.add(c)
-                frontier.append(c)
-    return reachable
-
+    if name == "main":
+        return False
+    for other, body in bodies.items():
+        if other != name and re.search(rf"(?<![A-Za-z_0-9]){re.escape(name)}\s*\(", body):
+            return False
+    return True
 
 def p_total_on_fn(src: str) -> tuple[bool, str]:
     """A `#[total]` on a function REACHABLE FROM `main`.
@@ -588,15 +497,14 @@ def p_total_on_fn(src: str) -> tuple[bool, str]:
     names = [m.group(1) for m in TOTAL_ON_FN.finditer(src)]
     if not names:
         return False, "no `#[total]` attached to a `fn`"
-    require_modellable(src, "TH-04 / #[total] reachability")
+    require_modellable(src, "TH-04 / #[total]")
     bodies = function_bodies(src)
-    reachable = certainly_reached_from_main(bodies)   # existence check: see R2
-    if not reachable:
-        return False, "no `fn main`, so nothing is certainly reached"
-    live = [n for n in names if n in reachable]
+    live = [n for n in names if not provably_dead(bodies, n)]
     if not live:
-        return False, f"`#[total]` only on function(s) unreachable from main: {', '.join(names)}"
-    return True, f"#[total] on {', '.join(live)}, certainly reached from main"
+        return False, (f"`#[total]` only on provably dead function(s) — nothing in the unit "
+                       f"names them (P2): {', '.join(names)}")
+    return True, (f"#[total] on {', '.join(live)} — P1 existence; liveness is NOT asserted "
+                  f"(GI-11)")
 
 
 def p_effect_is_transitive(report: str, src: str) -> tuple[bool, str]:
@@ -621,14 +529,18 @@ def p_effect_is_transitive(report: str, src: str) -> tuple[bool, str]:
     def direct_io(name: str) -> set[str]:
         return {c for c in CALL.findall(bodies.get(name, "")) if c in IO_BUILTINS}
 
-    reachable = certainly_reached_from_main(bodies)  # existence check: see R2
     for caller in sorted(reported):
         if caller not in bodies:
             continue                    # reported but not defined here: no edge to show
-        if caller not in reachable:
-            continue                    # an unreachable chain is an ornament, not a path
+        if provably_dead(bodies, caller):
+            continue                    # P2: nothing names it, so it cannot be a path
         if direct_io(caller):
             continue                    # a DIRECT effect proves nothing about propagation
+        # NOTE ON THE OTHER END OF THE EDGE. Review asked for the same relation applied to
+        # the callee. It is VACUOUS and was removed rather than kept as decoration: a
+        # callee is discovered BY being named in the caller's body, so `provably_dead` —
+        # "nothing in the unit names it" — is false for it by construction. The caller is
+        # the only end where the relation can discriminate, and it is applied there.
         for callee in sorted(callees(bodies[caller], exclude=caller)):
             io = direct_io(callee)
             if io:
@@ -732,6 +644,22 @@ def p_verdict(ctx, verdicts, path, kind, want_fp) -> tuple[bool, str]:
                            f"declares '{decl or '(none)'}' and this row requires '{want_fp}'")
         return True, f"{path} REJECTED at '{decl}'"
     return True, f"{path} {got}"
+
+
+def p_observable(ctx: Context, locator: str) -> tuple[bool, str]:
+    """`path::test_name` — the test must exist, be un-ignored, and pass."""
+    if "::" not in locator:
+        raise HarnessError(f"observable locator {locator!r} is not `path::test_name`")
+    rel, name = locator.split("::", 1)
+    f = ctx.root / rel
+    if not f.is_file():
+        return False, f"DECLARED, ABSENT — {rel} does not exist"
+    text = f.read_text(encoding="utf-8", errors="replace")
+    if not re.search(rf"fn\s+{re.escape(name)}\s*\(", text):
+        return False, f"DECLARED, ABSENT — {rel} has no `fn {name}`"
+    if re.search(rf"#\[ignore[^\]]*\][^#]*fn\s+{re.escape(name)}\s*\(", text):
+        return False, f"{rel}::{name} exists but is #[ignore]d"
+    return True, f"{rel}::{name} present and not ignored"
 
 
 def p_make_target(ctx: Context, target: str) -> tuple[bool, str]:
@@ -876,6 +804,11 @@ def evaluate(ctx: Context, rows: list[dict]) -> list[tuple[str, bool, str, str, 
         elif kind in REQUIRED_VERDICT:
             ok, d = p_verdict(ctx, verdicts, r["ev"], kind, r["fp"])
             results.append((rid, ok, r["milestone"], d, "C3" if kind == "reject" else "C2"))
+        elif kind == "observable":
+            # A named Rust test that must exist, not be #[ignore]d, and pass. Absent is a
+            # FINDING (DECLARED, ABSENT), not a malfunction — same rule as a witness.
+            ok, d = p_observable(ctx, r["ev"])
+            results.append((rid, ok, r["milestone"], d, "C1"))
         elif kind == "gate":
             target = r["ev"].replace("make ", "").strip()
             if target not in seen_targets:
@@ -991,6 +924,10 @@ BASE_ROWS = [
     ("TH-05", "M9", "gate", "make thesis-exit", "-"),
     ("TH-06", "M9", "gate", "make thesis-exit", "-"),
     ("WT-02", "M9", "fixture", "tests/witness/json_parser.pd", "-"),
+    ("GI-11", "M3-start", "observable",
+     "tests/n10_callgraph.rs::call_graph_meets_its_acceptance_contract", "-"),
+    ("GI-12", "M2", "reject", "tests/reject/incidental_diagnostic.pd",
+     "PD-CODE pinned, not a phrase"),
 ]
 
 
@@ -1052,6 +989,27 @@ def mutate(text: str, old: str, new: str, expect: int = 1) -> str:
     return out
 
 
+def mutate_fp(row_id: str, wrong: str) -> dict:
+    """GOOD_FP with ONE row's declaration replaced, asserting the old value was there.
+
+    The fingerprint control used to build its dict by overriding an entry directly, with
+    no assertion that the key existed or that the value changed — the same
+    mutates-nothing hole `mutate()` closes for text, in the one place that was not text.
+    Sixth sighting of the class; this is the typed mutator that makes the claim true.
+    """
+    kind, ev, fp = _C[row_id]
+    if kind != "reject" or fp == "-":
+        raise HarnessError(f"self-test: {row_id} is not a reject row with a fingerprint")
+    # GOOD_FP is derived from _C today, so this cannot currently fire; it is a guard for a
+    # future where the two stop being derived from one source. Stated rather than counted
+    # as coverage — an unreachable check is not a control.
+    if GOOD_FP.get(ev) != fp:
+        raise HarnessError(f"self-test: {ev} does not currently declare {fp!r}")
+    if wrong == fp:
+        raise HarnessError("self-test: the wrong fingerprint equals the right one")
+    return {**GOOD_FP, ev: wrong}
+
+
 def _verdict(row_id: str, verdict: str) -> str:
     """ALL_VERDICTS with one row's verdict replaced — and an ASSERTION that it changed.
 
@@ -1080,11 +1038,15 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
            report=GOOD_REPORT, report_b=None, fingerprints=None, drop_witness_b=False,
            omit_report_b=False, real_conformance=None, real_pdc=None,
            unreadable_requirements=False, unreadable_makefile=False,
-           real_make=False) -> int:
+           real_make=False, drop_observable=False) -> int:
     """Run the WHOLE gate against an injected repository state."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         (tmp / "a.pd").write_text(GOOD_WITNESS)
+        if not drop_observable:
+            obs = tmp / _C["GI-11"][1].split("::")[0]
+            obs.parent.mkdir(parents=True, exist_ok=True)
+            obs.write_text("fn " + _C["GI-11"][1].split("::")[1] + "() { }\n")
         w2 = tmp / WITNESS2                      # the contract's own path for witness 2
         w2.parent.mkdir(parents=True, exist_ok=True)
         if not drop_witness_b:
@@ -1179,10 +1141,11 @@ def self_test() -> int:
     # rows then had no declaration, the run went red for THAT, and deleting the comparison
     # outright would not have turned it green.
     case("REJECTED for the WRONG reason goes RED (incidental unsupported syntax)",
-         _drive(fingerprints={**GOOD_FP,
-                              _C["N9-06"][1]: "Unsupported type in reference parameter"}), 1)
-    case("the other five declarations are untouched by that mutation",
-         len(GOOD_FP), 6, drives_main=False)
+         _drive(fingerprints=mutate_fp("N9-06",
+                                       "Unsupported type in reference parameter")), 1)
+    case("the other declarations are untouched by that mutation",
+         len(GOOD_FP), sum(1 for k, _e, f in _C.values() if k == "reject" and f != "-"),
+         drives_main=False)
     case("REJECTED at the fingerprint the row demands is green", _drive(), 0)
 
     print("\n  condition 1 — the witnesses, and the gates beneath them")
@@ -1215,10 +1178,6 @@ def self_test() -> int:
                           "fn drive(x: ref String) -> i64 { return depth(1); }\n"
                           "fn main() { drive(s); }\n",
                 report_b="Function 'header' has effects: [Io]\n"), 1)
-    case("an ornament called only from `if false { … }` goes RED (R2)",
-         _drive(witness_b=mutate(GOOD_WITNESS, "fn main() { drive(s, c); }",
-                                 "fn main() { drive2(c); if false { drive(s, c); } }\n"
-                                 "fn drive2(mut c: C) { header(c); }")), 1)
     case("a GENERIC function is visible to the model, not silently invisible (R3)",
          _drive(witness_b=mutate(GOOD_WITNESS, "fn drive(x: ref String, mut c: C)",
                                  "fn drive<T>(x: ref String, mut c: C)")), 0)
@@ -1228,10 +1187,10 @@ def self_test() -> int:
          _drive(witness_b=GOOD_WITNESS + "fn m(s: S) { s.len(); }\n"), 2)
     case("a function-typed parameter is a HARNESS ERROR (R4)",
          _drive(witness_b=GOOD_WITNESS + "fn hof(f: fn(i64) -> i64) { }\n"), 2)
-    case("`#[total]` reachable only from a DEAD fn goes RED",
+    case("`#[total]` named only by another function is NOT refuted (P1, not liveness)",
          _drive(witness_b=mutate(GOOD_WITNESS, "return depth(1);", "return 1;")
-                          + "fn dead() -> i64 { return depth(2); }\n"), 1)
-    case("`#[total]` on a self-recursive-only fn goes RED",
+                          + "fn dead() -> i64 { return depth(2); }\n"), 0)
+    case("`#[total]` on a self-recursive-only fn goes RED (a self-edge is not a name)",
          _drive(witness_b=mutate(
              mutate(GOOD_WITNESS, "fn depth(n: i64) -> i64 { return n; }",
                     "fn depth(n: i64) -> i64 { return depth(n); }"),
@@ -1247,23 +1206,64 @@ def self_test() -> int:
     case("an absent make target goes RED",
          _drive(make={"selfhost": 0, "thesis-exit": 0}), 1)
 
-    print("\n  R2 — existence checks fail CLOSED, so a decoration cannot pass")
-    _bypass = ("fn ornament(x: ref String) -> i64 { return 1; }\n"
-               "fn okpath(mut c: C) { header(c); }\n"
-               "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
-               "fn emit(mut c: C, s: String) { file_write(c.out, s); }\n"
-               "fn header(mut c: C) { emit(c, \"x\"); }\n")
-    case("`if true { ok(); } else { ornament(); }` does NOT certify — the bypass R2 missed",
-         _drive(witness_b=_bypass + "fn main() { if true { okpath(c); } else "
-                                    "{ ornament(s); depth(1); } }\n"), 1)
-    case("the same features at the TOP LEVEL of main do certify",
-         _drive(witness_b=_bypass + "fn main() { okpath(c); ornament(s); depth(1); }\n"), 0)
-    case("a call after a `return` does not certify",
-         sorted(top_level_calls("return a(); b();")), ["a"], drives_main=False)
-    case("a call INSIDE the returned expression does certify",
-         sorted(top_level_calls("return depth(1);")), ["depth"], drives_main=False)
-    case("a call after `panic(...)` does not certify",
-         sorted(top_level_calls("panic(\"x\"); b();")), ["panic"], drives_main=False)
+    print("\n  P1/P2 — what a green verdict now means, and what it deliberately does not")
+    _orn = ("fn ornament(x: ref String) -> i64 { return 1; }\n"
+            "fn okpath(mut c: C) { header(c); }\n"
+            "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
+            "fn emit(mut c: C, s: String) { file_write(c.out, s); }\n"
+            "fn header(mut c: C) { emit(c, \"x\"); }\n")
+    # THE DELIBERATE LOSS, pinned so it cannot be forgotten or quietly re-claimed. A
+    # decoration referenced only from a dead branch is NOT refuted any more: three
+    # reachability heuristics each had a fail-open path, so the gate stopped guessing.
+    # P1 is existence; liveness is GI-11's, and GI-11 is a thesis row, so the gate cannot
+    # be green while that obligation is open.
+    case("a dead-branch decoration is NOT refuted — liveness is not asserted (P1)",
+         _drive(witness_b=_orn + "fn main() { if true { okpath(c); } else "
+                                 "{ ornament(s); depth(1); } }\n"), 0)
+    case("a decoration NOTHING names IS refuted — P2 is sound in that direction",
+         _drive(witness_b="fn ornament(x: ref String) -> i64 { return 1; }\n"
+                          "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
+                          "fn emit(mut c: C, s: String) { file_write(c.out, s); }\n"
+                          "fn header(mut c: C) { emit(c, \"x\"); }\n"
+                          "fn main() { header(c); }\n"), 1)
+    case("the three control-flow shapes that broke the last model are now moot",
+         _drive(witness_b=_orn + "fn main() { if true { return; } okpath(c); "
+                                 "ornament(s); depth(1); }\n"), 0)
+
+    print("\n  R4 — every closure form refuses, not only the brace form")
+    for form, label in [("|x| ornament(x)", "brace/ident body"), ("|x| (ornament(x))", "paren body"),
+                        ("|x| [ornament(x)]", "bracket body"), ("|x| -ornament(x)", "unary body")]:
+        case(f"a closure with a {label} is a HARNESS ERROR",
+             _drive(witness_b=GOOD_WITNESS + f"fn hof(mut c: C) {{ let f = {form}; }}\n"), 2)
+
+    print("\n  TH-05 — the edge relation applies to BOTH ends")
+    case("a caller nothing names cannot supply the exhibited edge (P2 on the caller)",
+         _drive(witness_b="fn ghost_io(mut c: C) { file_write(c.out, \"x\"); }\n"
+                          "fn orphan(mut c: C) { ghost_io(c); }\n"
+                          "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
+                          "fn drive(x: ref String, mut c: C) -> i64 { return depth(1); }\n"
+                          "fn main() { drive(s, c); }\n",
+                report_b="Function 'orphan' has effects: [Io]\n"), 1)
+
+    print("\n  TH-04 — a FUNCTION-level attribute, not the crate-level one")
+    case("a witness carrying only `#![total]` does not satisfy TH-04",
+         _drive(witness_b=mutate(GOOD_WITNESS, "#[total]", "#![total]")), 1)
+
+    print("\n  the safeguards for this gate's weaknesses BLOCK green (MUST-FIX 5)")
+    _req = (ROOT / "docs/contributing/1.0-requirements.tsv").read_text().split("\n")
+    _disp = {r.split("\t")[0]: r.split("\t")[7] for r in _req
+             if len(r.split("\t")) == 9 and not r.startswith("#")}
+    case("GI-11 is a THESIS row in the real manifest, not an ordinary 1.0 row",
+         _disp.get("GI-11"), "thesis", drives_main=False)
+    case("GI-12 is a THESIS row in the real manifest, not an ordinary 1.0 row",
+         _disp.get("GI-12"), "thesis", drives_main=False)
+    case("both are in the pinned contract, so demoting one is a harness error",
+         sorted(k for k in EXPECTED_THESIS_CONTRACT if k.startswith("GI-")),
+         ["GI-11", "GI-12"], drives_main=False)
+    case("GI-11 absent -> the gate cannot be green, however good the witness is",
+         _drive(drop_observable=True), 1)
+    case("GI-12's reject twin accepted by the compiler -> not green",
+         _drive(verdicts=_verdict("GI-12", "REJECT_ACCEPTED")), 1)
 
     print("\n  R4 — the detected set, and the name collision reviewers found")
     case("two functions sharing a name are a HARNESS ERROR, not a silent overwrite",
@@ -1357,6 +1357,19 @@ def self_test() -> int:
          _vd("N9-01", "OUTPUT_MISMATCH"), "accepted", drives_main=False)
     case("_verdict on a GATE row (no verdict line) is rejected, not silently a no-op",
          _vd("SH-01", "WHATEVER"), "rejected", drives_main=False)
+    def _fp(row, wrong):
+        try:
+            mutate_fp(row, wrong)
+            return "accepted"
+        except HarnessError:
+            return "rejected"
+
+    case("mutate_fp on a real reject row with a different value is accepted",
+         _fp("N9-06", "something else entirely"), "accepted", drives_main=False)
+    case("mutate_fp with the CORRECT fingerprint is rejected — it would mutate nothing",
+         _fp("N9-06", _C["N9-06"][2]), "rejected", drives_main=False)
+    case("mutate_fp on a non-reject row is rejected",
+         _fp("N9-01", "x"), "rejected", drives_main=False)
     case("a mutation whose replacement equals the original is rejected",
          _mut("return depth(1);", "return depth(1);"), "rejected", drives_main=False)
 
@@ -1443,6 +1456,19 @@ def self_test() -> int:
          drives_main=False)
     case("an unterminated comment does not crash the lexer",
          isinstance(strip_literals("/* unterminated"), str), True, drives_main=False)
+
+    print("\n  lexical stripping is part of the proof, so brace depth is controlled")
+    for src, want, label in [
+        ('fn a() { let s = "}"; } fn main() { a(); }', ["a", "main"], "brace in a string"),
+        ("fn a() { let c = '}'; } fn main() { a(); }", ["a", "main"], "brace in a char"),
+        ("fn a() { // }\n } fn main() { a(); }", ["a", "main"], "brace in a line comment"),
+        ("fn a() { /* } */ } fn main() { a(); }", ["a", "main"], "brace in a block comment"),
+    ]:
+        case(f"function_bodies survives a {label}",
+             sorted(function_bodies(strip_literals(src))), want, drives_main=False)
+    case("a body whose braces are only inside literals is still bounded",
+         "a" in function_bodies(strip_literals('fn a() { let s = "{{{"; }')), True,
+         drives_main=False)
 
     print("\n  the typed process boundary (scripts/gate_probe.py)")
     killed = GP.classify(GP.run(["sh", "-c", "echo 'error: buffered' >&2; kill -9 $$"]))

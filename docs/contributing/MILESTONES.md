@@ -55,6 +55,14 @@ a release**.
 | 3 | per differentiator, a **reject twin** — a `#[total]` whose proof fails, a `ref` whose region is ambiguous, an ungated effect escape: each a compile error, and the region one must *name the ambiguity* |
 | 4 | a **second witness program** — the JSON parser — meeting the same three conditions |
 
+**What the gate asserts, and what it deliberately does not.** After three reachability heuristics
+each shipped a fail-open path, the differentiator probes stopped guessing: a green TH-03/TH-04/TH-05
+means the construct **exists in the source**, and a RED may additionally mean it sits in a function
+**nothing in the unit names** — sound in that direction. **Liveness is no longer asserted.** That
+obligation is **GI-11**, which is now a *thesis* row, so `make thesis-exit` cannot go green while
+this lexical model is in use. Likewise **GI-12** for attributable rejections. Both were ordinary
+`1.0` rows and were therefore not preconditions of the gate they safeguard; that is fixed.
+
 **Condition 3 is load-bearing and must never be dropped. For an inference feature, the rejection is
 the product.** A region inferencer that accepts everything is a no-op, and a no-op is
 indistinguishable from a working one if you only look at green fixtures — which is exactly what
@@ -69,8 +77,8 @@ does not become the definition of the language.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| `thesis` | 23 | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
-| `1.0` | 163 | the witnesses exercise it, or a `thesis` row rests on it |
+| `thesis` | 25 | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
+| `1.0` | 161 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
 Nothing is dropped silently. A requirement the thesis does not exercise is marked `post-1.0` in
@@ -149,15 +157,16 @@ Retirement is a post-1.0 decision.
 
 ## Where the project actually is
 
-Measured at `7484bac`, not read from the previous version of this file.
+Measured at `e53ffa7` unless a row names its own command; the thesis and self-test
+figures are from this revision.
 
 | | | Command |
 |---|---|---|
-| **The thesis** | **1 green, 21 RED** over 22 evaluated rows + the aggregate | `make thesis-exit` |
+| **The thesis** | **1 green, 23 RED** over 24 evaluated rows + the aggregate | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 77 cases — 51 drive the gate end to end against an injected repository state, 26 exercise a helper | `make test-thesis-runner` |
+| Thesis gate itself | 93 cases — 59 drive the gate end to end against an injected repository state, 34 exercise a helper | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 232 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
@@ -490,7 +499,7 @@ rather than as another prerelease.
 4. **Witness 2 in the dialect** (WT-02, TH-06).
 5. **Parity with `src/`, not retirement.**
 
-**Exit**: `make thesis-exit`. It reports **1 green and 21 RED** today; every RED line names the
+**Exit**: `make thesis-exit`. It reports **1 green and 23 RED** today; every RED line names the
 milestone that owes it, and every absent fixture says `DECLARED, ABSENT` rather than passing.
 
 ## Scope: what is in 1.0, and what is not
@@ -629,7 +638,7 @@ Six more probes of the same family, each now with a control that fails on revert
 And the self-test itself, for the second time: it called the probe helpers directly, so deleting
 the production wiring left every case green. It now builds a temporary repository — requirements
 TSV, witnesses, conformance verdicts, `make` results, effect reports — and drives `main()`,
-asserting the **exit code**. Seventy-seven cases, of which six drop the injection entirely and drive
+asserting the **exit code**. Ninety-three cases, of which six drop the injection entirely and drive
 the real subprocess boundary — including one where conformance, `pdc` and `make` all run and
 conclude successfully, so the *green* path is exercised and not only the failures. The one probe
 group with no negative control (the real `make` subprocess) is a **disclosure pinned verbatim**:
