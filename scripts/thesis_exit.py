@@ -191,18 +191,23 @@ EXPECTED_LIVENESS_SHA = \
 # for why an `observable` could not carry it: an empty `#[test]` reports `1 passed`.
 CALLGRAPH_CORPUS = ROOT / "tests/callgraph-differential.tsv"
 EXPECTED_CALLGRAPH_IDS = frozenset({
-    "completion-diverges", "entry-roots", "indirect-declared", "order-independent",
-    "scoped-identity",
+    "completion-diverges", "completion-returns", "entry-roots", "indirect-declared",
+    "order-independent", "scoped-identity",
 })
 EXPECTED_CALLGRAPH_SHA = \
-    "0d483bdd01a66cb0c9ceb1c3f3410c16dc10255ea0c8c1e2a9df20c3cf5aa4c2"
+    "d334a3341cc6ae2f3f1eb199774345368a171d946218ab176b03bc0edbe4e410"
 
 # Clauses of GI-11's contract that NO corpus of program outputs can pin, because they are
 # properties of the artifact rather than of any program's graph. Named here and printed by
 # the gate, so the boundary is disclosed rather than implied away.
+# ONE clause, not two. "Fault injection" was on this list and should never have been: it
+# is mechanically enforceable, it is what makes the structural corpus unfakeable, and by
+# calling it human review the gate removed the only thing standing between a hardcoded
+# provider and a pass. It is enforced in callgraph_differential() now.
 GI11_HUMAN_REVIEW_RESIDUE = (
-    "provenance tied to the compiled unit",
-    "fault injection proving each verdict changes when its edge is removed",
+    "provenance tied to the compiled unit — mechanizable in principle (hash the unit, "
+    "require it back), but it constrains the PROVIDER'S INTERFACE rather than any "
+    "program's graph, and this corpus only speaks about graphs of programs",
 )
 
 
@@ -215,44 +220,6 @@ def callgraph_provider(source: str, prop: str):
     if LIVENESS_MODEL != "call-graph":
         return None
     raise HarnessError("LIVENESS_MODEL is `call-graph` but no callgraph_provider is wired")
-
-
-def callgraph_differential() -> tuple[list[tuple[str, str, str]], int]:
-    """-> (failures as (id, expected, got), total). Closed, like the liveness corpus."""
-    if not CALLGRAPH_CORPUS.is_file():
-        raise HarnessError(f"{CALLGRAPH_CORPUS} is missing — it IS the structural half of "
-                           "GI-11's acceptance, so its absence is not a pass")
-    parsed, failures = [], []
-    for n, line in enumerate(CALLGRAPH_CORPUS.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip() or line.startswith("#"):
-            continue
-        f = line.split("\t")
-        if len(f) != 6:
-            raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: {len(f)} columns, want 6")
-        rid, prop, source, expect, _why, _prov = f
-        if prop not in ("edges", "roots", "completion", "indirect", "identical-to"):
-            raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: unknown property {prop!r}")
-        parsed.append((rid, prop, source, expect))
-    ids = {r[0] for r in parsed}
-    if ids != EXPECTED_CALLGRAPH_IDS:
-        raise HarnessError(
-            "the call-graph corpus changed. "
-            f"added={sorted(ids - EXPECTED_CALLGRAPH_IDS) or 'none'} "
-            f"removed={sorted(EXPECTED_CALLGRAPH_IDS - ids) or 'none'}. Re-pin "
-            "EXPECTED_CALLGRAPH_IDS and EXPECTED_CALLGRAPH_SHA in the same commit.")
-    digest = hashlib.sha256(
-        "\n".join("\t".join(r) for r in sorted(parsed)).encode()).hexdigest()
-    if digest != EXPECTED_CALLGRAPH_SHA:
-        raise HarnessError(
-            f"a call-graph expectation changed (digest {digest}, pinned "
-            f"{EXPECTED_CALLGRAPH_SHA}). Those values are the contract; re-pin deliberately.")
-    for rid, prop, source, expect in parsed:
-        got = callgraph_provider(source, prop)
-        if got is None:
-            failures.append((rid, expect, "no call graph is wired"))
-        elif got != expect:
-            failures.append((rid, expect, str(got)))
-    return failures, len(parsed)
 
 
 def liveness_oracle(src: str, subject: str) -> str:
@@ -317,6 +284,104 @@ def liveness_differential() -> tuple[list[tuple[str, str, str]], int]:
     return failures, total
 
 
+def callgraph_differential() -> tuple[list[tuple[str, str, str]], int]:
+    """-> (failures as (id, expected, got), total). Closed, and FAULT-INJECTED.
+
+    Every row is checked twice. Comparing one answer to one expected string was the seventh
+    rung: a source-keyed stub returning the five expected strings scored 5/5. Requiring the
+    answer to CHANGE when the fact is removed is what a lookup table cannot do.
+    """
+    if not CALLGRAPH_CORPUS.is_file():
+        raise HarnessError(f"{CALLGRAPH_CORPUS} is missing — it IS the structural half of "
+                           "GI-11's acceptance, so its absence is not a pass")
+    parsed, failures = [], []
+    for n, line in enumerate(CALLGRAPH_CORPUS.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        f = line.split("\t")
+        if len(f) != 8:
+            raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: {len(f)} columns, want 8")
+        rid, prop, source, expect, mutation, expect_mut, _why, _prov = f
+        if prop not in ("edges", "roots", "completion", "indirect", "identical-to"):
+            raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: unknown property {prop!r}")
+        if "=>" not in mutation:
+            raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: mutation {mutation!r} is not "
+                               "`find=>replace`; without one the row cannot be fault-injected "
+                               "and a hardcoded provider passes it")
+        parsed.append((rid, prop, source, expect, mutation, expect_mut))
+    ids = {r[0] for r in parsed}
+    if ids != EXPECTED_CALLGRAPH_IDS:
+        raise HarnessError(
+            "the call-graph corpus changed. "
+            f"added={sorted(ids - EXPECTED_CALLGRAPH_IDS) or 'none'} "
+            f"removed={sorted(EXPECTED_CALLGRAPH_IDS - ids) or 'none'}. Re-pin "
+            "EXPECTED_CALLGRAPH_IDS and EXPECTED_CALLGRAPH_SHA in the same commit.")
+    digest = hashlib.sha256(
+        "\n".join("\t".join(r) for r in sorted(parsed)).encode()).hexdigest()
+    if digest != EXPECTED_CALLGRAPH_SHA:
+        raise HarnessError(
+            f"a call-graph expectation changed (digest {digest}, pinned "
+            f"{EXPECTED_CALLGRAPH_SHA}). Those values are the contract; re-pin deliberately.")
+
+    by_id = {r[0]: r for r in parsed}
+
+    def decoded(src: str) -> str:
+        # The provider gets a PROGRAM. An earlier version handed it the TSV encoding, so a
+        # real parser would have received a literal backslash-n.
+        return src.replace("\\n", "\n")
+
+    def ask(src: str, prop: str):
+        return callgraph_provider(decoded(src), prop)
+
+    def matches(got, expect: str) -> bool:
+        # `a|b` means the contract permits either. Without this a provider that RESOLVES an
+        # indirect target failed a row written for one that declares it unresolved — the
+        # better implementation losing to the weaker.
+        return str(got) in {alt.strip() for alt in expect.split("|")}
+
+    for rid, prop, source, expect, mutation, expect_mut in parsed:
+        find, _, repl = mutation.partition("=>")
+        mutated = decoded(source).replace(find, repl)
+        if mutated == decoded(source):
+            failures.append((rid, expect, f"the row's mutation {find!r} matched nothing — "
+                                          "it cannot fault-inject anything"))
+            continue
+        if prop == "identical-to":
+            other = by_id.get(expect)
+            if other is None:
+                failures.append((rid, expect, f"names no row in this corpus"))
+                continue
+            a, b = ask(source, "edges"), ask(other[2], "edges")
+            if a is None or b is None:
+                failures.append((rid, f"edges == {expect}'s edges", "no call graph is wired"))
+                continue
+            if a != b:
+                failures.append((rid, f"edges == {expect}'s edges ({b})", str(a)))
+                continue
+            after = callgraph_provider(mutated, "edges")
+            if after is None or not matches(after, expect_mut):
+                failures.append((rid, f"edges == {expect_mut} once `{find}` is removed",
+                                 "silence" if after is None else str(after)))
+            continue
+        got = ask(source, prop)
+        if got is None:
+            failures.append((rid, expect, "no call graph is wired"))
+            continue
+        if not matches(got, expect):
+            failures.append((rid, expect, str(got)))
+            continue
+        # THE PINNED OUTCOME, not merely a different one. `!= got` let a constant fallback
+        # pass, because a constant is a change; and silence is not an answer at all. Both
+        # measured against a hardcoded provider before this was tightened.
+        after = callgraph_provider(mutated, prop)
+        if after is None:
+            failures.append((rid, f"{expect_mut} once `{find}` is removed",
+                             "silence — a table with no entry for it is not a graph"))
+        elif not matches(after, expect_mut):
+            failures.append((rid, f"{expect_mut} once `{find}` is removed", str(after)))
+    return failures, len(parsed)
+
+
 def wiring_matches_declaration(source: str) -> list[str]:
     """Does the code do what LIVENESS_MODEL / ATTRIBUTION_MODEL say it does?
 
@@ -353,12 +418,18 @@ def wiring_matches_declaration(source: str) -> list[str]:
     return problems
 
 
-def constant_assertions(source: str) -> list[str]:
-    """`case(...)` arguments that are compile-time constants — they cannot fail.
+def or_true_assertions(source: str) -> list[str]:
+    """`case(...)` predicates containing `… or True` — exactly that, and nothing else.
 
-    Reads the file with `ast`, so it sees the EXPRESSION, not its value. This is the choke
-    point the review asked about: `all(... or True ...)` is `BoolOp(or)` with a literal
-    `True` operand, and no evaluation can reveal that.
+    NAMED FOR WHAT IT DOES. It was called `constant_assertions` and claimed to reject
+    compile-time-constant arguments; it detects an `or` node with a literal `True` operand
+    and misses `1`, `not False`, `x is x`, `all([])` and every fixed string. A checker whose
+    name is wider than its check is the defect this file has spent thirteen rounds on, so
+    the name is narrowed rather than the check widened — the broader set is a real check
+    someone can add, and pretending it exists would be worse than not having it.
+
+    Reads the file with `ast`, so it sees the EXPRESSION, not its value: `X or True`
+    evaluates to True and is invisible to `case()` by the time it arrives.
     """
     import ast as _ast
     bad = []
@@ -451,7 +522,7 @@ AGGREGATE_ROW = "D1-01"          # cites this command as its evidence: it is the
 # full SHA-256 over the whole normalized field has neither hole: any edit at all fails, and the
 # fix is to re-pin deliberately in the same commit.
 PINNED_ACCEPTANCE_SHA = {
-    "GI-11": "8eae233c60036ad7e7d6bcc06b05def5754cff974f2f6f9f5d72f320d4cfc2c0",
+    "GI-11": "711809346af5ce183e282884533d421537e85a842d35026b6ea5b11bc740056e",
     "GI-12": "f14b04ad415e5ee436829fef4f7b4c4865f26df29bc45f30dd7140caad7cea3a",
 }
 
@@ -488,8 +559,10 @@ EXPECTED_THESIS_CONTRACT = {
     # satisfiable by incidental text and while this lexical model was still in use — the
     # careful placement (M2, M3-start) defeated by not being preconditions. They are
     # thesis rows now: 1.0 cannot be declared with either outstanding.
-    "GI-11": ("observable",
-              "tests/n10_callgraph.rs::call_graph_meets_its_acceptance_contract", "-"),
+    # A `gate` row pointing at this command, like D1-01: GI-11 is adjudicated by the two
+    # differentials, not by a named test. It carried an `observable` locator that `evaluate`
+    # skipped, so tests/n10_callgraph.rs need not have existed for the gate to clear.
+    "GI-11": ("gate", "make thesis-exit", "-"),
     # NOT a `reject` row: a reject row is adjudicated by the substring matcher this
     # requirement exists to replace, so it could never have proved itself.
     "GI-12": ("gate", "make check-diagnostic-codes", "-"),
@@ -1331,7 +1404,7 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "e6ae73d707e3f430a1a4c41dcc6856671049e7b1f90c441010975999957d56f3"
+EXPECTED_CASE_SHA = "af5176eefd59c25354569786da2804ac71bc8ce13f11328f7d58be69157edab1"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -1473,8 +1546,7 @@ BASE_ROWS = [
     ("TH-05", "M9", "gate", "make thesis-exit", "-"),
     ("TH-06", "M9", "gate", "make thesis-exit", "-"),
     ("WT-02", "M9", "fixture", "tests/witness/json_parser.pd", "-"),
-    ("GI-11", "M3-start", "observable",
-     "tests/n10_callgraph.rs::call_graph_meets_its_acceptance_contract", "-"),
+    ("GI-11", "M3-start", "gate", "make thesis-exit", "-"),
     ("GI-12", "M2", "gate", "make check-diagnostic-codes", "-"),
 ]
 
@@ -1513,7 +1585,7 @@ ALL_VERDICTS = "\n".join(
 WITNESS2 = _C["WT-02"][1]
 GOOD_MAKE = {"selfhost": 0, "selfhost-corpus": 0, "thesis-exit": 0,
              "check-diagnostic-codes": 0}
-GOOD_OBSERVABLE = {EXPECTED_THESIS_CONTRACT["GI-11"][1]: 0}
+GOOD_OBSERVABLE: dict[str, int] = {}   # no thesis row is an `observable` now
 
 
 def mutate(text: str, old: str, new: str, expect: int = 1) -> str:
@@ -1595,10 +1667,10 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         (tmp / "a.pd").write_text(GOOD_WITNESS)
-        if not drop_observable:
-            obs = tmp / _C["GI-11"][1].split("::")[0]
-            obs.parent.mkdir(parents=True, exist_ok=True)
-            obs.write_text("fn " + _C["GI-11"][1].split("::")[1] + "() { }\n")
+        # GI-11 is no longer an `observable`, so the synthetic repo has no test file to
+        # create. Kept as a no-op knob rather than removed, so the `drop_observable` cases
+        # fail loudly if someone reintroduces an observable precondition.
+        assert "::" not in _C["GI-11"][1], "GI-11 is an observable again — see round 12/13"
         w2 = tmp / WITNESS2                      # the contract's own path for witness 2
         w2.parent.mkdir(parents=True, exist_ok=True)
         if not drop_witness_b:
@@ -1695,9 +1767,10 @@ def self_test() -> int:
             print(f"  {RED}FAIL{OFF} {name} (got {got!r}, want {want!r})")
             fails += 1
 
-    print("thesis-exit self-test — the GATE is driven, not its helpers called")
-    print("  every case below runs main() against an injected repository state and")
-    print("  asserts its exit code: 0 the thesis holds, 1 a finding, 2 cannot measure.")
+    print("thesis-exit self-test — the GATE is driven where a gate-level answer is what")
+    print("  is in question. MOST cases run main() against an injected repository state and")
+    print("  assert its exit code (0 holds, 1 a finding, 2 cannot measure); the rest")
+    print("  exercise one helper directly, and the split is reported in the summary.")
 
     print("\n  the gate must be capable of BOTH answers")
     case("an all-green repository state reaches EXIT 0", _drive(), 0)
@@ -1875,11 +1948,11 @@ def self_test() -> int:
          Context().assume_definition_complete, False, drives_main=False)
 
     print("\n  a control that cannot fail is a harness error")
-    case("no `case(...)` in this file asserts a compile-time constant",
-         constant_assertions((ROOT / "scripts/thesis_exit.py").read_text()), [],
+    case("no `case(...)` in this file contains `… or True` (not: no constant at all)",
+         or_true_assertions((ROOT / "scripts/thesis_exit.py").read_text()), [],
          drives_main=False)
     case("the lint catches a planted `… or True`",
-         len(constant_assertions('case("x", all(y or True for y in z), True)')), 1,
+         len(or_true_assertions('case("x", all(y or True for y in z), True)')), 1,
          drives_main=False)
 
     print("\n  the CALL-GRAPH STRUCTURAL DIFFERENTIAL — GI-11's other half")
@@ -1890,10 +1963,22 @@ def self_test() -> int:
          len(_cg_fail), _cg_total, drives_main=False)
     case("it covers scoped identities, roots, order-independence, completion and indirect",
          sorted(EXPECTED_CALLGRAPH_IDS),
-         ["completion-diverges", "entry-roots", "indirect-declared", "order-independent",
-          "scoped-identity"], drives_main=False)
-    case("the residue it cannot pin is NAMED, not implied away",
-         len(GI11_HUMAN_REVIEW_RESIDUE), 2, drives_main=False)
+         ["completion-diverges", "completion-returns", "entry-roots", "indirect-declared",
+          "order-independent", "scoped-identity"], drives_main=False)
+    case("the residue it cannot pin is ONE clause, named — fault injection left the list "
+         "because it is enforced",
+         len(GI11_HUMAN_REVIEW_RESIDUE), 1, drives_main=False)
+    case("fault injection is no longer called human review",
+         any("fault injection" in r.lower() for r in GI11_HUMAN_REVIEW_RESIDUE), False,
+         drives_main=False)
+    case("every structural row carries a mutation, so none can be passed by a lookup table",
+         all("=>" in l.split("\t")[4]
+             for l in CALLGRAPH_CORPUS.read_text().splitlines()
+             if l.strip() and not l.startswith("#")), True, drives_main=False)
+    case("every structural row pins the answer the MUTATED program must give",
+         all(l.split("\t")[5].strip()
+             for l in CALLGRAPH_CORPUS.read_text().splitlines()
+             if l.strip() and not l.startswith("#")), True, drives_main=False)
 
     print("\n  the LIVENESS DIFFERENTIAL — the escape from the fifth rung")
     _fails, _total = liveness_differential()
@@ -1910,10 +1995,17 @@ def self_test() -> int:
     # way. The predecessor of this case was `X or True` — always true, asserting nothing,
     # written in the round that added the mechanism it was meant to prove. Ninth sighting.
     _failed = {r for r, _w, _g in _fails}
-    case("every metamorphic variant is scored exactly as its base — no source fingerprint",
-         sorted(b for b in ("diverging-if", "while-true", "false-branch", "direct",
-                            "via-callee", "inside-else")
-                if (b in _failed) != (VARIANT_OF_BASE[b] in _failed)),
+    # Actual VERDICTS, not membership in the failure set: a base answering `live` and its
+    # variant answering `refused` are both "failing" and would have compared equal.
+    _answers = {}
+    for _l in LIVENESS_CORPUS.read_text().splitlines():
+        if not _l.strip() or _l.startswith("#"):
+            continue
+        _f = _l.split("\t")
+        _answers[_f[0]] = liveness_oracle(strip_literals(_f[3].replace("\\n", "\n")), _f[2])
+    case("every metamorphic variant gets the same VERDICT as its base — not merely the "
+         "same pass/fail",
+         sorted(b for b, v in VARIANT_OF_BASE.items() if _answers[b] != _answers[v]),
          [], drives_main=False)
     _diff_rows = [l.split("\t") for l in LIVENESS_CORPUS.read_text().splitlines()
                   if l.strip() and not l.startswith("#")]
@@ -1931,9 +2023,20 @@ def self_test() -> int:
     case("the reviewed answers pass it, so it is satisfiable",
          _score(lambda s, x: {r[0]: r[1] for r in _diff_rows}[
              next(r[0] for r in _diff_rows if r[2] == x and r[3] == s)]), 0, drives_main=False)
-    case("an empty corpus is a harness error, not a pass",
-         "an empty corpus passes everything" in (LIVENESS_CORPUS.read_text() + open(
-             ROOT / "scripts/thesis_exit.py").read()), True, drives_main=False)
+    # INJECTED, not grepped. This case used to search for an explanatory phrase, so it
+    # would not have noticed the guard being deleted. Tenth sighting of that shape.
+    _saved_corpus = LIVENESS_CORPUS.read_text()
+    try:
+        LIVENESS_CORPUS.write_text("# every row removed\n")
+        try:
+            liveness_differential()
+            _empty = "accepted"
+        except HarnessError:
+            _empty = "rejected"
+    finally:
+        LIVENESS_CORPUS.write_text(_saved_corpus)
+    case("an emptied corpus is REJECTED — injected, not grepped for a phrase",
+         _empty, "rejected", drives_main=False)
 
     print("\n  the machine contract Make cannot carry")
     _rc = subprocess.run([sys.executable, str(ROOT / "scripts/thesis_exit.py")],
@@ -1956,7 +2059,7 @@ def self_test() -> int:
     case("both preconditions are outstanding right now",
          sorted(set(r for r, _w in incomplete_definition())), ["GI-11", "GI-12"],
          drives_main=False)
-    case("GI-11 is outstanding for BOTH reasons — the observable AND the corpus",
+    case("GI-11 is outstanding for BOTH reasons — the structural AND the liveness corpus",
          len([r for r, _w in incomplete_definition() if r == "GI-11"]), 2,
          drives_main=False)
     # Through mutate(), so that when these constants legitimately change the controls

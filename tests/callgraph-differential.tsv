@@ -2,46 +2,75 @@
 #
 # WHY THIS EXISTS. GI-11's acceptance was an `observable`: a named Rust test that exists,
 # is not ignored, and passes. Measured, an empty `#[test] fn …() {}` produces exactly
-# `1 passed`, so the ENTIRE structural contract — scoped call-site identities, declared
-# entry roots, an order-independent fixed point, per-edge completion, indirect targets
-# resolved-or-declared — was satisfied by a body of `{}`. That is the sixth rung of the
-# ladder this session has already climbed five times, and the boundary is known:
+# `1 passed`, so the entire structural contract was satisfied by a body of `{}`. That was
+# the sixth rung of a ladder this session has climbed repeatedly, and the boundary is:
 #
 #     NO CHECK INSIDE THE ARTIFACT CAN ESTABLISH THAT A FUTURE REPLACEMENT IS GENUINE.
 #
-# The escape used for liveness works here too: pin OUTPUTS whose correct values are fixed
-# by review, so what is checked is what the graph RETURNS, not that something ran. An
-# empty test returns nothing and fails every row below.
+# WHY THE FIRST VERSION OF THIS FILE WAS THE SEVENTH RUNG. It asked the provider for a
+# STRING and compared it to a fixed one. Measured: a source-keyed stub returning the five
+# expected strings scored 5/5. A corpus of expected outputs defeats a provider that
+# computes nothing only if the provider cannot know which output is wanted — and a lookup
+# table always can.
 #
-# WHAT THIS FILE PINS, AND WHAT IT CANNOT. It pins the four contract clauses that are
-# properties of a graph over a program, so a reviewer can fix their values by reading:
-#   scoped call-site identities · declared entry roots · order-independent fixed point ·
-#   per-edge completion · indirect targets resolved-or-declared.
-# It CANNOT pin two others, because they are properties of the artifact and its test
-# suite rather than of any program's graph:
-#   * provenance tied to the compiled unit
-#   * fault injection proving each verdict changes when its edge is removed
-# Those are discharged by HUMAN REVIEW at the point GI-11 lands. The gate says so in its
-# own output rather than implying this file covers them.
+# WHAT CLOSES IT: FAULT INJECTION, which is already in GI-11's own pinned text and which an
+# earlier round wrongly printed as "discharged by human review". Every row carries a
+# `mutation` that removes the fact the row is about. The provider is asked twice, and both
+# must hold:
 #
-# COLUMNS (TAB-separated, all six mandatory):
-#   id  property  source  expect  why  source-of-truth
+#     answer(source)  == expect             the graph is right about the program
+#     answer(mutated) == expect-mutated     it is right about a program it has NOT seen
+#
+# The second condition was first written as `!= answer(source)` — merely "the answer
+# changed" — and a hardcoded table plus a constant fallback scored 6/6 against it, because
+# a constant IS a change. Pinning the OUTCOME closes that: a lookup table has no entry for
+# the mutated program, and silence is not an answer either.
+#
+# WHAT THIS FILE PINS: scoped call-site identities · declared entry roots · an
+# order-independent fixed point · per-edge completion · indirect targets resolved-or-
+# declared. Five clauses, and the count in this sentence is checked by the self-test.
+#
+# WHAT IT STILL CANNOT PIN: provenance tied to the compiled unit — binding a graph to the
+# identity of the unit submitted. That is mechanizable in principle (hash the unit, require
+# it back), but it constrains the PROVIDER'S INTERFACE rather than any program's graph, and
+# this corpus only speaks about graphs of programs. It remains on human review at the point
+# GI-11 lands, and it is the ONLY clause that does. Fault injection is no longer on that
+# list, because it turned out to be the mechanism that makes the rest worth anything.
+#
+# COLUMNS (TAB-separated, all EIGHT mandatory):
+#   id  property  source  expect  mutation  expect-mutated  why  source-of-truth
 #
 # property: edges | roots | completion | indirect | identical-to
-# expect:   the value the graph must return, normalized:
+# source:   a whole compilation unit, `\n` for newline. DECODED before the provider sees
+#           it — an earlier version passed the TSV encoding through, so a real parser would
+#           have received backslash-n.
+# expect:   the value the graph must return.
 #   edges         caller>callee, comma-separated, sorted. Scoped where a bare name is
-#                 ambiguous: `Buf::len` not `len`.
+#                 ambiguous: `Buf::len`, not `len`.
 #   roots         comma-separated, sorted.
-#   completion    caller>callee=yes|no, comma-separated, sorted. `no` means the edge may
-#                 not complete — the callee can diverge.
-#   indirect      resolved:<targets> or unresolved. SILENCE IS A FAILURE: a graph that
-#                 simply omits an indirect call has not declared it.
-#   identical-to  the id of another row whose graph this one's must equal exactly.
+#   completion    caller>callee=yes|no, sorted. `yes` = this edge's callee always returns;
+#                 `no` = it may diverge. A fact about the CALLEE, not about whether the
+#                 call site is reached — an earlier version conflated the two and marked an
+#                 edge into a plainly-returning function `no`.
+#   indirect      `resolved:<targets>` or `unresolved`. Where the row writes both separated
+#                 by `|`, EITHER is accepted: the contract permits both, so a better
+#                 provider that resolves the target must not fail a row written for one
+#                 that declares it unresolved.
+#   identical-to  the id of another row. The two programs' EDGE SETS are compared to each
+#                 other — an earlier version accepted the literal id string, proving nothing.
+# mutation: `find=>replace`, applied to the DECODED source. Removing the fact the row is
+#           about must change the provider's answer.
+# expect-mutated: the answer the MUTATED program must produce. `(none)` means the property
+#           is empty for it. REQUIRING A SPECIFIC OUTCOME, not merely a different one, is
+#           what closes the last gap: measured, a hardcoded table plus a constant fallback
+#           scored 6/6 against "the answer must change", because a constant IS a change.
+#           It cannot produce the right answer for a program it has never seen.
 #
-# id	property	source	expect	why	source-of-truth
+# id	property	source	expect	mutation	expect-mutated	why	source-of-truth
 
-scoped-identity	edges	struct Buf { n: i64 }\nstruct Log { n: i64 }\nimpl Buf { fn len(self) -> i64 { return self.n; } }\nimpl Log { fn len(self) -> i64 { return self.n; } }\nfn main() { let b: Buf = Buf { n: 1 }; b.len(); }	main>Buf::len	two functions named `len` in different impls. A bare-name graph collapses them and reports an edge into Log::len that does not exist — the exact defect measured in src/effects/mod.rs:98	reviewed
-entry-roots	roots	fn helper() -> i64 { return 1; }\nfn main() { helper(); }	main	`main` is the only declared entry root; `helper` is reachable, not a root	reviewed
-order-independent	identical-to	fn main() { helper(); }\nfn helper() -> i64 { return 1; }	entry-roots	the same program with its definitions reordered must yield the same graph; a single forward pass over source order does not	reviewed
-completion-diverges	completion	fn stop() { panic("x"); }\nfn after() -> i64 { return 1; }\nfn main() { stop(); after(); }	main>after=no,main>stop=no	the edge into `stop` may not complete, so the edge to `after` may not be taken either — per-edge completion is what makes this expressible	reviewed
-indirect-declared	indirect	fn target() -> i64 { return 1; }\nfn run(f: fn() -> i64) -> i64 { return f(); }\nfn main() { run(target); }	unresolved	the call `f()` has no statically visible target here. A graph may resolve it or declare it unresolved; omitting it silently is the failure this row exists to catch	reviewed
+scoped-identity	edges	struct Buf { n: i64 }\nstruct Log { n: i64 }\nimpl Buf { fn len(self) -> i64 { return self.n; } }\nimpl Log { fn len(self) -> i64 { return self.n; } }\nfn main() { let b: Buf = Buf { n: 1 }; let g: Log = Log { n: 2 }; b.len(); }	main>Buf::len	b.len()=>g.len()	main>Log::len	two functions named `len` in different impls. A bare-name graph collapses them and reports an edge into Log::len that does not exist — the defect measured in src/effects/mod.rs:98. Removing the call must remove the edge	reviewed
+entry-roots	roots	fn helper() -> i64 { return 1; }\nfn main() { helper(); }	main	fn main()=>fn start()	(none)	`main` is the only declared entry root. Renaming it away must change the root set	reviewed
+order-independent	identical-to	fn main() { helper(); }\nfn helper() -> i64 { return 1; }	entry-roots	fn main() { helper(); }=>fn extra() -> i64 { return 2; }\nfn main() { helper(); extra(); }	main>extra,main>helper	the same program with its definitions reordered must yield the SAME EDGE SET as `entry-roots`. A single forward pass over source order does not. Removing the call must break the equality	reviewed
+completion-diverges	completion	fn stop() { panic("x"); }\nfn main() { stop(); }	main>stop=no	panic("x")=>return	main>stop=yes	the callee diverges, so the edge may not complete. Making it return must flip the fact	reviewed
+completion-returns	completion	fn ok() -> i64 { return 1; }\nfn main() { ok(); }	main>ok=yes	return 1=>panic("x")	main>ok=no	the POSITIVE control the first version lacked: a callee that always returns. Making it diverge must flip the fact	reviewed
+indirect-declared	indirect	fn target() -> i64 { return 1; }\nfn run(f: fn() -> i64) -> i64 { return f(); }\nfn main() { run(target); }	resolved:target|unresolved	return f()=>return 1	(none)	the call `f()` has no statically visible target here. The contract permits resolving it OR declaring it unresolved; omitting it silently is the failure this row exists to catch. Removing the indirect call must change the answer	reviewed
