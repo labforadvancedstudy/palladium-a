@@ -185,6 +185,23 @@ else
   fail=$((fail+1))
 fi
 
+# AND THE SOURCE SIDE, which had no path to `gates` at all until this round. The
+# gate above RUNS the binaries and can only read `<name> <version>` on one
+# non-blank line, so the banner in src/main.rs and a `pub const` no binary prints
+# are structurally invisible to it — two of the three defects. That surface is
+# tests/version_matches_cargo_toml.rs, an ORDINARY integration test, and `make
+# test-rust` is `--lib --bins`: nothing on the certifying path executed it. Same
+# check as the two above, same reason, one layer over.
+if printf '%s\n' "$gates_dry" | grep -qF -- "--test version_matches_cargo_toml"; then
+  printf '  %sok%s   make gates runs the source-side scan (--test version_matches_cargo_toml)\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s make gates does NOT run the source-side version scan\n' "$RED" "$NC"
+  printf '         (it lives in an ordinary integration test, and `make test-rust` is\n'
+  printf '          --lib --bins, so without a target in that list nothing runs it)\n'
+  fail=$((fail+1))
+fi
+
 echo "=============================================="
 echo "$pass passed, $fail failed"
 echo "=============================================="

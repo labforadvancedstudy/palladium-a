@@ -381,6 +381,33 @@ version-gate: build ## Run every built binary and require its --version to match
 test-version-gate: ## Prove the version gate goes RED on binaries that misreport themselves
 	@bash scripts/test-version-gate.sh
 
+# THE SOURCE SIDE OF THE VERSION CLAIM, AND IT NEEDED ITS OWN TARGET BECAUSE IT
+# HAD NO PATH TO `gates` AT ALL. `version-gate` above RUNS the binaries; it can
+# only read output shaped `<name> <version>`, so the banner in src/main.rs and a
+# `pub const` no binary prints are structurally invisible to it — which is where
+# two of the three version defects actually lived. That surface is covered by
+# tests/version_matches_cargo_toml.rs, an ORDINARY integration test, and
+# `make test-rust` is `--lib --bins`: nothing on the certifying path executed it.
+# A check reachable only by someone who already knows to name it is a document.
+#
+# COST, MEASURED AT THE `gates` LEVEL, the way the test-xfail entry below insists
+# on — AND MEASURED TWICE, because once was misleading. Two back-to-back pairs of
+# `make gates` without / with this entry and `test-honest`:
+#
+#     1m45s -> 2m07s   (+21s)
+#     2m00s -> 2m46s   (+46s)
+#
+# Same tree, same machine, hours apart. The spread is machine load, not the
+# gates, and quoting either number alone would have been a claim the next run
+# falsifies — so both are here and the honest statement is "tens of seconds on a
+# two-minute run". On its own this target is 0.2s warm once the test binary is
+# linked; quoting THAT would understate what adding it to the list costs. It is
+# placed beside the two version targets it completes rather than at the end,
+# because its failure is the same class.
+.PHONY: version-source-gate
+version-source-gate: ## Require that no source file states this compiler's version by hand
+	@$(CARGO) test --release --test version_matches_cargo_toml
+
 # `test-xfail` BELONGS IN THIS LIST, and its absence was this round's own defect.
 # It is the check that every #[ignore]d row still fails FOR THE REASON IT
 # DECLARES — the headline mechanism of the last two rounds — and until now it was
@@ -394,16 +421,38 @@ test-version-gate: ## Prove the version gate goes RED on binaries that misreport
 # it needs. (`make test-xfail` on its own is 41s from a build warm for `cargo
 # build --release` but not for `cargo test --release`; that number is the
 # rebuild, not this gate, and quoting it here would have overstated the cost by
-# ten times.) It is last in the list because it is the only entry that runs the
-# whole test suite, so every cheaper failure is reported before it starts.
+# ten times.) It sits at the expensive end of the list — it runs every #[ignore]d
+# row — so every cheaper failure is reported before it starts. It was "last, and
+# the only entry that runs the whole test suite" until `test-honest` joined the
+# prerequisites after it, which is both of those things more literally.
 #
-# NOT ADDED HERE: `test-honest` (the entire test suite, 18s warm / minutes cold).
-# It is missing from this list too, and that is a real hole — but it is a
-# different kind of check (run everything) rather than a gate over a declared
-# inventory, and adding it is a scope decision with an owner, not a line to slip
-# in beside this one. Recorded rather than silently done.
+# `test-honest` IS HERE NOW, AND THE COMMENT THAT USED TO SIT IN ITS PLACE WAS
+# WRONG TWICE OVER. It said the suite was "a real hole… a scope decision with an
+# owner", which named no owner and tracked no obligation — a decoration. Then,
+# writing this round's replacement, I asserted the suite could not be in this
+# list because its debt is open by design. MEASURED, before shipping that
+# sentence: `make test-honest` is 668 passed / 0 failed / 46 ignored, GREEN, 8.4s
+# warm. The debt that is open is inventories 1 and 2 of `m1-exit` (2 rows
+# OWED_TO_M1); inventory 3, which is this same command character for character,
+# is green. So the only argument against it was cost, and the cost is 8.4s
+# standalone-warm — the bulk of what this entry and `version-source-gate` add to
+# `make gates` together, which two back-to-back pairs put at +21s and +46s on a
+# two-minute run. See the `version-source-gate` comment for why both are quoted.
+#
+# And "m1-exit already runs it" is not an answer — that is exactly the argument
+# the last round rejected for `test-xfail`: a target that is RED by design is
+# never evidence that anything inside it passed.
+#
+# `version-source-gate` IS ALSO newly here, and its absence was this round's
+# defect, the same shape as `test-xfail`'s last round: the source-side version
+# check lived in an ordinary integration test that no target on this path ran.
+# It OVERLAPS `test-honest` — the same four tests run twice, 0.2s — and stays
+# separate on purpose: it fails with a headline naming the version claim instead
+# of one line inside a 714-test `--no-fail-fast` wall, and a named target is
+# something scripts/test-version-gate.sh can pin membership of, which "some test
+# somewhere inside the suite" is not.
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate test-xfail ## Run every language-level gate
+gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate version-source-gate test-xfail test-honest ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------
