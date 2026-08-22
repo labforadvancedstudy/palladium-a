@@ -14,14 +14,32 @@ meaning rather than a hex string.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import shlex
+import shutil
+import signal
+import subprocess
 import sys
+import tempfile
+import threading
+import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The typed-result boundary, reused rather than re-implemented: `classify()` returns
+# `Malfunction` for a signal or an unlisted status, and `Malfunction` carries no text
+# attribute, so reading a non-concluding producer's output takes a deliberate step.
+# It is DISCOURAGED BY CONVENTION, not prevented — the bytes remain reachable through
+# `Run._out`. An earlier version of this comment called the ordering unexpressible; that
+# was overstated. scripts/gate_probe.py is owned by another branch and is not edited here.
+import gate_probe  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 PINS = ROOT / "docs" / "citation-pins.tsv"
 ALLOW = ROOT / "docs" / "no-compile-allowlist.txt"
 INDEX = ROOT / "docs" / "reference" / "features" / "feature-index.toml"
+MANIFEST = ROOT / "tests" / "conformance-manifest.txt"
 
 CITED_ROOTS = ("src/", "scripts/", "tests/", "examples/", "stdlib/", "benchmarks/",
                "runtime/", "bootstrap/", "docs/")
@@ -47,9 +65,72 @@ NO_COMPILE_FENCE = re.compile(r"^ {0,3}```palladium\b[^\n]*\bno-compile\b")
 SRC_EVIDENCE = re.compile(
     r"^src:\s+((?:src|runtime|scripts|bootstrap|stdlib|benchmarks|tests|examples)/[\w./-]+"
     r"|Cargo\.toml|Makefile):(\d+)(?:-(\d+))?\s+\S")
-CMD_EVIDENCE = re.compile(r"^cmd:\s+(.+?)\s*->\s*\S")
-CONF_EVIDENCE = re.compile(r"^conformance:\s+([\w./-]+\.pd)\s+"
-                           r"(PASS|COMPILE_FAIL|LINK_FAIL|RUN_FAIL|SKIP_NO_MAIN)\b")
+# `cmd:` is EXECUTED. It used to be a SHAPE check — the string had to look like
+# `cmd: X -> Y`, and X was never run — so the one evidence class that exists to prove an
+# ABSENCE was the one nothing checked. Measured at 2ef170f, 9 of the 53 `cmd:` items in
+# feature-index.toml were false, among them
+#   `grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> 1 line`
+# which produces 8, and
+#   `grep -rniE 'socket|TcpStream|BufReader' src/runtime/ -> exit 1, 0 lines`
+# which produces 95, over a whole src/runtime/net.rs the row claimed did not exist.
+#
+# So the result is a machine-readable contract rather than prose:
+#     cmd: <command> -> exit <N>, <M> lines[ -- <prose>]
+# and the gate runs <command> and compares BOTH numbers. `exit 1, 0 lines` is the
+# dominant shape and is a SUCCESS for an absence proof, which is why the exit status is
+# declared and compared rather than asserted to be zero.
+#
+# Prose after the em dash is a READING of the output and carries exactly the status a
+# `src:` claim carries about its cited range. So it gets the same rule: anything quoted
+# in it must actually appear in the output.
+CMD_EVIDENCE = re.compile(
+    r"^cmd:\s+(?P<cmd>.+)\s+->\s+exit\s+(?P<rc>\d+),\s+(?P<n>\d+)\s+lines?\b"
+    r"(?P<rest>.*)$")
+
+# Commands a `cmd:` item may run. Deliberately short: a `cmd:` item is a hermetic
+# observation of the checked-in source tree and nothing else. Anything needing a build,
+# a compiler, or a gate belongs to the gate that already owns it — see CMD_REFERRED.
+CMD_ALLOWED = {"grep", "ls", "find", "sort", "wc"}
+
+# Programs that must never appear in a `cmd:`, and where the question actually lives.
+# Building a second executor for these here would give the repository two engines that
+# can disagree about whether a program is rejected — the class of bug this file's own
+# header describes for the YAML parser: "a second parser can always disagree with the
+# first". It is also how the corpus of programs stops being enumerable: an inline program
+# in a TOML string is in nobody's closed inventory, so it can neither go MISSING nor be
+# UNDECLARED, which is the whole protection tests/conformance-manifest.txt provides.
+CMD_REFERRED = {
+    "pdc": "a program's behaviour is proved by a conformance fixture: add it under "
+           "tests/, declare it in tests/conformance-manifest.txt, and cite it as "
+           "`conformance: <path>.pd <class>`",
+    "pdm": "as for pdc — declare a fixture and cite `conformance:`",
+    "pls": "as for pdc — declare a fixture and cite `conformance:`",
+    "cargo": "a build is a gate, not an observation — cite it as `gate: cargo ... -> ...`",
+    "make": "a gate is proved by running it — cite it as `gate: make <target> -> ...`",
+    "bash": "a script is a gate — cite it as `gate: make <target> -> ...`",
+    "sh": "a script is a gate — cite it as `gate: make <target> -> ...`",
+}
+
+# Paths that only exist after a build. A command reading one is not reproducible from a
+# checkout, and a `cmd:` item that cannot be reproduced is the same unexecuted text this
+# whole change removes. Measured: `grep -c '#line' build_output/01_lexical_comments.c`
+# exited 2 ("No such file or directory") on a clean tree and had been recorded as
+# "0, exit 1".
+CMD_BUILD_ARTIFACT_ROOTS = {"target", "build_output"}   # compared case-folded
+
+# Shell control operators. shlex(punctuation_chars=True) surfaces these as their own
+# tokens ONLY when unquoted, so `grep -nE '#\[token\("(with|effect)"\)\]' f` keeps its
+# parenthesised alternation while `grep x src/; rm -rf y` is refused.
+CMD_OPERATORS = {";", "&", "&&", "||", "<", ">", ">>", "<<", "(", ")"}
+
+CONF_CLASSES = ("run", "untranscribed", "vacuous", "xfail", "reject", "skip")
+# The verdict vocabulary is the MANIFEST's class vocabulary, and the row is looked up
+# there. It used to be PASS|COMPILE_FAIL|LINK_FAIL|RUN_FAIL|SKIP_NO_MAIN, checked against
+# nothing but the fixture's existence — so six rows read `PASS (placeholder: only prints
+# that the feature is unimplemented)`, which is the manifest's `vacuous` class wearing the
+# word PASS. Separating those two is the entire reason the class exists.
+CONF_EVIDENCE = re.compile(r"^conformance:\s+([\w./-]+\.pd)\s+(" +
+                           "|".join(CONF_CLASSES) + r")\b")
 GATE_EVIDENCE = re.compile(r"^gate:\s+(?:make\s+([\w-]+)|cargo\s+[^\n]+?)\s*->\s*\S")
 TAGGED = re.compile(r"^(src|cmd|conformance|gate):")
 
@@ -232,6 +313,822 @@ def collect_fences() -> list[tuple[str, int]]:
             out.append((str(doc.relative_to(ROOT)), n))
     return sorted(out)
 
+# --- running a `cmd:` item ------------------------------------------------------------
+#
+# THE PROPERTY THIS SECTION ENFORCES, STATED POSITIVELY:
+#
+#     An absence claim must be shown CAPABLE OF PRODUCING OUTPUT.
+#
+# The first version of this executor stated the property negatively — "a path a command
+# names must exist" — and review walked in through two other doors of the same room:
+#
+#     grep -rn 'zzz'                  no path operand at all: grep reads stdin, is handed
+#                                     DEVNULL, and returns exit 1, 0 lines. The canonical
+#                                     absence proof, measured over nothing.
+#     grep -r --regexp=zzz src/       the pattern is consumed by the option, so the one
+#                                     real path is what the "drop the pattern" slice threw
+#                                     away. Zero existence checks, exit 1, 0 lines.
+#
+# and two more found while confirming those: `grep -rne 'zzz'` (a clustered short option
+# smuggling -e past a check that only looked at the whole token), and `wc -l` alone.
+#
+# Every one of them is the same bug, and no list of parse repairs closes a room. So the
+# rule is now measured rather than parsed, in three layers, of which only the third is a
+# proof:
+#
+#   L1 STRUCTURE   the FIRST segment must name at least one path operand; later segments
+#                  must name none, because their input is the pipe. Pattern-bearing
+#                  options (-e/-f/--regexp/--file, in every spelling including clustered)
+#                  are refused outright, because if the pattern can come from anywhere but
+#                  the first operand then "which operand is a path" has no total answer.
+#   L2 FILESYSTEM  every named path resolves — through symlinks — to somewhere inside this
+#                  repository, and exists.
+#   L3 MEASUREMENT for any item claiming 0 lines, the first segment is re-run with its
+#                  pattern replaced by one that matches EVERY line of every stream. If
+#                  that run finds nothing, the command reads nothing, and its emptiness
+#                  measures nothing.
+#
+# L3 is what makes this a property rather than a patch list. It subsumes all four doors
+# above and closes ones nobody has thought of — a live directory filtered to nothing by
+# --include, an empty scope, a path that exists but holds no files — because it asks the
+# stream, not the argv. It also VALIDATES L1's parse: the probe can only be built by
+# identifying the pattern, so a mis-identified pattern makes the probe fail loudly instead
+# of silently checking the wrong thing.
+
+# The tools a `cmd:` may run, and the statuses each may CONCLUDE at. Anything else — a
+# signal, a status not listed — is a MALFUNCTION: nothing was established, so no verdict
+# may be read out of it. grep's 1 is "did not match"; its 2 is "could not look".
+CMD_OK_STATUS = {"grep": (0, 1), "ls": (0,), "find": (0,), "sort": (0,), "wc": (0,)}
+
+# PATH is pinned rather than inherited. Without this, which binary answers `grep` is
+# decided by the caller's environment, and the "no shell" property is a claim about a
+# string rather than about the process that ran.
+SAFE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+# grep options that supply the PATTERN. Refused, not handled: if the pattern can arrive
+# through an option then the first operand may be a path, and the gate has no total way to
+# tell operands apart. `grep -r --regexp=zzz src/` is exactly that hole, and it read as a
+# perfect absence proof over zero checked paths.
+GREP_PATTERN_OPTS = {"-e", "-f", "--regexp", "--file"}
+GREP_PATTERN_SHORTS = "ef"
+# Options taking a separate argument that is NOT a pattern. Also refused, for the same
+# reason in reverse: their argument would be counted as a path.
+GREP_OPTS_WITH_ARG = {"-m", "-A", "-B", "-C", "-d", "--include", "--exclude",
+                      "--max-count", "--after-context", "--before-context", "--context"}
+GREP_SHORTS_WITH_ARG = "mABCd"
+# Inverting the match makes "matched nothing" mean the opposite thing, so the L3 probe
+# must not inherit it. Handled as a whole token AND as a letter inside a short cluster:
+# stripping only the token `-v` left `-vn` inverted, so a legitimate item written that way
+# was falsely REJECTED. Fail-closed, but it made an honest observation unwritable.
+GREP_DEREF_RECURSIVE = {"-R", "--dereference-recursive"}
+GREP_INVERT = {"-v", "--invert-match"}
+GREP_INVERT_SHORT = "v"
+
+# find's expression, ENUMERATED. Everything a `cmd:` item needs in order to observe the
+# tree, and nothing else. Until this existed the expression was forwarded to find
+# unchecked, so
+#     find src -name '*.rs' -exec /bin/sh -c id {} +
+# was accepted — a declared hermetic observation that runs an interpreter of the
+# document's choosing — and `-delete` would have altered the checkout. Neither is caught
+# by the head or tool checks, because the executable being run really is `find`.
+#
+# The set is closed for a second reason. The L3 probe below neutralises the MATCHING
+# predicates and preserves the TRAVERSAL ones, and that rewrite can only be total over a
+# set this small. Negation is refused for the same reason: under `-not`, neutralising
+# `-name X` to `-name '*'` would match nothing, and the probe would accuse an honest item.
+FIND_MATCH_PREDICATES = {"-name", "-iname", "-path", "-ipath"}    # at most ONE, neutralised
+FIND_TRAVERSAL_PREDICATES = {"-type", "-maxdepth", "-mindepth"}   # kept: they decide what is READ
+FIND_TYPE_ARGS = {"f", "d", "l", "p", "s", "b", "c"}
+
+# 4 MiB. A broad recursive grep can emit far more than the gate needs, and an unbounded
+# read is an out-of-memory failure dressed as a doc check. The count is all that is
+# compared, so a command this loud is a badly scoped item, and saying so is better than
+# buffering it.
+CMD_MAX_BYTES = 4 * 1024 * 1024
+CMD_TIMEOUT_S = 120
+CMD_CLEANUP_S = 10      # for ALL of cleanup together, after the kill
+CMD_MAX_SEGMENTS = 8    # a `cmd:` is an observation, not a shell script
+
+_TOOLS: dict = {}
+
+
+def resolve_tool(name: str):
+    """A bare command name -> the absolute path of the binary. -> (path, error).
+
+    Two things are enforced here that "no shell" only claimed before. A token containing
+    a slash is refused, so a checked-in `scripts/grep` cannot be the thing that runs; and
+    the lookup happens on SAFE_PATH rather than the inherited one, so the answer does not
+    depend on who invoked make. The resolved path is what Popen is given.
+    """
+    if "/" in name:
+        return None, (f"names the executable by path ({name!r}); a `cmd:` item may only "
+                      f"use a bare tool name, which is resolved on a pinned PATH. A path "
+                      f"here would let a file in this repository be the thing that runs")
+    if name not in _TOOLS:
+        _TOOLS[name] = shutil.which(name, path=SAFE_PATH)
+    if _TOOLS[name] is None:
+        return None, f"needs `{name}`, which is not on the pinned PATH ({SAFE_PATH})"
+    return _TOOLS[name], None
+
+
+def contained(rel: str):
+    """Resolve a path operand and require it to stay inside the repository.
+
+    `Path.resolve()` follows symlinks, which a lexical check cannot: a link committed
+    inside the repo can point anywhere, and the gate would then be measuring unversioned
+    content while reporting on this tree. scripts/conformance.sh:523-535 refuses the same
+    thing for the same reason.
+    """
+    if rel.startswith(("/", "~")):
+        return None, f"names {rel!r}, which is absolute; a `cmd:` observes this tree only"
+    p = (ROOT / rel)
+    if not p.exists():
+        return None, (f"reads {rel!r}, which does not exist. An absence measured over a "
+                      f"path that is not there is not an absence: BSD grep with --include "
+                      f"exits 1 and prints nothing for a missing directory, which is "
+                      f"exactly what a true absence proof looks like")
+    real = p.resolve()
+    if real != ROOT and ROOT not in real.parents:
+        return None, (f"names {rel!r}, which resolves to {real} — outside {ROOT}. The gate "
+                      f"would be measuring unversioned content and reporting it as this "
+                      f"repository's state")
+    # BUILD ARTIFACTS, DECIDED AFTER RESOLUTION. This used to be a lexical
+    # startswith(("target/", "./target/", ...)) over the raw token, which `target` without
+    # a slash and `docs/../target` both walked straight past — and CI creates target/
+    # before the documentation-evidence step, so generated state could validate
+    # documentation. The question is which directory the path IS IN once resolved, so it
+    # is asked of the resolved, checkout-relative first component.
+    # A RECURSIVE ROOT THAT CONTAINS AN EXCLUDED DIRECTORY READS IT. The alias repair
+    # fixed EXPLICIT operands: `target`, `docs/../target`. It did nothing about
+    # `grep -r pattern .`, which resolves to the repository root, passes containment, and
+    # then reads target/ and build_output/ anyway. The hermetic claim is about what is
+    # READ, not how the path was spelled -- so an operand that is an ANCESTOR of an
+    # excluded directory is refused, exactly as one inside it is. That narrows the grammar
+    # instead of validating it, the move the find expression and the five-command list
+    # both needed.
+    if any((real / d).exists() for d in CMD_BUILD_ARTIFACT_ROOTS):
+        return None, (f"names {rel!r}, which CONTAINS build output; a recursive read from "
+                      f"here would descend into it. Name the subdirectory the observation "
+                      f"is actually about")
+    # Case-folded: on a case-insensitive checkout `TARGET` is the same directory as
+    # `target`, and a case-sensitive comparison would let the alias through.
+    first = real.relative_to(ROOT).parts[0].casefold() if real != ROOT else ""
+    if first in CMD_BUILD_ARTIFACT_ROOTS:
+        return None, (f"reads {rel!r}, which resolves into {first}/ — a build artifact. A "
+                      f"`cmd:` item must be reproducible from a clean checkout, so "
+                      f"generated state is evidence only through the gate that generates "
+                      f"it")
+    return real, None
+
+
+def parse_segment(argv):
+    """Split one pipeline segment into (options, pattern, paths). -> (parsed, error)
+
+    Total for the five allowed tools, which is why the pattern-bearing options above are
+    refused rather than handled. `parsed` is a dict so the L3 probe can rebuild the argv
+    with a different pattern; that rebuild is the check on this parse.
+    """
+    head = argv[0]
+    rest, opts, operands, after_ddash = argv[1:], [], [], False
+    # find's grammar is `find <path>... <expression>`, and the expression contains bare
+    # words: `-name '*.v' -o -name '*.thy'`. Reading those as further paths made the gate
+    # demand a file literally called `*.v`. Once the expression starts it never stops.
+    in_find_expr = False
+    for tok in rest:
+        if in_find_expr:
+            opts.append(tok)
+            continue
+        if not after_ddash and tok == "--":
+            after_ddash = True
+            opts.append(tok)
+            continue
+        if not after_ddash and tok.startswith("-") and tok != "-":
+            if head == "find" and operands:
+                in_find_expr = True         # paths are read; the rest is the expression
+                opts.append(tok)
+                continue
+            if head == "find":
+                return None, (f"puts {tok!r} before any path. find's grammar is "
+                              f"`find <path>... <expression>`, and a `cmd:` item must name "
+                              f"the scope it observes first")
+            base = tok.split("=", 1)[0]
+            if base in GREP_DEREF_RECURSIVE:
+                return None, ("uses -R, which follows symlinks while descending, so a link "
+                              "inside the tree can lead the read outside it. Containment "
+                              "is checked on the operand, and only -r keeps that check "
+                              "meaning what it says")
+            if base in GREP_PATTERN_OPTS:
+                return None, (f"supplies its pattern through {base!r}. That is refused: if "
+                              f"the pattern can arrive through an option, the first operand "
+                              f"may be a path, and there is no total rule for telling "
+                              f"operands apart. Write the pattern as the first operand")
+            if base in GREP_OPTS_WITH_ARG and "=" not in tok:
+                return None, (f"uses {tok!r}, which takes a separate argument the gate "
+                              f"would count as a path. Use the inline `--opt=value` form")
+            # Clustered short options: `-rne` is `-r -n -e`, and a check that only looked
+            # at the whole token let the `e` through with its argument counted as a path.
+            if not tok.startswith("--"):
+                for ch in tok[1:]:
+                    if ch == "R":
+                        return None, (f"clusters -R inside {tok!r}, which follows symlinks "
+                                      f"while descending; use -r")
+                    if ch in GREP_PATTERN_SHORTS:
+                        return None, (f"clusters -{ch} inside {tok!r}, which supplies the "
+                                      f"pattern; see above. Write the pattern as the first "
+                                      f"operand")
+                    if ch in GREP_SHORTS_WITH_ARG:
+                        return None, (f"clusters -{ch} inside {tok!r}, which takes a "
+                                      f"separate argument the gate would count as a path")
+            opts.append(tok)
+            continue
+        operands.append(tok)
+    pattern = None
+    if head == "grep":
+        if not operands:
+            return None, "is a grep with no pattern at all"
+        pattern, operands = operands[0], operands[1:]
+    if head == "find":
+        err = check_find_expression(opts)
+        if err:
+            return None, err
+    return {"head": head, "opts": opts, "pattern": pattern, "paths": operands}, None
+
+
+def check_find_expression(expr):
+    """The find expression this gate permits. -> error-or-None.
+
+        <traversal>*  <match>?
+
+    A conjunction of traversal predicates and AT MOST ONE matching predicate. No `-o`, no
+    `-a`, no action, no negation, no parentheses.
+
+    WHY IT IS THIS SMALL. Three review rounds produced three defects in this one
+    construct, each time in the reduction that turns a command into its L3 probe:
+      round 1  the probe deleted the expression outright, so `find empty-dir -type f`
+               probed as `find empty-dir` and printed the directory itself;
+      round 2  `-type` was preserved but `-o` is Boolean, so `-type f -o -name '*.zzz'`
+               reads as (type f) OR (name) and one vacuous branch removed the -type bound;
+      round 3  `-a` binds tighter than `-o`, so `-name '*.x' -o -name '*.y' -print` reads
+               as name(x) OR (name(y) AND print) — measured, the command printed 0 lines
+               and its probe printed 3.
+    Each fix was to the instance. The construct is find's Boolean expression grammar, and
+    a gate does not need one: the corpus had exactly ONE item using `-o`, and it splits
+    into three items that are each trivially checkable. So the grammar is cut down to the
+    fragment where the reduction is obviously sound, rather than made cleverer again.
+
+    THE GUARANTEE, IN ONE SENTENCE: because the expression is a conjunction of traversal
+    predicates and at most one matching predicate, replacing that predicate's argument
+    with `*` yields a command whose results are a SUPERSET of the original's, so an empty
+    probe proves the scope held nothing for the command to match.
+    """
+    i, seen_match = 0, None
+    while i < len(expr):
+        tok = expr[i]
+        if tok in FIND_TRAVERSAL_PREDICATES:
+            if seen_match:
+                return (f"puts the traversal predicate {tok!r} after the matching predicate "
+                        f"{seen_match!r}. Traversal bounds WHAT IS READ and must come "
+                        f"first, so the probe can keep it while neutralising the match")
+            if i + 1 >= len(expr):
+                return f"has {tok!r} with no argument"
+            if tok == "-type" and expr[i + 1] not in FIND_TYPE_ARGS:
+                return (f"has -type {expr[i + 1]!r}; the argument must be one of "
+                        f"{', '.join(sorted(FIND_TYPE_ARGS))}")
+            i += 2
+            continue
+        if tok in FIND_MATCH_PREDICATES:
+            if seen_match:
+                return (f"uses two matching predicates ({seen_match} and {tok}). This gate "
+                        f"permits at most one, because the probe replaces it with a "
+                        f"match-everything argument and that reduction is only obviously "
+                        f"sound when there is nothing to combine it with. Write one item "
+                        f"per pattern")
+            if i + 1 >= len(expr):
+                return f"has {tok!r} with no argument"
+            seen_match = tok
+            i += 2
+            continue
+        allowed = sorted(FIND_MATCH_PREDICATES | FIND_TRAVERSAL_PREDICATES)
+        extra = ""
+        if tok in ("-o", "-a", "-not", "!", "(", ")", "-print", "-print0"):
+            extra = (" find's Boolean expression grammar is deliberately outside this "
+                     "gate: `-o` and `-a` have precedence, and every attempt to reduce an "
+                     "expression containing them to a sound probe has been wrong. Write "
+                     "one `cmd:` item per pattern instead; the default action already "
+                     "prints, so `-print` is never needed.")
+        return (f"uses the find predicate {tok!r}, which is not in the observation set "
+                f"({', '.join(allowed)}).{extra} A find expression is forwarded to a real "
+                f"process, so `-exec` would run a program of this document's choosing and "
+                f"`-delete` would alter the checkout — neither is caught by the tool "
+                f"checks, because the program being run really is find")
+    return None
+
+
+def build_probe(parsed):
+    """An argv for the same scope that MUST match, if one can be built. -> argv or None.
+
+    grep: the same options and paths, with a pattern matching every line of every stream.
+    The empty pattern does that in BRE, ERE and -F alike, so the probe does not depend on
+    the dialect. Inversion is removed — as a token and as a letter in a short cluster —
+    because with it "matched everything" becomes "printed nothing".
+
+    find: the traversal predicates are kept verbatim and the single matching predicate has
+    its argument replaced by `*`. See check_find_expression for why the permitted grammar
+    is only `<traversal>* <match>?` — three rounds of defects in the reduction of find's
+    Boolean expressions, fixed each time at the instance, until the construct itself was
+    removed.
+    """
+    head = parsed["head"]
+    if head == "grep":
+        opts = []
+        for o in parsed["opts"]:
+            if o in GREP_INVERT:
+                continue
+            if o.startswith("-") and not o.startswith("--"):
+                o = "-" + "".join(c for c in o[1:] if c != GREP_INVERT_SHORT)
+                if o == "-":
+                    continue
+            opts.append(o)
+        return [head] + opts + [""] + parsed["paths"]
+    if head == "find":
+        expr, i = [], 0
+        src = parsed["opts"]
+        while i < len(src):
+            tok = src[i]
+            if tok in FIND_MATCH_PREDICATES:
+                expr += [tok, "*"]                  # the one match, widened to everything
+                i += 2
+            else:
+                expr += [tok, src[i + 1]]           # a traversal predicate, kept verbatim
+                i += 2
+        return [head] + parsed["paths"] + expr
+    return None
+
+
+def split_pipeline(cmd: str):
+    """Split a `cmd:` command into checked argv segments. -> (segments, error-or-None)
+
+    There is NO SHELL anywhere in this path. A `cmd:` item is argv, not a script: parsed
+    with shlex, resolved on a pinned PATH, run with Popen, piped by file descriptor. That
+    is not only a safety property — it is what makes the allowlist mean anything, because
+    with `shell=True` a quoted string could still smuggle a substitution past any token
+    inspection.
+
+    Returns segments as {"argv": [...], "parsed": {...}}.
+    """
+    try:
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError as exc:               # unbalanced quote
+        return None, f"could not be parsed as a command ({exc})"
+    if not tokens:
+        return None, "is empty"
+    if "`" in cmd or "$(" in cmd or "${" in cmd:
+        return None, ("uses command or variable substitution; a `cmd:` item must be a "
+                      "fixed observation, not a computed one")
+
+    raw, current = [], []
+    for tok in tokens:
+        if tok == "|":
+            raw.append(current)
+            current = []
+        elif tok in CMD_OPERATORS:
+            return None, (f"uses the shell operator {tok!r}; only a plain pipeline of "
+                          f"allowed commands may be a `cmd:` item")
+        else:
+            current.append(tok)
+    raw.append(current)
+
+    segments = []
+    for n, seg in enumerate(raw):
+        if not seg:
+            return None, "has an empty pipeline segment"
+        head = seg[0]
+        if os.path.basename(head) in CMD_REFERRED:
+            return None, (f"runs `{os.path.basename(head)}`, which is not an observation "
+                          f"— {CMD_REFERRED[os.path.basename(head)]}")
+        # Before the allowlist, so the diagnosis names the real objection. `scripts/grep`
+        # is not "an unknown tool" — it is a file in this repository being asked to be the
+        # thing that runs, and whose interpreter could be a shell.
+        if "/" in head:
+            return None, (f"names the executable by path ({head!r}); a `cmd:` item may "
+                          f"only use a bare tool name, resolved on a pinned PATH. A path "
+                          f"here would let a file in this repository be what runs")
+        if head not in CMD_ALLOWED:
+            return None, (f"runs `{head}`, which is not in the `cmd:` allowlist "
+                          f"({', '.join(sorted(CMD_ALLOWED))}). A `cmd:` item is a "
+                          f"hermetic observation of the checked-in tree; anything else "
+                          f"belongs to the gate that owns it")
+        exe, err = resolve_tool(head)
+        if err:
+            return None, err
+        parsed, err = parse_segment(seg)
+        if err:
+            return None, err
+        # L1. The first segment is the one that reads the tree, so it must name something
+        # to read; every later segment's input is the pipe, so naming a file there would
+        # mean the pipeline measured two different things and reported one number.
+        if n == 0 and not parsed["paths"]:
+            return None, (f"names no path to read. Its input would be the gate's empty "
+                          f"stdin, so `exit 1, 0 lines` would be produced by reading "
+                          f"nothing at all — which is what a true absence proof looks "
+                          f"like, and is why this is refused rather than measured")
+        if n > 0 and parsed["paths"]:
+            return None, (f"is downstream of a pipe but also names the path(s) "
+                          f"{parsed['paths']}. Its input would be the file, not the pipe, "
+                          f"so the pipeline's result would not be what it appears to be")
+        # L2.
+        for rel in parsed["paths"]:
+            _, err = contained(rel)
+            if err:
+                return None, err
+        segments.append({"argv": [exe] + seg[1:], "parsed": parsed})
+    return segments, None
+
+
+def _classify(argv, rc: int, text: str, ok_status):
+    """gate_probe's typed boundary, applied to one pipeline segment.
+
+    Reused rather than re-implemented. `Malfunction` has no text attribute, so reading a
+    non-concluding segment's output takes a deliberate step rather than being the default
+    — a convention with a shape, not a barrier: the bytes are still reachable via
+    `Run._out`. What IS structural here is that every caller of this function gets
+    `(None, "", <reason>)` for a malfunction and has no output to misread.
+    """
+    return gate_probe.classify(gate_probe.Run(argv, rc, text), reject_codes=ok_status)
+
+
+def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
+    """Run the pipeline. -> (rc, stdout, harness-error-or-None)
+
+    EVERY SEGMENT'S STATUS IS CHECKED, not just the last one. An upstream segment killed
+    by SIGPIPE, or failing on an unreadable file, truncates the stream while the
+    downstream command cheerfully returns the declared absence. Each segment is classified
+    through gate_probe, so a signal or an unlisted status is a MALFUNCTION and the run
+    establishes nothing.
+
+    This is REACHABLE on the allowlist, which an earlier version of this comment denied:
+    `grep -q` terminates at its first match, so `grep -rn e src/ | grep -q fn` kills the
+    upstream with SIGPIPE while the downstream exits 0 having printed nothing — a perfect
+    absence, from a pipeline that broke in the middle. scripts/test-doc-evidence.sh
+    exercises exactly that command through the ordinary allowlist.
+
+    STDERR FROM ANY SEGMENT IS ALSO A HARNESS ERROR. grep answers three questions, not
+    two — 0 matched, 1 did not match, 2 COULD NOT LOOK — and collapsing the third into
+    "did not match" turns an unreadable path into a proof of absence. That is exactly how
+    a probe for the LLVM backend's CLI flag was recorded as `exit 1, 0 lines`: the pattern
+    began with two dashes, grep read it as an option, exited 2, and printed its usage to
+    stderr. Nothing was ever searched. (That probe is also why no comment here may spell
+    the flag out: it greps scripts/, so a mention would BE a hit.)
+    scripts/conformance.sh:140-152 draws the same distinction for the same reason.
+
+    stderr goes to a temporary FILE, never a pipe, so a chatty segment cannot deadlock the
+    gate against a full pipe buffer while nobody is reading it. There is exactly one
+    cleanup path, and it kills and reaps every process whatever happened, so an upstream
+    hang after the downstream has been terminated becomes a controlled harness error
+    rather than a traceback or a leaked process.
+    """
+    env = {"PATH": SAFE_PATH, "LC_ALL": "C"}   # pinned, not inherited
+    # ONE DEADLINE FOR THE WHOLE PIPELINE. `timeout` used to be spent again in full by the
+    # reader join, by the final wait, and by EVERY upstream wait, and then cleanup added
+    # up to 10s per process on top — so a two-segment pipeline under a 120s "timeout"
+    # could take past 360s and the number bounded nothing. Every wait below gets what is
+    # LEFT of this, and cleanup gets a small documented budget of its own because it runs
+    # after the deadline has already been declared blown.
+    deadline = time.monotonic() + timeout
+    def remaining():
+        return max(0.0, deadline - time.monotonic())
+    # Spawning is inside the deadline too, and the pipeline has a length. Every process
+    # used to be started before any clock was consulted and nothing capped the segment
+    # count, so "the deadline is total" was a statement about the waits only.
+    if len(segments) > CMD_MAX_SEGMENTS:
+        return None, "", (f"has {len(segments)} pipeline segments; at most "
+                          f"{CMD_MAX_SEGMENTS} may be spawned under one deadline")
+    procs, errfiles, prev = [], [], subprocess.DEVNULL
+    try:
+        for seg in segments:
+            if remaining() <= 0:
+                return None, "", f"did not finish within {timeout}s (while starting it)"
+            errf = tempfile.TemporaryFile()
+            errfiles.append(errf)
+            try:
+                # Its own session, so the cleanup below can kill DESCENDANTS. Measured
+                # without it: a segment whose grandchild held stdout open made the whole
+                # pipeline take 30s under a 3s timeout — the timeout returned the right
+                # answer and the process kept the gate waiting anyway.
+                p = subprocess.Popen(seg["argv"], cwd=ROOT, env=env, stdin=prev,
+                                     stdout=subprocess.PIPE, stderr=errf,
+                                     start_new_session=True)
+            except OSError as exc:
+                return None, "", f"could not start `{seg['argv'][0]}`: {exc}"
+            if prev is not subprocess.DEVNULL:
+                prev.close()
+            prev = p.stdout
+            procs.append(p)
+
+        # THE READ IS BOUNDED BY THE TIMEOUT, WHICH IT WAS NOT. `stdout.read()` ran BEFORE
+        # the timeout-bearing `wait()`, so a final process that held stdout open without
+        # finishing blocked forever and CMD_TIMEOUT_S bounded nothing. The read happens on
+        # a daemon thread with a bounded join; if it is still going the pipeline is killed
+        # by the `finally` below, which unblocks it, and the daemon flag means a wedged
+        # reader cannot keep the interpreter alive.
+        box: dict = {}
+
+        def _drain():
+            try:
+                box["out"] = procs[-1].stdout.read(CMD_MAX_BYTES + 1)
+            except OSError as exc:                       # pipe torn down by the kill
+                box["err"] = exc
+
+        reader = threading.Thread(target=_drain, daemon=True)
+        reader.start()
+        reader.join(remaining())
+        if reader.is_alive():
+            return None, "", (f"did not finish within {timeout}s (its output stream was "
+                              f"still open)")
+        if "err" in box:
+            return None, "", f"could not read the pipeline's output: {box['err']}"
+        out = box.get("out", b"")
+        if len(out) > CMD_MAX_BYTES:
+            return None, "", (f"produced more than {CMD_MAX_BYTES} bytes. A `cmd:` "
+                              f"item is an observation, not a dump; narrow its scope")
+        try:
+            procs[-1].wait(timeout=remaining())
+        except subprocess.TimeoutExpired:
+            return None, "", f"did not finish within {timeout}s"
+
+        for p in procs[:-1]:
+            try:
+                p.wait(timeout=remaining())
+            except subprocess.TimeoutExpired:
+                return None, "", (f"upstream segment `{p.args[0]}` did not finish within "
+                                  f"{timeout}s after the pipeline was drained")
+
+        for p, seg, errf in zip(procs, segments, errfiles):
+            errf.seek(0)
+            err = errf.read().decode("utf-8", "replace").strip()
+            if err:
+                return None, "", (f"`{seg['parsed']['head']}` wrote to stderr, so it did "
+                                  f"not answer the question — a command that could not "
+                                  f"look is not a proof of absence: "
+                                  f"{err.splitlines()[0][:160]}")
+            verdict = _classify(seg["argv"], p.returncode, "",
+                                CMD_OK_STATUS[seg["parsed"]["head"]])
+            if isinstance(verdict, gate_probe.Malfunction):
+                return None, "", (f"segment `{' '.join(seg['argv'][1:][:3])}...` "
+                                  f"MALFUNCTIONED ({verdict.how}). Nothing was "
+                                  f"established, so its output is not a result: a "
+                                  f"pipeline that broke in the middle still hands the "
+                                  f"last command an empty stream")
+        return procs[-1].returncode, out.decode("utf-8", "replace"), None
+    finally:
+        cleanup_deadline = time.monotonic() + CMD_CLEANUP_S
+        # One cleanup path, unconditional: kill then reap. A process left running would
+        # hold a pipe open for whoever comes next.
+        for p in procs:
+            # The budget covers every cleanup operation, not just wait(): killpg and
+            # close() are syscalls that can block on a wedged descendant too.
+            if time.monotonic() >= cleanup_deadline:
+                break
+            # The GROUP, not the process: a grandchild is what holds the pipe open.
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            if p.poll() is None:
+                try:
+                    p.kill()
+                except OSError:
+                    pass
+            try:
+                if p.stdout:
+                    p.stdout.close()
+            except OSError:
+                pass
+            try:
+                # CMD_CLEANUP_S total, not per process: this runs after the pipeline has
+                # already been killed, so it is a reaping formality, not a wait for work.
+                p.wait(timeout=max(0.0, cleanup_deadline - time.monotonic()))
+            except Exception:               # noqa: BLE001 — cleanup may not raise
+                pass
+        for errf in errfiles:
+            errf.close()
+
+
+def probe_reads_something(segments):
+    """L3. Show the first segment CAN produce output. -> error-or-None.
+
+    Required of every item claiming 0 lines, and of nothing else: an item claiming N > 0
+    has already demonstrated that it read something.
+    """
+    first = segments[0]
+    probe = build_probe(first["parsed"])
+    if probe is None:
+        return (f"claims an empty result, but `{first['parsed']['head']}` has no "
+                f"match-everything form the gate can use to show it read anything. Only "
+                f"grep and find can carry an absence claim here; for anything else, state "
+                f"the observation as a non-empty result")
+    exe, err = resolve_tool(first["parsed"]["head"])
+    if err:
+        return err
+    rc, out, herr = run_pipeline([{"argv": [exe] + probe[1:], "parsed": first["parsed"]}])
+    if herr:
+        return f"could not be shown to read anything: the control run {herr}"
+    if rc != 0 or not out:
+        return (f"claims an empty result over a scope that produces NOTHING even when "
+                f"asked to match everything ({' '.join(probe[1:])} -> exit {rc}, "
+                f"{len(out.splitlines())} lines). The command reads nothing, so its "
+                f"emptiness measures nothing. An absence proof must be shown capable of "
+                f"producing output")
+    return None
+
+
+def check_cmd(name: str, item: str, cache: dict) -> list[str]:
+    """Check one `cmd:` evidence item by RUNNING it. -> list of problems."""
+    m = CMD_EVIDENCE.match(item)
+    if not m:
+        return [f"{name}: `cmd:` must be `<command> -> exit <N>, <M> lines[ -- <prose>]`, "
+                f"so the gate can run the command and compare both numbers; an absence "
+                f"is proved by `exit 1, 0 lines`, not by prose -> {item[:80]!r}"]
+    cmd = m.group("cmd").strip()
+    want_rc, want_n = int(m.group("rc")), int(m.group("n"))
+    rest = m.group("rest")
+
+    key = (cmd, want_n == 0)
+    if key not in cache:
+        segments, err = split_pipeline(cmd)
+        if err:
+            cache[key] = (None, "", f"`cmd:` {err}")
+        elif want_n == 0 and (perr := probe_reads_something(segments)):
+            cache[key] = (None, "", f"`cmd:` {perr}")
+        else:
+            cache[key] = run_pipeline(segments)
+    rc, out, err = cache[key]
+    if err:
+        return [f"{name}: {err}\n      command: {cmd}"]
+
+    lines = out.splitlines()
+    problems = []
+    if rc != want_rc or len(lines) != want_n:
+        shown = "\n".join(f"        | {l[:150]}" for l in lines[:6]) or "        | (no output)"
+        if len(lines) > 6:
+            shown += f"\n        | ... and {len(lines) - 6} more line(s)"
+        problems.append(
+            f"{name}: `cmd:` claims a result the command does not produce\n"
+            f"      command: {cmd}\n"
+            f"      claimed: exit {want_rc}, {want_n} line(s)\n"
+            f"      actual:  exit {rc}, {len(lines)} line(s)\n"
+            f"      output:\n{shown}\n"
+            f"      Re-derive the row against what the command produces now. If the true "
+            f"result undermines the claim, the claim is what changes.")
+        return problems
+
+    # The prose is a reading of the output, so whatever it quotes must be in the output.
+    # Same rule, same reason, as the `src:` quoted-claim check above.
+    body = norm(out)
+    for q in QUOTED.finditer(rest):
+        text = q.group(1) or q.group(2) or q.group(3)
+        if norm(text) not in body:
+            problems.append(
+                f"{name}: `cmd:` quotes {text[:60]!r} but the command's output does not "
+                f"contain it\n      command: {cmd}\n"
+                f"      Quote from the output, or move the remark to `note`, which is "
+                f"where the schema puts prose that is not load-bearing.")
+    return problems
+
+
+# --- `gate:` evidence: a receipt from THIS run, never a transcription -------------------
+#
+# `gate:` was the last unexecuted evidence class: eight outcomes validated only as "a Make
+# target by that name exists". Two of them still carried the pre-2026-08-22 conformance
+# output shape, so the file was already carrying stale numbers under a green gate.
+#
+# Running these from inside the doc lint is not possible — `make gates` runs `check-docs`,
+# and the gates cited here are `make conformance` and `make selfhost`, so the lint would
+# recurse into its own caller. The recursion is an artefact of putting both jobs in one
+# target, so they are split: scripts/gate-receipts.sh executes each DISTINCT referenced
+# gate exactly once (three rows cite `make selfhost`; it runs once), records what it
+# printed, and then asks this checker to validate the index against those receipts.
+#
+# WHAT VALIDATION MEANS, and why it is not just "the gate passed": every checkable token
+# in the declared result — a `key=value`, or a backtick/double-quoted span — must be borne
+# out by what the gate printed in this run. That is what stops `-> fixtures=65 ...
+# verified=45` from rotting the way `-> total=42 pass=39` did. A result with no checkable
+# token at all is prose and is rejected, for the same reason a `cmd:` result may not be.
+#
+# KEY=VALUE IS COMPARED BY VALUE, NOT BY CONTAINMENT. The first version asked whether the
+# claimed token appeared as a SUBSTRING of the output, so a row claiming `verified=4`
+# validated against a run that printed `verified=46`. A number could drift downward by
+# truncation and still pass — in the one mechanism whose entire purpose is that a number
+# cannot drift. Keys are now parsed out of the receipt and the values compared exactly,
+# and a mismatch reports both.
+#
+# A QUOTED SPAN IS STILL A SUBSTRING, AND THAT IS A REVIEWED BOUNDARY. Requiring a quoted
+# span to be a whole output line would make many honest rows unwritable. So a row can
+# satisfy validation with a ubiquitous quoted span and then put an unsupported conclusion
+# in the unchecked prose beside it. That is a limit of this mechanism, recorded here and
+# in the index's schema header rather than papered over; the prose next to a validated
+# token is read by a human, exactly like the excerpt beside a citation pin.
+GATE_KV = re.compile(r"(?<![\w.=-])([a-z_][a-z0-9_]*)=([^\s,;]+)")
+
+
+def gate_tokens(result: str):
+    """-> (key/value pairs, quoted spans). The parts a machine can disagree with."""
+    kv = [(m.group(1), m.group(2)) for m in GATE_KV.finditer(result)]
+    quoted = [q.group(1) or q.group(2) or q.group(3) for q in QUOTED.finditer(result)]
+    return kv, [q for q in quoted if q]
+
+
+def gate_mismatches(kv, quoted, output: str):
+    """What the run does not bear out. -> list of human-readable strings."""
+    seen: dict = {}
+    for m in GATE_KV.finditer(output):
+        seen.setdefault(m.group(1), set()).add(m.group(2))
+    out, body = [], norm(output)
+    for k, v in kv:
+        if k not in seen:
+            out.append(f"{k}={v} (the run printed no {k}= at all)")
+        elif seen[k] != {v}:
+            # MEMBERSHIP IS NOT AGREEMENT. Asking only whether the claim is one of the
+            # values observed let an output containing both `verified=46` and
+            # `verified=4` validate EITHER claim — so a gate that contradicts itself
+            # endorses whichever number the document happens to want. The run must have
+            # said one thing about this key, and it must be the thing claimed.
+            got = ", ".join(sorted(seen[k]))
+            out.append(f"{k}={v} (the run printed {k}={got})"
+                       if len(seen[k]) == 1 else
+                       f"{k}={v} (the run printed {k} with more than one value: {got} — "
+                       f"a self-contradicting gate endorses nothing)")
+    for q in quoted:
+        if norm(q) not in body:
+            out.append(f"{q!r} (not in the run's output)")
+    return out
+
+
+def load_receipts(dirpath: Path):
+    """-> ({command: (exit, output)}, None) or (None, error).
+
+    A RECEIPT FROM AN EARLIER RUN MUST NOT SATISFY THIS ONE, and the previous attempt at
+    that was correlation rather than freshness: a run id written INTO the receipts
+    directory and compared against a caller-supplied string. The id sat next to the bytes
+    it authenticated, so `--gate-run-id "$(cat .../RUN_ID)"` replayed a week-old run — 
+    measured, it validated 10/10.
+
+    Freshness is now structural, and the guarantee is narrower than "nothing survives":
+    scripts/gate-receipts.sh writes into a private mktemp directory it removes on exit, so
+    an earlier run's receipts are neither DISCOVERABLE by nor REUSABLE by a later
+    certifying run — each mints its own unpredictable path. A SIGKILL or a host failure
+    can still leave a directory behind, and this function will read one that is explicitly
+    handed to it; what neither can do is contaminate the certifying path. The one thing
+    left to enforce here is that a receipts directory may not live INSIDE the repository:
+    a directory under version control is content, and content can be committed to look
+    like the outcome of a run that never happened.
+    """
+    idx = dirpath / "index.tsv"
+    if not idx.exists():
+        return None, f"no receipts at {dirpath} (run: make gate-receipts)"
+    real = dirpath.resolve()
+    if real == ROOT or ROOT in real.parents:
+        return None, (f"receipts at {dirpath} are inside the repository. Receipts are the "
+                      f"output of a run, not content: a directory under version control "
+                      f"could be committed and would then validate a run that never "
+                      f"happened. scripts/gate-receipts.sh writes to a private temporary "
+                      f"directory and deletes it on exit.")
+    out = {}
+    for line in idx.read_text(encoding="utf-8").split("\n"):
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        cmd, rc, slug = parts[0], parts[1], parts[2]
+        body = dirpath / slug
+        if not body.exists():
+            return None, f"receipt body missing for {cmd!r} ({slug})"
+        out[cmd] = (int(rc), body.read_text(encoding="utf-8", errors="replace"))
+    return out, None
+
+
+def load_manifest():
+    """tests/conformance-manifest.txt as {path: (class, line-number)}, or None.
+
+    None means the manifest could not be read, which is a gate failure and never a reason
+    to accept a `conformance:` item unchecked — the runner that owns this file exits 2
+    rather than report a green run without it (scripts/conformance.sh:112-116).
+    """
+    if not MANIFEST.exists():
+        return None
+    rows = {}
+    for n, line in enumerate(MANIFEST.read_text(encoding="utf-8").split("\n"), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        rows[parts[0].strip()] = (parts[1].strip(), n)
+    return rows
+
 
 # --- feature-index parsing: one parser, from the standard library ---------------------
 
@@ -268,12 +1165,47 @@ def load_rows():
     return rows, "tomllib (standard library, single parser)"
 
 
-def check_index():
+def list_gate_commands():
+    """The DISTINCT commands `gate:` items cite, for scripts/gate-receipts.sh.
+
+    Distinct: three rows cite `make selfhost`, and it is run once.
+    """
+    rows, _ = load_rows()
+    seen = []
+    for _, _, _, ev in rows:
+        for item in ev:
+            m = GATE_EVIDENCE.match(item) if item.startswith("gate:") else None
+            if not m:
+                continue
+            cmd = item[len("gate:"):].split("->")[0].strip()
+            if cmd not in seen:
+                seen.append(cmd)
+    return seen
+
+
+def check_index(receipts=None):
+    """-> (problems, row-count, how, counts)
+
+    `counts` is printed by main(). Every `cmd:` item is RUN — there is no skip path, and
+    that is deliberate: a skipped item that reports nothing is the same unmeasured
+    denominator one layer down, and the conformance runner this file borrows its
+    discipline from treats a fixture it cannot read as a failure rather than a skip
+    (scripts/conformance.sh:512-517). An item the gate cannot run hermetically is a lint
+    error naming the gate that owns the question, not a quiet exemption.
+    """
+    counts = {"cmd": 0, "conformance": 0, "src": 0, "gate": 0, "gate_validated": 0}
     if not INDEX.exists():
-        return [f"feature-index: {INDEX} missing"], 0, "none"
+        return [f"feature-index: {INDEX} missing"], 0, "none", counts
     rows, how = load_rows()
     problems = []
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    manifest = load_manifest()
+    if manifest is None:
+        problems.append(
+            f"conformance manifest {MANIFEST.relative_to(ROOT)} is missing, so no "
+            f"`conformance:` evidence can be resolved. The corpus is a closed inventory; "
+            f"without it this gate cannot know what a fixture is declared to do.")
+    cmd_cache: dict = {}
     for name, impl, spec, ev in rows:
         if not isinstance(ev, (list, tuple)) or not ev:
             problems.append(f"{name}: evidence must be a non-empty list")
@@ -282,6 +1214,7 @@ def check_index():
             if not TAGGED.match(item):
                 problems.append(f"{name}: untagged evidence -> {item[:70]!r}")
             elif item.startswith("src:"):
+                counts["src"] += 1
                 m = SRC_EVIDENCE.match(item)
                 if not m:
                     problems.append(
@@ -314,29 +1247,110 @@ def check_index():
                                         f"the range does not contain the quoted claim "
                                         f"{text[:50]!r} — widen the range to include what is "
                                         f"being claimed")
-            elif item.startswith("cmd:") and not CMD_EVIDENCE.match(item):
-                problems.append(f"{name}: `cmd:` shows no result — an absence needs its "
-                                f"exit status -> {item[:70]!r}")
+            elif item.startswith("cmd:"):
+                counts["cmd"] += 1
+                problems.extend(check_cmd(name, item, cmd_cache))
             elif item.startswith("conformance:"):
+                counts["conformance"] += 1
                 m = CONF_EVIDENCE.match(item)
                 if not m:
-                    problems.append(f"{name}: `conformance:` needs <file>.pd <VERDICT> "
-                                    f"-> {item[:70]!r}")
+                    problems.append(
+                        f"{name}: `conformance:` needs <path>.pd <class>, where <class> "
+                        f"is what {MANIFEST.name} declares "
+                        f"({' | '.join(CONF_CLASSES)}) -> {item[:70]!r}")
                 elif not (ROOT / m.group(1)).exists():
                     problems.append(f"{name}: conformance fixture missing -> {m.group(1)}")
+                elif manifest is not None:
+                    declared = manifest.get(m.group(1))
+                    if declared is None:
+                        problems.append(
+                            f"{name}: conformance fixture {m.group(1)} is not declared in "
+                            f"{MANIFEST.name}, so no gate runs it — an undeclared fixture "
+                            f"is outside the closed inventory and proves nothing")
+                    elif declared[0] != m.group(2):
+                        problems.append(
+                            f"{name}: `conformance:` cites {m.group(1)} as "
+                            f"{m.group(2)!r}, but {MANIFEST.name}:{declared[1]} declares "
+                            f"it {declared[0]!r}. The manifest is what the gate runs; a "
+                            f"row that reads PASS over a `vacuous` fixture is how a "
+                            f"placeholder gets counted as coverage.")
             elif item.startswith("gate:"):
+                counts["gate"] += 1
                 m = GATE_EVIDENCE.match(item)
+                body = item[len("gate:"):]
+                gcmd, _, gresult = body.partition("->")
+                gcmd, gresult = gcmd.strip(), gresult.strip()
                 if not m:
                     problems.append(f"{name}: `gate:` needs a command and a result "
                                     f"-> {item[:70]!r}")
                 elif m.group(1) and not re.search(rf"^{re.escape(m.group(1))}:",
                                                   makefile, re.M):
                     problems.append(f"{name}: no such make target -> {m.group(1)}")
+                else:
+                    # A result with nothing a machine can disagree with is prose, and
+                    # prose is what let `-> total=42 pass=39` survive the output format
+                    # that produced it. Same rule as `cmd:`: the result is a contract.
+                    gkv, gq = gate_tokens(gresult)
+                    toks = gkv + gq
+                    if not toks:
+                        problems.append(
+                            f"{name}: `gate:` result carries nothing checkable — it needs "
+                            f"at least one key=value or a quoted span that the gate's own "
+                            f"output contains, so a changed number fails here instead of "
+                            f"rotting -> {gresult[:70]!r}")
+                    elif receipts is None:
+                        pass        # counted, printed, and named by main(); never silent
+                    elif gcmd not in receipts:
+                        problems.append(
+                            f"{name}: `gate:` cites {gcmd!r}, for which this run has no "
+                            f"receipt. scripts/gate-receipts.sh runs every command the "
+                            f"index cites; a command it did not run cannot be evidence.")
+                    else:
+                        grc, gout = receipts[gcmd]
+                        if grc != 0:
+                            problems.append(
+                                f"{name}: `gate:` cites {gcmd!r}, which FAILED in this "
+                                f"run (exit {grc}). A failing gate is not evidence for "
+                                f"anything.")
+                        else:
+                            missing = gate_mismatches(gkv, gq, gout)
+                            if missing:
+                                problems.append(
+                                    f"{name}: `gate:` cites {gcmd!r}, and this run does "
+                                    f"not bear out:\n        "
+                                    + "\n        ".join(missing)
+                                    + f"\n      Re-derive the result from what the gate "
+                                      f"actually reports.")
+                            else:
+                                counts["gate_validated"] += 1
         if impl not in ("implemented", "partial", "unimplemented"):
             problems.append(f"{name}: implementation={impl!r} not in vocabulary")
+        # A BEHAVIOURAL CLAIM NEEDS EVIDENCE FROM A RUN.
+        #
+        # This is the durable form of the rule that refusing the literal names `pdc`,
+        # `cargo` and `make` in a `cmd:` only approximates. That blocklist stops one
+        # spelling; it does not stop a future author from deleting a compiler experiment,
+        # replacing it with a source grep, and satisfying the schema — which is how this
+        # file came to say a program "compiles, links, prints 99, no diagnostic" about a
+        # program the compiler refuses.
+        #
+        # `implemented` and `partial` assert that pdc DOES something. Nothing static can
+        # establish that: a source line proves a branch exists, not what happens when you
+        # reach it. So those rows must carry at least one item that came from running the
+        # compiler — a conformance fixture, or a gate whose output is checked against a
+        # receipt. `unimplemented` is exempt on purpose: an absence is exactly what a
+        # `cmd:` absence proof is for, and 16 rows legitimately rest on one.
+        if impl in ("implemented", "partial"):
+            if not any(str(x).startswith(("conformance:", "gate:")) for x in ev):
+                problems.append(
+                    f"{name}: implementation={impl!r} is a claim about what the compiler "
+                    f"DOES, and every item here is static. A source citation proves a "
+                    f"branch exists, not what happens when you reach it. Add a "
+                    f"`conformance:` fixture that exercises it, or a `gate:` whose output "
+                    f"says so.")
         if not spec:
             problems.append(f"{name}: no spec pointer")
-    return problems, len(rows), how
+    return problems, len(rows), how, counts
 
 
 def read_pins():
@@ -353,7 +1367,46 @@ def read_pins():
 
 
 def main() -> int:
+    global INDEX
     update = "--update" in sys.argv
+    # `--index` / `--index-only` exist for scripts/test-doc-evidence.sh, which points the
+    # evidence checks at a throwaway index containing a KNOWN-FALSE `cmd:` item and
+    # requires this gate to go red on it. A gate is worth its exit code, and the only way
+    # to know this one still has one is to break something on purpose.
+    # (Same purpose as CONFORMANCE_MANIFEST in scripts/conformance.sh.)
+    if "--index" in sys.argv:
+        INDEX = Path(sys.argv[sys.argv.index("--index") + 1]).resolve()
+
+    # scripts/gate-receipts.sh asks for the distinct commands, runs each once, then hands
+    # the receipts back. The receipts are read only when that same invocation passes the
+    # directory, so a stale directory from an earlier run cannot be picked up by accident.
+    if "--list-gate-commands" in sys.argv:
+        for c in list_gate_commands():
+            print(c)
+        return 0
+    receipts = None
+    if "--gate-receipts" in sys.argv:
+        rdir = Path(sys.argv[sys.argv.index("--gate-receipts") + 1])
+        receipts, rerr = load_receipts(rdir)
+        if rerr:
+            print(f"FAIL:\n  {rerr}")
+            return 1
+
+    if "--index-only" in sys.argv:
+        problems, nrows, how, counts = check_index(receipts)
+        print(f"feature-index rows: {nrows} via {how}")
+        print(f"cmd: evidence executed: {counts['cmd']}")
+        print(f"gate: evidence validated against this run: "
+              f"{counts['gate_validated']}/{counts['gate']}"
+              + ("" if receipts is not None else "  (no receipts passed)"))
+        if problems:
+            print("\nFAIL:")
+            for p in problems:
+                print(f"  {p}")
+            return 1
+        print("feature-index evidence: OK")
+        return 0
+
     cites = collect_citations()
     fences = collect_fences()
     conts = collect_continuations()
@@ -441,7 +1494,7 @@ def main() -> int:
         fail.append(f"unpinnable citation shorthand in {rel}: ...{ctx} — write the full path; "
                     f"a bare `:LINE` gets no pin and no movement check")
 
-    problems, nrows, how = check_index()
+    problems, nrows, how, counts = check_index(receipts)
     fail.extend(problems)
 
     print("=" * 62)
@@ -452,6 +1505,18 @@ def main() -> int:
     print(f"feature-index rows: {nrows} via {how}"
           + (", all evidence tagged and resolved" if not problems
              else f", {len(problems)} evidence problem(s)"))
+    # Printed, because the denominator IS the finding: for as long as this said nothing,
+    # all 53 `cmd:` items were unexecuted text. `cmd:` has no skip column — it is hermetic
+    # and cheap, so there is no reason to skip one. `gate:` does have a seam, because a
+    # gate needs a build and this is a lint: when the receipts are absent the count says
+    # so and names the command that produces them. `make gates` runs that command, so the
+    # target that CERTIFIES has no unvalidated gate evidence; only the lint does.
+    gv = counts["gate_validated"]
+    gate_note = (f"{gv}/{counts['gate']} validated against this run's receipts"
+                 if receipts is not None else
+                 f"{counts['gate']}, NONE validated -- run `make gate-receipts`")
+    print(f"evidence items: cmd={counts['cmd']} (all EXECUTED, none skipped) "
+          f"src={counts['src']} conformance={counts['conformance']} gate={gate_note}")
     print("=" * 62)
     if fail:
         print("\nFAIL:")

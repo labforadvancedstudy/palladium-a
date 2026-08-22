@@ -1,0 +1,20 @@
+// NEGATIVE TEST -- `&mut` of a local that is not `let mut` is refused, for a
+// struct type.
+//
+// feature-index.toml recorded this exact program as "compiles, links, prints 77
+// -- an immutable local mutated with no diagnostic", as an open borrow-checker
+// hole. Run, it does not: the borrow checker rejects it and names the repair.
+// The claim was a `cmd:` string no gate had ever executed.
+struct S {
+    x: i64,
+}
+
+fn bump(s: &mut S) {
+    s.x = 77;
+}
+
+fn main() {
+    let v: S = S { x: 1 };
+    bump(&mut v);
+    print_int(v.x);
+}

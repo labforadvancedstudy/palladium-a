@@ -1,0 +1,36 @@
+// D6 REGRESSION -- a variable passed to a function is still usable afterwards.
+//
+// D6 was recorded as "call arguments are borrowed forever": `t(s); t(s)` was
+// said to be rejected on the second call. It was fixed in 191f8c1 --
+// src/ownership/borrow_checker.rs:519 gives each call its own lifetime and
+// :525 ends the argument borrows with the call -- and the retraction rested on a
+// `cmd:` string in feature-index.toml that no gate ran. This file is that
+// retraction as a command.
+struct P {
+    x: i64,
+}
+
+fn t(a: String) -> i64 {
+    return string_len(a);
+}
+
+fn take2(a: String, b: String) -> i64 {
+    return string_len(a) + string_len(b);
+}
+
+fn bump(p: &mut P) {
+    p.x = p.x + 1;
+}
+
+fn main() {
+    let s: String = "hello";
+    print_int(t(s));
+    print_int(t(s));
+    print_int(take2(s, s));
+
+    let mut p: P = P { x: 0 };
+    bump(&mut p);
+    bump(&mut p);
+    print_int(p.x);
+    print("param_reused_after_call_ok");
+}

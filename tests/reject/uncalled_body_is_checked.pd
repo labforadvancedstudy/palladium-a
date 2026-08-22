@@ -1,0 +1,28 @@
+// NEGATIVE TEST, and half of a PAIR. Its partner is
+// tests/regression/lifetimes_uninferred.pd, and neither means much alone.
+//
+// WHAT THIS ONE ESTABLISHES: the borrow checker reads the body of a function
+// that nothing calls. `bad` is never called from main, and the file is still
+// refused. Without this, the partner fixture -- an uncalled function returning
+// a reference to a dead local, which compiles clean -- would be explained away
+// as "the checker never looked at it".
+//
+// Together the pair says something a grep cannot: the checker DID look, and had
+// no lifetime relation to apply. See src/ownership/mod.rs:329-333, where
+// add_constraint is defined and never called by anything.
+struct S {
+    x: i64,
+}
+
+fn borrow_it(s: &mut S) {
+    s.x = 1;
+}
+
+fn bad() {
+    let v: S = S { x: 0 };
+    borrow_it(&mut v);
+}
+
+fn main() {
+    print_int(1);
+}

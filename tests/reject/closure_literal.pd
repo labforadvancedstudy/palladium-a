@@ -1,0 +1,7 @@
+// NEGATIVE TEST -- closures do not exist, at any level of the compiler.
+//
+// There is no Closure or Lambda node in src/ast/ or src/parser/, so `|` in
+// expression position is simply not the start of anything.
+fn main() {
+    let f = |x: i64| x;
+}

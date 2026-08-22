@@ -1,0 +1,14 @@
+// NEGATIVE TEST -- the `ref T` parameter spelling does not exist.
+//
+// The specification's memory model (language-spec.md N9) writes a shared borrow
+// as `ref T` and a unique one as `ref mut T`. The implemented spelling is Rust's
+// `&` / `&mut`, so `ref` is not a keyword and the parser sees an identifier
+// where it wants the parameter's type.
+//
+// This file used to be a string in docs/reference/features/feature-index.toml
+// under a `cmd: pdc compile '...'` tag that nothing ever ran. A program's
+// behaviour belongs in the closed inventory that `make conformance` reconciles;
+// a program in a TOML string can neither go MISSING nor be UNDECLARED.
+fn f(x: ref String) {}
+
+fn main() {}

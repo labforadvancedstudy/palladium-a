@@ -1,0 +1,18 @@
+// NEGATIVE TEST -- `?` is refused, and that refusal is the fix for defect D5.
+//
+// `?` used to typecheck and then emit C referring to a `struct Result` layout
+// codegen never defines, so the failure surfaced in gcc with a message about a
+// type the user never wrote. It is now refused in the type checker, by name,
+// before any C exists.
+fn g() -> i64 {
+    return 1;
+}
+
+fn f() -> i64 {
+    let x: i64 = g()?;
+    return x;
+}
+
+fn main() {
+    print_int(f());
+}
