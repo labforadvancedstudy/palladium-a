@@ -1287,9 +1287,20 @@ why `scripts/conformance.sh` reports `SKIP_NO_MAIN` for two files rather than fa
 
 `scripts/conformance.sh` compiles, links, and runs every `.pd` under `tests/` and `examples/`
 against `tests/conformance-manifest.txt`, a **closed inventory** declaring what each fixture is
-expected to do. Current status (2026-08-22):
+expected to do. Current status, re-measured at `2ef170f` (2026-08-22):
 
-**verified 33 · untranscribed 0 · vacuous 7 · xfail 2 · skip 2 · failures 0**, over 44 fixtures.
+**verified 46 · untranscribed 0 · vacuous 7 · xfail 1 · reject 14 · skip 2 · failures 0**, over 70
+fixtures. (Re-measured on the integrated tree; the previous figure — 43 verified, reject 0, over
+53 — was taken before 16 rows landed, 14 of them `reject`. A11 is the authority a release plan
+reads, so a stale number here is release governance and not a documentation nit; that sentence is
+this file's own, and it is why the figure is re-measured rather than left.)
+
+> *(This paragraph previously read "verified 33 · … · xfail 2 · skip 2 · failures 0, over 44
+> fixtures" and, below, listed "the three failures". Both were true before M1 and false when M1
+> shipped: the corpus gained the nine `tests/stdlib/` drivers and `tests/regression/` rows, D9 made
+> `examples/practical/simple_sort.pd` run, `tests/misc/test1.pd` was transitioned, and the run has
+> `failures=0`. The annex is the authority a release plan reads, so stale numbers here are release
+> governance and not a documentation nit.)*
 
 `scripts/check-docs.sh` does the same for documentation snippets, and `scripts/selfhost.sh` checks
 the self-hosting fixed point.
@@ -1315,7 +1326,11 @@ Each fixture declares a class:
   an old excuse. A listed program that starts passing is `XPASS` and fails the gate.
 - **reject** — a negative test: the compiler *must* refuse it with the declared diagnostic. This is
   real coverage, and it is how "the compiler rejects `.await`" gets tested instead of a program
-  that prints prose about async being unimplemented.
+  that prints prose about async being unimplemented. **CLOSED**: `reject=14` on the integrated
+  tree. This paragraph carried a universally-quantified absence — "No fixture uses this class" —
+  that was false the moment the rows landed, and an absence claim is the kind that stays wrong
+  quietly, because nothing about a passing run contradicts it. The refusals a second
+  implementation must reproduce are now in the corpus rather than only in Rust integration tests.
 - **skip** — a declared non-program, and it must PROVE that: the compiler has to refuse it at a
   declared stage with a declared diagnostic, exactly like an `xfail`. This replaced an `fn main`
   regex, which `fn /* c */ main()`, `fn // c` + newline + `main()`, and plain `fn` + newline +
@@ -1326,19 +1341,19 @@ Because the inventory is closed, a fixture that is deleted, renamed, or added wi
 fails the gate rather than silently shrinking or growing it. The gate's own ability to fail is
 tested by `make test-conformance-runner` (96 cases).
 
-The three failures: `examples/practical/simple_sort.pd` ("Unsupported type in reference
-parameter"), `tests/misc/test1.pd` ("Expected function, struct, enum, trait, type, impl, or macro
-declaration"), `tests/projects/hello_pdm/tests/test_math.pd` ("Undefined function: add").
+**There are no failures.** The one remaining `xfail` is
+`tests/projects/hello_pdm/tests/test_math.pd` ("Undefined function: add"), which needs cross-file
+module imports. *(A previous version of this paragraph listed three failures. Two of them are gone:
+`examples/practical/simple_sort.pd` runs since D9 was fixed, and `tests/misc/test1.pd` was
+transitioned in the same change.)*
 
-`scripts/check-docs.sh` does the same for documentation snippets, and `scripts/selfhost.sh` checks
-the self-hosting fixed point.
-
-**Six files in `tests/` named after a feature do not exercise it.** `07_traits_basic.pd`,
-`08_generics_basic.pd`, `09_effects_system.pd`, `10_async_await.pd`, `11_unsafe_blocks.pd` and
-`12_modules_imports.pd` each only `print` a message saying the feature is unimplemented, and pass
-trivially. A green conformance run is therefore **not** evidence for traits, generics, effects,
-async, unsafe enforcement, or modules. *(v0.2 named two of these six; the other four have the same
-shape.)*
+**Seven files in `tests/` named after a feature do not exercise it.** `02_types_enums.pd`,
+`07_traits_basic.pd`, `08_generics_basic.pd`, `09_effects_system.pd`, `10_async_await.pd`,
+`11_unsafe_blocks.pd` and `12_modules_imports.pd` each only `print` a message saying the feature is
+unimplemented, and pass trivially. A green conformance run is therefore **not** evidence for enums,
+traits, generics, effects, async, unsafe enforcement, or modules. *(v0.2 named two of these; a
+later revision said six and omitted `02_types_enums.pd`, which the manifest has always declared
+`vacuous`.)*
 
 ## A12. Relationship to the bootstrap subset
 
