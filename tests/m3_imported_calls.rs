@@ -522,23 +522,21 @@ fn test_imported_definitions_are_emitted_in_a_stable_order() {
     }
 }
 
-/// The whole file, which is what a fixed point actually requires — and which is
-/// still not stable, because one iteration site remains unordered.
+/// The WHOLE file, which is what a fixed point actually requires.
 ///
-/// `generate_function_prototypes` clones `imported_modules` and iterates
-/// `.values()` (`src/codegen/mod.rs:1757-1758`), so the block of imported
-/// prototypes still permutes per process. Measured with the other three sites
-/// ordered: the residual diff is exactly a swap of two prototype lines
-/// (`long long a();` / `long long b();`), nothing else.
+/// TRANSITIONED from XFAIL. It was declared failing while only three of the four
+/// `imported_modules` iteration sites were ordered: `generate_function_prototypes`
+/// still iterated `.values()`, so the block of imported prototypes permuted per
+/// process and the residual diff was exactly a swap of two prototype lines. That
+/// fourth site is now ordered too, so this is a live assertion.
 ///
-/// That site was left alone deliberately: it is inside
-/// `generate_function_prototypes`, which another branch is editing, and the
-/// brief for this change bounded it to the other three. The fix is the same
-/// two lines applied there, and it was measured to close this test completely
-/// (30 of 30 identical compiles of this program) before being reverted to
-/// respect that boundary.
+/// The four sites are the complete set for the import path, established two ways.
+/// Structurally: `CodeGenerator` holds twelve `HashMap`/`HashSet` fields and
+/// `imported_modules` is the only one ever *iterated* — the other eleven are
+/// lookup-only, so their internal order cannot reach the output. Empirically:
+/// the assertion below, over 6 modules (720 possible orders) and 8 independent
+/// compiler processes.
 #[test]
-#[ignore = "XFAIL: the emitted C is not byte-stable across compiles — generate_function_prototypes still iterates the imported modules in HashMap order (src/codegen/mod.rs:1757-1758), and RandomState reseeds per process, so the block of imported prototypes permutes; the other three sites (:1114, :1193, :1278) are ordered and their definitions are stable, so the residual diff is exactly the prototype lines. This blocks a self-hosting fixed point for any compiler that imports anything (owned by M3, cross-file module imports)"]
 fn test_the_whole_emitted_c_is_byte_stable() {
     let runs = emitted_c_over_runs(8);
     for (i, c) in runs.iter().enumerate().skip(1) {
@@ -566,9 +564,22 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 ///
 /// It matters for the same reason the import one does: `make selfhost`'s fixed
 /// point is a byte-identity claim, and it survives today only because
-/// `bootstrap/pdc.pd` has neither modules nor generics.
+/// `bootstrap/pdc.pd` has neither modules (`grep -c '^import'` -> 0) nor generics
+/// (excluded from PBS-1, `docs/specification/bootstrap-subset.md:76`). Today's
+/// fixed point is therefore not evidence that the compiler is deterministic; it
+/// is evidence that PBS-1 avoids both sources.
+///
+/// TRANSITIONED from XFAIL: both `keys()` iterations are now sorted by
+/// `(name, type_args)`.
+///
+/// NOT COVERED by any test: the sibling sort in `get_struct_instantiations`
+/// (`src/typeck/mod.rs:2948`). Generic *structs* cannot be compiled at all right
+/// now — `struct Box<T> { v: T }` lowers to `void*` and gcc rejects
+/// "initializing 'void *' with an expression of incompatible type
+/// 'struct Box_alpha_i64'" — so there is no program whose output that ordering
+/// could be observed through. It is sorted for symmetry, and this paragraph is
+/// the honest statement of its coverage.
 #[test]
-#[ignore = "XFAIL: monomorphized generics are emitted in HashMap order — TypeChecker::get_instantiations iterates self.instantiations.keys() (src/typeck/mod.rs:2931) and get_struct_instantiations does the same (:2948), so codegen (src/codegen/mod.rs:1285, :1774) emits them in an order that changes with the per-process hash seed; a six-generic program that imports nothing produced 30 distinct C outputs in 30 compiles. Independent of the module system, and it blocks a self-hosting fixed point for any compiler using generics (owned by M4, generics that work)"]
 fn test_generic_instantiations_are_emitted_in_a_stable_order() {
     let names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
     let src = format!(
@@ -602,6 +613,98 @@ fn test_generic_instantiations_are_emitted_in_a_stable_order() {
             definition_order(c),
             definition_order(&runs[0]),
             "compile #{} emitted the monomorphized generics in a different order",
+            i
+        );
+    }
+}
+
+/// THE 1.0 PRECONDITION, measured directly.
+///
+/// The two tests above each isolate one source and are blind to the other: the
+/// module one uses no generics, the generic one imports nothing. Neither speaks
+/// to the case the thesis actually needs, because the standing definition of 1.0
+/// is `bootstrap/pdc.pd` rewritten in the differentiated dialect and still
+/// reaching a byte-identical fixed point — and that dialect uses BOTH.
+///
+/// So this one uses both at once, and mixes the type arguments so the sort's
+/// tie-break on `type_args` is exercised too, not just the one on `name`: six
+/// modules, each exporting a plain struct, a constructor and a generic function,
+/// with the generics instantiated at `i64` in half the call sites and at
+/// `String` in the other half. The emitted C carries twelve monomorphizations
+/// alongside the six imported structs and twelve imported functions.
+///
+/// Measured: 30 of 30 identical before this was reduced to 8 for test runtime.
+#[test]
+fn test_modules_and_generics_together_are_byte_stable() {
+    let names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
+    let modules: Vec<(String, String)> = names
+        .iter()
+        .map(|n| {
+            (
+                format!("{}.pd", n),
+                format!(
+                    "pub struct S_{n} {{ x: i64 }}\n\
+                     pub fn g_{n}() -> S_{n} {{ return S_{n} {{ x: 5 }}; }}\n\
+                     pub fn id_{n}<T>(v: T) -> T {{ return v; }}\n",
+                    n = n
+                ),
+            )
+        })
+        .collect();
+
+    let imports: String = names.iter().map(|n| format!("import {};\n", n)).collect();
+    let calls: String = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| {
+            // Alternate the type argument, so `instantiations` holds keys that
+            // differ in `type_args` as well as in `name`.
+            let use_generic = if i % 2 == 0 {
+                format!("    print_int(id_{n}(7));\n", n = n)
+            } else {
+                format!("    print(id_{n}(\"s\"));\n", n = n)
+            };
+            format!("    print_int(g_{n}().x);\n{}", use_generic, n = n)
+        })
+        .collect();
+    let main_src = format!("{}\nfn main() {{\n{}}}\n", imports, calls);
+
+    let runs: Vec<String> = (0..8)
+        .map(|_| {
+            let dir = TempDir::new().unwrap();
+            for (name, src) in &modules {
+                fs::write(dir.path().join(name), src).unwrap();
+            }
+            fs::write(dir.path().join("main.pd"), &main_src).unwrap();
+            let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+                .args(["compile", "main.pd", "-o", "prog"])
+                .current_dir(dir.path())
+                .output()
+                .expect("failed to run pdc");
+            assert!(
+                out.status.success(),
+                "the combined program must compile:\n{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            fs::read_to_string(dir.path().join("build_output").join("main.c")).unwrap()
+        })
+        .collect();
+
+    // The monomorphizations must actually be there, or this test would pass by
+    // exercising nothing — the same trap `tests/07_traits_basic.pd` fell into.
+    let monos = runs[0].matches("id_alpha_").count() + runs[0].matches("id_bravo_").count();
+    assert!(
+        monos > 0,
+        "no monomorphized generic reached the C, so this test proves nothing:\n{}",
+        runs[0]
+    );
+
+    for (i, c) in runs.iter().enumerate().skip(1) {
+        assert_eq!(
+            c, &runs[0],
+            "compile #{} of a program using BOTH modules and generics emitted \
+             different C than compile #0",
             i
         );
     }

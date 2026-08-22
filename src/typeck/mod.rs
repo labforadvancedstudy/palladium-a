@@ -2925,10 +2925,32 @@ impl TypeChecker {
     }
 
     /// Get all generic function instantiations for code generation
+    ///
+    /// Ordered by `(name, type_args)`, not by `HashMap` iteration.
+    /// `FunctionInstantiation` is a hash key, and `RandomState` reseeds every
+    /// process, so returning them in map order put the hash seed into the
+    /// emitted C: six generic functions in a program that imports nothing
+    /// produced thirty distinct outputs in thirty compiles.
+    ///
+    /// Emission order is not all that rides on this. `get_mangled_name_for_call`
+    /// (`src/codegen/mod.rs:3293-3310`) scans this list for every instantiation
+    /// of a name and, when a function has more than one, picks by inferring from
+    /// the first argument — so before this, *which monomorphization a call
+    /// resolved to* could also vary between runs. Sorting does not make that
+    /// selection correct; it makes it reproducible, which is the precondition
+    /// for ever seeing that it is wrong.
+    ///
+    /// This matters for the same reason the module ordering does: `make selfhost`
+    /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
+    /// because `bootstrap/pdc.pd` uses no generics — they are excluded from PBS-1
+    /// (`docs/specification/bootstrap-subset.md:76`).
     pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
         let mut result = Vec::new();
 
-        for instantiation in self.instantiations.keys() {
+        let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect();
+        keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+
+        for instantiation in keys {
             if let Some(generic_func) = self.generic_functions.get(&instantiation.name) {
                 result.push((
                     instantiation.name.clone(),
@@ -2942,10 +2964,18 @@ impl TypeChecker {
     }
 
     /// Get all generic struct instantiations for code generation
+    ///
+    /// Ordered by `(name, type_args)` for the same reason as
+    /// [`TypeChecker::get_instantiations`]: this list decides the order in which
+    /// codegen emits monomorphized struct definitions, and a `HashMap` key order
+    /// would make that depend on the per-process hash seed.
     pub fn get_struct_instantiations(&self) -> Vec<(String, Vec<String>, GenericStruct)> {
         let mut result = Vec::new();
 
-        for instantiation in self.struct_instantiations.keys() {
+        let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().collect();
+        keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+
+        for instantiation in keys {
             if let Some(generic_struct) = self.generic_structs.get(&instantiation.name) {
                 result.push((
                     instantiation.name.clone(),

@@ -162,10 +162,10 @@ description = "Whether a [T; N] parameter copies or aliases the caller's array. 
 spec = "../../specification/language-spec.md#n121-array-parameters-open-decision"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1927-1930 the Type::Array parameter arm, \"In C, array parameters are passed as pointers\"",
+  "src: src/codegen/mod.rs:1936-1939 the Type::Array parameter arm, \"In C, array parameters are passed as pointers\"",
   "conformance: tests/regression/array_param_mut_write.pd run",
   "conformance: tests/reject/array_param_write_byvalue.pd reject",
-  "src: src/codegen/mod.rs:1947-1957 the reference arm lowers `&[T; N]` and `&mut [T; N]` through the same declarator: \"C decays both to a pointer to the first element\"",
+  "src: src/codegen/mod.rs:1956-1966 the reference arm lowers `&[T; N]` and `&mut [T; N]` through the same declarator: \"C decays both to a pointer to the first element\"",
   "conformance: tests/regression/array_reference_params.pd run",
 ]
 note = "Marked unimplemented because no spelling copies: every array parameter decays to a pointer in C, so a callee that writes always reaches the caller's storage. The previous note described two behaviours this compiler no longer has -- it said mutation through a bare non-mut array was permitted, and that &mut [T; N] was rejected outright. Both were re-measured on 2026-08-22 and both are false: the bare by-value write is refused by codegen with a diagnostic naming the open decision, and &mut [T; N] compiles and is covered by a passing fixture. What remains open is the specification question, not a hole in the implementation: nothing here COPIES, so Option A (value semantics) is unimplemented, and Option B (reference semantics) would still need a rule that does not exist. See language-spec.md N12.1 and A9.2."
@@ -252,7 +252,7 @@ evidence = [
   "conformance: tests/06_pattern_matching.pd run",
   "src: src/ast/mod.rs:313 pub enum Pattern — three variants only",
   "src: src/typeck/mod.rs:1349 exhaustiveness runs only when the scrutinee is an enum",
-  "src: src/codegen/mod.rs:1973 match lowers to an if/else-if chain",
+  "src: src/codegen/mod.rs:1982 match lowers to an if/else-if chain",
 ]
 note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
 
@@ -264,7 +264,7 @@ evidence = [
   "conformance: tests/04_control_flow_for.pd run",
   "conformance: tests/04_control_flow_while.pd run",
   "conformance: tests/reject/loop_keyword.pd reject",
-  "src: src/codegen/mod.rs:1939 for-over-array emits sizeof(...) on a decayed pointer",
+  "src: src/codegen/mod.rs:1948 for-over-array emits sizeof(...) on a decayed pointer",
 ]
 
 [core_language.control_flow.conditionals]
@@ -295,7 +295,7 @@ evidence = [
   "conformance: tests/stdlib/stdlib_tail_return.pd run",
   "conformance: tests/stdlib/stdlib_tail_if_defect.pd run",
   "gate: make stdlib-gate -> \"generated C: 5 clean, 1 pinned to an open defect\" -- tests/stdlib/DRIVERS.tsv declares that one as known_violation:fib,classify, so the C is REQUIRED to lack a return on every path in exactly those two functions; the day the parser lowers a tail if, the gate reports XPASS",
-  "src: src/codegen/mod.rs:1973 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return",
+  "src: src/codegen/mod.rs:1982 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return",
 ]
 note = "Defect D3 is half-fixed: a tail EXPRESSION becomes a return, a tail `if` does not, and the tail-`if` shape is the idiomatic one for a recursive function. CLAUDE.md:66 records D3 as fixed, which holds only for the expression case. The \"437 affected sites\" figure is an understatement -- the heuristic behind it cannot see a function ending in the else block's brace. A note on the evidence that used to sit here: it read `pdc compile 'fn fib(n: i64) -> i64 { ... fib(n-1)+fib(n-2) ... }' -> prints 8261746944`. Run, that program does not compile at all -- `fib(n-1)` lexes as `fib` applied to the literal -1, and the parser reports \"expected ')', found integer -1\". Spaced as `fib(n - 1)` it compiles and does print 8261746944, so the defect is real and the transcription was not. tests/stdlib/stdlib_tail_if_defect.pd, which spaces it, is what proves this now."
 
@@ -335,8 +335,8 @@ description = "`?` for error propagation with early return."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
-  "src: src/codegen/mod.rs:1949-1950 emits a struct Result temporary — a layout codegen never defines",
-  "src: src/codegen/mod.rs:2586 the comment describing that layout",
+  "src: src/codegen/mod.rs:1958-1959 emits a struct Result temporary — a layout codegen never defines",
+  "src: src/codegen/mod.rs:2595 the comment describing that layout",
   "conformance: tests/reject/question_mark_operator.pd reject",
 ]
 note = "No longer silent. This row used to read \"it typechecks, and the failure surfaces in gcc\" -- true of the codegen path the two citations above describe, and no longer true of the compiler: the type checker refuses `?` by name before any C exists (defect D5's fix). The lowering is still there and still refers to a layout nothing defines, which is why the citations stay and why this is `partial` rather than `unimplemented`."
@@ -369,7 +369,7 @@ description = "No await operator; the compiler places async boundaries."
 spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:2534-2539 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
+  "src: src/codegen/mod.rs:2543-2548 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
   "conformance: tests/reject/async_fn.pd reject",
   "conformance: tests/10_async_await.pd vacuous",
 ]

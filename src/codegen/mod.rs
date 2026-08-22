@@ -1754,8 +1754,17 @@ impl CodeGenerator {
         };
 
         // Imported modules: public, non-generic functions get a body emitted below.
-        let imported_modules = self.imported_modules.clone();
-        for module_info in imported_modules.values() {
+        //
+        // Sorted by module name, like the three sites that fill the definitions
+        // (`:1114`, `:1193`, `:1278`). This is the fourth and last place the
+        // imported modules are iterated, and leaving it in `HashMap` order was
+        // enough on its own to keep the emitted C unstable: with the other three
+        // ordered, twenty-four compiles of one unchanged six-module program still
+        // produced twenty-four distinct files, differing only in this prototype
+        // block. With this one ordered too, thirty of thirty are identical.
+        let mut imported_modules: Vec<_> = self.imported_modules.clone().into_iter().collect();
+        imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
+        for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     if matches!(func.visibility, crate::ast::Visibility::Public)
