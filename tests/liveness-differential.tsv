@@ -1,0 +1,66 @@
+# LIVENESS DIFFERENTIAL CORPUS — CLOSED INVENTORY.
+#
+# WHY THIS EXISTS. Five times running, a check meant to establish that GI-11's replacement
+# is genuine degenerated into a check that something by a given name did not fail:
+#
+#   round 5  a NAME exists                  -> an empty function satisfied it
+#   round 6  a TEST exists                  -> same
+#   round 8  a test PASSES                  -> an empty `#[test]` satisfied it
+#   round 9  a TARGET exits 0               -> `@true` satisfied it
+#   round 9  the SOURCE has the right shape -> renaming the probes to `cg_*` wrappers
+#                                              satisfied it, measured
+#
+# That is a boundary, not five near misses:
+#
+#     NO CHECK THAT LIVES INSIDE THE ARTIFACT CAN ESTABLISH THAT A FUTURE REPLACEMENT OF
+#     THAT ARTIFACT IS GENUINE, BECAUSE WHOEVER WRITES THE REPLACEMENT ALSO WRITES THE
+#     CHECK.
+#
+# What escapes it is a check that can only be satisfied by PRODUCING DIFFERENT ANSWERS ON
+# INPUTS WHOSE CORRECT ANSWERS ARE ALREADY FIXED. This file is those inputs. A renamed
+# wrapper around the lexical probe cannot pass it, because what is checked is the model's
+# VERDICTS on these programs, not its spelling. The same move as replacing a re-implemented
+# module parser with `cargo test --list`.
+#
+# THE ANSWERS ARE FIXED BY REVIEW, NOT BY THE MODEL. Each `answer` below is the ground
+# truth about the program, decided by reading it. Changing an answer to make a model pass
+# is a change to what liveness MEANS, and it is a diff a reviewer can see. That is the
+# whole protection, and it is the same one tests/conformance-manifest.txt relies on.
+#
+# THE CORPUS IS RED TODAY, AND THAT IS THE POINT. Every other precondition this gate has
+# tried could be satisfied by an artifact that did nothing. This one is failed by the
+# model that is actually wired, on cases that model actually gets wrong. `make thesis-exit`
+# refuses until it passes.
+#
+# COLUMNS (TAB-separated, all six mandatory):
+#   id  answer  subject  source  why  source-of-truth
+#
+# answer:   live | dead     the GROUND TRUTH about `subject` in `source`.
+# subject:  the function whose liveness is being asked about.
+# source:   a whole compilation unit, `\n` for newline. Kept inline rather than as .pd
+#           files because tests/conformance-manifest.txt is a closed inventory over every
+#           .pd under tests/, and these are not conformance fixtures.
+# why:      the reasoning a reviewer checks the answer against.
+# source-of-truth: `reviewed` (decided by reading) or a file:line this shape was measured at.
+#
+# A model must answer every row. REFUSING IS FAILING: a model that cannot decide these is
+# not the replacement GI-11 requires. R4's honest refusal is the right behaviour for the
+# LEXICAL model and is exactly why the lexical model does not satisfy GI-11.
+#
+# id	answer	subject	source	why	source-of-truth
+
+# --- DEAD: the three shapes that broke every lexical design ---------------------------
+diverging-if	dead	ornament	fn ornament() -> i64 { return 1; }\nfn main() { if true { return; } ornament(); }	the `if` always diverges, so nothing after it runs	reviewed
+while-true	dead	ornament	fn ornament() -> i64 { return 1; }\nfn main() { while true { } ornament(); }	the loop never completes	reviewed
+false-branch	dead	ornament	fn ornament() -> i64 { return 1; }\nfn main() { if false { ornament(); } }	the guard is constant-false	reviewed
+unreferenced	dead	ornament	fn ornament() -> i64 { return 1; }\nfn main() { }	nothing names it at all	reviewed
+dead-caller	dead	ornament	fn ornament() -> i64 { return 1; }\nfn dead() -> i64 { return ornament(); }\nfn main() { }	its only caller is itself unreachable	reviewed
+self-recursive	dead	ornament	fn ornament() -> i64 { return ornament(); }\nfn main() { }	a self-edge is not a path from main	reviewed
+
+# --- LIVE: the converse, so "answer dead everywhere" fails too -------------------------
+direct	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { ornament(); }	called at the top level of main	reviewed
+via-callee	live	ornament	fn ornament() -> i64 { return 1; }\nfn mid() -> i64 { return ornament(); }\nfn main() { mid(); }	reached through one hop	reviewed
+inside-else	live	compile_file	fn compile_file(p: String) { print(p); }\nfn main() { let n: i64 = arg_count(); if n < 3 { print("usage"); } else { compile_file("x"); } }	a conditional branch is REACHABLE; a naive under-approximation calls this dead, and it is the real witness's own shape	bootstrap/pdc.pd:980-989
+loop-body	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { let i: i64 = 0; while i < 3 { ornament(); i = i + 1; } }	a loop body that may execute is reachable	reviewed
+after-conditional	live	ornament	fn ornament() -> i64 { return 1; }\nfn side() { print("x"); }\nfn main() { if true { side(); } ornament(); }	the `if` completes, so what follows runs	reviewed
+in-return-expr	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { let v: i64 = ornament(); print_int(v); }	a call in an initializer certainly evaluates	reviewed

@@ -80,9 +80,20 @@ was the one its row names — `grep -qF` over the whole log lets incidental text
 fingerprint, which is measured, not argued.
 
 Those two gaps are **GI-11** and **GI-12**. They are not scored rows — scoring them was the
-defect: four rounds running the check degenerated to an existence test, and an empty `#[test]`
-then an `@true` target each satisfied one. They are **preconditions**, decided by introspecting
-the gate's own wiring, and while either is outstanding **no verdict is computed at all**. Until
+defect. **Five** rungs of the same ladder were climbed and each was satisfiable by a replacement
+that did nothing: a name exists, a test exists, a test passes, a target exits 0, and finally the
+source has the right shape — that last one measured, by renaming the probes to `cg_*` wrappers.
+The class is a boundary, not five near misses: *no check that lives inside the artifact can
+establish that a future replacement of that artifact is genuine, because whoever writes the
+replacement also writes the check.*
+
+What escapes it is a check satisfiable only by **producing different answers on inputs whose
+correct answers are already fixed**. GI-11's precondition is now
+[`tests/liveness-differential.tsv`](../../tests/liveness-differential.tsv): twelve programs whose
+liveness answers are fixed by review, including the real witness's own shape (`compile_file`
+inside an `else`, genuinely reachable). The wired lexical model **fails four of them today**, and
+answering `live` everywhere, answering `dead` everywhere, and a renamed wrapper around the probe
+all fail it too. While either precondition is outstanding **no verdict is computed at all**. Until
 then this is a **fail-closed scaffold, not a language certificate** — which is the only form in which a weaker gate is defensible, and it is why the
 safeguards had to become preconditions rather than scheduled work.
 
@@ -196,7 +207,7 @@ Measured at this revision; every row names the command that produced it.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 123 cases — 65 drive the gate end to end against an injected repository state, 58 exercise a helper | `make test-thesis-runner` |
+| Thesis gate itself | 124 **unique** cases — 59 drive the gate end to end against an injected repository state, 65 exercise a helper | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 239 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
@@ -514,7 +525,8 @@ claim that this is the earliest correct start.
 **Waits on**: everything. **This milestone's exit is the definition of 1.0**, so it ships as `1.0.0`
 rather than as another prerelease.
 
-**Owns 15 requirement rows**; 23 rows across the manifest carry `disposition = thesis`.
+**Owns 15 requirement rows**; 25 rows across the manifest carry `disposition = thesis` —
+22 scored, `D1-01` the aggregate, and GI-11 and GI-12 as preconditions.
 
 1. **Rewrite `bootstrap/pdc.pd` in the differentiated dialect** — `ref`/`ref mut` parameters with
    inferred regions, at least one discharged `#[total]`, inferred effects reaching callers, no

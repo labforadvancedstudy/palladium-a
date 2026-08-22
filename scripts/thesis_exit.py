@@ -167,6 +167,55 @@ PRECONDITIONS = (
 )
 
 
+LIVENESS_CORPUS = ROOT / "tests/liveness-differential.tsv"
+
+
+def liveness_oracle(src: str, subject: str) -> str:
+    """The CURRENTLY WIRED model's answer: live | dead | refused.
+
+    One entry point, so the differential corpus interrogates whatever is wired rather than
+    a particular implementation. When GI-11 lands, this dispatches to the call-graph
+    reader and the corpus decides whether that reader actually answers correctly.
+    """
+    if LIVENESS_MODEL == "lexical":
+        if unmodellable(src):
+            return "refused"
+        return "dead" if provably_dead(function_bodies(src), subject) else "live"
+    raise HarnessError(f"no liveness oracle wired for LIVENESS_MODEL={LIVENESS_MODEL!r}")
+
+
+def liveness_differential() -> tuple[list[tuple[str, str, str]], int]:
+    """-> (failures as (id, expected, got), total rows).
+
+    THE ESCAPE FROM THE FIFTH RUNG. Every earlier precondition asked whether an artifact
+    existed, passed, or looked right — and each was satisfiable by an artifact that did
+    nothing, up to and including a renamed wrapper around the probe being replaced. This
+    asks for ANSWERS on programs whose correct answers are fixed by review. A wrapper
+    cannot pass it: what is compared is the verdict, not the spelling.
+    """
+    if not LIVENESS_CORPUS.is_file():
+        raise HarnessError(f"{LIVENESS_CORPUS} is missing — the differential corpus IS "
+                           "GI-11's acceptance test, so its absence is not a pass")
+    failures, total = [], 0
+    for n, line in enumerate(LIVENESS_CORPUS.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        f = line.split("\t")
+        if len(f) != 6:
+            raise HarnessError(f"{LIVENESS_CORPUS.name}:{n}: {len(f)} columns, want 6")
+        rid, answer, subject, source, _why, _prov = f
+        if answer not in ("live", "dead"):
+            raise HarnessError(f"{LIVENESS_CORPUS.name}:{n}: answer {answer!r} is not live/dead")
+        total += 1
+        got = liveness_oracle(strip_literals(source.replace("\\n", "\n")), subject)
+        if got != answer:
+            failures.append((rid, answer, got))
+    if total == 0:
+        raise HarnessError("the differential corpus is empty; an empty corpus passes "
+                           "everything, which is the defect it exists to prevent")
+    return failures, total
+
+
 def wiring_matches_declaration(source: str) -> list[str]:
     """Does the code do what LIVENESS_MODEL / ATTRIBUTION_MODEL say it does?
 
@@ -204,9 +253,29 @@ def wiring_matches_declaration(source: str) -> list[str]:
 
 
 def incomplete_definition() -> list[tuple[str, str]]:
-    """(requirement id, why no verdict is available). Empty means: a verdict is."""
+    """(requirement id, why no verdict is available). Empty means: a verdict is.
+
+    GI-11 is decided by the DIFFERENTIAL CORPUS, not by the declared constant and not by
+    the source's shape. Both of those were satisfiable by a replacement that did nothing;
+    a corpus of fixed answers is not.
+    """
     out = []
+    try:
+        failures, total = liveness_differential()
+    except HarnessError as e:
+        out.append(("GI-11", f"the liveness differential could not be run: {e}"))
+        failures, total = [("(unrun)", "", "")], 0
+    if failures:
+        shown = ", ".join(f"{rid}: want {want}, got {got}" for rid, want, got in failures[:3])
+        out.append(("GI-11",
+                    f"the wired liveness model fails {len(failures)} of {total} cases in "
+                    f"tests/liveness-differential.tsv — {shown}"
+                    f"{' …' if len(failures) > 3 else ''}. Those answers are fixed by "
+                    f"review, so a model that disagrees with them is wrong, whatever it "
+                    f"is called"))
     for rid, const, unsound, sound, why in PRECONDITIONS:
+        if rid == "GI-11":
+            continue
         if globals()[const] != sound:
             out.append((rid, why))
     return out
@@ -226,16 +295,16 @@ AGGREGATE_ROW = "D1-01"          # cites this command as its evidence: it is the
 # MF4: the EXACT normalized acceptance text, by digest. Pinning selected substrings let
 # the indirect-target clause go unpinned entirely, and let a pinned phrase survive inside
 # NEGATED prose ("does not require scoped call-site identities" contains the phrase). A
-# digest over the whole normalized field has neither hole: any edit at all fails, and the
+# full SHA-256 over the whole normalized field has neither hole: any edit at all fails, and the
 # fix is to re-pin deliberately in the same commit.
 PINNED_ACCEPTANCE_SHA = {
-    "GI-11": "8eae233c60036ad7",
-    "GI-12": "f14b04ad415e5ee4",
+    "GI-11": "8eae233c60036ad7e7d6bcc06b05def5754cff974f2f6f9f5d72f320d4cfc2c0",
+    "GI-12": "f14b04ad415e5ee436829fef4f7b4c4865f26df29bc45f30dd7140caad7cea3a",
 }
 
 
 def acceptance_digest(text: str) -> str:
-    return hashlib.sha256(" ".join(text.split()).encode()).hexdigest()[:16]
+    return hashlib.sha256(" ".join(text.split()).encode()).hexdigest()
 
 EXPECTED_THESIS_CONTRACT = {
     "D1-01": ("gate", "make thesis-exit", "-"),
@@ -554,17 +623,6 @@ UNMODELLABLE = (
 
 GENERIC_PARAMS = re.compile(
     r"(?<![A-Za-z_0-9])fn\s+[A-Za-z_][A-Za-z_0-9]*\s*<([^(){}]*)>\s*\(")
-
-
-def duplicate_function_names(src: str) -> list[str]:
-    """Names defined more than once. `bodies` is keyed by BARE NAME, so two functions
-    sharing one silently overwrite and every reference to the loser vanishes."""
-    seen, dupes = set(), []
-    for m in FN_HEADER.finditer(src):
-        if m.group(1) in seen:
-            dupes.append(m.group(1))
-        seen.add(m.group(1))
-    return sorted(set(dupes))
 
 
 def unmodellable(src: str) -> list[str]:
@@ -1016,10 +1074,15 @@ def main(ctx: Context | None = None) -> int:
     results = evaluate(ctx, rows)
     by_id = {r["id"]: r for r in rows}
 
+    blocked_early = [] if ctx.assume_definition_complete else incomplete_definition()
     print("=" * 78)
     print("  make thesis-exit — the definition of Palladium 1.0")
     print(f"  {len(rows)} `thesis` rows from {ctx.requirements.name}; "
           f"{AGGREGATE_ROW} is the aggregate and is answered by the summary")
+    if blocked_early:
+        print("=" * 78)
+        print("  NO VERDICT IS AVAILABLE. THE DEFINITION OF 1.0 IS INCOMPLETE.")
+        print("  The rows below are STATE, not a score. Do not total them.")
     print("=" * 78)
     for key, title in GROUPS:
         group = sorted(r for r in results if r[4] == key)
@@ -1048,8 +1111,6 @@ def main(ctx: Context | None = None) -> int:
         print("  name did not fail': an empty #[test] satisfied one, `@true` satisfied the")
         print("  next. There is nothing here to satisfy by naming it.")
         print()
-        print(f"  For information only, and NOT a verdict: {len(results) - len(red)} of "
-              f"{len(results)} evaluated rows would pass.")
         print("  A green run is not merely unreached — it is UNAVAILABLE, and will stay so")
         print("  until the two models above are replaced. `1.0 is not reached yet` is a")
         print("  measurement, and this command is not entitled to make one with tools it")
@@ -1057,18 +1118,17 @@ def main(ctx: Context | None = None) -> int:
         print("=" * 78)
         return 2
 
+    # DERIVED from the wired models, not a fixed paragraph. A fixed one would have gone
+    # on saying "liveness is NOT asserted, that obligation is GI-11" after GI-11 landed,
+    # misdescribing the very first verdict the gate was ever entitled to give.
     print("\n" + "-" * 78)
-    print("  WHAT A GREEN VERDICT MEANS, AND WHAT IT DOES NOT")
-    print("  Would mean: every differentiator's construct EXISTS in both witnesses, each")
-    print("    has a non-vacuous fixture and a reject twin refused at its declared")
-    print("    fingerprint, and the self-hosting compiler still reaches a fixed point.")
-    print("  Would NOT mean: that any differentiator is used on a path the program runs.")
-    print("    Liveness is NOT asserted — three lexical reachability models each failed")
-    print("    open, so the gate stopped guessing. That obligation is GI-11.")
-    print("  Would NOT mean: that a refusal was the one its row names. `grep -qF` over the")
-    print("    whole log lets incidental text satisfy a fingerprint. That is GI-12.")
-    print("  GI-11 and GI-12 are THESIS rows, so green is unreachable until both land.")
-    print("  Until then this is a fail-closed SCAFFOLD, not a language certificate.")
+    print("  WHAT THIS GREEN MEANS")
+    print("  Every differentiator's construct is present in both witnesses, each has a")
+    print("  non-vacuous fixture and a reject twin, and the self-hosting compiler still")
+    print("  reaches a byte-identical fixed point.")
+    print(f"  Liveness: decided by the {LIVENESS_MODEL} model, which passes every case in")
+    print("    tests/liveness-differential.tsv — answers fixed by review, not by the model.")
+    print(f"  Rejection attribution: decided by {ATTRIBUTION_MODEL} matching.")
     print("=" * 78)
     print(f"  thesis: {len(results) - len(red)} green, {RED}{len(red)} RED{OFF}"
           f"   ({len(results)} evaluated rows + {AGGREGATE_ROW}, the aggregate)")
@@ -1175,8 +1235,10 @@ def check_retracted_claims() -> int:
         print("Each was retracted by the round named. Re-asserting one is a claim that it "
               "is true again; make that argument in the commit, or remove the wording.")
         return 1
-    print(f"{GREEN}ok{OFF} no retracted claim in {len(CLAIM_SCANNED)} file(s); "
-          f"{len(RETRACTED_CLAIMS)} phrases banned by name")
+    print(f"{GREEN}ok{OFF} no EXACT BANNED PHRASE in {len(CLAIM_SCANNED)} file(s); "
+          f"{len(RETRACTED_CLAIMS)} phrases checked. This does not certify the absence of "
+          f"a retracted CLAIM: a paraphrase, a runtime-assembled string, or a file not in "
+          f"CLAIM_SCANNED all pass.")
     return 0
 
 
@@ -1573,8 +1635,11 @@ def self_test() -> int:
          "liveness is NOT asserted" in out, True, drives_main=False)
     case("a green run names the obligation that carries it",
          "GI-11" in out, True, drives_main=False)
-    case("a green run states what green does and does not mean",
-         "WHAT A GREEN VERDICT MEANS" in out, True, drives_main=False)
+    case("a green run states what THIS green means, derived from the wired models",
+         "WHAT THIS GREEN MEANS" in out and LIVENESS_MODEL in out, True, drives_main=False)
+    case("a green run does NOT repeat disclaimers its preconditions have retired",
+         "liveness is NOT asserted" in out.split("WHAT THIS GREEN MEANS")[-1], False,
+         drives_main=False)
 
     print("\n  the definition is INCOMPLETE, so no verdict is offered at all")
     case("with GI-11/GI-12 outstanding the gate REFUSES — exit 2, not a RED verdict",
@@ -1587,72 +1652,82 @@ def self_test() -> int:
          "THE DEFINITION OF 1.0 IS INCOMPLETE" in _out, True, drives_main=False)
     case("it still prints the per-row dashboard, so no progress signal is lost",
          "TH-06" in _out and "SH-01" in _out, True, drives_main=False)
-    case("it labels the row tally as information, NOT a verdict",
-         "NOT a verdict" in _out, True, drives_main=False)
+    case("the refusal banner precedes the rows, so no reader meets a score first",
+         _out.index("NO VERDICT IS AVAILABLE") < _out.index("SH-01"), True,
+         drives_main=False)
+    case("no aggregate tally is printed under refusal — a total is the quotable certificate",
+         "of 22 evaluated rows would pass" in _out, False, drives_main=False)
     case("it names both outstanding preconditions",
          "GI-11" in _out and "GI-12" in _out, True, drives_main=False)
     case("the real run never assumes the definition is complete",
          Context().assume_definition_complete, False, drives_main=False)
 
+    print("\n  the LIVENESS DIFFERENTIAL — the escape from the fifth rung")
+    _fails, _total = liveness_differential()
+    case("the corpus is non-trivial", _total >= 12, True, drives_main=False)
+    case("it is RED with the model actually wired — every other precondition was not",
+         len(_fails) > 0, True, drives_main=False)
+    case("it fails exactly the shapes that broke the three lexical designs",
+         sorted(r for r, _w, _g in _fails),
+         ["dead-caller", "diverging-if", "false-branch", "while-true"], drives_main=False)
+    _diff_rows = [l.split("\t") for l in LIVENESS_CORPUS.read_text().splitlines()
+                  if l.strip() and not l.startswith("#")]
+
+    def _score(oracle):
+        return sum(1 for rid, ans, subj, src, _w, _p in _diff_rows if oracle(src, subj) != ans)
+
+    case("answering `live` everywhere fails it", _score(lambda s, x: "live") > 0, True,
+         drives_main=False)
+    case("answering `dead` everywhere fails it", _score(lambda s, x: "dead") > 0, True,
+         drives_main=False)
+    case("a RENAMED WRAPPER round the lexical probe fails it — the fifth rung closed",
+         _score(lambda s, x: liveness_oracle(strip_literals(s.replace("\\n", "\n")), x)) > 0,
+         True, drives_main=False)
+    case("the reviewed answers pass it, so it is satisfiable",
+         _score(lambda s, x: {r[0]: r[1] for r in _diff_rows}[
+             next(r[0] for r in _diff_rows if r[2] == x and r[3] == s)]), 0, drives_main=False)
+    case("an empty corpus is a harness error, not a pass",
+         "an empty corpus passes everything" in (LIVENESS_CORPUS.read_text() + open(
+             ROOT / "scripts/thesis_exit.py").read()), True, drives_main=False)
+
+    print("\n  the machine contract Make cannot carry")
+    _rc = subprocess.run([sys.executable, str(ROOT / "scripts/thesis_exit.py")],
+                         capture_output=True, text=True, cwd=ROOT)
+    case("the script emits a typed result line", 
+         _rc.stdout.strip().splitlines()[-1].startswith("THESIS_RESULT "), True,
+         drives_main=False)
+    case("the line names the same code the script exits with",
+         _rc.stdout.strip().splitlines()[-1], f"THESIS_RESULT {_rc.returncode} "
+         f"{RESULT_NAMES[_rc.returncode]}", drives_main=False)
+
+    print("\n  the acceptance digest fires on a real edit")
+    _bad = mutate(REAL_ACCEPTANCE["GI-11"], "indirect targets resolved", "indirect targets ignored")
+    case("weakening GI-11's acceptance text changes its digest",
+         acceptance_digest(_bad) != PINNED_ACCEPTANCE_SHA["GI-11"], True, drives_main=False)
+    case("the pinned digest is a FULL sha256, not a truncation",
+         len(PINNED_ACCEPTANCE_SHA["GI-11"]), 64, drives_main=False)
+
     print("\n  a precondition cannot be satisfied by naming an artifact")
     case("both preconditions are outstanding right now",
          sorted(r for r, _w in incomplete_definition()), ["GI-11", "GI-12"],
          drives_main=False)
+    # Through mutate(), so that when these constants legitimately change the controls
+    # fail loudly instead of quietly mutating nothing. Eighth sighting of that class, and
+    # it was sitting on the two mutations that matter most.
+    _me = (ROOT / "scripts/thesis_exit.py").read_text()
+    # Anchored at column zero so the mutation hits the DECLARATION and not the copies of
+    # it inside prose. mutate() rejected the ambiguous form, which is why it exists.
     case("declaring `call-graph` while the lexical probes are still wired is caught",
-         bool(wiring_matches_declaration(
-             (ROOT / "scripts/thesis_exit.py").read_text()
-             .replace('LIVENESS_MODEL = "lexical"', 'LIVENESS_MODEL = "call-graph"'))),
+         bool(wiring_matches_declaration(mutate(
+             _me, '\nLIVENESS_MODEL = "lexical"', '\nLIVENESS_MODEL = "call-graph"'))),
          True, drives_main=False)
     case("declaring `code` while the substring comparison is still wired is caught",
-         bool(wiring_matches_declaration(
-             (ROOT / "scripts/thesis_exit.py").read_text()
-             .replace('ATTRIBUTION_MODEL = "substring"', 'ATTRIBUTION_MODEL = "code"'))),
+         bool(wiring_matches_declaration(mutate(
+             _me, '\nATTRIBUTION_MODEL = "substring"', '\nATTRIBUTION_MODEL = "code"'))),
          True, drives_main=False)
     case("the declaration and the wiring agree as committed",
          wiring_matches_declaration((ROOT / "scripts/thesis_exit.py").read_text()), [],
          drives_main=False)
-
-    print("\n  R4 — every closure form refuses, not only the brace form")
-    for form, label in [("|x| ornament(x)", "brace/ident body"), ("|x| (ornament(x))", "paren body"),
-                        ("|x| [ornament(x)]", "bracket body"), ("|x| -ornament(x)", "unary body")]:
-        case(f"a closure with a {label} is a HARNESS ERROR",
-             _drive(witness_b=GOOD_WITNESS + f"fn hof(mut c: C) {{ let f = {form}; }}\n"), 2)
-
-    print("\n  TH-05 — P2 applies to the caller (on the callee it is vacuous)")
-    case("a caller nothing names cannot supply the exhibited edge (P2 on the caller)",
-         _drive(witness_b="fn ghost_io(mut c: C) { file_write(c.out, \"x\"); }\n"
-                          "fn orphan(mut c: C) { ghost_io(c); }\n"
-                          "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
-                          "fn drive(x: ref String, mut c: C) -> i64 { return depth(1); }\n"
-                          "fn main() { drive(s, c); }\n",
-                report_b="Function 'orphan' has effects: [Io]\n"), 1)
-
-    print("\n  TH-04 — a FUNCTION-level attribute, not the crate-level one")
-    case("a witness carrying only `#![total]` does not satisfy TH-04",
-         _drive(witness_b=mutate(GOOD_WITNESS, "#[total]", "#![total]")), 1)
-
-    print("\n  retracted claims stay retracted, and the disclaimers are pinned to OUTPUT")
-    _self = (ROOT / "scripts/thesis_exit.py").read_text()
-    # Exclude this table itself, or the check would flag its own banned list.
-    _b, _e = "# BANNED-LIST-" + "BEGIN", "# BANNED-LIST-" + "END"
-    assert _b in _self and _e in _self, "banned-list sentinels missing"
-    _body = _self.split(_b)[0] + _self.split(_e)[1]
-    case("no retracted claim survives anywhere in this file",
-         stale_claims(_body), [], drives_main=False)
-    case("the phrase check CATCHES a re-asserted claim",
-         len(stale_claims("a docstring saying " + "REACHABLE" + " FROM main")), 1,
-         drives_main=False)
-    for doc in ("docs/contributing/MILESTONES.md", "scripts/thesis-exit.sh"):
-        case(f"no retracted claim survives in {doc}",
-             stale_claims((ROOT / doc).read_text()), [], drives_main=False)
-    _drive()
-    out = _drive.last_output
-    case("a green run SAYS liveness is not asserted, in its own output",
-         "liveness is NOT asserted" in out, True, drives_main=False)
-    case("a green run names the obligation that carries it",
-         "GI-11" in out, True, drives_main=False)
-    case("a green run states what green does and does not mean",
-         "WHAT A GREEN VERDICT MEANS" in out, True, drives_main=False)
 
     print("\n  the safeguards for this gate's weaknesses BLOCK green (MUST-FIX 5)")
     _req = (ROOT / "docs/contributing/1.0-requirements.tsv").read_text().split("\n")
@@ -1889,14 +1964,35 @@ def self_test() -> int:
 
     print("=" * 78)
     if fails == 0:
-        print(f"  self-test green — {cases} cases: {driven} drive main() end to end, "
-              f"{cases - driven} exercise a helper directly (lexer, process boundary)")
+        # UNIQUE cases. Ten labels were duplicated by an earlier block-insert, inflating
+        # the count without adding a single new fault. A test count that grows by copying
+        # is the same defect as a green gate that measures nothing.
+        print(f"  self-test green — {cases} UNIQUE cases: {driven} drive main() end to "
+              f"end, {cases - driven} exercise a helper directly (lexer, process boundary)")
         print(f"  {len(EXPECTED_UNCOVERED)} probe group(s) pinned as uncovered, listed above")
         print("=" * 78)
         return 0
     print(f"  self-test RED — {fails} of {cases} cases failed")
     print("=" * 78)
     return 1
+
+
+RESULT_NAMES = {0: "THESIS_HOLDS", 1: "THESIS_FALSE", 2: "NO_VERDICT"}
+
+
+def _emit_result(code: int) -> None:
+    """The machine contract, because `make` cannot carry it.
+
+    Make maps every nonzero recipe status to 2, so a status-only consumer cannot tell
+    `thesis false` from `could not measure` from `the build broke` — and those are three
+    different facts, two of which are about Palladium and one of which is about the
+    machine. The script's own exit code distinguishes them; this line survives the Make
+    layer as well, so a consumer can parse rather than infer.
+    """
+    try:
+        print(f"THESIS_RESULT {code} {RESULT_NAMES.get(code, 'HARNESS_ERROR')}")
+    except BaseException:  # noqa: BLE001
+        pass
 
 
 def _entry(argv: list[str]) -> int:
@@ -1925,6 +2021,11 @@ def _entry(argv: list[str]) -> int:
         except BaseException:  # noqa: BLE001
             pass
 
+    def finish(code: int) -> int:
+        if "--self-test" not in argv and "--check-retracted-claims" not in argv:
+            _emit_result(code)
+        return code
+
     try:
         if "--check-retracted-claims" in argv:
             return check_retracted_claims()
@@ -1935,22 +2036,22 @@ def _entry(argv: list[str]) -> int:
         if "--systemexit-for-self-test" in argv:
             # A dependency calling sys.exit(1) must not be mistaken for a thesis verdict.
             raise SystemExit(1)
-        return self_test() if "--self-test" in argv else main()
+        return finish(self_test() if "--self-test" in argv else main())
     except HarnessError as e:
         report("harness error", str(e))
-        return 2
+        return finish(2)
     except SystemExit as e:
         # NOT re-raised. A SystemExit from anywhere below is a dependency's opinion about
         # the process, not this gate's verdict about Palladium.
         report("harness error", f"a dependency raised SystemExit({e.code!r})")
-        return 2
+        return finish(2)
     except BaseException as e:  # noqa: BLE001
         try:
             traceback.print_exc()
         except BaseException:  # noqa: BLE001
             pass
         report("harness error", f"{type(e).__name__}: {e}")
-        return 2
+        return finish(2)
 
 
 if __name__ == "__main__":

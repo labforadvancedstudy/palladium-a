@@ -32,7 +32,19 @@
 #   scripts/thesis-exit.sh              # exit 0 only when 1.0 is real
 #   scripts/thesis-exit.sh --self-test  # fault-inject every probe (make test-thesis-runner)
 #
-# Exit: 0 = the thesis holds · 1 = it does not · 2 = the gate could not measure.
+# MACHINE CONTRACT. This script's exit code is three-valued:
+#   0  THESIS_HOLDS   the thesis is proven
+#   1  THESIS_FALSE   it is not — a measurement about Palladium
+#   2  NO_VERDICT     the gate could not or would not measure; nothing may be inferred
+#
+# `make thesis-exit` CANNOT CARRY THAT: Make maps every nonzero recipe status to 2, so a
+# status-only consumer sees the same number for "the thesis is false", "no verdict is
+# available" and "the build is broken". Consumers that need the distinction must either
+# call this script directly, or parse the last line of output, which is
+#
+#   THESIS_RESULT <code> <name>
+#
+# and survives the Make layer intact.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
