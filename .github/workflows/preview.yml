@@ -70,19 +70,17 @@ jobs:
       # Proves the probe above is not a suite of vacuous assertions: each fix is
       # reverted in turn and the controls must notice. Needs a clean checkout of the
       # file it mutates, which CI always has and a working tree often does not.
+      # THIS WORKFLOW PASSES NO BASE, and cannot: scripts/doc-evidence-fixes.tsv records
+      # the base it was built against and applies only where HEAD's merge-base with main
+      # is that base. This job runs on pushes to main, where the answer is
+      # `not-applicable why=head-is-on-main` — no base is needed, and supplying one there
+      # is an error rather than a way in. What runs here, and everywhere, is the control
+      # closure. (The plumbing that used to sit here computed github.event.before for a
+      # design that no longer exists, and survived three reported removals because this
+      # script's restore trap kept reverting the edit; scripts/test-doc-evidence.sh now
+      # carries a control that fails if it comes back.)
       - name: Evidence gate probe coverage
-        # A push to main can carry several commits; HEAD^1 would reconcile only the last.
-        # github.event.before is the push's true base. It is all-zeros for the first push
-        # of a branch, so it is used only when it resolves — COVERAGE_BASE is strict by
-        # design and would (correctly) exit 2 on a value it cannot honour.
-        run: |
-          BASE='${{ github.event.before }}'
-          if [ -n "$BASE" ] && git rev-parse --verify "$BASE^{commit}" >/dev/null 2>&1 \
-             && git merge-base --is-ancestor "$BASE" HEAD 2>/dev/null \
-             && [ "$BASE" != "$(git rev-parse HEAD)" ]; then
-            export COVERAGE_BASE="$BASE"
-          fi
-          bash scripts/test-doc-evidence-coverage.sh
+        run: bash scripts/test-doc-evidence-coverage.sh
 
       - id: id
         run: echo "tag=preview-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"

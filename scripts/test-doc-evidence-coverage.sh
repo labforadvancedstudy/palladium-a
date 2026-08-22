@@ -153,8 +153,37 @@ for f in $MUTABLE; do
 done
 
 TMP_KILL=$(mktemp "${TMPDIR:-/tmp}/doc-evidence-killsets.XXXXXX") || exit 2
-restore() { git checkout -- $MUTABLE 2>/dev/null; }
-trap 'restore; rm -f "$TMP_KILL"' EXIT INT TERM
+
+# RESTORE FROM A SNAPSHOT, NEVER FROM git.
+#
+# This used to be `git checkout -- $MUTABLE`, which discards UNCOMMITTED changes to every
+# file in that list. That is not a theoretical hazard: it is why a fix to
+# .github/workflows/preview.yml was reported as applied three times and was not there any
+# of them. Each round I edited the workflow, then ran this script; its EXIT trap reverted
+# the edit; the commit went out without it; and I reported from what I had written rather
+# than from what was on disk. One cause, three false reports.
+#
+# The rule that generalises past the instance: A TOOL THAT REWRITES FILES TO MEASURE THEM
+# MUST PUT BACK WHAT IT FOUND, NOT WHAT SOME OTHER SOURCE SAYS SHOULD BE THERE. Restoring
+# from git makes the tool's idea of "unchanged" differ from the working tree's, and the
+# difference is silently destructive. The dirty-tree guard below stays, because mutating a
+# dirty checker measures something nobody has reviewed — but safety no longer depends on
+# anyone remembering to honour it, and a mode that skips the guard can no longer destroy
+# anything.
+SNAP=$(mktemp -d "${TMPDIR:-/tmp}/doc-evidence-snapshot.XXXXXX") || exit 2
+snap_of() { printf '%s/%s' "$SNAP" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_')"; }
+for _f in $MUTABLE; do
+  [ -f "$_f" ] || continue
+  cp -p "$_f" "$(snap_of "$_f")" || { echo "error: cannot snapshot $_f" >&2; exit 2; }
+done
+restore() {
+  local f
+  for f in $MUTABLE; do
+    [ -f "$(snap_of "$f")" ] || continue
+    cp -p "$(snap_of "$f")" "$f" 2>/dev/null
+  done
+}
+trap 'restore; rm -f "$TMP_KILL"; rm -rf "$SNAP"' EXIT INT TERM
 
 echo "=============================================="
 if [ -z "$CHANGED" ]; then
@@ -288,7 +317,7 @@ FILES = {"py": "scripts/check_doc_evidence.py", "gr": "scripts/gate-receipts.sh"
          "cov": "scripts/test-doc-evidence-coverage.sh",
          "probe": "scripts/test-doc-evidence.sh"}
 which = {"gate-argv-grammar": "gr", "gate-private-receipts": "gr",
-         "ci-step-evidence": "ci", "ci-step-receipts": "ci", "ci-step-probe": "ci",
+         "ci-no-base": "ci", "ci-step-evidence": "ci", "ci-step-receipts": "ci", "ci-step-probe": "ci",
          "branch-scope": "cov", "applies-first": "cov", "head-on-main": "cov", "gates-wiring": "mk",
          "ci-gating": "probe", "ci-gating-job": "probe",
          "ci-statement": "probe"}.get(w, "py")
@@ -399,6 +428,11 @@ elif w == "ci-gating-job":     # a JOB that cannot fail the run does not gate
 elif w == "ci-gating":         # a STEP that cannot fail the job does not gate
     t = t.replace('    if (s["continue-on-error"] or "false").lower() != "false":\n        continue',
                   '    if False:\n        continue', 1)
+elif w == "ci-no-base":        # the workflow must not supply a base on main
+    t = t.replace("      - name: Evidence gate probe coverage\n        run: bash scripts/test-doc-evidence-coverage.sh",
+                  "      - name: Evidence gate probe coverage\n        run: |\n"
+                  "          export COVERAGE_BASE='${{ github.event.before }}'\n"
+                  "          bash scripts/test-doc-evidence-coverage.sh", 1)
 elif w.startswith("ci-step-"):
     # ONE MUTATION PER STEP. A single `ci-steps` mutation removed only the first step
     # while THREE controls declared `kill ci-steps`, so two of them were never required
@@ -460,6 +494,7 @@ gate-substring|scripts/check_doc_evidence.py
 gate-kv-compare|scripts/check_doc_evidence.py
 gate-argv-grammar|scripts/gate-receipts.sh
 gate-private-receipts|scripts/gate-receipts.sh
+ci-no-base|.github/workflows/preview.yml
 ci-step-evidence|.github/workflows/preview.yml
 ci-step-receipts|.github/workflows/preview.yml
 ci-step-probe|.github/workflows/preview.yml"

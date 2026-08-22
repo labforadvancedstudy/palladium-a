@@ -816,6 +816,56 @@ wf_case "a step in another working directory does not count" no \
         working-directory: sub
         run: bash scripts/check-doc-evidence.sh'
 
+# THE SENTENCE THAT HAD NO CONTROL, WHICH IS WHY IT BROKE THREE TIMES.
+#
+# "preview.yml passes no base to the coverage runner." Every other contract sentence on
+# this branch carries a control; this one did not, and it was reported as implemented in
+# three consecutive rounds without ever being true -- the workflow kept its
+# github.event.before plumbing because this suite's sibling runner reverted the edit each
+# time, and I reported from what I had written instead of from the file.
+#
+# The check is on EXECUTED text, not on the whole file: the comment above the step is
+# allowed to say the words "github.event.before" while explaining why they are gone. What
+# may not happen is a step SETTING a base.
+ci_no_base() {
+  python3 - <<'PYNB'
+import re, sys
+src = open(".github/workflows/preview.yml", encoding="utf-8").read().split("\n")
+runs, key = [], None
+for line in src:
+    if re.match(r"^      - ", line):
+        runs.append([]); key = None
+        line = "        " + line[8:]
+    if not runs:
+        continue
+    m = re.match(r"^        ([A-Za-z_-]+):[ ]*(.*)$", line)
+    if m:
+        key = m.group(1)
+        if key in ("run", "env"):
+            runs[-1].append(m.group(2))
+    elif key in ("run", "env") and re.match(r"^          ", line):
+        runs[-1].append(line.strip())
+    elif re.match(r"^        \S", line):
+        key = None
+body = "\n".join("\n".join(r) for r in runs)
+live = "\n".join(l.split("#", 1)[0] for l in body.split("\n"))
+bad = [t for t in ("COVERAGE_BASE", "github.event.before") if t in live]
+if bad:
+    print(", ".join(bad))
+    sys.exit(1)
+sys.exit(0)
+PYNB
+}
+if found=$(ci_no_base); then
+  printf '  %sok%s   the workflow passes no base to the coverage runner\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s the workflow passes no base to the coverage runner\n' "$RED" "$NC"
+  printf '         (an executed step still mentions: %s -- under inventory-base a push to\n' "$found"
+  printf '          main is not-applicable, so no base is needed or accepted there)\n'
+  fail=$((fail+1))
+fi
+
 for step in check-doc-evidence.sh gate-receipts.sh test-doc-evidence.sh; do
   if ci_runs "$step"; then
     printf '  %sok%s   CI runs scripts/%s\n' "$GREEN" "$NC" "$step"; pass=$((pass+1))
