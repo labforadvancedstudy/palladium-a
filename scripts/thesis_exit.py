@@ -170,6 +170,44 @@ PRECONDITIONS = (
 )
 
 
+# THE PRECONDITION SET IS PINNED, LIKE EVERY OTHER DEFINITIONAL SET HERE. It was the one
+# that was not, and it decides whether this command may compute a verdict at all.
+#
+# Measured, by deleting GI-12's tuple: `incomplete_definition()` stopped refusing for it
+# while ATTRIBUTION_MODEL was still `substring`, and GI-12 reappeared as an ordinary SCORED
+# row printing `RED GI-12 … owed by M2`. That is exactly the state the preconditions design
+# exists to prevent — "they were ordinary 1.0 rows, so `make thesis-exit` could have gone
+# green while rejection attribution was still satisfiable by incidental text" — reopened by
+# a one-line deletion. Today GI-11 still blocks, so the exit code does not change and the
+# demotion is invisible in it; it becomes fatal the day GI-11 lands.
+#
+# The self-test does catch it (four cases, via the `BLOCKED=` half of the failure
+# signature added in round 20 — before that they asserted a bare `2` and would have
+# passed). A pin is stronger: it makes the failure a REFUSAL rather than a verdict, which
+# is the property every other definitional set on this branch already has.
+EXPECTED_PRECONDITION_IDS = ("GI-11", "GI-12")
+EXPECTED_PRECONDITION_CONSTS = {"GI-11": ("LIVENESS_MODEL", "lexical", "call-graph"),
+                                "GI-12": ("ATTRIBUTION_MODEL", "substring", "code")}
+
+
+def validate_preconditions() -> None:
+    """The safeguard set must be the reviewed one. Drift is a FAILURE TO MEASURE."""
+    ids = tuple(rid for rid, *_ in PRECONDITIONS)
+    if ids != EXPECTED_PRECONDITION_IDS:
+        raise HarnessError(
+            f"the precondition set changed: {ids} against the pinned "
+            f"{EXPECTED_PRECONDITION_IDS}. These are the safeguards that stop this command "
+            "computing a verdict with tools it has disclosed as unsound; removing one does "
+            "not make it satisfied, it makes it SCORED — an ordinary red row, which is the "
+            "arrangement the preconditions replaced. Re-pin deliberately or restore it.")
+    for rid, const, unsound, sound, _why in PRECONDITIONS:
+        want = EXPECTED_PRECONDITION_CONSTS[rid]
+        if (const, unsound, sound) != want:
+            raise HarnessError(
+                f"precondition {rid} now watches {(const, unsound, sound)}, pinned {want}. "
+                "Repointing a safeguard at a different constant retires it silently.")
+
+
 LIVENESS_CORPUS = ROOT / "tests/liveness-differential.tsv"
 
 # THE CORPUS IS CLOSED, in the sense EXPECTED_THESIS_CONTRACT is closed. It carries the
@@ -928,6 +966,7 @@ def incomplete_definition() -> list[tuple[str, str]]:
     Making the liveness corpus the WHOLE precondition — which is what round 10 did — let
     GI-11 clear on scalar verdicts while the structure it contracted for was unbuilt.
     """
+    validate_preconditions()
     out = []
     try:
         cg_fail, cg_total = callgraph_differential()
@@ -1064,7 +1103,11 @@ def _validate_contract(contract=None):
     for rid, (kind, ev, fp) in sorted(contract.items()):
         if kind not in KINDS:
             raise HarnessError(f"pinned contract: {rid} has unknown kind {kind!r}")
-        if kind == "reject" and (not fp or fp == "-"):
+        # `fp.strip()`, not `fp`. Measured: `" "` passed this guard, and `p_verdict`
+        # compares `want_fp.strip() != decl.strip()`, so a corpus row declaring nothing
+        # then satisfied it — the same end state the guard names, reached by a value it
+        # did not consider. `-` and `""` were refused; whitespace was not.
+        if kind == "reject" and fp.strip() in ("", "-"):
             raise HarnessError(
                 f"pinned contract: {rid} is a `reject` row with no required fingerprint. "
                 "Any rejection would satisfy it, including one for incidental unsupported "
@@ -1958,7 +2001,7 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "1f67f4d2dbeb2086e6f7df5b7ef73a74bc53fc5e351a0a7966e7ab0bdf0338d7"
+EXPECTED_CASE_SHA = "5de5c3dd905ae493566b89a34dd3463bc4dce4a8409a6b414f8a68dc0389cad7"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -3485,6 +3528,63 @@ def self_test() -> int:
     case("...and the tracked corpus is intact afterwards, with its pinned row count",
          (LIVENESS_CORPUS == _real_corpus, liveness_differential()[1]),
          (True, len(EXPECTED_LIVENESS_IDS)), drives_main=False)
+
+    print("\n  incomplete_definition — THE LAST UNAUDITED DECISION FUNCTION")
+    # Round 21. The function between the corpora and the exit code: it decides whether this
+    # command may compute a verdict at all. Two defects and one coverage gap, each
+    # separated from the code by construction.
+
+    # F1. THE PRECONDITION SET WAS THE ONE DEFINITIONAL SET THAT WAS NOT PINNED.
+    _saved_pre = PRECONDITIONS
+    try:
+        globals()["PRECONDITIONS"] = tuple(p for p in _saved_pre if p[0] != "GI-12")
+        # THROUGH THE DECISION FUNCTION, not through the validator. The first version of
+        # this case called `validate_preconditions()` directly — so deleting the CALL SITE
+        # in `incomplete_definition` left it green, which is a check that exists and is not
+        # on the path. Same class this branch keeps finding; caught here by reverting.
+        _dropped = _raises_harness(incomplete_definition)
+        globals()["PRECONDITIONS"] = _saved_pre
+        _no_check = sorted({r for r, _w in incomplete_definition()})
+    finally:
+        globals()["PRECONDITIONS"] = _saved_pre
+    case("DELETING a precondition is a HARNESS ERROR now — it used to remove the refusal "
+         "silently while the unsound constant stayed put",
+         _dropped, True, drives_main=False)
+    case("...and repointing one at a different constant is caught too, because retiring a "
+         "safeguard by aiming it elsewhere reads as a rename in a diff",
+         _raises_harness(lambda: (globals().__setitem__(
+             "PRECONDITIONS",
+             (("GI-11", "LIVENESS_MODEL", "lexical", "call-graph", "x"),
+              ("GI-12", "LIVENESS_MODEL", "substring", "code", "x"))),
+             validate_preconditions())[-1]), True, drives_main=False)
+    globals()["PRECONDITIONS"] = _saved_pre
+    case("as committed, both safeguards are outstanding and BOTH refuse",
+         _no_check, ["GI-11", "GI-12"], drives_main=False)
+
+    # F3. THE SATISFIED BRANCH OF THAT LOOP WAS NEVER DRIVEN — the self-test bypassed the
+    # whole function with `assume_definition_complete` instead, so "the refusal lifts when
+    # the constant is sound" was asserted nowhere.
+    _saved_attr = ATTRIBUTION_MODEL
+    try:
+        globals()["ATTRIBUTION_MODEL"] = "code"
+        _lifted = sorted({r for r, _w in incomplete_definition()})
+    finally:
+        globals()["ATTRIBUTION_MODEL"] = _saved_attr
+    case("the GI-12 refusal LIFTS when its constant becomes sound — the branch that says "
+         "a precondition can be met, driven for the first time",
+         _lifted, ["GI-11"], drives_main=False)
+    case("...and GI-11 keeps refusing on its own two grounds, so lifting one lifts one",
+         len([r for r, _w in incomplete_definition() if r == "GI-11"]), 2, drives_main=False)
+
+    # F2. `_validate_contract` names the defect "a reject row with no required fingerprint";
+    # a whitespace one reached that state without tripping it.
+    case("a reject row pinned with WHITESPACE is refused, like `-` and `` — it made the "
+         "fingerprint comparison vacuous against a corpus that declares nothing",
+         [_raises_harness(lambda fp=fp: _validate_contract({"X-01": ("reject", "x.pd", fp)}))
+          for fp in ("-", "", " ", "   ", "\t")], [True] * 5, drives_main=False)
+    case("...while a real fingerprint still validates",
+         _raises_harness(lambda: _validate_contract(
+             {"X-01": ("reject", "x.pd", "declared pure")})), False, drives_main=False)
 
     print("\n  THE SELF-TEST HARNESS — the region every other control runs through")
     # Round 20. `_drive`, `case`, `mutate`, `mutate_fp`, `_verdict`. A defect here does not
