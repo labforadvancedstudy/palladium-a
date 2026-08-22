@@ -1,0 +1,101 @@
+# LIVENESS DIFFERENTIAL CORPUS — CLOSED INVENTORY.
+#
+# WHY THIS EXISTS. Five times running, a check meant to establish that GI-11's replacement
+# is genuine degenerated into a check that something by a given name did not fail:
+#
+#   round 5  a NAME exists                  -> an empty function satisfied it
+#   round 6  a TEST exists                  -> same
+#   round 8  a test PASSES                  -> an empty `#[test]` satisfied it
+#   round 9  a TARGET exits 0               -> `@true` satisfied it
+#   round 9  the SOURCE has the right shape -> renaming the probes to `cg_*` wrappers
+#                                              satisfied it, measured
+#
+# That is a boundary, not five near misses:
+#
+#     NO CHECK THAT LIVES INSIDE THE ARTIFACT CAN ESTABLISH THAT A FUTURE REPLACEMENT OF
+#     THAT ARTIFACT IS GENUINE, BECAUSE WHOEVER WRITES THE REPLACEMENT ALSO WRITES THE
+#     CHECK.
+#
+# What escapes it is a check that can only be satisfied by PRODUCING DIFFERENT ANSWERS ON
+# INPUTS WHOSE CORRECT ANSWERS ARE ALREADY FIXED. This file is those inputs. A renamed
+# wrapper around the lexical probe cannot pass it, because what is checked is the model's
+# VERDICTS on these programs, not its spelling. The same move as replacing a re-implemented
+# module parser with `cargo test --list`.
+#
+# THE ANSWERS ARE FIXED BY REVIEW, NOT BY THE MODEL. Each `answer` below is the ground
+# truth about the program, decided by reading it. Changing an answer to make a model pass
+# is a change to what liveness MEANS, and it is a diff a reviewer can see. That is the
+# whole protection, and it is the same one tests/conformance-manifest.txt relies on.
+#
+# THE CORPUS IS RED TODAY, AND THAT IS THE POINT. Every other precondition this gate has
+# tried could be satisfied by an artifact that did nothing. This one is failed by the
+# model that is actually wired, on cases that model actually gets wrong. `make thesis-exit`
+# refuses until it passes.
+#
+# COLUMNS (TAB-separated, all six mandatory):
+#   id  answer  subject  source  why  source-of-truth
+#
+# answer:   live | dead     the GROUND TRUTH about `subject` in `source`.
+# subject:  the function whose liveness is being asked about.
+# source:   a whole compilation unit, `\n` for newline. Kept inline rather than as .pd
+#           files because tests/conformance-manifest.txt is a closed inventory over every
+#           .pd under tests/, and these are not conformance fixtures.
+# why:      the reasoning a reviewer checks the answer against.
+# source-of-truth: `reviewed` (decided by reading) or a file:line this shape was measured at.
+#
+# WHAT THESE CASES DO NOT ESTABLISH. Reviewers put the ceiling plainly: a lexical
+# classifier could score full marks by recognising the three literal divergence forms and
+# then following at most one named intermediary from `main`. The metamorphic variants below
+# raise the cost of ONE part of that, and the claim is narrowed to what they do: alpha-
+# renaming, reordering and inert whitespace defeat an EXACT SOURCE FINGERPRINT. They do NOT
+# defeat the classifier described above — `if true { return; }`, `while true` and
+# `if false` all survive those transformations intact, and the deepest positive still has a
+# single intermediary. Defeating that would need a divergence restructured into a
+# semantically identical but lexically different form, which is not in this corpus.
+# NO FINITE CORPUS REMOVES THE HUMAN-REVIEW BOUNDARY. This corpus proves the model's
+# VERDICTS on cases a reviewer fixed. It says nothing about the model's STRUCTURE: scoped
+# call-site identities, declared entry roots, an order-independent fixed point, provenance,
+# per-edge completion, indirect targets resolved-or-declared. That is GI-11's observable,
+# and GI-11 requires BOTH — this corpus and tests/callgraph-differential.tsv — precisely
+# because neither substitutes for the other. A named test was tried for the structural half
+# and removed in round 12: an empty test body reported success and satisfied it whole. Feasibility that needs interprocedural constant propagation is
+# deliberately out of scope here and belongs to the observable.
+#
+# A model must answer every row. REFUSING IS FAILING: a model that cannot decide these is
+# not the replacement GI-11 requires. R4's honest refusal is the right behaviour for the
+# LEXICAL model and is exactly why the lexical model does not satisfy GI-11.
+#
+# id	answer	subject	source	why	source-of-truth
+
+# --- DEAD: the three shapes that broke every lexical design ---------------------------
+diverging-if	dead	ornament	fn ornament() -> i64 { return 1; }\nfn main() { if true { return; } ornament(); }	the `if` always diverges, so nothing after it runs	reviewed
+while-true	dead	ornament	fn ornament() -> i64 { return 1; }\nfn main() { while true { } ornament(); }	the loop never completes	reviewed
+false-branch	dead	ornament	fn ornament() -> i64 { return 1; }\nfn main() { if false { ornament(); } }	the guard is constant-false	reviewed
+unreferenced	dead	ornament	fn ornament() -> i64 { return 1; }\nfn main() { }	nothing names it at all	reviewed
+dead-caller	dead	ornament	fn ornament() -> i64 { return 1; }\nfn dead() -> i64 { return ornament(); }\nfn main() { }	its only caller is itself unreachable	reviewed
+self-recursive	dead	ornament	fn ornament() -> i64 { return ornament(); }\nfn main() { }	a self-edge is not a path from main	reviewed
+
+# --- LIVE: the converse, so "answer dead everywhere" fails too -------------------------
+direct	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { ornament(); }	called at the top level of main	reviewed
+via-callee	live	ornament	fn ornament() -> i64 { return 1; }\nfn mid() -> i64 { return ornament(); }\nfn main() { mid(); }	reached through one hop	reviewed
+inside-else	live	compile_file	fn compile_file(p: String) { print(p); }\nfn main() { let n: i64 = arg_count(); if n < 3 { print("usage"); } else { compile_file("x"); } }	a conditional branch is REACHABLE; a naive under-approximation calls this dead, and it is the real witness's own shape	bootstrap/pdc.pd:980-989
+loop-body	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { let i: i64 = 0; while i < 3 { ornament(); i = i + 1; } }	a loop body that may execute is reachable	reviewed
+after-conditional	live	ornament	fn ornament() -> i64 { return 1; }\nfn side() { print("x"); }\nfn main() { if true { side(); } ornament(); }	the `if` completes, so what follows runs	reviewed
+in-initializer	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { let v: i64 = ornament(); print_int(v); }	a call in a `let` INITIALIZER evaluates. (Named `in-return-expr` until round 11; it was never a return expression, and GI-11's contract names initializers, conditions and return expressions as three separate shapes)	reviewed
+in-condition	live	ornament	fn ornament() -> i64 { return 1; }\nfn main() { if ornament() > 0 { print("y"); } }	a call in a CONDITION evaluates before either branch is chosen	reviewed
+in-return-expr	live	ornament	fn ornament() -> i64 { return 1; }\nfn mid() -> i64 { return ornament(); }\nfn main() { print_int(mid()); }	a call in a RETURN EXPRESSION evaluates; truncating at the `return` token loses it	reviewed
+
+# --- METAMORPHIC VARIANTS -------------------------------------------------------------
+# The same programs under transformations that CANNOT change liveness: alpha-renaming,
+# reordering definitions, and inert whitespace. What they establish, exactly: a model that
+# answers by EXACT SOURCE FINGERPRINT scores differently on a variant than on its base, and
+# a correct model cannot tell them apart. What they do NOT establish: they do not defeat a
+# classifier that recognises `if true { return; }`, `while true` or `if false`, because
+# every variant preserves those forms verbatim. scripts/thesis_exit.py pins each variant to
+# its base in VARIANT_OF_BASE and requires the two to be scored identically.
+mm-diverging-if-renamed	dead	decoration	fn decoration() -> i64 { return 1; }\nfn main() { if true { return; } decoration(); }	alpha-renamed `diverging-if`; the answer cannot depend on the identifier	reviewed
+mm-while-true-reordered	dead	ornament	fn main() { while true { } ornament(); }\nfn ornament() -> i64 { return 1; }	`while-true` with the definition AFTER main; order is not semantics	reviewed
+mm-direct-spaced	live	ornament	fn ornament( ) -> i64 {\n\n    return 1;\n}\nfn main( ) {\n    ornament( );\n}	`direct` with inert whitespace and newlines	reviewed
+mm-via-callee-renamed	live	deep	fn deep() -> i64 { return 1; }\nfn hop() -> i64 { return deep(); }\nfn main() { hop(); }	alpha-renamed `via-callee`	reviewed
+mm-false-branch-reordered	dead	ornament	fn main() { if false { ornament(); } }\nfn ornament() -> i64 { return 1; }	`false-branch` with the definition after main	reviewed
+mm-inside-else-renamed	live	build	fn build(p: String) { print(p); }\nfn main() { let n: i64 = arg_count(); if n < 3 { print("usage"); } else { build("x"); } }	alpha-renamed `inside-else`, the real witness's shape	reviewed

@@ -293,13 +293,13 @@ test-conformance-runner: build ## Prove the conformance gate still goes RED when
 .PHONY: m1-exit
 m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1
 	@rc=0; \
-	echo "$(YELLOW)== inventory 1 of 3: .pd fixtures (tests/conformance-manifest.txt) ==$(NC)"; \
+	echo "$(YELLOW)== inventory one of three: .pd fixtures (tests/conformance-manifest.txt) ==$(NC)"; \
 	CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests examples || rc=1; \
 	echo; \
-	echo "$(YELLOW)== inventory 2 of 3: Rust debt (tests/rust-debt-manifest.txt + #[ignore] reasons) ==$(NC)"; \
+	echo "$(YELLOW)== inventory two of three: Rust debt (tests/rust-debt-manifest.txt + #[ignore] reasons) ==$(NC)"; \
 	TEST_XFAIL_FORBID_OWNER=M1 python3 scripts/test-xfail.py || rc=1; \
 	echo; \
-	echo "$(YELLOW)== inventory 3 of 3: the ordinary Rust suite (nothing here is allowed to fail) ==$(NC)"; \
+	echo "$(YELLOW)== inventory three of three: the ordinary Rust suite (nothing here is allowed to fail) ==$(NC)"; \
 	$(CARGO) test --release --no-fail-fast || rc=1; \
 	echo; \
 	if [ $$rc -eq 0 ]; then \
@@ -432,7 +432,7 @@ version-source-gate: ## Require that no source file states this compiler's versi
 # writing this round's replacement, I asserted the suite could not be in this
 # list because its debt is open by design. MEASURED, before shipping that
 # sentence: `make test-honest` is 668 passed / 0 failed / 46 ignored, GREEN, 8.4s
-# warm. The debt that is open is inventories 1 and 2 of `m1-exit` (2 rows
+# warm. The debt that is open is `m1-exit`'s first two inventories (2 rows
 # OWED_TO_M1); inventory 3, which is this same command character for character,
 # is green. So the only argument against it was cost, and the cost is 8.4s
 # standalone-warm — the bulk of what this entry and `version-source-gate` add to
@@ -452,7 +452,25 @@ version-source-gate: ## Require that no source file states this compiler's versi
 # something scripts/test-version-gate.sh can pin membership of, which "some test
 # somewhere inside the suite" is not.
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate version-source-gate test-xfail test-honest ## Run every language-level gate
+# `thesis-exit` is DELIBERATELY ABSENT and must stay absent: it exits 2 by design, and a
+# green umbrella that swallowed a NO_VERDICT would be the one reading this branch exists to
+# prevent. Its SELF-TEST belongs here, though — every defence this branch built was
+# reachable only from a target outside the umbrella, which is an enforcement gap, not a
+# design choice.
+#
+# RESOLVED AS A UNION, DELIBERATELY, AND FOR THE SECOND TIME. `main` and each incoming
+# branch have carried gates the other did not, so taking either side wholesale silently
+# DROPS gates. From the thesis branch: check-retracted-claims, test-thesis-runner,
+# test-xfail. From fix/d3b-tail-if: version-source-gate, test-honest. Fifteen targets, and
+# a conflict on this line should be resolved this way every time — the union is the only
+# resolution that cannot lose a gate, and losing one is silent by construction.
+#
+# `test-honest` ARRIVING HERE CLOSES GI-06, which docs/contributing/1.0-requirements.tsv
+# carried as `owed` and MILESTONES.md described as "a one-word change nobody has made".
+# Both are updated in this same commit: a requirement whose status changes in a merge and
+# is not written down in that merge is a claim measured against a state that no longer
+# exists.
+gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate version-source-gate check-retracted-claims test-thesis-runner test-xfail test-honest ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # `make gates` GREEN IS A STATEMENT ABOUT THIS WORKTREE, AND THAT IS NOT THE TREE
@@ -478,3 +496,26 @@ merge-preflight: ## Run `make gates` against the merge of this branch into REF (
 .PHONY: test-xfail
 test-xfail: ## Run the #[ignore]d tests and fail if a declared failure now passes
 	@python3 scripts/test-xfail.py
+
+# --- The definition of 1.0, as a command -----------------------------------
+# Committed RED on purpose. See scripts/thesis-exit.sh and
+# docs/contributing/MILESTONES.md: 1.0 is the thesis proven on the self-hosting
+# compiler, not an inventory with no unmet rows.
+
+.PHONY: thesis-exit
+thesis-exit: build ## The definition of Palladium 1.0. RED until M9.
+	@bash scripts/thesis-exit.sh
+
+# Fault injection, not a call to the helpers: for every probe that reads source or
+# a verdict, a state that VIOLATES the property must go RED and a state that
+# satisfies it must go green. Probe groups with no negative control are named in
+# the output rather than left silent.
+.PHONY: test-thesis-runner
+test-thesis-runner: build ## Fault-inject every thesis probe and prove it can still go RED
+	@bash scripts/thesis-exit.sh --self-test
+
+# The banned-list check belongs on the release path, not only under --self-test:
+# three retracted claims survived a deletion because nothing on this path looked.
+.PHONY: check-retracted-claims
+check-retracted-claims: ## Fail if wording a review round retracted has come back
+	@python3 scripts/thesis_exit.py --check-retracted-claims
