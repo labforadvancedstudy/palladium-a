@@ -1978,11 +1978,6 @@ def thesis_rows(ctx: Context) -> list[dict]:
             f"added={added or 'none'} removed_or_retyped={gone or 'none'}. Update "
             "EXPECTED_THESIS_CONTRACT in this file in the same commit, deliberately.")
     _validate_pin_keys(set(PINNED_ACCEPTANCE_SHA))
-    if False:
-        raise HarnessError(
-            f"the acceptance-pin key set changed: {sorted(PINNED_ACCEPTANCE_SHA)} against "
-            f"the reviewed {sorted(PINNED_ACCEPTANCE_IDS)}. Removing a key does not make a "
-            "row's text unpinned-by-design, it makes it unpinned in silence.")
     for r in rows:
         want = EXPECTED_THESIS_CONTRACT[r["id"]]
         got = (r["kind"], r["ev"], r["fp"])
@@ -2226,7 +2221,7 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "64b4d0a2496f05959d0e4a960a35a72932fc75a16919fc0e51e2a260aea44f57"
+EXPECTED_CASE_SHA = "1dd2b6838eafd12ff5af1ac4ed9d82fd56a40d2f618d88ff99619606d657146d"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -2374,23 +2369,33 @@ def conformance_corpus_size() -> int:
                 if l.strip() and not l.startswith("#")])
 
 
+def corpus_figures_in(rel: str, text: str, want: int) -> list[str]:
+    """`over N fixtures` in one text where N is not `want`. PURE, so it can be PLANTED.
+
+    Its sibling `scan_claims(rel, text)` has this shape for exactly this reason: a checker
+    that can only be run against the real tree has no negative control, and gutting it to
+    `return []` left the self-test green with the digest unchanged.
+    """
+    out = []
+    for m in re.finditer(r'(.?)over (\d+)\s*\n?fixtures', text):
+        # A QUOTED figure is a RECORD OF WHAT SOMETHING SAID, not a live claim. F7 exists
+        # to quote stale numbers accurately, so a checker that could not tell a quotation
+        # from an assertion would make honest history impossible to write.
+        if m.group(1) == '"':
+            continue
+        if int(m.group(2)) != want:
+            out.append(f"{rel}: `over {m.group(2)} fixtures`, measured {want}")
+    return out
+
+
 def stale_corpus_figures() -> list[str]:
-    """`over N fixtures` in a scanned file where N is not the measured corpus size."""
+    """Every scanned file's live `over N fixtures`, against the MEASURED corpus size."""
     want = conformance_corpus_size()
     out = []
     for rel in CLAIM_SCANNED:
         f = ROOT / rel
-        if not f.is_file():
-            continue
-        text = f.read_text()
-        for m in re.finditer(r'(.?)over (\d+)\s*\n?fixtures', text):
-            # A QUOTED figure is a RECORD OF WHAT SOMETHING SAID, not a live claim. F7
-            # exists to quote stale numbers accurately, so a checker that could not tell
-            # a quotation from an assertion would make honest history impossible to write.
-            if m.group(1) == '"':
-                continue
-            if int(m.group(2)) != want:
-                out.append(f"{rel}: `over {m.group(2)} fixtures`, measured {want}")
+        if f.is_file():
+            out += corpus_figures_in(rel, f.read_text(), want)
     return out
 
 
@@ -2474,11 +2479,25 @@ def real_acceptance() -> dict[str, str]:
 
 
 def module_level_file_reads(source: str) -> list[str]:
-    """Top-level statements that touch an external file. THE DURABLE HALF of that fix.
+    """Top-level statements SPELLED as a file read. A FAST PRE-CHECK, NOT THE CONTROL.
 
-    Deferring one dict is a fix for one instance; this is the check that catches the next
-    one, because the defect is invisible — it does not make a case fail, it moves a failure
-    outside the only place that can classify it.
+    THIS DOCSTRING USED TO CALL ITSELF "THE DURABLE HALF" AND THAT WAS THE SAME DEFECT ONE
+    LEVEL UP: it names spellings, not the fact. Measured escapes, all of which leave it
+    returning `[]` while the requirement is violated —
+
+        _EAGER = real_acceptance()        a module-level call to a reading HELPER
+        def f(x=Path("p").read_text()):   a default-argument value
+        @decorator(Path("p").read_text()) a decorator expression
+        class C: data = open("p").read() a class-body statement
+
+    — plus `subprocess`, `os.listdir`, `Path.iterdir` and a bound-method read. The
+    requirement is "no external file is read before `_entry()` can classify the failure",
+    and no list of attribute names decides that.
+
+    What decides it is running the command with the file gone and reading the exit code,
+    which `case("a MISSING manifest is exit 2 …")` does in a subprocess. Note the existing
+    `unreadable_requirements=True` control cannot see this by construction: it drives
+    `_entry()`, and the defect is upstream of `_entry()`.
     """
     import ast as _ast
     bad = []
@@ -3990,10 +4009,27 @@ def self_test() -> int:
     case("`over N fixtures` is MEASURED from the manifest, so a corpus that grows leaves a "
          "red gate rather than a stale authority",
          stale_corpus_figures(), [], drives_main=False)
-    case("...and a planted stale figure is caught, while a QUOTED one is read as history",
-         (len(stale_corpus_figures()) == 0,
-          bool(re.search(r'(.?)over (\d+)\s*\n?fixtures', "over 999 fixtures"))),
-         (True, True), drives_main=False)
+    # PLANTED, and BOTH BRANCHES EXERCISED. The predecessor of this case planted nothing:
+    # its two assertions were a duplicate of the case above and an inline `re.search` that
+    # bypassed the function entirely, so gutting the function to `return []` left the
+    # self-test green.
+    # ASSEMBLED AT RUN TIME. Written whole, each plant would be a LIVE `over N fixtures`
+    # in a file this very check scans — the fifth time this session that a control's own
+    # text tripped the check it was written for, and every time the guard caught it.
+    _stale_fig, _live_fig = "over " + "53 fixtures", "over " + "70 fixtures"
+    case("a planted STALE figure is caught",
+         corpus_figures_in("planted.md", f"measured {_stale_fig}", 70),
+         [f"planted.md: `{_stale_fig}`, measured 70"], drives_main=False)
+    case("...a planted CURRENT figure is not",
+         corpus_figures_in("planted.md", f"measured {_live_fig}", 70), [],
+         drives_main=False)
+    case("...and a QUOTED stale figure is read as history, which is what lets F7 record "
+         "what an authority used to say",
+         corpus_figures_in("planted.md", f'A11 said "{_stale_fig}" once', 70), [],
+         drives_main=False)
+    case("...while the same figure unquoted is a live claim and is caught",
+         len(corpus_figures_in("planted.md", f"A11 says {_stale_fig} today", 70)), 1,
+         drives_main=False)
 
     # MF4. Rename + label defeated the identifier-keyed detector with `grep -qF` live.
     _renamed = mutate(_me_for_drive, _fp_anchor,
@@ -4010,11 +4046,33 @@ def self_test() -> int:
          drives_main=False)
 
     # MF5. Module-level I/O escaped the three-state boundary entirely.
-    case("NO external file is read at import time — a missing manifest reported THESIS "
-         "FALSE (exit 1, no THESIS_RESULT line) because the read ran before `_entry` "
-         "existed to classify it",
-         module_level_file_reads(_me_for_drive), [], drives_main=False)
-    case("...and the check catches a planted one, so the next module-level read is loud",
+    # THE CONTROL THAT MEASURES THE REQUIREMENT: run the real command against a tree whose
+    # manifest is gone, and read the exit code. The AST walker below is a pre-check that
+    # names spellings; this asks the question.
+    _mf5_dir = Path(tempfile.mkdtemp(prefix="thesis-no-manifest-"))
+    for _rel in ("scripts", "docs/contributing", "tests"):
+        (_mf5_dir / _rel).mkdir(parents=True, exist_ok=True)
+    for _rel in ("scripts/thesis_exit.py", "scripts/gate_probe.py",
+                 "scripts/conformance.sh", "tests/liveness-differential.tsv",
+                 "tests/callgraph-differential.tsv"):
+        (_mf5_dir / _rel).write_text((ROOT / _rel).read_text())
+    # docs/contributing/1.0-requirements.tsv is deliberately NOT copied.
+    _mf5 = subprocess.run([sys.executable, str(_mf5_dir / "scripts/thesis_exit.py")],
+                          capture_output=True, text=True, cwd=_mf5_dir)
+    _mf5_out = _mf5.stdout + _mf5.stderr
+    case("a MISSING manifest is exit 2 with exactly one THESIS_RESULT line — measured by "
+         "RUNNING the command, because the requirement is about what happens before "
+         "`_entry()` exists and no list of attribute names decides that",
+         (_mf5.returncode, _mf5_out.count("THESIS_RESULT"),
+          "Traceback" in _mf5_out and "THESIS_RESULT" not in _mf5_out),
+         (2, 1, False), drives_main=False)
+    case("...and it says NO_VERDICT, not that the thesis is false",
+         "THESIS_RESULT 2 NO_VERDICT" in _mf5_out, True, drives_main=False)
+    case("the AST pre-check is clean too, and is named for what it is — a spelling scan, "
+         "not the durable half: `_EAGER = real_acceptance()` escapes it entirely",
+         (module_level_file_reads(_me_for_drive),
+          module_level_file_reads("X = real_acceptance()\n")), ([], []), drives_main=False)
+    case("...it does catch the spelling it names",
          len(module_level_file_reads(
              "from pathlib import Path\nX = Path('a').read_text()\n")), 1,
          drives_main=False)
