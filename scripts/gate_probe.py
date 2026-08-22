@@ -42,32 +42,36 @@ paragraph claimed more than the code delivers:
     (`WITHHELD_AT`). Gates grep stdout, so this is the property that actually
     blocks the failure mode — a caller cannot grep what was never printed.
 
-WHAT THIS IS NOT — STATED BECAUSE IT WAS PREVIOUSLY OVERSTATED, HERE AND IN
-BRIEFS QUOTING THIS FILE
-The bytes are not destroyed, and Python cannot make them unreachable. They
-survive in `Run._out` and in `Withheld._b`; underscores are convention, not
-access control. "Reading the output of a producer that did not conclude is
-structurally unexpressible" was false — measured, it is `r._out` or
-`v.withheld._b`. A false claim in the module whose entire job is "do not certify
-what you did not establish" is the disease it exists to treat.
+THE INVARIANT IS NON-PUBLICATION, NOT DESTRUCTION
+-------------------------------------------------
+Say it that way round, because saying it the other way round is how this file
+came to make a claim it could not keep. The bytes still exist after
+classification, in `Run._out` and in `Withheld._b`; a leading underscore is a
+naming convention, and Python has no access control. Earlier text here, and
+briefs quoting it, said the output of a producer that did not conclude could
+not be got at. Measured, it can: `r._out`, `v.withheld._b`. A false claim in
+the module whose entire job is "do not certify what you did not establish" is
+the disease it exists to treat.
 
-The bytes are kept ON PURPOSE, and discarding them would not have closed it:
+Fusing `run()` and `classify()` and discarding on the malfunction branch WOULD
+be possible — it is a design choice, not an impossibility. It is declined:
 
   * `spill()` is the DESIGNED channel for a malfunction's output — to a file,
     for a human, never to the stream a shell parses. Delete it and the next
     person debugging a malfunction re-runs the producer under their own ad-hoc
     capture, which is the failure mode with no boundary at all.
-  * `run()` must hand the bytes back for `classify()` to read them, so
-    `Run._out` exists BEFORE any classification. Discarding at classification
-    time would leave the hole open one line earlier, and a promise that fails
-    just out of shot is not a promise.
+  * Destruction would buy nothing the gates need. What the gates need is that
+    a producer's text never reaches a stream a verdict is read from, and that
+    is a property of what is PRINTED, not of what is retained.
 
-So the honest claim is narrower, and it is MECHANICAL: the honest path is the
-easy path, and the dishonest one requires reaching for a private name. That is
-enforceable even though unreachability is not, and scripts/test-gate-probe.sh
-enforces it — the gate fails if any consumer outside this module names `._out`,
-`._b` or `.withheld._b`, if `Malfunction` grows a `text` attribute, or if
-`Withheld`'s `repr`/`str` starts carrying the bytes.
+So the guarantee is narrower than "cannot", and it is MECHANICAL: the honest
+path is the easy path, the dishonest one requires reaching for a private name,
+and scripts/test-gate-probe.sh fails if any consumer outside this module writes
+one, if `Malfunction` grows a `text` attribute, if `Withheld`'s `repr`/`str`
+starts carrying the bytes, or if this file's prose re-grows the overclaim.
+That last check reads the WHOLE file — an earlier version scanned only the text
+above this heading, which is how the docstrings on `Run` and `classify` went on
+asserting the retracted version for a round.
 
 TOTALITY
 --------
@@ -144,12 +148,38 @@ class Withheld:
 
     __str__ = __repr__
 
-    def spill(self, path: Path) -> Path:
+    def spill(self, path: Path):
+        """Write the output to `path`. -> (path, error or None).
+
+        IT USED TO SWALLOW THE ERROR AND RETURN THE PATH ANYWAY, and the caller
+        printed `WITHHELD_AT <path>` over a file that does not exist. Measured:
+        `spill(Path('/nonexistent-dir-xyz/out.txt'))` returned that path, wrote
+        nothing, and the operator was told the diagnostic had been preserved.
+
+        That is worse than an ordinary swallowed error. The whole argument for
+        keeping these bytes is that `spill()` is the DESIGNED channel — the
+        alternative to a designed channel is somebody re-running the producer
+        under an ad-hoc capture with no boundary at all. A channel that fails
+        silently exactly when it is needed, and reports success, is not a
+        channel; it is the failure mode wearing the channel's name.
+
+        The error is RETURNED rather than raised so the malfunction report can
+        still be emitted — losing the report as well as the bytes helps nobody —
+        but it must be announced. `report_malfunction` prints `WITHHELD_LOST`
+        instead of `WITHHELD_AT`, and says why.
+        """
         try:
             path.write_text(self._b, errors="replace")
-        except OSError:
-            pass
-        return path
+        except (OSError, UnicodeError) as exc:
+            return path, f"{type(exc).__name__}: {exc}"
+        # Confirm rather than assume. A write that raised nothing but left no
+        # readable file is the same lie in a different costume.
+        try:
+            if not path.is_file():
+                return path, "write raised nothing but no file is there"
+        except OSError as exc:
+            return path, f"cannot stat what was just written: {exc}"
+        return path, None
 
 
 @dataclass(frozen=True)
@@ -170,7 +200,14 @@ class Malfunction:
 
 
 class Run:
-    """A finished process. Its output has no accessor; use `classify()`."""
+    """A finished process, its exit status, and its output.
+
+    `classify()` is the route a caller is meant to take: it turns the status
+    into a verdict and only then hands over the text. The output is in `_out`,
+    an ordinary attribute behind a naming convention — reachable, and not
+    pretended otherwise. See the module docstring for what is actually
+    guaranteed, and scripts/test-gate-probe.sh for the rule that is enforced.
+    """
 
     __slots__ = ("argv", "rc", "_out")
 
@@ -280,7 +317,13 @@ def run(argv, cwd=None, env=None) -> Run:
 
 
 def classify(r: Run, reject_codes=(1,)):
-    """Concluded | Malfunction. There is no other route to the output."""
+    """Concluded | Malfunction — the intended route from a status to a verdict.
+
+    A `Concluded` carries `.text`; a `Malfunction` has no such attribute, so
+    reading the output of a producer that did not conclude cannot happen BY
+    ACCIDENT. It can still happen on purpose, via `Run._out`; that is a naming
+    convention plus the grep in scripts/test-gate-probe.sh, not a barrier.
+    """
     if r.rc == 0:
         return Concluded(r._out, r.rc, True)
     if r.signal_number is None and r.rc in reject_codes:
@@ -305,10 +348,22 @@ def emit(**fields):
 
 
 def report_malfunction(what: str, m: Malfunction, spill_to=None) -> int:
-    """Announce a malfunction WITHOUT republishing any producer text."""
+    """Announce a malfunction WITHOUT republishing any producer text.
+
+    `WITHHELD_AT <path>` is a promise that the output is at that path, so it is
+    printed only when the write is CONFIRMED. When the spill fails, the
+    distinct token `WITHHELD_LOST` is printed with the reason — never the
+    bytes — so an operator is told the diagnostic is gone rather than sent to a
+    file that is not there.
+    """
     emit(outcome="malfunction", reason=f"{what} {m.how}")
     if spill_to:
-        print(f"WITHHELD_AT {m.withheld.spill(Path(spill_to))}")
+        path, err = m.withheld.spill(Path(spill_to))
+        if err is None:
+            print(f"WITHHELD_AT {path}")
+        else:
+            print(f"WITHHELD_LOST could not write the withheld output to "
+                  f"{path}: {err}. It is gone; re-run the producer to see it.")
     else:
         print("WITHHELD output of a process that did not conclude is not evidence "
               "and is not reproduced here")

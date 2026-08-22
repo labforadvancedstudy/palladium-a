@@ -97,11 +97,14 @@ enum NetA {
     /// THE HANDOFF, BY NAME — the rows that change together when the final
     /// `else` is emitted, so nobody has to go looking:
     ///
-    ///   1. `tests/stdlib/DRIVERS.tsv`, row `stdlib_tail_match`: column 3 is
+    ///   1. `tests/stdlib/DRIVERS.tsv:31`, row `stdlib_tail_match`: column 3 is
     ///      `known_violation:area_code,sides`; promote it to `clean`.
-    ///      `make stdlib-gate` announces that transition itself — it prints
-    ///      "XPASS: … is recorded known_violation:… but its C is now CLEAN"
-    ///      (scripts/stdlib-gate.sh) and stays red until the row is promoted.
+    ///      `make stdlib-gate` announces that transition itself — the
+    ///      known_violation branch is scripts/stdlib-gate.sh:360-362, the XPASS
+    ///      note it prints when the C goes clean is
+    ///      scripts/stdlib-gate.sh:371, and a CHANGED violation set (a
+    ///      different function list) is scripts/stdlib-gate.sh:379. Both are
+    ///      `note`, which is what makes that gate red.
     ///   2. This expectation: `StillFindsTheOpenMatchDefect` -> `Accepts`, at
     ///      its single use in `tail_match_arms_are_lowered_to_returns`.
     ///   3. `src/parser/mod.rs`, the NOTE inside `returns_on_every_path` that
@@ -110,34 +113,105 @@ enum NetA {
     /// `tests/conformance-manifest.txt` needs NO change: its
     /// `tests/stdlib/stdlib_tail_match.pd` row is `run`/`expected` and pins the
     /// VALUES the program prints, which a final `else` does not alter.
-    StillFindsTheOpenMatchDefect,
+    ///
+    /// The payload is the name of the ONE C function expected to carry the
+    /// finding. It is not decoration: without it, the assertion passed on any
+    /// exit-1 output containing a generic fall-through message, so the tail-
+    /// `match` defect could be fixed while some other function supplied a
+    /// finding — and the handoff built to demand a transition would have stayed
+    /// green and demanded nothing. An assertion whose predicate is broader than
+    /// the property it names is the same defect as a check whose scope is.
+    StillFindsTheOpenMatchDefect(&'static str),
 }
 
 fn assert_net_a(c_file: &Path, what: &str, expect: NetA) {
     match expect {
         NetA::Accepts => assert_net_a_accounts_for(c_file, what),
-        NetA::StillFindsTheOpenMatchDefect => {
+        NetA::StillFindsTheOpenMatchDefect(func) => {
             let (code, text) = net_a_verdict(c_file);
             assert_eq!(
                 code,
                 Some(1),
                 "`{}` emits a tail `match`, whose C has no final `else`, so the \
                  generated-C invariant must still report a finding. If it now \
-                 returns 0 the missing-`else` defect is FIXED: change this \
-                 expectation to NetA::Accepts (and retire the `known_violation` \
-                 pin on tests/stdlib/stdlib_tail_match.pd). Got exit {:?}:\n{}",
+                 returns 0 the missing-`else` defect is FIXED — follow the \
+                 handoff on NetA::StillFindsTheOpenMatchDefect. Got exit {:?}:\n{}",
                 what,
                 code,
                 text
             );
-            assert!(
-                text.contains("FINDING") && text.contains("may fall off its end"),
-                "exit 1 must be corroborated by the well-formed finding, not by \
-                 arbitrary output:\n{}",
-                text
-            );
+            if let Err(why) = declared_match_finding(&text, func) {
+                panic!("`{}`: {}\n{}", what, why, text);
+            }
         }
     }
+}
+
+/// Is `text` EXACTLY the declared tail-`match` finding for `func`?
+///
+/// Split out from the assertion so it can itself be tested. The predicate used
+/// to be "the output contains `FINDING` and the words `may fall off its end`",
+/// which is broader than the property it names: the declared defect could be
+/// fixed while a DIFFERENT function supplied a finding, and the handoff built to
+/// demand a transition would have stayed green and demanded nothing. An
+/// assertion whose predicate is broader than its property is the same defect as
+/// a check whose scope is.
+fn declared_match_finding(text: &str, func: &str) -> Result<(), String> {
+    let findings: Vec<&str> = text.lines().filter(|l| l.starts_with("FINDING ")).collect();
+    // Exactly one. A second finding is a NEW defect sheltering behind an old
+    // excuse — what scripts/conformance.sh's diagnostic fingerprints exist to
+    // prevent, applied here.
+    if findings.len() != 1 {
+        return Err(format!(
+            "expected exactly one finding (the tail `match` in `{}`), got {}",
+            func,
+            findings.len()
+        ));
+    }
+    let f = findings[0];
+    if !f.contains("may fall off its end") {
+        return Err("exit 1 must be corroborated by the well-formed finding, not \
+                    by arbitrary output"
+            .to_string());
+    }
+    if !f.contains(&format!(" {}(", func)) {
+        return Err(format!(
+            "the finding must name `{}`, the function whose tail `match` this \
+             expectation is declared for; it names something else",
+            func
+        ));
+    }
+    Ok(())
+}
+
+/// The control on the predicate above. Each case is a way the old, broader
+/// predicate stayed green while the property it claimed had stopped holding.
+#[test]
+fn the_declared_match_finding_predicate_is_exact() {
+    let real = "FINDING build_output/d3b_match.c:315: non-void function may fall \
+                off its end (no return on every path): long long area(struct Shape s) {\n\
+                ACCOUNTED build_output/d3b_match.c: 45 definition(s) analysed\n";
+    assert!(declared_match_finding(real, "area").is_ok());
+
+    // The declared defect is fixed, but another function falls through. The old
+    // predicate ("contains FINDING and the words") accepted this.
+    let other = "FINDING x.c:9: non-void function may fall off its end (no return \
+                 on every path): long long unrelated(long long n) {\n";
+    assert!(
+        declared_match_finding(other, "area").is_err(),
+        "a finding about another function must not satisfy this expectation"
+    );
+
+    // Two findings: the declared one plus a new defect hiding behind it.
+    let two = format!("{}{}", real, other);
+    assert!(
+        declared_match_finding(&two, "area").is_err(),
+        "a second finding must not shelter behind the declared one"
+    );
+
+    // Exit 1 with no well-formed finding at all.
+    assert!(declared_match_finding("FINDING nonsense\n", "area").is_err());
+    assert!(declared_match_finding("", "area").is_err());
 }
 
 fn net_a_verdict(c_file: &Path) -> (Option<i32>, String) {
@@ -605,13 +679,28 @@ fn main() {
 }
 
 /// THE AGREEMENT BOUNDARY, PINNED. Only the literal `while true` is treated as
-/// infinite, because only it emits the literal `while (1)` that
-/// `scripts/check-c-returns.py` recognises. `while 1 == 1` emits
-/// `while ((1 == 1))`, which neither side calls infinite — so the program is
-/// refused here rather than accepted here and flagged there.
+/// infinite BY THE PARSER, which reads the AST before the optimizer runs, so
+/// `1 == 1` is still a comparison when it looks. The program is refused.
 ///
-/// This is a deliberate limit, not an oversight: widening one side without the
-/// other is how the two analyses drift apart.
+/// AN EARLIER VERSION OF THIS COMMENT went on to say that this loop emits a
+/// comparison in the C and that neither side calls it infinite. That is false.
+/// It was measured false in this same file —
+/// `codegen_spellings_the_generated_c_invariant_depends_on` counts TWO
+/// `while (1) {` in one program — and the contradiction survived a prose audit
+/// whose receipt was "I looked". The audit is now a check
+/// (scripts/test-gate-probe.sh, "retracted claims may not be reasserted"),
+/// which is what found this line.
+///
+/// What actually happens: constant folding rewrites the comparison to `true`
+/// (src/optimizer/constant_folding.rs, `BinOp::Eq`) before code generation, so
+/// the emitted C is `while (1)` and `scripts/check-c-returns.py` WOULD call it
+/// infinite. The two analyses disagree here — in the SAFE direction, because
+/// the parser is the stricter one and refuses the program before any C exists.
+/// A refusal costs a valid program; the reverse costs a miscompile.
+///
+/// The limit is deliberate: teaching the parser to fold constants, or the
+/// checker to distrust the folded spelling, moves one side without the other,
+/// and that is how the two drift apart.
 #[test]
 fn a_loop_that_is_infinite_but_not_spelled_true_is_refused() {
     let err = compile_to_c(
@@ -705,7 +794,7 @@ fn main() {
 }
 "#,
         "d3b_match",
-        NetA::StillFindsTheOpenMatchDefect,
+        NetA::StillFindsTheOpenMatchDefect("area"),
     )
     .expect("must compile, link and run");
     assert_eq!(out.trim(), "1\n2", "each arm returns its own value");

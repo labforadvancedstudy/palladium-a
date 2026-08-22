@@ -104,10 +104,36 @@ starts emitting a shape this reader does not model:
     a refusal turns that gate red unless its probe is deleted in the same
     commit — which is a visible edit to a reviewed file, not a silent one.
 
-What is NOT covered, said plainly: `make conformance` compiles 54 fixtures and
-does not pass any of them through this analyser, so a shape that appears only
-in a conformance fixture is caught by gcc's `-Wreturn-type` (Net B) and not by
-this reader.
+WHAT IS NOT COVERED, AND WHETHER IT MATTERS — MEASURED, NOT GUESSED
+`make conformance` compiles 54 fixtures and passes none of them through this
+analyser. Nor does anything else reach them: `link_command` (src/linker.rs:73-86)
+invokes gcc with `-O2`/`-O0`/`-O3`, `-I <runtime>` and `-o` — NO `-Wall`, NO
+`-Wreturn-type`, NO `-Werror`. So a conformance fixture whose C falls off the
+end links silently. The only structural gate on that corpus is the transcript
+diff, which catches a wrong VALUE but not a wrong SHAPE, and only for the values
+a fixture happens to print. Net B (`-Werror=return-type`) exists solely inside
+`gate_probe.py` `cmd_generated_c`, invoked by scripts/stdlib-gate.sh on the 7
+stdlib drivers.
+
+Does that matter today? Measured 2026-08-22, by compiling every conformance
+fixture whose class is run/untranscribed/vacuous (51 of them) and running this
+analyser over the emitted C:
+
+    clean 50 · finding 1 · UNACCOUNTED 0
+
+and the single finding is the already-declared, already-pinned tail-`match`
+defect (tests/stdlib/stdlib_tail_match.pd, `known_violation:area_code,sides` in
+tests/stdlib/DRIVERS.tsv:31). Zero unaccounted means no codegen shape unique to
+the conformance corpus is outside this reader.
+
+So: the gap is real, and it is currently empty. It is NOT closed here on
+purpose. The natural home for a structural verdict on those fixtures is a
+column in tests/conformance-manifest.txt — that runner's design is that every
+row declares its own expectation and an undeclared one fails
+(scripts/conformance.sh:10-13, :495 UNDECLARED, :713 MISSING). Bolting a second,
+undeclared verdict source onto it from elsewhere would recreate the two-
+inventories-that-disagree problem this branch spent itself removing. It is a
+change to that manifest's design, not a patch, and it is handed off as one.
 
 EXIT TAXONOMY — a finding and a malfunction must not share an exit code.
     0  every function analysed, none can fall off its end
@@ -164,16 +190,18 @@ LABEL_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*[ \t]*:(?!:)")
 ELSE_IF_RE = re.compile(r"^\}[ \t]*else[ \t]+(\S.*\{)[ \t]*$")
 
 
-def parse_compound(lines, header, i):
+def parse_compound(lines, header, i, lineno):
     """Parse one compound statement whose body starts at line `i`.
 
-    Returns (item, index_after_the_whole_construct).
+    `lineno` is the 1-based source line of the HEADER, carried through so a
+    diagnostic can name the construct's own line rather than the enclosing
+    function's. Returns (item, index_after_the_whole_construct).
     """
     then_items, j = parse_block(lines, i)
     closing = lines[j].strip() if j < len(lines) else "}"
     if closing.startswith("} else {"):
         else_items, k = parse_block(lines, j + 1)
-        return ("compound", header, then_items, else_items), k + 1
+        return ("compound", header, then_items, else_items, lineno), k + 1
     m = ELSE_IF_RE.match(closing)
     if m:
         # The else branch holds exactly one nested compound, and it must be
@@ -189,19 +217,24 @@ def parse_compound(lines, header, i):
         # "non-void function does not return a value in all control paths".
         # A false "terminates" is the silent direction this whole check exists
         # to avoid, so it is worth the extra case.
-        nested, k = parse_compound(lines, m.group(1), j + 1)
-        return ("compound", header, then_items, [nested]), k
+        nested, k = parse_compound(lines, m.group(1), j + 1, j + 1)
+        return ("compound", header, then_items, [nested], lineno), k
     # `} else` with the body on following lines — treat as no else rather than
     # guessing; a false "does not terminate" is a loud failure that gets looked
     # at, a false "terminates" is silent.
-    return ("compound", header, then_items, None), j + 1
+    return ("compound", header, then_items, None, lineno), j + 1
 
 
 def parse_block(lines, i):
     """Parse statements until this block's closing brace.
 
     Returns (items, index_of_closing_line). An item is either
-      ('stmt', text) or ('compound', header, then_items, else_items|None).
+      ('stmt', text, lineno) or
+      ('compound', header, then_items, else_items|None, lineno),
+    where `lineno` is 1-based and is the line the item STARTS on. It is carried
+    so that a construct this reader cannot model is reported at its own line: it
+    used to be reported at the enclosing function's `{`, which sends an operator
+    to the wrong place in a file they did not write.
     """
     items = []
     while i < len(lines):
@@ -210,11 +243,11 @@ def parse_block(lines, i):
             # Closes this block (possibly `} else {`, handled by the caller).
             return items, i
         if text.endswith("{"):
-            item, i = parse_compound(lines, text, i + 1)
+            item, i = parse_compound(lines, text, i + 1, i + 1)
             items.append(item)
             continue
         if text:
-            items.append(("stmt", text))
+            items.append(("stmt", text, i + 1))
         i += 1
     return items, i
 
@@ -242,7 +275,7 @@ def contains_break(items, depth=0):
             if depth == 0 and re.match(r"^break\b", item[1]):
                 return True
         else:
-            _, header, then_items, else_items = item
+            _, header, then_items, else_items, _ln = item
             h = header.rstrip("{").strip()
             nested = depth + 1 if re.match(r"^(while|for|do|switch)\b", h) else depth
             if contains_break(then_items, nested):
@@ -278,7 +311,7 @@ def item_terminates(item):
     if item[0] == "stmt":
         text = item[1]
         return bool(RETURN_RE.match(text)) or bool(NORETURN_RE.match(text))
-    _, header, then_items, else_items = item
+    _, header, then_items, else_items, _ln = item
     h = header.rstrip("{").strip()
     # An infinite loop never falls through — UNLESS it can `break` out of itself.
     # `while (1) { ... break; ... }` reaches the code after the loop, so treating
@@ -302,7 +335,7 @@ def item_terminates(item):
 
 
 def unmodelled_construct(items):
-    """-> a description of the first construct this reader cannot model, or None.
+    """-> (source line, description) of the first unmodellable construct, or None.
 
     Everything here is a construct the generator provably does not emit (see the
     module docstring). Checking rather than assuming is the point: the moment
@@ -327,22 +360,25 @@ def unmodelled_construct(items):
     """
     for item in items:
         if item[0] == "stmt":
-            text = item[1]
+            _, text, lineno = item
             if text.startswith("#"):
-                return ("a preprocessor directive inside a function body (%s) — "
+                return (lineno,
+                        "a preprocessor directive inside a function body (%s) — "
                         "text it selects may or may not be compiled, so which "
                         "statements this body HAS is not a question this reader "
                         "can answer" % text[:40])
             if GOTO_RE.match(text):
-                return ("a `goto` (%s) — a jump can leave a loop that "
+                return (lineno,
+                        "a `goto` (%s) — a jump can leave a loop that "
                         "`contains_break` would call inescapable" % text[:40])
             if re.match(r"^(?:case\b|default[ \t]*:)", text):
-                return "a `switch` case label (%s)" % text[:40]
+                return lineno, "a `switch` case label (%s)" % text[:40]
             if LABEL_RE.match(text):
-                return ("a label (%s) — it is a jump target, so control can "
+                return (lineno,
+                        "a label (%s) — it is a jump target, so control can "
                         "arrive here from anywhere" % text[:40])
             continue
-        _, _, then_items, else_items = item
+        _, _, then_items, else_items, _ln = item
         found = unmodelled_construct(then_items)
         if found:
             return found
@@ -423,7 +459,14 @@ def check_file(path):
                 return (violations, 1, recognised)
             bad = unmodelled_construct(body)
             if bad:
-                unaccounted(i + 1, f"{text[:60]!r} contains {bad}")
+                # Reported at the CONSTRUCT's line, not the definition's. It
+                # used to be `i + 1` — the function header — which sends an
+                # operator to the wrong place in a generated file they did not
+                # write. The function is still named, because that is the unit
+                # whose verdict is being withheld.
+                bad_line, why = bad
+                unaccounted(bad_line,
+                            f"{why}, inside {text[:60]!r} at line {i + 1}")
                 return (violations, 1, recognised)
             if not VOID_RE.match(text) and not terminates(body):
                 print(

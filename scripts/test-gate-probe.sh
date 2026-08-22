@@ -146,6 +146,12 @@ $PROBE generated-c "$TMP/cpp_in_body.c" >"$TMP/o" 2>&1
 check "Net A, #if inside a function body" 2 $?
 grep -q 'preprocessor directive inside a function body' "$TMP/o"
 check "  and the malfunction names it" 0 $?
+# ...at the DIRECTIVE's line (2), not the function definition's (1). Naming the
+# line is part of the operator contract this reader states for itself, and it
+# used to report the enclosing definition — the wrong place in a generated file
+# nobody wrote by hand.
+grep -q 'cpp_in_body.c:2: a preprocessor directive' "$TMP/o"
+check "  at the construct's own line, not the definition's" 0 $?
 # ...including one nested inside a compound, which the statement walk only
 # reaches by recursing into both arms.
 printf 'long long g(long long n) {\n    if (n) {\n#ifdef X\n        return 1;\n#endif\n        return 3;\n    } else {\n        return 2;\n    }\n}\n' >"$TMP/cpp_nested.c"
@@ -312,19 +318,63 @@ try:
 except TypeError:
     pass
 
-# 4. The honest channel must keep working, or people route around it.
+# 4. The honest channel must keep working, or people route around it — AND it
+#    must report its own failure. It used to swallow the OSError and return the
+#    path anyway, so `WITHHELD_AT <path>` was printed over a file that does not
+#    exist: the designed channel failing silently exactly when it is needed.
 with tempfile.TemporaryDirectory() as d:
-    if v.withheld.spill(pathlib.Path(d) / "spilled").read_text() != "SECRET":
-        bad.append("spill() no longer writes the output it withheld")
+    path, err = v.withheld.spill(pathlib.Path(d) / "spilled")
+    if err is not None or path.read_text() != "SECRET":
+        bad.append("spill() no longer writes the output it withheld (%s)" % err)
+    path, err = v.withheld.spill(pathlib.Path(d) / "no-such-dir" / "x")
+    if err is None:
+        bad.append("spill() reports success for a write that did not happen")
+    if path.exists():
+        bad.append("the failing-spill fixture is not actually failing")
 
-# 5. And the prose must not re-grow the claim. Only the text BEFORE the
-#    "WHAT THIS IS NOT" section is checked: that section names these phrases in
-#    order to retract them.
-head = pathlib.Path("scripts/gate_probe.py").read_text().split("WHAT THIS IS NOT")[0]
-for phrase in ("no accessor", "unexpressible", "cannot be reached",
-               "impossible to read", "the only way to the bytes"):
-    if phrase in head.lower():
-        bad.append("gate_probe.py claims %r again" % phrase)
+# 5. RETRACTED CLAIMS MAY NOT BE REASSERTED — ANYWHERE IN THE FILE.
+#    The first version of this check read only the text before the
+#    "WHAT THIS IS NOT" heading, on the theory that a retraction has to quote
+#    what it retracts. Consequence, found in review one round later:
+#    `Run.__doc__` ("its output has no accessor") and `classify.__doc__`
+#    ("there is no other route to the output") went on asserting the retracted
+#    version BELOW that heading for a whole round. A check whose SCOPE was
+#    narrower than the property it claimed — the exact defect this suite exists
+#    to find, inside the control built to close it.
+#
+#    So the scope is the whole file, and the retraction is worded not to
+#    reproduce these strings. WHAT THIS IS: a lexical guard over wordings
+#    MEASURED FALSE in this repository. It is not a claim detector and cannot
+#    recognise a fresh way of saying the same thing; what it does is make a
+#    known false claim unrepeatable.
+CLAIMS = [
+    # (files, forbidden lowercase substring, why it is false)
+    (["scripts/gate_probe.py"], "no accessor",
+     "Run._out is the accessor"),
+    (["scripts/gate_probe.py"], "no other route",
+     "Run._out is another route"),
+    (["scripts/gate_probe.py", "scripts/test-xfail.py"], "unexpressible",
+     "reading a non-concluding producer's output is expressible"),
+    (["scripts/gate_probe.py", "scripts/test-xfail.py"], "cannot be reached",
+     "the bytes can be reached; the invariant is non-publication"),
+    (["scripts/gate_probe.py", "scripts/test-xfail.py"], "impossible to read",
+     "same"),
+    (["scripts/gate_probe.py"], "the only way to the bytes",
+     "spill() is the intended way, not the only one"),
+    # Measured in round 2 and contradicted inside the same test file for a
+    # round: constant folding rewrites `1 == 1` to true, so BOTH spellings emit
+    # `while (1)`. tests/d3b_tail_if.rs pins that count at 2.
+    (["tests/d3b_tail_if.rs", "src/parser/mod.rs", "scripts/check-c-returns.py"],
+     "while ((1 == 1))",
+     "constant folding (src/optimizer/constant_folding.rs, BinOp::Eq) turns it "
+     "into `while (1)`; measured, both spellings emit the same C"),
+]
+for files, phrase, why in CLAIMS:
+    for f in files:
+        p = pathlib.Path(f)
+        if p.exists() and phrase in p.read_text().lower():
+            bad.append("%s reasserts a claim measured false: %r (%s)"
+                       % (f, phrase, why))
 
 print("\n".join(bad) if bad else "ok")
 sys.exit(1 if bad else 0)
@@ -332,10 +382,16 @@ PY
 check "the boundary's promises match its code" 0 $?
 grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
 
-# THE RULE THAT IS ENFORCED, since unreachability is not enforceable in Python:
-# reaching for the bytes takes a private name, and no consumer outside
-# gate_probe.py may write one. A grep is the whole point — the dishonest path
-# has to appear somewhere a gate can see it.
+# WHAT THIS CHECK IS, SAID PLAINLY — the same discipline the Withheld repr got.
+# It is a LEXICAL CONVENTION GUARD, not access control. It reads `.py`, `.sh`
+# and `.rs` files under scripts/, tests/ and src/ and looks for the literal
+# attribute spellings. Every one of these walks past it: `getattr(x, "_b")`, a
+# name built from tokens, a consumer living outside those three directories, a
+# file with another extension, and anything written at runtime. It is worth
+# having anyway — it makes the ordinary way of reaching for the bytes visible to
+# a gate, so the shortcut has to be taken deliberately and in a form a reviewer
+# will notice — but it does not stop a determined caller, and nothing in Python
+# would.
 #
 # Two files are exempt and both are load-bearing rather than convenient:
 # gate_probe.py OWNS the slots, and this file is the ENFORCER — it must spell
