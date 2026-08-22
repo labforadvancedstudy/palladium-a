@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "pdc")]
 #[command(author = "Alan von Palladium Team")]
-#[command(version = "0.1.0-alpha")]
+#[command(version)] // = CARGO_PKG_VERSION, never a literal. Enforced by `make version-gate`.
 #[command(about = "Alan von Palladium Compiler - Where Legends Compile")]
 #[command(long_about = r#"
 Alan von Palladium Compiler

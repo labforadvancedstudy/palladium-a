@@ -286,8 +286,37 @@ check-docs: build check-doc-evidence ## Compile every ```palladium block in the 
 	@bash scripts/check-docs.sh docs README.md
 
 .PHONY: check-doc-evidence
-check-doc-evidence: ## Pin doc citations, the no-compile allowlist and the evidence tags
+check-doc-evidence: ## Pin doc citations, the no-compile allowlist, and RUN every cmd: item
 	@bash scripts/check-doc-evidence.sh
+
+# The evidence gate passed every day for as long as `cmd:` was a shape check, over nine
+# false items, because passing cost nothing. This hands it lies and requires it to say so.
+.PHONY: test-doc-evidence
+test-doc-evidence: ## Prove the evidence gate goes RED on a deliberately false cmd: item
+	@bash scripts/test-doc-evidence.sh
+
+# NOT in `gates`: it rewrites the gate's own sources and puts back what it found (a
+# startup snapshot, not `git checkout`), and it refuses to run against a dirty tree — the
+# normal state while someone is working on one — because mutating an unreviewed file
+# measures an unreviewed file.
+# It runs in CI, where the tree is always clean, and on demand. A green control suite only
+# says the controls agree with the code; this says they would NOTICE if the code stopped
+# working. (No counts here on purpose: they drift, and a stale number in a comment is the
+# same defect this whole branch is about.)
+.PHONY: test-doc-evidence-coverage
+test-doc-evidence-coverage: ## Revert each evidence-gate fix and count the controls that catch it
+	@bash scripts/test-doc-evidence-coverage.sh
+
+# `gate:` evidence cannot be validated by the doc lint: check-docs is a step of `gates`,
+# and the gates the index cites are conformance and selfhost, so the lint would recurse
+# into its own caller. Static linting and receipt collection are therefore separate
+# targets. This one runs each DISTINCT cited gate once — three rows cite `make selfhost`,
+# it runs once — and requires every declared outcome to appear in what that gate printed
+# in THIS run. It re-runs gates that `make gates` also runs directly (~31s measured); that
+# is the price of keeping their output streamed rather than buried in a receipt file.
+.PHONY: gate-receipts
+gate-receipts: build ## Run every gate the feature index cites, and validate its claims
+	@bash scripts/gate-receipts.sh
 
 # stdlib/ = library modules with no `fn main`; the only pinnable thing is a
 # compile verdict plus its blocker. tests/stdlib/*.pd are ordinary conformance
@@ -300,13 +329,33 @@ stdlib-gate: build ## Pin the stdlib/ measurement, account builtins, check gener
 test-gate-probe: build ## Fault-inject every producer the stdlib gate reads as evidence
 	@bash scripts/test-gate-probe.sh
 
+# `#[command(version = "0.1.0-alpha")]` sat in src/cli.rs while Cargo.toml went 0.1.0 ->
+# 0.2.0 -> 0.3.0, so both shipped releases install a compiler that answers `--version` with
+# 0.1.0-alpha. Two releases, no gate, because no gate ever ran the binary. This one does:
+# it executes every declared [[bin]] and compares what it printed against the manifest.
+# Not a grep for `env!` — that reads the source, and the source is not what the user runs.
+.PHONY: version-gate
+version-gate: build ## Run every built binary and require its --version to match Cargo.toml
+	@bash scripts/version-gate.sh
+
+.PHONY: test-version-gate
+test-version-gate: ## Prove the version gate goes RED on binaries that misreport themselves
+	@bash scripts/test-version-gate.sh
+
 .PHONY: gates
 # `thesis-exit` is DELIBERATELY ABSENT and must stay absent: it exits 2 by design, and a
 # green umbrella that swallowed a NO_VERDICT would be the one reading this branch exists to
 # prevent. Its SELF-TEST belongs here, though — every defence this branch built was
 # reachable only from a target outside the umbrella, which is an enforcement gap, not a
 # design choice.
-gates: conformance test-conformance-runner check-docs selfhost stdlib-gate test-gate-probe check-retracted-claims test-thesis-runner test-xfail ## Run every language-level gate
+#
+# RESOLVED AS A UNION, DELIBERATELY. `main` and this branch each carried gates the other
+# did not: taking either side wholesale silently DROPS gates. From `main`: gate-receipts,
+# test-doc-evidence, version-gate, test-version-gate. From this branch:
+# check-retracted-claims, test-thesis-runner, test-xfail. Neither line contained
+# `test-xfail` or this gate's self-test, which is how every defence built here ended up
+# reachable only from outside the umbrella.
+gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate check-retracted-claims test-thesis-runner test-xfail ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------

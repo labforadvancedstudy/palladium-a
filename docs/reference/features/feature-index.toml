@@ -33,25 +33,90 @@
 #       or double quotes must actually appear in the cited range — a citation whose excerpt
 #       does not contain the thing being claimed is the failure the pin file exists to expose.
 #
-#   cmd: <command> -> <result>
+#   cmd: <command> -> exit <N>, <M> lines[ -- <prose>]
 #       A reproducible command and what it produced. THIS IS HOW AN ABSENCE IS PROVED:
 #       a grep that returns nothing, quoted with its exit status. "There is no X" on its own
 #       is an assertion, not evidence, and the gate rejects it.
 #
-#   conformance: <file>.pd <VERDICT>      a row from scripts/conformance.sh
-#   gate: <make target> -> <result>       a project gate and its outcome
+#       THE GATE RUNS THE COMMAND. Until 2026-08-22 it did not: it checked that the string
+#       had the SHAPE `cmd: X -> Y` and never executed X, so the entire absence-proving
+#       mechanism was unexecuted text. Nine of the 53 items were false when first run --
+#       including `grep -rn 'effects::' src/ | grep -v '^src/effects' -> 1 line`, which
+#       produces 8, and `grep -rniE 'socket|TcpStream|BufReader' src/runtime/ -> exit 1,
+#       0 lines`, which produces 95 over a src/runtime/net.rs the row said did not exist.
+#
+#       The result is therefore a contract a machine can disagree with: the exit status and
+#       the line count are compared, and `exit 1, 0 lines` is the SUCCESS case for an
+#       absence proof. Prose after ` -- ` is a reading of the output and carries the same
+#       status a `src:` claim carries about its cited range, so it gets the same rule:
+#       anything it quotes must actually appear in the output.
+#
+#       A `cmd:` is a HERMETIC OBSERVATION of the checked-in tree -- grep, ls, find, sort,
+#       wc, over a plain pipeline, no shell. It may not run pdc, cargo or make, and may not
+#       read target/ or build_output/. Nothing is skipped: an item the gate cannot run
+#       hermetically is a lint error naming the gate that owns the question, because a
+#       skipped item that reports nothing is the same unmeasured denominator one layer down.
+#
+#   conformance: <path>.pd <class>        a fixture and the class tests/conformance-manifest.txt
+#                                         declares for it: run | untranscribed | vacuous |
+#                                         xfail | reject | skip. The class is looked up in the
+#                                         manifest, so it cannot drift. It used to be a
+#                                         PASS/COMPILE_FAIL vocabulary checked against nothing
+#                                         but the file's existence, which is how six rows read
+#                                         `PASS (placeholder: only prints that the feature is
+#                                         unimplemented)` -- the manifest's `vacuous` class
+#                                         wearing the word PASS.
+#   gate: <make target> -> <result>       a project gate and its outcome, EXECUTED and checked
+#                                         against a receipt from that run by
+#                                         `make gate-receipts`. Every key=value in the result
+#                                         is compared to the gate's own output BY VALUE and must
+#                                         be the ONLY value that run printed for the key —
+#                                         containment let `verified=4` validate against a run
+#                                         printing `verified=46`, and mere membership let a run
+#                                         printing both endorse either. A result with no
+#                                         key=value and no quoted span is prose and rejected.
+#                                         Receipts are written to a private temporary directory
+#                                         that scripts/gate-receipts.sh removes when it exits,
+#                                         so the certifying path cannot discover or reuse an
+#                                         earlier run's output; an earlier design wrote a run id
+#                                         NEXT TO the receipts, which authenticated nothing
+#                                         because the id could simply be read back. `make
+#                                         check-docs` alone prints `gate=N, NONE validated`:
+#                                         a gate needs a build and that target is a lint, so
+#                                         the seam is counted and named rather than silent.
+#
+#   THE BOUNDARY THIS SCHEMA DOES NOT MECHANISE. A quoted span is checked as a substring of
+#   the gate's output, because requiring it to be a whole output line would make many honest
+#   rows unwritable. So a row can satisfy validation with a ubiquitous quoted span and put an
+#   unsupported conclusion in the prose beside it. That prose is READ BY A HUMAN, exactly like
+#   the excerpt beside a citation pin, and it is recorded here as a limit rather than left to
+#   be discovered. The same applies to `note`, which is never load-bearing by construction.
+#
+# WHY A PROGRAM IS NOT A `cmd:`. Sixteen items used to read `cmd: pdc compile '<a whole .pd
+# program>' -> <diagnostic or behaviour>`. Those are conformance fixtures written in prose.
+# Executing them here would give the repository two engines that can disagree about whether a
+# program is rejected -- the same class of bug as the second YAML parser above -- and would put
+# a corpus of programs in nobody's closed inventory, unable to go MISSING and unable to be
+# UNDECLARED. They are now real fixtures under tests/reject/ and tests/regression/, declared in
+# tests/conformance-manifest.txt, and cited here as `conformance:`. Two of them arrived FALSE.
 #
 # CAUTION about conformance evidence. Six files under tests/ are named after a feature and
 # PASS without exercising it: 07_traits_basic, 08_generics_basic, 09_effects_system,
 # 10_async_await, 11_unsafe_blocks and 12_modules_imports each only `print` a message saying
 # the feature is unimplemented. A green row for those names is evidence of nothing.
 #
-# Measured at commit abeb665 (2026-08-22):
-#   cargo build --release && scripts/conformance.sh
-#     -> total=42 pass=39 compile_fail=3 link_fail=0 run_fail=0 skipped=2
+# Measured at commit 2ef170f (2026-08-22):
+#   cargo build --release && scripts/conformance.sh tests examples
+#     -> fixtures=70 declared_in_scope=70 evaluated=70
+#        verified=46 untranscribed=0 vacuous=7 xfail=1 reject=14 skip=2 failures=0
+#
+# These two numbers are no longer transcribed by hand. `make gate-receipts` runs each gate
+# the rows below cite, once, and requires every key=value and quoted span in a `gate:`
+# result to appear in what that gate printed in THAT run. The pair above went stale within
+# one commit of being written, and the receipt runner is what caught it.
 
 [meta]
-measured_at = "abeb665"
+measured_at = "2ef170f"
 measured_on = "2026-08-22"
 specification = "../../specification/language-spec.md"
 annex = "../../specification/language-spec.md#part-ii-implementation-status-annex"
@@ -61,10 +126,25 @@ description = "Lifetimes inferred; no 'a parameter lists. Explicit ref<'a> T onl
 spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
-  "cmd: grep -rn 'region\\|Region' src/ --include='*.rs' -> exit 1, 0 lines",
   "src: src/parser/mod.rs:553 lifetime_params, populated by the parser",
-  "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> 0 real readers; every hit is `lifetime_params: vec![]` in an src/lsp or src/optimizer test fixture",
+  "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> exit 0, 83 lines -- and they are REAL readers, not test fixtures: src/typeck/mod.rs clones the list into its own records and src/codegen/mod.rs branches on `lifetime_params.is_empty()` before emitting a type",
+  "conformance: tests/regression/lifetimes_uninferred.pd run",
+  "src: tests/regression/lifetimes_uninferred.pd:26-29 \"fn dangling() -> &i64\" returning \"return &x;\", a reference to a local that dies at the closing brace",
+  "conformance: tests/reject/uncalled_body_is_checked.pd reject",
+  "src: tests/reject/uncalled_body_is_checked.pd:21-24 \"fn bad()\" is called by nothing and still refused, which is what makes the fixture above a statement about lifetimes",
+  "gate: make conformance -> reject=14 verified=46 -- the pair above is in the corpus those numbers count",
+  "src: src/ownership/borrow_checker.rs:404-407 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
+  "src: src/ownership/mod.rs:25-33 \"pub enum Lifetime\" -- the four variants a lifetime can be, none of which carries a relation to another",
+  "src: src/ownership/mod.rs:86-95 \"constraints: Vec<LifetimeConstraint>\" at :87 and \"pub struct LifetimeConstraint\" at :92 with its longer/shorter pair -- the only type in the module that RELATES two lifetimes",
+  "src: src/ownership/mod.rs:329-333 add_constraint, the only writer of that vector",
+  "cmd: grep -rn LifetimeConstraint src/ --include='*.rs' -> exit 0, 3 lines -- the field, the struct, and the push inside add_constraint. Nothing constructs one elsewhere and nothing reads the vector",
+  "cmd: grep -rn add_constraint src/ --include='*.rs' -> exit 0, 1 line -- its own definition; no other occurrence of that spelling in src/",
+  "cmd: grep -rn '\\.constraints' src/ --include='*.rs' -> exit 0, 1 line -- the push inside add_constraint; no other member access to it under that spelling",
+  "cmd: grep -rniE 'constraint|outliv|longer|shorter|subtyp' src/ownership/borrow_checker.rs -> exit 0, 10 lines -- every one a comment or a test name; the other half of the module declares no outlives type, field or construction of its own",
+  "src: src/ownership/mod.rs:132-141 end_borrows compares two lifetimes with \"borrow.lifetime == lifetime\" -- equality",
+  "src: src/ownership/mod.rs:109-113 exit_scope compares with \"borrow.lifetime != scope_lifetime\" -- equality again; these two are the only comparisons of one lifetime with another in the file, and neither orders them",
 ]
+note = "Two corrections, one of them to an argument this file made while correcting others. (1) The row used to rest on \"0 real readers; every hit is `lifetime_params: vec![]` in a test fixture\". Executed, that is false: 83 hits across 13 files, of which typeck and codegen are load-bearing. Explicit lifetime lists are parsed and carried end to end -- which is the annotation burden this feature exists to remove. (2) It then argued that nothing could INFER a lifetime because `grep -rn 'region|Region'` was empty. That does not follow, and it was written in the same row that had just found 83 readers: the absence of two identifier spellings is not a statement about behaviour. The claim is now behavioural, and stated at the width it is proved to. tests/regression/lifetimes_uninferred.pd returns a reference to a local that dies at the closing brace -- the canonical lifetime error -- and it compiles, links and runs. Its paired reject fixture shows the borrow checker DOES read the body of a function nothing calls, so that is a statement about lifetimes rather than about dead code being skipped. The code path agrees: the return arm carries a TODO where the check would be, and add_constraint -- the only way an outlives relation could be recorded -- is referenced exactly once in the tree, by its own definition. WHAT THAT ESTABLISHES, PRECISELY: there is no return-lifetime or outlives checking, which is what this feature requires and is why it is unimplemented. It does NOT establish that no limited lifetime reasoning exists anywhere in the compiler -- borrow_checker.rs mints per-call lifetimes and ends argument borrows with the call, which is how defect D6 came to be retracted. HOW FAR THE OUTLIVES CLAIM IS CHECKED, since one grep on a single symbol would not carry it: src/ownership/ is two files. THE SENTENCE THIS EVIDENCE SUPPORTS, and it is the fourth attempt at it because the previous three were each written from the conclusion inward and each landed slightly wider than the facts. Written outward from what the commands show: add_constraint (:330-333) DOES construct an ordering relation -- `LifetimeConstraint { longer, shorter }` -- so \"no ordering relation is constructed anywhere in the file\" was false on its face, at a line this row already cited. What the four probes establish is narrower and sufficient: add_constraint occurs once in all of src/, its own definition, so NO CALL SITE INVOKES IT; `.constraints` occurs once, the push inside that function, so NO CODE CONSULTS THE STORED CONSTRAINTS; LifetimeConstraint occurs three times, the field (:87), the type (:92) and that push (:332), so nothing else builds one; and the only two places comparing one lifetime with another, end_borrows (:135) and exit_scope (:113), use equality. Everything else mod.rs does with lifetimes -- constructing them in new_lifetime (:172-175), storing and cloning them in borrow (:283-300), rendering them in Display (:383-386) -- is not a relation between two of them. THE SENTENCE, WRITTEN AS THE SCOPE OF THE SEARCH RATHER THAN AS A PROPERTY OF THE PROGRAM, because the fourth attempt still overreached: the probes establish TEXTUAL FACTS about src/ under particular spellings, and \"never called\" is a claim about execution. What was searched: every .rs file in the repository outside build output. What was found: add_constraint occurs once, its definition at mod.rs:330; `.constraints` occurs once, the push at :331; LifetimeConstraint occurs three times, the field, the type and that push. So NO CALL SITE AND NO READER OF THE OUTLIVES VECTOR APPEARS ANYWHERE IN THIS REPOSITORY UNDER THOSE SPELLINGS. Two things that search does not cover, named rather than left implicit: add_constraint is `pub` on a library crate (Cargo.toml [lib] palladium), so an out-of-tree consumer could call it -- which is not a statement about what pdc does, and pdc is what this row is about; and a caller reached through a reference or a trait object would not carry the name. Both are reasons the sentence is about the search, not about the program. In borrow_checker.rs, every occurrence of constraint/outlives/longer/shorter/subtyping is a comment or a test name -- it declares no outlives type, field or construction of its own. So the absent thing is the RELATION between lifetimes, checked across both files of the module rather than inferred from one name."
 
 [core_language.memory_management.reference_syntax]
 description = "ref / ref mut instead of & and &mut."
@@ -72,7 +152,7 @@ spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
   "cmd: grep -nE '#\\[token\\(\"ref\"\\)\\]' src/lexer/token.rs -> exit 1, 0 lines",
-  "cmd: pdc compile 'fn f(x: ref String) {} fn main(){}' -> error: Unexpected token: expected ')', found identifier 'String'",
+  "conformance: tests/reject/ref_parameter.pd reject",
   "src: src/lexer/token.rs:33 #[token(\"fn\")] — start of the 29-keyword block; ref is not in it",
 ]
 note = "The implemented spelling is Rust's & / &mut with 'a parameter lists — the exact annotation burden the definition removes."
@@ -82,27 +162,28 @@ description = "Whether a [T; N] parameter copies or aliases the caller's array. 
 spec = "../../specification/language-spec.md#n121-array-parameters-open-decision"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1055 Type::Array param lowered to a C array declarator, which decays to a pointer",
-  "cmd: pdc compile 'fn bump(mut a: [i64;3]) { a[0]=99; } fn main(){ let mut v:[i64;3]=[1,2,3]; bump(v); print_int(v[0]); }' -> generated C is `void bump(long long a[3])`; program prints 99",
-  "cmd: pdc compile 'fn bump(a: [i64;3]) { a[0]=99; } ...' (no mut) -> compiles, links, prints 99, no diagnostic",
-  "src: src/codegen/mod.rs:1981 'Unsupported type in reference parameter' — &mut [T; N] does not compile at all",
+  "src: src/codegen/mod.rs:1910-1913 the Type::Array parameter arm, \"In C, array parameters are passed as pointers\"",
+  "conformance: tests/regression/array_param_mut_write.pd run",
+  "conformance: tests/reject/array_param_write_byvalue.pd reject",
+  "src: src/codegen/mod.rs:1930-1940 the reference arm lowers `&[T; N]` and `&mut [T; N]` through the same declarator: \"C decays both to a pointer to the first element\"",
+  "conformance: tests/regression/array_reference_params.pd run",
 ]
-note = "Marked unimplemented because no spelling copies. Under Option A (value semantics) this stays unimplemented and src/codegen/mod.rs:1055 is the gap. Under Option B (reference semantics) it becomes partial AT BEST, never implemented: Option B still needs a rule that does not exist — either the reference spellings are forbidden or &mut [T; N] becomes required for a written-through parameter — and current behaviour satisfies neither, permitting mutation through a bare non-mut array while rejecting &mut [T; N] outright. The specification states both options rather than picking silently; see language-spec.md N12.1 and A9.2."
+note = "Marked unimplemented because no spelling copies: every array parameter decays to a pointer in C, so a callee that writes always reaches the caller's storage. The previous note described two behaviours this compiler no longer has -- it said mutation through a bare non-mut array was permitted, and that &mut [T; N] was rejected outright. Both were re-measured on 2026-08-22 and both are false: the bare by-value write is refused by codegen with a diagnostic naming the open decision, and &mut [T; N] compiles and is covered by a passing fixture. What remains open is the specification question, not a hole in the implementation: nothing here COPIES, so Option A (value semantics) is unimplemented, and Option B (reference semantics) would still need a rule that does not exist. See language-spec.md N12.1 and A9.2."
 
 [core_language.memory_management.borrow_checker]
 description = "Rust-compatible ownership: moves, borrows, no GC."
 spec = "../../specification/language-spec.md#n12-memory-model"
 implementation = "partial"
 evidence = [
-  "conformance: tests/05_ownership_basic.pd PASS",
-  "conformance: tests/05_borrowing_references.pd PASS",
+  "conformance: tests/05_ownership_basic.pd run",
+  "conformance: tests/05_borrowing_references.pd run",
   "src: src/typeck/mod.rs:121-125 Type::Reference maps to its inner type — 'TODO: Proper reference type handling'",
   "src: src/ownership/borrow_checker.rs:519 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",
   "src: src/ownership/borrow_checker.rs:525 self.context.end_borrows(&call_lifetime) — argument borrows end with the call",
-  "cmd: pdc compile 'fn t(a: String) -> i64 { return string_len(a); } fn main(){ let s: String = \"hello\"; print_int(t(s)); print_int(t(s)); }' -> accepted, prints 5 5 (defect D6 does not reproduce)",
-  "cmd: pdc compile 'struct S { x: i64 } fn bump(s: &mut S) { s.x = 77; } fn main(){ let v: S = S { x: 1 }; bump(&mut v); print_int(v.x); }' -> compiles, links, prints 77 — an immutable local mutated with no diagnostic",
+  "conformance: tests/regression/param_reused_after_call.pd run",
+  "conformance: tests/reject/mut_borrow_of_immutable.pd reject",
 ]
-note = "Enforces a move/initialization discipline and conflicting-borrow detection, but is not represented in the type system. One known defect: `&mut` of an immutable local is accepted for struct types. Defect D6 (\"call arguments borrowed forever\") was FIXED in commit 191f8c1 and is retracted here — see language-spec.md A9.4 for the re-measurement. CLAUDE.md still lists D6 as open and is stale."
+note = "Enforces a move/initialization discipline and conflicting-borrow detection, but is not represented in the type system. The \"known defect\" this note used to record -- `&mut` of an immutable local accepted for struct types -- was a `cmd:` string no gate ran; executed on 2026-08-22 the borrow checker refuses that program and names the repair, so the defect is retracted and tests/reject/mut_borrow_of_immutable.pd pins the refusal. Defect D6 (\"call arguments borrowed forever\") was FIXED in commit 191f8c1; its retraction is now a passing fixture rather than a sentence. CLAUDE.md still lists D6 as open and is stale."
 
 [core_language.memory_management.unsafe_blocks]
 description = "Restricted unsafe with side-channel protection; forbidden in #![total(strict)] crates."
@@ -112,7 +193,7 @@ evidence = [
   "src: src/parser/mod.rs:1331 Token::Unsafe => self.parse_unsafe()",
   "src: src/driver/mod.rs:164 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
-  "conformance: tests/11_unsafe_blocks.pd PASS (placeholder: only prints that the feature is unimplemented)",
+  "conformance: tests/11_unsafe_blocks.pd vacuous",
 ]
 
 [core_language.type_system.type_inference]
@@ -120,7 +201,7 @@ description = "Hindley-Milner type inference with extensions; minimal annotation
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "partial"
 evidence = [
-  "conformance: examples/tutorial/01_variables.pd PASS",
+  "conformance: examples/tutorial/01_variables.pd run",
   "cmd: grep -rn 'HindleyMilner\\|unify\\|Substitution' src/typeck/ --include='*.rs' -> exit 1, 0 lines",
   "src: src/typeck/mod.rs:2722 'Cannot infer type from empty array'",
 ]
@@ -133,8 +214,8 @@ implementation = "unimplemented"
 evidence = [
   "src: src/codegen/mod.rs:1663 'Generic types in structs not yet supported'",
   "src: src/parser/mod.rs:2100-2110 all-uppercase name inside <...> reclassified as a const argument",
-  "cmd: pdc compile 'fn f<T: Clone>(x: T) {} fn main(){}' -> error: expected '>' after generic parameters, found ':'",
-  "conformance: tests/08_generics_basic.pd PASS (placeholder: only prints that generics are unimplemented)",
+  "conformance: tests/reject/generic_bound.pd reject",
+  "conformance: tests/08_generics_basic.pd vacuous",
 ]
 note = "Design detail: ../../design/generics.md"
 
@@ -147,7 +228,7 @@ evidence = [
   "src: src/codegen/mod.rs:1013 Item::Trait(_) => emits nothing",
   "src: src/typeck/mod.rs:795-797 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
   "src: src/parser/mod.rs:876 trait-method parameter loop, which has no self_param branch",
-  "conformance: tests/07_traits_basic.pd PASS (placeholder: only prints that traits are unimplemented)",
+  "conformance: tests/07_traits_basic.pd vacuous",
 ]
 note = "Design detail: ../../design/trait_system_design.md"
 
@@ -159,15 +240,16 @@ evidence = [
   "src: src/parser/mod.rs:58-60 the const-parameter branch of parse_generic_params",
   "src: src/codegen/mod.rs:1058 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
   "src: src/codegen/mod.rs:1059 ArraySize::Expr(_) => \"0\".to_string()",
+  "conformance: tests/reject/const_generic_param.pd reject",
 ]
-note = "Neither case is monomorphised."
+note = "Neither case is monomorphised, and the reject fixture is what shows it: the parameter reaches the type checker as the NAME N, so a call with a [i64; 3] does not match it. The three src: lines above prove the branches exist; only the fixture proves what happens when you use one."
 
 [core_language.control_flow.pattern_matching]
 description = "match with exhaustiveness checking, destructuring, guards, wildcards."
 spec = "../../specification/language-spec.md#n6-patterns"
 implementation = "partial"
 evidence = [
-  "conformance: tests/06_pattern_matching.pd PASS",
+  "conformance: tests/06_pattern_matching.pd run",
   "src: src/ast/mod.rs:313 pub enum Pattern — three variants only",
   "src: src/typeck/mod.rs:1349 exhaustiveness runs only when the scrutinee is an enum",
   "src: src/codegen/mod.rs:1956 match lowers to an if/else-if chain",
@@ -179,9 +261,9 @@ description = "for over iterators, while, loop, break, continue."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
-  "conformance: tests/04_control_flow_for.pd PASS",
-  "conformance: tests/04_control_flow_while.pd PASS",
-  "cmd: pdc compile 'fn main() { loop { break; } }' -> error: expected ';' after expression, found '{'",
+  "conformance: tests/04_control_flow_for.pd run",
+  "conformance: tests/04_control_flow_while.pd run",
+  "conformance: tests/reject/loop_keyword.pd reject",
   "src: src/codegen/mod.rs:1922 for-over-array emits sizeof(...) on a decayed pointer",
 ]
 
@@ -190,7 +272,7 @@ description = "if/else as expressions; no ternary."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
-  "conformance: tests/04_control_flow_if.pd PASS",
+  "conformance: tests/04_control_flow_if.pd run",
   "src: src/parser/mod.rs:1469 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
   "src: src/parser/mod.rs:1325 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
 ]
@@ -200,8 +282,8 @@ description = "Typed parameters, optional return type, expression-oriented bodie
 spec = "../../specification/language-spec.md#n3-program-structure-and-items"
 implementation = "implemented"
 evidence = [
-  "conformance: tests/03_functions_basic.pd PASS",
-  "gate: make selfhost -> byte-identical fixed point, exercising every function in bootstrap/pdc.pd",
+  "conformance: tests/03_functions_basic.pd run",
+  "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\", \"fixed point reached\" -- stage1 and stage2 compile bootstrap/pdc.pd to byte-identical C",
 ]
 note = "A tail expression in a function body with a declared return type is lowered to a return. A tail expression in a nested block is not."
 
@@ -210,11 +292,12 @@ description = "A function body's trailing expression is its return value."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
-  "cmd: pdc compile 'fn add(a: i64, b: i64) -> i64 { a + b } fn main(){ print_int(add(2,3)); }' -> prints 5 (tail expression is lowered)",
-  "cmd: pdc compile 'fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n-1)+fib(n-2) } } fn main(){ print_int(fib(10)); }' -> compiles clean, prints 8261746944; the answer is 55",
+  "conformance: tests/stdlib/stdlib_tail_return.pd run",
+  "conformance: tests/stdlib/stdlib_tail_if_defect.pd run",
+  "gate: make stdlib-gate -> \"generated C: 5 clean, 1 pinned to an open defect\" -- tests/stdlib/DRIVERS.tsv declares that one as known_violation:fib,classify, so the C is REQUIRED to lack a return on every path in exactly those two functions; the day the parser lowers a tail if, the gate reports XPASS",
   "src: src/codegen/mod.rs:1956 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return",
 ]
-note = "Defect D3 is half-fixed: a tail EXPRESSION becomes a return, a tail `if` does not, and the tail-`if` shape is the idiomatic one for a recursive function. CLAUDE.md:66 records D3 as fixed, which holds only for the expression case. The \"437 affected sites\" figure is an understatement — the heuristic behind it cannot see a function ending in the else block's brace."
+note = "Defect D3 is half-fixed: a tail EXPRESSION becomes a return, a tail `if` does not, and the tail-`if` shape is the idiomatic one for a recursive function. CLAUDE.md:66 records D3 as fixed, which holds only for the expression case. The \"437 affected sites\" figure is an understatement -- the heuristic behind it cannot see a function ending in the else block's brace. A note on the evidence that used to sit here: it read `pdc compile 'fn fib(n: i64) -> i64 { ... fib(n-1)+fib(n-2) ... }' -> prints 8261746944`. Run, that program does not compile at all -- `fib(n-1)` lexes as `fib` applied to the literal -1, and the parser reports \"expected ')', found integer -1\". Spaced as `fib(n - 1)` it compiles and does print 8261746944, so the defect is real and the transcription was not. tests/stdlib/stdlib_tail_if_defect.pd, which spaces it, is what proves this now."
 
 [core_language.functions.closures]
 description = "Anonymous functions with inferred capture; move closures."
@@ -222,7 +305,7 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "unimplemented"
 evidence = [
   "cmd: grep -rn 'Closure\\|Lambda' src/ast/ src/parser/ --include='*.rs' -> exit 1, 0 lines",
-  "cmd: pdc compile 'fn main() { let f = |x: i64| x; }' -> error: Expected expression, but found '|'",
+  "conformance: tests/reject/closure_literal.pd reject",
 ]
 
 [core_language.modules.module_system]
@@ -232,8 +315,8 @@ implementation = "partial"
 evidence = [
   "src: src/parser/mod.rs:176 while self.check(&Token::Import) — imports are drained before items",
   "cmd: grep -rn 'Item::Module\\|Token::Mod' src/ --include='*.rs' -> exit 1, 0 lines",
-  "conformance: tests/12_modules_imports.pd PASS (placeholder: only prints that modules are unimplemented)",
-  "conformance: tests/projects/hello_pdm/src/main.pd PASS",
+  "conformance: tests/12_modules_imports.pd vacuous",
+  "conformance: tests/projects/hello_pdm/src/main.pd run",
 ]
 note = "Design detail: ../../design/module-system.md"
 
@@ -254,8 +337,9 @@ implementation = "partial"
 evidence = [
   "src: src/codegen/mod.rs:1932-1933 emits a struct Result temporary — a layout codegen never defines",
   "src: src/codegen/mod.rs:2569 the comment describing that layout",
+  "conformance: tests/reject/question_mark_operator.pd reject",
 ]
-note = "Silent breakage: it typechecks, and the failure surfaces in gcc."
+note = "No longer silent. This row used to read \"it typechecks, and the failure surfaces in gcc\" -- true of the codegen path the two citations above describe, and no longer true of the compiler: the type checker refuses `?` by name before any C exists (defect D5's fix). The lowering is still there and still refers to a layout nothing defines, which is why the citations stay and why this is `partial` rather than `unimplemented`."
 
 [error_handling.try_blocks]
 description = "`try { ... }` for scoped error handling."
@@ -263,7 +347,7 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "unimplemented"
 evidence = [
   "cmd: grep -rn 'TryBlock\\|Token::Try' src/ --include='*.rs' -> exit 1, 0 lines",
-  "cmd: pdc compile 'fn main() { try { } }' -> error: Unknown struct type: try",
+  "conformance: tests/reject/try_block.pd reject",
 ]
 
 [async_and_effects.async_as_effect]
@@ -273,11 +357,12 @@ implementation = "unimplemented"
 evidence = [
   "src: src/lexer/token.rs:111 #[token(\"async\")] — one of the two things the definition removes",
   "src: src/parser/mod.rs:565 effects: None, // Effects will be inferred during analysis",
-  "src: src/driver/mod.rs:59 the analyser's result is println!ed and nothing else",
+  "src: src/driver/mod.rs:59 the analyser's result is println!ed by the driver and feeds no later phase",
   "src: src/effects/mod.rs:283 'If function is unknown, we conservatively assume it's pure' — the unsound direction",
-  "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> 1 line, src/driver/mod.rs:147",
-  "conformance: tests/09_effects_system.pd PASS (placeholder: only prints that effects are unimplemented)",
+  "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> exit 0, 8 lines -- 1 in src/driver/mod.rs (the analyser is run) and 7 in src/builtins.rs (each builtin declares an effect set, and the analyser's own unit tests live there); no phase after the driver reads the result",
+  "conformance: tests/09_effects_system.pd vacuous",
 ]
+note = "The `effects::` probe used to read \"1 line, src/driver/mod.rs:147\". Executed, it is 8. The extra 7 are src/builtins.rs, which does declare an effect set per builtin -- so the analyser has real INPUT. What it does not have is an output path: the driver prints the analysis and no later phase consumes it, which is what makes async-as-an-effect unimplemented rather than partial."
 
 [async_and_effects.no_await_syntax]
 description = "No await operator; the compiler places async boundaries."
@@ -285,8 +370,8 @@ spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
   "src: src/codegen/mod.rs:2517-2522 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
-  "cmd: pdc compile 'async fn g() -> i64 { return 1; } fn main(){}' -> error: Type mismatch: expected Future<Int>, found Int",
-  "conformance: tests/10_async_await.pd PASS (placeholder: only prints that async/await is unimplemented)",
+  "conformance: tests/reject/async_fn.pd reject",
+  "conformance: tests/10_async_await.pd vacuous",
 ]
 
 [async_and_effects.effect_contexts]
@@ -312,7 +397,7 @@ spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
   "src: src/lib.rs:5 pub mod async_runtime — the module's only reachable entry point",
-  "cmd: grep -rn 'async_runtime' src/ --include='*.rs' | grep -v '^src/async_runtime' -> 1 line, src/lib.rs:5",
+  "cmd: grep -rn 'async_runtime' src/ --include='*.rs' | grep -v '^src/async_runtime' -> exit 0, 1 line -- `pub mod async_runtime;` and nothing else",
 ]
 note = "src/async_runtime/mod.rs is a Rust-side thread pool that no compiler phase and no generated C uses."
 
@@ -321,10 +406,10 @@ description = "#[total], #[decreases(expr)], #![total(strict)], fuel-bounded ter
 spec = "advanced/totality-checking.md"
 implementation = "unimplemented"
 evidence = [
-  "cmd: pdc compile '#[total] fn f(n: i64) -> i64 { return n; }' -> error: Unexpected character '#' at line 1, column 1",
-  "cmd: grep -rn 'total\\|decreases\\|Fuel' src/ --include='*.rs' -> 1 line, src/runtime/string_ops.rs:398, an unrelated test named test_null_termination",
+  "conformance: tests/reject/total_attribute.pd reject",
+  "cmd: grep -rn 'total\\|decreases\\|Fuel' src/ --include='*.rs' -> exit 0, 14 lines -- every one an unrelated local named `total_changed`, `total_changes`, `total_start` or `total_time`, or a fixture function named total",
 ]
-note = "The blocker is lexical: there is no '#' token, so attributes fail one level below the parser."
+note = "The blocker is lexical: there is no '#' token, so attributes fail one level below the parser. The probe above is a three-way alternation and all 14 of its hits come from the `total` arm: decreases and Fuel match nothing anywhere in src/. That half cannot be quoted from the output, because the output is what does not contain it -- which is why it is stated here rather than in the evidence item."
 
 [advanced_features.verification.refinement_types]
 description = "Types carrying predicates, checked at compile time."
@@ -342,8 +427,10 @@ spec = "PALLADIUM_V1_FEATURES.md#41-verification"
 implementation = "unimplemented"
 milestone = "post-1.0"
 evidence = [
-  "cmd: grep -rn 'Coq\\|Lean\\|Isabelle\\|Proof' src/ --include='*.rs' -> 2 lines, both the marketing tagline \"Turing's Proofs Meet von Neumann's Performance\" at src/main.rs:100 and src/cli.rs:14",
-  "cmd: find . -name '*.v' -o -name '*.thy' -o -name '*.lean' -not -path './target/*' -> exit 0, 0 lines",
+  "cmd: grep -rn 'Coq\\|Lean\\|Isabelle\\|Proof' src/ --include='*.rs' -> exit 0, 2 lines -- both the marketing tagline \"Turing's Proofs Meet von Neumann's Performance\", at src/main.rs:100 and src/cli.rs:14",
+  "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.v' -> exit 0, 0 lines -- no Coq artifact is checked in",
+  "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.thy' -> exit 0, 0 lines -- no Isabelle artifact is checked in",
+  "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.lean' -> exit 0, 0 lines -- no Lean artifact is checked in",
 ]
 note = "Depends on totality_checking, which is also unimplemented."
 
@@ -364,7 +451,9 @@ evidence = [
   "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
   "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
   "src: src/parser/mod.rs:1274 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
+  "conformance: tests/reject/macro_invocation_bracket.pd reject",
 ]
+note = "The registered builtins are reachable through exactly one call shape. `vec![...]`, the spelling every Rust program uses and the one the vec! builtin was written for, does not parse -- the macro parser requires a parenthesis after the name. So `partial` here means four macros exist and one common way of calling them does not."
 
 [advanced_features.macro_system.hygiene]
 description = "Hygienic expansion by default."
@@ -388,7 +477,7 @@ description = "Multi-threaded compilation pipeline."
 spec = "PALLADIUM_V1_FEATURES.md#6-compilation--optimization"
 implementation = "unimplemented"
 evidence = [
-  "cmd: grep -rn 'thread::spawn\\|rayon\\|par_iter' src/ --include='*.rs' -> 2 lines, both in src/async_runtime/mod.rs (:80, :279), which no compiler phase uses",
+  "cmd: grep -rn 'thread::spawn\\|rayon\\|par_iter' src/ --include='*.rs' -> exit 0, 2 lines -- both `src/async_runtime/mod.rs`, which no compiler phase uses",
   "src: src/driver/mod.rs:53 // Phase 1: Lexing — the phases run in sequence from here",
 ]
 
@@ -397,8 +486,8 @@ description = "C code generation; the backend the compiler actually ships."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "implemented"
 evidence = [
-  "gate: make conformance -> total=42 pass=39 compile_fail=3 link_fail=0 run_fail=0 skipped=2",
-  "gate: make selfhost -> byte-identical fixed point",
+  "gate: make conformance -> fixtures=70 evaluated=70 verified=46 vacuous=7 xfail=1 reject=14 skip=2 failures=0",
+  "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\" -- the C backend is the one a Palladium compiler is built with",
 ]
 
 [advanced_features.compilation.llvm_backend]
@@ -408,10 +497,10 @@ implementation = "unimplemented"
 evidence = [
   "src: src/codegen/llvm_text_backend.rs:16 'const BACKEND_REFUSES: bool = true;'",
   "src: src/codegen/llvm_text_backend.rs:71-73 'pub fn compile'",
-  "cmd: grep -c 'TODO: Implement' src/codegen/llvm_text_backend.rs -> 0; the per-construct TODOs this row used to cite were replaced by refusals",
-  "cmd: grep -rn '--llvm' scripts/ Makefile -> exit 1, 0 lines; no gate selects this backend",
+  "cmd: grep -n 'TODO: Implement' src/codegen/llvm_text_backend.rs -> exit 0, 1 line -- one survives, `TODO: Implement proper pattern matching`",
+  "cmd: grep -rn -- '--llvm' scripts/ Makefile -> exit 1, 0 lines -- no gate selects this backend",
 ]
-note = "Refuses unconditionally as of the wholesale gate; the lowering is retained for development and is exercised only through compile_unchecked in that file's tests. Previously cited five TODO comments that no longer exist."
+note = "Refuses unconditionally as of the wholesale gate; the lowering is retained for development and is exercised only through compile_unchecked in that file's tests. Two corrections from executing this row's evidence on 2026-08-22. (1) It claimed zero `TODO: Implement` comments remain; one does. It was written as `grep -c`, which prints a count and therefore always emits exactly one line -- a line-count check over it can never disagree with anything, so it is now `grep -n` and the count IS the measurement. (2) The `--llvm` probe was recorded as `exit 1, 0 lines`; run, it exited 2 with `grep: unrecognized option`, having never searched. It needed `--` to end grep's own option parsing. A command that could not look is not a proof of absence. Note that `--llvm` IS a live CLI flag (src/main.rs:114); what no gate does is select it."
 
 [advanced_features.compilation.optimizer]
 description = "Inlining, const propagation, dead code elimination."
@@ -419,7 +508,7 @@ spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "partial"
 evidence = [
   "src: src/driver/mod.rs:174 Phase 3.8, enabled by default",
-  "conformance: tests/integration/test_optimizations.pd PASS",
+  "conformance: tests/integration/test_optimizations.pd run",
 ]
 note = "gcc receives an explicit -O level since commit e72c39b."
 
@@ -428,8 +517,8 @@ description = "The compiler."
 spec = "../../specification/language-spec.md"
 implementation = "implemented"
 evidence = [
-  "cmd: cargo build --release -> exit 0, produces target/release/pdc",
-  "gate: make conformance -> total=42 pass=39 compile_fail=3 skipped=2",
+  "gate: cargo build --release -> \"[optimized] target(s)\" -- the compiler builds, and target/release/pdc is what every other gate here runs",
+  "gate: make conformance -> fixtures=70 evaluated=70 verified=46 vacuous=7 xfail=1 reject=14 skip=2 failures=0",
 ]
 
 [tooling.compiler.bootstrapping]
@@ -437,7 +526,7 @@ description = "A Palladium compiler that compiles its own source to a fixed poin
 spec = "../../specification/bootstrap-subset.md"
 implementation = "implemented"
 evidence = [
-  "gate: make selfhost -> stage1 and stage2 outputs byte-identical",
+  "gate: make selfhost -> \"fixed point reached\", and the two stage transcripts hash alike",
 ]
 note = "The subset it implements is PBS-1, deliberately smaller than what pdc accepts."
 
@@ -458,9 +547,10 @@ implementation = "partial"
 milestone = "post-1.0"
 evidence = [
   "src: Cargo.toml:53 [[bin]] for pls",
-  "cmd: ls src/lsp/ -> completion.rs, diagnostics.rs and their tests",
+  "gate: cargo test --release --lib lsp:: -> \"76 passed\" -- the only executed evidence for pls anywhere in this repository",
+  "cmd: ls src/lsp/ -> exit 0, 11 lines -- `completion.rs`, `diagnostics.rs`, `hover.rs`, `references.rs`, `symbols.rs`, `analysis.rs`, `handlers.rs`, `server.rs` and two test files",
 ]
-note = "No conformance or integration row covers it."
+note = "No conformance or integration row covers it -- which is why the previous evidence, \"completion.rs, diagnostics.rs and their tests\", could understate the surface by six files and nothing noticed. The listing is now the measurement. It bounds the surface, not the behaviour: no gate runs pls, so what these files DO is unmeasured, and `partial` here means \"a server exists and is unproven\", not \"these features work\"."
 
 [tooling.developer_tools.debugger]
 description = "GDB/LLDB integration, source-level debugging."
@@ -469,8 +559,8 @@ implementation = "unimplemented"
 milestone = "post-1.0"
 evidence = [
   "cmd: grep -rn 'DWARF\\|debug_info\\|#line\\|gimli' src/ --include='*.rs' -> exit 1, 0 lines",
-  "cmd: grep -c '#line' build_output/01_lexical_comments.c -> 0, exit 1 (generated C carries no line directives)",
 ]
+note = "A second item here read `grep -c '#line' build_output/01_lexical_comments.c -> 0, exit 1`. build_output/ is gitignored, so on a clean checkout that command exits 2 with \"No such file or directory\" -- it had never run, and could not. It is deleted rather than repaired: the probe above subsumes it. If the string `#line` occurs nowhere in the compiler, no generated C can carry a line directive, and that is checkable from a checkout."
 
 [tooling.package_management.cargo_compat]
 description = "Read Cargo.toml, resolve dependencies compatibly."
@@ -478,8 +568,8 @@ spec = "PALLADIUM_V1_FEATURES.md#73-package-management"
 implementation = "partial"
 evidence = [
   "src: Cargo.toml:49 [[bin]] for pdm",
-  "conformance: tests/projects/hello_pdm/tests/test_math.pd COMPILE_FAIL (\"Undefined function: add\")",
-  "conformance: tests/projects/hello_pdm/src/main.pd PASS",
+  "conformance: tests/projects/hello_pdm/tests/test_math.pd xfail",
+  "conformance: tests/projects/hello_pdm/src/main.pd run",
 ]
 
 [tooling.package_management.registry]
@@ -488,7 +578,7 @@ spec = "PALLADIUM_V1_FEATURES.md#73-package-management"
 implementation = "unimplemented"
 milestone = "post-1.0"
 evidence = [
-  "cmd: grep -rnE 'reqwest|ureq|hyper|curl|isahc' Cargo.toml -> exit 1, 0 lines — no HTTP client is a dependency, so no registry can be contacted",
+  "cmd: grep -rnE 'reqwest|ureq|hyper|curl|isahc' Cargo.toml -> exit 1, 0 lines -- no HTTP client is a dependency, so no registry can be contacted",
   "src: src/package/lockfile.rs:341 url: \"https://packages.palladium-lang.org\" — a hardcoded default with no client behind it",
 ]
 
@@ -497,11 +587,10 @@ description = "Core types and traits, memory utilities, iterator protocol."
 spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
 implementation = "unimplemented"
 evidence = [
-  "cmd: for f in $(find stdlib -name '*.pd'); do pdc compile $f; done -> 0 of 21 compile; every file is rejected at lex or parse time",
-  "cmd: pdc compile stdlib/std/option.pd -> error: Expected 'fn' for method, but found 'pub'",
-  "cmd: PALLADIUM_PATH=.../stdlib/std pdc compile 'import option; fn main(){}' -> error: Unexpected token: expected 'fn' for method, found 'pub' — forcing it onto the search path does not help",
+  "gate: make stdlib-gate -> \"21 stdlib files pinned\", \"38 builtins accounted for\" -- 0 of the 21 compile, each re-proved at its recorded stage and blocker against stdlib/MANIFEST.tsv, and the forced-import probe (PALLADIUM_PATH=stdlib/std, import option) still fails with that same blocker",
+  "src: stdlib/MANIFEST.tsv:1 the pinned per-file verdict and blocker the gate above recomputes",
   "src: src/resolver/mod.rs:51 the resolver reads PALLADIUM_PATH, so this is not a dead-resolver problem",
-  "cmd: grep -rn stdlib .github/ -> exit 1, 0 lines — stdlib is not packaged by any workflow, and neither Homebrew formula installs it",
+  "cmd: grep -rn stdlib .github/ -> exit 1, 0 lines -- stdlib is not packaged by any workflow, and neither Homebrew formula installs it",
   "src: scripts/conformance.sh:211 the default SCOPES are tests and examples — stdlib/ is never scanned, which is why this was invisible",
 ]
 note = "Because nothing here has ever compiled, no compiler defect can have \"silently miscompiled the standard library\"; the D3 claim to that effect is retracted in language-spec.md A6.6."
@@ -521,9 +610,12 @@ spec = "../../specification/language-spec.md#n14-builtins-and-the-standard-libra
 implementation = "partial"
 evidence = [
   "src: src/builtins.rs:1 the SSOT table the file and path builtins are generated from",
-  "cmd: grep -rniE 'socket|TcpStream|BufReader' src/runtime/ -> exit 1, 0 lines — no network, no buffering",
+  "conformance: tests/stdlib/stdlib_builtins_file.pd run",
+  "cmd: grep -rniE 'socket|TcpStream|BufReader' src/runtime/ -> exit 0, 95 lines -- src/runtime/net.rs is a complete Rust-side TCP/UDP layer, and src/runtime/mod.rs declares it",
+  "cmd: grep -rniE 'socket|tcp|udp|listen|connect|bind' src/builtins.rs -> exit 1, 0 lines -- no builtin names one",
+  "cmd: grep -rniE 'socket|tcp|udp|listen|connect|bind' runtime/ -> exit 1, 0 lines -- and runtime/ is what a compiled program actually LINKS, so the question does not rest on the builtin table being the only bridge",
 ]
-note = "See reference/builtins.md, generated from src/builtins.rs."
+note = "See reference/builtins.md, generated from src/builtins.rs. The evidence here used to read \"exit 1, 0 lines -- no network, no buffering\" over src/runtime/. Executed, that command returns 95 lines: a whole net.rs exists. It is dead Rust, and the decisive point is WHERE it lives: src/runtime/ is compiled into the pdc binary, while a Palladium program links runtime/palladium_runtime.c, which has no socket surface at all. So the conclusion does not depend on src/builtins.rs being the only language-to-runtime bridge -- the code is on the other side of the compiler from anything a program could reach. This is the difference between \"the code is not there\" and \"the code is there and unreachable\", and only the second one is true."
 
 [ecosystem.interop.rust_ffi]
 description = "Call Rust from Palladium, share data structures."
@@ -532,7 +624,7 @@ implementation = "unimplemented"
 milestone = "post-1.0"
 evidence = [
   "cmd: grep -rn 'Extern\\|ExternBlock' src/ast/mod.rs src/parser/mod.rs -> exit 1, 0 lines",
-  "cmd: pdc compile 'extern \"C\" { fn puts(s: String) -> i64; } fn main(){}' -> error: Expected function, struct, enum, trait, type, impl, or macro declaration",
+  "conformance: tests/reject/extern_block.pd reject",
 ]
 note = "The extern \"C\" symbols in src/runtime/ are the compiler's own runtime, not a user-facing FFI."
 
@@ -543,8 +635,10 @@ implementation = "partial"
 milestone = "1.0"
 evidence = [
   "src: src/driver/mod.rs:185 // Phase 4: Code generation — output is C, which gcc then links, so the ABI is C by construction",
-  "cmd: grep -rn 'Extern\\|ExternBlock' src/ast/mod.rs src/parser/mod.rs -> exit 1, 0 lines — no syntax for importing a C symbol",
+  "cmd: grep -rn 'Extern\\|ExternBlock' src/ast/mod.rs src/parser/mod.rs -> exit 1, 0 lines -- no syntax for importing a C symbol",
+  "conformance: tests/03_functions_basic.pd run",
 ]
+note = "The ABI is C because the output IS C and gcc links it -- the conformance fixture above is a Palladium program that became an executable through that path, which is the whole of what `partial` claims here. What is missing is any syntax for naming a foreign symbol, which the probe above measures."
 
 [ecosystem.interop.wasm]
 description = "WASM target with WASI support."
@@ -553,6 +647,7 @@ implementation = "unimplemented"
 milestone = "post-1.0"
 evidence = [
   "cmd: grep -rniE 'wasm|WebAssembly|wasi' src/ --include='*.rs' -> exit 1, 0 lines",
-  "cmd: ls src/codegen/ -> mod.rs and llvm_text_backend.rs only; there is no third backend",
+  "cmd: ls src/codegen/ -> exit 0, 5 lines -- `llvm_backend.rs`, `llvm_backend_improved.rs`, `llvm_native.rs`, `llvm_text_backend.rs` and mod.rs; four LLVM-flavoured backends, and none of them targets wasm",
 ]
+note = "The previous evidence read \"mod.rs and llvm_text_backend.rs only; there is no third backend\". There are five files and four backend modules, all declared in src/codegen/mod.rs:4-7. The verdict is unchanged -- none is a wasm target, and the probe above finds no wasm/wasi identifier anywhere in src/ -- but the shape of the codegen directory was misreported, and three of those modules are referenced by neither the driver nor the CLI."
 

@@ -1,0 +1,12 @@
+// NEGATIVE TEST -- attributes do not exist, and the blocker is LEXICAL.
+//
+// `#[total]`, `#[decreases(expr)]` and `#![total(strict)]` are the totality
+// surface in advanced/totality-checking.md. There is no `#` token, so an
+// attribute fails one level below the parser: the lexer refuses the character.
+// That is why no amount of parser work reaches this feature first.
+#[total]
+fn f(n: i64) -> i64 {
+    return n;
+}
+
+fn main() {}

@@ -321,7 +321,7 @@ Measured at this revision; every row names the command that produced it.
 |---|---|---|
 | **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
-| Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
+| Conformance | `verified=46 untranscribed=0 vacuous=7 xfail=1 reject=14 skip=2 failures=0` over 70 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`) | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 256 unique cases, **checked** and digest-pinned; 70 exercise the fault-injection branch, **16 adversaries on a generated label → score scoreboard (above) that rejects duplicate labels**, and **14 cases assert the exact failing row set and the stage (`original`/`mutation`) each row failed at**. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 243 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
@@ -484,10 +484,14 @@ tagged M1), and the vacuous `tests/02_types_enums.pd`.
    the language and leave `BUILTINS`; `file_flush` and `file_seek` are normative and get re-based.
 7. **Witness 1** (WT-01): a JSON parser written with no workarounds, added to the corpus. It becomes
    the thesis gate's second witness at M9.
-8. **Gate integrity** (GI-06, GI-08, GI-09). `make gates` (`Makefile:303-305`) does **not** run
+8. **Gate integrity** (GI-06, GI-08, GI-09). `make gates` (`Makefile:358-359`) does **not** run
    `test-honest` (`Makefile:277-282`), so a non-ignored compiler regression can coexist with a green
-   gate — GI-06 adds it, a one-word change. The milestone-exit target and its self-test ship before
-   anything depends on them.
+   gate — **GI-06 adds it and is STILL OWED**, a one-word change nobody has made. The milestone-exit
+   target and its self-test ship before anything depends on them.
+   *(Citation relocated during the `main` integration: the `gates:` target moved when the two
+   branches' gate lists were resolved as a union. The claim is unchanged and re-verified — the
+   union added `check-retracted-claims`, `test-thesis-runner` and `test-xfail`, and `test-honest`
+   is still absent.)*
 
 **Exit**: `make m2-exit`.
 
@@ -954,10 +958,20 @@ replaced with a supersession pointer.
   vacuous 7 · xfail 2 · skip 2" and named "the three failures", against a measured
   `verified=43 … xfail=1 … failures=0` over 53. **Corrected**, because this file treats the annex as
   an authority and stale data in an authority is release governance, not a documentation nit.
-- `feature-index.toml`'s `async_as_effect` row claims `cmd: grep -rn 'effects::' … -> 1 line`.
-  Re-run, it returns **8**. `scripts/check_doc_evidence.py:50` and `scripts/check_doc_evidence.py:317-318`
-  only regex-match the *shape* `cmd: X -> Y`, so a `cmd:` item's output is never checked.
-  **A separate unit owns that repair**; not touched here.
+- `feature-index.toml`'s `async_as_effect` row claimed `cmd: grep -rn 'effects::' … -> 1 line`
+  while a re-run returned **8**, because the evidence gate only regex-matched the *shape*
+  `cmd: X -> Y` and never checked a `cmd:` item's output. **REPAIRED ON `main`, by the separate
+  unit that owned it** — `make check-doc-evidence` now RUNS every `cmd:` item
+  (`scripts/check_doc_evidence.py` executes them; `make test-doc-evidence` proves the gate goes
+  RED on a deliberately false one), and `make gates` runs both. Recorded as closed rather than
+  deleted: this row is the one place the finding is written down, and the integration of that
+  repair is what closed it.
+
+  *This bullet was rewritten during the `main` integration. Its two `path:line` citations were
+  pinned against the pre-repair file; `main` rewrote it (+1077 lines) and the pinned text no
+  longer exists, so the citations could not be relocated by matching. The claim they supported
+  had become false, which is what the pin gate reported — a moved pin is sometimes a stale
+  claim, not a stale line number.*
 - `CLAUDE.md` describes `bootstrap/pdc.pd` as "~760줄". It is 991 lines — the number that makes
   M3's move to the front an argument rather than a preference.
 

@@ -8,7 +8,7 @@ Cargo.toml	49-49	docs/reference/features/feature-index.toml	fa72a98b6370	[[bin]]
 Cargo.toml	53-53	docs/reference/features/feature-index.toml	fa72a98b6370	[[bin]]
 Makefile	270-271	docs/contributing/MILESTONES.md	44b760faefc4	m1-exit: build ## M1's exit criterion, as a command: nothing in the corpus st ...  to M1 @CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests examples
 Makefile	277-282	docs/contributing/MILESTONES.md	3fecec465ff4	.PHONY: test-honest test-honest: ## Run EVERY test binary, including integrat ... on failures below went unnoticed.$(NC)" $(CARGO) test --release --no-fail-fast
-Makefile	303-305	docs/contributing/MILESTONES.md	85b59b3fa81e	.PHONY: gates gates: conformance test-conformance-runner check-docs selfhost  ... claims ## Run every language-level gate @echo "$(GREEN)✓ all gates green$(NC)"
+Makefile	358-359	docs/contributing/MILESTONES.md	ccbb39faca21	gates: conformance test-conformance-runner check-docs gate-receipts test-doc- ... -xfail ## Run every language-level gate @echo "$(GREEN)✓ all gates green$(NC)"
 benchmarks/palladium/bubble_sort.pd	11-11	docs/specification/language-spec.md	df0f5c145b7b	fn bubble_sort(mut arr: [i64; 45000], n: i64) {
 bootstrap/pdc.pd	164-175	docs/contributing/MILESTONES.md	ab895892cab8	if n == 42 { i = i + 2; while i + 1 < len { if string_char_at(c.src, i) == 42 ... ing_char_at(c.src, i + 1) == 47 { i = i + 2; break; } } i = i + 1; } continue;
 bootstrap/pdc.pd	49-51	docs/contributing/MILESTONES.md	2176e84e9bc4	fn emit(mut c: C, s: String) { file_write(c.out, s); }
@@ -25,8 +25,6 @@ grammar.ebnf	130-130	docs/reference/features/core-language/implicit-lifetimes.md
 grammar.ebnf	145-145	docs/reference/features/core-language/implicit-lifetimes.md	27eae3e7e3c5	reference = '&' [ "'" identifier ] [ "mut" ] type ;
 grammar.ebnf	58-59	docs/reference/features/core-language/implicit-lifetimes.md	41773243f31f	# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
 grammar.ebnf	66-67	docs/reference/features/advanced/totality-checking.md	445c16d1a73f	punctuation = '(' | ')' | '{' | '}' | '[' | ']' | ';' | ',' | ':' | '.' | ".." | "->" | "::" | '_' | "=>" | '\'' | '?' ;
-scripts/check_doc_evidence.py	317-318	docs/contributing/MILESTONES.md	3a10012f6bf1	elif item.startswith("cmd:") and not CMD_EVIDENCE.match(item): problems.append(f"{name}: `cmd:` shows no result — an absence needs its "
-scripts/check_doc_evidence.py	50-50	docs/contributing/MILESTONES.md	7809e429688b	CMD_EVIDENCE = re.compile(r"^cmd:\s+(.+?)\s*->\s*\S")
 scripts/conformance.sh	145-152	docs/contributing/MILESTONES.md	e383a707f766	grep_status() { local mode=$1 pat=$2 file=$3 case "$mode" in E) grep -qE -- " ... " 2>/dev/null ;; F) grep -qF -- "$pat" "$file" 2>/dev/null ;; esac return $? }
 scripts/conformance.sh	211-211	docs/reference/features/feature-index.toml	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
 scripts/conformance.sh	211-211	docs/specification/language-spec.md	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
@@ -57,7 +55,6 @@ src/codegen/mod.rs	1013-1013	docs/design/trait_system_design.md	e27e67ec8902	sel
 src/codegen/mod.rs	1013-1013	docs/reference/features/feature-index.toml	e27e67ec8902	self.output.push_str("extern int pd_file_close(FileHandle handle);\n");
 src/codegen/mod.rs	1013-1013	docs/specification/language-spec.md	e27e67ec8902	self.output.push_str("extern int pd_file_close(FileHandle handle);\n");
 src/codegen/mod.rs	1027-1033	docs/specification/language-spec.md	e6576fd963b2	self.output.push_str("extern int pd_write_string_to_file(const char* path, si ... rn pd_file_open(path, strlen(path), mode);\n"); self.output.push_str("}\n\n");
-src/codegen/mod.rs	1055-1055	docs/reference/features/feature-index.toml	0a5066da4d3b	// pd_file_flush wrapper
 src/codegen/mod.rs	1055-1055	docs/specification/language-spec.md	0a5066da4d3b	// pd_file_flush wrapper
 src/codegen/mod.rs	1057-1059	docs/specification/language-spec.md	d184f6270b9e	self.output.push_str(" return pd_file_flush(handle);\n"); self.output.push_str("}\n\n");
 src/codegen/mod.rs	1058-1058	docs/reference/features/feature-index.toml	093de8ea2466	self.output.push_str("}\n\n");
@@ -78,12 +75,13 @@ src/codegen/mod.rs	1663-1663	docs/reference/features/feature-index.toml	5cd73aa2
 src/codegen/mod.rs	1663-1663	docs/specification/bootstrap-subset.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
 src/codegen/mod.rs	1663-1663	docs/specification/language-spec.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
 src/codegen/mod.rs	1678-1678	docs/specification/bootstrap-subset.md	eac9f4b0ef4d	"Tuple types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1910-1913	docs/reference/features/feature-index.toml	1c161afbcc5b	Type::Array(elem_type, size) => { // In C, array parameters are passed as poi ... arity, though it decays to pointer sig.push_str(&Self::array_param_declarator(
 src/codegen/mod.rs	1922-1922	docs/reference/features/feature-index.toml	3b1dedd1cb30	sig.push_str(&format!("{}* {}", c_type, param.name));
+src/codegen/mod.rs	1930-1940	docs/reference/features/feature-index.toml	51328d533ce6	// itself - C decays both to a pointer to the first element - // so `&[T; N]` ...  size, &param.name, !*mutable, )?); continue; } // Handle reference parameters
 src/codegen/mod.rs	1932-1933	docs/reference/features/feature-index.toml	5ac98f2e0a74	// Without this case the whole parameter was rejected, which // is why examples/practical/simple_sort.pd did not compile.
 src/codegen/mod.rs	1956-1956	docs/reference/features/feature-index.toml	13b4cf93b10f	"const unsigned int* "
 src/codegen/mod.rs	1956-1956	docs/specification/language-spec.md	13b4cf93b10f	"const unsigned int* "
 src/codegen/mod.rs	1977-1988	docs/specification/language-spec.md	ce03910b3003	} } _ => { return Err(CompileError::Generic( "Unsupported type in reference p ... r".to_string(), )); } } sig.push_str(&param.name); } _ => { // For other types
-src/codegen/mod.rs	1981-1981	docs/reference/features/feature-index.toml	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
 src/codegen/mod.rs	1981-1981	docs/specification/language-spec.md	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
 src/codegen/mod.rs	2007-2012	docs/contributing/MILESTONES.md	e711343c947e	fn generate_function_with_name(&mut self, func: &Function, name: &str) -> Res ... _async { self.generate_async_function_with_name(func, name)?; return Ok(()); }
 src/codegen/mod.rs	2121-2121	docs/specification/bootstrap-subset.md	5e71679bdf3f	/// how long each array is, and a flat function-wide map let an inner
@@ -105,6 +103,7 @@ src/codegen/mod.rs	2604-2615	docs/specification/language-spec.md	3e8e873e271c	} 
 src/codegen/mod.rs	2613-2615	docs/reference/features/async-system/async-as-effect.md	0ada7a203994	)); } }
 src/codegen/mod.rs	3055-3059	docs/contributing/MILESTONES.md	c86405b6532b	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
 src/codegen/mod.rs	3102-3110	docs/contributing/MILESTONES.md	602a5a4dee29	// Generate poll function self.output .push_str(&format!("// Poll function fo ...  if (future->state == 0) {\n"); self.output.push_str(" future->state = 1;\n");
+src/codegen/mod.rs	4-7	docs/reference/features/feature-index.toml	e7c89afcb67b	pub mod llvm_backend; pub mod llvm_backend_improved; pub mod llvm_native; pub mod llvm_text_backend;
 src/codegen/mod.rs	424-424	docs/specification/language-spec.md	23a7d0452793	/// `"long long[3][2]"`.
 src/codegen/mod.rs	494-494	docs/specification/language-spec.md	b825c1675d27	match form {
 src/codegen/mod.rs	81-81	docs/contributing/MILESTONES.md	796fe95556b7	imported_modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
@@ -152,11 +151,13 @@ src/macros/mod.rs	167-167	docs/specification/language-spec.md	4937b6ff3ab8	Token
 src/macros/mod.rs	41-41	docs/reference/features/feature-index.toml	8922f12cdd4a	fn register_builtin_macros(&mut self) {
 src/macros/mod.rs	41-41	docs/specification/language-spec.md	8922f12cdd4a	fn register_builtin_macros(&mut self) {
 src/main.rs	100-100	docs/reference/features/feature-index.toml	701dcf50c0cc	"Turing's Proofs Meet von Neumann's Performance"
+src/main.rs	114-114	docs/reference/features/feature-index.toml	c6a8c537cf38	if llvm {
 src/ownership/borrow_checker.rs	179-185	docs/specification/bootstrap-subset.md	534ae550da38	for item in &program.items { match item { Item::Function(func) => { self.chec ... (func)?; } Item::Impl(impl_block) => { // Check method bodies from impl blocks
 src/ownership/borrow_checker.rs	184-190	docs/specification/language-spec.md	4f479bc9111b	Item::Impl(impl_block) => { // Check method bodies from impl blocks for method in &impl_block.methods { self.check_function(method)?; } } _ => {}
 src/ownership/borrow_checker.rs	210-210	docs/specification/language-spec.md	9bc58cbf9fff	// whatever the type is. Classifying `mut x: i64` or
 src/ownership/borrow_checker.rs	224-224	docs/specification/language-spec.md	1b5d3f823599	// keeps using the array afterwards — see the parameter
 src/ownership/borrow_checker.rs	241-241	docs/specification/language-spec.md	af0940c0792c	ParamOwnership::Borrow
+src/ownership/borrow_checker.rs	404-407	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
 src/ownership/borrow_checker.rs	43-44	docs/specification/language-spec.md	52913fa77a92	/// Return value ownership #[allow(dead_code)]
 src/ownership/borrow_checker.rs	470-515	docs/specification/bootstrap-subset.md	57ab3c20ee5b	// Bind pattern variables self.bind_pattern(&arm.pattern)?; self.check_block_ ... ip::Ownership::Borrowed { .. }) => { // Value is borrowed but still accessible
 src/ownership/borrow_checker.rs	48-48	docs/specification/language-spec.md	d6fcadd1772d	/// How a callee takes each parameter.
@@ -168,7 +169,12 @@ src/ownership/borrow_checker.rs	525-525	docs/reference/features/feature-index.to
 src/ownership/borrow_checker.rs	525-525	docs/specification/language-spec.md	d10b36aa74a5	}
 src/ownership/mod.rs	107-118	docs/specification/bootstrap-subset.md	d2bfec889bd9	/// Exit a scope, invalidating borrows pub fn exit_scope(&mut self) { let sco ... n this scope // TODO: Implement proper drop semantics self.current_scope -= 1;
 src/ownership/mod.rs	109-109	docs/reference/features/core-language/implicit-lifetimes.md	8103577ec368	let scope_lifetime = Lifetime::Scope(self.current_scope);
+src/ownership/mod.rs	109-113	docs/reference/features/feature-index.toml	489189178b91	let scope_lifetime = Lifetime::Scope(self.current_scope); // Remove borrows t ... h this scope self.borrows .retain(|borrow| borrow.lifetime != scope_lifetime);
+src/ownership/mod.rs	132-141	docs/reference/features/feature-index.toml	653441c6cecb	pub fn end_borrows(&mut self, lifetime: &Lifetime) { let mut affected: Vec<Pl ... e == lifetime { affected.push(borrow.place.clone()); false } else { true } });
+src/ownership/mod.rs	25-33	docs/reference/features/feature-index.toml	75384ea2397d	/// Lifetime representation #[derive(Debug, Clone, PartialEq, Eq, Hash)] pub  ...  lifetime ('a, 'b, etc.) Named(String), /// Anonymous lifetime Anonymous(u32),
 src/ownership/mod.rs	27-27	docs/reference/features/core-language/implicit-lifetimes.md	e06a29f1a329	pub enum Lifetime {
+src/ownership/mod.rs	329-333	docs/reference/features/feature-index.toml	5d7e60bc0988	/// Add a lifetime constraint pub fn add_constraint(&mut self, longer: Lifeti ...  Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
+src/ownership/mod.rs	86-95	docs/reference/features/feature-index.toml	cbafa46d3323	/// Lifetime constraints (outlives relationships) constraints: Vec<LifetimeCo ... pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime, }
 src/package/lockfile.rs	341-341	docs/reference/features/feature-index.toml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),
 src/parser/mod.rs	1045-1051	docs/specification/language-spec.md	2623da5935b7	if !self.check(&Token::Fn) { return Err(CompileError::UnexpectedToken { expec ... to_string(), found: self.peek()?.to_string(), span: self.current_span(), }); }
 src/parser/mod.rs	1263-1263	docs/specification/bootstrap-subset.md	bfe03ca491a1	Token::LeftBracket => AstToken::Punct('['),
@@ -218,7 +224,6 @@ src/parser/mod.rs	876-876	docs/specification/language-spec.md	cb78d967e569	self.
 src/resolver/mod.rs	51-51	docs/reference/features/feature-index.toml	891ba0920fa5	// Check for PALLADIUM_PATH environment variable
 src/resolver/mod.rs	51-52	docs/specification/language-spec.md	07ec7e442f32	// Check for PALLADIUM_PATH environment variable if let Ok(pd_path) = std::env::var("PALLADIUM_PATH") {
 src/runtime/string_ops.rs	398-398	docs/reference/features/advanced/totality-checking.md	b8736fb052c9	fn test_null_termination() {
-src/runtime/string_ops.rs	398-398	docs/reference/features/feature-index.toml	b8736fb052c9	fn test_null_termination() {
 src/typeck/mod.rs	121-125	docs/contributing/MILESTONES.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	121-125	docs/reference/features/core-language/implicit-lifetimes.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	121-125	docs/reference/features/feature-index.toml	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
@@ -246,8 +251,11 @@ src/typeck/mod.rs	795-795	docs/design/trait_system_design.md	78074ff85f28	Item::
 src/typeck/mod.rs	795-797	docs/reference/features/feature-index.toml	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
 src/typeck/mod.rs	795-797	docs/specification/language-spec.md	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
 src/typeck/mod.rs	947-947	docs/specification/language-spec.md	b283b5e48b13	self.symbols.enter_scope();
+stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
 tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	7dd57dc45b4c	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:114 defines only `macro name ... n) block`, so `macro_rules! vec { … }` is not an item (owned by M5, tooling)"]
 tests/compiler_comprehensive_test.rs	567-567	docs/contributing/MILESTONES.md	d64781684de7	#[ignore = "XFAIL: no missing-return diagnostic — `fn f() -> int { }` compile ... gnostic and the tail-expression lowering have to land together (owned by M1)"]
 tests/conformance-manifest.txt	91-91	docs/contributing/MILESTONES.md	2b0254e17595	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... from src/math.pd; needs cross-file module imports (no use/mod in the language)
 tests/e2e_test.rs	269-269	docs/contributing/MILESTONES.md	93e5bb1ed91a	#[ignore = "XFAIL: generated identifiers are not mangled against C keywords — ... is a silent miscompile of exactly the kind M1 exists to remove (owned by M1)"]
 tests/e2e_test.rs	309-309	docs/contributing/MILESTONES.md	3f3f169fea0b	#[ignore = "XFAIL: a tail `if` is not lowered to a return — `fn fib(n: i64) - ... wned by M1; superseded by scripts/check-c-returns.py on feat/m1-stdlib-gate)"]
+tests/regression/lifetimes_uninferred.pd	26-29	docs/reference/features/feature-index.toml	72af1a529f72	fn dangling() -> &i64 { let x: i64 = 5; return &x; }
+tests/reject/uncalled_body_is_checked.pd	21-24	docs/reference/features/feature-index.toml	d225dd41e15a	fn bad() { let v: S = S { x: 0 }; borrow_it(&mut v); }
