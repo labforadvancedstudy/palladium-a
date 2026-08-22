@@ -407,6 +407,21 @@ elif w == "l1-sep-arg":        # an option whose argument would be counted as a 
     t = t.replace('            if base in GREP_OPTS_WITH_ARG and "=" not in tok:', "            if False:", 1)
 elif w == "l1-downstream":     # a downstream segment may not name a file
     t = t.replace('        if n > 0 and parsed["paths"]:', "        if False:", 1)
+elif w == "pin-semantic":     # a cited range need not carry any content
+    # Reverts the NON-SEMANTIC classification: every range becomes "semantic",
+    # so a pin that has come to rest on a bare `}` or a blank line is
+    # fingerprint-stable, never MOVES, and is therefore never wrong -- which is
+    # the laundering the four probe cases exist to catch.
+    t = t.replace("    return bool(SEMANTIC.search(text))", "    return True", 1)
+elif w == "blank-targets":     # the delimiter-only floor, reverted to the six-string list
+    # Not `if False` like most of the others: switching the floor OFF would prove only
+    # that some control notices the floor exists at all. What has to be caught is the
+    # floor being written as an ENUMERATION again, so this mutation restores the exact
+    # frozenset the predicate replaced. The six strings it knew must still pass, and the
+    # ones it never knew -- `]`, `];`, `),`, `);`, `},`, a markdown rule -- must go red.
+    # If they do not, the new cases are not testing the property they claim to.
+    t = t.replace('    return re.search(r"\\w", norm(text)) is None',
+                  '    return norm(text) in ("", "}", "{", "};", ")", "*/")', 1)
 elif w == "gate-kv-compare":   # key=value results are not compared at all
     t = t.replace("    for k, v in kv:", "    for k, v in []:", 1)
 elif w == "gate-substring":    # key=value by containment instead of by value
@@ -510,6 +525,8 @@ conformance-declared|scripts/check_doc_evidence.py
 cmd-grammar|scripts/check_doc_evidence.py
 l1-sep-arg|scripts/check_doc_evidence.py
 l1-downstream|scripts/check_doc_evidence.py
+blank-targets|scripts/check_doc_evidence.py
+pin-semantic|scripts/check_doc_evidence.py
 gate-substring|scripts/check_doc_evidence.py
 gate-kv-compare|scripts/check_doc_evidence.py
 gate-argv-grammar|scripts/gate-receipts.sh

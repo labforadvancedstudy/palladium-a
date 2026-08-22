@@ -422,6 +422,17 @@ pub struct TypeChecker {
     functions: HashMap<String, CheckerType>,
     /// Generic function definitions
     generic_functions: HashMap<String, GenericFunction>,
+    /// Where the template currently winning each name in `generic_functions`
+    /// came from: `None` for a local definition, `Some(module)` for an import.
+    ///
+    /// WRITTEN IN LOCKSTEP WITH THE MAP ABOVE, AT EVERY INSERT, so it always
+    /// describes the WINNER and not some earlier candidate. It exists because
+    /// `generic_functions` is keyed by bare name and is last-writer-wins, so
+    /// the name alone cannot say WHICH `pick<T>` codegen will monomorphize. A
+    /// consumer handed only the name checked every same-named template,
+    /// including ones nothing emits, and vetoed a build over an error in a body
+    /// that never reached the output.
+    generic_function_origin: HashMap<String, Option<String>>,
     /// Instantiated generic functions
     instantiations: HashMap<FunctionInstantiation, CheckerType>,
     /// Struct definitions
@@ -484,6 +495,7 @@ impl TypeChecker {
             deferred_generic_async_value_returns: Vec::new(),
             functions,
             generic_functions: HashMap::new(),
+            generic_function_origin: HashMap::new(),
             instantiations: HashMap::new(),
             structs: HashMap::new(),
             generic_structs: HashMap::new(),
@@ -513,11 +525,38 @@ impl TypeChecker {
     }
 
     /// Set imported modules for type checking
+    ///
+    /// Modules are visited in SORTED key order, not `HashMap` order — the seventh
+    /// site of the class the rest of this branch fixes, and the only one where the
+    /// hash seed reaches the program's ANSWER rather than only the order of the
+    /// emitted C.
+    ///
+    /// Every insert below is under the BARE name as well as the qualified one
+    /// (`src/typeck/mod.rs:627-628`, `src/typeck/mod.rs:652`,
+    /// `src/typeck/mod.rs:667`), and the map is last-writer-wins. So when two
+    /// imported modules export the same name, iteration order decides which
+    /// signature — and, for a generic, which BODY — survives. `get_instantiations`
+    /// reads `generic_functions` by bare name and hands the winner to codegen's
+    /// monomorphizer, so with
+    ///
+    /// ```text
+    /// liba.pd:  pub fn pick<T>(v: T) -> i64 { return 111; }
+    /// libb.pd:  pub fn pick<T>(v: T) -> i64 { return 222; }
+    /// ```
+    ///
+    /// imported together, twenty compiles of one unchanged program printed 111 ten
+    /// times and 222 ten times. Sorting does not make the choice CORRECT — two
+    /// modules exporting one name is a real ambiguity nothing diagnoses, and
+    /// `test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc` declares
+    /// that — but it makes it the same wrong answer every run, which is the
+    /// precondition for anyone noticing it is wrong.
     pub fn set_imported_modules(&mut self, modules: HashMap<String, crate::resolver::ModuleInfo>) {
         self.imported_modules = modules;
 
         // Process imported functions and add them to our function table
-        for (module_name, module_info) in &self.imported_modules {
+        let mut sorted_modules: Vec<_> = self.imported_modules.iter().collect();
+        sorted_modules.sort_by_key(|(name, _)| *name);
+        for (module_name, module_info) in sorted_modules {
             // For now, process all exported functions from the module
             for item in &module_info.ast.items {
                 match item {
@@ -587,6 +626,10 @@ impl TypeChecker {
                                 };
                                 self.generic_functions
                                     .insert(func.name.clone(), generic_func);
+                                // Lockstep with the insert above: this import is
+                                // now the winner for that bare name.
+                                self.generic_function_origin
+                                    .insert(func.name.clone(), Some(module_name.clone()));
                             } else {
                                 // Regular function
                                 let param_types: Vec<CheckerType> = func
@@ -794,6 +837,10 @@ impl TypeChecker {
                         };
                         self.generic_functions
                             .insert(func.name.clone(), generic_func);
+                        // Lockstep with the insert above. Locals are walked after
+                        // imports, so this overwrites any imported template of the
+                        // same name -- and the origin has to overwrite with it.
+                        self.generic_function_origin.insert(func.name.clone(), None);
                     } else {
                         // Regular function - process as before
                         let param_types: Vec<CheckerType> = func
@@ -960,6 +1007,8 @@ impl TypeChecker {
                                 return_type: method.return_type.clone(),
                                 body: method.body.clone(),
                             };
+                            self.generic_function_origin
+                                .insert(method_name.clone(), None);
                             self.generic_functions.insert(method_name, generic_func);
                         } else {
                             // Regular method
@@ -1040,6 +1089,64 @@ impl TypeChecker {
                 }
             }
         }
+
+        // Third pass: type check the bodies of the imported modules.
+        //
+        // Same reason as the borrow checker's third pass
+        // (`src/ownership/borrow_checker.rs`, "Third pass"): making an imported
+        // signature callable without ever visiting the body behind it means the
+        // compiler accepts code it has not checked. Measured before this,
+        // `pub fn broken() -> i64 { let s = "x"; return s; }` in a module printed
+        // "Compilation successful" and then died in gcc with "incompatible pointer
+        // to integer conversion returning 'const char *'" — a C diagnostic against
+        // code the user never wrote, which is the class of failure this pass exists
+        // to remove.
+        //
+        // GENERICS ARE SKIPPED HERE, and the reason changed under this pass.
+        // It used to say "no generic guard needed: `check_function` already
+        // returns early for a function with type parameters". That was true
+        // until the async-value-return refusal was placed BEFORE that early
+        // return (`src/typeck/mod.rs:667`), and walking an imported
+        // generic now raises it at DECLARATION. An uninstantiated generic is
+        // emitted by nobody, so refusing it rejects a declaration the output
+        // cannot contain — which is what
+        // `an_uninstantiated_imported_generic_async_violation_is_not_diagnosed`
+        // pins. Generic imported bodies are owned by the deferred check at the
+        // end of this function, which filters on `self.instantiations` and so
+        // fires only for the ones that become C.
+        //
+        // Module order is sorted for the same reason `set_imported_modules` sorts:
+        // when two modules both fail, WHICH error the user is shown must not depend
+        // on the hash seed.
+        let modules = std::mem::take(&mut self.imported_modules);
+        let mut module_names: Vec<&String> = modules.keys().collect();
+        module_names.sort();
+        for module_name in module_names {
+            for item in &modules[module_name].ast.items {
+                if let Item::Function(func) = item {
+                    if !matches!(func.visibility, crate::ast::Visibility::Public) {
+                        continue;
+                    }
+                    if !func.type_params.is_empty() {
+                        continue;
+                    }
+                    // A SHADOWED IMPORT IS NOT IN THE OUTPUT, so checking it is
+                    // checking code that cannot run — the same rule as the generic
+                    // skip above, and asked through the SHARED predicate codegen
+                    // uses to decide what it emits, so the two cannot drift.
+                    // Without it, a module exporting `pub async fn main` beside a
+                    // program declaring its own `fn main` was refused with
+                    // "`async fn main` is not implemented", naming a declaration
+                    // the local definition displaces
+                    // (`async_main_is_refused_only_when_it_is_the_entry_point`).
+                    if crate::ast::local_definition_shadows_import(program, &func.name) {
+                        continue;
+                    }
+                    self.check_function(func)?;
+                }
+            }
+        }
+        self.imported_modules = modules;
 
         // AN IMPORTED GENERIC THAT WAS INSTANTIATED IS PART OF THE EMITTED
         // PROGRAM, so the refusal `check_function` applies to every LOCAL async
@@ -3234,10 +3341,46 @@ impl TypeChecker {
     }
 
     /// Get all generic function instantiations for code generation
+    ///
+    /// Ordered by `(name, type_args)`, not by `HashMap` iteration.
+    /// `FunctionInstantiation` is a hash key, and `RandomState` reseeds every
+    /// process, so returning them in map order put the hash seed into the
+    /// emitted C: six generic functions in a program that imports nothing
+    /// produced thirty distinct outputs in thirty compiles.
+    ///
+    /// Emission order is not all that rides on this. `get_mangled_name_for_call`
+    /// (`src/codegen/mod.rs:3474-3538`) scans this list for every instantiation
+    /// of a name and, when a function has more than one, picks by inferring from
+    /// the first argument — so before this, *which monomorphization a call
+    /// resolved to* could also vary between runs. Sorting does not make that
+    /// selection correct; it makes it reproducible, which is the precondition
+    /// for ever seeing that it is wrong.
+    ///
+    /// AND IT IS WRONG. The cited range covers the whole function, including its
+    /// silent default, because that is where the defect lives: the match loop
+    /// accepts ANY type argument in ANY position, so `fn snd<A, B>(a: A, b: B)`
+    /// instantiated at both `(i64, String)` and `(i64, i64)` resolves the call
+    /// `snd(1, 2)` against the first sorted key — `(i64, String)`, since `S` sorts
+    /// before `i`. Measured: the emitted C contains both `snd__i64_String` and
+    /// `snd__i64_i64`, and calls `snd__i64_String(1, 2)`; the correct
+    /// monomorphization is emitted and never called. When nothing matches at all
+    /// the function still returns the first entry rather than `None`, with no
+    /// diagnostic. Sorting made that reproducible instead of a coin flip, which is
+    /// how it became visible. It is declared as
+    /// `test_a_generic_call_resolves_to_its_own_monomorphization` and is owned by
+    /// M4, not by this branch.
+    ///
+    /// This matters for the same reason the module ordering does: `make selfhost`
+    /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
+    /// because `bootstrap/pdc.pd` uses no generics — they are excluded from PBS-1
+    /// (`docs/specification/bootstrap-subset.md:76`).
     pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
         let mut result = Vec::new();
 
-        for instantiation in self.instantiations.keys() {
+        let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect();
+        keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+
+        for instantiation in keys {
             if let Some(generic_func) = self.generic_functions.get(&instantiation.name) {
                 result.push((
                     instantiation.name.clone(),
@@ -3250,11 +3393,56 @@ impl TypeChecker {
         result
     }
 
+    /// For every generic name this compilation instantiates, WHERE the template
+    /// codegen will monomorphize came from: `None` local, `Some(module)` imported.
+    ///
+    /// This is `get_instantiations` without the lossy step. That function returns
+    /// the winning `GenericFunction` itself, but a consumer that only needs to
+    /// decide "is THIS declaration the one that gets emitted" was collapsing the
+    /// result to the bare name, and the name is shared by every same-named
+    /// template across every module. Measured before this existed: a module
+    /// exporting `pick<T>` with an ownership error in its body vetoed a build
+    /// whose LOCAL `pick<T>` was the instantiated template and whose C contained
+    /// no trace of the imported one. Renaming the imported function -- changing
+    /// nothing else -- compiled.
+    ///
+    /// Restricted to instantiated names on purpose: an uninstantiated template is
+    /// emitted by nobody, so no consumer should be deciding anything about it
+    /// from this map.
+    pub fn get_instantiated_generic_origins(&self) -> HashMap<String, Option<String>> {
+        let mut result = HashMap::new();
+        for instantiation in self.instantiations.keys() {
+            if let Some(origin) = self.generic_function_origin.get(&instantiation.name) {
+                result.insert(instantiation.name.clone(), origin.clone());
+            }
+        }
+        result
+    }
+
     /// Get all generic struct instantiations for code generation
+    ///
+    /// Ordered by `(name, type_args)` for the same reason as
+    /// [`TypeChecker::get_instantiations`]: this list decides the order in which
+    /// codegen emits monomorphized struct definitions, and a `HashMap` key order
+    /// would make that depend on the per-process hash seed.
+    ///
+    /// NOT COVERED BY ANY TEST, and it cannot be until generic structs compile.
+    /// The sentence above states what this ordering WOULD decide; no program can
+    /// currently reach it, because `struct Box<T> { v: T }` lowers to `void*` and
+    /// gcc rejects "initializing 'void *' with an expression of incompatible type
+    /// 'struct Box_alpha_i64'". So this is sorted for symmetry with its sibling,
+    /// and this paragraph — not the one above it — is the honest statement of its
+    /// coverage. The same statement appears beside the test that covers the
+    /// sibling (`tests/m3_imported_calls.rs`,
+    /// `test_generic_instantiations_are_emitted_in_a_stable_order`), because a
+    /// reader who arrives at either one should not have to find the other.
     pub fn get_struct_instantiations(&self) -> Vec<(String, Vec<String>, GenericStruct)> {
         let mut result = Vec::new();
 
-        for instantiation in self.struct_instantiations.keys() {
+        let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().collect();
+        keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+
+        for instantiation in keys {
             if let Some(generic_struct) = self.generic_structs.get(&instantiation.name) {
                 result.push((
                     instantiation.name.clone(),
@@ -3444,7 +3632,8 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:2459`, `:2606`). That is not what these diagnostics
+    /// (`src/parser/mod.rs:3148-3156`, `src/parser/mod.rs:3001-3009`). That is not
+    /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this
     /// test, and no other, which is the point of keeping it apart from the

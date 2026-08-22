@@ -391,7 +391,8 @@ fn main() {
 /// The limit the help now states out loud, pinned so it cannot silently drift.
 ///
 /// Code generation skips generic enum definitions entirely
-/// (`src/codegen/mod.rs:841`, `:909`, `:929`), and generic enum construction
+/// (`src/codegen/mod.rs:1244-1245`, `src/codegen/mod.rs:1245`,
+/// `src/codegen/mod.rs:1281`), and generic enum construction
 /// infers only the type parameters a variant actually mentions — so
 /// `Result::Err(e)` yields `Result<(), Int>` and never matches a declared
 /// `Result<i64, i64>`. A `match`-based replacement written against a generic

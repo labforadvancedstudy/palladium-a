@@ -135,6 +135,31 @@ impl Driver {
         println!("🔒 Borrow checking...");
         let borrow_start = Instant::now();
         let mut borrow_checker = BorrowChecker::new();
+
+        // Same resolver result and same guard as the type checker above. Without
+        // this the borrow checker sees a single-file program: every call to an
+        // imported function was rejected as "Use of uninitialized value", because
+        // the callee was absent from its function table and was then looked up as
+        // a variable.
+        if !resolved_modules.is_empty() {
+            borrow_checker.set_imported_modules(resolved_modules.clone());
+        }
+
+        // Which generic templates get monomorphized, AND WHERE EACH CAME FROM, so
+        // the walk over imported bodies covers exactly the bodies codegen emits.
+        //
+        // Both halves were learned the hard way. Skipping every generic body — on
+        // the reasoning that codegen emits only non-generic imported functions,
+        // true of the direct path and false of monomorphization — let a
+        // use-after-move inside an imported `fn bad<T>` compile, emit `bad__i64`,
+        // link and print 7. Then keying on the NAME alone — `instantiations`
+        // collapsed to a set of names — made the pass check every same-named
+        // imported template including ones a local definition had displaced, and
+        // an error in a body nothing emits vetoed the build. The origin map is
+        // the same question asked without the lossy projection.
+        borrow_checker
+            .set_instantiated_generic_origins(type_checker.get_instantiated_generic_origins());
+
         borrow_checker.check_program(&ast)?;
         let borrow_time = borrow_start.elapsed();
         println!(

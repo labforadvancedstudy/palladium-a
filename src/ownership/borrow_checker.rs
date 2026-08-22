@@ -12,8 +12,6 @@ pub struct BorrowChecker {
     context: OwnershipContext,
     /// Function signatures for ownership analysis
     functions: HashMap<String, FunctionSig>,
-    /// Current function being analyzed
-    current_function: Option<String>,
     /// Local variable types for Copy checking
     local_types: HashMap<String, Type>,
     /// Track if we're in an unsafe context
@@ -33,6 +31,28 @@ pub struct BorrowChecker {
     /// temporary `&x` / `&mut x` references written in argument position — gets
     /// this lifetime and is released when the call completes.
     call_lifetime: Option<Lifetime>,
+    /// Modules the resolver loaded for this compilation, keyed by the name the
+    /// importing program refers to them by (the alias, if there was one).
+    ///
+    /// This pass used to have no channel at all by which an imported signature
+    /// could arrive: it was handed the *pre-resolution* AST, and `Program.imports`
+    /// carries only paths, never the loaded module. So every call to an imported
+    /// function died as "Use of uninitialized value", because the callee was not
+    /// in `functions` and was then looked up as a variable. The type checker has
+    /// had this channel since it was written (`TypeChecker::set_imported_modules`);
+    /// this is the same channel, and the driver fills both from one resolver run.
+    imported_modules: HashMap<String, crate::resolver::ModuleInfo>,
+    /// For every generic name this compilation instantiates, WHERE the template
+    /// codegen monomorphizes came from: `None` local, `Some(module)` imported.
+    ///
+    /// A SET OF NAMES IS NOT ENOUGH, and that was the second bug on this line.
+    /// `TypeChecker::generic_functions` is keyed by bare name and is
+    /// last-writer-wins, so "the name `pick` is instantiated" says nothing about
+    /// WHICH `pick<T>` is the one emitted. Keyed on the name, this pass checked
+    /// every same-named imported template and refused a build over a body
+    /// nothing emits. Keyed on the origin, it checks the one template that
+    /// becomes C.
+    instantiated_generic_origins: HashMap<String, Option<String>>,
 }
 
 /// Function signature for ownership analysis
@@ -119,12 +139,13 @@ impl Default for BorrowChecker {
         Self {
             context: OwnershipContext::new(),
             functions,
-            current_function: None,
             local_types: HashMap::new(),
             mutable_bindings: HashMap::new(),
             unsafe_depth: 0,
             struct_fields: HashMap::new(),
             call_lifetime: None,
+            imported_modules: HashMap::new(),
+            instantiated_generic_origins: HashMap::new(),
         }
     }
 }
@@ -145,6 +166,152 @@ impl BorrowChecker {
         self.functions.keys().cloned().collect()
     }
 
+    /// Hand this pass the modules the resolver loaded, so that a call to an
+    /// imported function can be checked at all.
+    ///
+    /// Takes exactly what `TypeChecker::set_imported_modules` takes
+    /// (`src/typeck/mod.rs:553`), because the driver has one resolver result and
+    /// two passes that need it; a second shape here would be a second thing to
+    /// keep in sync. Registration itself is deferred to `check_program`, which is
+    /// where the ordering against local definitions is decided.
+    pub fn set_imported_modules(
+        &mut self,
+        modules: HashMap<String, crate::resolver::ModuleInfo>,
+    ) {
+        self.imported_modules = modules;
+    }
+
+    /// Tell this pass which generic templates the compilation instantiates, and
+    /// where each one came from.
+    ///
+    /// Takes `TypeChecker::get_instantiated_generic_origins`, which the driver
+    /// computes between type checking and this pass. The ORIGIN is the load-bearing
+    /// half: it is what distinguishes the imported `pick<T>` that gets
+    /// monomorphized from the imported `pick<T>` that a local definition of the
+    /// same name displaced. Passing names alone made those two indistinguishable
+    /// and turned an error in the displaced body into a build failure.
+    ///
+    /// Not supplying it is safe in the only direction that matters: the map is then
+    /// empty, generic imported bodies are skipped, and this pass is back to where it
+    /// was rather than checking bodies against a map it does not have.
+    pub fn set_instantiated_generic_origins(&mut self, origins: HashMap<String, Option<String>>) {
+        self.instantiated_generic_origins = origins;
+    }
+
+    /// Register the public functions *and struct layouts* of every imported module.
+    ///
+    /// LAYOUTS ARE NOT OPTIONAL. Field Copy classification reads `struct_fields`
+    /// (`place_type`, `is_expr_copy`), and an unresolvable projection falls into
+    /// the conservative "not Copy" default. So a body walked without its struct
+    /// layouts does not merely lose precision — it MOVES on every field read, and
+    /// the second read of an `i64` field is reported as "Use of moved value". Once
+    /// the third pass below started walking imported bodies, that turned the
+    /// missing layouts into a FALSE REJECT of a valid program: byte-identical
+    /// source compiled when the struct was declared locally and was refused when
+    /// it came from a module. Over-approximating a refusal fails closed onto
+    /// correct programs, which is the worse polarity of the two.
+    ///
+    /// Public-only, and imports-before-locals, for the same reasons as functions
+    /// below; the type checker registers imported layouts under exactly the same
+    /// filter (`src/typeck/mod.rs:657-658`), so the two passes agree on which
+    /// `P` is meant.
+    ///
+    /// AND THE REMAINING WINDOW IS UNREACHABLE, which is a stronger statement than
+    /// "the order is right". If an imported layout ever did leak where a local
+    /// should win, the program it would mis-check cannot be built at all: codegen
+    /// emits every public imported struct (`src/codegen/mod.rs:1306-1314`) and then
+    /// every local struct (`src/codegen/mod.rs:1330-1334`) with no shadowing check
+    /// between them, so the C holds two definitions of `P`. Measured — a module
+    /// exporting `pub struct P { a: i64 }` beside a local `struct P { a: i64 }`
+    /// passes both checkers and dies as gcc's "redefinition of 'P'". So the
+    /// ordering above is what makes the pass reason about the right layout, and the
+    /// linker is what makes the question moot; neither rests on the other.
+    ///
+    /// SHADOWING: a local definition wins, and it wins by *order* — this runs
+    /// before the walk over `program.items`, so a local `fn helper` overwrites an
+    /// imported `helper` in `functions`. That direction is the only one that can
+    /// be right here: the local definition is the one whose body this pass will
+    /// go on to check, and whose signature codegen will emit, so registering the
+    /// import over it would make the borrow checker reason about a *different*
+    /// function from the one that runs. It also matches what the type checker
+    /// already does — it fills its table from imports in `set_imported_modules`
+    /// and then overwrites from local items during `check` — so the two passes
+    /// agree about which `helper` is meant.
+    ///
+    /// Modules are visited in sorted key order rather than `HashMap` order: when
+    /// two modules export the same name, the winner must not depend on the hash
+    /// seed. Which of the two wins is still arbitrary and is a real ambiguity the
+    /// language does not yet diagnose (M3), but it is at least the same one twice.
+    ///
+    /// Both the bare name and `module::name` are registered, matching the type
+    /// checker, so a qualified call is not rejected by a pass the unqualified one
+    /// passes.
+    fn register_imported_functions(&mut self) {
+        let modules = std::mem::take(&mut self.imported_modules);
+        let mut names: Vec<&String> = modules.keys().collect();
+        names.sort();
+
+        for module_name in names {
+            let module_info = &modules[module_name];
+            for item in &module_info.ast.items {
+                match item {
+                    Item::Struct(struct_def) => {
+                        if !matches!(struct_def.visibility, crate::ast::Visibility::Public) {
+                            continue;
+                        }
+                        // GENERIC LAYOUTS ARE REGISTERED TOO, and the guard that
+                        // used to skip them was the same mistake as the one over
+                        // function bodies, one item kind across.
+                        //
+                        // Its reason was that codegen emits only NON-generic
+                        // imported structs (`src/codegen/mod.rs:1309-1310`), so a
+                        // generic `P<T>` would be "a layout for a type this
+                        // compilation never produces". Structs have a
+                        // monomorphization path too
+                        // (`generic_struct_instantiations`), so that was false in
+                        // exactly the way the function version was — and once the
+                        // walk below started checking instantiated imported bodies,
+                        // the missing layout became a FALSE REJECT rather than a
+                        // harmless omission: field Copy classification falls back to
+                        // "not Copy" for a layout it cannot resolve, so the second
+                        // read of an `i64` field is reported as a use of a moved
+                        // value. Measured, the only difference being `<T>` on the
+                        // struct:
+                        //
+                        //     pub struct P<T> { a: i64 }   -> Use of moved value: p.a
+                        //     pub struct Q    { a: i64 }   -> compiles
+                        //
+                        // The local walk has never had this guard
+                        // (`Item::Struct` below registers every local struct,
+                        // generic or not), so registering here is what makes the two
+                        // sides agree rather than a new rule. The collision the old
+                        // comment worried about is handled by ORDER, as everywhere
+                        // else here: imports first, locals overwrite, so a local
+                        // `struct P` wins the name — which is the layout codegen
+                        // emits.
+                        self.struct_fields
+                            .insert(struct_def.name.clone(), struct_def.fields.clone());
+                    }
+                    Item::Function(func) => {
+                        // Private items of a module are not callable from outside it,
+                        // so registering them would let this pass accept a program the
+                        // type checker rejects — the two passes must refuse the same
+                        // programs, not merely overlap.
+                        if !matches!(func.visibility, crate::ast::Visibility::Public) {
+                            continue;
+                        }
+                        self.collect_function_sig(func);
+                        let qualified_name = format!("{}::{}", module_name, func.name);
+                        self.collect_function_sig_with_name(func, &qualified_name);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        self.imported_modules = modules;
+    }
+
     /// Check if we're currently in an unsafe context
     #[allow(dead_code)]
     fn in_unsafe_context(&self) -> bool {
@@ -153,6 +320,10 @@ impl BorrowChecker {
 
     /// Check a program for ownership violations
     pub fn check_program(&mut self, program: &Program) -> Result<()> {
+        // Imported signatures first, so that the walk below - the local
+        // definitions - overwrites them. See `register_imported_functions`.
+        self.register_imported_functions();
+
         // First pass: collect function signatures and struct layouts
         for item in &program.items {
             match item {
@@ -190,6 +361,130 @@ impl BorrowChecker {
                 _ => {}
             }
         }
+
+        // Third pass: check the bodies of the imported modules.
+        //
+        // WITHOUT THIS, REGISTERING THE SIGNATURES IS A SAFETY HOLE RATHER THAN A
+        // FEATURE. `register_imported_functions` makes a call to an imported
+        // function pass this pass; the walk above visits `program.items` only, so
+        // the body behind that signature was never visited by anything. The
+        // compiler would then be ACCEPTING code it has never checked, and
+        // `pub fn bad(mut x: i64) { x = 42; }` in a module compiled, linked and
+        // printed 42 while the byte-identical program written locally was refused
+        // with "cannot borrow `n` as mutable". A pass that refuses a program in one
+        // file and accepts it in two is not checking the language.
+        //
+        // ONLY `Item::Function` IS WALKED, and an imported `impl` method is not a
+        // gap in that. Codegen's imported walk matches `Item::Struct` and
+        // `Item::Enum` (`src/codegen/mod.rs:1305-1322`) and, separately,
+        // `Item::Function` (`src/codegen/mod.rs:1410`) — there is no `Item::Impl`
+        // arm anywhere in it. So an imported impl method is not merely uncallable:
+        // IT DOES NOT EXIST IN THE OUTPUT. Measured — a module exporting
+        // `pub struct P { a: i64 }` with `impl P { fn get(self) -> i64 { … } }`
+        // compiles, and the emitted C contains no trace of `get`. Checking a body
+        // that produces no code would be checking something that cannot run, and
+        // the fail-open this pass exists to close is specifically "accepted code
+        // that DOES run unchecked". That argument holds whatever the parser later
+        // does with method-call syntax, which a runtime measurement of a call would
+        // not.
+        //
+        // Private items are skipped for the same reason they are skipped in
+        // registration: they are not callable from here, so their signatures are
+        // not in `functions` and checking their bodies would report names this
+        // program cannot reach. That leaves a real gap — a module has no private
+        // scope, so a PUBLIC imported function that calls a private sibling is
+        // reported as an undefined name — and it is declared as such in
+        // `tests/m3_imported_calls.rs`
+        // (`test_a_module_can_use_its_own_private_items`), not papered over.
+        //
+        // Shadowing: `functions` at this point holds the LOCAL definitions, because
+        // the first pass overwrote the imported ones. So an imported body that calls
+        // a name the importing program also defines is checked against the local
+        // signature. That is wrong, and it is the same unresolved ambiguity that
+        // `test_a_local_definition_shadows_an_imported_one` declares; it is recorded
+        // here rather than silently fixed one pass at a time.
+        let modules = std::mem::take(&mut self.imported_modules);
+        let mut module_names: Vec<&String> = modules.keys().collect();
+        module_names.sort();
+        for module_name in module_names {
+            for item in &modules[module_name].ast.items {
+                if let Item::Function(func) = item {
+                    if !matches!(func.visibility, crate::ast::Visibility::Public) {
+                        continue;
+                    }
+                    // A GENERIC BODY IS CHECKED EXACTLY WHEN IT IS INSTANTIATED,
+                    // because that is exactly when codegen emits one.
+                    //
+                    // THE PREVIOUS VERSION OF THIS GUARD SKIPPED EVERY GENERIC BODY
+                    // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
+                    // "produces no C, because the codegen guard is the same
+                    // predicate". That is true of the DIRECT imported-emission path
+                    // (`src/codegen/mod.rs:1412-1414`, public and non-generic) and
+                    // false of MONOMORPHIZATION, which is a different path and emits
+                    // `name__T` from the same template. Measured on the guard:
+                    //
+                    //     lib: pub fn bad<T>(x: T) -> i64 {
+                    //              let a: S = S{v:7}; let b: S = a; let c: S = a;
+                    //              return c.v; }
+                    //     main: import lib; fn main() { print_int(bad(1)); }
+                    //
+                    // compiled, emitted `bad__i64`, linked and PRINTED 7 — a plain
+                    // use-after-move that runs. The byte-identical LOCAL generic is
+                    // refused, by this same pass, which is the "refuses it in one
+                    // file, accepts it in two" defect this third pass exists to
+                    // close, reopened for generics.
+                    //
+                    // Reading a guarantee off the stated reason instead of off the
+                    // mechanism is the recurrence family here: ONE COMPILER PASS
+                    // SKIPS CODE ANOTHER PASS EMITS. So the predicate is now the
+                    // emission set itself — `instantiated_generics` comes from
+                    // `TypeChecker::get_instantiations`, which the driver already
+                    // computes before this pass runs and which is the same list
+                    // codegen monomorphizes from.
+                    //
+                    // The uninstantiated case still has to be skipped, and that is
+                    // not this defect wearing a hat: imported ASTs are never
+                    // macro-expanded (the driver expands the top-level AST before it
+                    // resolves modules), so walking `pub fn gen<T>(..) { vec!(7) }`
+                    // that nothing calls turned a compilation `main` COMPLETES into
+                    // "Unexpected macro invocation in borrow checking". Nothing emits
+                    // that body either, so skipping it is the emission rule, not an
+                    // exception to it. When the same body IS instantiated the
+                    // compilation already fails in codegen with the macro error, so
+                    // checking it here moves the phase and not the verdict. The
+                    // underlying asymmetry is declared in
+                    // `tests/m3_imported_calls.rs`
+                    // (`test_a_macro_in_an_imported_body_is_never_expanded`); the
+                    // honest fix is expanding module ASTs.
+                    // The ORIGIN, not just the name. `generic_functions` in the
+                    // type checker is keyed by bare name and last-writer-wins,
+                    // with locals walked after imports, so a local `pick<T>`
+                    // DISPLACES an imported one and codegen monomorphizes the
+                    // local. Testing only "is the name `pick` instantiated" made
+                    // this pass check the displaced import too. Measured:
+                    //
+                    //     lib.pd:  pub fn pick<T>(x: T) -> i64 { ...use-after-move... }
+                    //     main.pd: import lib;
+                    //              fn pick<T>(x: T) -> i64 { return 3; }
+                    //              fn main() { print_int(pick(1)); }
+                    //
+                    //     -> error: Use of moved value: a
+                    //
+                    // over a body the emitted C contains no trace of; renaming the
+                    // imported function, changing nothing else, compiled and ran.
+                    // The same shape with no local definition at all is two modules
+                    // exporting the name, where the loser is displaced identically.
+                    if !func.type_params.is_empty()
+                        && self.instantiated_generic_origins.get(&func.name)
+                            != Some(&Some(module_name.clone()))
+                    {
+                        continue;
+                    }
+                    self.check_function(func)?;
+                }
+            }
+        }
+        self.imported_modules = modules;
 
         Ok(())
     }
@@ -258,9 +553,16 @@ impl BorrowChecker {
             .insert(name.to_string(), FunctionSig { params, returns });
     }
 
-    /// Check a function for ownership violations
+    /// Check a function for ownership violations.
+    ///
+    /// The function scope opened here is what makes the per-function state
+    /// per-function. `local_types` and `mutable_bindings` are cleared outright
+    /// just below; `self.context` cannot be, because it carries the counters
+    /// that keep temporaries and lifetimes distinct, so it is unwound by
+    /// `exit_scope` instead — which is only truthful now that `exit_scope`
+    /// actually retires bindings and borrows rather than dropping a lifetime
+    /// variant nothing constructs.
     fn check_function(&mut self, func: &Function) -> Result<()> {
-        self.current_function = Some(func.name.clone());
         self.context.enter_scope();
         self.local_types.clear();
         self.mutable_bindings.clear();
@@ -268,6 +570,7 @@ impl BorrowChecker {
         // Initialize parameters and their types
         for param in &func.params {
             let place = Place::Local(param.name.clone());
+            self.context.declare(&place);
             self.context.init_owned(place);
             self.local_types
                 .insert(param.name.clone(), param.ty.clone());
@@ -285,7 +588,6 @@ impl BorrowChecker {
         }
 
         self.context.exit_scope();
-        self.current_function = None;
         Ok(())
     }
 
@@ -318,19 +620,37 @@ impl BorrowChecker {
                 // Initialize the new variable
                 let place = Place::Local(name.clone());
 
-                // Check if value is moved or copied
+                // THE ORDER OF THESE THREE STEPS IS THE WHOLE POINT, because a
+                // `Place` is a NAME and `let s: S = s;` gives the source and the
+                // destination the same one.
+                //
+                // It used to be declare -> move_value, and `move_value` writes
+                // `Moved` to the source and then `Owned` to the destination. With
+                // one key those are the same slot, so the second write cancelled
+                // the first and the move never happened; `declare` had already
+                // snapshotted the outer `Owned`, so scope exit restored it and an
+                // outer binding survived being moved out of. Measured: the
+                // shadowing form was ACCEPTED and the identical program using a
+                // different inner name was refused, the name being the only
+                // difference between them.
+                //
+                //   1. move out of the SOURCE, naming no destination. This is also
+                //      where an already-moved or borrowed source is refused, so it
+                //      must run before anything writes to the name.
+                //   2. record what this binder shadows — now the POST-move state,
+                //      so scope exit restores `Moved` rather than resurrecting the
+                //      outer value.
+                //   3. give the new binding its own ownership.
+                //
+                // A Copy source skips step 1 and keeps both bindings usable, which
+                // is what Copy means.
                 if let Some(from_place) = expr_to_place(value) {
-                    if self.is_expr_copy(value) {
-                        // Copy types don't move
-                        self.context.init_owned(place);
-                    } else {
-                        // Move ownership
-                        self.context.move_value(from_place, place, value.span())?;
+                    if !self.is_expr_copy(value) {
+                        self.context.move_out_of(from_place, value.span())?;
                     }
-                } else {
-                    // Temporary value (like string literal), take ownership
-                    self.context.init_owned(place);
                 }
+                self.context.declare(&place);
+                self.context.init_owned(place);
             }
 
             Stmt::Assign {
@@ -451,6 +771,7 @@ impl BorrowChecker {
                 // binding has to be recorded, because an unregistered name is
                 // now a refusal, not a free pass.
                 let place = Place::Local(var.clone());
+                self.context.declare(&place);
                 self.context.init_owned(place);
                 self.mutable_bindings.insert(var.clone(), false);
 
@@ -498,16 +819,42 @@ impl BorrowChecker {
     fn check_expr(&mut self, expr: &Expr) -> Result<()> {
         match expr {
             Expr::Ident(name) => {
-                // Check if this is a function name or a variable
-                if self.functions.contains_key(name) {
+                let place = Place::Local(name.clone());
+                let ownership = self.context.get_ownership(&place).cloned();
+
+                // A BINDING IN SCOPE WINS OVER A FUNCTION OF THE SAME NAME.
+                //
+                // This used to ask `functions` first and return early on a hit, so
+                // a local whose name collided with any registered function skipped
+                // the move and initialization checks entirely. Measured, in return
+                // position, with `struct S { v: i64 }`:
+                //
+                //     let helper: S = S { v: 1 };  let b = helper;  return helper;
+                //
+                // is refused with "Use of moved value: helper" on its own, and
+                // ACCEPTED — compiled, linked, printed 1 — as soon as a
+                // `fn helper()` exists for the name to collide with. The hole was
+                // already there for a local `fn helper`; registering imported
+                // signatures widened it to every name any imported module exports,
+                // which is a much larger surface for a program to collide with by
+                // accident. The two controls are
+                // `test_a_local_binding_is_not_laundered_by_a_local_function` and
+                // `..._by_an_imported_function` in tests/m3_imported_calls.rs.
+                //
+                // The order is decided rather than merely swapped: a name that IS a
+                // place in this scope is a variable, whatever else shares its
+                // spelling, so the function table is consulted only for a name the
+                // ownership context does not know. `let`-RHS and call-argument
+                // positions never reached here — they have their own move handling —
+                // which is why this survived four constructions before one in return
+                // position found it.
+                if ownership.is_none() && self.functions.contains_key(name) {
                     // It's a function - no ownership check needed
                     return Ok(());
                 }
 
-                let place = Place::Local(name.clone());
-
                 // Check if the value is initialized and not moved
-                match self.context.get_ownership(&place) {
+                match ownership.as_ref() {
                     Some(crate::ownership::Ownership::Owned) => {
                         // Value is accessible
                     }
@@ -897,6 +1244,7 @@ impl BorrowChecker {
         match pattern {
             Pattern::Ident(name) => {
                 let place = Place::Local(name.clone());
+                self.context.declare(&place);
                 self.context.init_owned(place);
                 // A match binding is immutable: the grammar has no `mut`
                 // pattern. Recording it keeps the map total over binders.

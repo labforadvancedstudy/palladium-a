@@ -37,7 +37,7 @@
 //! WHAT THE SOURCE SCAN IS, AT ITS TRUE SIZE.
 //! Default-deny over every `*.rs` under `src/`: a string literal may not contain
 //! a version-shaped token. The old check was default-ALLOW over a hand-written
-//! list of two files, which is why `src/lib.rs:42` — a fourth spelling,
+//! list of two files, which is why `src/lib.rs:43-46` — a fourth spelling,
 //! rendering `v0.3.0-alpha`, a version the package has never had — was invisible
 //! to it for the whole round in which the other three were fixed. A new file is
 //! now covered the day it is added; that is the property the file list could not

@@ -276,8 +276,8 @@ The parser hardcodes `Function.effects` to `None`, commented "Effects will be in
 analysis" (`src/parser/mod.rs:1038`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
 `Effect` enum at `src/effects/mod.rs:16-29`, `analyze_function` at `src/effects/mod.rs:151`) and it does union effects across
 statements and calls (`src/effects/mod.rs:263`). But `crate::effects::` is referenced from exactly one place in
-the compiler — `src/driver/mod.rs:147` — and all the driver does with the result is `println!` it
-(`src/driver/mod.rs:151`). No later phase reads it. It cannot reject a program, cannot change
+the compiler — `src/driver/mod.rs:172` — and all the driver does with the result is `println!` it
+(`src/driver/mod.rs:176`). No later phase reads it. It cannot reject a program, cannot change
 codegen, and cannot schedule anything.
 
 **3. Propagation to callers is order-dependent, and unknown callees are assumed pure.**
@@ -288,7 +288,7 @@ contributes no effects to that caller. The definition requires propagation to be
 over the call graph, not a single forward pass.
 
 **4. Effect analysis never sees methods.** The driver's loop matches only
-`crate::ast::Item::Function` (`src/driver/mod.rs:148-149`), so functions inside `impl` blocks are
+`crate::ast::Item::Function` (`src/driver/mod.rs:173-174`), so functions inside `impl` blocks are
 not analysed at all.
 
 **5. Automatic parallelization does not exist.** `grep -rn 'parallel' src/effects/mod.rs
@@ -299,15 +299,21 @@ scheduler.
 no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 (`docs/specification/grammar.ebnf:58-59`).
 
-**7. `.await` is refused by code generation, because the C it used to emit referenced a member
-no part of the compiler emits.** The await arm now returns `CompileError::await_unimplemented`
-(`src/codegen/mod.rs:3215-3219`). It previously emitted `while (!<tmp>.poll(&<tmp>)) { }` and then
-read `<tmp>.result`, while nothing generates a `poll` member on the produced C type — the poll
-routine that IS generated is the free function `<name>_poll`. That was not an error at any
-earlier stage: it was silent breakage discovered by the C compiler, which is the failure mode
-`language-spec.md` §6.5 recorded. The parallel defect for `?` was the same shape and is refused
-at the same place (`src/codegen/mod.rs:3203-3207`); it used to emit a
-`struct Result { int is_ok; union { ... } data; }` layout that codegen never defines.
+**7. `.await` is refused, and the lowering that used to be here is deleted.**
+Codegen for an await expression returns `await_unimplemented` at the construct's own span
+(`src/codegen/mod.rs:3243-3248`), and the type checker refuses it before that
+(`src/typeck/mod.rs:2793`). `?` is the same shape: refused in codegen
+(`src/codegen/mod.rs:3231-3235`) and in the type checker (`src/typeck/mod.rs:2786`).
+
+*Historical, and the reason those refusals exist — this paragraph described it in the present
+tense until D5 was fixed.* Codegen used to emit `while (!<tmp>.poll(&<tmp>)) { }` and then read
+`<tmp>.result`, and nothing generated a `poll` member on the produced C type — the poll routine
+that IS generated is the free function `<name>_poll`, which that call never named; `?` used to emit a
+`struct Result { int is_ok; union { ... } data; }` layout that codegen never defined. Neither was
+an error at any earlier stage — it was silent breakage discovered by the C compiler, which is the
+failure mode `language-spec.md` §6.5 recorded. Both lowerings are gone: searching
+`src/codegen/mod.rs` for `poll(&` and `struct Result` now matches only the two comments that
+explain why the arms refuse (`src/codegen/mod.rs:3233`, `src/codegen/mod.rs:3245`).
 
 Direction of travel: making `.await` a hard compile error is *consistent* with this document,
 because `.await` is not part of the language. The end state is that neither `async` nor `await` is

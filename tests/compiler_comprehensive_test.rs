@@ -6,13 +6,13 @@
 //
 //   1. `int`/`string` in the expected C. The integer type lowers to
 //      `long long` (`int` is only a source-level alias for `i64`,
-//      `src/parser/mod.rs:2064`) and `print` lowers to `__pd_print`, not
+//      `src/parser/mod.rs:2022`) and `print` lowers to `__pd_print`, not
 //      `printf`.
 //   2. Fragments with no `fn main`. The driver rejects a program without one
 //      ("No main function found"), so a declaration-only snippet cannot be
 //      compiled at all.
 //   3. Constant folding. The optimizer runs by default
-//      (`src/driver/mod.rs:173-176`), so `1 + 2` never reaches the C as
+//      (`src/driver/mod.rs:198-201`), so `1 + 2` never reaches the C as
 //      `(1 + 2)`. Operator tests therefore use variables, which is what they
 //      meant to test anyway: that the operator survives, not that folding is off.
 //
@@ -336,7 +336,7 @@ fn test_control_flow() {
 }
 
 #[test]
-#[ignore = "XFAIL: `else if` — grammar.ebnf:157 'There is NO `else if`: after `else` the parser requires \\'{\\'' (owned by M2, item 2)"]
+#[ignore = "XFAIL: `else if` — grammar.ebnf:170 'There is NO `else if`: after `else` the parser requires \\'{\\'' (owned by M2, item 2)"]
 fn test_else_if_chain() {
     compile_and_verify(
         "fn main() {

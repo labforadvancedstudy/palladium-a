@@ -1623,17 +1623,17 @@ fn a_user_written_return_zero_in_a_unit_function_is_refused() {
 ///                               `resolved_modules` is LIVE in that scope and
 ///                               is not passed. That omission is the whole
 ///                               mechanism.
-///   src/ownership/borrow_checker.rs:114-118
+///   src/ownership/borrow_checker.rs:134-138
 ///                               `functions` is seeded from `BUILTINS` and
 ///                               nothing else.
-///   src/ownership/borrow_checker.rs:156-176
+///   src/ownership/borrow_checker.rs:327-347
 ///                               `check_program` walks `program.items` only.
 ///                               `Program.imports` (src/ast/mod.rs:9) is never
 ///                               read, and `Item` (src/ast/mod.rs:24-32) has no
 ///                               `Import` variant, so nothing in the local AST
 ///                               could have carried the imported signatures
 ///                               either.
-///   src/ownership/borrow_checker.rs:535 -> :502 -> :527
+///   src/ownership/borrow_checker.rs:882 -> :502 -> :527
 ///                               `Expr::Call` checks its callee expression;
 ///                               `Expr::Ident` misses `functions`, falls
 ///                               through to the ownership table, finds no
@@ -1651,7 +1651,6 @@ fn a_user_written_return_zero_in_a_unit_function_is_refused() {
 /// that the wall is DECLARED, with its mechanism, so it cannot go on being the
 /// silent explanation for somebody else's green.
 #[test]
-#[ignore = "XFAIL: the borrow checker is never told about imported modules. src/driver/mod.rs:104-107 hands the resolver's output to the type checker, but :137-138 constructs BorrowChecker::new() and calls check_program(&ast) without it, although resolved_modules is live in that scope. src/ownership/borrow_checker.rs:114-118 seeds `functions` from BUILTINS only and :156-176 walks program.items only (Program.imports, src/ast/mod.rs:9, is never read and Item has no Import variant), so an imported callee misses at :502 and :527 reports UseOfUninitializedValue. Measured: a program that type-checks clean is refused with `Use of uninitialized value: helper`. Needs the same shared definition of the imported program the two rows below need (owned by M4)"]
 fn an_imported_function_is_visible_to_the_borrow_checker() {
     let out = compile_and_run_with_import(
         "pub fn helper() -> i64 { return 5; }\n",
@@ -1784,7 +1783,7 @@ fn selective_import_excludes_a_symbol_from_the_consumers() {
 /// THE SCOPE OF THIS ROW ALSO COVERS DECLARATION IDENTITY, and it is bounded
 /// here rather than fixed. Imported generics are stored by BARE NAME
 /// (`TypeChecker.generic_functions`), and the deferred-refusal lists that
-/// src/typeck/mod.rs:1062-1080 filters carry `(name, span)` and nothing else.
+/// src/typeck/mod.rs:1169-1187 filters carry `(name, span)` and nothing else.
 /// So with two same-named imported generic `async fn`s, the refusal is raised
 /// off whichever declaration was RECORDED and the body that would have been
 /// emitted is whichever won a `HashMap`: THE REFUSAL MAY NAME A DECLARATION
@@ -1866,8 +1865,8 @@ fn two_modules_exporting_one_name_are_deterministic() {
 ///
 /// THE SHAPE. Two imported modules both export a generic `async fn agen<T>`.
 /// Only `a.pd`'s returns a value, so only `a.pd`'s is recorded in
-/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:552-563), and the
-/// refusal is raised for it at src/typeck/mod.rs:1062-1080 once the call site
+/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:591-602), and the
+/// refusal is raised for it at src/typeck/mod.rs:1169-1187 once the call site
 /// has instantiated the name. But `generic_functions` is keyed by BARE NAME and
 /// `set_imported_modules` iterates a `HashMap`, so WHICH module's body that key
 /// holds — and therefore which body `get_instantiations` would have handed to
@@ -1985,7 +1984,7 @@ fn the_generic_async_refusal_carries_no_declaration_identity() {
 ///
 /// THE CROSS-GATE HALF, cited rather than asserted: the promotion is not
 /// optional. `scripts/stdlib-gate.sh:360` enters the `known_violation:*` arm
-/// for that row; `:370-372` turns a CLEAN result into
+/// for that row; `scripts/stdlib-gate.sh:370-372` turns a CLEAN result into
 /// `note "XPASS: … is recorded known_violation:… but its C is now CLEAN …
 /// promote it to 'clean'"`, and `note` is what makes that gate red. So the
 /// moment codegen emits the final `else`, `make stdlib-gate` fails until the

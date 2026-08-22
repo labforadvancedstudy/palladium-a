@@ -38,7 +38,7 @@ enum ArrayParamForm {
     /// `xs: [T; N]` - no declared intent to mutate anything.
     ByValue,
     /// `mut xs: [T; N]` - the bootstrap subset's spelling for a mutable array
-    /// parameter (docs/specification/bootstrap-subset.md:95).
+    /// parameter (docs/specification/bootstrap-subset.md:96).
     MutByValue,
     /// `xs: &[T; N]`.
     Shared,
@@ -650,9 +650,9 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:2321`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:2676`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
-    /// (`src/ownership/borrow_checker.rs:253`). So `fn f(xs: &[i64; 3])` could
+    /// (`src/ownership/borrow_checker.rs:548`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
     /// the callee's mutable binding, where it is legitimate. Measured, before
     /// this check: the caller's `v[0]` came back 99 through both a shared and a
@@ -1204,7 +1204,18 @@ impl CodeGenerator {
         self.output.push_str("}\n\n");
 
         // First pass: collect function signatures, type aliases, and enum definitions from imported modules
-        for module_info in self.imported_modules.values() {
+        //
+        // Sorted by module name, not `HashMap` order. `RandomState` reseeds per
+        // process, so iterating the map directly made the emitted C depend on the
+        // hash seed: eight compiles of one unchanged two-module program produced
+        // two distinct outputs, four each, differing only in the order of the
+        // imported declarations. `make selfhost`'s fixed point is a claim about
+        // byte identity, and it holds today only because `bootstrap/pdc.pd`
+        // imports nothing — so this must be ordered before modules can appear in
+        // the self-hosting compiler at all.
+        let mut sorted_modules: Vec<_> = self.imported_modules.iter().collect();
+        sorted_modules.sort_by_key(|(name, _)| *name);
+        for (_, module_info) in sorted_modules {
             for item in &module_info.ast.items {
                 match item {
                     Item::Function(func) => {
@@ -1281,9 +1292,15 @@ impl CodeGenerator {
             }
         }
 
-        // Generate struct definitions from imported modules first
-        let imported_modules = self.imported_modules.clone();
-        for module_info in imported_modules.values() {
+        // Generate struct definitions from imported modules first.
+        //
+        // Sorted by module name for the same reason as the collection pass above:
+        // this local drives BOTH the imported struct definitions here and the
+        // imported function bodies further down, and `HashMap` order would put
+        // the hash seed into the emitted C.
+        let mut imported_modules: Vec<_> = self.imported_modules.clone().into_iter().collect();
+        imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
+        for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 match item {
                     Item::Struct(struct_def) => {
@@ -1367,7 +1384,10 @@ impl CodeGenerator {
             self.output.push('\n');
         }
 
-        // Generate functions from imported modules.
+        // Generate functions from imported modules, off the SAME SORTED LOCAL as
+        // above — `imported_modules` here is a sorted Vec, not the HashMap this
+        // loop used to walk with `.values()`, because HashMap order put the hash
+        // seed into the emitted C.
         //
         // A LOCAL DEFINITION SHADOWS AN IMPORTED ONE, and this loop emitted both.
         // The type checker has always resolved the name to the local function —
@@ -1385,7 +1405,7 @@ impl CodeGenerator {
         // definition lives in src/ast/mod.rs and both passes call it, which is
         // what makes "both passes ask one question" a fact about the call graph
         // rather than a claim in a comment.
-        for module_info in imported_modules.values() {
+        for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     // Only generate public, non-generic, non-shadowed functions
@@ -1867,8 +1887,16 @@ impl CodeGenerator {
         // shadow (see `local_definition_shadows_import`) but emits no prototype
         // under its own name either — its instantiations are mangled — so that
         // case is not a collision.
-        let imported_modules = self.imported_modules.clone();
-        for module_info in imported_modules.values() {
+        //
+        // SORTED BY MODULE NAME, like the three sites that fill the definitions.
+        // This is the fourth and last place the imported modules are iterated, and
+        // `HashMap` order here alone kept the emitted C unstable: with the other
+        // three ordered, twenty-four compiles of one unchanged six-module program
+        // still produced twenty-four distinct files, differing only in this block.
+        // Ordered too, `test_the_whole_emitted_c_is_byte_stable`'s 8 are identical.
+        let mut imported_modules: Vec<_> = self.imported_modules.clone().into_iter().collect();
+        imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
+        for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     if matches!(func.visibility, crate::ast::Visibility::Public)

@@ -97,7 +97,7 @@ fn test_async_await_multiple() {
 }
 
 #[test]
-#[ignore = "XFAIL: effect declarations — grammar.ebnf:86 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:99 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_effects_system() {
     let source = r#"
     effect IO {
@@ -132,7 +132,7 @@ fn test_effects_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:105 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
+#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:118 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
 fn test_trait_system() {
     let source = r#"
     trait Display {
@@ -166,7 +166,7 @@ fn test_trait_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: `self` as an assignment target — grammar.ebnf:154 `place = identifier | place '[' … | place '.' … | '*' identifier` and `self` is a keyword (line 42), not an identifier, so `self.data[0] = item` does not parse (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: `self` as an assignment target — docs/specification/grammar.ebnf:167 `place = identifier | place '[' … | place '.' … | '*' identifier` and `self` is a keyword (docs/specification/grammar.ebnf:52-56), not an identifier, so `self.data[0] = item` does not parse (owned by M2, surface syntax)"]
 fn test_generic_collections() {
     let source = r#"
     struct Vec<T> {
@@ -374,7 +374,7 @@ fn test_macros() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:119 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1004-1013) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:119 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1477-1486) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics() {
     let source = r#"
     struct Array<T, const N: int> {
