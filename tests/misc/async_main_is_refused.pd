@@ -1,0 +1,18 @@
+// `async fn main` must be REFUSED, not compiled into an entry point nothing
+// can call.
+//
+// Measured at d0eebbf, before the refusal: this program produced no
+// diagnostic, compiled, linked, ran and exited 0 — having printed nothing. The
+// emitted entry point was `main_Future main()` with the body inside a
+// `main_poll` function that nothing calls, so the C runtime's entry point
+// returned a struct and the body never ran. A program that compiles, links,
+// runs, exits 0 and does nothing is the D3/D3b family at the entry point.
+//
+// The ANNOTATED spelling (`async fn main() -> ()`) was already rejected, by
+// accident rather than design: typeck wraps a declared return type in `Future`,
+// so it mismatches. With no annotation there was nothing to mismatch, which is
+// why only this spelling reached code generation.
+
+async fn main() {
+    print_int(7)
+}

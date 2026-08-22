@@ -469,8 +469,8 @@ def unmodelled_construct(items):
             # control flow has exactly the same shape.
             #
             # The property is not about header text, it is about the statement:
-            # every statement pdc emits inside a body ends with `;` or is a
-            # comment.
+            # every statement pdc emits inside a body ends with `;` —
+            # possibly followed by a line comment — or is itself a comment.
             #
             # HOW THAT IS KNOWN, at both strengths, because one of them reads
             # stronger than it is. SOURCE SIDE: `generate_block`
@@ -486,7 +486,23 @@ def unmodelled_construct(items):
             #
             # So anything else is a construct this reader is not reading
             # correctly, whatever it turns out to be, and it stops the file.
-            if not text.endswith(";") and not text.startswith("//") \
+            # A TRAILING LINE COMMENT STILL LEAVES A TERMINATED STATEMENT.
+            # `return 1; // Ready` is one — measured, emitted by
+            # `generate_async_function_with_name` — and the first version of
+            # this rule stopped the file on it. That also falsified the claim
+            # this rule was justified by ("every statement pdc emits inside a
+            # body ends with `;` or is a comment", measured over 400 files):
+            # the sample had no async output in it, because no fixture produced
+            # any. The claim is now "…ends with `;`, possibly followed by a line
+            # comment, or is a comment", and it is checked on async output too.
+            #
+            # Stripping is only attempted when the line does NOT already end in
+            # `;`, so a `//` inside a string literal — which is always followed
+            # by `");` — is never touched.
+            bare = text
+            if not bare.endswith(";") and "//" in bare:
+                bare = bare[:bare.rindex("//")].rstrip()
+            if not bare.endswith(";") and not text.startswith("//") \
                     and not text.startswith("/*"):
                 return (lineno,
                         "a statement that does not end in `;` (%s) — every "

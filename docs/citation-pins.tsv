@@ -195,22 +195,22 @@ src/runtime/string_ops.rs	398-398	docs/reference/features/feature-index.toml	b87
 src/typeck/mod.rs	121-125	docs/reference/features/core-language/implicit-lifetimes.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	121-125	docs/reference/features/feature-index.toml	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	121-125	docs/specification/language-spec.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
-src/typeck/mod.rs	1349-1349	docs/reference/features/feature-index.toml	785cb833e3d8	// Pattern exhaustiveness checking
-src/typeck/mod.rs	1349-1349	docs/specification/language-spec.md	785cb833e3d8	// Pattern exhaustiveness checking
-src/typeck/mod.rs	1562-1562	docs/specification/language-spec.md	44666adec598	"Indirect function calls not yet supported".to_string(),
-src/typeck/mod.rs	1712-1712	docs/specification/bootstrap-subset.md	3ff4b09e3d69	// Comparison operations return Bool
-src/typeck/mod.rs	1874-1874	docs/specification/bootstrap-subset.md	ddc08c3b4c5e	// Check that all type parameters have been inferred
-src/typeck/mod.rs	2356-2356	docs/specification/bootstrap-subset.md	048a469d60d8	// program that satisfied the old type rules failed inside gcc —
-src/typeck/mod.rs	2356-2356	docs/specification/language-spec.md	048a469d60d8	// program that satisfied the old type rules failed inside gcc —
-src/typeck/mod.rs	2363-2363	docs/specification/bootstrap-subset.md	e6e1df962044	// Refusing in this phase rather than only in codegen is deliberate:
-src/typeck/mod.rs	2363-2363	docs/specification/language-spec.md	e6e1df962044	// Refusing in this phase rather than only in codegen is deliberate:
-src/typeck/mod.rs	2370-2370	docs/reference/features/feature-index.toml	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
-src/typeck/mod.rs	2521-2521	docs/specification/language-spec.md	efe7d8d7b500	CheckerType::Generic { name, args } if name == enum_name => {
-src/typeck/mod.rs	2722-2722	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
-src/typeck/mod.rs	2722-2722	docs/specification/language-spec.md	917b6d488770	"Cannot infer type from empty array".to_string(),
+src/typeck/mod.rs	1362-1362	docs/reference/features/feature-index.toml	785cb833e3d8	// Pattern exhaustiveness checking
+src/typeck/mod.rs	1362-1362	docs/specification/language-spec.md	785cb833e3d8	// Pattern exhaustiveness checking
+src/typeck/mod.rs	1575-1575	docs/specification/language-spec.md	44666adec598	"Indirect function calls not yet supported".to_string(),
+src/typeck/mod.rs	1725-1725	docs/specification/bootstrap-subset.md	3ff4b09e3d69	// Comparison operations return Bool
+src/typeck/mod.rs	1887-1887	docs/specification/bootstrap-subset.md	ddc08c3b4c5e	// Check that all type parameters have been inferred
+src/typeck/mod.rs	2369-2369	docs/specification/bootstrap-subset.md	048a469d60d8	// program that satisfied the old type rules failed inside gcc —
+src/typeck/mod.rs	2369-2369	docs/specification/language-spec.md	048a469d60d8	// program that satisfied the old type rules failed inside gcc —
+src/typeck/mod.rs	2376-2376	docs/specification/bootstrap-subset.md	e6e1df962044	// Refusing in this phase rather than only in codegen is deliberate:
+src/typeck/mod.rs	2376-2376	docs/specification/language-spec.md	e6e1df962044	// Refusing in this phase rather than only in codegen is deliberate:
+src/typeck/mod.rs	2383-2383	docs/reference/features/feature-index.toml	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+src/typeck/mod.rs	2534-2534	docs/specification/language-spec.md	efe7d8d7b500	CheckerType::Generic { name, args } if name == enum_name => {
+src/typeck/mod.rs	2735-2735	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
+src/typeck/mod.rs	2735-2735	docs/specification/language-spec.md	917b6d488770	"Cannot infer type from empty array".to_string(),
 src/typeck/mod.rs	352-527	docs/specification/bootstrap-subset.md	602390ba423f	} impl Default for TypeChecker { fn default() -> Self { Self::new() } } impl  ... ty::Public) { // Store trait information // TODO: Implement trait tracking } }
 src/typeck/mod.rs	365-365	docs/specification/language-spec.md	25d1c4d5945e	let functions: HashMap<String, CheckerType> = crate::builtins::BUILTINS
 src/typeck/mod.rs	795-795	docs/design/trait_system_design.md	78074ff85f28	Item::Trait(_) => {
 src/typeck/mod.rs	795-797	docs/reference/features/feature-index.toml	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
 src/typeck/mod.rs	795-797	docs/specification/language-spec.md	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
-src/typeck/mod.rs	947-947	docs/specification/language-spec.md	b283b5e48b13	self.symbols.enter_scope();
+src/typeck/mod.rs	960-960	docs/specification/language-spec.md	b283b5e48b13	self.symbols.enter_scope();

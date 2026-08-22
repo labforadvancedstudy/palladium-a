@@ -236,6 +236,50 @@ impl CompileError {
         }
     }
 
+    /// `async fn main` compiles to an entry point nothing can call.
+    ///
+    /// MEASURED at d0eebbf: `async fn main() { print_int(7) }` produced no
+    /// diagnostic, compiled, linked, ran and exited 0 — having printed nothing.
+    /// The emitted entry point was
+    ///
+    /// ```text
+    /// main_Future main() { … }        // not int main(int, char**)
+    /// int main_poll(main_Future *f) { … }
+    /// ```
+    ///
+    /// so the body sits inside a poll function that nobody calls, and the C
+    /// runtime's entry point returns a struct. A program that compiles, links,
+    /// runs, exits 0 and does nothing is the D3/D3b family at the entry point.
+    ///
+    /// WHY THIS IS A REFUSAL AND NOT A FIX. Making it work needs an async
+    /// runtime to drive the future, and the specification says there is none
+    /// (§N7). This compiler's rule when it cannot honour a construct is to
+    /// refuse it with the reason and a workaround — `?`, `.await` and the LLVM
+    /// backend are all refused that way — not to emit something that looks
+    /// like a program.
+    ///
+    /// The ANNOTATED form was already rejected, by accident rather than by
+    /// design: `async fn main() -> ()` fails as "Type mismatch: expected
+    /// Future<()>, found ()" because typeck wraps the declared return type in
+    /// `Future`. With no annotation there is nothing to mismatch, which is why
+    /// only this spelling reached code generation.
+    pub fn async_main_unimplemented(span: Span) -> Self {
+        CompileError::Unimplemented {
+            construct: "`async fn main`".to_string(),
+            consequence:
+                "the entry point would be emitted as `main_Future main()` rather than \
+                 `int main(int, char**)`, with the body inside a `main_poll` function that \
+                 nothing calls — so the program links, runs, exits 0 and does nothing"
+                    .to_string(),
+            workaround:
+                "make `main` an ordinary function: `fn main() { … }`. There is no async \
+                 runtime to drive a future returned from the entry point, so nothing else \
+                 can give it its meaning"
+                    .to_string(),
+            span: Some(span),
+        }
+    }
+
     /// D5: `.await` parses, but nothing lowers it.
     ///
     /// Raised without inspecting the operand, so the advice is phrased for any

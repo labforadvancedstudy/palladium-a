@@ -27,9 +27,18 @@ fn annotated_early(n: i64) -> () {
     print_int(0)
 }
 
+// `main` itself, annotated, with a TAIL CONDITIONAL — the shape that makes the
+// lowering produce a `Stmt::Return` in the function whose C type is `int`, and
+// therefore the shape that used to emit `return <void expression>;` from `int
+// main` and be REFUSED by gcc outright.
 fn main() -> () {
     plain(1);
     annotated(2);
     annotated_early(3);
-    annotated_early(-1)
+    annotated_early(-1);
+    if 1 > 0 {
+        print_int(9)
+    } else {
+        print_int(8)
+    }
 }

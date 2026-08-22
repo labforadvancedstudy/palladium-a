@@ -83,6 +83,7 @@ tests/integration/test_break_simple.pd	run	-	expected	-	-
 tests/integration/test_optimizations.pd	run	-	expected	-	-
 tests/misc/test1.pd	run	-	expected	-	-
 tests/misc/test_llvm_example.pd	run	-	expected	-	-
+tests/misc/async_main_is_refused.pd	reject	compile	`async fn main` is not implemented	-	the entry point would be `main_Future main()` with the body in a poll function nothing calls; refused rather than compiled into a program that runs and does nothing
 tests/misc/unit_return_spellings.pd	run	-	expected	-	-
 tests/misc/test_vec_i64.pd	run	-	expected	-	-
 tests/misc/test_vec_simple.pd	run	-	expected	-	-

@@ -638,7 +638,7 @@ field (`src/parser/mod.rs:786`, `src/ast/mod.rs:139`).
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1218`, corrected from line 736–960 of the pre-cleanup revision) and then
 emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1039`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:795-797`, corrected
-from `src/typeck/mod.rs:947`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+from `src/typeck/mod.rs:960`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1342`, corrected from line 863–897 of the pre-cleanup revision).
 
@@ -721,7 +721,7 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing is that `?` typechecks
-against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2521`, corrected from line 2495 of the pre-cleanup revision) — and
+against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2534`, corrected from line 2495 of the pre-cleanup revision) — and
 then generates C for a `struct Result` layout that codegen never emits (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -772,7 +772,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 - partial: ranges outside a `for` header — codegen error "Range expressions can only be used in
   for loops" (`src/codegen/mod.rs:2522-2525`, corrected from line 2121 of the pre-cleanup revision).
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:2722`, corrected from line 1874 of the pre-cleanup revision).
+  (`src/typeck/mod.rs:2735`, corrected from line 1874 of the pre-cleanup revision).
 
 **partial — precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for
 its right operand (`src/parser/mod.rs:2349`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
@@ -783,7 +783,7 @@ requires `a * -b`.
 
 **unimplemented.** `x.f()` parses as a call whose callee is a field access, and the typechecker
 rejects exactly that: **"Indirect function calls not yet supported"**
-(`src/typeck/mod.rs:1562`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
+(`src/typeck/mod.rs:1575`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
 
 *(v0.2 also claimed a "same guard" in codegen at line 1870 of the pre-cleanup revision.
 `grep -n 'Indirect function calls' src/codegen/mod.rs` returns nothing; there is no such guard in
@@ -835,7 +835,7 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`src/typeck/mod.rs:2356`, `src/typeck/mod.rs:2363`) and again by code
+The refusal is raised by the type checker (`src/typeck/mod.rs:2369`, `src/typeck/mod.rs:2376`) and again by code
 generation (`src/codegen/mod.rs:2564`, `src/codegen/mod.rs:2576`), which is callable on its own.
 
 What they used to do:
@@ -949,7 +949,7 @@ pattern = "_"
 (`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
 bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1349`,
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1362`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
 (`src/codegen/mod.rs:1982`, `src/codegen/mod.rs:2003-2014`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.

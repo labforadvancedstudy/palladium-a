@@ -794,55 +794,100 @@ PRIVATE = ("_out", "_b", "_rc")
 
 # (scope path with sibling ordinals, attribute) -> exact number of LOADS.
 ALLOWED = collections.Counter({
-    ("Withheld#0.__init__#0", "_b"): 0,        # the assignment is a Store
     ("Withheld#0.spill#0", "_b"): 3,
-    ("Run#0.__init__#0", "_rc"): 0,            # Store
-    ("Run#0.__init__#0", "_out"): 0,           # Store
     ("Run#0.signal_number#0", "_rc"): 4,
     ("Run#0.describe#0", "_rc"): 2,
     ("classify#0", "_rc"): 4,
     ("classify#0", "_out"): 3,
     ("report_malfunction#0", "_b"): 1,
 })
-ALLOWED = collections.Counter({k: v for k, v in ALLOWED.items() if v})
 
 src = pathlib.Path("scripts/gate_probe.py").read_text()
 tree = ast.parse(src)
 
 found = collections.Counter()
 where = collections.defaultdict(list)
-SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+# EXECUTION scopes, not just definitions. A comprehension and a generator
+# expression each run in their own frame — a generator's LAZILY — so a load that
+# moves into one changes WHEN and WHERE it executes. Leaving them out let such a
+# move keep its approved key, which is not the within-function relocation that
+# was ruled acceptable.
+DEF_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+IMPLICIT_SCOPES = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+SCOPES = DEF_SCOPES + IMPLICIT_SCOPES
+
+IMPLICIT_NAME = {
+    ast.ListComp: "<listcomp>",
+    ast.SetComp: "<setcomp>",
+    ast.DictComp: "<dictcomp>",
+    ast.GeneratorExp: "<genexpr>",
+}
 
 
 def scope_name(node, counts):
-    base = node.name if not isinstance(node, ast.Lambda) else "<lambda>"
+    if isinstance(node, ast.Lambda):
+        base = "<lambda>"
+    elif isinstance(node, IMPLICIT_SCOPES):
+        base = IMPLICIT_NAME[type(node)]
+    else:
+        base = node.name
     n = counts[base]
     counts[base] += 1
     return "%s#%d" % (base, n)
 
 
-def walk(node, path, counts):
-    """`counts` disambiguates same-named siblings IN THIS SCOPE."""
+def record(node, path):
+    key = (".".join(path) or "<module>", node.attr)
+    found[key] += 1
+    where[key].append("%d:%d" % (node.lineno, node.col_offset))
+
+
+def definition_time(node):
+    """Expressions of a def evaluated in the ENCLOSING scope, yielded ONCE.
+
+    Decorators, positional defaults, KEYWORD-ONLY defaults and annotations. The
+    previous version walked decorators and positional defaults in the enclosing
+    scope AND again beneath the new function key (double-counting), while
+    keyword-only defaults were never walked at all — so a load could move into
+    one and keep its key.
+    """
+    out = list(getattr(node, "decorator_list", []) or [])
+    args = getattr(node, "args", None)
+    if args is not None:
+        out += [d for d in (args.defaults or []) if d is not None]
+        out += [d for d in (getattr(args, "kw_defaults", None) or []) if d is not None]
+    ret = getattr(node, "returns", None)
+    if ret is not None:
+        out.append(ret)
+    return out
+
+
+def visit(node, path, counts):
+    """Record `node` if it is a private load, then descend in the right scope."""
+    if isinstance(node, ast.Attribute) and node.attr in PRIVATE \
+            and isinstance(node.ctx, ast.Load):
+        record(node, path)
+    if isinstance(node, SCOPES):
+        outer = definition_time(node)
+        for expr in outer:                      # enclosing scope, exactly once
+            visit(expr, path, counts)
+        inner_path = path + [scope_name(node, counts)]
+        inner_counts = collections.Counter()
+        for child in ast.iter_child_nodes(node):
+            # `arguments` holds the defaults and annotations already walked
+            # above; decorator expressions are direct children and likewise.
+            if isinstance(child, ast.arguments):
+                continue
+            if any(child is e for e in outer):
+                continue
+            visit(child, inner_path, inner_counts)
+        return
     for child in ast.iter_child_nodes(node):
-        if isinstance(child, ast.Attribute) and child.attr in PRIVATE \
-                and isinstance(child.ctx, ast.Load):
-            key = (".".join(path) or "<module>", child.attr)
-            found[key] += 1
-            where[key].append("%d:%d" % (child.lineno, child.col_offset))
-        if isinstance(child, SCOPES):
-            # Decorators and argument defaults are evaluated in the ENCLOSING
-            # scope, so they are walked before the new one is entered.
-            for outer in list(getattr(child, "decorator_list", [])) \
-                    + list(getattr(child.args, "defaults", []) if hasattr(child, "args") else []):
-                walk(ast.Module(body=[ast.Expr(value=outer)], type_ignores=[]),
-                     path, counts)
-            walk(child, path + [scope_name(child, counts)],
-                 collections.Counter())
-        else:
-            walk(child, path, counts)
+        visit(child, path, counts)
 
 
-walk(tree, [], collections.Counter())
+visit(tree, [], collections.Counter())
 
 problems = []
 for key in sorted(set(ALLOWED) | set(found)):

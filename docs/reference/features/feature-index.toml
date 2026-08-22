@@ -122,7 +122,7 @@ implementation = "partial"
 evidence = [
   "conformance: examples/tutorial/01_variables.pd PASS",
   "cmd: grep -rn 'HindleyMilner\\|unify\\|Substitution' src/typeck/ --include='*.rs' -> exit 1, 0 lines",
-  "src: src/typeck/mod.rs:2722 'Cannot infer type from empty array'",
+  "src: src/typeck/mod.rs:2735 'Cannot infer type from empty array'",
 ]
 note = "Local `let` inference works (the i64 default was replaced by real inference in 04104c5). There is no unification engine and no polymorphic generalisation, so it is not Hindley-Milner."
 
@@ -169,7 +169,7 @@ implementation = "partial"
 evidence = [
   "conformance: tests/06_pattern_matching.pd PASS",
   "src: src/ast/mod.rs:313 pub enum Pattern — three variants only",
-  "src: src/typeck/mod.rs:1349 exhaustiveness runs only when the scrutinee is an enum",
+  "src: src/typeck/mod.rs:1362 exhaustiveness runs only when the scrutinee is an enum",
   "src: src/codegen/mod.rs:1982 match lowers to an if/else-if chain",
 ]
 note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
@@ -242,7 +242,7 @@ description = "Built-in Result<T, E> with Ok/Err."
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "unimplemented"
 evidence = [
-  "src: src/typeck/mod.rs:2370 the type checker refuses `?` outright with CompileError::question_unimplemented",
+  "src: src/typeck/mod.rs:2383 the type checker refuses `?` outright with CompileError::question_unimplemented",
   "cmd: grep -rn 'prelude' src/driver/ --include='*.rs' -> exit 1, 0 lines (stdlib/prelude.pd is never loaded)",
 ]
 note = "Result and Option are ordinary user enums if you declare them."

@@ -1004,9 +1004,10 @@ fn main() {
 ///
 /// `return <expression>;` in a `void` function is a C11 6.8.6.4p1 constraint
 /// violation that gcc and clang accept as an extension, so nothing objected —
-/// and no `.pd` file in this repository writes `-> ()` (measured: `git ls-files
-/// '*.pd' | xargs grep -l -- '->[[:space:]]*()'` returns nothing), which is why
-/// it survived eight rounds of review of this exact area.
+/// and no `.pd` file in this repository wrote `-> ()` BEFORE the regression
+/// fixture added for it (tests/misc/unit_return_spellings.pd), which is why it
+/// survived eight rounds of review of this exact area. That fixture is now the
+/// one tracked user of the spelling, and it is in the conformance corpus.
 ///
 /// The test below asserts the C, not the exit code, for all three cases: an
 /// OMITTED return type, an explicit `-> ()`, and a NON-UNIT return. Asserting
@@ -1197,6 +1198,131 @@ fn main() {
     assert!(
         err.contains("expected Int") && err.contains("found ()"),
         "the type checker must catch this before codegen, got:\n{}",
+        err
+    );
+}
+
+/// `async fn main` is refused, and the refusal says what would have happened.
+///
+/// MEASURED at d0eebbf: it compiled, linked, ran and exited 0 having printed
+/// nothing, because the entry point was emitted as `main_Future main()` with
+/// the body inside a `main_poll` that nothing calls. That is a program which
+/// does nothing while reporting success — the family this whole branch exists
+/// to remove — at the entry point.
+///
+/// Refused rather than fixed, and the scope call is deliberate: making it work
+/// needs an async runtime to drive the future, and the specification says there
+/// is none (§N7). When this compiler cannot honour a construct it refuses it
+/// with the reason and a workaround (`?`, `.await`, the LLVM backend); it does
+/// not emit something shaped like a program.
+#[test]
+fn async_main_is_refused_rather_than_compiled_into_a_program_that_does_nothing() {
+    let err = compile_to_c(
+        "async fn main() {\n    print_int(7)\n}\n",
+        "d3b_async_main",
+    )
+    .expect_err("`async fn main` has no entry point anything can call");
+    assert!(
+        err.contains("`async fn main`"),
+        "the refusal must name the construct, got:\n{}",
+        err
+    );
+    assert!(
+        err.contains("main_Future main()"),
+        "the note must say what WOULD have been emitted — that is the whole \
+         reason this is refused rather than accepted:\n{}",
+        err
+    );
+    assert!(
+        err.contains("fn main()"),
+        "the workaround must name the ordinary spelling:\n{}",
+        err
+    );
+}
+
+/// THE REACHABILITY BOUNDARY OF THE ASYNC UNIT REPLACEMENT, pinned because the
+/// emission itself cannot be.
+///
+/// `generate_async_function_with_name` is the third caller of
+/// `generate_statement`, and it did not set the unit replacement — a
+/// path-keyed exception of exactly the shape `name != "main"` was. It sets it
+/// now. But NO FIXTURE CAN EXERCISE IT: measured, every async spelling whose
+/// body would contain a `Stmt::Return` is rejected by the type checker first,
+/// because it wraps a declared return type in `Future` —
+///
+///     async fn f() -> () { print_int(1) }  expected Future<()>, found ()
+///     async fn f() -> () { return; }       expected (), found return value
+///     async fn f() { return; }             expected (), found return value
+///     async fn f() -> i64 { 1 }            expected Future<Int>, found Int
+///     async fn f() { print_int(1) }        COMPILES — and has no Return at all
+///
+/// The one accepted shape carries no annotation, so the parser does no
+/// lowering and there is nothing for the replacement to replace. Saying "the
+/// fixture covers it" would therefore be false, so this test pins the PREMISE
+/// instead: if typeck ever accepts one of these, this goes red, and whoever
+/// changed it has to look at what the poll function emits.
+#[test]
+fn every_async_shape_that_would_reach_the_unit_replacement_is_refused_earlier() {
+    for (n, src) in [
+        "async fn f() -> () { print_int(1) }",
+        "async fn f() -> () { return; }",
+        "async fn f() { return; }",
+        "async fn f() -> i64 { 1 }",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let program = format!("{}\nfn main() {{ f(); }}\n", src);
+        let err = compile_to_c(&program, &format!("d3b_async_reach_{}", n))
+            .expect_err(&format!(
+                "`{}` reaches code generation; the async unit replacement in \
+                 generate_async_function_with_name is now live and untested — \
+                 check what its poll function emits",
+                src
+            ));
+        assert!(
+            err.contains("Type mismatch"),
+            "expected the type checker to refuse `{}`, got:\n{}",
+            src,
+            err
+        );
+    }
+
+    // ...and the one shape that IS accepted has no `Stmt::Return` to replace.
+    let c = compile_to_c(
+        "async fn f() { print_int(1) }\n\nfn main() { f(); }\n",
+        "d3b_async_accepted",
+    )
+    .expect("the unannotated async unit function compiles");
+    assert!(
+        c.contains("int f_poll("),
+        "the accepted shape should still emit a poll function:\n{}",
+        c
+    );
+    assert!(
+        !c.contains("return __pd_print_int"),
+        "and it must not return a void expression from it:\n{}",
+        c
+    );
+}
+
+/// What the language does with a user-written `return 0;` in a unit function:
+/// it REFUSES it. Neither accepted nor silently rewritten.
+///
+/// Worth pinning because the codegen change rewrites `Stmt::Return(Some(expr))`
+/// in unit functions, and a reader could reasonably wonder whether a
+/// deliberate `return 0;` is being quietly turned into `return;`. It is not —
+/// it never reaches code generation.
+#[test]
+fn a_user_written_return_zero_in_a_unit_function_is_refused() {
+    let err = compile_to_c(
+        "fn f() { return 0; }\n\nfn main() { f(); }\n",
+        "d3b_unit_return_zero",
+    )
+    .expect_err("a unit function cannot return a value");
+    assert!(
+        err.contains("expected ()") && err.contains("found Int"),
+        "the type checker must refuse it, got:\n{}",
         err
     );
 }

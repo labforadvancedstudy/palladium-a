@@ -938,6 +938,19 @@ impl TypeChecker {
 
     /// Type check a function
     fn check_function(&mut self, func: &Function) -> Result<()> {
+        // `async fn main` has no entry point that anything can call. Refused
+        // here, before code generation, because codegen would emit
+        // `main_Future main()` and a `main_poll` nobody invokes: a program that
+        // links, runs, exits 0 and does nothing. See
+        // `CompileError::async_main_unimplemented` for the measurement and for
+        // why this is a refusal rather than a lowering.
+        //
+        // Checked BEFORE the generic skip above would have applied, so a
+        // hypothetical `async fn main<T>` cannot slip past it.
+        if func.is_async && func.name == "main" {
+            return Err(CompileError::async_main_unimplemented(func.span));
+        }
+
         // Skip generic functions - they'll be checked when instantiated
         if !func.type_params.is_empty() {
             return Ok(());
