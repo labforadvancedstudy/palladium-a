@@ -25,6 +25,13 @@ jobs:
       tag: ${{ steps.id.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # scripts/test-doc-evidence-coverage.sh reconciles the files this branch
+          # changed against scripts/doc-evidence-fixes.tsv, and needs a base commit to
+          # do it. A default checkout is shallow: no main ref, no HEAD^, so the
+          # reconciliation would report NOT APPLICABLE on the one workflow that
+          # certifies. Full history is what makes that check real here.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 

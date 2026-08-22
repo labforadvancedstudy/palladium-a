@@ -13,10 +13,18 @@
 #
 # WHAT IT DOES NOT ESTABLISH. It does not establish that "every fix has a control". A fix
 # has no machine-readable identity: a new repair inside an already-inventoried file changes
-# no file set and needs no new mutation, so a fix can be entirely absent from the table
+# no file set and needs no new mutation, so a fix can be entirely absent from both tables
 # while this runs green. That was claimed for two rounds and was false; the unit that IS
-# authoritative is the control, so the control is what is now closed over. Adding a fix
-# without a control is caught by review of the two inventories, not by this script.
+# authoritative is the control, so the control is what is closed over.
+#
+# THE RESIDUAL, STATED EXACTLY. Reviewing the two inventories does NOT close it either —
+# an earlier version of this comment said it did, which was the same withdrawal made
+# incompletely. Neither table carries an identity for a fix, so a repair added inside an
+# already-declared file leaves both unchanged and both reconciling. What closes it is
+# reviewing THE BRANCH DIFF ITSELF against the mutation table and the control table: for
+# each behavioural change in the diff, is there a mutation that reverts it and a control
+# that dies. That is a human step, it is not performed here, and nothing in this script
+# should be read as having performed it.
 #
 # WHY TWO INVENTORIES.
 #   doc-evidence-controls.tsv  closes over the CONTROLS -- runtime-derived, works anywhere.
@@ -49,8 +57,9 @@ for f in $MUTABLE; do
   fi
 done
 
+TMP_KILL=$(mktemp "${TMPDIR:-/tmp}/doc-evidence-killsets.XXXXXX") || exit 2
 restore() { git checkout -- $MUTABLE 2>/dev/null; }
-trap restore EXIT INT TERM
+trap 'restore; rm -f "$TMP_KILL"' EXIT INT TERM
 
 # --- the file-set reconciliation: branch-time, and honest about when it is not ---------
 CONTROLS=scripts/doc-evidence-controls.tsv
@@ -61,16 +70,38 @@ CONTROLS=scripts/doc-evidence-controls.tsv
 # where `merge-base main HEAD` is HEAD and the diff would be empty); the merge-base with
 # main or origin/main on a feature branch. If none resolves -- a shallow CI checkout has
 # no main ref and no HEAD^ -- the file reconciliation is NOT APPLICABLE and says so.
-BASE=""
+BASE=""; BASE_WHY=""
 if [ -n "${COVERAGE_BASE:-}" ]; then
-  BASE=$(git rev-parse --verify "${COVERAGE_BASE}^{commit}" 2>/dev/null)
-elif [ "$(git rev-list --parents -n 1 HEAD 2>/dev/null | wc -w | tr -d ' ')" -ge 3 ]; then
-  BASE=$(git rev-parse --verify 'HEAD^1' 2>/dev/null)      # merge commit: what it merged
+  # AN EXPLICIT REQUEST THAT CANNOT BE HONOURED IS AN ERROR, NOT A SKIP. Previously an
+  # invalid COVERAGE_BASE fell through to the same green NOT APPLICABLE as "no base
+  # exists", so asking for a reconciliation and silently not getting one looked identical
+  # to not asking.
+  BASE=$(git rev-parse --verify "${COVERAGE_BASE}^{commit}" 2>/dev/null) || BASE=""
+  if [ -z "$BASE" ]; then
+    echo "error: COVERAGE_BASE='${COVERAGE_BASE}' does not resolve to a commit. A base was" >&2
+    echo "       explicitly requested and cannot be honoured; refusing to report a" >&2
+    echo "       reconciliation that did not happen." >&2
+    exit 2
+  fi
+  BASE_WHY="COVERAGE_BASE"
 else
+  # On a FEATURE BRANCH the base is the merge-base with main. Deliberately preferred over
+  # HEAD^1 even when HEAD is a merge: a branch that merges main INTO itself has a first
+  # parent measuring the incoming upstream delta, not this branch's work.
   for ref in main origin/main; do
-    if git rev-parse --verify "$ref" >/dev/null 2>&1; then
-      BASE=$(git merge-base "$ref" HEAD 2>/dev/null); [ -n "$BASE" ] && break
+    git rev-parse --verify "$ref" >/dev/null 2>&1 || continue
+    cand=$(git merge-base "$ref" HEAD 2>/dev/null) || continue
+    [ -n "$cand" ] || continue
+    if [ "$cand" = "$(git rev-parse HEAD)" ]; then
+      # HEAD is ON main: a push, a merge, or a squash. What that push introduced is
+      # HEAD^1..HEAD — for a merge commit the first parent is the target branch, so this
+      # is the incoming work; for a squash it is the whole branch.
+      BASE=$(git rev-parse --verify 'HEAD^1' 2>/dev/null) || BASE=""
+      [ -n "$BASE" ] && BASE_WHY="HEAD is $ref; first parent"
+    else
+      BASE=$cand; BASE_WHY="merge-base with $ref"
     fi
+    [ -n "$BASE" ] && break
   done
 fi
 CHANGED=""
@@ -88,7 +119,7 @@ if [ -z "$CHANGED" ]; then
   fi
   echo "  The control closure below is what carries the claim, and it runs anywhere."
 else
-  echo "file-set reconciliation: $(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ') file(s) changed since $(git rev-parse --short "$BASE"),"
+  echo "file-set reconciliation: $(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ') file(s) changed since $(git rev-parse --short "$BASE") ($BASE_WHY),"
   echo "reconciled against $INVENTORY in both directions"
 fi
 echo "=============================================="
@@ -146,12 +177,36 @@ $LIVE
 EOF2
 while IFS=$'\t' read -r label role _; do
   case "$label" in ''|'#'*) continue ;; esac
+  # The role vocabulary is CLOSED, for the reason the disposition column was closed one
+  # round ago: `kil` is not `kill`, and an unvalidated column means a typo silently
+  # removes a control from every check that follows.
+  case "$role" in
+    kill|guard) ;;
+    *) printf '  %sBAD-ROLE%s      %s -- %s is not one of: kill, guard\n' \
+         "$RED" "$NC" "$label" "'$role'"; recon=$((recon+1)) ;;
+  esac
   if ! printf '%s\n' "$LIVE" | grep -qxF -- "$label"; then
     printf '  %sMISSING-CONTROL%s    %s -- declared %s, but the probe no longer emits it\n' \
       "$RED" "$NC" "$label" "$role"
     recon=$((recon+1))
   fi
 done < "$CONTROLS"
+
+# MEMBERSHIP IS NOT A BIJECTION. Both sides were compared with `grep -qxF`, so two
+# controls sharing a label, or two rows declaring one, reconciled cleanly while one of
+# each pair went unchecked. The same ∃/∀ slackness as the kill loop below, one table over.
+dup_live=$(printf '%s\n' "$LIVE" | sort | uniq -d)
+if [ -n "$dup_live" ]; then
+  printf '  %sDUPLICATE-CONTROL%s the probe emits these labels more than once:\n' "$RED" "$NC"
+  printf '%s\n' "$dup_live" | sed 's/^/       /'
+  recon=$((recon+1))
+fi
+dup_decl=$(awk -F'\t' '$1!~/^#/ && NF>=2 {print $1}' "$CONTROLS" | sort | uniq -d)
+if [ -n "$dup_decl" ]; then
+  printf '  %sDUPLICATE-ROW%s     %s declares these labels more than once:\n' "$RED" "$NC" "$CONTROLS"
+  printf '%s\n' "$dup_decl" | sed 's/^/       /'
+  recon=$((recon+1))
+fi
 
 if [ "$recon" -gt 0 ]; then
   echo
@@ -174,7 +229,8 @@ w = sys.argv[1]
 FILES = {"py": "scripts/check_doc_evidence.py", "gr": "scripts/gate-receipts.sh",
          "mk": "Makefile", "ci": ".github/workflows/preview.yml"}
 which = {"gate-argv-grammar": "gr", "gate-private-receipts": "gr",
-         "ci-steps": "ci"}.get(w, "py")
+         "ci-step-evidence": "ci", "ci-step-receipts": "ci",
+         "ci-step-probe": "ci"}.get(w, "py")
 p = pathlib.Path(FILES[which])
 t = orig = p.read_text()
 
@@ -219,17 +275,40 @@ elif w == "dynamic-evidence":  # implemented/partial rows need evidence from a r
     t = t.replace('        if impl in ("implemented", "partial"):', "        if False:", 1)
 elif w == "conformance-class": # conformance: class must match the manifest
     t = t.replace("                    elif declared[0] != m.group(2):", "                    elif False:", 1)
+elif w == "conformance-declared":  # a fixture the manifest does not declare at all
+    t = t.replace("                    if declared is None:", "                    if False:", 1)
+elif w == "cmd-grammar":       # a prose result must not be accepted
+    t = t.replace('    if not m:\n        return [f"{name}: `cmd:` must be',
+                  '    if not m:\n        return []\n    if False:\n        return [f"{name}: `cmd:` must be', 1)
+elif w == "l1-sep-arg":        # an option whose argument would be counted as a path
+    t = t.replace('            if base in GREP_OPTS_WITH_ARG and "=" not in tok:', "            if False:", 1)
+elif w == "l1-downstream":     # a downstream segment may not name a file
+    t = t.replace('        if n > 0 and parsed["paths"]:', "        if False:", 1)
+elif w == "gate-kv-compare":   # key=value results are not compared at all
+    t = t.replace("    for k, v in kv:", "    for k, v in []:", 1)
+elif w == "gate-substring":    # key=value by containment instead of by value
+    t = t.replace("    for k, v in kv:\n        if k not in seen:",
+                  '    for k, v in kv:\n        if f"{k}={v}" in output:\n            continue\n        if k not in seen:', 1)
 
-elif w == "gate-argv-grammar":       # back to a prefix that accepted trailing words
-    t = t.replace('  local argv\n  read -ra argv <<< "$1"\n  case "${#argv[@]}:${argv[0]:-}" in',
-                  '  case "$1" in "make "*|"cargo "*) return 0 ;; esac\n'
-                  '  local argv\n  read -ra argv <<< "$1"\n  case "${#argv[@]}:${argv[0]:-}" in', 1)
+elif w == "gate-argv-grammar":       # the whole function, back to prefix-only
+    import re as _re
+    t = _re.sub(r"^allowed\(\) \{.*?^\}\n",
+                'allowed() {\n  case "$1" in\n    "make "*|"cargo build"*|"cargo test"*) return 0 ;;\n'
+                '  esac\n  return 1\n}\n', t, count=1, flags=_re.S | _re.M)
 elif w == "gate-private-receipts":   # back to a shared, surviving receipts directory
     t = t.replace('OUT=$(mktemp -d "${TMPDIR:-/tmp}/palladium-gate-receipts.XXXXXX") || exit 2\n'
                   'trap \'rm -rf "$OUT"\' EXIT INT TERM',
                   'OUT=build_output/gate-receipts\nrm -rf "$OUT"; mkdir -p "$OUT"', 1)
-elif w == "ci-steps":          # the workflow must invoke the evidence gate at all
-    t = t.replace("      - name: Documentation evidence\n        run: bash scripts/check-doc-evidence.sh\n", "", 1)
+elif w.startswith("ci-step-"):
+    # ONE MUTATION PER STEP. A single `ci-steps` mutation removed only the first step
+    # while THREE controls declared `kill ci-steps`, so two of them were never required
+    # to fail by anything. Splitting is the honest unit: each step is a separate fix.
+    step = {"ci-step-evidence": "bash scripts/check-doc-evidence.sh",
+            "ci-step-receipts": "bash scripts/gate-receipts.sh",
+            "ci-step-probe":    "bash scripts/test-doc-evidence.sh"}[w]
+    import re as _re
+    t = _re.sub(r"      - name: [^\n]*\n(        #[^\n]*\n)*        run: " + _re.escape(step) + r"\n",
+                "", t, count=1)
 else:
     sys.exit(2)
 if t == orig:
@@ -238,51 +317,79 @@ p.write_text(t)
 PYEOF
 }
 
-# name | file | THE CONTROL CASE THIS FIX EXISTS FOR.
-# The third field is what turns a count into an identity: a mutation that reddens
-# three unrelated cases and leaves its own passing is not covered, and counting
-# alone reported it as covered. Fragments are verbatim from the case labels and
-# contain no backticks, so they survive the shell that reads this table.
-MUTATIONS="executed|scripts/check_doc_evidence.py|a false LINE COUNT is rejected
-l1-path|scripts/check_doc_evidence.py|a command naming NO path is refused
-l1-pattern-opt|scripts/check_doc_evidence.py|an option-supplied pattern
-l2-exists|scripts/check_doc_evidence.py|an absence over a MISSING PATH is rejected
-l2-symlink|scripts/check_doc_evidence.py|a symlink resolving outside the repository is refused
-l3-probe|scripts/check_doc_evidence.py|an absence over an EMPTY scope is refused
-l3-find-probe|scripts/check_doc_evidence.py|an absence over an empty scope is refused for FIND too
-find-allowlist|scripts/check_doc_evidence.py|find -exec is refused
-find-grammar|scripts/check_doc_evidence.py|a find disjunction is refused outright, not reduced
-exe-path|scripts/check_doc_evidence.py|an executable named by PATH is refused
-tool-resolution|scripts/check_doc_evidence.py|a hijacked PATH does not change WHICH BINARY runs
-pinned-env|scripts/check_doc_evidence.py|an inherited GREP_OPTIONS does not change WHAT THE TOOL DOES
-seg-status|scripts/check_doc_evidence.py|a real SIGPIPE from a downstream grep -q is caught
-gate-checkable|scripts/check_doc_evidence.py|a gate: result with no checkable token is refused
-gate-exact|scripts/check_doc_evidence.py|a self-contradicting run endorses NEITHER value
-gate-receipts-in-repo|scripts/check_doc_evidence.py|a receipts directory inside the repository is refused
-dynamic-evidence|scripts/check_doc_evidence.py|only STATIC evidence is refused
-conformance-class|scripts/check_doc_evidence.py|a class the manifest disagrees with is rejected
-gate-argv-grammar|scripts/gate-receipts.sh|make conformance CC=clang
-gate-private-receipts|scripts/gate-receipts.sh|receipts are invocation-private and removed on exit
-ci-steps|.github/workflows/preview.yml|CI runs scripts/check-doc-evidence.sh"
+# name | file. What each mutation must KILL is not written here: it is written in
+# scripts/doc-evidence-controls.tsv, once per control, and every row of that table is
+# checked. Keeping the expectation in one place is the fix for the defect below.
+MUTATIONS="executed|scripts/check_doc_evidence.py
+l1-path|scripts/check_doc_evidence.py
+l1-pattern-opt|scripts/check_doc_evidence.py
+l2-exists|scripts/check_doc_evidence.py
+l2-symlink|scripts/check_doc_evidence.py
+l3-probe|scripts/check_doc_evidence.py
+l3-find-probe|scripts/check_doc_evidence.py
+find-allowlist|scripts/check_doc_evidence.py
+find-grammar|scripts/check_doc_evidence.py
+exe-path|scripts/check_doc_evidence.py
+tool-resolution|scripts/check_doc_evidence.py
+pinned-env|scripts/check_doc_evidence.py
+seg-status|scripts/check_doc_evidence.py
+gate-checkable|scripts/check_doc_evidence.py
+gate-exact|scripts/check_doc_evidence.py
+gate-receipts-in-repo|scripts/check_doc_evidence.py
+dynamic-evidence|scripts/check_doc_evidence.py
+conformance-class|scripts/check_doc_evidence.py
+conformance-declared|scripts/check_doc_evidence.py
+cmd-grammar|scripts/check_doc_evidence.py
+l1-sep-arg|scripts/check_doc_evidence.py
+l1-downstream|scripts/check_doc_evidence.py
+gate-substring|scripts/check_doc_evidence.py
+gate-kv-compare|scripts/check_doc_evidence.py
+gate-argv-grammar|scripts/gate-receipts.sh
+gate-private-receipts|scripts/gate-receipts.sh
+ci-step-evidence|.github/workflows/preview.yml
+ci-step-receipts|.github/workflows/preview.yml
+ci-step-probe|.github/workflows/preview.yml"
 
-# A failing CASE line, not any line containing the word: a summary line or a quoted
-# diagnostic would otherwise inflate the count — the same membership-versus-agreement
-# slackness that let `pinned-path` look covered before it was split in two.
-count_failing() { bash scripts/test-doc-evidence.sh 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -c '^  FAIL'; }
+# ∀ KILL ROW, NOT ∃ FRAGMENT PER MUTATION.
+#
+# The proposition this runner exists to establish is
+#     for every `kill` control c,  reverting mutation(c) makes c fail.
+# What it implemented was
+#     for every mutation m,  SOME one named fragment fails.
+# Those differ whenever more than one control names the same mutation, and three did:
+# `ci-steps` removed a single CI step while three controls declared `kill ci-steps`, so
+# two of them were never required to fail by anything. Measured, that is a real hole.
+#
+# THE PATTERN, because this is the eighth sighting of this class in this branch and it is
+# worth writing down rather than fixing again: WHENEVER YOU WRITE "EVERY X", CHECK WHETHER
+# THE LOOP IS OVER X OR OVER SOMETHING X IS GROUPED UNDER. Here X was the control and the
+# loop was over the mutation. Earlier on this branch it was `cmd:` items grouped under
+# their shape, gate tokens grouped under containment, controls grouped under a count, and
+# fixes grouped under files. Same shape every time.
+#
+# So: each mutation is applied once, the FULL set of failing labels is recorded, and then
+# every `kill` row is checked against the set belonging to the mutation it names.
+failing_labels() {
+  bash scripts/test-doc-evidence.sh 2>&1 | sed 's/\x1b\[[0-9;]*m//g' \
+    | grep '^  FAIL ' | sed 's/^  FAIL //' | sed 's/[[:space:]]*$//'
+}
 
 echo
-baseline=$(count_failing)
-if [ "$baseline" -ne 0 ]; then
-  echo "${RED}ABORT${NC}: the controls are not green to begin with ($baseline failing), so"
-  echo "       every number below would be measuring that instead of the mutation."
+base_fail=$(failing_labels)
+if [ -n "$base_fail" ]; then
+  echo "${RED}ABORT${NC}: the controls are not green to begin with, so every number below"
+  echo "       would be measuring that instead of the mutation:"
+  printf '%s\n' "$base_fail" | sed 's/^/         /'
   exit 1
 fi
 printf '  %sok%s            unmutated: 0 controls failing\n\n' "$GREEN" "$NC"
 
-dead=0; uncovered=0; ran=0; COVERED_FILES=""
+dead=0; problems=0; ran=0; COVERED_FILES=""
+KILLSETS=$TMP_KILL
+: > "$KILLSETS"
 while IFS= read -r entry; do
   [ -z "$entry" ] && continue
-  m=${entry%%|*}; rest=${entry#*|}; mf=${rest%%|*}; want=${rest#*|}
+  m=${entry%%|*}; mf=${entry#*|}
   mutate "$m"; mrc=$?
   if [ "$mrc" -eq 9 ]; then
     printf '  %sMUTATION-DEAD%s %-22s the patch no longer applies; this row measures NOTHING\n' \
@@ -293,38 +400,42 @@ while IFS= read -r entry; do
     dead=$((dead+1)); restore; continue
   fi
   ran=$((ran+1)); COVERED_FILES="$COVERED_FILES $mf"
-  failing=$(bash scripts/test-doc-evidence.sh 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep '^  FAIL')
-  if [ -z "$failing" ]; then n=0; else n=$(printf '%s\n' "$failing" | wc -l | tr -d ' '); fi
+  f=$(failing_labels)
   restore
+  n=0; [ -n "$f" ] && n=$(printf '%s\n' "$f" | wc -l | tr -d ' ')
+  printf '%s\n' "$f" | sed "s|^|$m\t|" >> "$KILLSETS"
   if [ "$n" -eq 0 ]; then
     printf '  %sUNCOVERED%s     %-22s reverted, and NOT ONE control noticed\n' "$RED" "$NC" "$m"
-    uncovered=$((uncovered+1))
-  elif ! printf '%s\n' "$failing" | grep -qF -- "$want"; then
-    # Something went red, but not the control written for THIS fix. Counting alone would
-    # have reported coverage; naming the expected case is what tells an intended kill
-    # from collateral damage — the same membership-versus-agreement exactness as the
-    # key=value comparison, and what let `pinned-path` look covered before it was split.
-    printf '  %sWRONG-CONTROL%s %-22s %2d red, none matching: %s\n' \
-      "$RED" "$NC" "$m" "$n" "$want"
-    uncovered=$((uncovered+1))
+    problems=$((problems+1))
   else
-    printf '  %sok%s            %-22s %2d red, incl: %s\n' "$GREEN" "$NC" "$m" "$n" "$want"
+    printf '  %sok%s            %-22s %2d control(s) went red\n' "$GREEN" "$NC" "$m" "$n"
   fi
-done <<EOF
+done <<EOF2
 $MUTATIONS
-EOF
+EOF2
 
-# Every mutation named as a `kill` role must actually be in the table above; otherwise a
-# control declares itself covered by something that never runs.
+# --- the proposition itself: every kill row, checked by name -----------------------------
+echo
+echo "every `kill` control, against the mutation it names:"
+killrows=0
 while IFS=$'\t' read -r label role detail; do
   case "$label" in ''|'#'*) continue ;; esac
   [ "$role" = kill ] || continue
+  killrows=$((killrows+1))
   if ! printf '%s\n' "$MUTATIONS" | grep -q "^$detail|"; then
     printf '  %sPHANTOM-KILL%s  %-22s no mutation by that name exists (declared by: %s)\n' \
       "$RED" "$NC" "$detail" "$label"
-    uncovered=$((uncovered+1))
+    problems=$((problems+1)); continue
+  fi
+  if awk -F'\t' -v m="$detail" -v l="$label" '$1==m && $2==l {f=1} END{exit !f}' "$KILLSETS"; then
+    printf '  %sok%s   %-22s kills: %s\n' "$GREEN" "$NC" "$detail" "$label"
+  else
+    printf '  %sNOT-KILLED%s %-22s does NOT kill: %s\n' "$RED" "$NC" "$detail" "$label"
+    printf '             (the control declares this mutation, and reverting it left the case passing)\n'
+    problems=$((problems+1))
   fi
 done < "$CONTROLS"
+echo
 
 # A file declared `mutated` that nothing mutates is the omission this reconciliation
 # exists to surface, and it is exactly what happened to four files last round.
@@ -332,7 +443,7 @@ for f in $MUTATED_FILES; do
   case " $COVERED_FILES " in
     *" $f "*) ;;
     *) printf '  %sNO-MUTATION%s   %-22s declared mutated, but nothing reverts anything in it\n' \
-         "$RED" "$NC" "$f"; uncovered=$((uncovered+1)) ;;
+         "$RED" "$NC" "$f"; problems=$((problems+1)) ;;
   esac
 done
 
@@ -342,12 +453,18 @@ echo "MUTATED (fixes reverted, controls required to notice):"
 printf '%s\n' $MUTATED_FILES | sed 's/^/  /'
 echo "NOT MUTATED, and why -- every one declared in $INVENTORY:"
 awk -F'\t' '$1!~/^#/ && NF>=2 && $2!="mutated" {printf "  %-46s %s\n", $1, $2}' "$INVENTORY"
-if [ "$uncovered" -eq 0 ] && [ "$dead" -eq 0 ]; then
-  echo "${GREEN}coverage green${NC} -- $ran mutation(s) across $(printf '%s\n' $MUTATED_FILES | wc -l | tr -d ' ') file(s), every one noticed by"
-  echo "at least one control, and the inventory reconciles with git."
+if [ "$problems" -eq 0 ] && [ "$dead" -eq 0 ]; then
+  echo "${GREEN}coverage green${NC} -- $ran mutation(s) across $(printf '%s\n' $MUTATED_FILES | wc -l | tr -d ' ') file(s);"
+  echo "all $killrows kill row(s) killed by the mutation each names; $(printf '%s\n' "$LIVE" | wc -l | tr -d ' ') control(s) reconciled."
+  if [ -n "$CHANGED" ]; then
+    echo "File inventory reconciled with git ($BASE_WHY)."
+  else
+    echo "File inventory NOT reconciled: no base commit was available, so that check did"
+    echo "not run. It is not claimed here."
+  fi
   echo "=============================================="
   exit 0
 fi
-echo "${RED}coverage FAILED${NC} -- $uncovered uncovered, $dead dead mutation(s)"
+echo "${RED}coverage FAILED${NC} -- $problems problem(s), $dead dead mutation(s)"
 echo "=============================================="
 exit 1

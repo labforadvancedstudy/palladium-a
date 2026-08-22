@@ -111,8 +111,17 @@ echo "== the harness must be able to say YES before any NO is worth anything =="
 # would invert exactly these, passing the liars and failing the honest rows. The pipeline
 # is here because there was no green pipeline control at all in the first version, so
 # nothing established that the new per-segment status checks pass a working pipeline.
+#
+# THE SCOPE IS runtime/ AND NOT scripts/, AND THAT MATTERS. It used to count scripts/, and
+# the count is taken when this index is built -- before the gate runs. The gate's first
+# Python import writes scripts/__pycache__, so on a FRESH CHECKOUT the directory gained an
+# entry between the claim and the measurement and this control failed. It is the fatal
+# green control, so the whole probe aborted; and it failed only on the first run in a new
+# tree, which is to say only on the certifying path. Measured in a shallow clone:
+# `ls scripts/` was 31 before the first import and 32 after. runtime/ holds two checked-in
+# files and nothing generates into it.
 index truth implemented \
-  "cmd: ls scripts/ -> exit 0, $(ls scripts/ | wc -l | tr -d ' ') lines" \
+  "cmd: ls runtime/ -> exit 0, $(ls runtime/ | wc -l | tr -d ' ') lines" \
   "cmd: grep -rn zzz_no_such_identifier_anywhere src/ --include='*.rs' -> exit 1, 0 lines -- the shape most of this corpus uses" \
   "cmd: grep -rn 'pub fn' src/lexer/ --include='*.rs' | grep -v zzz_nothing -> exit 0, $(/usr/bin/grep -rn 'pub fn' src/lexer/ --include='*.rs' | /usr/bin/grep -v zzz_nothing | wc -l | tr -d ' ') lines" \
   "cmd: find src -name '*.zzz' -> exit 0, 0 lines -- find's expression is an expression, not more paths" \
@@ -185,7 +194,7 @@ expect_red prose_result "a prose result is rejected: there is nothing to compare
 # CASE 6. A quoted claim the output does not contain. Same rule, and same reason, as the
 # `src:` check: a citation whose excerpt lacks the thing being claimed.
 index bad_quote unimplemented \
-  "cmd: ls scripts/ -> exit 0, $(ls scripts/ | wc -l | tr -d ' ') lines -- including \`no_such_file_at_all.py\`"
+  "cmd: ls runtime/ -> exit 0, $(ls runtime/ | wc -l | tr -d ' ') lines -- including \`no_such_file_at_all.py\`"
 expect_red bad_quote "a quote absent from the output is rejected" \
   "but the command's output does not contain it"
 
@@ -333,7 +342,7 @@ expect_red find_dangling_o "a disjunction mixing match and traversal is refused"
 index find_action_under_o unimplemented \
   "cmd: find src -name '*.x' -o -name '*.y' -print -> exit 0, 0 lines"
 expect_red find_action_under_o "an action under a disjunction is refused (it bound to one branch)" \
-  "-o"
+  "not in the observation set"
 
 index find_two_matches unimplemented \
   "cmd: find src -name a -name b -> exit 0, 0 lines"
@@ -571,11 +580,15 @@ gr_case refuse "make conformance --always-make"
 gr_case refuse "cargo build --release --features anything"
 gr_case refuse "make conformance; rm -rf /"
 
-# Receipts are invocation-private and must not outlive the run. The previous design wrote
-# a run id NEXT TO the bytes it authenticated, so `--gate-run-id "$(cat .../RUN_ID)"`
-# replayed an old run -- measured, it validated 10/10. Text-level on purpose: proving it
-# by running the real thing costs ~31s and `make gate-receipts` in the same target already
-# does that. What is asserted is that no shared path is used and the directory is trapped.
+# Receipts must not be DISCOVERABLE by or REUSABLE by the certifying path -- not "must not
+# outlive the run", which is false under SIGKILL or host failure and which the runner's own
+# documentation now disclaims; this comment said it anyway, which is a retraction applied in
+# one file and not the other. The previous design wrote a run id NEXT TO the bytes it
+# authenticated, so `--gate-run-id "$(cat .../RUN_ID)"` replayed an old run -- measured, it
+# validated 10/10. Text-level on purpose: proving it by running the real thing costs ~31s
+# and `make gate-receipts` in the same target already does. What is asserted is that no
+# shared path is used, so no later run can find an earlier one's bytes, and that the
+# private path is trapped for removal.
 CASE="receipts are invocation-private and removed on exit"
 if grep -q 'OUT=\$(mktemp -d' scripts/gate-receipts.sh \
    && grep -q "trap 'rm -rf \"\$OUT\"' EXIT" scripts/gate-receipts.sh \

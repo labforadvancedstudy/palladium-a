@@ -27,7 +27,7 @@ a command that COULD NOT LOOK is not a proof of absence	kill	l2-exists
 an absence over a MISSING PATH is rejected (--include hides it)	kill	l2-exists
 the same shape over an EXISTING path still passes	guard	L2 must not refuse a live path
 a clustered -rvn item is not falsely rejected by its own probe	guard	the probe must strip inversion
-a prose result is rejected: there is nothing to compare	kill	executed
+a prose result is rejected: there is nothing to compare	kill	cmd-grammar
 a quote absent from the output is rejected	kill	executed
 an inline pdc program is refused and sent to conformance	kill	executed
 a build is refused and sent to gate:	kill	executed
@@ -37,10 +37,10 @@ a command outside the allowlist is refused	kill	executed
 a command naming NO path is refused	kill	l1-path
 an option-supplied pattern (--regexp=) is refused	kill	l1-pattern-opt
 a clustered -e is refused	kill	l1-pattern-opt
-an option taking a separate argument is refused	kill	l1-pattern-opt
+an option taking a separate argument is refused	kill	l1-sep-arg
 an absence over an EMPTY scope is refused (measured, not parsed)	kill	l3-probe
 an absence filtered to an empty file set is refused	kill	l3-probe
-a downstream segment naming a path is refused	kill	l1-path
+a downstream segment naming a path is refused	kill	l1-downstream
 an absence over an empty scope is refused for FIND too	kill	l3-find-probe
 find -exec is refused: it runs a program of the document's choosing	kill	find-allowlist
 find -delete is refused: an observation may not alter the tree	kill	find-allowlist
@@ -67,8 +67,8 @@ an upstream segment exiting 1 (grep: no match) still concludes	guard	grep's 1 is
 a real SIGPIPE from a downstream grep -q is caught (not white-box)	kill	seg-status
 a gate: result with no checkable token is refused	kill	gate-checkable
 a gate: result the run DID print validates	guard	receipt validation must accept the truth
-a TRUNCATED number (verified=4 vs verified=46) is refused	kill	gate-exact
-a number the gate did not print is refused	kill	gate-exact
+a TRUNCATED number (verified=4 vs verified=46) is refused	kill	gate-substring
+a number the gate did not print is refused	kill	gate-kv-compare
 a self-contradicting run endorses NEITHER value	kill	gate-exact
 gate command 'make conformance'                       -> allow	guard	the real gate commands must stay runnable
 gate command 'cargo build --release'                  -> allow	guard	the real gate commands must stay runnable
@@ -80,11 +80,11 @@ gate command 'cargo build --release --features anything' -> refuse	kill	gate-arg
 gate command 'make conformance; rm -rf /'             -> refuse	kill	gate-argv-grammar
 receipts are invocation-private and removed on exit	kill	gate-private-receipts
 a receipts directory inside the repository is refused	kill	gate-receipts-in-repo
-CI runs scripts/check-doc-evidence.sh	kill	ci-steps
-CI runs scripts/gate-receipts.sh	kill	ci-steps
-CI runs scripts/test-doc-evidence.sh	kill	ci-steps
+CI runs scripts/check-doc-evidence.sh	kill	ci-step-evidence
+CI runs scripts/gate-receipts.sh	kill	ci-step-receipts
+CI runs scripts/test-doc-evidence.sh	kill	ci-step-probe
 a partial/implemented row with only STATIC evidence is refused	kill	dynamic-evidence
 the same row passes once it cites a fixture	guard	the dynamic-evidence rule must be satisfiable
 an unimplemented row may still rest on an absence proof	guard	absence proofs stay legal for unimplemented
 a class the manifest disagrees with is rejected	kill	conformance-class
-an undeclared fixture is rejected	kill	conformance-class
+an undeclared fixture is rejected	kill	conformance-declared

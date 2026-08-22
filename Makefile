@@ -295,11 +295,12 @@ check-doc-evidence: ## Pin doc citations, the no-compile allowlist, and RUN ever
 test-doc-evidence: ## Prove the evidence gate goes RED on a deliberately false cmd: item
 	@bash scripts/test-doc-evidence.sh
 
-# NOT in `gates`: it rewrites scripts/check_doc_evidence.py sixteen times and restores it
-# from git, so it refuses to run against a dirty checker — which is the normal state while
-# someone is working on one. It runs in CI, where the tree is always clean, and on demand.
-# "44 of 44 controls pass" only says the controls agree with the code; this says they would
-# NOTICE if the code stopped working, which is the number worth having.
+# NOT in `gates`: it rewrites the gate's own sources and restores them from git, so it
+# refuses to run against a dirty tree — the normal state while someone is working on one.
+# It runs in CI, where the tree is always clean, and on demand. A green control suite only
+# says the controls agree with the code; this says they would NOTICE if the code stopped
+# working. (No counts here on purpose: they drift, and a stale number in a comment is the
+# same defect this whole branch is about.)
 .PHONY: test-doc-evidence-coverage
 test-doc-evidence-coverage: ## Revert each evidence-gate fix and count the controls that catch it
 	@bash scripts/test-doc-evidence-coverage.sh
