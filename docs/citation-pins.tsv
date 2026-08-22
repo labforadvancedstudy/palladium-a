@@ -49,41 +49,41 @@ src/codegen/mod.rs	1059-1059	docs/reference/features/feature-index.toml	e3b0c442
 src/codegen/mod.rs	1086-1089	docs/specification/bootstrap-subset.md	7ff1cf9e0168	self.output.push_str("int __pd_remove_dir(const char* path) {\n"); self.outpu ...  return pd_remove_dir(path, strlen(path));\n"); self.output.push_str("}\n\n");
 src/codegen/mod.rs	1086-1089	docs/specification/language-spec.md	7ff1cf9e0168	self.output.push_str("int __pd_remove_dir(const char* path) {\n"); self.outpu ...  return pd_remove_dir(path, strlen(path));\n"); self.output.push_str("}\n\n");
 src/codegen/mod.rs	1109-1109	docs/specification/bootstrap-subset.md	1651cd25c677	self.output.push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");
-src/codegen/mod.rs	1150-1150	docs/specification/bootstrap-subset.md	d10b36aa74a5	}
-src/codegen/mod.rs	1336-1336	docs/specification/bootstrap-subset.md	b32551e9b7f4	Ok(())
-src/codegen/mod.rs	1362-1362	docs/specification/language-spec.md	985045f1c057	} else {
-src/codegen/mod.rs	1374-1374	docs/specification/language-spec.md	35b1d18c2084	format!("{}*", self.type_to_c(inner))
-src/codegen/mod.rs	1384-1384	docs/specification/language-spec.md	d10b36aa74a5	}
-src/codegen/mod.rs	1663-1663	docs/reference/features/advanced/totality-checking.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1663-1663	docs/reference/features/feature-index.toml	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1663-1663	docs/specification/bootstrap-subset.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1663-1663	docs/specification/language-spec.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1678-1678	docs/specification/bootstrap-subset.md	eac9f4b0ef4d	"Tuple types in structs not yet supported".to_string(),
-src/codegen/mod.rs	1910-1913	docs/reference/features/feature-index.toml	1c161afbcc5b	Type::Array(elem_type, size) => { // In C, array parameters are passed as poi ... arity, though it decays to pointer sig.push_str(&Self::array_param_declarator(
-src/codegen/mod.rs	1922-1922	docs/reference/features/feature-index.toml	3b1dedd1cb30	sig.push_str(&format!("{}* {}", c_type, param.name));
-src/codegen/mod.rs	1930-1940	docs/reference/features/feature-index.toml	51328d533ce6	// itself - C decays both to a pointer to the first element - // so `&[T; N]` ...  size, &param.name, !*mutable, )?); continue; } // Handle reference parameters
-src/codegen/mod.rs	1932-1933	docs/reference/features/feature-index.toml	5ac98f2e0a74	// Without this case the whole parameter was rejected, which // is why examples/practical/simple_sort.pd did not compile.
-src/codegen/mod.rs	1956-1956	docs/reference/features/feature-index.toml	13b4cf93b10f	"const unsigned int* "
-src/codegen/mod.rs	1956-1956	docs/specification/language-spec.md	13b4cf93b10f	"const unsigned int* "
-src/codegen/mod.rs	1977-1988	docs/specification/language-spec.md	ce03910b3003	} } _ => { return Err(CompileError::Generic( "Unsupported type in reference p ... r".to_string(), )); } } sig.push_str(&param.name); } _ => { // For other types
-src/codegen/mod.rs	1981-1981	docs/specification/language-spec.md	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
-src/codegen/mod.rs	2121-2121	docs/specification/bootstrap-subset.md	5e71679bdf3f	/// how long each array is, and a flat function-wide map let an inner
-src/codegen/mod.rs	2160-2160	docs/specification/bootstrap-subset.md	1abc8c2a15b6	/// `for` variable and a match binding are written into these maps *before*
-src/codegen/mod.rs	2186-2186	docs/specification/language-spec.md	226586ca8ba7	Stmt::Expr(expr) => {
-src/codegen/mod.rs	2208-2208	docs/specification/bootstrap-subset.md	9b66c55c534f	Type::Array(elem_type, size) => {
-src/codegen/mod.rs	2467-2470	docs/specification/language-spec.md	f6bd8fe92350	self.output.push_str(" }\n"); } }
-src/codegen/mod.rs	2509-2509	docs/specification/language-spec.md	44f4caca8484	// Generate pattern matching condition
-src/codegen/mod.rs	2517-2522	docs/reference/features/feature-index.toml	57a680eabfc5	self.output.push_str("1) {\n"); self.output.push_str(&format!( " long long {} = _match_expr;\n", name )); let arm_scope = self.open_binding_scope();
-src/codegen/mod.rs	2521-2521	docs/specification/language-spec.md	0c049cf1444b	));
-src/codegen/mod.rs	2537-2537	docs/specification/bootstrap-subset.md	77c07d279457	let arm_scope = self.open_binding_scope();
-src/codegen/mod.rs	2548-2569	docs/reference/features/async-system/async-as-effect.md	94ee2664c02c	if let Some(enum_def) = self.enums.get(enum_name) { // Find the variant if le ... ariant.to_lowercase(), i )); // The binding is a real // variable; type it for
-src/codegen/mod.rs	2548-2569	docs/specification/language-spec.md	94ee2664c02c	if let Some(enum_def) = self.enums.get(enum_name) { // Find the variant if le ... ariant.to_lowercase(), i )); // The binding is a real // variable; type it for
-src/codegen/mod.rs	2549-2549	docs/specification/bootstrap-subset.md	93a7f122ad55	// Find the variant
-src/codegen/mod.rs	2569-2569	docs/reference/features/feature-index.toml	af750a79ff49	// variable; type it for
-src/codegen/mod.rs	2590-2590	docs/specification/language-spec.md	e923217334ec	for (field_name, pattern) in field_patterns {
-src/codegen/mod.rs	2604-2611	docs/reference/features/async-system/async-as-effect.md	ca7c8fc91ec6	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... ing) return Err(CompileError::Generic( "Pattern type mismatch in enum variant"
-src/codegen/mod.rs	2604-2615	docs/specification/language-spec.md	3e8e873e271c	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... eError::Generic( "Pattern type mismatch in enum variant" .to_string(), )); } }
-src/codegen/mod.rs	2613-2615	docs/reference/features/async-system/async-as-effect.md	0ada7a203994	)); } }
+src/codegen/mod.rs	1161-1161	docs/specification/bootstrap-subset.md	d10b36aa74a5	}
+src/codegen/mod.rs	1353-1353	docs/specification/bootstrap-subset.md	b32551e9b7f4	Ok(())
+src/codegen/mod.rs	1379-1379	docs/specification/language-spec.md	985045f1c057	} else {
+src/codegen/mod.rs	1391-1391	docs/specification/language-spec.md	35b1d18c2084	format!("{}*", self.type_to_c(inner))
+src/codegen/mod.rs	1401-1401	docs/specification/language-spec.md	d10b36aa74a5	}
+src/codegen/mod.rs	1680-1680	docs/reference/features/advanced/totality-checking.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1680-1680	docs/reference/features/feature-index.toml	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1680-1680	docs/specification/bootstrap-subset.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1680-1680	docs/specification/language-spec.md	5cd73aa28180	"Generic types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1695-1695	docs/specification/bootstrap-subset.md	eac9f4b0ef4d	"Tuple types in structs not yet supported".to_string(),
+src/codegen/mod.rs	1927-1930	docs/reference/features/feature-index.toml	1c161afbcc5b	Type::Array(elem_type, size) => { // In C, array parameters are passed as poi ... arity, though it decays to pointer sig.push_str(&Self::array_param_declarator(
+src/codegen/mod.rs	1939-1939	docs/reference/features/feature-index.toml	3b1dedd1cb30	sig.push_str(&format!("{}* {}", c_type, param.name));
+src/codegen/mod.rs	1947-1957	docs/reference/features/feature-index.toml	51328d533ce6	// itself - C decays both to a pointer to the first element - // so `&[T; N]` ...  size, &param.name, !*mutable, )?); continue; } // Handle reference parameters
+src/codegen/mod.rs	1949-1950	docs/reference/features/feature-index.toml	5ac98f2e0a74	// Without this case the whole parameter was rejected, which // is why examples/practical/simple_sort.pd did not compile.
+src/codegen/mod.rs	1973-1973	docs/reference/features/feature-index.toml	13b4cf93b10f	"const unsigned int* "
+src/codegen/mod.rs	1973-1973	docs/specification/language-spec.md	13b4cf93b10f	"const unsigned int* "
+src/codegen/mod.rs	1994-2005	docs/specification/language-spec.md	ce03910b3003	} } _ => { return Err(CompileError::Generic( "Unsupported type in reference p ... r".to_string(), )); } } sig.push_str(&param.name); } _ => { // For other types
+src/codegen/mod.rs	1998-1998	docs/specification/language-spec.md	b0724c5f00e2	"Unsupported type in reference parameter".to_string(),
+src/codegen/mod.rs	2138-2138	docs/specification/bootstrap-subset.md	5e71679bdf3f	/// how long each array is, and a flat function-wide map let an inner
+src/codegen/mod.rs	2177-2177	docs/specification/bootstrap-subset.md	1abc8c2a15b6	/// `for` variable and a match binding are written into these maps *before*
+src/codegen/mod.rs	2203-2203	docs/specification/language-spec.md	226586ca8ba7	Stmt::Expr(expr) => {
+src/codegen/mod.rs	2225-2225	docs/specification/bootstrap-subset.md	9b66c55c534f	Type::Array(elem_type, size) => {
+src/codegen/mod.rs	2484-2487	docs/specification/language-spec.md	f6bd8fe92350	self.output.push_str(" }\n"); } }
+src/codegen/mod.rs	2526-2526	docs/specification/language-spec.md	44f4caca8484	// Generate pattern matching condition
+src/codegen/mod.rs	2534-2539	docs/reference/features/feature-index.toml	57a680eabfc5	self.output.push_str("1) {\n"); self.output.push_str(&format!( " long long {} = _match_expr;\n", name )); let arm_scope = self.open_binding_scope();
+src/codegen/mod.rs	2538-2538	docs/specification/language-spec.md	0c049cf1444b	));
+src/codegen/mod.rs	2554-2554	docs/specification/bootstrap-subset.md	77c07d279457	let arm_scope = self.open_binding_scope();
+src/codegen/mod.rs	2565-2586	docs/reference/features/async-system/async-as-effect.md	94ee2664c02c	if let Some(enum_def) = self.enums.get(enum_name) { // Find the variant if le ... ariant.to_lowercase(), i )); // The binding is a real // variable; type it for
+src/codegen/mod.rs	2565-2586	docs/specification/language-spec.md	94ee2664c02c	if let Some(enum_def) = self.enums.get(enum_name) { // Find the variant if le ... ariant.to_lowercase(), i )); // The binding is a real // variable; type it for
+src/codegen/mod.rs	2566-2566	docs/specification/bootstrap-subset.md	93a7f122ad55	// Find the variant
+src/codegen/mod.rs	2586-2586	docs/reference/features/feature-index.toml	af750a79ff49	// variable; type it for
+src/codegen/mod.rs	2607-2607	docs/specification/language-spec.md	e923217334ec	for (field_name, pattern) in field_patterns {
+src/codegen/mod.rs	2621-2628	docs/reference/features/async-system/async-as-effect.md	ca7c8fc91ec6	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... ing) return Err(CompileError::Generic( "Pattern type mismatch in enum variant"
+src/codegen/mod.rs	2621-2632	docs/specification/language-spec.md	3e8e873e271c	} } } } _ => { // Fallback for mismatched patterns (shouldn't happen with pro ... eError::Generic( "Pattern type mismatch in enum variant" .to_string(), )); } }
+src/codegen/mod.rs	2630-2632	docs/reference/features/async-system/async-as-effect.md	0ada7a203994	)); } }
 src/codegen/mod.rs	4-7	docs/reference/features/feature-index.toml	e7c89afcb67b	pub mod llvm_backend; pub mod llvm_backend_improved; pub mod llvm_native; pub mod llvm_text_backend;
 src/codegen/mod.rs	424-424	docs/specification/language-spec.md	23a7d0452793	/// `"long long[3][2]"`.
 src/codegen/mod.rs	494-494	docs/specification/language-spec.md	b825c1675d27	match form {

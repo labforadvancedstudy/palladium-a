@@ -399,3 +399,210 @@ fn test_an_import_may_not_silently_disagree_with_a_builtin() {
         output
     );
 }
+
+// ---------------------------------------------------------------------------
+// Determinism of the emitted C
+// ---------------------------------------------------------------------------
+//
+// Not an M3 feature question. `make selfhost`'s fixed point is the claim that
+// stage1 and stage2 produce byte-identical C, and that claim is the project's
+// thesis. It holds today only because `bootstrap/pdc.pd` imports nothing
+// (`grep -c '^import' bootstrap/pdc.pd` -> 0), so the moment the self-hosting
+// compiler is rewritten in a dialect with modules, a compiler whose output
+// depends on the hash seed cannot reach a fixed point at all.
+//
+// Measured before the fix, on ONE unchanged two-module program: 8 compiles
+// produced two distinct SHA-1s, four each; the diff was a pure ordering swap of
+// the two imported functions. Cause: `HashMap` with `RandomState`, which
+// reseeds per process, iterated at four sites over `imported_modules`.
+//
+// N is 6 modules, not 2, so a false pass is not a coin flip: 6 declarations can
+// land in 720 orders, and the assertion is over 8 independent compiler
+// processes.
+
+/// Six modules, each contributing a struct and two functions.
+fn stress_modules() -> Vec<(String, String)> {
+    ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
+        .iter()
+        .map(|n| {
+            (
+                format!("{}.pd", n),
+                format!(
+                    "pub struct S_{n} {{ x: i64, y: i64 }}\n\
+                     pub fn f_{n}(a: i64) -> i64 {{ return a + 1; }}\n\
+                     pub fn g_{n}() -> S_{n} {{ return S_{n} {{ x: 1, y: 2 }}; }}\n",
+                    n = n
+                ),
+            )
+        })
+        .collect()
+}
+
+fn stress_main() -> String {
+    let names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
+    let imports: String = names.iter().map(|n| format!("import {};\n", n)).collect();
+    let calls: String = names
+        .iter()
+        .map(|n| format!("    print_int(f_{n}(1));\n    print_int(g_{n}().y);\n", n = n))
+        .collect();
+    format!("{}\nfn main() {{\n{}}}\n", imports, calls)
+}
+
+/// Compile the stress program `n` times and return the generated C of each run.
+fn emitted_c_over_runs(n: usize) -> Vec<String> {
+    let modules = stress_modules();
+    let borrowed: Vec<(&str, &str)> = modules
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let main_src = stress_main();
+
+    (0..n)
+        .map(|_| {
+            let dir = TempDir::new().unwrap();
+            for (name, src) in &borrowed {
+                fs::write(dir.path().join(name), src).unwrap();
+            }
+            fs::write(dir.path().join("main.pd"), &main_src).unwrap();
+            let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+                .args(["compile", "main.pd", "-o", "prog"])
+                .current_dir(dir.path())
+                .output()
+                .expect("failed to run pdc");
+            assert!(
+                out.status.success(),
+                "the stress program must compile:\n{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            fs::read_to_string(dir.path().join("build_output").join("main.c")).unwrap()
+        })
+        .collect()
+}
+
+/// The order in which DEFINITIONS are emitted: every `typedef struct X {` and
+/// every function definition opener (a line ending in `) {`).
+///
+/// This is deliberately narrower than the whole file. It isolates the two
+/// emission sites the fix covers — imported struct definitions
+/// (`src/codegen/mod.rs:1193`) and imported function bodies (`:1278`) — from the
+/// prototype block (`:1741`), which is a separate, still-unordered site and is
+/// pinned by the XFAIL below. Asserting the whole file here would conflate a
+/// property this fix establishes with one it does not.
+///
+/// Column zero only, so an indented `if (...) {` inside a body is not mistaken
+/// for a definition; and `__pd_` names are dropped because those are the fixed
+/// C runtime prelude, emitted from a literal, which would bury the twelve lines
+/// this test is about under 47 entries that never move.
+fn definition_order(c: &str) -> Vec<&str> {
+    c.lines()
+        .map(str::trim_end)
+        .filter(|l| !l.starts_with(char::is_whitespace))
+        .filter(|l| l.starts_with("typedef struct ") || l.ends_with(") {"))
+        .filter(|l| !l.contains("__pd_"))
+        .collect()
+}
+
+/// REGRESSION CONTROL for the ordering of the imported-module iteration.
+///
+/// Measured with the sort removed: 22 distinct definition orders over 24
+/// compiles of this same program. With it: 24 of 24 identical.
+#[test]
+fn test_imported_definitions_are_emitted_in_a_stable_order() {
+    let runs = emitted_c_over_runs(8);
+    let first = definition_order(&runs[0]);
+    for (i, c) in runs.iter().enumerate().skip(1) {
+        assert_eq!(
+            definition_order(c),
+            first,
+            "compile #{} emitted the imported definitions in a different order than \
+             compile #0 — the generated C depends on the hash seed",
+            i
+        );
+    }
+}
+
+/// The whole file, which is what a fixed point actually requires — and which is
+/// still not stable, because one iteration site remains unordered.
+///
+/// `generate_function_prototypes` clones `imported_modules` and iterates
+/// `.values()` (`src/codegen/mod.rs:1757-1758`), so the block of imported
+/// prototypes still permutes per process. Measured with the other three sites
+/// ordered: the residual diff is exactly a swap of two prototype lines
+/// (`long long a();` / `long long b();`), nothing else.
+///
+/// That site was left alone deliberately: it is inside
+/// `generate_function_prototypes`, which another branch is editing, and the
+/// brief for this change bounded it to the other three. The fix is the same
+/// two lines applied there, and it was measured to close this test completely
+/// (30 of 30 identical compiles of this program) before being reverted to
+/// respect that boundary.
+#[test]
+#[ignore = "XFAIL: the emitted C is not byte-stable across compiles — generate_function_prototypes still iterates the imported modules in HashMap order (src/codegen/mod.rs:1757-1758), and RandomState reseeds per process, so the block of imported prototypes permutes; the other three sites (:1114, :1193, :1278) are ordered and their definitions are stable, so the residual diff is exactly the prototype lines. This blocks a self-hosting fixed point for any compiler that imports anything (owned by M3, cross-file module imports)"]
+fn test_the_whole_emitted_c_is_byte_stable() {
+    let runs = emitted_c_over_runs(8);
+    for (i, c) in runs.iter().enumerate().skip(1) {
+        assert_eq!(
+            c, &runs[0],
+            "compile #{} emitted different C than compile #0",
+            i
+        );
+    }
+}
+
+/// NOT ON THE IMPORT PATH — and that is the point of recording it here.
+///
+/// Auditing codegen for what else could put the hash seed into the output
+/// turned up a second, independent source: monomorphized generic
+/// instantiations. `TypeChecker::get_instantiations` builds its `Vec` by
+/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:2931`), which is a
+/// `HashMap`, and `get_struct_instantiations` does the same (`:2948`). Codegen
+/// then emits in that Vec's order (`src/codegen/mod.rs:1285`, `:1774`).
+///
+/// This program imports NOTHING, which is how the two sources were told apart:
+/// with all four `imported_modules` sites ordered, a six-module program with no
+/// generics is byte-identical over 30 compiles, while this six-generic program
+/// with no modules produced 30 DISTINCT outputs in 30 compiles.
+///
+/// It matters for the same reason the import one does: `make selfhost`'s fixed
+/// point is a byte-identity claim, and it survives today only because
+/// `bootstrap/pdc.pd` has neither modules nor generics.
+#[test]
+#[ignore = "XFAIL: monomorphized generics are emitted in HashMap order — TypeChecker::get_instantiations iterates self.instantiations.keys() (src/typeck/mod.rs:2931) and get_struct_instantiations does the same (:2948), so codegen (src/codegen/mod.rs:1285, :1774) emits them in an order that changes with the per-process hash seed; a six-generic program that imports nothing produced 30 distinct C outputs in 30 compiles. Independent of the module system, and it blocks a self-hosting fixed point for any compiler using generics (owned by M4, generics that work)"]
+fn test_generic_instantiations_are_emitted_in_a_stable_order() {
+    let names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
+    let src = format!(
+        "{}\nfn main() {{\n{}}}\n",
+        names
+            .iter()
+            .map(|n| format!("fn id_{n}<T>(v: T) -> T {{ return v; }}\n", n = n))
+            .collect::<String>(),
+        names
+            .iter()
+            .map(|n| format!("    print_int(id_{n}(7));\n", n = n))
+            .collect::<String>(),
+    );
+
+    let runs: Vec<String> = (0..8)
+        .map(|_| {
+            let dir = TempDir::new().unwrap();
+            fs::write(dir.path().join("main.pd"), &src).unwrap();
+            let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+                .args(["compile", "main.pd", "-o", "prog"])
+                .current_dir(dir.path())
+                .output()
+                .expect("failed to run pdc");
+            assert!(out.status.success(), "the generic program must compile");
+            fs::read_to_string(dir.path().join("build_output").join("main.c")).unwrap()
+        })
+        .collect();
+
+    for (i, c) in runs.iter().enumerate().skip(1) {
+        assert_eq!(
+            definition_order(c),
+            definition_order(&runs[0]),
+            "compile #{} emitted the monomorphized generics in a different order",
+            i
+        );
+    }
+}

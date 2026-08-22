@@ -1111,7 +1111,18 @@ impl CodeGenerator {
         self.output.push_str("}\n\n");
 
         // First pass: collect function signatures, type aliases, and enum definitions from imported modules
-        for module_info in self.imported_modules.values() {
+        //
+        // Sorted by module name, not `HashMap` order. `RandomState` reseeds per
+        // process, so iterating the map directly made the emitted C depend on the
+        // hash seed: eight compiles of one unchanged two-module program produced
+        // two distinct outputs, four each, differing only in the order of the
+        // imported declarations. `make selfhost`'s fixed point is a claim about
+        // byte identity, and it holds today only because `bootstrap/pdc.pd`
+        // imports nothing — so this must be ordered before modules can appear in
+        // the self-hosting compiler at all.
+        let mut sorted_modules: Vec<_> = self.imported_modules.iter().collect();
+        sorted_modules.sort_by_key(|(name, _)| *name);
+        for (_, module_info) in sorted_modules {
             for item in &module_info.ast.items {
                 match item {
                     Item::Function(func) => {
@@ -1188,9 +1199,15 @@ impl CodeGenerator {
             }
         }
 
-        // Generate struct definitions from imported modules first
-        let imported_modules = self.imported_modules.clone();
-        for module_info in imported_modules.values() {
+        // Generate struct definitions from imported modules first.
+        //
+        // Sorted by module name for the same reason as the collection pass above:
+        // this local drives BOTH the imported struct definitions here and the
+        // imported function bodies further down, and `HashMap` order would put
+        // the hash seed into the emitted C.
+        let mut imported_modules: Vec<_> = self.imported_modules.clone().into_iter().collect();
+        imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
+        for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 match item {
                     Item::Struct(struct_def) => {
@@ -1274,8 +1291,8 @@ impl CodeGenerator {
             self.output.push('\n');
         }
 
-        // Generate functions from imported modules
-        for module_info in imported_modules.values() {
+        // Generate functions from imported modules (same sorted local as above)
+        for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     // Only generate public, non-generic functions
