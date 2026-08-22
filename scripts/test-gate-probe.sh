@@ -956,17 +956,25 @@ fi
 # from producer text, which is the thing being prevented; a reviewer checking
 # this rule is reading exactly these two files anyway.
 #
-# COMMENT LINES ARE EXCLUDED, and that is not a loophole: the retraction this
-# whole section exists to make REQUIRES naming `Run._out` and `Withheld._b` in
-# prose, in gate_probe.py and in test-xfail.py, to say that they hold the bytes.
-# A rule that forbade writing the truth down would push the truth back out of
-# the comments, which is the failure mode. Access is what is forbidden, and
-# access cannot hide on a line that begins with `#` or `//`.
+# COMMENT LINES AND BACKTICKED PROSE ARE EXCLUDED, and that is not a loophole:
+# the retraction this whole section exists to make REQUIRES naming `Run._out`
+# and `Withheld._b` in prose — in gate_probe.py, in test-xfail.py, and (since
+# the merge of fix/cmd-evidence-unexecuted) in check_doc_evidence.py's own
+# docstring, which describes this boundary correctly. A rule that forbade
+# writing the truth down would push the truth back out of the prose, which is
+# the failure mode.
+#
+# The backtick exemption is the same one the intra-module check already used and
+# it has a cost worth naming: a shell line using backticks for command
+# substitution AND touching a private slot would be skipped. No such line exists
+# (the pattern is Python/Rust attribute syntax), and access on a `#`/`//` line
+# or inside backticks is not access.
 leaks=$(git ls-files -z \
         | xargs -0 grep -InE '\._out\b|\._b\b|\._rc\b|\.withheld\._' 2>/dev/null \
         | grep -v '^scripts/gate_probe.py:' \
         | grep -v '^scripts/test-gate-probe.sh:' \
-        | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' || true)
+        | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' \
+        | grep -v '`' || true)
 if [ -z "$leaks" ]; then
   printf '  %sok%s   no consumer outside gate_probe.py names a withheld private slot\n' "$GREEN" "$NC"
   pass=$((pass+1))

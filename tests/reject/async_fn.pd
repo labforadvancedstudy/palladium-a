@@ -6,6 +6,13 @@
 // the opposite: `#[token("async")]` at src/lexer/token.rs:111, an `async fn`
 // whose declared return type is rewritten to `Future<T>`, and a body that then
 // fails to match it. The refusal is the useful part; the keyword is the debt.
+// WHICH refusal changed on branch fix/d3b-tail-if. `return 1;` below is now
+// refused for carrying a VALUE at all: an async body is emitted into a poll
+// function that returns an int readiness flag, so there is nowhere to put the
+// value -- it was evaluated and dropped, and for a non-unit output the emitted
+// C did not compile. That fires before the older `Future<Int>` mismatch. The
+// manifest fingerprint moved with it; the stage and the verdict did not.
+
 async fn g() -> i64 {
     return 1;
 }
