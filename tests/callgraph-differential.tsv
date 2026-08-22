@@ -22,26 +22,34 @@
 #     answer(mutated) == expect-mutated     it is right about a program it has NOT seen
 #
 # The second condition was first written as `!= answer(source)` — merely "the answer
-# changed" — and a hardcoded table plus a constant fallback scored 7/7 against it, because
-# a constant IS a change. Pinning the OUTCOME closes that: a lookup table has no entry for
-# the mutated program, and silence is not an answer either.
+# changed" — and a hardcoded table plus a constant fallback scored full marks against it,
+# because a constant IS a change. Pinning the OUTCOME closes that: a lookup table has no
+# entry for the mutated program, and silence is not an answer either.
 #
 # WHAT THIS FILE PINS: scoped call-site identities · declared entry roots · an
 # order-independent fixed point · per-edge completion (both ways) · indirect targets
-# resolved-or-declared. Five clauses over seven rows; the ROW SET is pinned by
-# EXPECTED_CALLGRAPH_IDS and checked every run, the clause count in this sentence is prose
-# a reviewer checks — an earlier version of this line claimed the self-test counted it, and
-# no such case exists.
+# resolved-or-declared, the last of them PER CALL SITE. Five clauses over eight rows; the
+# ROW SET is pinned by EXPECTED_CALLGRAPH_IDS and checked every run, while the clause count
+# in this sentence is prose a reviewer checks — an earlier version of this line claimed the
+# self-test counted it, and no such case exists.
 #
-# PROVENANCE IS NOT A PROPERTY, IT IS AN OBLIGATION ON EVERY ANSWER. It used to be a row
-# of its own, asked as an independent query — and that proved only `provider(unit,
-# "provenance") == sha256(unit)`, which a stale table plus an honest hash satisfies with no
-# connection to the edges it reports. The provider now returns `(provenance, answer)` for
-# EVERY query, the runner computes the digest of the unit it submitted, and a mismatched or
-# missing provenance fails the row whose graph it accompanies. Seven rows × two queries =
-# fourteen checks of the binding per run. It still does not prove the graph was DERIVED
-# from that unit — it makes the two travel together, so a stale graph cannot be laundered
-# by an honest digest computed on the side.
+# PROVENANCE IS NOT A PROPERTY, AND IT IS NOT A PER-ANSWER TAG EITHER. Two narrowings, both
+# forced by review. It began as a row of its own, asked as `provider(unit, "provenance")`,
+# which proved only that the provider could hash its input and tied that digest to nothing.
+# It then became a tag on each per-property answer — and that was refuted too: handing a
+# value-only provider a correct digest is free (the self-test's `_bound` does exactly
+# that), so the digest never caught a stale VALUE, and querying properties one at a time
+# let `edges`, `completion` and `indirect` come from INCONSISTENT snapshots wearing the
+# same digest.
+#
+# The provider now returns ONE SNAPSHOT PER UNIT — `(provenance, {property: value})` — and
+# the runner asks ONCE per unit, caches it, and projects every property from that object.
+# What that establishes, exactly: every property the gate reads for a unit comes from one
+# object the provider labelled with the digest of the bytes it was handed, so the answers
+# cannot be assembled from different snapshots and cannot wear another unit's identity. It
+# establishes NOTHING about derivation — a provider that hashes its input while returning a
+# remembered graph passes, on purpose, and that is the residue this gate prints rather than
+# a hole it hides.
 #
 # THE INDIRECT CONTRACT, SETTLED. GI-11's text carries two clauses that read as one:
 # "indirect targets resolved or the edge declared unresolved" and "unresolved target =
@@ -59,6 +67,11 @@
 # program, honestly reported), a wrong or absent answer FAILS the row, and `resolved:` with
 # an empty target list raises a harness error instead of being scored either way.
 #
+# AND THE ANSWER IS KEYED BY SITE, because the sentence above says "every indirect call
+# site" and a scalar answer cannot address one: `resolved:a,b` reads equally as two targets
+# for one site or one target for each of two sites. `indirect-multi-site` is the program
+# that tells them apart, and its mutation removes ONE of two calls.
+#
 # WHICH EDGES ARE IN SCOPE. The queries below range over the projection whose CALLEES ARE
 # DEFINED IN THE SUBMITTED UNIT. Builtin callees (`panic`, `file_write`, …) are outside it:
 # `completion-diverges` expects `main>stop=no` and NOT `stop>panic=no`. This was undefined
@@ -69,13 +82,13 @@
 #
 # WHAT REMAINS, AND IT IS ONE THING, NOT TWO. Measured this round: an adversary who reads
 # this corpus and tabulates the correct answer for every program AND every mutation scores
-# 7/7. Run-time metamorphic renaming takes that exact-source table to 0/7 — but an
+# 8/8. Run-time metamorphic renaming takes that exact-source table to 0/8 — but an
 # adversary that normalises identifiers, looks up, and re-applies the suffix is back to
-# 7/7, and it passes the provenance obligation too by hashing whatever it was handed. A
+# 8/8, and it passes the provenance obligation too by hashing whatever it was handed. A
 # FINITE, PUBLIC CORPUS CANNOT DEFEAT A READER. What these rows establish is that SPECIFIC
 # wrong-answer and exact-table strategies fail — not that a wrong implementation in general
 # fails, and not that a real one exists. Implementation authenticity and generalisation
-# beyond these seven programs are review obligations at the point GI-11 lands, and the gate
+# beyond these eight programs are review obligations at the point GI-11 lands, and the gate
 # says exactly that in its output rather than implying the corpus closed it.
 #
 # COLUMNS (TAB-separated, all EIGHT mandatory):
@@ -85,10 +98,14 @@
 # source:   a whole compilation unit, `\n` for newline. DECODED before the provider sees
 #           it — an earlier version passed the TSV encoding through, so a real parser would
 #           have received backslash-n.
-# answer:   the provider returns `(provenance, value)` for every query. `provenance` is the
-#           sha256 of the DECODED unit it was handed, computed independently by the runner;
-#           `value` is the property below. A bare value, a stale digest or a silent value
-#           fails the row.
+# answer:   the provider returns ONE SNAPSHOT PER UNIT — `(provenance, {property: value})`
+#           — and the gate PROJECTS the properties below from it. `provenance` is the
+#           sha256 of the DECODED unit it was handed, computed independently by the runner.
+#           A bare value, a stale digest, a snapshot that is not a property map, or a
+#           snapshot with no entry for the property fails the row. The runner asks ONCE per
+#           unit and caches, so every property of a unit demonstrably comes from one
+#           object; see the module docstring of scripts/thesis_exit.py for the one sentence
+#           on what that does and does not establish (it does not establish derivation).
 # expect:   the value the graph must return.
 #   edges         caller>callee, comma-separated, sorted. Scoped where a bare name is
 #                 ambiguous: `Buf::len`, not `len`. Callees not defined in the unit are out
@@ -98,11 +115,19 @@
 #                 `no` = it may diverge. A fact about the CALLEE, not about whether the
 #                 call site is reached — an earlier version conflated the two and marked an
 #                 edge into a plainly-returning function `no`.
-#   indirect      `resolved:<one or more targets>` or `unresolved`, per the settled contract
-#                 above. Where the row writes both separated by `|`, EITHER is accepted: the
-#                 contract permits both, so a better provider that resolves the target must
-#                 not fail a row written for one that declares it unresolved. `resolved:`
-#                 naming nothing is a HARNESS FAILURE, not a score.
+#   indirect      SITE-KEYED, comma-separated, sorted: `<site>=unresolved` or
+#                 `<site>=resolved:<t1>;<t2>`, or `(none)` when the unit has no indirect
+#                 call site. A site is `<caller>><callee-expression>`, with `#<n>` in source
+#                 order when one caller invokes the same expression more than once.
+#                 A SCALAR ANSWER COULD NOT CARRY THIS CONTRACT: `resolved:a,b` cannot
+#                 distinguish two targets for ONE site from one target for EACH of two
+#                 sites, so "every indirect call site" was enforceable only where there was
+#                 exactly one. Where the row writes alternatives separated by `|`, ANY is
+#                 accepted: the contract permits resolving or declaring per site, so a
+#                 better provider that resolves must not fail a row written for one that
+#                 declares. A site that claims `resolved:` and names nothing is a HARNESS
+#                 FAILURE, not a score; a dropped site, a duplicate site key and an
+#                 unparseable entry are wrong ANSWERS and die in the score.
 #   identical-to  the id of another row. The two programs' EDGE SETS are compared to each
 #                 other — an earlier version accepted the literal id string, proving nothing.
 # mutation: `find=>replace`, applied to the DECODED source. Removing the fact the row is
@@ -110,7 +135,8 @@
 # expect-mutated: the answer the MUTATED program must produce. `(none)` means the property
 #           is empty for it. REQUIRING A SPECIFIC OUTCOME, not merely a different one, is
 #           what closes the last gap: measured, a hardcoded table plus a constant fallback
-#           scored 7/7 against "the answer must change", because a constant IS a change.
+#           scored full marks against "the answer must change", because a constant IS a
+#           change.
 #           It cannot produce the right answer for a program it has never seen.
 #
 # id	property	source	expect	mutation	expect-mutated	why	source-of-truth
@@ -120,5 +146,6 @@ entry-roots	roots	fn helper() -> i64 { return 1; }\nfn main() { helper(); }	main
 order-independent	identical-to	fn main() { helper(); }\nfn helper() -> i64 { return 1; }	entry-roots	fn main() { helper(); }=>fn extra() -> i64 { return 2; }\nfn main() { helper(); extra(); }	main>extra,main>helper	the same program with its definitions reordered must yield the SAME EDGE SET as `entry-roots`. A single forward pass over source order does not. Removing the call must break the equality	reviewed
 completion-diverges	completion	fn stop() { panic("x"); }\nfn main() { stop(); }	main>stop=no	panic("x")=>return	main>stop=yes	the callee diverges, so the edge may not complete. Making it return must flip the fact. `panic` is a builtin, so `stop>panic` is outside the projection this corpus queries — see WHICH EDGES ARE IN SCOPE	reviewed
 completion-returns	completion	fn ok() -> i64 { return 1; }\nfn main() { ok(); }	main>ok=yes	return 1=>panic("x")	main>ok=no	the POSITIVE control the first version lacked: a callee that always returns. Making it diverge must flip the fact	reviewed
-indirect-declared	indirect	fn target() -> i64 { return 1; }\nfn run(f: fn() -> i64) -> i64 { return f(); }\nfn main() { run(target); }	resolved:target|unresolved	return f()=>return 1	(none)	the call `f()` has no statically visible target here. The contract permits resolving it OR declaring it unresolved; omitting it silently is the failure this row exists to catch, and `resolved:` naming nothing is a harness failure rather than either. Removing the indirect call must change the answer	reviewed
-provenance-binding	edges	fn extra() -> i64 { return 2; }\nfn main() { extra(); }	main>extra	{ extra(); }=>{ }	(none)	the named instance of an obligation every row now carries: the answer arrives as `(provenance, value)` and the provenance must be the digest of the unit submitted, so a graph remembered from another unit cannot be laundered by an honest hash computed on the side. The mutation changes the unit, so a remembered digest fails too. This does not prove the graph was DERIVED from the unit — only that the two travel together	reviewed
+indirect-declared	indirect	fn target() -> i64 { return 1; }\nfn run(f: fn() -> i64) -> i64 { return f(); }\nfn main() { run(target); }	run>f=resolved:target|run>f=unresolved	return f()=>return 1	(none)	the call `f()` has no statically visible target here. The contract permits resolving it OR declaring it unresolved; omitting it silently is the failure this row exists to catch, and `resolved:` naming nothing is a harness failure rather than either. Removing the indirect call must change the answer	reviewed
+indirect-multi-site	indirect	fn target() -> i64 { return 1; }\nfn other() -> i64 { return 2; }\nfn run(f: fn() -> i64, g: fn() -> i64) -> i64 { return f() + g(); }\nfn main() { run(target, other); }	run>f=resolved:target,run>g=resolved:other|run>f=resolved:target,run>g=unresolved|run>f=unresolved,run>g=resolved:other|run>f=unresolved,run>g=unresolved	 + g()=>	run>f=resolved:target|run>f=unresolved	TWO indirect sites in ONE caller — the case a scalar answer could not express, and the corpus had none. Each site is answered independently, so all four resolved/unresolved combinations are permitted; removing one of the two calls must drop exactly one entry, which is the fault injection a site-blind answer passes by accident	reviewed
+provenance-binding	edges	fn extra() -> i64 { return 2; }\nfn main() { extra(); }	main>extra	{ extra(); }=>{ }	(none)	the named instance of an obligation every row now carries: the unit's whole snapshot arrives as `(provenance, {property: value})` and the provenance must be the digest of the unit submitted, so a graph remembered from another unit cannot wear this one's identity. The mutation changes the unit, so a remembered digest fails too. This does not prove the graph was DERIVED from the unit — only that one labelled object is where all of its answers came from	reviewed

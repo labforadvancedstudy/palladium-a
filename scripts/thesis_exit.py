@@ -193,10 +193,10 @@ EXPECTED_LIVENESS_SHA = \
 CALLGRAPH_CORPUS = ROOT / "tests/callgraph-differential.tsv"
 EXPECTED_CALLGRAPH_IDS = frozenset({
     "completion-diverges", "completion-returns", "entry-roots", "indirect-declared",
-    "order-independent", "provenance-binding", "scoped-identity",
+    "indirect-multi-site", "order-independent", "provenance-binding", "scoped-identity",
 })
 EXPECTED_CALLGRAPH_SHA = \
-    "94d38977695ff96b5e69b8013f80f357709c06ed8285419df32d632ad53cf1e1"
+    "6f9ad8500cd799698f2c479ce5f133d34d6ddc1582e46a676427549ab9df9706"
 
 # Clauses of GI-11's contract that NO corpus of program outputs can pin, because they are
 # properties of the artifact rather than of any program's graph. Named here and printed by
@@ -219,29 +219,47 @@ EXPECTED_CALLGRAPH_SHA = \
 GI11_HUMAN_REVIEW_RESIDUE = (
     "that the provider is a REAL implementation rather than a sufficiently well-informed "
     "lookup. What these rows reject is specific and measured: an exact-source table of all "
-    "seven programs AND all seven mutations scores 7/7 with the seed pinned but 0/7 under "
+    "eight programs AND all eight mutations scores 8/8 with the seed pinned but 0/8 under "
     "a fresh one; a constant graph, a silent graph, a graph right on the original and "
-    "wrong on the mutation, a graph right on the original and silent on the mutation, a "
-    "correct graph returned without provenance, and a correct graph carrying another "
-    "unit's provenance all score 0/7 — while an adversary that normalises identifiers, "
-    "looks up and re-applies the suffix scores 7/7, hashing whatever it is handed to "
-    "satisfy the provenance obligation as it goes. A finite, public corpus cannot defeat a "
-    "reader. So these rows reject those wrong-answer and exact-table strategies; that the "
-    "provider is an authentic implementation, and that it generalises beyond these seven "
-    "programs, remain REVIEW OBLIGATIONS and are not established here",
+    "wrong on every mutation, a graph right on the original and silent on every mutation, "
+    "a correct graph returned without provenance, and a correct graph carrying another "
+    "unit's provenance all score 0/8; a graph wrong on exactly ONE mutation scores 7/8 — "
+    "while an adversary that normalises identifiers, looks up and re-applies the suffix "
+    "scores 8/8, hashing whatever it is handed to satisfy the provenance obligation as it "
+    "goes. A finite, public corpus cannot defeat a reader, and provenance does not change "
+    "that: it establishes that every property came from one object labelled with the "
+    "digest of the bytes handed over, never that the graph was DERIVED from them. So these "
+    "rows reject those wrong-answer and exact-table strategies; that the provider is an "
+    "authentic implementation, and that it generalises beyond these eight programs, remain "
+    "REVIEW OBLIGATIONS and are not established here",
 )
 
 
-def callgraph_provider(source: str, prop: str):
-    """The wired graph's answer for one property, or None if no graph is wired.
+def callgraph_provider(source: str):
+    """ONE provenance-bearing graph SNAPSHOT for a unit, or None if no graph is wired.
 
-    THE INTERFACE IS A PAIR: `(provenance, value)`, where `provenance` is the sha256 of the
-    DECODED unit handed in and `value` is the property's answer. Provenance used to be a
-    property of its own — `provider(unit, "provenance")` — which proved only that the
-    provider could hash its input, with nothing tying that digest to the edges it reported;
-    a stale table plus an honest hash passed. Returning them together means every answer
-    carries the identity of the unit it is an answer ABOUT, and the runner checks it on
-    every query, original and mutated alike.
+    THE INTERFACE IS `(provenance, {property: value})` — one object per unit, from which
+    the gate PROJECTS `edges`, `roots`, `completion` and `indirect` itself.
+
+    WHAT THAT FIXES, and it is the second narrowing of this claim. Round 15 asked
+    `provider(unit, prop)` and required each answer to arrive with the digest. Reviewers
+    refuted the sentence that shipped with it — "the coupling is what makes a stale graph
+    fail" — using the self-test's own `_bound`, which hands any value-only provider a
+    correct digest for free: stale VALUES are caught by the ordinary expectation checks,
+    never by the digest. Worse, querying properties separately allowed `edges`,
+    `completion` and `indirect` to come from INCONSISTENT snapshots wearing the same
+    digest, since nothing required them to come from the same object.
+
+    WHAT PROVENANCE ESTABLISHES, in one sentence, and it is all it establishes: every
+    property the gate reads for a unit is projected from ONE object the provider labelled
+    with the digest of the bytes it was handed — so the answers cannot be assembled from
+    different snapshots and cannot wear another unit's identity — and DERIVATION from those
+    bytes is not established at all: a provider that hashes its input while returning a
+    remembered graph passes, which `_bound` in this file's self-test does on purpose. That
+    is acceptable because derivation is the boundary no in-corpus check can cross (it is
+    the residue this gate prints), and because the two things this DOES rule out —
+    per-property snapshot skew and a stale label — are real defects a wired provider can
+    have without anyone noticing.
 
     Today nothing is wired, so every row fails — which is correct and is the property an
     `observable` lacked: there is no artifact whose mere existence satisfies this.
@@ -317,7 +335,8 @@ CALLGRAPH_PROVIDER_OVERRIDE = None   # self-test injection point
 
 # Identifiers the metamorphic family renames at run time. Not `main` (a declared entry
 # root, and renaming it changes the property under test) and not builtins.
-FAMILY_RENAMEABLE = ("helper", "extra", "ok", "stop", "target", "run", "Buf", "Log", "len")
+FAMILY_RENAMEABLE = ("helper", "extra", "ok", "stop", "target", "other", "run", "Buf",
+                     "Log", "len", "f", "g")
 
 
 def family_instance(source: str, expect: str, expect_mut: str, mutation: str, seed: str):
@@ -346,17 +365,43 @@ def family_instance(source: str, expect: str, expect_mut: str, mutation: str, se
     return rename(source), rename(expect), rename(expect_mut), rename(mutation)
 
 
-def _ask_provider(source: str, prop: str):
+def _ask_provider(source: str):
     if CALLGRAPH_PROVIDER_OVERRIDE is not None:
-        return CALLGRAPH_PROVIDER_OVERRIDE(source, prop)
-    return callgraph_provider(source, prop)
+        return CALLGRAPH_PROVIDER_OVERRIDE(source)
+    return callgraph_provider(source)
 
 
 INDIRECT_RESOLVED = "resolved:"
+INDIRECT_EMPTY = "(none)"
+
+
+def indirect_entries(value: str) -> list[tuple[str, str]]:
+    """A site-keyed `indirect` answer, parsed. -> [(site, state)]; `(none)` -> [].
+
+    THE ENCODING WAS SCALAR AND THE CONTRACT IS PER SITE. `resolved:a,b` could not
+    distinguish TWO TARGETS FOR ONE SITE from ONE TARGET FOR EACH OF TWO SITES, so "every
+    indirect call site" was enforceable only on a program with exactly one — which is the
+    only program the corpus had. The answer is now a sorted, comma-separated list of
+    `<site>=<state>`, where a site is `<caller>><callee-expression>` (`#<n>`, in source
+    order, when a caller invokes the same expression more than once) and a state is
+    `unresolved` or `resolved:` with `;`-separated targets.
+
+    An entry with no `=` is returned with an empty site, so it is a WRONG ANSWER and dies
+    in the score rather than here: the grammar refuses one thing only, and the one thing is
+    named in `indirect_grammar_or_raise`.
+    """
+    s = str(value).strip()
+    if s == INDIRECT_EMPTY or not s:
+        return []
+    out = []
+    for entry in s.split(","):
+        site, sep, state = entry.strip().partition("=")
+        out.append((site.strip(), state.strip()) if sep else ("", entry.strip()))
+    return out
 
 
 def indirect_grammar_or_raise(rid: str, value: str) -> None:
-    """THE CONTRACT CLAUSE THAT WAS PINNED AND NOT IMPLEMENTED.
+    """THE CONTRACT CLAUSE THAT WAS PINNED AND NOT IMPLEMENTED, now applied PER SITE.
 
     GI-11's text carries two clauses that read as one — "indirect targets resolved or the
     edge declared unresolved" and "unresolved target = HARNESS FAILURE distinct from
@@ -371,21 +416,24 @@ def indirect_grammar_or_raise(rid: str, value: str) -> None:
         a resolution from a declination and refuses to score the row rather than read it as
         either.
 
-    So this raises ONLY on `resolved:` with an empty target list. `unresolved` is a legal
-    answer, a wrong or missing answer is a scored row failure, and neither reaches here.
+    So this raises ONLY on an entry whose state is `resolved:` with an empty target list.
+    `unresolved` is a legal state, a wrong or missing entry is a scored row failure, and a
+    duplicated site key is a wrong answer too — the grammar refuses ONE situation, the one
+    the gate cannot classify, and everything else is left to the score.
     """
-    s = str(value).strip()
-    if not s.startswith(INDIRECT_RESOLVED):
-        return
-    if [t for t in s[len(INDIRECT_RESOLVED):].split(",") if t.strip()]:
-        return
-    raise HarnessError(
-        f"{CALLGRAPH_CORPUS.name}: {rid}: the provider answered {s!r} — it claims to have "
-        "RESOLVED the indirect call site and names no target. The contract permits "
-        "resolving the site or declaring the edge `unresolved`; an answer that is neither "
-        "cannot be scored as either, so this is a HARNESS FAILURE. It is distinct from "
-        "OMISSION: a call site the graph drops silently is a scored graph failure, a "
-        "finding about the graph, and is not this.")
+    for site, state in indirect_entries(value):
+        if not state.startswith(INDIRECT_RESOLVED):
+            continue
+        if [t for t in state[len(INDIRECT_RESOLVED):].split(";") if t.strip()]:
+            continue
+        raise HarnessError(
+            f"{CALLGRAPH_CORPUS.name}: {rid}: the provider answered {str(value).strip()!r} "
+            f"— the call site {site or '(unnamed)'!r} claims to have been RESOLVED and "
+            "names no target. The contract permits resolving a site or declaring it "
+            "`unresolved`; an answer that is neither cannot be scored as either, so this "
+            "is a HARNESS FAILURE. It is distinct from OMISSION: a call site the graph "
+            "drops silently is a scored graph failure, a finding about the graph, and is "
+            "not this.")
 
 
 def callgraph_differential() -> tuple[list[tuple[str, str, str, str]], int]:
@@ -401,6 +449,9 @@ def callgraph_differential() -> tuple[list[tuple[str, str, str, str]], int]:
     unusable for this row), `original` (the answer for the submitted unit) or `mutation`
     (the answer for the unit with the fact removed), and the self-test asserts the exact
     per-row set for every injected provider.
+
+    EVERY PROPERTY IS PROJECTED FROM ONE SNAPSHOT PER UNIT. See `callgraph_provider` for
+    what that establishes and — equally important — what it does not.
     """
     if not CALLGRAPH_CORPUS.is_file():
         raise HarnessError(f"{CALLGRAPH_CORPUS} is missing — it IS the structural half of "
@@ -444,30 +495,50 @@ def callgraph_differential() -> tuple[list[tuple[str, str, str, str]], int]:
         # real parser would have received a literal backslash-n.
         return src.replace("\\n", "\n")
 
-    def query(unit: str, prop: str):
-        """One provider call. -> (value, problem). `unit` is a DECODED program.
+    snapshots: dict[str, tuple] = {}
 
-        PROVENANCE TRAVELS WITH THE ANSWER. The provider returns `(provenance, value)`; the
-        runner computes sha256 of the unit it just submitted and refuses the answer unless
-        the two agree. A provider that returns a bare value has not implemented the
-        interface, and a provider whose digest belongs to another unit is reporting a graph
-        that is not about the program it was asked about — both are row failures, on the
-        stage that made the call, and both used to be invisible because provenance was a
-        separate query about a separate program.
+    def snapshot(unit: str):
+        """The provider's ONE graph object for a unit. -> (graph, problem). CACHED.
+
+        THE CACHE IS THE MECHANISM, not an optimisation. Asking once per unit is what makes
+        "every property of a unit comes from one object" true of the GATE rather than hoped
+        for of the provider: there is no second call that could return a different snapshot
+        wearing the same digest. The self-test counts the calls and pins that there is
+        exactly one per distinct unit.
         """
-        got = _ask_provider(unit, prop)
+        if unit in snapshots:
+            return snapshots[unit]
+        got = _ask_provider(unit)
         if got is None:
-            return None, "no call graph is wired"
-        if not (isinstance(got, tuple) and len(got) == 2):
-            return None, (f"a bare {type(got).__name__} — the interface is "
-                          f"(provenance, answer), so this answer is bound to no unit")
-        prov, value = got
-        want = hashlib.sha256(unit.encode()).hexdigest()
-        if str(prov) != want:
-            return None, (f"provenance {str(prov)[:12]}…, but the unit submitted hashes to "
-                          f"{want[:12]}… — the graph is not bound to the program asked about")
+            out = (None, "no call graph is wired")
+        elif not (isinstance(got, tuple) and len(got) == 2):
+            out = (None, f"a bare {type(got).__name__} — the interface is "
+                         f"(provenance, graph), so nothing binds these answers to a unit")
+        else:
+            prov, graph = got
+            want = hashlib.sha256(unit.encode()).hexdigest()
+            if str(prov) != want:
+                out = (None,
+                       f"provenance {str(prov)[:12]}…, but the unit submitted hashes to "
+                       f"{want[:12]}… — the graph is not bound to the program asked about")
+            elif not isinstance(graph, dict):
+                out = (None, f"a {type(graph).__name__} where the snapshot should be a "
+                             f"property map — the properties cannot be shown to come from "
+                             f"one object")
+            else:
+                out = (graph, None)
+        snapshots[unit] = out
+        return out
+
+    def query(unit: str, prop: str):
+        """-> (value, problem). PROJECTED from the unit's one snapshot, not asked for."""
+        graph, problem = snapshot(unit)
+        if problem:
+            return None, problem
+        value = graph.get(prop)
         if value is None:
-            return None, "silence — a table with no entry for it is not a graph"
+            return None, (f"silence — this unit's snapshot answers no `{prop}`; "
+                          "a table with no entry for it is not a graph")
         return value, None
 
     def matches(got, expect: str) -> bool:
@@ -693,11 +764,14 @@ AGGREGATE_ROW = "D1-01"          # cites this command as its evidence: it is the
 # full SHA-256 over the whole normalized field has neither hole: any edit at all fails, and the
 # fix is to re-pin deliberately in the same commit.
 PINNED_ACCEPTANCE_SHA = {
-    # Re-pinned this round, deliberately: GI-11's acceptance text now SETTLES the indirect
-    # contract (two situations, not one), states provenance as an obligation carried by
-    # every graph answer rather than a property to be asked for, and names the projection
-    # the queries range over. The pin moved because the contract did.
-    "GI-11": "865db5522aa5e6cc7234ffb7e43ea42d9a383ec50131d27238695b6985e1e795",
+    # Re-pinned twice, deliberately, and the reasons are the review record. Round 15 settled
+    # the indirect contract (two situations, not one) and named the projection the queries
+    # range over. Round 16: provenance is ONE SNAPSHOT PER UNIT rather than a tag on each
+    # answer — the per-answer form proved only that the provider could hash its input, and
+    # let properties come from inconsistent snapshots — and the indirect clause is answered
+    # BY SITE KEY, because a scalar answer cannot address one site of two. The pin moves
+    # when the contract moves, and only then.
+    "GI-11": "27665d37e069ebabdb0bf2f37ae75c7dceb364200f849b04915f9fb645d5ec95",
     "GI-12": "f14b04ad415e5ee436829fef4f7b4c4865f26df29bc45f30dd7140caad7cea3a",
 }
 
@@ -1583,7 +1657,7 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "6dbe39529e77bca4ba94014bf530fb417c18203abbc45ca895babbcd4cca6c26"
+EXPECTED_CASE_SHA = "a0895a581aa867f5c8a22132f4ab2bab38e7a9be43f64bad0a9de56c8a1386f5"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -2173,6 +2247,22 @@ def self_test() -> int:
     # decidable rather than searched for in prose.
     case("GI-11 is adjudicated by this command, not by a named test — pinned, not grepped",
          _C["GI-11"], ("gate", "make thesis-exit", "-"), drives_main=False)
+    # AND THE JUDGEMENT ON `p_observable` ITSELF, mechanized instead of argued. Reviewers
+    # asked whether it and `observable_results` are dead code. The answer is RETAINED, and
+    # both halves of the reason are checked here rather than asserted: no THESIS row can
+    # reach the dispatch (so it is unreachable from `make thesis-exit`, which is why the
+    # token could never have named a live mechanism in the pin), and the manifest carries
+    # real `observable` rows for the 1.0 gate GI-10 owes. If that second number ever goes to
+    # zero this case fails, and the dispatch becomes a deletion candidate loudly.
+    _kinds = [r.split("\t") for r in
+              (ROOT / "docs/contributing/1.0-requirements.tsv").read_text().split("\n")]
+    _kinds = [f for f in _kinds if len(f) == 9 and not f[0].startswith("#")]
+    case("no THESIS row is an `observable`, so `make thesis-exit` cannot reach that dispatch",
+         [f[0] for f in _kinds if f[7] == "thesis" and f[4] == "observable"], [],
+         drives_main=False)
+    case("the manifest DOES carry `observable` rows for the 1.0 gate, which is why the "
+         "dispatch is retained rather than deleted",
+         len([f for f in _kinds if f[4] == "observable"]), 18, drives_main=False)
     _drive()
     out = _drive.last_output
     case("a green run SAYS liveness is not asserted, in its own output",
@@ -2220,11 +2310,13 @@ def self_test() -> int:
          _cg_total >= 5, True, drives_main=False)
     case("every structural row fails with no graph wired",
          len(_cg_fail), _cg_total, drives_main=False)
-    case("the row set is exactly the seven reviewed ids — scoped identities, roots, "
-         "order-independence, completion both ways, indirect, provenance binding",
+    case("the row set is exactly the eight reviewed ids — scoped identities, roots, "
+         "order-independence, completion both ways, indirect on one site AND on two, "
+         "provenance binding",
          sorted(EXPECTED_CALLGRAPH_IDS),
          ["completion-diverges", "completion-returns", "entry-roots", "indirect-declared",
-          "order-independent", "provenance-binding", "scoped-identity"], drives_main=False)
+          "indirect-multi-site", "order-independent", "provenance-binding",
+          "scoped-identity"], drives_main=False)
     case("`provenance` is no longer a property a provider can be asked for on its own",
          sorted({l.split("\t")[1] for l in CALLGRAPH_CORPUS.read_text().splitlines()
                  if l.strip() and not l.startswith("#")}),
@@ -2287,13 +2379,23 @@ def self_test() -> int:
     def _reasons(prov):
         return {rid: got for rid, _s, _w, got in _run(prov)[0]}
 
+    _PROPS = ("edges", "roots", "completion", "indirect")
+
     def _bound(fn):
-        """A value-only provider, wrapped into the `(provenance, answer)` interface with an
-        HONEST digest of whatever it was handed. Honest provenance is the adversary's easy
-        half — the coupling is what makes a stale graph fail."""
-        def _p(s, p):
-            v = fn(s, p)
-            return None if v is None else (_h.sha256(s.encode()).hexdigest(), v)
+        """A value-only provider, wrapped into the SNAPSHOT interface — one object per unit,
+        `(provenance, {property: value})`, with an honest digest of whatever it was handed.
+
+        NAMED FOR WHAT IT PROVES, WHICH IS NOTHING ABOUT THE PROVIDER. Handing a lookup a
+        correct digest is free, and reviewers used this very function to refute the round-15
+        sentence "the coupling is what makes a stale graph fail": stale VALUES are caught by
+        the ordinary expectation checks, never by the digest. `_bound` is kept deliberately
+        as the standing demonstration that provenance establishes origin-labelling and
+        single-object projection, and not derivation.
+        """
+        def _p(s):
+            graph = {prop: fn(s, prop) for prop in _PROPS}
+            graph = {k: v for k, v in graph.items() if v is not None}
+            return (_h.sha256(s.encode()).hexdigest(), graph) if graph else None
         return _p
 
     def _expectation_oracle(src, prop, seed_env):
@@ -2333,31 +2435,71 @@ def self_test() -> int:
         case("the EXPECTATION ORACLE passes every row — an exact-source lookup built from "
              "the corpus, so this proves the checks are mutually satisfiable and nothing "
              "about any implementation",
-             (_ok, _tot), (7, 7), drives_main=False)
+             (_ok, _tot), (8, 8), drives_main=False)
+
+        # ONE SNAPSHOT PER UNIT, AND THE GATE PROVES IT BY COUNTING (MUST-FIX 1). The claim
+        # is about the GATE's behaviour, not the provider's honesty: if the runner asks once
+        # per unit and projects, then no second call can hand back a different snapshot
+        # wearing the same digest. Two properties of one unit — `entry-roots`' program is
+        # read for `roots` by its own row and for `edges` by `order-independent`'s
+        # comparison — come from a single call, which is what the count shows.
+        _calls = []
+
+        def _counting(s):
+            _calls.append(s)
+            return _honest(s)
+        _run(_counting)
+        case("the gate asks the provider ONCE PER DISTINCT UNIT and projects every property "
+             "from that one snapshot — no call is repeated, so per-property snapshot skew "
+             "is impossible by construction rather than by trust",
+             (len(_calls), len(set(_calls))), (16, 16), drives_main=False)
+        case("...and 16 is two units per row (original and mutated) with NO extra call for "
+             "the second property of `entry-roots`' program",
+             len(_calls), 2 * _tot, drives_main=False)
+
         # right on the original, wrong on the mutation: the branch that never ran
-        def _wrong_mut(s, p):
+        def _wrong_mut(s):
             for rid, row in _cg.items():
-                if s == _fam(row, "SEED")[3] and p in (row[1], "edges"):
-                    return (_h.sha256(s.encode()).hexdigest(), "WRONG")
-            return _honest(s, p)
-        _score(_wrong_mut, "right on the original, wrong on the mutation")
-        case("right on the original, WRONG on the mutation -> ALL SEVEN rows fail, each at "
+                if s == _fam(row, "SEED")[3]:
+                    return (_h.sha256(s.encode()).hexdigest(),
+                            {prop: "WRONG" for prop in _PROPS})
+            return _honest(s)
+        _score(_wrong_mut, "right on the original, wrong on every mutation")
+        case("right on the original, WRONG on the mutation -> ALL EIGHT rows fail, each at "
              "the MUTATION stage",
              _stages(_wrong_mut), {rid: "mutation" for rid in _ids}, drives_main=False)
-        case("...and each of the seven names the wrong mutated answer as its reason",
+        case("...and each of the eight names the wrong mutated answer as its reason",
              sorted(r for r, g in _reasons(_wrong_mut).items() if "WRONG" in g), _ids,
              drives_main=False)
 
-        def _silent_mut(s, p):
+        # THE FIGURE THE ROADMAP QUOTED WITH NO CONTROL BEHIND IT (MUST-FIX 3). An adversary
+        # wrong on exactly ONE mutation is the thing `score < total` could not tell from an
+        # adversary wrong on all of them, and it was quoted as measured while nothing ran it.
+        _one_bad = _fam(_cg["scoped-identity"], "SEED")[3]
+
+        def _one_row_wrong(s):
+            if s == _one_bad:
+                return (_h.sha256(s.encode()).hexdigest(),
+                        {prop: "WRONG" for prop in _PROPS})
+            return _honest(s)
+        case("an adversary wrong on EXACTLY ONE mutation scores 7 of 8 — the figure the "
+             "roadmap quoted, now produced by something that runs",
+             _score(_one_row_wrong, "wrong on exactly one mutation"), (7, 8),
+             drives_main=False)
+        case("...and it fails exactly that one row, at the MUTATION stage — which is what "
+             "`score < total` could not distinguish from failing all eight",
+             _stages(_one_row_wrong), {"scoped-identity": "mutation"}, drives_main=False)
+
+        def _silent_mut(s):
             for rid, row in _cg.items():
                 if s == _fam(row, "SEED")[3]:
-                    return (_h.sha256(s.encode()).hexdigest(), None)
-            return _honest(s, p)
-        _score(_silent_mut, "right on the original, silent on the mutation")
-        case("right on the original, SILENT on the mutation -> ALL SEVEN fail at the "
+                    return (_h.sha256(s.encode()).hexdigest(), {})
+            return _honest(s)
+        _score(_silent_mut, "right on the original, silent on every mutation")
+        case("right on the original, SILENT on the mutation -> ALL EIGHT fail at the "
              "MUTATION stage",
              _stages(_silent_mut), {rid: "mutation" for rid in _ids}, drives_main=False)
-        case("...and each of the seven names silence, not a wrong answer, as its reason",
+        case("...and each of the eight names silence, not a wrong answer, as its reason",
              sorted(r for r, g in _reasons(_silent_mut).items()
                     if g.startswith("silence —")), _ids, drives_main=False)
 
@@ -2367,11 +2509,11 @@ def self_test() -> int:
         # the identical-to comparison and only dies on the mutation.
         _const = _bound(lambda s, p: "main>x")
         _score(_const, "a constant graph")
-        case("a constant graph fails every row, six at the ORIGINAL stage",
+        case("a constant graph fails every row, seven at the ORIGINAL stage",
              _stages(_const),
              {rid: ("mutation" if rid == "order-independent" else "original")
               for rid in _ids}, drives_main=False)
-        _silent = lambda s, p: None                                       # noqa: E731
+        _silent = lambda s: None                                          # noqa: E731
         _score(_silent, "a silent graph")
         case("a silent graph fails every row at the ORIGINAL stage, for want of a graph",
              _stages(_silent), {rid: "original" for rid in _ids}, drives_main=False)
@@ -2379,78 +2521,131 @@ def self_test() -> int:
              sorted(r for r, g in _reasons(_silent).items()
                     if g == "no call graph is wired"), _ids, drives_main=False)
 
-        # PROVENANCE IS COUPLED TO THE ANSWER (MUST-FIX 3). Both of these carry a CORRECT
-        # graph for every row: they pass every edge, root, completion and indirect check
-        # and fail only on the binding. With provenance answered as its own property they
-        # both scored 7/7 — a stale table plus an honest hash.
-        _unbound = lambda s, p: _expectation_oracle(s, p, "SEED")         # noqa: E731
+        # WHAT PROVENANCE DOES AND DOES NOT CATCH (MUST-FIX 1). All three of these carry a
+        # CORRECT graph for every row: they pass every edge, root, completion and indirect
+        # check and fail only on the shape or the label of the object carrying them. None of
+        # them shows that provenance catches a stale VALUE — nothing here does, because it
+        # does not: `_bound` above hashes whatever it is handed and passes.
+        _unbound = lambda s: {p: _expectation_oracle(s, p, "SEED") for p in _PROPS}
         _score(_unbound, "a correct graph returned without provenance")
-        case("a CORRECT graph returned as a bare value — no provenance — fails every row",
+        case("a CORRECT graph returned as a bare map — no provenance — fails every row",
              _stages(_unbound), {rid: "original" for rid in _ids}, drives_main=False)
 
-        def _stale_prov(s, p):
-            v = _expectation_oracle(s, p, "SEED")
-            return None if v is None else (
-                _h.sha256(b"a unit this graph is not about").hexdigest(), v)
+        def _stale_prov(s):
+            got = _honest(s)
+            return None if got is None else (
+                _h.sha256(b"a unit this graph is not about").hexdigest(), got[1])
         _score(_stale_prov, "a correct graph carrying another unit's provenance")
-        case("a CORRECT graph carrying ANOTHER UNIT'S provenance fails every row — the "
-             "stale table with an honest hash, which used to pass",
+        case("a CORRECT graph carrying ANOTHER UNIT'S provenance fails every row — a "
+             "snapshot cannot wear an identity that is not the unit's",
              _stages(_stale_prov), {rid: "original" for rid in _ids}, drives_main=False)
         case("...and the reason names the binding, not the graph",
              sorted(r for r, g in _reasons(_stale_prov).items()
                     if "not bound to the program asked about" in g), _ids, drives_main=False)
 
-        # THE INDIRECT CONTRACT, BOTH CLAUSES (MUST-FIX 2). Settled as TWO situations:
-        # an edge whose target cannot be determined may be declared `unresolved`, and an
-        # answer that claims resolution while naming NO target cannot be scored at all.
+        def _not_a_map(s):
+            got = _honest(s)
+            return None if got is None else (got[0], "main>helper_SEED")
+        _score(_not_a_map, "a snapshot that is not a property map")
+        case("a snapshot that is not a PROPERTY MAP fails every row — the properties have "
+             "to be projectable from one object, not concatenated into one string",
+             _stages(_not_a_map), {rid: "original" for rid in _ids}, drives_main=False)
+
+        # THE INDIRECT CONTRACT, BOTH CLAUSES (MUST-FIX 2), NOW PER SITE. Settled as TWO
+        # situations: a site whose target cannot be determined may be declared `unresolved`,
+        # and a site that claims resolution while naming NO target cannot be scored at all.
         def _grammar_raises(v):
             try:
                 indirect_grammar_or_raise("indirect-declared", v)
             except HarnessError:
                 return True
             return False
-        case("the grammar refuses `resolved:` with an empty target list",
-             _grammar_raises("resolved:"), True, drives_main=False)
-        case("the grammar refuses `resolved:` carrying only separators",
-             _grammar_raises("resolved: , "), True, drives_main=False)
-        case("the grammar admits a resolution that names one target",
-             _grammar_raises("resolved:target"), False, drives_main=False)
-        case("the grammar admits `unresolved`", _grammar_raises("unresolved"), False,
+        case("the grammar refuses a site that claims `resolved:` and names nothing",
+             _grammar_raises("run>f=resolved:"), True, drives_main=False)
+        case("the grammar refuses it carrying only separators",
+             _grammar_raises("run>f=resolved: ; "), True, drives_main=False)
+        case("the grammar refuses ONE bad site among good ones — it is applied per entry, "
+             "which a scalar answer could not express",
+             _grammar_raises("run>f=resolved:target,run>g=resolved:"), True,
              drives_main=False)
+        case("the grammar admits a site resolved to one target",
+             _grammar_raises("run>f=resolved:target"), False, drives_main=False)
+        case("the grammar admits a site resolved to TWO targets",
+             _grammar_raises("run>f=resolved:target;other"), False, drives_main=False)
+        case("the grammar admits `unresolved`",
+             _grammar_raises("run>f=unresolved"), False, drives_main=False)
+        case("the grammar admits `(none)` — a unit with no indirect site at all",
+             _grammar_raises("(none)"), False, drives_main=False)
         case("the grammar leaves everything else to the SCORE — it is not a second "
              "wrong-answer check",
              _grammar_raises("maybe"), False, drives_main=False)
+        case("a scalar answer parses as ONE UNKEYED ENTRY, so it can never satisfy a "
+             "site-keyed row",
+             indirect_entries("resolved:target"), [("", "resolved:target")],
+             drives_main=False)
+        case("two sites parse as two entries",
+             indirect_entries("run>f=resolved:target,run>g=unresolved"),
+             [("run>f", "resolved:target"), ("run>g", "unresolved")], drives_main=False)
 
-        def _ind(alt):
-            def _p(s, p):
-                if p == "indirect" and s == _fam(_cg["indirect-declared"], "SEED")[0]:
-                    return (_h.sha256(s.encode()).hexdigest(), alt)
-                return _honest(s, p)
+        def _ind(alt, rid="indirect-declared"):
+            _u = _fam(_cg[rid], "SEED")[0]
+
+            def _p(s):
+                got = _honest(s)
+                if s == _u and got is not None:
+                    return (got[0], {**got[1], "indirect": alt})
+                return got
             return _p
 
-        def _ind_outcome(alt):
+        def _ind_outcome(alt, rid="indirect-declared"):
             """-> `passes`, the stage it failed at, or `harness failure`."""
             try:
-                fl, _t = _run(_ind(alt))
+                fl, _t = _run(_ind(alt, rid))
             except HarnessError:
                 return "harness failure"
-            for rid, stage, _w, _g in fl:
-                if rid == "indirect-declared":
+            for _rid, stage, _w, _g in fl:
+                if _rid == rid:
                     return stage
             return "passes"
-        case("clause one: a resolution NAMING A TARGET passes",
-             _ind_outcome("resolved:target_SEED"), "passes", drives_main=False)
-        case("clause one: `unresolved` passes — an edge whose target cannot be determined "
+        case("clause one: a site resolved to a target passes",
+             _ind_outcome("run_SEED>f_SEED=resolved:target_SEED"), "passes",
+             drives_main=False)
+        case("clause one: `unresolved` passes — a site whose target cannot be determined "
              "is a fact about the program, honestly reported",
-             _ind_outcome("unresolved"), "passes", drives_main=False)
-        case("clause two: `resolved:` naming NO target is a HARNESS FAILURE — the gate "
-             "cannot tell a resolution from a declination, so it refuses to score",
-             _ind_outcome("resolved:"), "harness failure", drives_main=False)
+             _ind_outcome("run_SEED>f_SEED=unresolved"), "passes", drives_main=False)
+        case("clause two: a site claiming resolution with NO target is a HARNESS FAILURE — "
+             "the gate cannot tell a resolution from a declination, so it refuses to score",
+             _ind_outcome("run_SEED>f_SEED=resolved:"), "harness failure", drives_main=False)
         case("and OMISSION is the other situation, SCORED not refused: a graph that drops "
              "the call site fails the row",
              _ind_outcome("(none)"), "original", drives_main=False)
         case("an answer that is neither resolution nor declination is scored, not refused",
              _ind_outcome("maybe"), "original", drives_main=False)
+        case("THE SITE KEY IS LOAD-BEARING: the old scalar answer, correct in every other "
+             "respect, no longer satisfies the single-site row",
+             _ind_outcome("resolved:target_SEED"), "original", drives_main=False)
+
+        # THE MULTI-SITE ROW — what a scalar answer could not express at all.
+        _MS = "indirect-multi-site"
+        _ms = ("run_SEED>f_SEED={}," "run_SEED>g_SEED={}")
+        case("two sites, both resolved, passes",
+             _ind_outcome(_ms.format("resolved:target_SEED", "resolved:other_SEED"), _MS),
+             "passes", drives_main=False)
+        case("two sites, one resolved and one declared, passes — the contract is per site, "
+             "so a provider may resolve what it can and declare what it cannot",
+             _ind_outcome(_ms.format("resolved:target_SEED", "unresolved"), _MS), "passes",
+             drives_main=False)
+        case("DROPPING ONE OF TWO SITES fails the row — the omission a single-site corpus "
+             "could not detect",
+             _ind_outcome("run_SEED>f_SEED=resolved:target_SEED", _MS), "original",
+             drives_main=False)
+        case("`resolved:a;b` on ONE site is not the same answer as one target on each of "
+             "two — the ambiguity the scalar encoding could not resolve",
+             _ind_outcome("run_SEED>f_SEED=resolved:target_SEED;other_SEED", _MS),
+             "original", drives_main=False)
+        case("one bad site among two is a HARNESS FAILURE, not a score",
+             _ind_outcome(_ms.format("resolved:target_SEED", "resolved:"), _MS),
+             "harness failure", drives_main=False)
 
         # THE MEASUREMENT: a table of every program and every mutation
         _tbl = {}
@@ -2462,22 +2657,22 @@ def self_test() -> int:
         # the adversary also reads the identical-to comparison and tabulates its edges
         _tbl[(_fam(_cg["entry-roots"], "SEED")[0], "edges")] = "main>helper_SEED"
         _exact = _bound(lambda s, p: _tbl.get((s, p)))
-        case("a table of ALL originals AND ALL mutations still passes 7 of 7 — a finite "
+        case("a table of ALL originals AND ALL mutations still passes 8 of 8 — a finite "
              "public corpus cannot defeat a reader, and hashing its input satisfies "
              "provenance on the way past",
-             _score(_exact, "an exact-source table, seed pinned"), (7, 7), drives_main=False)
+             _score(_exact, "an exact-source table, seed pinned"), (8, 8), drives_main=False)
     finally:
         _os.environ.pop("THESIS_FAMILY_SEED", None)
-    case("with a FRESH seed per run that same table scores exactly 0 of 7",
-         _score(_exact, "the same table under a fresh seed"), (0, 7), drives_main=False)
+    case("with a FRESH seed per run that same table scores exactly 0 of 8",
+         _score(_exact, "the same table under a fresh seed"), (0, 8), drives_main=False)
 
-    # THE CEILING, EXECUTABLE (MUST-FIX 5). Its number was quoted in the gate's output and
-    # tested by finding the string "7/7" in prose; no adversary existed. This one runs.
+    # THE CEILING, EXECUTABLE (MUST-FIX 5 of round 15). Its number was quoted in the gate's
+    # output and tested by finding the string "7/7" in prose; no adversary existed.
     _SEEDPAT = re.compile(r"_(?:m[0-9a-f]{6}|SEED)\b")
     _norm_tbl = {(_SEEDPAT.sub("", src), p): val.replace("_SEED", "\x00")
                  for (src, p), val in _tbl.items()}
 
-    def _normalising(s, p):
+    def _norm_lookup(s, p):
         """Normalise identifiers, look up, re-apply the run's suffix. NOT an implementation
         of anything — it computes no graph — and it scores full marks, which is why the
         residue says these rows reject SPECIFIC strategies rather than wrong ones."""
@@ -2485,19 +2680,48 @@ def self_test() -> int:
         if tmpl is None:
             return None
         found = re.search(r"_(m[0-9a-f]{6}|SEED)\b", s)
-        return (_h.sha256(s.encode()).hexdigest(),
-                tmpl.replace("\x00", "_" + found.group(1) if found else ""))
+        return tmpl.replace("\x00", "_" + found.group(1) if found else "")
+    _normalising = _bound(_norm_lookup)
     case("an adversary that NORMALISES identifiers, looks up and re-suffixes scores "
-         "exactly 7 of 7 under a fresh seed — the metamorphic family's ceiling, measured "
-         "rather than asserted",
-         _score(_normalising, "an identifier-normalising adversary"), (7, 7),
+         "exactly 8 of 8 under a fresh seed — the metamorphic family's ceiling, measured "
+         "rather than asserted, and it satisfies the provenance obligation by hashing "
+         "whatever it is handed",
+         _score(_normalising, "an identifier-normalising adversary"), (8, 8),
          drives_main=False)
+
+    # THE SCOREBOARD, PINNED BY LABEL. The previous round compared SETS of `N/N` tokens, so
+    # a figure could be attributed to the wrong adversary and pass, and a figure quoted in
+    # the roadmap was outside the text it read at all. That is why a 6/7 with no control
+    # behind it survived a check whose label said every quoted score was measured.
+    case("the adversary scoreboard is exactly this — label -> score, so attribution is "
+         "checked and not merely membership in a set of numbers",
+         _MEASURED,
+         {"the expectation oracle": (8, 8),
+          "right on the original, wrong on every mutation": (0, 8),
+          "wrong on exactly one mutation": (7, 8),
+          "right on the original, silent on every mutation": (0, 8),
+          "a constant graph": (0, 8),
+          "a silent graph": (0, 8),
+          "a correct graph returned without provenance": (0, 8),
+          "a correct graph carrying another unit's provenance": (0, 8),
+          "a snapshot that is not a property map": (0, 8),
+          "an exact-source table, seed pinned": (8, 8),
+          "the same table under a fresh seed": (0, 8),
+          "an identifier-normalising adversary": (8, 8)}, drives_main=False)
     case("the residual boundary is stated as ONE thing",
          len(GI11_HUMAN_REVIEW_RESIDUE), 1, drives_main=False)
-    case("every score the residue quotes was produced by an adversary in THIS run — no "
-         "figure is quoted that nothing measured",
+    case("every figure the RESIDUE quotes is a score measured this run (a set check over "
+         "ASCII `N/N` tokens — it cannot tell which adversary produced which, which is "
+         "what the scoreboard above is for)",
          sorted(set(re.findall(r"\b\d+/\d+\b", GI11_HUMAN_REVIEW_RESIDUE[0]))),
          sorted({f"{ok}/{tot}" for ok, tot in _MEASURED.values()}), drives_main=False)
+    case("no `x/<corpus size>` figure in the ROADMAP is unmeasured — the check that missed "
+         "a quoted 6/7 read only the residue string, and the figure was in MILESTONES.md",
+         sorted({tok for tok in re.findall(
+             r"\b\d+/\d+\b",
+             (ROOT / "docs/contributing/MILESTONES.md").read_text())
+             if tok.endswith(f"/{_tot}")}
+            - {f"{ok}/{tot}" for ok, tot in _MEASURED.values()}), [], drives_main=False)
     case("and the residue no longer claims that a wrong implementation fails in general",
          "a WRONG implementation" in GI11_HUMAN_REVIEW_RESIDUE[0], False,
          drives_main=False)
@@ -2547,18 +2771,27 @@ def self_test() -> int:
              next(r[0] for r in _diff_rows if r[2] == x and r[3] == s)]), 0, drives_main=False)
     # INJECTED, not grepped. This case used to search for an explanatory phrase, so it
     # would not have noticed the guard being deleted. Tenth sighting of that shape.
-    _saved_corpus = LIVENESS_CORPUS.read_text()
+    # POINTED AT A TEMPORARY FILE, NEVER WRITTEN OVER THE TRACKED ONE. This control used to
+    # blank tests/liveness-differential.tsv and restore it in a `finally`: a concurrent gate
+    # could read the empty corpus, and a SIGKILL between the two writes left the
+    # repository's corpus destroyed. The check is the same; the blast radius is not.
+    _empty_corpus = Path(tempfile.mkdtemp(prefix="thesis-empty-corpus-")) / LIVENESS_CORPUS.name
+    _empty_corpus.write_text("# every row removed\n")
+    _real_corpus = LIVENESS_CORPUS
+    globals()["LIVENESS_CORPUS"] = _empty_corpus
     try:
-        LIVENESS_CORPUS.write_text("# every row removed\n")
-        try:
-            liveness_differential()
-            _empty = "accepted"
-        except HarnessError:
-            _empty = "rejected"
+        liveness_differential()
+        _empty = "accepted"
+    except HarnessError:
+        _empty = "rejected"
     finally:
-        LIVENESS_CORPUS.write_text(_saved_corpus)
-    case("an emptied corpus is REJECTED — injected, not grepped for a phrase",
+        globals()["LIVENESS_CORPUS"] = _real_corpus
+    case("an emptied corpus is REJECTED — injected on a TEMPORARY path, so the control "
+         "cannot destroy the tracked corpus it is testing",
          _empty, "rejected", drives_main=False)
+    case("...and the tracked corpus is intact afterwards, with its pinned row count",
+         (LIVENESS_CORPUS == _real_corpus, liveness_differential()[1]),
+         (True, len(EXPECTED_LIVENESS_IDS)), drives_main=False)
 
     print("\n  the machine contract Make cannot carry")
     _rc = subprocess.run([sys.executable, str(ROOT / "scripts/thesis_exit.py")],
