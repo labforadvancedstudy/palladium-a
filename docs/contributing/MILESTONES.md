@@ -95,10 +95,11 @@ correct answers are already fixed**. GI-11 requires **two things, neither substi
 liveness answers are fixed by review, including the real witness's own shape (`compile_file`
 inside an `else`, genuinely reachable) and six metamorphic variants under alpha-renaming,
 reordering and inert whitespace — which proves the model's **verdicts**; and
-[`tests/callgraph-differential.tsv`](../../tests/callgraph-differential.tsv) — **eight** programs
+[`tests/callgraph-differential.tsv`](../../tests/callgraph-differential.tsv) — **nine** programs
 whose **graph outputs** are fixed by review (scoped call-site identities, declared entry roots,
 an order-independent fixed point, per-edge completion both ways, indirect targets
-resolved-or-declared **per call site**, on a one-site program and on a two-site one) — which
+resolved-or-declared **per call site**, on a one-site program, a two-site one, and one that
+calls the same expression twice) — which
 proves the model's **structure**. The acceptance *observable*
 cannot carry that: measured, an empty `#[test]` reports `1 passed`, so a body of `{}` satisfied
 the entire structural contract.
@@ -106,16 +107,21 @@ the entire structural contract.
 **Every structural row is fault-injected**, and **provenance is one snapshot per unit, not a
 row and not a per-answer tag**: the provider returns `(provenance, {property: value})`, the
 runner asks **once per unit**, checks the digest against the unit it submitted, and **projects**
-every property from that one object — 16 calls for 8 rows, counted in the self-test. Two earlier
+every property from that one object — 18 calls for 9 rows, counted in the self-test — and the count is derived from the corpus,
+not written down. Two earlier
 shapes were refuted by review: as its own property it proved only that the provider could hash
 its input, and as a tag on each answer it still proved only that, while letting `edges`,
 `completion` and `indirect` come from **inconsistent snapshots wearing the same digest**.
 
-**What provenance establishes, exactly:** every property the gate reads for a unit comes from one
-object the provider labelled with the digest of the bytes it was handed — so the answers cannot
-be assembled from different snapshots and cannot wear another unit's identity. It establishes
-**nothing about derivation**: a provider that hashes its input while returning a remembered graph
-passes, and the self-test's `_bound` does exactly that on purpose.
+**What this establishes, exactly — third narrowing, and it is a claim about the runner:** the
+**gate** makes one invocation per distinct unit and reads every property from a **copy**, taken at
+return, of the single container that invocation returned, labelled with the digest of the bytes the
+gate handed over. It does **not** establish that the provider *assembled* that container from one
+observation — the self-test's `_bound` builds it by calling its value source once per property, so
+its parts may come from different states, and it scores full marks — and it establishes **nothing
+about derivation**, for the same reason. The copy buys one small real thing: a provider handing
+back a live reference into a changing world cannot make two projections disagree. Both
+counterexamples are executable, and both pass.
 
 **The indirect contract, settled — and keyed by site.** GI-11's text carried two clauses that
 read as one. They name two situations: an indirect call site answered as a **resolution naming
@@ -123,22 +129,28 @@ one or more targets** or as **unresolved** both discharge the obligation, **omit
 site is a scored graph failure, and an answer that **claims resolution and names no target** is a
 **harness failure** — the gate cannot tell a resolution from a declination, so it refuses to
 score rather than read it as either. The pinned requirement says exactly that, and the corpus
-enforces it **per site**: the answer is `<caller>><callee-expression>=resolved:…|unresolved`,
-because a scalar `resolved:a,b` cannot distinguish two targets for one site from one target for
-each of two sites — so "every call site" was enforceable only on a program with exactly one,
-which was the only program the corpus had.
+enforces it **per site**, keyed by **position**: `<caller>#<n>=resolved:…|unresolved`, where `n`
+is the 1-based index of the site within the caller. A scalar `resolved:a,b` cannot distinguish two
+targets for one site from one target for each of two sites — so "every call site" was enforceable
+only on a program with exactly one, which was the only program the corpus had — and a key built
+from the *callee expression* could not round-trip, because the answer's delimiters are `,` `=` `;`
+`|` and there is no escaping. A position has none of them in it. `indirect-repeated-site` calls the
+same parameter twice, which is what makes the index an identity rather than a decoration.
 
 **What that does and does not establish, measured rather than argued.** A hardcoded table of all
-eight programs *and* all eight mutations scores **8/8**. Run-time metamorphic renaming takes that
-same table to **0/8** — but an adversary that normalises identifiers, looks up, and re-applies the
-suffix is back to **8/8**. So: **a finite, public corpus cannot defeat a reader.** Every one of
+nine programs *and* all nine mutations scores **9/9**. Run-time metamorphic renaming takes that
+same table to **0/9** — but an adversary that normalises identifiers, looks up, and re-applies the
+suffix is back to **9/9**. So: **a finite, public corpus cannot defeat a reader.** Every one of
 those figures is produced by an adversary that runs in the self-test, whose **scoreboard is pinned
-label → score**, and no `x/8` figure may appear *in this file* without a measurement behind it —
-the previous check read only the gate's own residue string, which is how a quoted **7/8** stood
-here for a round with nothing running it. What these rows establish is that **those specific
+label → score** and rejects duplicate labels, and **no score-shaped token may appear in any file
+that carries one** — this file, the corpus, the manifest and the gate itself — without a
+measurement behind it. The round-15 check read only the gate's residue string, which is how a
+quoted **8/9** stood here with nothing running it; the round-16 check added this file but not the
+gate's own source, which then quoted a superseded corpus size in four places. The current figures
+are *derived* from the row count, so they cannot rot. What these rows establish is that **those specific
 wrong-answer and exact-table strategies fail** — *not* that a wrong implementation fails in
-general, which the 8/8 normalising adversary refutes on the same page. Implementation
-authenticity and generalisation beyond these eight programs are human-review judgements at the
+general, which the 9/9 normalising adversary refutes on the same page. Implementation
+authenticity and generalisation beyond these nine programs are human-review judgements at the
 point GI-11 lands, and the gate says exactly that. That is **one** boundary, not
 a list — provenance used to be a second and is now mechanized. The wired lexical model **fails 7 of the 20**, and
 answering `live` everywhere, answering `dead` everywhere, and a renamed wrapper around the probe
@@ -257,7 +269,7 @@ Measured at this revision; every row names the command that produced it.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 190 unique cases, **checked** and digest-pinned; 45 exercise the fault-injection branch, **12 adversaries on a pinned label → score scoreboard**, and **12 cases assert the exact failing row set and the stage (`original`/`mutation`) each row failed at**. An adversary wrong on exactly one mutation scores **7/8** — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
+| Thesis gate itself | 207 unique cases, **checked** and digest-pinned; 61 exercise the fault-injection branch, **14 adversaries on a pinned label → score scoreboard that rejects duplicate labels**, and **13 cases assert the exact failing row set and the stage (`original`/`mutation`) each row failed at**. An adversary wrong on exactly one mutation scores **8/9** — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 239 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
