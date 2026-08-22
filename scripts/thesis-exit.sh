@@ -8,9 +8,17 @@
 # compile itself vacuously.
 #
 # The definition lives in docs/contributing/1.0-requirements.tsv — the rows whose
-# `disposition` is `thesis`. This command reads them and EXECUTES them; it does
-# not restate them. A definition that exists in two places and is checked in one
-# drifts silently, which is how this repository got `progress: 85%`.
+# `disposition` is `thesis`. This command reads and EXECUTES them, and it also
+# carries a version-controlled copy of the full contract (kind, evidence,
+# fingerprint) which it compares against them.
+#
+# That duplication is DELIBERATE and it is a reviewed cross-check, not a second
+# definition. The two copies catch different defects: the pin catches an edit to
+# the manifest, and `_validate_contract()` catches a defect in the pin itself —
+# a `reject` row pinned with no required fingerprint would otherwise match a
+# manifest that agreed with it, and the fingerprint comparison would be skipped.
+# Weakening both together is possible and is meant to be: it takes an edit to two
+# files in one commit, which is exactly the thing a reviewer can see.
 #
 # Conditions 2 and 3 are delegated to scripts/conformance.sh, which already
 # compiles, links, runs, diffs stdout against a recorded transcript, checks the

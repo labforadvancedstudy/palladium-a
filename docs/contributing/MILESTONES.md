@@ -63,14 +63,14 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **190 rows, 31 satisfied · 151 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **191 rows, 31 satisfied · 152 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
 | Disposition | Count | Meaning |
 |---|---|---|
 | `thesis` | 23 | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
-| `1.0` | 161 | the witnesses exercise it, or a `thesis` row rests on it |
+| `1.0` | 162 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
 Nothing is dropped silently. A requirement the thesis does not exercise is marked `post-1.0` in
@@ -157,13 +157,13 @@ Measured at `7484bac`, not read from the previous version of this file.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 56 cases — 43 drive the gate end to end against an injected repository state, 13 exercise a helper | `make test-thesis-runner` |
+| Thesis gate itself | 68 cases — 48 drive the gate end to end against an injected repository state, 20 exercise a helper | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 232 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 38 builtins accounted against a normative 34 | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 31 satisfied · 151 owed · 8 blocked, over 190 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 31 satisfied · 152 owed · 8 blocked, over 191 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -227,7 +227,11 @@ m5-exit: build
 	@REQ_MILESTONE=M5 bash scripts/requirements.sh
 ```
 
-`scripts/requirements.sh` does not exist yet. It is specified precisely enough to write:
+`scripts/requirements.sh` does not exist yet. It is specified precisely enough to write.
+(`make thesis-exit` is the same shape and already exists — note that it both reads the
+manifest *and* carries a version-controlled copy of the thesis contract to compare against
+it. That duplication is a reviewed cross-check, not a second definition: the pin catches an
+edit to the manifest, and the pin's own validator catches a defect in the pin.)
 
 1. Parse [`1.0-requirements.tsv`](1.0-requirements.tsv) — **nine** tab-separated columns, all
    mandatory. A row with a missing column, an unknown evidence kind, status or disposition is a
@@ -625,7 +629,7 @@ Six more probes of the same family, each now with a control that fails on revert
 And the self-test itself, for the second time: it called the probe helpers directly, so deleting
 the production wiring left every case green. It now builds a temporary repository — requirements
 TSV, witnesses, conformance verdicts, `make` results, effect reports — and drives `main()`,
-asserting the **exit code**. Fifty-six cases, of which five drop the injection entirely and drive
+asserting the **exit code**. Sixty-eight cases, of which five drop the injection entirely and drive
 the real subprocess boundary — including one where conformance, `pdc` and `make` all run and
 conclude successfully, so the *green* path is exercised and not only the failures. The one probe
 group with no negative control (the real `make` subprocess) is a **disclosure pinned verbatim**:
@@ -647,9 +651,17 @@ Cross-branch constraint, now enforced rather than hoped for: a reject fixture ca
 sibling branch **without a compiler change**, and a runner that sees only `REJECTED` cannot tell
 "refused because the prohibition is enforced" from "refused for incidental unsupported syntax".
 So the manifest gained a ninth column and each thesis reject row **names the diagnostic its
-refusal must carry**; the gate cross-checks that against the fingerprint the corpus declares,
-which `scripts/conformance.sh` has already matched against the actual diagnostic. A rejection at
-the wrong fingerprint is RED.
+refusal must carry**.
+
+The chain, stated exactly, because condition 3 rests on it: `scripts/conformance.sh:636` runs
+`grep_status F "$fp" "$TMPROOT/diag"`, and `grep_status` (`scripts/conformance.sh:145-152`)
+mode `F` is `grep -qF`. So the corpus's declared fingerprint is matched as a **literal
+substring of any line of the ANSI-stripped compiler log** (`scripts/conformance.sh:635`) — not
+an equality, not a regex. A log it cannot read is a third outcome, `HARNESS_ERROR`, kept
+distinct from "did not match" (`scripts/conformance.sh:684-689`). The thesis gate then requires
+the corpus's declaration to **equal** the fingerprint its row pins. Equality on the half this
+gate owns, substring on the half `conformance.sh` owns, and both stated rather than assumed —
+a sibling branch was caught doing substring where it meant equality.
 
 ### F13. The first thesis gate was blind in the way M1 spent itself curing
 

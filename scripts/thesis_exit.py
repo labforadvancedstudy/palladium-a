@@ -42,14 +42,23 @@ a conformance run that did not conclude, a `pdc` that died or rejected the witne
 are malfunctions and exit 2. Conflating them is how a failure to measure gets read as a
 passing measurement.
 
-THE ROW SET IS CLOSED
----------------------
+THE ROW SET IS CLOSED, AND THE PIN IS A CROSS-CHECK
+---------------------------------------------------
 The definition lives in docs/contributing/1.0-requirements.tsv, in the rows whose
-`disposition` is `thesis`. That set is PINNED here by id. Adding a row, removing one,
-renaming one, or retyping one so it stops being dispatched is a harness error — exactly as
-tests/conformance-manifest.txt treats an undeclared or missing fixture. Every row produces
-exactly one result and that is asserted, because "the summary printed 23" while a retyped
-row was silently skipped is the same defect one level up.
+`disposition` is `thesis`. `EXPECTED_THESIS_CONTRACT` below is a version-controlled copy
+of the full contract — id, kind, evidence locator, required fingerprint — compared against
+the manifest on every run.
+
+The duplication is the point, and it is a REVIEWED CROSS-CHECK rather than a second
+definition. Each copy catches what the other cannot: the pin catches an edit to the
+manifest (retyping a `reject` row to `fixture` turns a negative test into a positive one),
+and `_validate_contract()` catches a defect in the pin (a `reject` row pinned with `-`
+would match a manifest that agreed with it, and `p_verdict` would then skip the
+fingerprint comparison entirely). Weakening both in one commit is possible and is meant to
+be: it is a diff a reviewer can see, which is the level this is defended at.
+
+Every row produces exactly one result and that is asserted, because "the summary printed
+23" while a retyped row was silently skipped is the same defect one level up.
 
 Usage:
     scripts/thesis-exit.sh                exit 0 only when 1.0 is real
@@ -64,6 +73,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 import tempfile
 from contextlib import redirect_stdout
 from dataclasses import dataclass, field
@@ -265,7 +275,12 @@ ASYNC_TOKEN = re.compile(r"(?:^|[^A-Za-z_0-9])(async|await)(?:[^A-Za-z_0-9]|$)")
 REF_REGION = re.compile(r"(?<![A-Za-z_0-9])ref\s*<\s*'[A-Za-z_0-9]*\s*>")
 LIFETIME_LIST = re.compile(r"<\s*'")
 
-FN_HEADER = re.compile(r"(?<![A-Za-z_0-9])fn\s+([A-Za-z_][A-Za-z_0-9]*)\s*\(")
+# grammar.ebnf:91-92 is `"fn" identifier [ generic_params ] '('`, so the generic
+# parameter list is OPTIONAL AND MUST BE MATCHED. Without it `fn generic<T>(x: T)`
+# matched nothing at all: the function was not in `bodies`, so it was neither a
+# reachable target nor a caller — invisible in both directions.
+FN_HEADER = re.compile(
+    r"(?<![A-Za-z_0-9])fn\s+([A-Za-z_][A-Za-z_0-9]*)\s*(<[^(){}]*>)?\s*\(")
 REF_PARAM = re.compile(r":\s*ref(?:\s*<[^>]*>)?(?:\s+mut)?\s+[A-Za-z_\[(]")
 TOTAL_ON_FN = re.compile(
     r"#!?\[\s*total\s*(?:\([^)]*\))?\s*\]\s*(?:#!?\[[^\]]*\]\s*)*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z_0-9]*)"
@@ -325,6 +340,7 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
     A parameter in dead code is an ornament: it shows the syntax parses, not that the
     compiler is written against references. Same discipline as `p_total_on_fn`.
     """
+    require_modellable(src, "TH-03 / `ref` parameter reachability")
     bodies = function_bodies(src)
     reachable = reachable_from_main(bodies)
     if not reachable:
@@ -342,21 +358,128 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
     return False, "no `fn` declares a `ref` / `ref mut` PARAMETER"
 
 
-def reachable_from_main(bodies: dict[str, str]) -> set[str]:
-    """Functions the program can actually run.
+# --- THE STATIC-REACHABILITY CONTRACT ------------------------------------------------
+#
+# All three differentiator probes ask the same question — "is this on a path the program
+# can actually run?" — so the answer needs a written contract rather than whatever a
+# regex happens to do. This is that contract. It is deliberately small and deliberately
+# LOUD at its edges.
+#
+#   R1  A CALL is `name(` appearing in a function body, where `name` is a function
+#       defined in the same compilation unit. Self-edges do not count: a function's own
+#       recursive call is not evidence anything reaches it.
+#
+#   R2  A call inside a block guarded by a LITERAL FALSE condition — `if false { … }`,
+#       `while false { … }` — is NOT a call. This is the only folding performed, and the
+#       minimality is the point: it refuses the cheapest ornament without pretending to
+#       be a partial evaluator. `if 1 == 2 { … }` is NOT folded; it is modelled as live,
+#       which over-approximates, which is the safe direction for a gate that is trying to
+#       catch decoration.
+#
+#   R3  An INDIRECT call has no statically visible target: dispatch through a trait bound
+#       (`T::method(…)` where `T` is a type parameter), a `.`-method call, a closure, or a
+#       function value. A GENERIC FUNCTION IS NOT ITSELF INDIRECT — `fn map<T>(x: T)` is
+#       called as `map(…)` and that edge is perfectly visible, which is why the fix for it
+#       was to teach FN_HEADER the optional parameter list, not to give up. What the model
+#       cannot see is the DISPATCH, not the genericity.
+#
+#   R4  THEREFORE: any construct whose edges this model cannot see is a HARNESS ERROR,
+#       not a silent edge and not a silent non-edge. The gate stops and says it cannot
+#       measure (exit 2) instead of returning an answer it cannot support.
+#
+#       This matters more than it looks. M3 — the very next milestone — is traits and
+#       generics, moved to second on the argument that bootstrap/pdc.pd is 991 lines
+#       BECAUSE it cannot abstract. Trait-bound dispatch and `.`-methods arrive with it,
+#       and a model that silently under-approximated would falsely reject a legitimate
+#       1.0 compiler for using the features this roadmap schedules first. Failing loudly
+#       turns that into a prompt to replace the model rather than a wrong verdict.
+#
+#   R5  The replacement is not a better regex. `pdc` already builds a call graph for
+#       effect analysis; the gate should consume it. That is requirement GI-11, owned by
+#       M3, so it is scheduled rather than merely regretted.
 
-    THE SINGLE DISCIPLINE FOR ALL THREE DIFFERENTIATOR PROBES. It was written for
-    `#[total]` and applied only there, so `fn ornament(x: ref T)` in dead code satisfied
-    the reference probe and an unreachable caller->callee->builtin chain satisfied the
-    effect probe: the thesis could go green while the compiler's live path used neither
-    differentiator, which is precisely the claim "rewritten in the dialect" makes.
+FALSE_BLOCK = re.compile(r"(?<![A-Za-z_0-9])(if|while)\s+false\s*\{")
+FN_TYPE_PARAM = re.compile(r":\s*fn\s*\(")
+CLOSURE = re.compile(r"\|[^|\n]*\|\s*(\{|[A-Za-z_0-9])")
+METHOD_CALL = re.compile(r"\.\s*[A-Za-z_][A-Za-z_0-9]*\s*\(")
+
+UNMODELLABLE = (
+    (FN_TYPE_PARAM, "a function-typed parameter — R3/R4"),
+    (CLOSURE, "a closure — R3/R4"),
+    (METHOD_CALL, "a `.`-method call — R3/R4"),
+)
+
+# Dispatch through a type parameter: `T::method(…)` where `T` is bound by the enclosing
+# function's generic list. This is what actually arrives with M3, and it is the case the
+# model must refuse rather than guess at.
+GENERIC_PARAMS = re.compile(
+    r"(?<![A-Za-z_0-9])fn\s+[A-Za-z_][A-Za-z_0-9]*\s*<([^(){}]*)>\s*\(")
+
+
+def unmodellable(src: str) -> list[str]:
+    """Constructs whose call edges R1-R3 cannot see. Non-empty means: do not answer."""
+    found = [why for pat, why in UNMODELLABLE if pat.search(src)]
+    params = set()
+    for m in GENERIC_PARAMS.finditer(src):
+        for raw in m.group(1).split(","):
+            name = raw.split(":")[0].strip().lstrip("'")
+            # A lifetime-only list (`fn f<'a>(…)`) binds no type, so it dispatches
+            # nothing; TH-02 already gives a definitive answer about it.
+            if name and not raw.strip().startswith("'"):
+                params.add(name)
+    for tp in sorted(params):
+        if re.search(rf"(?<![A-Za-z_0-9]){re.escape(tp)}::\s*[A-Za-z_]", src):
+            found.append(f"dispatch through the type parameter `{tp}::…` — R3/R4")
+    return found
+
+
+def require_modellable(src: str, what: str) -> None:
+    found = unmodellable(src)
+    if found:
+        raise HarnessError(
+            f"{what}: this gate's reachability model cannot see the call edges of "
+            + "; ".join(found)
+            + ". Refusing to report reachability it cannot support — see the "
+              "static-reachability contract in scripts/thesis_exit.py (R4), and GI-11, "
+              "which replaces this model with the compiler's own call graph.")
+
+
+def strip_false_blocks(body: str) -> str:
+    """R2. Remove `if false { … }` / `while false { … }`, braces balanced."""
+    out, i = [], 0
+    while i < len(body):
+        m = FALSE_BLOCK.search(body, i)
+        if not m:
+            out.append(body[i:])
+            break
+        out.append(body[i:m.start()])
+        depth, j = 0, m.end() - 1
+        while j < len(body):
+            if body[j] == "{":
+                depth += 1
+            elif body[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    j += 1
+                    break
+            j += 1
+        i = j
+    return "".join(out)
+
+
+def reachable_from_main(bodies: dict[str, str]) -> set[str]:
+    """Functions the program can actually run, per the contract above.
+
+    The single discipline for all three differentiator probes. Written for `#[total]`
+    and once applied only there, so `fn ornament(x: ref T)` in dead code satisfied the
+    reference probe and an unreachable chain satisfied the effect probe.
     """
     if "main" not in bodies:
         return set()
     reachable, frontier = {"main"}, ["main"]
     while frontier:
         cur = frontier.pop()
-        for c in callees(bodies.get(cur, ""), exclude=cur):
+        for c in callees(strip_false_blocks(bodies.get(cur, "")), exclude=cur):
             if c in bodies and c not in reachable:
                 reachable.add(c)
                 frontier.append(c)
@@ -372,6 +495,7 @@ def p_total_on_fn(src: str) -> tuple[bool, str]:
     names = [m.group(1) for m in TOTAL_ON_FN.finditer(src)]
     if not names:
         return False, "no `#[total]` attached to a `fn`"
+    require_modellable(src, "TH-04 / #[total] reachability")
     bodies = function_bodies(src)
     reachable = reachable_from_main(bodies)
     if not reachable:
@@ -391,6 +515,7 @@ def p_effect_is_transitive(report: str, src: str) -> tuple[bool, str]:
     call passed for a function that calls NOTHING — a fabricated or over-approximated
     report then proved the property. The edge caller -> callee -> builtin is exhibited.
     """
+    require_modellable(src, "TH-05 / effect-propagation reachability")
     bodies = function_bodies(src)
     reported = {}
     for line in report.splitlines():
@@ -502,8 +627,13 @@ def p_verdict(ctx, verdicts, path, kind, want_fp) -> tuple[bool, str]:
         # sibling branch can turn a reject fixture green with no compiler change. So the
         # row names the fingerprint and the corpus must declare it; conformance.sh has
         # already matched that declaration against the actual diagnostic.
+        # EQUALITY, not substring. Both sides of this comparison are ours — the row's
+        # pin and the corpus's declaration — so there is no reason to be loose, and
+        # `conformance.sh` is already substring-matching the declaration against the real
+        # diagnostic (`grep -qF`, scripts/conformance.sh:145-152,636). Being loose here
+        # too would compound two approximations into one unstated one.
         decl = declared_fingerprint(ctx, path)
-        if want_fp.lower() not in decl.lower():
+        if want_fp.strip() != decl.strip():
             return False, (f"{path} is REJECTED, but for the wrong reason: the corpus "
                            f"declares '{decl or '(none)'}' and this row requires '{want_fp}'")
         return True, f"{path} REJECTED at '{decl}'"
@@ -804,6 +934,30 @@ WITNESS2 = _C["WT-02"][1]
 GOOD_MAKE = {"selfhost": 0, "selfhost-corpus": 0, "thesis-exit": 0}
 
 
+def mutate(text: str, old: str, new: str, expect: int = 1) -> str:
+    """Replace `old` with `new`, asserting it matched EXACTLY `expect` times.
+
+    THE MECHANICAL ANSWER to a shape this gate has now hit four times: a control whose
+    `str.replace` silently becomes a no-op, so the case passes by asserting that an
+    unmutated state is unchanged. `_verdict()` closed it for verdict lines; every other
+    synthetic edit — witness sources, fingerprint maps — went through raw `str.replace`
+    and had the same hole. Now nothing does.
+    """
+    if old == new:
+        # An identity "mutation" is a control that tests nothing, exactly like one that
+        # matches nothing. Same defect, and it would read as deliberate in a diff.
+        raise HarnessError(f"self-test: mutation {old!r} replaces text with itself")
+    n = text.count(old)
+    if n != expect:
+        raise HarnessError(
+            f"self-test: mutation {old!r} matched {n} time(s), expected {expect}. "
+            "A control that mutates nothing tests nothing.")
+    out = text.replace(old, new)
+    if out == text and old != new:
+        raise HarnessError(f"self-test: mutation {old!r} changed nothing")
+    return out
+
+
 def _verdict(row_id: str, verdict: str) -> str:
     """ALL_VERDICTS with one row's verdict replaced — and an ASSERTION that it changed.
 
@@ -823,8 +977,9 @@ def _verdict(row_id: str, verdict: str) -> str:
 # Every pinned reject fingerprint, so the all-green state really is all-green. One entry
 # used to cover one row; the other five rows had `-` and skipped the comparison, which is
 # the hole MF2 closed.
-GOOD_FP = {ev: f"error: {fp} here" for kind, ev, fp in _C.values()
-           if kind == "reject" and fp != "-"}
+# The corpus must declare EXACTLY the pinned fingerprint — that is the contract the gate
+# enforces, and conformance.sh then greps that literal against the real diagnostic.
+GOOD_FP = {ev: fp for kind, ev, fp in _C.values() if kind == "reject" and fp != "-"}
 
 
 def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=None,
@@ -924,8 +1079,16 @@ def self_test() -> int:
          _drive(verdicts=_verdict("N8-01", "OUTPUT_MISMATCH")), 1)
     case("a DECLARED, ABSENT fixture goes RED — silence is not a pass",
          _drive(verdicts=_verdict("N9-03", "")), 1)
+    # ONE real pinned path is mutated and the other five keep their correct declarations,
+    # so the only thing that can turn this red is the fingerprint comparison. The previous
+    # version handed in a map for a path that is not in the contract at all: all six real
+    # rows then had no declaration, the run went red for THAT, and deleting the comparison
+    # outright would not have turned it green.
     case("REJECTED for the WRONG reason goes RED (incidental unsupported syntax)",
-         _drive(fingerprints={"r/async_fn.pd": "Unsupported type in reference parameter"}), 1)
+         _drive(fingerprints={**GOOD_FP,
+                              _C["N9-06"][1]: "Unsupported type in reference parameter"}), 1)
+    case("the other five declarations are untouched by that mutation",
+         len(GOOD_FP), 6, drives_main=False)
     case("REJECTED at the fingerprint the row demands is green", _drive(), 0)
 
     print("\n  condition 1 — the witnesses, and the gates beneath them")
@@ -938,19 +1101,19 @@ def self_test() -> int:
     case("`myref<'a>` goes RED — the ref<'…> exemption needs an identifier boundary",
          _drive(witness_b=GOOD_WITNESS + "fn myref<'a>(x: i64) -> i64 { return x; }\n"), 1)
     case("`ref<'a> T` is PERMITTED by N9 and stays green",
-         _drive(witness_b=GOOD_WITNESS.replace("x: ref String", "x: ref<'a> String")), 0)
+         _drive(witness_b=mutate(GOOD_WITNESS, "x: ref String", "x: ref<'a> String")), 0)
     case("no `ref` PARAMETER (a struct field only) goes RED",
-         _drive(witness_b="struct S { x: ref String }\n" + GOOD_WITNESS.replace(
-             "fn drive(x: ref String, mut c: C)", "fn drive(mut c: C)").replace(
+         _drive(witness_b="struct S { x: ref String }\n" + mutate(
+             mutate(GOOD_WITNESS, "fn drive(x: ref String, mut c: C)", "fn drive(mut c: C)"),
              "drive(s, c)", "drive(c)")), 1)
     # These two keep the REST of witness 2 green, so the only thing that can turn the run
     # red is the property under test. An earlier draft mutated the witness so heavily that
     # TH-05 failed too, and the cases passed for the wrong reason.
     case("a `ref` parameter only on an UNREACHABLE fn goes RED",
-         _drive(witness_b=GOOD_WITNESS.replace("fn drive(x: ref String, mut c: C)",
-                                               "fn drive(mut c: C)")
-                                      .replace("drive(s, c)", "drive(c)")
-                          + "fn ornament(x: ref String) -> i64 { return 1; }\n"), 1)
+         _drive(witness_b=mutate(
+             mutate(GOOD_WITNESS, "fn drive(x: ref String, mut c: C)", "fn drive(mut c: C)"),
+             "drive(s, c)", "drive(c)")
+             + "fn ornament(x: ref String) -> i64 { return 1; }\n"), 1)
     case("an effect chain only on UNREACHABLE functions goes RED",
          _drive(witness_b="fn emit(mut c: C, s: String) { file_write(c.out, s); }\n"
                           "fn header(mut c: C) { emit(c, \"x\"); }\n"
@@ -958,13 +1121,27 @@ def self_test() -> int:
                           "fn drive(x: ref String) -> i64 { return depth(1); }\n"
                           "fn main() { drive(s); }\n",
                 report_b="Function 'header' has effects: [Io]\n"), 1)
+    case("an ornament called only from `if false { … }` goes RED (R2)",
+         _drive(witness_b=mutate(GOOD_WITNESS, "fn main() { drive(s, c); }",
+                                 "fn main() { drive2(c); if false { drive(s, c); } }\n"
+                                 "fn drive2(mut c: C) { header(c); }")), 1)
+    case("a GENERIC function is visible to the model, not silently invisible (R3)",
+         _drive(witness_b=mutate(GOOD_WITNESS, "fn drive(x: ref String, mut c: C)",
+                                 "fn drive<T>(x: ref String, mut c: C)")), 0)
+    case("trait-bound dispatch `T::m(…)` is a HARNESS ERROR, never a guess (R4)",
+         _drive(witness_b=GOOD_WITNESS + "fn show<T: Display>(x: T) { T::fmt(x); }\n"), 2)
+    case("a `.`-method call is a HARNESS ERROR (R4)",
+         _drive(witness_b=GOOD_WITNESS + "fn m(s: S) { s.len(); }\n"), 2)
+    case("a function-typed parameter is a HARNESS ERROR (R4)",
+         _drive(witness_b=GOOD_WITNESS + "fn hof(f: fn(i64) -> i64) { }\n"), 2)
     case("`#[total]` reachable only from a DEAD fn goes RED",
-         _drive(witness_b=GOOD_WITNESS.replace("return depth(1);", "return 1;")
-                                      + "fn dead() -> i64 { return depth(2); }\n"), 1)
+         _drive(witness_b=mutate(GOOD_WITNESS, "return depth(1);", "return 1;")
+                          + "fn dead() -> i64 { return depth(2); }\n"), 1)
     case("`#[total]` on a self-recursive-only fn goes RED",
-         _drive(witness_b=GOOD_WITNESS.replace("return depth(1);", "return 1;")
-                                      .replace("fn depth(n: i64) -> i64 { return n; }",
-                                               "fn depth(n: i64) -> i64 { return depth(n); }")), 1)
+         _drive(witness_b=mutate(
+             mutate(GOOD_WITNESS, "fn depth(n: i64) -> i64 { return n; }",
+                    "fn depth(n: i64) -> i64 { return depth(n); }"),
+             "return depth(1);", "return 1;")), 1)
     case("a missing witness is a FINDING (exit 1), not a malfunction",
          _drive(drop_witness_b=True), 1)
     case("TH-05 reads before it compiles, so an ABSENT witness is a finding not a malfunction",
@@ -1023,10 +1200,38 @@ def self_test() -> int:
         capture_output=True, text=True, cwd=ROOT).returncode
     case("an arbitrary crash in the real entry point exits 2, never 1",
          rc, 2, drives_main=False)
+    rc_se = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/thesis_exit.py"), "--systemexit-for-self-test"],
+        capture_output=True, text=True, cwd=ROOT).returncode
+    case("a dependency's SystemExit(1) exits 2, not 1 — it is not a thesis verdict",
+         rc_se, 2, drives_main=False)
+    rc_sh = subprocess.run(
+        ["bash", str(ROOT / "scripts/thesis-exit.sh"), "--crash-for-self-test"],
+        capture_output=True, text=True, cwd=ROOT).returncode
+    case("the shell wrapper preserves the code (exec, no re-mapping)",
+         rc_sh, 2, drives_main=False)
     case("an unreadable requirements file is exit 2",
          _drive(rows=None, unreadable_requirements=True), 2)
     case("an unreadable Makefile is exit 2, not a red `make` row",
          _drive(make=None, unreadable_makefile=True), 2)
+
+    print("\n  a mutation that mutates nothing is caught, not silently passed")
+
+    def _mut(old, new, expect=1):
+        try:
+            mutate(GOOD_WITNESS, old, new, expect)
+            return "accepted"
+        except HarnessError:
+            return "rejected"
+
+    case("a real mutation is accepted", _mut("return depth(1);", "return 1;"), "accepted",
+         drives_main=False)
+    case("a mutation matching NOTHING is rejected — the four-time disease, mechanised",
+         _mut("this text is not in the witness", "x"), "rejected", drives_main=False)
+    case("a mutation matching more often than declared is rejected",
+         _mut("c", "d"), "rejected", drives_main=False)
+    case("a mutation whose replacement equals the original is rejected",
+         _mut("return depth(1);", "return depth(1);"), "rejected", drives_main=False)
 
     print("\n  the PIN itself is checked, not only the manifest against it")
 
@@ -1111,26 +1316,57 @@ def self_test() -> int:
     return 1
 
 
-if __name__ == "__main__":
+def _entry(argv: list[str]) -> int:
+    """Compute the exit code. NEVER calls sys.exit, so nothing here can leak one.
+
+    The previous entry point had two holes, both of which could land on 0 or 1 where the
+    code means 2 — and 1 is reserved for "the thesis does not hold", a claim about the
+    language:
+
+      * `except SystemExit: raise` re-raised a dependency's `SystemExit(0)` or
+        `SystemExit(1)` verbatim. A library calling sys.exit() on a bad argument would
+        have been reported as a thesis verdict.
+      * the error report was printed INSIDE the handler, so a failure while writing it
+        (a closed stderr, a broken pipe) propagated out of the handler rather than into
+        a sibling clause, taking the chosen code with it.
+
+    So: decide the number in here, report best-effort, and let the caller do the exiting.
+    """
+    def report(kind: str, detail: str) -> None:
+        # Best effort by construction. If stderr is gone there is nothing to say and
+        # nothing said may change the verdict already decided above.
+        try:
+            print(f"{RED}{kind}{OFF}: {detail}", file=sys.stderr)
+            print("This is a failure to MEASURE, not a verdict about the language.",
+                  file=sys.stderr)
+        except BaseException:  # noqa: BLE001
+            pass
+
     try:
-        if "--crash-for-self-test" in sys.argv:
+        if "--crash-for-self-test" in argv:
             # Exercised by the self-test: any unwrapped failure must leave as exit 2, the
-            # measurement code, never as Python's default 1 — which is the code reserved
-            # for "the thesis does not hold".
+            # measurement code, never as Python's default 1.
             raise RuntimeError("deliberate crash, exercised by --self-test")
-        sys.exit(self_test() if "--self-test" in sys.argv else main())
+        if "--systemexit-for-self-test" in argv:
+            # A dependency calling sys.exit(1) must not be mistaken for a thesis verdict.
+            raise SystemExit(1)
+        return self_test() if "--self-test" in argv else main()
     except HarnessError as e:
-        print(f"{RED}harness error{OFF}: {e}", file=sys.stderr)
-        print("This is a failure to MEASURE, not a verdict about the language.", file=sys.stderr)
-        sys.exit(2)
-    except SystemExit:
-        raise
+        report("harness error", str(e))
+        return 2
+    except SystemExit as e:
+        # NOT re-raised. A SystemExit from anywhere below is a dependency's opinion about
+        # the process, not this gate's verdict about Palladium.
+        report("harness error", f"a dependency raised SystemExit({e.code!r})")
+        return 2
     except BaseException as e:  # noqa: BLE001
-        # TOTALITY. Anything unwrapped — an import error, a bad read, a typo in this file —
-        # would otherwise leave via Python's default exit 1, which is the code reserved for
-        # "the thesis does not hold". A crash is not a finding about the language.
-        import traceback
-        traceback.print_exc()
-        print(f"{RED}harness error{OFF}: {type(e).__name__}: {e}", file=sys.stderr)
-        print("This is a failure to MEASURE, not a verdict about the language.", file=sys.stderr)
-        sys.exit(2)
+        try:
+            traceback.print_exc()
+        except BaseException:  # noqa: BLE001
+            pass
+        report("harness error", f"{type(e).__name__}: {e}")
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(_entry(sys.argv))
