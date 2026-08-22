@@ -229,9 +229,25 @@ def citing_sources():
     `/// ```text`, which `FENCE` does not match, so nothing here depends on stripping —
     and leaving it unstripped is the conservative direction: a citation inside a doc fence
     gets pinned rather than exempted.
+
+    ROOT-LEVEL `*.md` IS IN THE SET, and that is the half of the asymmetry that was missing
+    longest. `CITED_ROOTS` has always allowed src/, tests/, scripts/ … as legal TARGETS of a
+    citation, so the gate has always checked where a claim POINTS; it did not check the files
+    where claims are MADE unless they lived under docs/. `CLAUDE.md` — the file every agent
+    working on this repository is told to read first — was therefore ungated, and its single
+    `path:line` citation was WRONG: it named `check_stmt` while claiming to name the call path
+    that mints and ends a per-call lifetime. Nobody could say when it broke, because nothing
+    had ever looked.
+
+    Measured before widening: root `.md` holds 1 citation in total (CLAUDE.md's), 0 of which
+    fail, plus 1 unpinnable shorthand which was fixed first. README, CONTRIBUTING, FEATURES and
+    README-crate carry none, so they enter with zero cost today and are governed from now on.
+    Full accounting, including what this does NOT buy, is in
+    `docs/contributing/claude-md-coverage.md`.
     """
     out = []
-    for doc in (sorted(ROOT.glob("docs/**/*.md")) + sorted(ROOT.glob("docs/**/*.toml"))
+    for doc in (sorted(ROOT.glob("*.md")) + sorted(ROOT.glob("docs/**/*.md"))
+                + sorted(ROOT.glob("docs/**/*.toml"))
                 + sorted(ROOT.glob("src/**/*.rs")) + sorted(ROOT.glob("tests/**/*.rs"))):
         text = doc.read_text(encoding="utf-8", errors="replace")
         if doc.suffix == ".md":
