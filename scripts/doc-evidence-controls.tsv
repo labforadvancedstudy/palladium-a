@@ -122,7 +122,7 @@ a bracketed statement terminator supports no claim (missed by the list)	kill	bla
 a paren followed by a comma supports no claim (missed by the list)	kill	blank-targets
 a paren followed by a semicolon supports no claim (missed by the list)	kill	blank-targets
 a brace followed by a comma supports no claim (missed by the list)	kill	blank-targets
-whitespace around a delimiter is normalised away	kill	blank-targets
+whitespace around a delimiter is normalised away	guard	both implementations normalise first (the enumeration used x.strip()), so this case cannot distinguish them -- it guards the normalisation itself
 a comment rule of punctuation supports no claim (found one in grammar.ebnf)	kill	blank-targets
 a real statement is substantive	guard	a floor that rejects every citation is not a floor
 a bare number is substantive: a claim can be about a value	guard	a floor that rejects every citation is not a floor
