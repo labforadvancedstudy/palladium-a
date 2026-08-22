@@ -1395,16 +1395,21 @@ fn every_offending_imported_async_export_is_validated_not_just_the_last() {
     );
 }
 
-/// An imported GENERIC async violation is not diagnosed, because code
-/// generation never emits an imported generic.
+/// An imported GENERIC async violation that is NEVER INSTANTIATED is not
+/// diagnosed.
 ///
-/// The mirror of the shadowing case in the other axis: typeck recorded the
-/// violation before the generic branch while codegen's imported-function loop
-/// requires `type_params.is_empty()`, so a declaration the output can never
-/// contain was rejected. Whatever this program fails for, it must not be the
-/// async rule.
+/// The condition is instantiation, not genericity. This test used to claim the
+/// wider reason — "code generation never emits an imported generic" — and could
+/// not have caught that being false, because it never calls `gen`. It does not
+/// call it now either; that is the point of this fixture, and
+/// `an_instantiated_imported_generic_async_violation_is_diagnosed` is the other
+/// half. Together they say: an uninstantiated generic is not in the output, so
+/// refusing it would reject a declaration the output cannot contain — the
+/// mirror of the shadowing case in the other axis.
+///
+/// Whatever this program fails for, it must not be the async rule.
 #[test]
-fn an_imported_generic_async_violation_is_not_diagnosed() {
+fn an_uninstantiated_imported_generic_async_violation_is_not_diagnosed() {
     let err = compile_and_run_with_import(
         "fn g() -> Future<()> { panic(\"x\"); }\n\
          pub async fn gen<T>() -> () { g() }\n\
@@ -1416,7 +1421,7 @@ fn an_imported_generic_async_violation_is_not_diagnosed() {
     .unwrap_or_default();
     assert!(
         !err.contains("`return` with a value inside an `async fn`"),
-        "an imported generic is never emitted, so refusing it rejects a \
+        "an uninstantiated generic is never emitted, so refusing it rejects a \
          declaration the output cannot contain; got:\n{}",
         err
     );
@@ -1952,5 +1957,158 @@ fn main() {
         out.trim(),
         "3\n4",
         "the mid-body `if` runs for effect; the tail expression is the value"
+    );
+}
+
+/// A local definition SHADOWS an imported one at the PROTOTYPE too, not only at
+/// the body.
+///
+/// The imported-function loop asked `local_definition_shadows_import`; the
+/// imported-PROTOTYPE loop, in `generate_function_prototypes`, did not, and it
+/// is the loop that wins: `seen` is first-wins and imports are visited before
+/// the main program, so the imported signature took the name and the local
+/// prototype was dropped as a duplicate. MEASURED at 2fe30e7 with exactly this
+/// program: the C carried
+///
+/// ```text
+/// long long f(long long x);        // from the import
+/// long long f() { return 5; }      // the local definition
+/// ```
+///
+/// and gcc refused it ("conflicting types for 'f'", then "too few arguments").
+/// A same-named local function with a DIFFERENT signature is the whole of the
+/// exposure, so the fixture gives them different arities on purpose — same
+/// arity would link and run and prove nothing.
+#[test]
+fn a_local_definition_shadows_the_imported_prototype_too() {
+    let out = compile_and_run_with_import(
+        "pub fn f(x: i64) -> i64 { return x; }\n",
+        "import lib;\n\nfn f() -> i64 { return 5; }\n\nfn main() {\n    let v = f();\n    print_int(v);\n}\n",
+        "d3b_shadowed_prototype",
+    )
+    .expect("the local definition is the only `f`, so the C must compile and run");
+    assert_eq!(
+        out.trim(),
+        "5",
+        "the local `f` is the one that runs; an imported prototype beside it \
+         is a C that does not compile"
+    );
+}
+
+/// A local function generic in only LIFETIMES still shadows an import.
+///
+/// The control on `local_definition_shadows_import`'s exact test. Its comment
+/// used to say "a local GENERIC does not shadow", which is wider than
+/// `type_params.is_empty()`: `Function` also carries `lifetime_params` and
+/// `const_params`, and nothing defers a function generic in only those axes —
+/// typeck registers it as an ordinary signature and codegen emits it under its
+/// own name. So it DOES replace the import.
+///
+/// This test fails on the change that would make the code match the old
+/// sentence. MEASURED: widening the predicate to also require
+/// `const_params.is_empty() && lifetime_params.is_empty()` emits the imported
+/// body as well, and gcc reports `redefinition of 'f'`.
+#[test]
+fn a_lifetime_generic_local_still_shadows_an_import() {
+    let out = compile_and_run_with_import(
+        "pub fn f() -> i64 { return 1; }\n",
+        "import lib;\n\nfn f<'a>() -> i64 { return 5; }\n\nfn main() {\n    let v = f();\n    print_int(v);\n}\n",
+        "d3b_lifetime_generic_shadow",
+    )
+    .expect("one definition of `f` must be emitted, not two");
+    assert_eq!(out.trim(), "5", "the local definition is the one that runs");
+}
+
+/// The same, for a local generic in only CONST parameters.
+#[test]
+fn a_const_generic_local_still_shadows_an_import() {
+    let out = compile_and_run_with_import(
+        "pub fn f() -> i64 { return 1; }\n",
+        "import lib;\n\nfn f<const N: u64>() -> i64 { return 5; }\n\nfn main() {\n    let v = f();\n    print_int(v);\n}\n",
+        "d3b_const_generic_shadow",
+    )
+    .expect("one definition of `f` must be emitted, not two");
+    assert_eq!(out.trim(), "5", "the local definition is the one that runs");
+}
+
+/// EVERY unshadowed offender is NAMED, in an order that is a function of the
+/// program.
+///
+/// `every_offending_imported_async_export_is_validated_not_just_the_last`
+/// establishes that a second offender is still VALIDATED. It does not establish
+/// that it is REPORTED: the raise loop returned at the first one it found, and
+/// the list it walked came out of `imported_modules`, a `HashMap`, so which
+/// offender supplied the single diagnostic was not even a function of the
+/// program. Both names must appear, and they must appear in the same order
+/// every time — the fixture spells them `zeta` before `alpha` in the source so
+/// that source order and sorted order disagree, which is what makes the sort
+/// observable.
+#[test]
+fn all_offending_imported_async_exports_are_named_in_a_stable_order() {
+    let mut seen: Vec<String> = Vec::new();
+    for i in 0..5 {
+        let err = compile_and_run_with_import(
+            "fn g() -> Future<()> { panic(\"x\"); }\n\
+             pub async fn zeta() -> () { g() }\n\
+             pub async fn alpha() -> () { g() }\n",
+            "import lib;\n\nfn main() { print_int(7); }\n",
+            &format!("d3b_all_offenders_{}", i),
+        )
+        .expect_err("neither offender is shadowed, so both must be refused");
+        assert!(
+            err.contains("`alpha`") && err.contains("`zeta`"),
+            "both offenders must be named, not just whichever the hash order \
+             put first; got:\n{}",
+            err
+        );
+        let line = err
+            .lines()
+            .find(|l| l.contains("(imported:"))
+            .unwrap_or_default()
+            .to_string();
+        seen.push(line);
+    }
+    assert!(
+        seen.windows(2).all(|w| w[0] == w[1]),
+        "the diagnostic must be a function of the program, not of hash order; got:\n{:#?}",
+        seen
+    );
+    assert!(
+        seen[0].find("`alpha`") < seen[0].find("`zeta`"),
+        "sorted by name, so `alpha` precedes `zeta` even though the source \
+         declares `zeta` first; got:\n{}",
+        seen[0]
+    );
+}
+
+/// An imported GENERIC async violation IS diagnosed once it is instantiated.
+///
+/// The reason the validation was dropped — "code generation never emits an
+/// imported generic" — was false, and the test that stood in for it never
+/// instantiated the generic, so it could not have caught that. `generic_functions`
+/// holds imported generics, `check_call` consults it BEFORE `functions`, and
+/// `get_instantiations` hands the imported body to codegen. MEASURED at 2fe30e7
+/// with this program: the emitted C carried `long long agen__i64(long long x)`
+/// beside `agen_Future v = agen__i64(7);`, and clang reported
+/// `use of undeclared identifier 'agen_Future'` — exactly the class refused for
+/// a non-generic import, reached through the generic path.
+#[test]
+fn an_instantiated_imported_generic_async_violation_is_diagnosed() {
+    let err = compile_and_run_with_import(
+        "pub async fn agen<T>(x: T) -> i64 { return 42; }\n",
+        "import lib;\n\nfn main() {\n    let v = agen(7);\n    print_int(v);\n}\n",
+        "d3b_instantiated_imported_generic_async",
+    )
+    .expect_err("an instantiated imported generic IS part of the emitted program");
+    assert!(
+        err.contains("`return` with a value inside an `async fn`"),
+        "the refusal must be the async rule, not whatever the broken C says \
+         downstream; got:\n{}",
+        err
+    );
+    assert!(
+        err.contains("`agen`"),
+        "the offender must be named; got:\n{}",
+        err
     );
 }

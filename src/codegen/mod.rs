@@ -79,12 +79,46 @@ struct ArrayBinding {
 ///                               the ONLY three callers of `generate_statement`;
 ///                               the first and third set the reset, the second
 ///                               inherits it.
-///   the imported-function loop  which imported bodies are emitted: public,
-///                               non-generic, and not shadowed — the last via
-///                               `crate::ast::local_definition_shadows_import`,
-///                               the same function the type checker calls.
 ///   `function_signature`        the `actual_return_type` special case that
 ///                               rewrites `main` to `int`.
+///
+/// EVERY SITE THAT DECIDES WHAT THE IMPORTED PROGRAM CONTAINS — derived by
+/// listing the readers of `self.imported_modules` and of `self.generic_instantiations`,
+/// not by recalling which ones felt relevant. The first version of this map
+/// named one of them, and the omitted one was a release blocker: it is a claim
+/// about what matters, so it inherits its author's blind spot, and the way out
+/// is to enumerate from the code.
+///
+///   `compile`, signature pass   registers imported public signatures into
+///                               `functions` (later OVERWRITTEN by the local
+///                               pass) and into `async_functions` (a HashSet
+///                               that is only ever inserted into — see the
+///                               declared residual on `async_functions`).
+///                               Asks NO shadowing question.
+///   `compile`, type pass        imported public structs and enums are emitted
+///                               unconditionally beside the local ones. The
+///                               shared predicate is function-only, so this
+///                               question is not merely unasked, it is
+///                               unanswerable here today.
+///   the imported-function loop  which imported BODIES are emitted: public,
+///                               `type_params` empty, and not shadowed — the
+///                               last via
+///                               `crate::ast::local_definition_shadows_import`,
+///                               the same function the type checker calls.
+///   the imported-prototype loop in `generate_function_prototypes`, the ONLY
+///                               `seen` set in this file. Must ask the SAME
+///                               three questions as the body loop, because
+///                               `seen` is first-wins and imports are visited
+///                               first: a shadowed import that gets a prototype
+///                               takes the name and suppresses the local one.
+///                               It did not ask, and gcc refused the result.
+///   `generic_instantiations`    monomorphised bodies, imported or local. The
+///                               list is built by the TYPE CHECKER
+///                               (`TypeChecker::get_instantiations`) from
+///                               `generic_functions`, so which body an
+///                               instantiation carries is decided there and
+///                               only executed here — including for an imported
+///                               generic, which this pass emits like any other.
 pub struct CodeGenerator {
     module_name: String,
     output: String,
@@ -144,7 +178,19 @@ pub struct CodeGenerator {
     /// Map from original generic struct name to list of instantiations
     /// e.g., "Box" -> [("i64", "Box_i64"), ("bool", "Box_bool")]
     generic_struct_instantiation_map: std::collections::HashMap<String, Vec<(Vec<String>, String)>>,
-    /// Set of async function names
+    /// Set of async function names.
+    ///
+    /// DECLARED RESIDUAL, not fixed here: unlike `functions`, which the
+    /// main-program pass OVERWRITES entry by entry, this is a set that is only
+    /// ever inserted into. An imported `pub async fn f` shadowed by a local
+    /// ordinary `fn f` therefore leaves `f` in here, and `try_infer_expr_type`
+    /// types a call to the LOCAL `f` as `f_Future`. MEASURED: the emitted C
+    /// carried `f_Future v = f();` beside `long long f()` and gcc reported
+    /// `use of undeclared identifier 'f_Future'`. It is the same class as the
+    /// prototype-loop defect — a decision about the imported program made
+    /// without asking `local_definition_shadows_import` — one container over,
+    /// and it belongs with the module-system defects owed to M4 rather than to
+    /// this branch's scope.
     async_functions: std::collections::HashSet<String>,
     /// Names of struct tags actually emitted (structs + enums, both are
     /// `typedef struct Name {...} Name;`). Used to keep forward declarations
@@ -1801,13 +1847,33 @@ impl CodeGenerator {
             }
         };
 
-        // Imported modules: public, non-generic functions get a body emitted below.
+        // Imported modules: the ones whose BODY is emitted below, asked through
+        // the same shared definition the body loop uses.
+        //
+        // This loop used to omit the shadowing test, and it is the loop that
+        // decides the name — `seen` is first-wins and imports are visited before
+        // the main program, so a shadowed import took the slot and the LOCAL
+        // prototype was then dropped as a duplicate. MEASURED: an imported
+        // `pub fn f(x: i64) -> i64` with a local `fn f() -> i64` emitted
+        // `long long f(long long x);` next to `long long f() { … }` and gcc
+        // refused it ("conflicting types for 'f'", "too few arguments"). The
+        // condition list here read like the body loop's but was one term short,
+        // which is exactly what a shared predicate cannot protect against if a
+        // call site does not call it.
+        //
+        // The `seen` ordering is no longer load-bearing between these two
+        // sources: with the shadowing test, an imported name and a local name
+        // cannot both be pushed. A local TYPE-PARAMETERISED function does not
+        // shadow (see `local_definition_shadows_import`) but emits no prototype
+        // under its own name either — its instantiations are mangled — so that
+        // case is not a collision.
         let imported_modules = self.imported_modules.clone();
         for module_info in imported_modules.values() {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
                     if matches!(func.visibility, crate::ast::Visibility::Public)
                         && func.type_params.is_empty()
+                        && !crate::ast::local_definition_shadows_import(program, &func.name)
                         && !func.is_async
                         && func.name != "main"
                     {

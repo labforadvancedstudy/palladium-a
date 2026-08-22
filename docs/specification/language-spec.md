@@ -624,9 +624,9 @@ enums.
 
 **partial** — field types that parse and then fail in codegen (all three corrected from v0.2,
 which was ~250 lines low):
-- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1728`)
-- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1439`)
-- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1172`)
+- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1774`)
+- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1485`)
+- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1218`)
 
 ### A4.3 Enums
 
@@ -637,8 +637,8 @@ field (`src/parser/mod.rs:786`, `src/ast/mod.rs:139`).
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1225`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:983`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:895-897`, corrected
-from `src/typeck/mod.rs:1088`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1029`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:994-996`, corrected
+from `src/typeck/mod.rs:1226`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1349`, corrected from line 863–897 of the pre-cleanup revision).
 
@@ -654,7 +654,7 @@ impl_block = "impl" [ generic_params ] [ type "for" ] type "{" { function } "}" 
 ```
 
 **implemented**: methods become mangled free functions `__pd_Type_method`
-(`src/codegen/mod.rs:1074-1080`, corrected from line 1861 of the pre-cleanup revision).
+(`src/codegen/mod.rs:1120-1126`, corrected from line 1861 of the pre-cleanup revision).
 **unimplemented**: associated constants and associated types are rejected — an impl body may
 contain only `fn` (`src/parser/mod.rs:1518-1524`, corrected from line 1030 of the pre-cleanup revision).
 **partial**: methods cannot be called with `.` syntax — see [A6.4](#a64-method-calls). Call them
@@ -691,7 +691,7 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 | `&T`, `&mut T` | partial | parses, but the typechecker is a **no-op**: `Type::Reference` maps to its inner type — "For now, treat references as the inner type / TODO: Proper reference type handling" (`src/typeck/mod.rs:121-125`, corrected from line 2470–2486 of the pre-cleanup revision). `&i64` and `i64` are indistinguishable to it. |
 | `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
 | `Name<A, B>` | partial | see below |
-| `(A, B)` | partial | becomes `void*` in C (`src/codegen/mod.rs:1132-1135`, corrected from line 828 of the pre-cleanup revision); no tuple expression exists, so no tuple is constructible |
+| `(A, B)` | partial | becomes `void*` in C (`src/codegen/mod.rs:1178-1181`, corrected from line 828 of the pre-cleanup revision); no tuple expression exists, so no tuple is constructible |
 | `f32`, `f64`, `char`, `str`, `u8`, `usize` | unimplemented | not in the primitive table |
 | `fn(A) -> B` | unimplemented | function types are unparseable |
 | `[T]` slices, `dyn T`, `impl T` | unimplemented | |
@@ -704,8 +704,8 @@ mixed-case names like `Vec<Item>` reach the type branch.
 
 **partial — const generics**: they parse, and in codegen an `ArraySize::ConstParam` is emitted
 into C verbatim as the parameter's *name* while an `ArraySize::Expr` becomes the literal `"0"`
-(`src/codegen/mod.rs:1104-1106`). Neither is monomorphised. *(v0.2 said "array sizes from a const
-parameter resolve to `0`" citing `src/codegen/mod.rs:1427`; that is the expression case, not the const-parameter
+(`src/codegen/mod.rs:1150-1152`). Neither is monomorphised. *(v0.2 said "array sizes from a const
+parameter resolve to `0`" citing `src/codegen/mod.rs:1473`; that is the expression case, not the const-parameter
 case.)*
 
 `tests/08_generics_basic.pd` PASSES conformance while only printing that generics are
@@ -721,7 +721,7 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing is that `?` typechecks
-against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2558`, corrected from line 2495 of the pre-cleanup revision) — and
+against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2696`, corrected from line 2495 of the pre-cleanup revision) — and
 then generates C for a `struct Result` layout that codegen never emits (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -770,9 +770,9 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 - unimplemented: tuple expressions and `.0` indexing.
 - unimplemented: `as` casts, string interpolation.
 - partial: ranges outside a `for` header — codegen error "Range expressions can only be used in
-  for loops" (`src/codegen/mod.rs:2561-2564`, corrected from line 2121 of the pre-cleanup revision).
+  for loops" (`src/codegen/mod.rs:2627-2630`, corrected from line 2121 of the pre-cleanup revision).
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:2761`, corrected from line 1874 of the pre-cleanup revision).
+  (`src/typeck/mod.rs:2899`, corrected from line 1874 of the pre-cleanup revision).
 
 **partial — precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for
 its right operand (`src/parser/mod.rs:2225`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
@@ -783,7 +783,7 @@ requires `a * -b`.
 
 **unimplemented.** `x.f()` parses as a call whose callee is a field access, and the typechecker
 rejects exactly that: **"Indirect function calls not yet supported"**
-(`src/typeck/mod.rs:1703`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
+(`src/typeck/mod.rs:1841`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
 
 *(v0.2 also claimed a "same guard" in codegen at line 1870 of the pre-cleanup revision.
 `grep -n 'Indirect function calls' src/codegen/mod.rs` returns nothing; there is no such guard in
@@ -801,9 +801,9 @@ typecheck. The silent-breakage description is retracted.)*
 
 - `?` generates C that references a `struct Result { int is_ok; union {…} data; }` layout which
   **no other part of codegen emits** — user enums are generated with a `.tag` field and
-  `__Enum__Variant` constants instead (`src/codegen/mod.rs:2642-2663`, corrected from line 2160–2201 of the pre-cleanup revision). The result is C that does not compile.
+  `__Enum__Variant` constants instead (`src/codegen/mod.rs:2708-2729`, corrected from line 2160–2201 of the pre-cleanup revision). The result is C that does not compile.
 - `.await` emits `while (!<tmp>.poll(&<tmp>)) { }` and then reads `<tmp>.result`, calling a `poll`
-  member that is never generated (`src/codegen/mod.rs:2698-2709`, corrected from line 2208–2237 of the pre-cleanup revision —
+  member that is never generated (`src/codegen/mod.rs:2764-2775`, corrected from line 2208–2237 of the pre-cleanup revision —
   which is the builtin-name mapping table, unrelated).
 
 ```
@@ -830,13 +830,13 @@ that what precedes `?` is a Result, because in those programs it is not.
 The `match` alternative is bounded, and the help says where it stops rather than leaving it to be
 discovered. Measured: dispatch works, propagation out of a helper works, payload types other than
 `i64` work — but a generic `Result<T, E>` does **not** compile, because code generation skips
-generic enum definitions (`src/codegen/mod.rs:888`, `src/codegen/mod.rs:952-956`, `src/codegen/mod.rs:976`) and generic enum construction
+generic enum definitions (`src/codegen/mod.rs:934`, `src/codegen/mod.rs:998-1002`, `src/codegen/mod.rs:1022`) and generic enum construction
 infers only the parameters a variant mentions, so `Result::Err(e)` yields `Result<(), E>`. One
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`src/typeck/mod.rs:2497`, `src/typeck/mod.rs:2400`) and again by code
-generation (`src/codegen/mod.rs:2603`, `src/codegen/mod.rs:2615`), which is callable on its own.
+The refusal is raised by the type checker (`src/typeck/mod.rs:2679`, `src/typeck/mod.rs:2686`) and again by code
+generation (`src/codegen/mod.rs:2669`, `src/codegen/mod.rs:2681`), which is callable on its own.
 
 What they used to do:
 
@@ -845,7 +845,7 @@ What they used to do:
   constants instead. gcc reported `variable has incomplete type 'struct Result'`.
 - `.await` emitted `while (!f.poll(&f)) {}`. C has no member function calls, and the poll
   routine that *is* generated is the free function `<name>_poll`
-  (`src/codegen/mod.rs:2684`), which that call never names. There is no async runtime.
+  (`src/codegen/mod.rs:2750`), which that call never names. There is no async runtime.
 
 Both lowerings are deleted rather than kept behind a flag: they encoded a representation a real
 implementation must not reuse, and version control holds them.
@@ -936,7 +936,7 @@ does, which is why `make selfhost` is unaffected by any of this.
 
 ## A7. Patterns
 
-**partial — three forms only.** `src/ast/mod.rs:334` defines exactly three pattern variants:
+**partial — three forms only.** `src/ast/mod.rs:353` defines exactly three pattern variants:
 
 ```ebnf
 pattern = "_"
@@ -949,9 +949,9 @@ pattern = "_"
 (`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
 bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1464`,
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1602`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
-(`src/codegen/mod.rs:2021`, `src/codegen/mod.rs:2042-2053`) with a wildcard arm becoming the final `else`; when no
+(`src/codegen/mod.rs:2087`, `src/codegen/mod.rs:2108-2119`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
 
 Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else` chains.
@@ -974,10 +974,10 @@ rather than `char`, because `char` is not a type ([A5](#a5-types)). **N14's effe
 is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
-checker derives its signature table from it (`src/typeck/mod.rs:408`) and so does the borrow
+checker derives its signature table from it (`src/typeck/mod.rs:468`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:2265`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
-every output file (`src/codegen/mod.rs:541`, corrected from line 251–575 of the pre-cleanup revision).
+(`src/codegen/mod.rs:2331`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+every output file (`src/codegen/mod.rs:587`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
 became the SSOT; it is no longer the mechanism.)*
@@ -1053,7 +1053,7 @@ LSP fixtures. There is no region inference: `grep -rn 'region\|Region' src/ --in
 returns nothing.
 
 No garbage collector. Strings are allocated from a 64 KiB static arena with a malloc fallback and
-are freed at exit (`src/codegen/mod.rs:471`, corrected from line 210–245 of the pre-cleanup revision).
+are freed at exit (`src/codegen/mod.rs:517`, corrected from line 210–245 of the pre-cleanup revision).
 
 ### A9.1 `String` is a copyable handle (decision, 2026-08-21)
 
@@ -1170,14 +1170,14 @@ write that reaches the caller can only come from a spelling that declared it.
 The normative question is open ([N12.1](#n121-array-parameters-open-decision)). What the
 implementation does is not open, and it is the same for all three spellings.
 
-A `[T; N]` parameter is lowered to a C array declarator (`src/codegen/mod.rs:1102`), which decays
+A `[T; N]` parameter is lowered to a C array declarator (`src/codegen/mod.rs:1148`), which decays
 to a pointer. **No spelling copies.** Measured at `abeb665`:
 
 | Spelling | Result |
 |---|---|
 | `mut a: [i64; 3]` | compiles; generated C is `void bump(long long a[3]);` — a write is caller-visible. Program prints `99`. |
 | `a: [i64; 3]` (no `mut`) | compiles; a write is caller-visible; **no diagnostic**. Program prints `99`. |
-| `a: &mut [i64; 3]` | does not compile: "Unsupported type in reference parameter" (`src/codegen/mod.rs:2046`). |
+| `a: &mut [i64; 3]` | does not compile: "Unsupported type in reference parameter" (`src/codegen/mod.rs:2112`). |
 
 So today the reference spellings are not an alternative to the bare one — one of them is rejected
 outright, and the other two behave identically.
@@ -1185,7 +1185,7 @@ outright, and the other two behave identically.
 Consequence for whichever ruling lands:
 
 - **Option A (value semantics)** would make this row **unimplemented**, and the gap is exactly
-  `src/codegen/mod.rs:1102`: it emits a decayed declarator where a copy is required.
+  `src/codegen/mod.rs:1148`: it emits a decayed declarator where a copy is required.
 - **Option B (reference semantics)** would make this row **partial at best — never implemented**,
   because Option B is not "what the compiler already does". It needs a further rule that does not
   exist yet: either the reference spellings are forbidden, or `&mut [T; N]` becomes the required

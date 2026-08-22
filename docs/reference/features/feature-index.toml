@@ -127,7 +127,7 @@ spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
   "src: src/parser/mod.rs:1026 lifetime_params, populated by the parser",
-  "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> exit 0, 83 lines -- and they are REAL readers, not test fixtures: src/typeck/mod.rs clones the list into its own records and src/codegen/mod.rs branches on `lifetime_params.is_empty()` before emitting a type",
+  "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> exit 0, 85 lines -- and some are REAL readers, not only test fixtures: src/typeck/mod.rs clones the list into its own records and src/codegen/mod.rs branches on `lifetime_params.is_empty()` before emitting a type. Two of the 85 are prose in the shared shadowing predicate in src/ast/mod.rs, recording that its test is the type-parameter list and NOT this field",
   "conformance: tests/regression/lifetimes_uninferred.pd run",
   "src: tests/regression/lifetimes_uninferred.pd:26-29 \"fn dangling() -> &i64\" returning \"return &x;\", a reference to a local that dies at the closing brace",
   "conformance: tests/reject/uncalled_body_is_checked.pd reject",
@@ -162,10 +162,10 @@ description = "Whether a [T; N] parameter copies or aliases the caller's array. 
 spec = "../../specification/language-spec.md#n121-array-parameters-open-decision"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1975-1978 the Type::Array parameter arm, \"In C, array parameters are passed as pointers\"",
+  "src: src/codegen/mod.rs:2041-2044 the Type::Array parameter arm, \"In C, array parameters are passed as pointers\"",
   "conformance: tests/regression/array_param_mut_write.pd run",
   "conformance: tests/reject/array_param_write_byvalue.pd reject",
-  "src: src/codegen/mod.rs:1995-2005 the reference arm lowers `&[T; N]` and `&mut [T; N]` through the same declarator: \"C decays both to a pointer to the first element\"",
+  "src: src/codegen/mod.rs:2061-2071 the reference arm lowers `&[T; N]` and `&mut [T; N]` through the same declarator: \"C decays both to a pointer to the first element\"",
   "conformance: tests/regression/array_reference_params.pd run",
 ]
 note = "Marked unimplemented because no spelling copies: every array parameter decays to a pointer in C, so a callee that writes always reaches the caller's storage. The previous note described two behaviours this compiler no longer has -- it said mutation through a bare non-mut array was permitted, and that &mut [T; N] was rejected outright. Both were re-measured on 2026-08-22 and both are false: the bare by-value write is refused by codegen with a diagnostic naming the open decision, and &mut [T; N] compiles and is covered by a passing fixture. What remains open is the specification question, not a hole in the implementation: nothing here COPIES, so Option A (value semantics) is unimplemented, and Option B (reference semantics) would still need a rule that does not exist. See language-spec.md N12.1 and A9.2."
@@ -203,7 +203,7 @@ implementation = "partial"
 evidence = [
   "conformance: examples/tutorial/01_variables.pd run",
   "cmd: grep -rn 'HindleyMilner\\|unify\\|Substitution' src/typeck/ --include='*.rs' -> exit 1, 0 lines",
-  "src: src/typeck/mod.rs:2893 'Cannot infer type from empty array'",
+  "src: src/typeck/mod.rs:3031 'Cannot infer type from empty array'",
 ]
 note = "Local `let` inference works (the i64 default was replaced by real inference in 04104c5). There is no unification engine and no polymorphic generalisation, so it is not Hindley-Milner."
 
@@ -212,7 +212,7 @@ description = "Monomorphization-based generics, generic structs and enums, where
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1728 'Generic types in structs not yet supported'",
+  "src: src/codegen/mod.rs:1774 'Generic types in structs not yet supported'",
   "src: src/parser/mod.rs:2635-2645 all-uppercase name inside <...> reclassified as a const argument",
   "conformance: tests/reject/generic_bound.pd reject",
   "conformance: tests/08_generics_basic.pd vacuous",
@@ -225,8 +225,8 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/parser/mod.rs:1225 fn parse_trait — traits do parse",
-  "src: src/codegen/mod.rs:983 Item::Trait(_) => emits nothing",
-  "src: src/typeck/mod.rs:908-910 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
+  "src: src/codegen/mod.rs:1029 Item::Trait(_) => emits nothing",
+  "src: src/typeck/mod.rs:1007-1009 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
   "src: src/parser/mod.rs:1349 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd vacuous",
 ]
@@ -238,8 +238,8 @@ spec = "../../specification/language-spec.md#n4-types"
 implementation = "partial"
 evidence = [
   "src: src/parser/mod.rs:465-467 the const-parameter branch of parse_generic_params",
-  "src: src/codegen/mod.rs:983 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
-  "src: src/codegen/mod.rs:983 ArraySize::Expr(_) => \"0\".to_string()",
+  "src: src/codegen/mod.rs:1029 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
+  "src: src/codegen/mod.rs:1029 ArraySize::Expr(_) => \"0\".to_string()",
   "conformance: tests/reject/const_generic_param.pd reject",
 ]
 note = "Neither case is monomorphised, and the reject fixture is what shows it: the parameter reaches the type checker as the NAME N, so a call with a [i64; 3] does not match it. The three src: lines above prove the branches exist; only the fixture proves what happens when you use one."
@@ -250,9 +250,9 @@ spec = "../../specification/language-spec.md#n6-patterns"
 implementation = "partial"
 evidence = [
   "conformance: tests/06_pattern_matching.pd run",
-  "src: src/ast/mod.rs:334 pub enum Pattern — three variants only",
-  "src: src/typeck/mod.rs:1464 exhaustiveness runs only when the scrutinee is an enum",
-  "src: src/codegen/mod.rs:2021 match lowers to an if/else-if chain",
+  "src: src/ast/mod.rs:353 pub enum Pattern — three variants only",
+  "src: src/typeck/mod.rs:1602 exhaustiveness runs only when the scrutinee is an enum",
+  "src: src/codegen/mod.rs:2087 match lowers to an if/else-if chain",
 ]
 note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
 
@@ -264,7 +264,7 @@ evidence = [
   "conformance: tests/04_control_flow_for.pd run",
   "conformance: tests/04_control_flow_while.pd run",
   "conformance: tests/reject/loop_keyword.pd reject",
-  "src: src/codegen/mod.rs:1987 for-over-array emits sizeof(...) on a decayed pointer",
+  "src: src/codegen/mod.rs:2053 for-over-array emits sizeof(...) on a decayed pointer",
 ]
 
 [core_language.control_flow.conditionals]
@@ -328,7 +328,7 @@ description = "Built-in Result<T, E> with Ok/Err."
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "unimplemented"
 evidence = [
-  "src: src/typeck/mod.rs:2416 the type checker refuses `?` outright with CompileError::question_unimplemented",
+  "src: src/typeck/mod.rs:2554 the type checker refuses `?` outright with CompileError::question_unimplemented",
   "cmd: grep -rn 'prelude' src/driver/ --include='*.rs' -> exit 1, 0 lines (stdlib/prelude.pd is never loaded)",
 ]
 note = "Result and Option are ordinary user enums if you declare them."
@@ -338,8 +338,8 @@ description = "`?` for error propagation with early return."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
-  "src: src/codegen/mod.rs:1997-1998 emits a struct Result temporary — a layout codegen never defines",
-  "src: src/codegen/mod.rs:2663 the comment describing that layout",
+  "src: src/codegen/mod.rs:2063-2064 emits a struct Result temporary — a layout codegen never defines",
+  "src: src/codegen/mod.rs:2729 the comment describing that layout",
   "conformance: tests/reject/question_mark_operator.pd reject",
 ]
 note = "No longer silent. This row used to read \"it typechecks, and the failure surfaces in gcc\" -- true of the codegen path the two citations above describe, and no longer true of the compiler: the type checker refuses `?` by name before any C exists (defect D5's fix). The lowering is still there and still refers to a layout nothing defines, which is why the citations stay and why this is `partial` rather than `unimplemented`."
@@ -372,7 +372,7 @@ description = "No await operator; the compiler places async boundaries."
 spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:2611-2616 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
+  "src: src/codegen/mod.rs:2677-2682 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
   "conformance: tests/reject/async_fn.pd reject",
   "conformance: tests/10_async_await.pd vacuous",
 ]
@@ -597,7 +597,7 @@ spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
 implementation = "unimplemented"
 evidence = [
   "src: src/macros/mod.rs:41 vec![e] is registered here and expands to a 1-element array, not a growable vector",
-  "src: src/codegen/mod.rs:1728 'Generic types in structs not yet supported' — no generic container can exist",
+  "src: src/codegen/mod.rs:1774 'Generic types in structs not yet supported' — no generic container can exist",
 ]
 
 [ecosystem.std_library.io]

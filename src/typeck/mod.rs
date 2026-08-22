@@ -318,26 +318,59 @@ pub struct StructInstantiation {
 /// row. The decisions that recent review turns on are these, and nothing else
 /// in the file participates:
 ///
-///   `set_imported_modules`      registration of imported items, and the two
+///   `set_imported_modules`      registration of imported items, and the three
 ///                               deferred refusals recorded there (async main,
-///                               async value return). Public-only, and
-///                               non-generic-only — both conditions matter and
-///                               both are commented at the site.
-///   `check`, opening lines      where those deferrals are RAISED, after the
-///                               entry point is knowable. Uses
-///                               `crate::ast::local_definition_shadows_import`.
+///                               async value return, async value return in a
+///                               TYPE-PARAMETERISED import). Public-only; the
+///                               type-parameterised case goes on its own list
+///                               because it is raised on a different condition.
+///   `check`, opening lines      where the first two deferrals are RAISED,
+///                               after the entry point is knowable. Uses
+///                               `crate::ast::local_definition_shadows_import`,
+///                               reports EVERY offender, and sorts before it
+///                               reports because the list arrives in hash order.
+///   `check`, closing lines      where the third is raised — after the body
+///                               walk, because its condition is "was it
+///                               INSTANTIATED", which nothing earlier knows.
 ///   `check`, "Check for main"   the main-existence rule the entry-point
 ///                               question resolves against.
 ///   `has_value_return`          the statement walk behind the async refusal;
 ///                               descends `if`/`match`/`while`/`for`/`unsafe`.
 ///   `check_function`, opening   the LOCAL refusals: `async fn main`, and a
 ///                               value-carrying return in any async function.
+///                               Both are tested BEFORE its generic skip, which
+///                               is why local generics need no deferral.
 ///
-/// MEMBERSHIP AND SHADOWING ARE NOT DECIDED HERE. They are decided once, in
+/// THE GENERIC-INSTANTIATION PATH, which the sections above depend on and which
+/// is past every reviewer's read limit so far:
+///
+///   `generic_functions`         one map, holding IMPORTED generics (registered
+///                               by `set_imported_modules`) and LOCAL ones
+///                               (registered by `check`'s first pass, which
+///                               therefore OVERWRITES an imported entry of the
+///                               same name).
+///   `check_call`                consults `generic_functions` BEFORE
+///                               `functions`, so a type-parameterised import
+///                               wins over an ordinary local definition of the
+///                               same name — the reverse of the ordinary
+///                               shadowing direction.
+///   `instantiate_generic_function`
+///                               materialises one, recording the key in
+///                               `instantiations`.
+///   `get_instantiations`        pairs every key with `generic_functions[name]`
+///                               and hands the result to code generation, which
+///                               monomorphises and emits it. THIS is the route
+///                               by which an imported generic body reaches the
+///                               output, and the reason "codegen never emits an
+///                               imported generic" was false.
+///
+/// SHADOWING OF ORDINARY DEFINITIONS IS NOT DECIDED HERE. It is decided once, in
 /// `crate::ast::local_definition_shadows_import`, which code generation calls
-/// too — see src/codegen/mod.rs's imported-function loop. That is deliberate:
-/// the two passes asked different questions about generics for a round, and a
-/// program was diagnosed against a declaration the output never contained.
+/// too — see src/codegen/mod.rs's imported-function and imported-prototype
+/// loops. That is deliberate: the two passes asked different questions about
+/// generics for a round, and a program was diagnosed against a declaration the
+/// output never contained. Which body an INSTANTIATION carries is a different
+/// question with a different answer, and it is decided here alone.
 pub struct TypeChecker {
     /// A PUBLIC imported `async fn main`, recorded at import-registration time
     /// and raised by `check` — but only if it is the EFFECTIVE ENTRY POINT.
@@ -357,7 +390,34 @@ pub struct TypeChecker {
     /// first through — measured. A rule that is right about the construct,
     /// applied through a container that can only hold one, is wrong about the
     /// program.
+    ///
+    /// THE ORDER IN THIS VEC IS NOT MEANINGFUL. It is filled by iterating
+    /// `imported_modules`, a `HashMap`, so which module's offender lands first
+    /// varies run to run. Only the SET is deterministic. `check` therefore
+    /// sorts before it reports, and reports all of the offenders rather than
+    /// returning at the first — three separate properties ("every entry",
+    /// "deterministic order", "all diagnostics") that the earlier
+    /// return-on-first loop delivered one of while the comment claimed the
+    /// three.
     deferred_async_value_returns: Vec<(String, Span)>,
+    /// The same violation in a public imported function that HAS type
+    /// parameters, kept apart because it is raised on a different condition.
+    ///
+    /// These used to be dropped at registration time, on the ground that "code
+    /// generation never emits an imported generic". That ground is false.
+    /// MEASURED: `lib.pd` exporting `pub async fn agen<T>(x: T) -> i64 { return 42; }`
+    /// and an app calling `agen(7)` — typeck instantiates it
+    /// (`generic_functions` holds imported generics too, and the call site
+    /// looks there FIRST), `get_instantiations` hands the imported body to code
+    /// generation, and the emitted C contained `long long agen__i64(long long x)`
+    /// beside `agen_Future v = agen__i64(7);`, which clang refused. Dropping
+    /// the validation permitted exactly the body it was justified by calling
+    /// unemittable.
+    ///
+    /// So the condition is not "is it generic" but "is it INSTANTIATED", which
+    /// is knowable only after the body walk — hence a second list raised at the
+    /// END of `check` rather than at its opening.
+    deferred_generic_async_value_returns: Vec<(String, Span)>,
     /// Function signatures
     functions: HashMap<String, CheckerType>,
     /// Generic function definitions
@@ -421,6 +481,7 @@ impl TypeChecker {
         Self {
             deferred_async_main: None,
             deferred_async_value_returns: Vec::new(),
+            deferred_generic_async_value_returns: Vec::new(),
             functions,
             generic_functions: HashMap::new(),
             instantiations: HashMap::new(),
@@ -475,14 +536,32 @@ impl TypeChecker {
                             // Measured at fbcfc39: a private imported
                             // `async fn main` killed compilation of a program
                             // whose own `main` was perfectly good.
-                            // GENERIC IMPORTS ARE SKIPPED BY CODE GENERATION
-                            // (src/codegen/mod.rs's imported-function loop
-                            // requires `type_params.is_empty()`), so recording
-                            // one here would reject a declaration the output can
-                            // never contain — the same over-approximation as the
-                            // shadowing case, in the other axis.
+                            // A TYPE-PARAMETERISED IMPORT IS NOT EXEMPT, IT IS
+                            // CONDITIONAL. It is skipped by codegen's
+                            // imported-function loop, which requires
+                            // `type_params.is_empty()` — but that is not the
+                            // only route into the output. `generic_functions`
+                            // below holds imported generics, the call site
+                            // consults it BEFORE `functions`, and every
+                            // instantiation reaches codegen through
+                            // `get_instantiations`. Measured: an imported
+                            // `pub async fn agen<T>` that is called emits
+                            // `agen__i64` and does not compile.
+                            //
+                            // So the offender is recorded on a SEPARATE list and
+                            // raised at the end of `check`, when it is known
+                            // whether it was instantiated. `async fn main` needs
+                            // no such list: an entry point is never called, so a
+                            // type-parameterised one is never instantiated and
+                            // never emitted.
                             if !func.type_params.is_empty() {
-                                // registered as a generic below; nothing emitted
+                                if func.is_async
+                                    && func.name != "main"
+                                    && Self::has_value_return(&func.body)
+                                {
+                                    self.deferred_generic_async_value_returns
+                                        .push((func.name.clone(), func.span));
+                                }
                             } else if func.is_async && func.name == "main" {
                                 self.deferred_async_main = Some(func.span);
                             } else if func.is_async
@@ -652,11 +731,31 @@ impl TypeChecker {
         //
         // So both passes now ask the same question: is this imported
         // declaration shadowed by a local one?
-        // EVERY offender, not the last one recorded.
-        for (name, span) in self.deferred_async_value_returns.clone() {
-            if !crate::ast::local_definition_shadows_import(program, &name) {
-                return Err(CompileError::async_value_return_unimplemented(span));
-            }
+        //
+        // EVERY offender is VALIDATED, in a DETERMINISTIC ORDER, and ALL of
+        // them are DIAGNOSED. Those are three properties and the previous loop
+        // delivered the first only: it returned at the first unshadowed
+        // offender, so later entries were never tested, and the entries arrive
+        // in `imported_modules` hash order, so WHICH module supplied the one
+        // reported diagnostic varied between runs of the same compiler on the
+        // same program. Sorting by (name, span) makes the report a function of
+        // the program; collecting rather than returning makes "every entry" a
+        // property of the diagnostic and not just of the loop.
+        let mut offenders: Vec<(String, Span)> = self
+            .deferred_async_value_returns
+            .iter()
+            .filter(|(name, _)| !crate::ast::local_definition_shadows_import(program, name))
+            .cloned()
+            .collect();
+        offenders.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.start.cmp(&b.1.start))
+                .then(a.1.end.cmp(&b.1.end))
+        });
+        if !offenders.is_empty() {
+            return Err(CompileError::async_value_return_unimplemented_in_imports(
+                &offenders,
+            ));
         }
 
         // THE ENTRY POINT, NOT ANY DECLARATION. An imported `pub async fn main`
@@ -940,6 +1039,45 @@ impl TypeChecker {
                     // Macros are handled during expansion phase, skip here
                 }
             }
+        }
+
+        // AN IMPORTED GENERIC THAT WAS INSTANTIATED IS PART OF THE EMITTED
+        // PROGRAM, so the refusal `check_function` applies to every LOCAL async
+        // function has to apply to it too. Raised HERE and not at the opening
+        // because "was it instantiated" is only knowable after the body walk
+        // above has run every call site.
+        //
+        // WHICH BODY AN INSTANTIATION CARRIES IS DECIDED HERE, NOT IN CODEGEN.
+        // `get_instantiations` pairs each key with whatever
+        // `self.generic_functions` holds for that name, and a local generic
+        // definition OVERWRITES the imported entry (`set_imported_modules` runs
+        // first). So a local generic of the same name means the emitted body is
+        // the local one — already validated by `check_function`, which tests
+        // `is_async` before its own generic skip — and the imported declaration
+        // is not in the output. That, and not shadowing in the
+        // `local_definition_shadows_import` sense, is the exemption here: an
+        // ordinary local `fn agen` does NOT displace an imported `agen<T>`,
+        // because the call site consults `generic_functions` first.
+        let mut generic_offenders: Vec<(String, Span)> = self
+            .deferred_generic_async_value_returns
+            .iter()
+            .filter(|(name, _)| self.instantiations.keys().any(|k| &k.name == name))
+            .filter(|(name, _)| {
+                !program.items.iter().any(|item| {
+                    matches!(item, Item::Function(f) if &f.name == name && !f.type_params.is_empty())
+                })
+            })
+            .cloned()
+            .collect();
+        generic_offenders.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.start.cmp(&b.1.start))
+                .then(a.1.end.cmp(&b.1.end))
+        });
+        if !generic_offenders.is_empty() {
+            return Err(CompileError::async_value_return_unimplemented_in_imports(
+                &generic_offenders,
+            ));
         }
 
         Ok(())

@@ -279,6 +279,43 @@ impl CompileError {
         }
     }
 
+    /// The same refusal for a SET of offending imported declarations.
+    ///
+    /// `CompileError` carries one span, so a compiler that finds several of
+    /// these has a choice: report one and drop the rest, or report one that
+    /// NAMES the rest. Reporting one and dropping the rest is what the type
+    /// checker used to do, and because its input arrived in `HashMap` order the
+    /// survivor was not even a function of the program. This constructor takes
+    /// offenders the caller has already put in a deterministic order, points the
+    /// span at the first, and lists every name in `construct`, so a second
+    /// offender is visible without a second compile.
+    ///
+    /// The leading text is byte-identical to
+    /// `async_value_return_unimplemented` because it is the same refusal for the
+    /// same reason; only the list of locations differs. `consequence` and
+    /// `workaround` are unchanged and remain true of each named declaration
+    /// individually, which is the condition this variant's doc comment puts on
+    /// advice raised before the operand is examined.
+    ///
+    /// # Panics
+    /// If `offenders` is empty — an error that names no offender is a claim with
+    /// no referent, and every caller already knows its list is non-empty.
+    pub fn async_value_return_unimplemented_in_imports(offenders: &[(String, Span)]) -> Self {
+        let (_, first_span) = offenders
+            .first()
+            .expect("a refusal must name at least one offending declaration");
+        let names = offenders
+            .iter()
+            .map(|(name, _)| format!("`{}`", name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut err = Self::async_value_return_unimplemented(*first_span);
+        if let CompileError::Unimplemented { construct, .. } = &mut err {
+            *construct = format!("{} (imported: {})", construct, names);
+        }
+        err
+    }
+
     /// `async fn main` compiles to an entry point nothing can call.
     ///
     /// MEASURED at d0eebbf: `async fn main() { print_int(7) }` produced no

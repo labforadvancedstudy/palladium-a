@@ -941,23 +941,44 @@ fi
 # read only `.py`/`.sh`/`.rs` under scripts/, tests/ and src/, so "any consumer"
 # in the module docstring was wider than what any gate checked.
 #
-# PROSE IS EXEMPTED BY SPAN, NOT BY LINE — and that correction matters more than
-# it sounds. The first version dropped any line containing a backtick anywhere,
-# so this was invisible to the guard:
+# THE EXEMPTION IS A SHAPE THE MENTION MUST HAVE, NOT A REGION OF THE LINE THAT
+# IS DELETED FIRST. Two rounds of "remove the prose, then match what is left"
+# both failed, in both directions, because deciding what is prose needs a lexer
+# and a regex is not one. MEASURED, on the previous version:
 #
-#     x = r._out  # `debug`
+#     s = "http://x"; y = r._out    ->  's = "http:'      live access ERASED
+#     obj.`x`_out = 1               ->  'obj._out = 1'    access INVENTED
 #
-# live access, exempted by an unrelated word in a trailing comment. The stated
-# cost ("a shell line using backticks for command substitution") was not the
-# cost it had. Backticked spans and comment tails are now removed FROM the line
-# and the pattern is matched against what is left, so prose is exempt and code
-# on the same line is not.
+# The `//` inside a STRING LITERAL looked like a comment tail and took the real
+# access away with it; and deleting a span between `obj.` and `_out` joined two
+# halves that were never adjacent, so the guard reported an access nobody wrote.
+# Two backticks in separate string literals erase everything between them the
+# same way, and nested or unbalanced Markdown was never modelled at all. The
+# earlier round had already recorded one wrong cost here — the whole-line
+# version's stated cost, "a shell line using backticks for command
+# substitution", was not the cost it had — and the span version repeated the
+# mistake one layer down: its stated cost was unmodelled Markdown, when its
+# actual cost was erasing live access and inventing access that is not there.
+#
+# So the grammar is NARROWED rather than given another case, and the line is
+# never modified. A mention is EXEMPT only when the whole of it sits inside a
+# backticked BARE DOTTED NAME — a backtick, an optional leading `.`, an
+# identifier, dot-separated identifier pieces, a backtick, and nothing else. No
+# whitespace, no quotes, no operators. That span cannot reach across a statement
+# (it would have to contain a space or a quote), so nothing between two
+# unrelated backticks is ever exempted; and since nothing is deleted, no two
+# characters can become adjacent that were not. Everything that is not that
+# shape is treated as code. BLAST RADIUS MEASURED BEFORE THE SWAP: zero lines in
+# the tracked tree change verdict.
 #
 # WHAT STILL WALKS PAST IT, because a guard described as more than it is becomes
 # the next round's defect: `getattr(x, "_b")`, a name assembled from tokens,
 # `vars(x)["_b"]`, anything constructed at runtime, an untracked file, and a
-# private slot named inside a string literal that is not backticked. It is a
-# LEXICAL CONVENTION GUARD, not access control.
+# private slot spelled as a backticked bare name inside a string literal. It is
+# a LEXICAL CONVENTION GUARD, not access control. The cost of the narrowing is
+# also stated rather than implied: a prose mention that is NOT backticked — say
+# a comment reading "the _out slot" written as `x._out` without backticks — is
+# now a finding, and the fix is to add the backticks the convention asks for.
 #
 # Two files are exempt and both are load-bearing rather than convenient:
 # gate_probe.py OWNS the slots, and this file is the ENFORCER — it must spell the
@@ -966,10 +987,19 @@ python3 - >"$TMP/leaks.out" 2>&1 <<'LEAKPY'
 import pathlib, re, subprocess, sys
 
 PRIVATE = re.compile(r"\._out\b|\._b\b|\._rc\b|\.withheld\._")
-# A backticked span, a `#` comment tail, or a `//` comment tail. Removed from
-# the line before the pattern is applied: what is left is code.
-PROSE = re.compile(r"`[^`]*`|#.*$|//.*$")
+# The ONLY exempt shape: a backticked bare dotted name. Nothing is removed from
+# the line; a mention is exempt when it lies wholly inside one of these spans.
+NAME = re.compile(r"`\.?[A-Za-z_][A-Za-z0-9_]*(?:\._?[A-Za-z0-9_]+)*`")
 EXEMPT = {"scripts/gate_probe.py", "scripts/test-gate-probe.sh"}
+
+
+def flagged(line):
+    spans = [m.span() for m in NAME.finditer(line)]
+    return any(
+        not any(s <= m.start() and m.end() <= e for s, e in spans)
+        for m in PRIVATE.finditer(line)
+    )
+
 
 tracked = subprocess.run(["git", "ls-files", "-z"], capture_output=True).stdout
 leaks = []
@@ -989,8 +1019,7 @@ for raw in tracked.split(b"\0"):
     for n, line in enumerate(text.split("\n"), 1):
         if "_out" not in line and "_b" not in line and "_rc" not in line:
             continue
-        code = PROSE.sub("", line)
-        if PRIVATE.search(code):
+        if flagged(line):
             leaks.append("%s:%d: %s" % (name, n, line.strip()[:100]))
 
 print("\n".join(leaks) if leaks else "ok")
@@ -1007,16 +1036,24 @@ fi
 
 # ...AND THE EXEMPTION ITSELF IS FAULT-INJECTED. A prose mention must stay
 # invisible, and live access must stay visible even when prose shares its line —
-# which is exactly the case the whole-line version missed.
+# which is exactly the case the whole-line version missed. The last three rows
+# are the two directions the SPAN-REMOVAL version got wrong, reproduced here so
+# that reverting to any delete-then-match scheme is red rather than reviewed:
+# rows 7 and 8 were false negatives (a live access erased), row 9 a false
+# positive (an access invented out of two halves).
 python3 - >"$TMP/prose.out" 2>&1 <<'PROSEPY'
 import re, sys
 
 PRIVATE = re.compile(r"\._out\b|\._b\b|\._rc\b|\.withheld\._")
-PROSE = re.compile(r"`[^`]*`|#.*$|//.*$")
+NAME = re.compile(r"`\.?[A-Za-z_][A-Za-z0-9_]*(?:\._?[A-Za-z0-9_]+)*`")
 
 
 def flagged(line):
-    return bool(PRIVATE.search(PROSE.sub("", line)))
+    spans = [m.span() for m in NAME.finditer(line)]
+    return any(
+        not any(s <= m.start() and m.end() <= e for s, e in spans)
+        for m in PRIVATE.finditer(line)
+    )
 
 
 bad = []
@@ -1030,6 +1067,15 @@ for line, want, why in [
     ("    return res.withheld._b", True, "plain access"),
     ("value = obj._rc + 1  // `note`", True, "live access, Rust comment tail"),
     ("/// See `Withheld._b` for why", False, "a doc comment"),
+    ('s = "http://x"; y = r._out', True,
+     "`//` inside a STRING LITERAL is not a comment tail: deleting from it "
+     "erased a live access further right"),
+    ('a = "`"; x = r._out; b = "`"', True,
+     "two backticks in separate string literals are not one prose span: "
+     "deleting between them erased the access lying between"),
+    ("obj.`x`_out = 1", False,
+     "deleting the span joined `obj.` to `_out` and reported an access that "
+     "is not written anywhere on the line"),
 ]:
     got = flagged(line)
     if got != want:
@@ -1037,7 +1083,7 @@ for line, want, why in [
 print("\n".join(bad) if bad else "ok")
 sys.exit(1 if bad else 0)
 PROSEPY
-check "the prose exemption hides prose and not access" 0 $?
+check "the exemption hides a backticked bare name and nothing else" 0 $?
 grep -v '^ok$' "$TMP/prose.out" | sed 's/^/        /' || true
 
 echo

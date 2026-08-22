@@ -112,8 +112,10 @@ import sys
 #   * Getting the bytes anyway takes a private name, and there is a gate for
 #     the ordinary way of writing one: scripts/test-gate-probe.sh greps every
 #     GIT-TRACKED file for the literal spellings `._out`, `._b`, `._rc` and
-#     `.withheld._`, outside gate_probe.py and the enforcer, comment lines
-#     excluded. That is the whole of the mechanism. `getattr(x, "_b")`, a name
+#     `.withheld._`, outside gate_probe.py and the enforcer, exempting a
+#     mention only where it sits inside a backticked bare dotted name — not
+#     comment lines, which took a lexer to find and never had one.
+#     That is the whole of the mechanism. `getattr(x, "_b")`, a name
 #     assembled at runtime, and an untracked file all walk past it — it is a
 #     convention guard, not access control. (This comment said "any consumer
 #     outside gate_probe.py" for two rounds after gate_probe.py's own docstring
