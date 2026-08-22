@@ -565,7 +565,7 @@ echo "== the boundary must promise only what it delivers =="
 # checks keep prose and code in step: each fails if a future edit re-grows a
 # promise the class cannot keep, or lets the bytes back onto a parsed stream.
 python3 - >"$TMP/o" 2>&1 <<'PY'
-import os, pathlib, subprocess, sys, tempfile
+import os, pathlib, re, subprocess, sys, tempfile
 sys.path.insert(0, "scripts")
 import gate_probe as gp
 
@@ -737,10 +737,33 @@ CLAIMS = [
     (["scripts/gate_probe.py"], "the only way to the bytes",
      "spill() is the intended way, not the only one"),
     # THE PROMISE, in every file that states it. The grep covers git-tracked
-    # files, literal spellings, comment lines excluded — say that, or broaden
-    # the mechanism to match.
+    # files and literal spellings, exempting a mention only where it sits wholly
+    # inside a backticked bare dotted name — say that, or broaden the mechanism
+    # to match.
     (["scripts/gate_probe.py", "scripts/test-xfail.py"], "any consumer outside",
      "the enforced scope is git-tracked files and literal spellings only"),
+    # THE MECHANISM, described three times as something it never did. Three
+    # files said the private-slot grep skips comment lines: it does not, and
+    # never has — a comment is exempt only when the mention inside it is a
+    # backticked bare dotted name, which is why `# see the _out slot` written as
+    # `x._out` without backticks IS a finding. scripts/test-xfail.py:145-147 has
+    # said so explicitly for a round while the other two said the opposite.
+    #
+    # THE PHRASES ARE SPLIT so that this table can list the ENFORCER itself.
+    # Every phrase above is spelled here, in this file, which is exactly why
+    # scripts/test-gate-probe.sh appears in none of their file lists — and it was
+    # one row away from catching its own stale sentence at line 740. Python
+    # concatenates adjacent literals at parse time, so the phrase exists when the
+    # check runs and does not exist in the file being checked.
+    (["scripts/gate_probe.py", "scripts/test-xfail.py",
+      "scripts/test-gate-probe.sh"],
+     "comment lines " "excluded",
+     "comment lines are searched; the exemption is a backticked bare dotted "
+     "name, not a comment"),
+    (["scripts/gate_probe.py", "scripts/test-xfail.py",
+      "scripts/test-gate-probe.sh"],
+     "ignoring comment " "lines",
+     "same claim, second spelling"),
     # Measured in round 2 and contradicted inside the same test file for a
     # round: constant folding rewrites `1 == 1` to true, so BOTH spellings emit
     # `while (1)`. tests/d3b_tail_if.rs pins that count at 2.
@@ -749,10 +772,29 @@ CLAIMS = [
      "constant folding (src/optimizer/constant_folding.rs:154, BinOp::Eq) turns "
      "it into `while (1)`; measured, both spellings emit the same C"),
 ]
+# WHITESPACE IS COLLAPSED BEFORE MATCHING, and that is a repair, not a tidy-up.
+# Every file this table guards is PROSE wrapped at 79 columns, so a multi-word
+# phrase lands across a line break as often as not, and a plain substring match
+# reads a phrase with a newline inside it as a different string entirely.
+# MEASURED while the rows above were being added: the retracted claim was put
+# back into BOTH gate_probe.py and this file, and only this file's copy — the one
+# that happened to fit on a single line — was caught. A guard that a paragraph
+# reflow switches off has coverage nobody chose.
+#
+# AND NOTE WHAT THAT MAKES OF PROSE IN THIS FILE: with whitespace collapsed, a
+# comment that QUOTES a forbidden phrase in order to explain it trips the row
+# itself — line wrapping is no longer hiding it. That is why every phrase above
+# is split across adjacent literals, and why none of them is spelled out in a
+# sentence anywhere here. This paragraph is the only description of them, and it
+# names none.
+def flat(text):
+    return re.sub(r"\s+", " ", text.lower())
+
+
 for files, phrase, why in CLAIMS:
     for f in files:
         fp = pathlib.Path(f)
-        if fp.exists() and phrase in fp.read_text().lower():
+        if fp.exists() and flat(phrase) in flat(fp.read_text()):
             bad.append("%s reasserts a claim measured false: %r (%s)"
                        % (f, phrase, why))
 
@@ -983,6 +1025,29 @@ fi
 # Two files are exempt and both are load-bearing rather than convenient:
 # gate_probe.py OWNS the slots, and this file is the ENFORCER — it must spell the
 # names in its pattern in order to search for them.
+#
+# THE ROWS AND THE TREE SCAN NOW RUN ON THE SAME OBJECT, IN ONE PROCESS, AND
+# THAT IS A RETRACTION. Until this round the fault-injection table lived in a
+# SECOND heredoc with its own hand-typed copy of `PRIVATE`, `NAME` and
+# `flagged` — a control that was a duplicate of the thing it controlled, with
+# no equality check anywhere between them. It certified nothing about the
+# enforcer, and the receipt built on it was unsound: widening the grammar to
+# admit `(…)`/`[…]` in the COPY turned two rows red, while widening it HERE —
+# the predicate actually in force — left all twelve rows green and the tree
+# verdict unchanged. The header that used to sit further down said "AND THE
+# EXEMPTION ITSELF IS FAULT-INJECTED"; a duplicate of it was.
+#
+# This is the same failure tests/d3b_tail_if.rs:107-122 states as the reason
+# agreement between two analyses must be EXECUTED and not asserted — live in
+# this file while that sentence was in that one. scripts/test-xfail.py and
+# scripts/check_doc_evidence.py both import what they check; this was the one
+# control in the branch that re-implemented it.
+#
+# So: ONE definition, and the rows run FIRST. If the predicate does not do what
+# its rows say, the tree is NOT scanned and neither row passes — a scan verdict
+# produced by a predicate already known to be wrong is worse than no verdict,
+# because it is greppable as a pass. (`grep -c` on the two definition lines,
+# just below this block, is what keeps a second copy from being pasted back in.)
 python3 - >"$TMP/leaks.out" 2>&1 <<'LEAKPY'
 import pathlib, re, subprocess, sys
 
@@ -1001,63 +1066,14 @@ def flagged(line):
     )
 
 
-tracked = subprocess.run(["git", "ls-files", "-z"], capture_output=True).stdout
-leaks = []
-for raw in tracked.split(b"\0"):
-    if not raw:
-        continue
-    name = raw.decode("utf-8", "replace")
-    if name in EXEMPT:
-        continue
-    path = pathlib.Path(name)
-    try:
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        continue                      # binary or unreadable: nothing to read
-    for n, line in enumerate(text.split("\n"), 1):
-        if "_out" not in line and "_b" not in line and "_rc" not in line:
-            continue
-        if flagged(line):
-            leaks.append("%s:%d: %s" % (name, n, line.strip()[:100]))
-
-print("\n".join(leaks) if leaks else "ok")
-sys.exit(1 if leaks else 0)
-LEAKPY
-if [ $? -eq 0 ]; then
-  printf '  %sok%s   no consumer outside gate_probe.py names a withheld private slot\n' "$GREEN" "$NC"
-  pass=$((pass+1))
-else
-  printf '  %sFAIL%s a consumer reaches past the boundary for withheld bytes:\n' "$RED" "$NC"
-  sed 's/^/        /' "$TMP/leaks.out"
-  fail=$((fail+1))
-fi
-
-# ...AND THE EXEMPTION ITSELF IS FAULT-INJECTED. A prose mention must stay
-# invisible, and live access must stay visible even when prose shares its line —
-# which is exactly the case the whole-line version missed. The last three rows
-# are the two directions the SPAN-REMOVAL version got wrong, reproduced here so
-# that reverting to any delete-then-match scheme is red rather than reviewed:
-# rows 7 and 8 were false negatives (a live access erased), row 9 a false
-# positive (an access invented out of two halves).
-python3 - >"$TMP/prose.out" 2>&1 <<'PROSEPY'
-import re, sys
-
-PRIVATE = re.compile(r"\._out\b|\._b\b|\._rc\b|\.withheld\._")
-NAME = re.compile(r"`\.?[A-Za-z_][A-Za-z0-9_]*(?:\._?[A-Za-z0-9_]+)*`")
-
-
-def flagged(line):
-    spans = [m.span() for m in NAME.finditer(line)]
-    return any(
-        not any(s <= m.start() and m.end() <= e for s, e in spans)
-        for m in PRIVATE.finditer(line)
-    )
-
-
-bad = []
-for line, want, why in [
+# STEP 1 — THE EXEMPTION IS FAULT-INJECTED, against the predicate above rather
+# than against a transcription of it. A prose mention must stay invisible, and
+# live access must stay visible even when prose shares its line, which is
+# exactly the case the whole-line version missed. Rows 7 and 8 are the false
+# NEGATIVES the span-removal version produced (a live access erased), row 9 its
+# false POSITIVE (an access invented out of two halves), reproduced so that
+# reverting to any delete-then-match scheme is red rather than reviewed.
+ROWS = [
     ("# the bytes survive in `Run._out` and `Withheld._b`", False,
      "a comment naming the slots is the retraction, not access"),
     ("    `Run._out`. What IS structural here is that every caller", False,
@@ -1083,8 +1099,8 @@ for line, want, why in [
     # who hits it is the last row: backtick the bare name and leave the call or
     # the index outside. Widening the grammar to admit `(…)` or `[…]` would
     # readmit the class this guard exists for, because a call is exactly where a
-    # live access lives. Recorded as rows rather than as a sentence: a boundary
-    # a reader has to infer from a regex is one the next round re-litigates.
+    # live access lives. These three rows are the ones that stayed green through
+    # a widening of the enforcer for as long as they lived in a second process.
     ("# see `Run._out()` for the raw bytes", True,
      "a backticked CALL is not a bare name, so it is flagged"),
     ("# see `Run._out[index]` for the raw bytes", True,
@@ -1092,15 +1108,86 @@ for line, want, why in [
     ("# see `Run._out`() for the raw bytes", False,
      "and the documented fix works: the bare name is backticked, the call is "
      "not"),
-]:
+]
+
+bad = []
+for line, want, why in ROWS:
     got = flagged(line)
     if got != want:
         bad.append("%r -> flagged=%s, wanted %s (%s)" % (line, got, want, why))
-print("\n".join(bad) if bad else "ok")
-sys.exit(1 if bad else 0)
-PROSEPY
-check "the exemption hides a backticked bare name and nothing else" 0 $?
-grep -v '^ok$' "$TMP/prose.out" | sed 's/^/        /' || true
+if bad:
+    print("the predicate does not do what its rows say:")
+    print("\n".join(bad))
+    sys.exit(2)
+
+# STEP 2 — and only now, the tree.
+tracked = subprocess.run(["git", "ls-files", "-z"], capture_output=True).stdout
+leaks = []
+for raw in tracked.split(b"\0"):
+    if not raw:
+        continue
+    name = raw.decode("utf-8", "replace")
+    if name in EXEMPT:
+        continue
+    path = pathlib.Path(name)
+    try:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        continue                      # binary or unreadable: nothing to read
+    for n, line in enumerate(text.split("\n"), 1):
+        if "_out" not in line and "_b" not in line and "_rc" not in line:
+            continue
+        if flagged(line):
+            leaks.append("%s:%d: %s" % (name, n, line.strip()[:100]))
+
+print("\n".join(leaks) if leaks else "ok")
+sys.exit(1 if leaks else 0)
+LEAKPY
+leak_rc=$?
+if [ "$leak_rc" -eq 2 ]; then
+  printf '  %sFAIL%s the exemption does not hide what its rows say it hides:\n' "$RED" "$NC"
+  sed 's/^/        /' "$TMP/leaks.out"
+  fail=$((fail+1))
+  printf '  %sFAIL%s no consumer outside gate_probe.py names a withheld private slot — NOT ESTABLISHED: the tree was not scanned, because the predicate that would have scanned it is wrong\n' "$RED" "$NC"
+  fail=$((fail+1))
+else
+  printf '  %sok%s   the exemption hides a backticked bare name and nothing else\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+  if [ "$leak_rc" -eq 0 ]; then
+    printf '  %sok%s   no consumer outside gate_probe.py names a withheld private slot\n' "$GREEN" "$NC"
+    pass=$((pass+1))
+  else
+    printf '  %sFAIL%s a consumer reaches past the boundary for withheld bytes:\n' "$RED" "$NC"
+    sed 's/^/        /' "$TMP/leaks.out"
+    fail=$((fail+1))
+  fi
+fi
+
+# AND THE SINGLE DEFINITION IS ENFORCED STRUCTURALLY, because "one definition"
+# is a property of this file that prose cannot hold. The duplicate that made the
+# receipt above unsound was created by pasting the predicate into a second
+# heredoc; that paste is now a red row. Counting definition lines is exactly as
+# strong as it looks — a copy under another name, or a predicate rebuilt out of
+# `re.compile` calls spelled differently, walks past it — and it is here for the
+# ordinary way of doing it, which is the way it happened.
+#
+# (`PRIVATE` is also spelled in the ALLOWPY block above, as a tuple of the three
+# slot NAMES. That is not a third copy of this predicate: it answers a different
+# question — which function may LOAD a raw slot — with a different mechanism
+# (Python's own AST). The names are duplicated between them and nothing checks
+# that; recorded here rather than left for the next round to find.)
+flagged_defs=$(grep -c '^def flagged(line):$' scripts/test-gate-probe.sh)
+private_defs=$(grep -c '^PRIVATE = re.compile' scripts/test-gate-probe.sh)
+if [ "$flagged_defs" -eq 1 ] && [ "$private_defs" -eq 1 ]; then
+  printf '  %sok%s   the predicate has exactly one definition in this file\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s the private-slot predicate is defined %s time(s) and its pattern %s time(s) — a control that is a COPY of what it controls certifies nothing about the enforcer. Delete the copy and run the rows against the definition in force.\n' \
+    "$RED" "$NC" "$flagged_defs" "$private_defs"
+  fail=$((fail+1))
+fi
 
 echo
 echo "== the malfunction path must not republish producer text =="

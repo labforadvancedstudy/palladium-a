@@ -100,8 +100,14 @@ the retracted version for a round).
 
 AND THE SCOPE OF THE PRIVATE-NAME RULE, STATED AT ITS TRUE SIZE. The gate greps
 EVERY GIT-TRACKED FILE (binaries skipped) for the literal spellings `._out`,
-`._b` and `.withheld._`, outside this module and the enforcer itself, ignoring
-comment lines. That is the whole of it. It is a LEXICAL CONVENTION GUARD:
+`._b` and `.withheld._`, outside this module and the enforcer itself, exempting
+a mention only where it sits wholly inside a backticked bare dotted name. A
+comment is NOT skipped: `# the _out slot` written without backticks is a
+finding, and the fix is the backticks the convention asks for. (This paragraph
+claimed the opposite for two rounds, as did `Withheld`'s docstring below, while
+scripts/test-xfail.py described the real mechanism — three statements of one
+rule, drifting. Both spellings of the false one are now checked phrases.)
+That is the whole of it. It is a LEXICAL CONVENTION GUARD:
 `getattr(x, "_b")`, a name assembled from tokens, `vars(x)["_b"]`, anything
 built at runtime, and an untracked file all walk past it. It does not stop a
 determined caller and nothing in Python would; what it does is make the
@@ -240,9 +246,10 @@ class Withheld:
 
     The rule that IS enforced lives in scripts/test-gate-probe.sh: a grep over
     every git-tracked file for the literal spellings `._b` and `._out`, outside
-    this module and the enforcer, comment lines excluded. That is a convention
-    guard, not access control — see the module docstring for exactly what walks
-    past it.
+    this module and the enforcer, exempting a mention only where it lies wholly
+    inside a backticked bare dotted name — a comment is searched like any other
+    line. That is a convention guard, not access control — see the module
+    docstring for exactly what walks past it.
 
     `complete` records whether the capture reached EOF. It is FALSE exactly when
     `Run.capture_error` was set, and it is the difference between "here is what

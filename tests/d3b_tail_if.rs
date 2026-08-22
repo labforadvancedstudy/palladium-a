@@ -1604,6 +1604,16 @@ fn a_user_written_return_zero_in_a_unit_function_is_refused() {
 /// with what it declares. (Whether one actually did is now a measurement rather
 /// than a worry — see the diagnostic column in tests/rust-debt-manifest.txt.)
 ///
+/// "STOPS HERE" IS ORDERED, NOT UNCONDITIONAL, and the two rows below differ on
+/// it. `a_local_fn_shadowing_an_imported_async_fn…` calls only its LOCAL `f`, so
+/// the wall is not on its path at all. `selective_import_excludes_a_symbol…`
+/// does call an imported `helper`, so the wall IS on its path — it simply never
+/// arrives, because src/driver/mod.rs:109 (`type_checker.check(&ast)?`) returns
+/// Err before :137-138 constructs the borrow checker. Its honest reason is
+/// therefore "the wall is downstream of this refusal", not "the wall is
+/// irrelevant": move the refusal that fires first and that row's diagnostic
+/// becomes this one's.
+///
 /// The chain, read in the code rather than inferred from the message:
 ///
 ///   src/driver/mod.rs:104-107   the resolver's output goes to the type
@@ -1718,7 +1728,7 @@ fn a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future() {
 /// The fix is one shared definition of the effective imported symbol set, read
 /// by both consumers. That is module-system work, not tail-return work.
 #[test]
-#[ignore = "XFAIL: selective import (`import lib::{item}`) filters only ModuleInfo.exports (src/resolver/mod.rs:105-118); src/typeck/mod.rs set_imported_modules and src/codegen/mod.rs's imported-function loops both iterate the unchanged module AST's public functions instead, so excluded items are still registered, still emitted, and still reach entry-point rejection. Measured: `import lib::{helper}` from a module that also declares `pub async fn main` is rejected for that `main`. Needs one shared definition of the effective imported symbol set consumed by both passes (owned by M4)"]
+#[ignore = "XFAIL: selective import (`import lib::{item}`) filters only ModuleInfo.exports (src/resolver/mod.rs:105-118); src/typeck/mod.rs set_imported_modules and src/codegen/mod.rs's imported-function loops both iterate the unchanged module AST's public functions instead, so excluded items are still registered, still emitted, and still reach entry-point rejection. Measured: `import lib::{helper}` from a module that also declares `pub async fn main` is rejected for that `main`. Needs one shared definition of the effective imported symbol set consumed by both passes (owned by M4). The import wall (an_imported_function_is_visible_to_the_borrow_checker) is DOWNSTREAM of this refusal rather than irrelevant to it: this fixture does call an imported `helper`, so the wall IS on its path, but src/driver/mod.rs:109 `type_checker.check(&ast)?` returns Err before :137-138 ever constructs the borrow checker. The day the async-main refusal moves, this row's failure becomes the wall's and this diagnostic names nothing that happened"]
 fn selective_import_excludes_a_symbol_from_the_consumers() {
     let err = compile_and_run_with_import(
         "pub fn helper() { print_int(2); }\npub async fn main() { print_int(1) }\n",
@@ -1867,10 +1877,18 @@ fn two_modules_exporting_one_name_are_deterministic() {
 ///     cannot distinguish the two declarations;
 ///   * its span renders against `app.pd`, which declares neither of them.
 ///
-/// That is the exhibit: on the runs where `b.pd`'s harmless body won the key,
-/// the compiler refused a program over a declaration that would not have been
-/// in it. The refusal is not wrong to exist — an offending declaration IS
-/// reachable — but which one it is about is not something it can say.
+/// WHAT THE SIX RUNS BELOW ESTABLISH, AND WHAT THEY DO NOT. They establish the
+/// two bullets above: every run refuses, every refusal names `agen` alone, and
+/// every span renders against `app.pd`. They do NOT observe which module's body
+/// held the key on any run — nothing in the output says, which is the whole
+/// finding. An earlier version of this comment went further and described "the
+/// runs where `b.pd`'s harmless body won the key" as a measured event; it is
+/// not measured, here or anywhere, and a claim about a run nobody can read is
+/// the same defect this file exists to remove.
+///
+/// So the exhibit is exactly this: the refusal is not wrong to exist — an
+/// offending declaration IS reachable — but which declaration it is about is
+/// not something it can say, and a reader cannot recover it from the message.
 #[test]
 fn the_generic_async_refusal_carries_no_declaration_identity() {
     let dir = TempDir::new().unwrap();
@@ -1890,8 +1908,14 @@ fn the_generic_async_refusal_carries_no_declaration_identity() {
     )
     .unwrap();
 
-    // Six runs, because the thing being pinned is that the VERDICT does not
-    // vary while the winning body does. One run could not tell them apart.
+    // Six runs, because the verdict must be pinned across whatever the HashMap
+    // does — `set_imported_modules` iterates one, so the winning body may differ
+    // between runs and one run cannot show that the verdict does not. Note the
+    // asymmetry, since it is the whole reason this is a control and not a proof:
+    // six identical verdicts are consistent with the order having varied and
+    // with its never having varied at all. What is asserted is only the former's
+    // consequence — the message is the same either way, and says nothing that
+    // would let a reader tell which.
     for i in 0..6 {
         let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
             .args(["compile", "app.pd", "-o", &format!("d3b_agen_{}", i)])

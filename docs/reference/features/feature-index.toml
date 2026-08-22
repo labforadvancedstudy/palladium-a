@@ -428,7 +428,7 @@ description = "Export machine-checkable proofs to Lean/Coq."
 spec = "PALLADIUM_V1_FEATURES.md#41-verification"
 implementation = "unimplemented"
 evidence = [
-  "cmd: grep -rn 'Coq\\|Lean\\|Isabelle\\|Proof' src/ --include='*.rs' -> exit 0, 2 lines -- both the marketing tagline \"Turing's Proofs Meet von Neumann's Performance\", at src/main.rs:104 and src/cli.rs:19",
+  "cmd: grep -rn 'Coq\\|Lean\\|Isabelle\\|Proof' src/ --include='*.rs' -> exit 0, 2 lines -- both the marketing tagline \"Turing's Proofs Meet von Neumann's Performance\", at src/main.rs:104 and src/cli.rs:31",
   "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.v' -> exit 0, 0 lines -- no Coq artifact is checked in",
   "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.thy' -> exit 0, 0 lines -- no Isabelle artifact is checked in",
   "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.lean' -> exit 0, 0 lines -- no Lean artifact is checked in",

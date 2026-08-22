@@ -109,11 +109,23 @@ its declared diagnostic is reported as DEBT_DIAGNOSTIC, separately from a row
 that fails with it, which is the distinction "is it still failing" cannot make.
 
 What this does NOT claim: that the diagnostic is the RIGHT one. A substring
-copied from a run is a measurement, and the review of the reason text is still
-the authorisation boundary — exactly as it is for the owner column. What it buys
-is that the reason and the run can no longer drift apart in silence: when the
-upstream defect is fixed and the test starts failing further along, the gate
-says so and names both strings.
+copied from a run is a measurement, and it is as authoritative as the reason
+text a reviewer reads — no more than that.
+
+AND NOT "EXACTLY AS AUTHORITATIVE AS THE OWNER COLUMN BESIDE IT", which is what
+this paragraph used to say and which overstated it. The owner is cross-checked
+against a SECOND inventory: the manifest row and the `#[ignore]` reason must
+name the same milestone, and a disagreement is DEBT_OWNER, so moving a debt is a
+two-file edit. The diagnostic is cross-checked against nothing but the run it was
+copied from — and when a row misses, the report below PRINTS the observed
+string, which leaves the cheapest evasion (paste it into column 5) one copy
+away. Said out loud because a reviewer who knows it reads the diff differently:
+here the review of the reason text is the whole of the authorisation boundary,
+with no second inventory behind it.
+
+What the column does buy is that the reason and the run can no longer drift
+apart in silence: when the upstream defect is fixed and the test starts failing
+further along, the gate says so and names both strings.
 
 Env:
   TEST_XFAIL_FORBID_OWNER   fail if any still-failing XFAIL is owned by this
@@ -1341,12 +1353,28 @@ def self_test():
                               reject_codes=(101,)), Malfunction),
           True)
 
+    # AND THE GATE HAS TO BE REACHABLE — the check that this file is on the
+    # certifying path, which it was not. `make gates` ran ten gates and not this
+    # one, so "every declared failure still fails for its declared reason" was
+    # enforced only by naming this target by hand, or by `make m1-exit`, which is
+    # RED by design and therefore never evidence that anything passed. The
+    # version gate's tester makes the same assertion about itself for the same
+    # reason (scripts/test-version-gate.sh:172-186); a gate nobody runs is a
+    # document, and this is the line that notices when it becomes one again.
+    # `make -n` goes through run_and_classify, not raw subprocess: this file does
+    # not re-implement the process boundary, and a `make` that dies on a signal
+    # must not be read as "the target is not wired".
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    dry = run_and_classify(["make", "-n", "gates"], cwd=root, reject_codes=())
+    check("make gates runs scripts/test-xfail.py",
+          dry.succeeded and "scripts/test-xfail.py" in dry.text, True)
+
     if failures:
         print("self-test FAILED:", file=sys.stderr)
         for f in failures:
             print("  " + f, file=sys.stderr)
         return False
-    print("self-test: 61 checks green (reason lookup incl. same name in two "
+    print("self-test: 62 checks green (reason lookup incl. same name in two "
           "modules and in two targets, shared module, missing and ambiguous "
           "reasons, literal-safe scanning, cargo attribution, verdicts, the "
           "milestone-owner gate incl. its off state, owner agreement between "

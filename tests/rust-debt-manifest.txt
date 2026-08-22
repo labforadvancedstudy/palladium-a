@@ -44,10 +44,18 @@
 # captures for every failing test, and a mismatch is reported as
 # DEBT_DIAGNOSTIC — distinctly from a row that fails for its named reason.
 #
-# The column is a MEASUREMENT, not a proof that the reason is the right one; a
-# substring copied out of a run is exactly as authoritative as the owner label
-# beside it. What it buys is that the reason and the run cannot drift apart in
-# silence.
+# The column is a MEASUREMENT, not a proof that the reason is the right one: a
+# substring copied out of a run is as authoritative as the reason text a
+# reviewer reads, and no more.
+#
+# It is NOT as authoritative as the owner column beside it, which is what this
+# comment used to claim. The owner is checked against a SECOND inventory — the
+# `#[ignore]` reason must name the same milestone, or the run reports DEBT_OWNER
+# — while this column is checked against nothing but the run it was copied from,
+# and the report prints the observed string when a row misses, so pasting it
+# back into column 5 is the cheapest thing a hurried author can do. Review of
+# the reason text is the whole boundary here. What the column buys is that the
+# reason and the run cannot drift apart in silence.
 #
 # PAYING A DEBT IS A TRANSITION, NOT A DELETION. Delete the row and the test is
 # an UNDECLARED_DEBT; delete the test and the row is DEBT_MISSING. Deleting both

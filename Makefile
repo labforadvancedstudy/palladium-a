@@ -368,8 +368,42 @@ stdlib-gate: build ## Pin the stdlib/ measurement, account builtins, check gener
 test-gate-probe: build ## Fault-inject every producer the stdlib gate reads as evidence
 	@bash scripts/test-gate-probe.sh
 
+# `#[command(version = "0.1.0-alpha")]` sat in src/cli.rs while Cargo.toml went 0.1.0 ->
+# 0.2.0 -> 0.3.0, so both shipped releases install a compiler that answers `--version` with
+# 0.1.0-alpha. Two releases, no gate, because no gate ever ran the binary. This one does:
+# it executes every declared [[bin]] and compares what it printed against the manifest.
+# Not a grep for `env!` — that reads the source, and the source is not what the user runs.
+.PHONY: version-gate
+version-gate: build ## Run every built binary and require its --version to match Cargo.toml
+	@bash scripts/version-gate.sh
+
+.PHONY: test-version-gate
+test-version-gate: ## Prove the version gate goes RED on binaries that misreport themselves
+	@bash scripts/test-version-gate.sh
+
+# `test-xfail` BELONGS IN THIS LIST, and its absence was this round's own defect.
+# It is the check that every #[ignore]d row still fails FOR THE REASON IT
+# DECLARES — the headline mechanism of the last two rounds — and until now it was
+# reachable only by naming its own target or through `m1-exit`, which is RED by
+# design and therefore never evidence that anything passed. A check that the
+# certifying path does not run is a document.
+#
+# COST, MEASURED BY RUNNING IT BOTH WAYS BACK TO BACK rather than by subtracting
+# a standalone timing: `make gates` 1m43s without this entry, 1m47s with it — 4s,
+# because everything ahead of it in this list has already built the test binaries
+# it needs. (`make test-xfail` on its own is 41s from a build warm for `cargo
+# build --release` but not for `cargo test --release`; that number is the
+# rebuild, not this gate, and quoting it here would have overstated the cost by
+# ten times.) It is last in the list because it is the only entry that runs the
+# whole test suite, so every cheaper failure is reported before it starts.
+#
+# NOT ADDED HERE: `test-honest` (the entire test suite, 18s warm / minutes cold).
+# It is missing from this list too, and that is a real hole — but it is a
+# different kind of check (run everything) rather than a gate over a declared
+# inventory, and adding it is a scope decision with an owner, not a line to slip
+# in beside this one. Recorded rather than silently done.
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe ## Run every language-level gate
+gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate test-xfail ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------
