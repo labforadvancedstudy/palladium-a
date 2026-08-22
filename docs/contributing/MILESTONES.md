@@ -102,14 +102,17 @@ resolved-or-declared) — which proves the model's **structure**. The acceptance
 cannot carry that: measured, an empty `#[test]` reports `1 passed`, so a body of `{}` satisfied
 the entire structural contract.
 
-**Every structural row is fault-injected.** Each carries a mutation that removes the fact it is
-about, and pins the answer the mutated program must give — so the provider is asked about a
-program it has not been told about. Measured: a hardcoded table keyed by source scores **0 of 6**,
-and so does one with a constant fallback. Comparing expected strings alone scored **5/5** for a
-hardcoded stub, which is why fault injection had to stop being called human review — it is the
-clause that makes the other five worth anything. **One** clause remains on human review:
-provenance tied to the compiled unit, because it constrains the provider's interface rather than
-any program's graph. The wired lexical model **fails 7 of the 20**, and
+**Every structural row is fault-injected**, and one row mechanizes provenance: the provider must
+return the digest of the unit it was handed, computed independently by the runner and re-checked
+after the unit changes.
+
+**What that does and does not establish, measured rather than argued.** A hardcoded table of all
+seven programs *and* all seven mutations scores **7/7**. Run-time metamorphic renaming takes that
+same table to **0/7** — but an adversary that normalises identifiers, looks up, and re-applies the
+suffix is back to **7/7**. So: **a finite, public corpus cannot defeat a reader.** These rows
+establish that a *wrong* implementation fails; that a *real* one exists is a human-review
+judgement at the point GI-11 lands, and the gate says exactly that. That is **one** boundary, not
+a list — provenance used to be a second and is now mechanized. The wired lexical model **fails 7 of the 20**, and
 answering `live` everywhere, answering `dead` everywhere, and a renamed wrapper around the probe
 all fail it too. The corpus is itself closed — id set both ways, full digest over
 (id, answer, subject, source) — because it carries the verdict half of GI-11. While either precondition is outstanding **no verdict is computed at all**. Until
@@ -226,7 +229,7 @@ Measured at this revision; every row names the command that produced it.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 135 unique cases, **checked** — duplicate labels and `… or True` predicates are harness errors, and the set is digest-pinned; 59 drive the gate end to end | `make test-thesis-runner` |
+| Thesis gate itself | 146 unique cases, **checked**; 11 of them drive the fault-injection branch with injected providers, which had no coverage at all until this round | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 239 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |

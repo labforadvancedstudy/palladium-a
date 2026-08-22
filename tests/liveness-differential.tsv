@@ -57,8 +57,8 @@
 # call-site identities, declared entry roots, an order-independent fixed point, provenance,
 # per-edge completion, indirect targets resolved-or-declared. That is GI-11's observable,
 # and GI-11 requires BOTH — this corpus and tests/callgraph-differential.tsv — precisely
-# because neither substitutes for the other. The acceptance OBSERVABLE was removed from the
-# precondition in round 12: an empty `#[test]` reports `1 passed`. Feasibility that needs interprocedural constant propagation is
+# because neither substitutes for the other. A named test was tried for the structural half
+# and removed in round 12: an empty test body reported success and satisfied it whole. Feasibility that needs interprocedural constant propagation is
 # deliberately out of scope here and belongs to the observable.
 #
 # A model must answer every row. REFUSING IS FAILING: a model that cannot decide these is

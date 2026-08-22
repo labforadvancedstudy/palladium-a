@@ -30,12 +30,21 @@
 # order-independent fixed point · per-edge completion · indirect targets resolved-or-
 # declared. Five clauses, and the count in this sentence is checked by the self-test.
 #
-# WHAT IT STILL CANNOT PIN: provenance tied to the compiled unit — binding a graph to the
-# identity of the unit submitted. That is mechanizable in principle (hash the unit, require
-# it back), but it constrains the PROVIDER'S INTERFACE rather than any program's graph, and
-# this corpus only speaks about graphs of programs. It remains on human review at the point
-# GI-11 lands, and it is the ONLY clause that does. Fault injection is no longer on that
-# list, because it turned out to be the mechanism that makes the rest worth anything.
+# PROVENANCE IS NOW MECHANIZED TOO. An earlier round excused it as "constrains the
+# provider's interface rather than any program's graph" — true, and not a technical
+# barrier: `provenance-binding` requires the provider to return the digest of the unit it
+# was handed, computed independently by the runner, and fault-injects it by changing the
+# unit. It does not prove the graph was DERIVED from that unit; it enforces the stale-unit
+# binding the contract actually states.
+#
+# WHAT REMAINS, AND IT IS ONE THING, NOT TWO. Measured this round: an adversary who reads
+# this corpus and works out the correct answer for every program AND every mutation scores
+# 6/6. Run-time metamorphic renaming takes that table to 0/6 — but an adversary that
+# normalises identifiers, looks up, and re-applies the suffix is back to 6/6. A FINITE,
+# PUBLIC CORPUS CANNOT DEFEAT A READER. What these rows establish is that a WRONG
+# implementation fails; that a REAL one exists is a human-review judgement at the point
+# GI-11 lands, and the gate says exactly that in its output rather than implying the corpus
+# closed it.
 #
 # COLUMNS (TAB-separated, all EIGHT mandatory):
 #   id  property  source  expect  mutation  expect-mutated  why  source-of-truth
@@ -52,6 +61,10 @@
 #                 `no` = it may diverge. A fact about the CALLEE, not about whether the
 #                 call site is reached — an earlier version conflated the two and marked an
 #                 edge into a plainly-returning function `no`.
+#   provenance    the sha256 of the DECODED unit the provider was handed. The runner
+#                 computes it independently. `sha256-of-submitted-unit` in the expect
+#                 column means "whatever that digest is" — the value is computed, not
+#                 written here, or the corpus would just be another lookup key.
 #   indirect      `resolved:<targets>` or `unresolved`. Where the row writes both separated
 #                 by `|`, EITHER is accepted: the contract permits both, so a better
 #                 provider that resolves the target must not fail a row written for one
@@ -74,3 +87,4 @@ order-independent	identical-to	fn main() { helper(); }\nfn helper() -> i64 { ret
 completion-diverges	completion	fn stop() { panic("x"); }\nfn main() { stop(); }	main>stop=no	panic("x")=>return	main>stop=yes	the callee diverges, so the edge may not complete. Making it return must flip the fact	reviewed
 completion-returns	completion	fn ok() -> i64 { return 1; }\nfn main() { ok(); }	main>ok=yes	return 1=>panic("x")	main>ok=no	the POSITIVE control the first version lacked: a callee that always returns. Making it diverge must flip the fact	reviewed
 indirect-declared	indirect	fn target() -> i64 { return 1; }\nfn run(f: fn() -> i64) -> i64 { return f(); }\nfn main() { run(target); }	resolved:target|unresolved	return f()=>return 1	(none)	the call `f()` has no statically visible target here. The contract permits resolving it OR declaring it unresolved; omitting it silently is the failure this row exists to catch. Removing the indirect call must change the answer	reviewed
+provenance-binding	provenance	fn helper() -> i64 { return 1; }\nfn main() { helper(); }	sha256-of-submitted-unit	helper()=>1	sha256-of-submitted-unit	the graph must return the digest of the unit it was HANDED, so a stale or mismatched unit is detectable. The runner computes the digest independently and compares; the mutation changes the unit, so a provider echoing a remembered digest fails. This does not prove the graph was DERIVED from the unit — only that the binding is not stale	reviewed

@@ -72,6 +72,7 @@ import importlib.util
 import io
 import os
 import re
+import secrets
 import subprocess
 import sys
 import traceback
@@ -192,10 +193,10 @@ EXPECTED_LIVENESS_SHA = \
 CALLGRAPH_CORPUS = ROOT / "tests/callgraph-differential.tsv"
 EXPECTED_CALLGRAPH_IDS = frozenset({
     "completion-diverges", "completion-returns", "entry-roots", "indirect-declared",
-    "order-independent", "scoped-identity",
+    "order-independent", "provenance-binding", "scoped-identity",
 })
 EXPECTED_CALLGRAPH_SHA = \
-    "d334a3341cc6ae2f3f1eb199774345368a171d946218ab176b03bc0edbe4e410"
+    "2df8c551e33dc871446f1fb792cacac595f2f3a54cca7cf1a0dc79246881d362"
 
 # Clauses of GI-11's contract that NO corpus of program outputs can pin, because they are
 # properties of the artifact rather than of any program's graph. Named here and printed by
@@ -204,10 +205,15 @@ EXPECTED_CALLGRAPH_SHA = \
 # is mechanically enforceable, it is what makes the structural corpus unfakeable, and by
 # calling it human review the gate removed the only thing standing between a hardcoded
 # provider and a pass. It is enforced in callgraph_differential() now.
+# ONE boundary, named once. Provenance left this list — it is mechanized by the
+# `provenance-binding` row. What is left is the thing no finite corpus can reach.
 GI11_HUMAN_REVIEW_RESIDUE = (
-    "provenance tied to the compiled unit — mechanizable in principle (hash the unit, "
-    "require it back), but it constrains the PROVIDER'S INTERFACE rather than any "
-    "program's graph, and this corpus only speaks about graphs of programs",
+    "that the provider is a REAL implementation rather than a sufficiently well-informed "
+    "lookup. Measured: a table of all seven programs AND all seven mutations scores 7/7; "
+    "run-time metamorphic renaming takes it to 0/7; an adversary that normalises "
+    "identifiers, looks up and re-applies the suffix is back to 7/7. A finite, public "
+    "corpus cannot defeat a reader. These rows establish that a WRONG implementation "
+    "fails — not that a real one exists",
 )
 
 
@@ -284,6 +290,44 @@ def liveness_differential() -> tuple[list[tuple[str, str, str]], int]:
     return failures, total
 
 
+CALLGRAPH_PROVIDER_OVERRIDE = None   # self-test injection point
+
+# Identifiers the metamorphic family renames at run time. Not `main` (a declared entry
+# root, and renaming it changes the property under test) and not builtins.
+FAMILY_RENAMEABLE = ("helper", "extra", "ok", "stop", "target", "run", "Buf", "Log", "len")
+
+
+def family_instance(source: str, expect: str, expect_mut: str, mutation: str, seed: str):
+    """One member of a metamorphic family: the same program, alpha-renamed at RUN TIME.
+
+    WHY. Measured: an adversary who reads this corpus and works out the correct answer for
+    all six programs AND all six mutations scores 6/6. Fault injection defeats a table of
+    ORIGINALS; it does not defeat a table of everything, because every program here is
+    deterministic and public. Renaming with a per-run suffix means the exact source is in
+    no table written in advance.
+
+    WHAT THIS DOES NOT DO, stated because the last two rounds each claimed a closure that
+    measurement then removed: it does not defeat an adversary who NORMALISES identifiers
+    before looking up. It raises the cost from "read the corpus" to "implement renaming-
+    invariant lookup", which is a step toward implementing the analysis but is not the
+    analysis. The residual boundary is named in the gate's output.
+    """
+    subs = {n: f"{n}_{seed}" for n in FAMILY_RENAMEABLE}
+
+    def rename(text: str) -> str:
+        for old, new in sorted(subs.items(), key=lambda kv: -len(kv[0])):
+            text = re.sub(rf"(?<![A-Za-z_0-9]){re.escape(old)}(?![A-Za-z_0-9])", new, text)
+        return text
+
+    return rename(source), rename(expect), rename(expect_mut), rename(mutation)
+
+
+def _ask_provider(source: str, prop: str):
+    if CALLGRAPH_PROVIDER_OVERRIDE is not None:
+        return CALLGRAPH_PROVIDER_OVERRIDE(source, prop)
+    return callgraph_provider(source, prop)
+
+
 def callgraph_differential() -> tuple[list[tuple[str, str, str]], int]:
     """-> (failures as (id, expected, got), total). Closed, and FAULT-INJECTED.
 
@@ -302,7 +346,8 @@ def callgraph_differential() -> tuple[list[tuple[str, str, str]], int]:
         if len(f) != 8:
             raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: {len(f)} columns, want 8")
         rid, prop, source, expect, mutation, expect_mut, _why, _prov = f
-        if prop not in ("edges", "roots", "completion", "indirect", "identical-to"):
+        if prop not in ("edges", "roots", "completion", "indirect", "identical-to",
+                        "provenance"):
             raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: unknown property {prop!r}")
         if "=>" not in mutation:
             raise HarnessError(f"{CALLGRAPH_CORPUS.name}:{n}: mutation {mutation!r} is not "
@@ -331,7 +376,7 @@ def callgraph_differential() -> tuple[list[tuple[str, str, str]], int]:
         return src.replace("\\n", "\n")
 
     def ask(src: str, prop: str):
-        return callgraph_provider(decoded(src), prop)
+        return _ask_provider(decoded(src), prop)
 
     def matches(got, expect: str) -> bool:
         # `a|b` means the contract permits either. Without this a provider that RESOLVES an
@@ -339,27 +384,59 @@ def callgraph_differential() -> tuple[list[tuple[str, str, str]], int]:
         # better implementation losing to the weaker.
         return str(got) in {alt.strip() for alt in expect.split("|")}
 
+    seed = os.environ.get("THESIS_FAMILY_SEED") or f"m{secrets.token_hex(3)}"
     for rid, prop, source, expect, mutation, expect_mut in parsed:
+        # Draw a fresh family member per run. `identical-to` rows must be renamed with the
+        # SAME seed as the row they compare against, which holds because the seed is
+        # per-run, not per-row.
+        source, expect, expect_mut, mutation = family_instance(
+            source, expect, expect_mut, mutation, seed)
         find, _, repl = mutation.partition("=>")
         mutated = decoded(source).replace(find, repl)
         if mutated == decoded(source):
             failures.append((rid, expect, f"the row's mutation {find!r} matched nothing — "
                                           "it cannot fault-inject anything"))
             continue
-        if prop == "identical-to":
-            other = by_id.get(expect)
-            if other is None:
-                failures.append((rid, expect, f"names no row in this corpus"))
+        if prop == "provenance":
+            # The digest is COMPUTED, never read from the corpus — otherwise the expected
+            # value would just be another lookup key.
+            want = hashlib.sha256(decoded(source).encode()).hexdigest()
+            got = ask(source, prop)
+            if got != want:
+                failures.append((rid, f"sha256 of the submitted unit ({want[:12]}…)",
+                                 "silence" if got is None else str(got)[:24]))
                 continue
-            a, b = ask(source, "edges"), ask(other[2], "edges")
+            want_m = hashlib.sha256(mutated.encode()).hexdigest()
+            after = _ask_provider(mutated, prop)
+            if after != want_m:
+                failures.append((rid, f"sha256 of the MUTATED unit ({want_m[:12]}…) — a "
+                                      f"remembered digest is a stale binding",
+                                 "silence" if after is None else str(after)[:24]))
+            continue
+        if prop == "identical-to":
+            other = by_id.get(expect.rsplit("_", 1)[0] if "_" in expect else expect)
+            if other is None:
+                failures.append((rid, expect, "names no row in this corpus"))
+                continue
+            other_src = family_instance(other[2], "", "", "", seed)[0]
+            def norm(v):
+                # SETS, not strings. Direct comparison of provider values is only sound if
+                # canonical sorted serialisation is a provider-interface requirement, and
+                # nothing states that — so the claim "EDGE SETS are compared" is made true
+                # here instead of assumed.
+                if v is None:
+                    return None
+                return frozenset(x.strip() for x in str(v).split(",") if x.strip())
+
+            a, b = norm(ask(source, "edges")), norm(ask(other_src, "edges"))
             if a is None or b is None:
                 failures.append((rid, f"edges == {expect}'s edges", "no call graph is wired"))
                 continue
             if a != b:
                 failures.append((rid, f"edges == {expect}'s edges ({b})", str(a)))
                 continue
-            after = callgraph_provider(mutated, "edges")
-            if after is None or not matches(after, expect_mut):
+            after = norm(_ask_provider(mutated, "edges"))
+            if after is None or after != norm(expect_mut):
                 failures.append((rid, f"edges == {expect_mut} once `{find}` is removed",
                                  "silence" if after is None else str(after)))
             continue
@@ -373,7 +450,7 @@ def callgraph_differential() -> tuple[list[tuple[str, str, str]], int]:
         # THE PINNED OUTCOME, not merely a different one. `!= got` let a constant fallback
         # pass, because a constant is a change; and silence is not an answer at all. Both
         # measured against a hardcoded provider before this was tightened.
-        after = callgraph_provider(mutated, prop)
+        after = _ask_provider(mutated, prop)
         if after is None:
             failures.append((rid, f"{expect_mut} once `{find}` is removed",
                              "silence — a table with no entry for it is not a graph"))
@@ -461,13 +538,15 @@ def incomplete_definition() -> list[tuple[str, str]]:
 
       * the DIFFERENTIAL CORPUS proves the model's VERDICTS — that it answers correctly on
         programs whose answers are fixed by review;
-      * the OBSERVABLE proves the model's CONTRACT — scoped call-site identities, declared
-        entry roots, a source-order-independent fixed point, provenance tied to the
-        compiled unit, per-edge completion, indirect targets resolved-or-declared, and
-        unresolved-target as a harness failure. The corpus touches none of that.
+      * the CALL-GRAPH DIFFERENTIAL proves the model's STRUCTURE — scoped call-site
+        identities, declared entry roots, a source-order-independent fixed point,
+        provenance binding, per-edge completion, indirect targets resolved-or-declared —
+        each fault-injected, so a lookup table fails. The liveness corpus touches none of
+        that; an `observable` could not carry it either, because an empty `#[test]`
+        reports `1 passed`.
 
-    Making the corpus the WHOLE precondition — which is what round 10 did — let GI-11 clear
-    on twelve scalar verdicts while the structure it contracted for was unbuilt.
+    Making the liveness corpus the WHOLE precondition — which is what round 10 did — let
+    GI-11 clear on scalar verdicts while the structure it contracted for was unbuilt.
     """
     out = []
     try:
@@ -1343,8 +1422,9 @@ def main(ctx: Context | None = None) -> int:
         print("  WHAT NO CORPUS HERE ESTABLISHES, so it is not implied away:")
         for item in GI11_HUMAN_REVIEW_RESIDUE:
             print(f"    - {item}")
-        print("    Both are properties of the artifact, not of any program's graph. They")
-        print("    are discharged by HUMAN REVIEW at the point GI-11 lands.")
+        print("    Discharged by HUMAN REVIEW at the point GI-11 lands. This is ONE")
+        print("    boundary, not a list: provenance was on it and is now mechanized by the")
+        print("    `provenance-binding` row.")
         print()
         print("  A green run is not merely unreached — it is UNAVAILABLE, and will stay so")
         print("  until the two models above are replaced. `1.0 is not reached yet` is a")
@@ -1404,7 +1484,7 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "af5176eefd59c25354569786da2804ac71bc8ce13f11328f7d58be69157edab1"
+EXPECTED_CASE_SHA = "ec6cf68d9edcd32f489b6b3b2626334541f2c06e9234cb08ca646c284810cf51"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -1481,6 +1561,16 @@ def stale_claims(text: str) -> list[str]:
 
 # Files the release path scans. The TSV is included because a retracted claim can as
 # easily live in a requirement's text as in a docstring.
+# Mechanisms that NO LONGER EXIST. A phrase naming one is a contract description that has
+# outlived its mechanism — the class that has now recurred four rounds running, always
+# because the banned list named the PREVIOUS round's words. This list names the MECHANISM,
+# so any sentence that still points at it fails regardless of how it is phrased.
+DEAD_MECHANISMS = (
+    ("p_observable", "GI-11 stopped being an `observable` in round 12"),
+    ("acceptance observable", "same"),
+    ("n10_callgraph.rs", "the named test is no longer any row's evidence"),
+)
+
 CLAIM_SCANNED = (
     "scripts/thesis_exit.py",
     "scripts/thesis-exit.sh",
@@ -1499,6 +1589,9 @@ def check_retracted_claims() -> int:
             text = text.split(b)[0] + text.split(e)[1]
         for hit in stale_claims(text):
             bad.append(f"{rel}: {hit}")
+        for mech, why in DEAD_MECHANISMS:
+            if mech in text and rel != "scripts/thesis_exit.py":
+                bad.append(f"{rel}: names the dead mechanism {mech!r} ({why})")
     if bad:
         print(f"{RED}retracted claims are back{OFF}:")
         for b in bad:
@@ -1961,10 +2054,11 @@ def self_test() -> int:
          _cg_total >= 5, True, drives_main=False)
     case("every structural row fails with no graph wired",
          len(_cg_fail), _cg_total, drives_main=False)
-    case("it covers scoped identities, roots, order-independence, completion and indirect",
+    case("it covers scoped identities, roots, order-independence, completion, indirect "
+         "and provenance",
          sorted(EXPECTED_CALLGRAPH_IDS),
          ["completion-diverges", "completion-returns", "entry-roots", "indirect-declared",
-          "order-independent", "scoped-identity"], drives_main=False)
+          "order-independent", "provenance-binding", "scoped-identity"], drives_main=False)
     case("the residue it cannot pin is ONE clause, named — fault injection left the list "
          "because it is enforced",
          len(GI11_HUMAN_REVIEW_RESIDUE), 1, drives_main=False)
@@ -1979,6 +2073,126 @@ def self_test() -> int:
          all(l.split("\t")[5].strip()
              for l in CALLGRAPH_CORPUS.read_text().splitlines()
              if l.strip() and not l.startswith("#")), True, drives_main=False)
+
+    print("\n  the MUTATION BRANCH, with providers injected — it never ran before")
+    import hashlib as _h
+
+    def _fam(row, seed="SEED"):
+        src, exp, expm, mu = family_instance(row[2], row[3], row[5], row[4], seed)
+        f, _, r = mu.partition("=>")
+        return (src.replace("\\n", "\n"), exp, expm,
+                src.replace("\\n", "\n").replace(f, r))
+
+    _cg = {r[0]: r for r in
+           (l.split("\t") for l in CALLGRAPH_CORPUS.read_text().splitlines()
+            if l.strip() and not l.startswith("#"))}
+
+    def _score(prov):
+        global CALLGRAPH_PROVIDER_OVERRIDE
+        globals()["CALLGRAPH_PROVIDER_OVERRIDE"] = prov
+        try:
+            fl, tot = callgraph_differential()
+        finally:
+            globals()["CALLGRAPH_PROVIDER_OVERRIDE"] = None
+        return tot - len(fl), tot
+
+    def _oracle(src, prop, seed_env):
+        """A correct-by-construction provider for the family instance under test."""
+        if prop == "provenance":
+            return _h.sha256(src.encode()).hexdigest()
+        # `identical-to` asks for `edges` on the OTHER row's source too, so the oracle has
+        # to answer that even though the other row's own property is `roots`.
+        if prop == "edges":
+            for rid in ("entry-roots", "order-independent"):
+                o, _e, expm, mut = _fam(_cg[rid], seed_env)
+                if src == o:
+                    return f"main>helper_{seed_env}"
+                if src == mut:
+                    return expm if rid == "order-independent" else "(none)"
+        for rid, row in _cg.items():
+            o, exp, expm, mut = _fam(row, seed_env)
+            want_prop = "edges" if row[1] == "identical-to" else row[1]
+            if prop != want_prop:
+                continue
+            if src == o:
+                return (exp.split("|")[0] if row[1] != "identical-to" else "main>helper_" + seed_env)
+            if src == mut:
+                return (expm.split("|")[0] if row[1] != "identical-to" else expm)
+        return None
+
+    import os as _os
+    _os.environ["THESIS_FAMILY_SEED"] = "SEED"
+    try:
+        _ok, _tot = _score(lambda s, p: _oracle(s, p, "SEED"))
+        case("a CORRECT provider passes every row — the rows are satisfiable",
+             _ok, _tot, drives_main=False)
+        # right on the original, wrong on the mutation: the branch that never ran
+        def _wrong_mut(s, p):
+            v = _oracle(s, p, "SEED")
+            for rid, row in _cg.items():
+                if s == _fam(row, "SEED")[3] and p in (row[1], "edges"):
+                    return "WRONG"
+            return v
+        case("right on the original, WRONG on the mutation -> fails",
+             _score(_wrong_mut)[0] < _tot, True, drives_main=False)
+        def _silent_mut(s, p):
+            for rid, row in _cg.items():
+                if s == _fam(row, "SEED")[3]:
+                    return None
+            return _oracle(s, p, "SEED")
+        case("right on the original, SILENT on the mutation -> fails",
+             _score(_silent_mut)[0] < _tot, True, drives_main=False)
+        case("a constant provider fails every row", _score(lambda s, p: "main>x")[0], 0,
+             drives_main=False)
+        case("a silent provider fails every row", _score(lambda s, p: None)[0], 0,
+             drives_main=False)
+        # both permitted indirect answers, checked by whether that row is among the failures
+        def _ind_fails(alt):
+            def _ind(s, p):
+                if p == "indirect":
+                    for rid, row in _cg.items():
+                        if row[1] == "indirect" and s == _fam(row, "SEED")[0]:
+                            return alt
+                return _oracle(s, p, "SEED")
+            globals()["CALLGRAPH_PROVIDER_OVERRIDE"] = _ind
+            try:
+                fl, _ = callgraph_differential()
+            finally:
+                globals()["CALLGRAPH_PROVIDER_OVERRIDE"] = None
+            return any(r == "indirect-declared" for r, _w, _g in fl)
+        case("the indirect row accepts `resolved:…`", _ind_fails("resolved:target_SEED"),
+             False, drives_main=False)
+        case("the indirect row accepts `unresolved`", _ind_fails("unresolved"), False,
+             drives_main=False)
+        case("the indirect row REFUSES an answer that is neither", _ind_fails("maybe"),
+             True, drives_main=False)
+        # THE MEASUREMENT: a table of every program and every mutation
+        _tbl = {}
+        for rid, row in _cg.items():
+            o, exp, expm, mut = _fam(row, "SEED")
+            wp = "edges" if row[1] == "identical-to" else row[1]
+            if wp == "provenance":
+                continue        # any adversary computes a digest; tabulating it would
+                                # UNDERSTATE the attack, and the point is the honest number
+            _tbl[(o, wp)] = exp.split("|")[0] if row[1] != "identical-to" else "main>helper_SEED"
+            _tbl[(mut, wp)] = expm.split("|")[0]
+        # the adversary also reads the identical-to comparison and tabulates its edges
+        _tbl[(_fam(_cg["entry-roots"], "SEED")[0], "edges")] = "main>helper_SEED"
+        _tbl[(_fam(_cg["entry-roots"], "SEED")[3], "edges")] = "(none)"
+        case("a table of ALL originals AND ALL mutations still passes — a finite public "
+             "corpus cannot defeat a reader",
+             _score(lambda s, p: _tbl.get((s, p)) or
+                    (_h.sha256(s.encode()).hexdigest() if p == "provenance" else None))[0],
+             _tot, drives_main=False)
+    finally:
+        _os.environ.pop("THESIS_FAMILY_SEED", None)
+    case("with a FRESH seed per run that same table scores zero",
+         _score(lambda s, p: _tbl.get((s, p)) or
+                (_h.sha256(s.encode()).hexdigest() if p == "provenance" else None))[0] < _tot,
+         True, drives_main=False)
+    case("the residual boundary is stated as ONE thing, and names the measurement",
+         len(GI11_HUMAN_REVIEW_RESIDUE) == 1 and "7/7" in GI11_HUMAN_REVIEW_RESIDUE[0],
+         True, drives_main=False)
 
     print("\n  the LIVENESS DIFFERENTIAL — the escape from the fifth rung")
     _fails, _total = liveness_differential()
