@@ -46,7 +46,7 @@
 #         reconciliation of that inventory is by review, not by command. Adding
 #         the id is an edit to tests/ and lands with F9's re-tagging.
 #
-# COLUMNS (TAB-separated, all eight mandatory, `-` for N/A):
+# COLUMNS (TAB-separated, all NINE mandatory, `-` for N/A):
 #   id  milestone  source  requirement  evidence-kind  evidence  status  disposition
 #   fingerprint
 #

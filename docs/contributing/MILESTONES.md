@@ -157,7 +157,7 @@ Measured at `7484bac`, not read from the previous version of this file.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 40 cases, most driving the gate end to end against an injected repository state | `make test-thesis-runner` |
+| Thesis gate itself | 56 cases — 43 drive the gate end to end against an injected repository state, 13 exercise a helper | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 232 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
@@ -229,9 +229,11 @@ m5-exit: build
 
 `scripts/requirements.sh` does not exist yet. It is specified precisely enough to write:
 
-1. Parse [`1.0-requirements.tsv`](1.0-requirements.tsv) — eight tab-separated columns, all
+1. Parse [`1.0-requirements.tsv`](1.0-requirements.tsv) — **nine** tab-separated columns, all
    mandatory. A row with a missing column, an unknown evidence kind, status or disposition is a
-   failure of the manifest, not of the milestone.
+   failure of the manifest, not of the milestone. The ninth column is the diagnostic
+   fingerprint a `reject` row's refusal must carry, and for a `thesis` reject row it may not
+   be `-`: any rejection would satisfy that, including one for incidental unsupported syntax.
 2. For the milestone named by `REQ_MILESTONE`, **every** row must be `satisfied`.
 3. Resolve each evidence locator by kind, and *run* it: `fixture` → a `run` row whose transcript
    matches · `reject` → a `reject` row refused with its declared diagnostic · `skip` → a proven
@@ -623,11 +625,12 @@ Six more probes of the same family, each now with a control that fails on revert
 And the self-test itself, for the second time: it called the probe helpers directly, so deleting
 the production wiring left every case green. It now builds a temporary repository — requirements
 TSV, witnesses, conformance verdicts, `make` results, effect reports — and drives `main()`,
-asserting the **exit code**. Forty cases, four of which drop the injection entirely and drive the
-real subprocess boundary — a conformance run and a `pdc` that each print parsable output and then
-fail or get killed must both exit 2. The one probe group with no negative control (the real `make`
-subprocess) is pinned in `EXPECTED_UNCOVERED`, so emptying that list fails the self-test instead of
-printing "0 uncovered".
+asserting the **exit code**. Fifty-six cases, of which five drop the injection entirely and drive
+the real subprocess boundary — including one where conformance, `pdc` and `make` all run and
+conclude successfully, so the *green* path is exercised and not only the failures. The one probe
+group with no negative control (the real `make` subprocess) is a **disclosure pinned verbatim**:
+emptying *or rewording* it fails the self-test. It is not a derived check, and says so — nothing
+computes which probes lack a control.
 
 Two things it caught that review did not. `fn f< 'a>(x: i64)` — a *spaced* lifetime parameter
 list — **compiles today**, and `grammar.ebnf:129` makes whitespace insignificant between tokens,
