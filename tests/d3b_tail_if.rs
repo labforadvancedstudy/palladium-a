@@ -87,6 +87,18 @@ fn compile_and_run_with_import(lib: &str, app: &str, name: &str) -> Result<Strin
     let run = Command::new(&exe)
         .output()
         .map_err(|e| format!("running {}: {}", exe.display(), e))?;
+    // THE EXIT STATUS IS PART OF THE RESULT. Without this a binary could print
+    // exactly the expected stdout and then exit nonzero, and every caller that
+    // compares stdout would pass — an assertion narrower than its label, in the
+    // helper that carries this file's import claims.
+    if !run.status.success() {
+        return Err(format!(
+            "{} exited {:?}: {}",
+            exe.display(),
+            run.status.code(),
+            String::from_utf8_lossy(&run.stderr)
+        ));
+    }
     Ok(String::from_utf8_lossy(&run.stdout).to_string())
 }
 
@@ -1502,6 +1514,142 @@ fn a_user_written_return_zero_in_a_unit_function_is_refused() {
         err.contains("expected ()") && err.contains("found Int"),
         "the type checker must refuse it, got:\n{}",
         err
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Module-system defects this branch MEASURED but does not own
+// ---------------------------------------------------------------------------
+//
+// THE SCOPE CALL, stated once for both. This branch is about tail returns and
+// the family of "compiles, runs, does nothing" defects. It reached the module
+// system because refusing `async fn main` forced the question "which `main`
+// wins", and answering that exposed two further disagreements between the
+// resolver, the type checker and code generation about WHAT THE IMPORTED
+// PROGRAM IS.
+//
+// Designing module semantics inside a defect branch is how a branch stops
+// being reviewable — this one is already thirteen rounds long. So the two
+// defects below are DECLARED with an owner and a failing test rather than
+// fixed here: M4 owns modules. Each says what a program can currently do that
+// it should not, because a declaration that only names a mechanism is a note,
+// not a debt.
+//
+// What was NOT deferred: the entry-point question the refusal actually needs,
+// and the typeck/codegen agreement about shadowing — both fixed, because both
+// are consequences of a diagnostic this branch added.
+
+/// SELECTIVE IMPORT DOES NOT EXCLUDE ANYTHING FROM THE CONSUMERS.
+///
+/// What a program can do today that it should not: `import lib::{helper}` names
+/// one item, and the resolver filters `ModuleInfo.exports` accordingly
+/// (src/resolver/mod.rs:105-118) — but the type checker
+/// (src/typeck/mod.rs, `set_imported_modules`) and code generation
+/// (src/codegen/mod.rs, the imported-function loops) both iterate the PUBLIC
+/// FUNCTIONS OF THE UNCHANGED MODULE AST and never read `exports`. So every
+/// public item of the module is registered and emitted regardless of what the
+/// import named.
+///
+/// Measured: a module exporting `helper` and `main`, imported as
+/// `import lib::{helper}`, is still rejected with "`async fn main` is not
+/// implemented" — for a symbol the import deliberately excluded. The same route
+/// registers signatures and emits bodies for excluded functions.
+///
+/// The fix is one shared definition of the effective imported symbol set, read
+/// by both consumers. That is module-system work, not tail-return work.
+#[test]
+#[ignore = "XFAIL: selective import (`import lib::{item}`) filters only ModuleInfo.exports (src/resolver/mod.rs:105-118); src/typeck/mod.rs set_imported_modules and src/codegen/mod.rs's imported-function loops both iterate the unchanged module AST's public functions instead, so excluded items are still registered, still emitted, and still reach entry-point rejection. Measured: `import lib::{helper}` from a module that also declares `pub async fn main` is rejected for that `main`. Needs one shared definition of the effective imported symbol set consumed by both passes (owned by M4)"]
+fn selective_import_excludes_a_symbol_from_the_consumers() {
+    let err = compile_and_run_with_import(
+        "pub fn helper() { print_int(2); }\npub async fn main() { print_int(1) }\n",
+        "import lib::{helper};\n\nfn other() { helper(); }\n",
+        "d3b_selective_import",
+    )
+    .err()
+    .unwrap_or_default();
+    // With no local `main` this program has no entry point, so it must fail —
+    // but with "No main function found", because the module's `main` was NOT
+    // imported. Today it fails with the async-main refusal instead, which is
+    // the leak: a symbol the import excluded still reached entry-point
+    // resolution.
+    assert!(
+        !err.contains("`async fn main`"),
+        "`main` was not imported, so it must not be considered at all:\n{}",
+        err
+    );
+    assert!(
+        err.contains("No main function found"),
+        "the excluded `main` must not supply an entry point:\n{}",
+        err
+    );
+}
+
+/// TWO MODULES EXPORTING ONE NAME HAVE NO RULE, AND THE OUTPUT IS
+/// NONDETERMINISTIC.
+///
+/// What a program can do today that it should not: import two modules that each
+/// export `dup`, and get a program whose EMITTED C DIFFERS BETWEEN IDENTICAL
+/// RUNS. `set_imported_modules` overwrites the unqualified name in a `HashMap`
+/// and code generation iterates `self.imported_modules.values()` — a `HashMap`,
+/// so in arbitrary order.
+///
+/// Measured, six identical compilations of one program whose two modules export
+/// `dup` with different return types:
+///
+/// ```text
+///    3 int dup()
+///    3 long long dup()
+/// ```
+///
+/// Nondeterministic output from identical input is worse than a wrong answer,
+/// because no transcript can pin it. There is no defined semantics to appeal to
+/// — reject the collision, first-wins, or require qualification are all
+/// defensible, and choosing is module-system design.
+#[test]
+#[ignore = "XFAIL: two imported modules exporting the same name have no defined semantics — src/typeck/mod.rs set_imported_modules overwrites the unqualified name in a HashMap and src/codegen/mod.rs iterates imported_modules.values() (also a HashMap), so both the registered signature and the emitted body are chosen by iteration order. Measured: six identical compilations of one program produced `int dup()` three times and `long long dup()` three times. Needs a decision — reject the collision, first-wins, or require qualification — and both layers honouring it (owned by M4)"]
+fn two_modules_exporting_one_name_are_deterministic() {
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut compiled = 0;
+    for i in 0..6 {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("a.pd"), "pub fn dup() -> i64 { 1 }\n").unwrap();
+        fs::write(dir.path().join("b.pd"), "pub fn dup() -> bool { true }\n").unwrap();
+        fs::write(
+            dir.path().join("app.pd"),
+            "import a;\nimport b;\n\nfn main() { print_int(9); }\n",
+        )
+        .unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+            .args(["compile", "app.pd", "-o", &format!("d3b_dup_{}", i)])
+            .current_dir(dir.path())
+            .output()
+            .expect("failed to run pdc");
+        if !out.status.success() {
+            continue;
+        }
+        compiled += 1;
+        let c = fs::read_to_string(dir.path().join("build_output").join("app.c"))
+            .unwrap_or_default();
+        // Every line mentioning `dup`, prototype and definition alike: the
+        // whole point is that WHICH module's `dup` is emitted varies.
+        let shape: Vec<&str> = c
+            .lines()
+            .filter(|l| l.contains("dup("))
+            .map(|l| l.trim())
+            .collect();
+        seen.insert(shape.join(" | "));
+    }
+    assert!(
+        compiled > 0,
+        "the collision fixture never compiled, so this proves nothing"
+    );
+    assert_eq!(
+        seen.len(),
+        1,
+        "identical input produced {} different emitted shapes across {} runs: {:#?}",
+        seen.len(),
+        compiled,
+        seen
     );
 }
 

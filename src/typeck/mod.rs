@@ -320,10 +320,12 @@ pub struct TypeChecker {
     /// emitted a `main_Future main()` entry point.
     deferred_async_main: Option<Span>,
     /// A PUBLIC imported `async fn` whose body contains a value-carrying
-    /// `return`, recorded for the same reason: `set_imported_modules` performs
-    /// no equivalent of `check_function`'s validation, so the class refused
-    /// there was still declarable through an import.
-    deferred_async_value_return: Option<Span>,
+    /// `return`, with its NAME, recorded for the same reason:
+    /// `set_imported_modules` performs no equivalent of `check_function`'s
+    /// validation, so the class refused there was still declarable through an
+    /// import. The name is kept because the raise has to ask whether a local
+    /// definition shadows it — see `check`.
+    deferred_async_value_return: Option<(String, Span)>,
     /// Function signatures
     functions: HashMap<String, CheckerType>,
     /// Generic function definitions
@@ -446,7 +448,8 @@ impl TypeChecker {
                             } else if func.is_async
                                 && Self::has_value_return(&func.body)
                             {
-                                self.deferred_async_value_return = Some(func.span);
+                                self.deferred_async_value_return =
+                                    Some((func.name.clone(), func.span));
                             }
                             let qualified_name = format!("{}::{}", module_name, func.name);
 
@@ -595,11 +598,24 @@ impl TypeChecker {
 
     /// Type check a program
     pub fn check(&mut self, program: &Program) -> Result<()> {
-        // An imported `pub async fn` whose body carries a value return is
-        // refused wherever it was declared: nothing can honour it, and unlike
-        // the entry-point case that does not depend on which function wins.
-        if let Some(span) = self.deferred_async_value_return {
-            return Err(CompileError::async_value_return_unimplemented(span));
+        // WHAT COUNTS AS "THE PROGRAM" MUST BE ONE ANSWER IN BOTH PASSES.
+        //
+        // I argued last round that a value-carrying async return "cannot be
+        // honoured wherever it sits, so there is no shadowing exemption". That
+        // was right about the construct and wrong about the program: code
+        // generation SKIPS an imported body when a local definition of the same
+        // name exists (src/codegen/mod.rs, the imported-function loop), so a
+        // shadowed imported declaration is not part of the emitted program at
+        // all. Diagnosing it rejected a program for a declaration the output
+        // would not contain — the same over-approximation as the entry-point
+        // case, one construct over.
+        //
+        // So both passes now ask the same question: is this imported
+        // declaration shadowed by a local one?
+        if let Some((name, span)) = self.deferred_async_value_return.clone() {
+            if !Self::shadowed_by_a_local_definition(program, &name) {
+                return Err(CompileError::async_value_return_unimplemented(span));
+            }
         }
 
         // THE ENTRY POINT, NOT ANY DECLARATION. An imported `pub async fn main`
@@ -614,10 +630,7 @@ impl TypeChecker {
         // is the mirror of accepting what cannot be honoured; both are the
         // compiler making a claim it has not established.
         if let Some(span) = self.deferred_async_main {
-            let shadowed_by_a_local_main = program.items.iter().any(|item| {
-                matches!(item, Item::Function(f) if f.name == "main" && f.type_params.is_empty())
-            });
-            if !shadowed_by_a_local_main {
+            if !Self::shadowed_by_a_local_definition(program, "main") {
                 return Err(CompileError::async_main_unimplemented(span));
             }
         }
@@ -996,6 +1009,23 @@ impl TypeChecker {
     }
 
     /// Type check a function
+    /// Is `name` defined locally, so that an imported definition of it is
+    /// shadowed and never emitted?
+    ///
+    /// THE ONE PLACE THIS QUESTION IS ANSWERED for the type checker. Code
+    /// generation asks the same question in its imported-function loop; the two
+    /// must not drift, because a disagreement means a program is diagnosed
+    /// against a declaration the output does not contain (or, the other way,
+    /// emitted without being checked).
+    ///
+    /// Generic definitions are excluded: they are registered separately and do
+    /// not shadow an ordinary imported function.
+    fn shadowed_by_a_local_definition(program: &Program, name: &str) -> bool {
+        program.items.iter().any(|item| {
+            matches!(item, Item::Function(f) if f.name == name && f.type_params.is_empty())
+        })
+    }
+
     /// Does `body` contain a `return <value>` anywhere?
     ///
     /// Walks nested blocks because the parser's tail lowering puts the return
