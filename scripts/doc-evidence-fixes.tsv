@@ -22,6 +22,25 @@
 # A file cannot leave the measurement by being forgotten; it can only leave by being
 # argued for in a row here, which is a reviewed edit.
 #
+# WHEN THIS INVENTORY APPLIES -- one sentence, and the code below reads this line:
+#
+#   It applies exactly when the tree being measured is the tree it describes, which is to
+#   say when HEAD's merge-base with main equals the base recorded here.
+#
+# The previous rule was "HEAD is not reachable from main", i.e. HEAD is on A branch. This
+# inventory describes THE branch. Every future feature, release and integration branch
+# would have been reconciled against these 31 rows and failed with MISSING for all of
+# them -- the same shape as the defect it replaced, a predicate answering a nearby
+# question. Tying applicability to the recorded base also means the inventory STOPS BEING
+# A GATE the moment it stops describing the tree, which is the property that makes it safe
+# to merge.
+#
+# Residual, stated rather than discovered: a SIBLING branch cut from the same base would
+# match and be reconciled against rows that are not its own. It fails loudly and names
+# this file, and it stops being possible once this branch lands and main moves.
+#
+# inventory-base: 2ef170fc8e6c3a35b7793e1348dfb9017bee1703
+#
 # Columns are TAB-separated: path  disposition  note
 #
 # disposition:

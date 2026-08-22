@@ -116,7 +116,7 @@ CMD_REFERRED = {
 # whole change removes. Measured: `grep -c '#line' build_output/01_lexical_comments.c`
 # exited 2 ("No such file or directory") on a clean tree and had been recorded as
 # "0, exit 1".
-CMD_BUILD_ARTIFACT_ROOTS = {"target", "build_output"}
+CMD_BUILD_ARTIFACT_ROOTS = {"target", "build_output"}   # compared case-folded
 
 # Shell control operators. shlex(punctuation_chars=True) surfaces these as their own
 # tokens ONLY when unquoted, so `grep -nE '#\[token\("(with|effect)"\)\]' f` keeps its
@@ -380,6 +380,7 @@ GREP_SHORTS_WITH_ARG = "mABCd"
 # must not inherit it. Handled as a whole token AND as a letter inside a short cluster:
 # stripping only the token `-v` left `-vn` inverted, so a legitimate item written that way
 # was falsely REJECTED. Fail-closed, but it made an honest observation unwritable.
+GREP_DEREF_RECURSIVE = {"-R", "--dereference-recursive"}
 GREP_INVERT = {"-v", "--invert-match"}
 GREP_INVERT_SHORT = "v"
 
@@ -405,7 +406,8 @@ FIND_TYPE_ARGS = {"f", "d", "l", "p", "s", "b", "c"}
 # buffering it.
 CMD_MAX_BYTES = 4 * 1024 * 1024
 CMD_TIMEOUT_S = 120
-CMD_CLEANUP_S = 10      # for ALL processes together, after the kill
+CMD_CLEANUP_S = 10      # for ALL of cleanup together, after the kill
+CMD_MAX_SEGMENTS = 8    # a `cmd:` is an observation, not a shell script
 
 _TOOLS: dict = {}
 
@@ -456,7 +458,21 @@ def contained(rel: str):
     # before the documentation-evidence step, so generated state could validate
     # documentation. The question is which directory the path IS IN once resolved, so it
     # is asked of the resolved, checkout-relative first component.
-    first = real.relative_to(ROOT).parts[0] if real != ROOT else ""
+    # A RECURSIVE ROOT THAT CONTAINS AN EXCLUDED DIRECTORY READS IT. The alias repair
+    # fixed EXPLICIT operands: `target`, `docs/../target`. It did nothing about
+    # `grep -r pattern .`, which resolves to the repository root, passes containment, and
+    # then reads target/ and build_output/ anyway. The hermetic claim is about what is
+    # READ, not how the path was spelled -- so an operand that is an ANCESTOR of an
+    # excluded directory is refused, exactly as one inside it is. That narrows the grammar
+    # instead of validating it, the move the find expression and the five-command list
+    # both needed.
+    if any((real / d).exists() for d in CMD_BUILD_ARTIFACT_ROOTS):
+        return None, (f"names {rel!r}, which CONTAINS build output; a recursive read from "
+                      f"here would descend into it. Name the subdirectory the observation "
+                      f"is actually about")
+    # Case-folded: on a case-insensitive checkout `TARGET` is the same directory as
+    # `target`, and a case-sensitive comparison would let the alias through.
+    first = real.relative_to(ROOT).parts[0].casefold() if real != ROOT else ""
     if first in CMD_BUILD_ARTIFACT_ROOTS:
         return None, (f"reads {rel!r}, which resolves into {first}/ — a build artifact. A "
                       f"`cmd:` item must be reproducible from a clean checkout, so "
@@ -496,6 +512,11 @@ def parse_segment(argv):
                               f"`find <path>... <expression>`, and a `cmd:` item must name "
                               f"the scope it observes first")
             base = tok.split("=", 1)[0]
+            if base in GREP_DEREF_RECURSIVE:
+                return None, ("uses -R, which follows symlinks while descending, so a link "
+                              "inside the tree can lead the read outside it. Containment "
+                              "is checked on the operand, and only -r keeps that check "
+                              "meaning what it says")
             if base in GREP_PATTERN_OPTS:
                 return None, (f"supplies its pattern through {base!r}. That is refused: if "
                               f"the pattern can arrive through an option, the first operand "
@@ -508,6 +529,9 @@ def parse_segment(argv):
             # at the whole token let the `e` through with its argument counted as a path.
             if not tok.startswith("--"):
                 for ch in tok[1:]:
+                    if ch == "R":
+                        return None, (f"clusters -R inside {tok!r}, which follows symlinks "
+                                      f"while descending; use -r")
                     if ch in GREP_PATTERN_SHORTS:
                         return None, (f"clusters -{ch} inside {tok!r}, which supplies the "
                                       f"pattern; see above. Write the pattern as the first "
@@ -775,9 +799,17 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
     deadline = time.monotonic() + timeout
     def remaining():
         return max(0.0, deadline - time.monotonic())
+    # Spawning is inside the deadline too, and the pipeline has a length. Every process
+    # used to be started before any clock was consulted and nothing capped the segment
+    # count, so "the deadline is total" was a statement about the waits only.
+    if len(segments) > CMD_MAX_SEGMENTS:
+        return None, "", (f"has {len(segments)} pipeline segments; at most "
+                          f"{CMD_MAX_SEGMENTS} may be spawned under one deadline")
     procs, errfiles, prev = [], [], subprocess.DEVNULL
     try:
         for seg in segments:
+            if remaining() <= 0:
+                return None, "", f"did not finish within {timeout}s (while starting it)"
             errf = tempfile.TemporaryFile()
             errfiles.append(errf)
             try:
@@ -855,6 +887,10 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
         # One cleanup path, unconditional: kill then reap. A process left running would
         # hold a pipe open for whoever comes next.
         for p in procs:
+            # The budget covers every cleanup operation, not just wait(): killpg and
+            # close() are syscalls that can block on a wedged descendant too.
+            if time.monotonic() >= cleanup_deadline:
+                break
             # The GROUP, not the process: a grandchild is what holds the pipe open.
             try:
                 os.killpg(p.pid, signal.SIGKILL)

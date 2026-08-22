@@ -46,7 +46,99 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
 INVENTORY=scripts/doc-evidence-fixes.tsv
+CONTROLS=scripts/doc-evidence-controls.tsv
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YEL=$'\033[0;33m'; NC=$'\033[0m'
+
+# WHEN scripts/doc-evidence-fixes.tsv APPLIES -- ONE SENTENCE, AND THE CODE IS BELOW IT:
+#
+#   It applies exactly when the tree being measured is the tree it describes, which is to
+#   say when HEAD's merge-base with main equals the `# inventory-base:` recorded in it.
+#
+# Two previous rules were both predicates answering a NEARBY question. "An explicit base
+# means branch review" made CI treat every push to main as a branch, so the first push
+# after this branch landed would have failed with fatal MISSING. "HEAD is not reachable
+# from main" means HEAD is on A branch, while this inventory describes THE branch -- so
+# every future feature, release and integration branch would have been reconciled against
+# these rows and failed for all of them. Measured before the fix: a fresh branch cut from
+# a fresh main reported `reconciliation=branch files=1`.
+#
+# Tying it to the recorded base also gives the property that makes this safe to merge: the
+# inventory STOPS BEING A GATE the moment it stops describing the tree.
+#
+# APPLICABILITY IS DECIDED FIRST, BEFORE ANY BASE IS LOOKED AT. Where it does not apply
+# the reconciliation does not run, and supplying COVERAGE_BASE there is an ERROR rather
+# than a way in -- previously the base was validated first, so an unresolvable one exited
+# 2 even on main, contradicting this file's own sentence in the commit that wrote it.
+INV_BASE=$(sed -n 's/^# inventory-base:[[:space:]]*//p' "$INVENTORY" | head -1)
+APPLIES=no; WHY=""
+if [ -z "$INV_BASE" ]; then
+  WHY="no-inventory-base"
+else
+  _mb=""
+  for _ref in main origin/main; do
+    git rev-parse --verify "$_ref" >/dev/null 2>&1 || continue
+    _mb=$(git merge-base "$_ref" HEAD 2>/dev/null) && [ -n "$_mb" ] && break
+  done
+  if [ -z "$_mb" ]; then
+    WHY="no-main-ref"
+  elif [ "$_mb" = "$(git rev-parse HEAD 2>/dev/null)" ]; then
+    WHY="head-is-on-main"
+  elif [ "$_mb" = "$INV_BASE" ]; then
+    APPLIES=yes
+  else
+    WHY="different-branch"
+  fi
+fi
+
+BASE=""; BASE_WHY=""
+if [ "$APPLIES" = yes ]; then
+  if [ -n "${COVERAGE_BASE:-}" ]; then
+    BASE=$(git rev-parse --verify "${COVERAGE_BASE}^{commit}" 2>/dev/null) || BASE=""
+    if [ -z "$BASE" ]; then
+      echo "error: COVERAGE_BASE='${COVERAGE_BASE}' does not resolve to a commit." >&2
+      exit 2
+    fi
+    if ! git merge-base --is-ancestor "$BASE" HEAD 2>/dev/null; then
+      echo "error: COVERAGE_BASE='${COVERAGE_BASE}' is not an ancestor of HEAD, so the" >&2
+      echo "       diff between them is not 'what this branch changed'." >&2
+      exit 2
+    fi
+    if [ "$BASE" = "$(git rev-parse HEAD)" ]; then
+      echo "error: COVERAGE_BASE='${COVERAGE_BASE}' IS HEAD, so the reconciliation would" >&2
+      echo "       be over an empty file set. A base was requested; an empty answer is" >&2
+      echo "       not one." >&2
+      exit 2
+    fi
+    BASE_WHY="COVERAGE_BASE"
+  else
+    BASE=$INV_BASE; BASE_WHY="inventory-base"
+  fi
+elif [ -n "${COVERAGE_BASE:-}" ]; then
+  echo "error: COVERAGE_BASE was supplied, but $INVENTORY does not describe this tree" >&2
+  echo "       ($WHY). A base cannot make an inventory applicable; it only chooses where" >&2
+  echo "       an applicable one starts." >&2
+  exit 2
+fi
+
+CHANGED=""
+if [ "$APPLIES" = yes ] && [ -n "$BASE" ]; then
+  CHANGED=$(git diff --name-only "$BASE"..HEAD)
+fi
+
+# A mode for the controls: resolve the scope, say what was decided, and stop. It runs
+# BEFORE the restore trap below is installed, because it mutates nothing and an EXIT trap
+# that reverts MUTABLE files would otherwise destroy a working tree's uncommitted edits --
+# measured, it ate one of this file's own.
+if [ "${1:-}" = "--explain-base" ]; then
+  if [ "$APPLIES" = yes ] && [ -n "$CHANGED" ]; then
+    echo "reconciliation=branch base=$(git rev-parse --short "$BASE") why=$BASE_WHY files=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')"
+  elif [ "$APPLIES" = yes ]; then
+    echo "reconciliation=not-applicable why=no-diff"
+  else
+    echo "reconciliation=not-applicable why=$WHY"
+  fi
+  exit 0
+fi
 
 # Every file a mutation may touch. Restored from git after each one, and on exit.
 MUTABLE="scripts/check_doc_evidence.py scripts/gate-receipts.sh .github/workflows/preview.yml Makefile scripts/test-doc-evidence-coverage.sh scripts/test-doc-evidence.sh"
@@ -64,121 +156,14 @@ TMP_KILL=$(mktemp "${TMPDIR:-/tmp}/doc-evidence-killsets.XXXXXX") || exit 2
 restore() { git checkout -- $MUTABLE 2>/dev/null; }
 trap 'restore; rm -f "$TMP_KILL"' EXIT INT TERM
 
-# --- the file-set reconciliation: branch-time, and honest about when it is not ---------
-CONTROLS=scripts/doc-evidence-controls.tsv
-[ -f "$INVENTORY" ] || { echo "error: $INVENTORY missing; it IS the file denominator." >&2; exit 2; }
-[ -f "$CONTROLS" ]  || { echo "error: $CONTROLS missing; it IS the control denominator." >&2; exit 2; }
-
-# In order: an explicit base; the first parent when HEAD is a merge (post-merge on main,
-# where `merge-base main HEAD` is HEAD and the diff would be empty); the merge-base with
-# main or origin/main on a feature branch. If none resolves -- a shallow CI checkout has
-# no main ref and no HEAD^ -- the file reconciliation is NOT APPLICABLE and says so.
-# WHAT scripts/doc-evidence-fixes.tsv IS FOR, AND WHERE IT IS A GATE.
-#
-# It answers a BRANCH-REVIEW question: did this branch declare every file it changed, and
-# does every file it declares as machinery carry mutations. That question exists while the
-# branch is under review and stops existing when the branch lands — on main the branch is
-# history, and the next push has a different file set entirely.
-#
-# So it is a gate ON A FEATURE BRANCH ONLY. On main it is NOT APPLICABLE, whatever base is
-# supplied. The previous code decided that from HOW THE BASE ARRIVED — an explicit
-# COVERAGE_BASE meant "branch" — and CI passed github.event.before as COVERAGE_BASE on
-# every main push. The first push after this branch merged that did not touch all 31
-# declared files would have failed with fatal MISSING, and any newly touched file with
-# UNDECLARED. That is a gate that bricks the branch it is merged into, and the divergence
-# was between this file's own description and its code: the description already said
-# "fatal on a feature branch and a printed note elsewhere".
-#
-# POSITION DECIDES. HEAD reachable from main means we are not on a branch under review.
-# The permanent gate that runs everywhere is the CONTROL closure below; it is derived from
-# what the probe prints at runtime and does not depend on git history at all.
-BASE=""; BASE_WHY=""; ON_BRANCH=no
-for _ref in main origin/main; do
-  git rev-parse --verify "$_ref" >/dev/null 2>&1 || continue
-  if git merge-base --is-ancestor HEAD "$_ref" 2>/dev/null; then
-    ON_BRANCH=no        # HEAD is on (or behind) main: not a branch under review
-  else
-    ON_BRANCH=yes
-  fi
-  break
-done
-if [ -n "${COVERAGE_BASE:-}" ]; then
-  # AN EXPLICIT REQUEST THAT CANNOT BE HONOURED IS AN ERROR, NOT A SKIP. Previously an
-  # invalid COVERAGE_BASE fell through to the same green NOT APPLICABLE as "no base
-  # exists", so asking for a reconciliation and silently not getting one looked identical
-  # to not asking.
-  BASE=$(git rev-parse --verify "${COVERAGE_BASE}^{commit}" 2>/dev/null) || BASE=""
-  if [ -z "$BASE" ]; then
-    echo "error: COVERAGE_BASE='${COVERAGE_BASE}' does not resolve to a commit. A base was" >&2
-    echo "       explicitly requested and cannot be honoured; refusing to report a" >&2
-    echo "       reconciliation that did not happen." >&2
-    exit 2
-  fi
-  # RESOLVING IS NOT ENOUGH. An unrelated commit resolves fine and would be reported as a
-  # meaningful "changed since"; HEAD itself resolves and yields an empty diff, which then
-  # degraded to a green NOT APPLICABLE — an explicitly requested reconciliation quietly
-  # not happening, which is the same defect as an unresolvable base, one step later.
-  if ! git merge-base --is-ancestor "$BASE" HEAD 2>/dev/null; then
-    echo "error: COVERAGE_BASE='${COVERAGE_BASE}' is not an ancestor of HEAD, so the diff" >&2
-    echo "       between them is not 'what this branch changed'." >&2
-    exit 2
-  fi
-  if [ "$BASE" = "$(git rev-parse HEAD)" ]; then
-    echo "error: COVERAGE_BASE='${COVERAGE_BASE}' IS HEAD, so the reconciliation would be" >&2
-    echo "       over an empty file set. A base was explicitly requested; an empty answer" >&2
-    echo "       is not one." >&2
-    exit 2
-  fi
-  BASE_WHY="COVERAGE_BASE"
-else
-  # On a FEATURE BRANCH the base is the merge-base with main. Deliberately preferred over
-  # HEAD^1 even when HEAD is a merge: a branch that merges main INTO itself has a first
-  # parent measuring the incoming upstream delta, not this branch's work.
-  for ref in main origin/main; do
-    git rev-parse --verify "$ref" >/dev/null 2>&1 || continue
-    cand=$(git merge-base "$ref" HEAD 2>/dev/null) || continue
-    [ -n "$cand" ] || continue
-    if [ "$cand" = "$(git rev-parse HEAD)" ]; then
-      # HEAD is ON main: a push, a merge, or a squash. What that push introduced is
-      # HEAD^1..HEAD — for a merge commit the first parent is the target branch, so this
-      # is the incoming work; for a squash it is the whole branch.
-      # HEAD^1 is right for a merge or a squash, and WRONG for an ordinary push of
-      # several commits: it reconciles only the last one. CI supplies the push-before SHA
-      # (github.event.before) through COVERAGE_BASE, which is handled above; this is the
-      # local fallback and its limit is stated rather than hidden.
-      BASE=$(git rev-parse --verify 'HEAD^1' 2>/dev/null) || BASE=""
-      [ -n "$BASE" ] && BASE_WHY="HEAD is $ref; first parent (a multi-commit push needs COVERAGE_BASE)"
-    else
-      BASE=$cand; BASE_WHY="merge-base with $ref"
-    fi
-    [ -n "$BASE" ] && break
-  done
-fi
-CHANGED=""
-if [ "$ON_BRANCH" = yes ] && [ -n "$BASE" ]; then
-  CHANGED=$(git diff --name-only "$BASE"..HEAD)
-fi
-
-# A mode for the controls: resolve the scope, say what was decided, and stop. Running the
-# whole mutation matrix to test a base decision would cost minutes per case.
-if [ "${1:-}" = "--explain-base" ]; then
-  if [ "$ON_BRANCH" = yes ] && [ -n "$CHANGED" ]; then
-    echo "reconciliation=branch base=$(git rev-parse --short "$BASE") why=$BASE_WHY files=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')"
-  elif [ "$ON_BRANCH" = yes ]; then
-    echo "reconciliation=not-applicable why=no-base"
-  else
-    echo "reconciliation=not-applicable why=head-is-on-main"
-  fi
-  exit 0
-fi
-
 echo "=============================================="
 if [ -z "$CHANGED" ]; then
   echo "file-set reconciliation: NOT APPLICABLE"
-  if [ "$ON_BRANCH" != yes ]; then
-    echo "  HEAD is reachable from main, so this is not a branch under review. The file"
-    echo "  inventory describes ONE BRANCH's changes; on main it would fail on every push"
-    echo "  that did not touch all of them. The control closure below is the gate here."
+  if [ "$APPLIES" != yes ]; then
+    echo "  $INVENTORY does not describe this tree ($WHY). It records the base it was"
+    echo "  built against and applies only where HEAD's merge-base with main is that"
+    echo "  base, so it is not a gate on main and not a gate on any other branch. The"
+    echo "  control closure below is the gate here, and it runs everywhere."
   elif [ -z "$BASE" ]; then
     echo "  no base commit resolves (no main/origin/main ref, HEAD is not a merge, and"
     echo "  COVERAGE_BASE is unset) -- a shallow checkout looks like this."
@@ -304,8 +289,9 @@ FILES = {"py": "scripts/check_doc_evidence.py", "gr": "scripts/gate-receipts.sh"
          "probe": "scripts/test-doc-evidence.sh"}
 which = {"gate-argv-grammar": "gr", "gate-private-receipts": "gr",
          "ci-step-evidence": "ci", "ci-step-receipts": "ci", "ci-step-probe": "ci",
-         "branch-scope": "cov", "gates-wiring": "mk", "ci-gating": "probe",
-         "ci-gating-job": "probe"}.get(w, "py")
+         "branch-scope": "cov", "applies-first": "cov", "head-on-main": "cov", "gates-wiring": "mk",
+         "ci-gating": "probe", "ci-gating-job": "probe",
+         "ci-statement": "probe"}.get(w, "py")
 p = pathlib.Path(FILES[which])
 t = orig = p.read_text()
 
@@ -387,9 +373,24 @@ elif w == "gate-private-receipts":   # back to a shared, surviving receipts dire
     t = t.replace('OUT=$(mktemp -d "${TMPDIR:-/tmp}/palladium-gate-receipts.XXXXXX") || exit 2\n'
                   'trap \'rm -rf "$OUT"\' EXIT INT TERM',
                   'OUT=build_output/gate-receipts\nrm -rf "$OUT"; mkdir -p "$OUT"', 1)
-elif w == "branch-scope":      # the file inventory is a branch-review gate, only there
-    t = t.replace("    ON_BRANCH=no        # HEAD is on (or behind) main",
-                  "    ON_BRANCH=yes       # HEAD is on (or behind) main", 1)
+elif w == "branch-scope":      # applicability is tied to the inventory's recorded base
+    t = t.replace('  elif [ "$_mb" = "$INV_BASE" ]; then\n    APPLIES=yes',
+                  '  elif true; then\n    APPLIES=yes', 1)
+elif w == "head-on-main":      # HEAD on main is never a branch under review
+    t = t.replace('  elif [ "$_mb" = "$(git rev-parse HEAD 2>/dev/null)" ]; then\n    WHY="head-is-on-main"',
+                  '  elif false; then\n    WHY="head-is-on-main"', 1)
+elif w == "applies-first":     # applicability is decided BEFORE any base is validated
+    t = t.replace('if [ "$APPLIES" = yes ]; then\n  if [ -n "${COVERAGE_BASE:-}" ]; then',
+                  'if true; then\n  if [ -n "${COVERAGE_BASE:-}" ]; then', 1)
+elif w == "grep-deref":        # -R follows symlinks out of the checkout
+    t = t.replace("            if base in GREP_DEREF_RECURSIVE:", "            if False:", 1)
+    t = t.replace('                    if ch == "R":', "                    if False:", 1)
+elif w == "artifact-ancestor": # a recursive root containing build output reads it
+    t = t.replace("    if any((real / d).exists() for d in CMD_BUILD_ARTIFACT_ROOTS):",
+                  "    if False:", 1)
+elif w == "ci-statement":      # && / || are not unconditional command starts
+    t = t.replace('re.split(r"[\\n;]", "\\n".join(out))',
+                  're.split(r"[\\n;]|&&|\\|\\|", "\\n".join(out))', 1)
 elif w == "gates-wiring":      # gate-receipts must be a prerequisite of `gates`
     t = t.replace("check-docs gate-receipts test-doc-evidence", "check-docs test-doc-evidence", 1)
 elif w == "ci-gating-job":     # a JOB that cannot fail the run does not gate
@@ -424,6 +425,11 @@ cmd-referred|scripts/check_doc_evidence.py
 cmd-allowlist|scripts/check_doc_evidence.py
 cmd-artifact|scripts/check_doc_evidence.py
 branch-scope|scripts/test-doc-evidence-coverage.sh
+applies-first|scripts/test-doc-evidence-coverage.sh
+head-on-main|scripts/test-doc-evidence-coverage.sh
+grep-deref|scripts/check_doc_evidence.py
+artifact-ancestor|scripts/check_doc_evidence.py
+ci-statement|scripts/test-doc-evidence.sh
 gates-wiring|Makefile
 ci-gating|scripts/test-doc-evidence.sh
 ci-gating-job|scripts/test-doc-evidence.sh

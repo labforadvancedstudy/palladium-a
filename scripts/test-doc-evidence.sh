@@ -287,6 +287,18 @@ expect_red downstream_path "a downstream segment naming a path is refused" \
 # its probe printed `empty-dir`, and the empty scope passed: L3 was a proof for grep and
 # NOT for find, under a claim that said "if that finds nothing, the command reads
 # nothing". The probe now keeps the traversal and neutralises only the matching predicate.
+# WHAT IS READ, not how the path was spelled. `grep -r pattern .` resolves to the
+# repository root, passed containment, and then read target/ and build_output/ anyway;
+# `-R` follows a symlink out of the checkout while descending.
+index reads_artifacts unimplemented \
+  "cmd: grep -rn zzz_no_such_identifier_anywhere . -> exit 1, 0 lines"
+expect_red reads_artifacts "a recursive read from a root containing build output is refused" \
+  "CONTAINS build output"
+
+index deref_recursive unimplemented \
+  "cmd: grep -Rn zzz_no_such_identifier_anywhere src/ -> exit 1, 0 lines"
+expect_red deref_recursive "-R is refused: it follows symlinks out of the checkout" "-R"
+
 index find_empty_scope unimplemented \
   "cmd: find $INREPO/empty -type f -> exit 0, 0 lines"
 expect_red find_empty_scope "an absence over an empty scope is refused for FIND too" \
@@ -698,7 +710,13 @@ def statements(body):
         if h:
             skip_to = h.group(1)
         out.append(line)
-    return [s.strip() for s in re.split(r"[\n;]|&&|\|\||\|", "\n".join(out))]
+    # Split on the separators that unconditionally END a command, and on nothing else.
+    # Treating && and || as command starts meant `false && bash scripts/x` and
+    # `true || bash scripts/x` were both certified -- neither ever runs. Interpreting
+    # shell control flow badly is worse than not interpreting it: a false negative asks
+    # someone to write the step plainly, a false positive certifies a gate that does not
+    # run. So a conditional invocation is simply not recognised.
+    return [s.strip() for s in re.split(r"[\n;]", "\n".join(out))]
 
 
 pat = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*bash\s+scripts/" + re.escape(want)
@@ -778,6 +796,18 @@ wf_case "text inside a heredoc does not count" no \
           cat <<EOF
           bash scripts/check-doc-evidence.sh
           EOF'
+wf_case "a conditional && invocation does not count" no \
+'jobs:
+  gates:
+    steps:
+      - name: Documentation evidence
+        run: false && bash scripts/check-doc-evidence.sh'
+wf_case "a short-circuited || invocation does not count" no \
+'jobs:
+  gates:
+    steps:
+      - name: Documentation evidence
+        run: true || bash scripts/check-doc-evidence.sh'
 wf_case "a step in another working directory does not count" no \
 'jobs:
   gates:
@@ -850,9 +880,34 @@ scope_case() { # scope_case <case> <repo> <expected fragment>
   fi
 }
 REPO_ROOT=$(pwd)
+
+# THE INVENTORY DESCRIBES ONE TREE, and says which by recording the base it was built
+# against. The applicable case is where that recording matches, so this repo stamps its
+# own base into the copy. The cases that do NOT stamp are trees the inventory was not
+# written for -- the realistic shape once this branch lands and someone cuts the next one.
 mk_repo "$TMP/r1"
-( cd "$TMP/r1" && git checkout -qb feature && echo x > f && git add -A && git commit -qm work )
-scope_case "a feature branch reconciles its own file set" "$TMP/r1" "reconciliation=branch"
+( cd "$TMP/r1" && git checkout -qb feature && echo x > f && git add -A && git commit -qm work
+  sed -i.bak "s/^# inventory-base:.*/# inventory-base: $(git rev-parse main)/" \
+      scripts/doc-evidence-fixes.tsv && rm -f scripts/doc-evidence-fixes.tsv.bak )
+scope_case "a branch the inventory was written for reconciles" "$TMP/r1" "reconciliation=branch"
+
+mk_repo "$TMP/r4"
+( cd "$TMP/r4" && git checkout -qb future-work && echo z > u && git add -A && git commit -qm w )
+scope_case "a FUTURE branch is not reconciled against a stale inventory" \
+  "$TMP/r4" "reconciliation=not-applicable why=different-branch"
+
+# APPLICABILITY IS DECIDED BEFORE ANY BASE IS LOOKED AT. Previously the base was validated
+# first, so an unresolvable COVERAGE_BASE exited 2 even where the inventory did not apply
+# -- the file's own sentence said "whatever base is supplied" in the commit that wrote it.
+OUT=$( cd "$TMP/r4" && COVERAGE_BASE=nope bash scripts/test-doc-evidence-coverage.sh 2>&1 ); RC=$?
+if [ "$RC" -eq 2 ] && printf '%s\n' "$OUT" | grep -qF "does not describe this tree"; then
+  printf '  %sok%s   an explicit base cannot make an inapplicable inventory apply\n' "$GREEN" "$NC"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s an explicit base cannot make an inapplicable inventory apply\n' "$RED" "$NC"
+  printf '         (exit %s: %s)\n' "$RC" "$(printf '%s' "$OUT" | head -1)"
+  fail=$((fail+1))
+fi
 
 # THE STATE THAT BRICKS TODAY: main has moved on, and this push touches something else.
 mk_repo "$TMP/r2"
