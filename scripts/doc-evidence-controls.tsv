@@ -127,3 +127,7 @@ a comment rule of punctuation supports no claim (found one in grammar.ebnf)	kill
 a real statement is substantive	guard	a floor that rejects every citation is not a floor
 a bare number is substantive: a claim can be about a value	guard	a floor that rejects every citation is not a floor
 a non-ASCII prose line is substantive: the word-character test is Unicode-aware	guard	a floor that rejects every citation is not a floor
+a citation on a line that carries code is accepted	guard	the fatal green control for the pin probe: a real citation must still pass under either implementation
+a pin relocated onto a bare '}' is refused	kill	pin-semantic
+a pin relocated onto an EMPTY line is refused	kill	pin-semantic
+--update refuses to record a content-free pin, and writes nothing	kill	pin-semantic
