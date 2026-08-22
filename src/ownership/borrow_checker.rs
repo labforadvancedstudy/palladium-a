@@ -219,8 +219,8 @@ impl BorrowChecker {
     /// AND THE REMAINING WINDOW IS UNREACHABLE, which is a stronger statement than
     /// "the order is right". If an imported layout ever did leak where a local
     /// should win, the program it would mis-check cannot be built at all: codegen
-    /// emits every public imported struct (`src/codegen/mod.rs:1306-1314`) and then
-    /// every local struct (`src/codegen/mod.rs:1330-1334`) with no shadowing check
+    /// emits every public imported struct (`src/codegen/mod.rs:1355-1363`) and then
+    /// every local struct (`src/codegen/mod.rs:1379-1383`) with no shadowing check
     /// between them, so the C holds two definitions of `P`. Measured — a module
     /// exporting `pub struct P { a: i64 }` beside a local `struct P { a: i64 }`
     /// passes both checkers and dies as gcc's "redefinition of 'P'". So the
@@ -264,7 +264,7 @@ impl BorrowChecker {
                         // function bodies, one item kind across.
                         //
                         // Its reason was that codegen emits only NON-generic
-                        // imported structs (`src/codegen/mod.rs:1309-1310`), so a
+                        // imported structs (`src/codegen/mod.rs:1358-1359`), so a
                         // generic `P<T>` would be "a layout for a type this
                         // compilation never produces". Structs have a
                         // monomorphization path too
@@ -376,8 +376,8 @@ impl BorrowChecker {
         //
         // ONLY `Item::Function` IS WALKED, and an imported `impl` method is not a
         // gap in that. Codegen's imported walk matches `Item::Struct` and
-        // `Item::Enum` (`src/codegen/mod.rs:1305-1322`) and, separately,
-        // `Item::Function` (`src/codegen/mod.rs:1410`) — there is no `Item::Impl`
+        // `Item::Enum` (`src/codegen/mod.rs:1354-1371`) and, separately,
+        // `Item::Function` (`src/codegen/mod.rs:1459`) — there is no `Item::Impl`
         // arm anywhere in it. So an imported impl method is not merely uncallable:
         // IT DOES NOT EXIST IN THE OUTPUT. Measured — a module exporting
         // `pub struct P { a: i64 }` with `impl P { fn get(self) -> i64 { … } }`
@@ -419,7 +419,7 @@ impl BorrowChecker {
                     // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
                     // "produces no C, because the codegen guard is the same
                     // predicate". That is true of the DIRECT imported-emission path
-                    // (`src/codegen/mod.rs:1412-1414`, public and non-generic) and
+                    // (`src/codegen/mod.rs:1461-1463`, public and non-generic) and
                     // false of MONOMORPHIZATION, which is a different path and emits
                     // `name__T` from the same template. Measured on the guard:
                     //

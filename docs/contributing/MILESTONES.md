@@ -166,13 +166,13 @@ self-hosting unit **imports nothing** (`grep -c '^import' bootstrap/pdc.pd` = 0)
 generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec excludes them, and
 `bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
 subset it implements"*). Both exclusions mattered because there were **two independent unordered
-emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:161`) emitted by iterating
+emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:162`) emitted by iterating
 `.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:437`,
 `src/typeck/mod.rs:445`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: modules at `src/codegen/mod.rs:1217` and `src/typeck/mod.rs:558`,
-the two later codegen walks off one sorted local (`src/codegen/mod.rs:1302`), and the
+sites sorts before it emits: modules at `src/codegen/mod.rs:1266` and `src/typeck/mod.rs:558`,
+the two later codegen walks off one sorted local (`src/codegen/mod.rs:1351`), and the
 instantiation keys at `src/typeck/mod.rs:3381` and `src/typeck/mod.rs:3442`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
@@ -381,8 +381,8 @@ by the requirement manifest; this is the reading list.
 |---|---|---|
 | D3b — a tail `if` is not lowered to a `return`; `fib(10)` prints `8261746944` and exits 0 | [A6.6](../specification/language-spec.md#a66-tail-expressions) | N3-02, N3-03 |
 | **The async producer is live** — `async fn g() { … }` compiles and emits a `Future` struct with a `state` field and a `_poll` function, which N7 forbids outright | [F11](#f11-the-async-producer-is-alive-and-violates-n7-today) | N7-18 |
-| C-keyword identifiers — `fn double` emits `long long double(…)` | `tests/e2e_test.rs:269` | N3-01 |
-| No missing-return diagnostic — `fn f() -> int { }` compiles silently | `tests/compiler_comprehensive_test.rs:575` | N3-03 |
+| C-keyword identifiers — `fn double` emitted `long long double(…)`. **CLOSED**: escaped on the way into code generation, `src/codegen/c_ident.rs:440`; the `#[ignore]` is gone and the debt row is `paid` | `tests/e2e_test.rs:277` | N3-01 |
+| No missing-return diagnostic — `fn f() -> int { }` compiled silently. **CLOSED**: the parser already decided "returns on every path" and now refuses when it does not, `src/parser/mod.rs:1039-1068`; the `#[ignore]` is gone and the debt row is `paid` | `tests/compiler_comprehensive_test.rs:583` | N3-03 |
 | Block comments do not nest, which N2 requires | [F10](#f10-block-comments-do-not-nest-and-nothing-said-so) | N2-08 |
 | `a * -b` does not parse | [A6.3](../specification/language-spec.md#a63-expression-forms) | N5-16 |
 | Nested arrays work in neither locals nor parameters | [A5](../specification/language-spec.md#a5-types) | N4-10 |
@@ -476,10 +476,11 @@ token N8 sits below, and the first witness program.
 **Owns 45 requirement rows**, seventeen declared `#[ignore]` failures (fourteen tagged M2, three
 tagged M1), and the vacuous `tests/02_types_enums.pd`.
 
-1. **The M1 debt first, because it is a live miscompile.** A tail `if` is not lowered to a return —
-   `fib(10)` prints `8261746944` (N3-02) — and the missing-return diagnostic lands with it (N3-03),
-   as `tests/compiler_comprehensive_test.rs:575` already says it must. With them, C-keyword
-   identifier mangling (N3-01).
+1. **The M1 debt is PAID, and it was the live miscompile.** A tail `if` was not lowered to a return
+   — `fib(10)` printed `8261746944` (N3-02); the missing-return diagnostic landed with it (N3-03),
+   as `tests/compiler_comprehensive_test.rs:583` says it must; and C-keyword identifier escaping
+   (N3-01) landed with those. All three `#[ignore]`s are gone, their rows in
+   `tests/rust-debt-manifest.txt` are `paid`, and `make m1-exit` exits **0**.
 2. **The async producer** (N7-18). `async fn g() { print("x"); }` compiles today and emits
    `typedef struct g_Future { int state; }` plus `int g_poll(g_Future *future)`. N7 says the
    language has **no runtime representation** of effects, so this is a live normative violation and
@@ -765,11 +766,11 @@ owner's.
 
 ### F11. The async producer is alive, and violates N7 today
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3243-3247` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3292-3296` returns
 `CompileError::await_unimplemented`. The **producer** was not touched.
-`src/codegen/mod.rs:2166-2171` still dispatches on `func.is_async` into
+`src/codegen/mod.rs:2215-2220` still dispatches on `func.is_async` into
 `generate_async_function_with_name`, which emits a `Future` struct and a poll routine
-(`src/codegen/mod.rs:3290-3298`, commented "Simplified async - immediately ready").
+(`src/codegen/mod.rs:3339-3347`, commented "Simplified async - immediately ready").
 
 It is reachable, not dead code. Measured at `7484bac`:
 
@@ -922,19 +923,20 @@ self-test case pins that behaviour — it fails when N2-08 lands, forcing the tw
 `tests/conformance-manifest.txt` and nothing else, and no row there is owned by M1. On the
 integrated tree it reads three inventories (`Makefile:294-295`) and exits **2**; that change
 arrived with `fix/d3b-tail-if` and is what the closing paragraph of this finding now records. The second owner inventory — the `(owned by M<n>)` tag every `#[ignore]` reason carries and
-`scripts/test-xfail.py:186` parses — has three M1 rows, all still red:
+`scripts/test-xfail.py:186` parses — had three M1 rows, all red. All three are now closed:
 
-| Row | What is still broken |
+| Row | What was broken, and what closed it |
 |---|---|
-| `tests/e2e_test.rs:315` **CLOSED** | a tail `if` was not lowered to a return — fixed in `src/parser/mod.rs` (`lower_tail_to_return`); the `#[ignore]` is gone, so `make test-xfail` would report an XPASS if it came back |
-| `tests/compiler_comprehensive_test.rs:575` | `fn f() -> int { }` compiles with no diagnostic |
-| `tests/e2e_test.rs:269` | `fn double` emits `long long double(…)`; gcc rejects the compiler's own output |
+| `tests/e2e_test.rs:322` **CLOSED** | a tail `if` was not lowered to a return — fixed in `src/parser/mod.rs` (`lower_tail_to_return`); the `#[ignore]` is gone, so `make test-xfail` would report an XPASS if it came back |
+| `tests/compiler_comprehensive_test.rs:583` **CLOSED** | `fn f() -> int { }` compiled with no diagnostic — the parser's own `returns_on_every_path` had been deciding the question since D3b and the call site did not act on a `false`; it now refuses (`src/parser/mod.rs:1039-1068`, `CompileError::missing_return`). Accept-side receipts: `tests/m1_missing_return.rs` |
+| `tests/e2e_test.rs:277` **CLOSED** | `fn double` emitted `long long double(…)` and gcc rejected the compiler's own output — reserved words are escaped on the way into code generation (`src/codegen/c_ident.rs:440`). Controls on what must NOT be renamed: `tests/m1_c_keyword_idents.rs` |
 
-The first reproduces: `fib(10)` prints `8261746944` and exits 0. **A silent miscompile shipped in
+The first reproduced: `fib(10)` printed `8261746944` and exited 0. **A silent miscompile shipped in
 the release named for removing silent miscompiles.**
 
-Re-measured on the integrated tree: `make m1-exit` now **exits 2**, reporting exactly two rows
-`OWED_TO_M1` — the third, the tail-`if` miscompile above, is fixed. At the time this finding was
+Re-measured after all three landed: `make m1-exit` **exits 0** and reports no `OWED_TO_M1` row. The
+reading between then and now went 0 (blind) -> 2 (seeing) -> 0 (paid), and only the last of those
+three zeros means the milestone is finished. At the time this finding was
 written it exited **0**: a brief handed to this unit expected it red, it was not, and the reason was
 the finding itself — the target read the conformance manifest, no row there is owned by M1, and the
 three rows owed to M1 lived in the other inventory. Reading all three inventories fixes the omission but

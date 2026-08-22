@@ -6,7 +6,7 @@
 //
 //   1. `int`/`string` in the expected C. The integer type lowers to
 //      `long long` (`int` is only a source-level alias for `i64`,
-//      `src/parser/mod.rs:2022`) and `print` lowers to `__pd_print`, not
+//      `src/parser/mod.rs:2083`) and `print` lowers to `__pd_print`, not
 //      `printf`.
 //   2. Fragments with no `fn main`. The driver rejects a program without one
 //      ("No main function found"), so a declaration-only snippet cannot be
@@ -563,16 +563,23 @@ fn test_error_cases() {
     }
 }
 
-// The reason below was CORRECTED, not retagged — the owner is still M1 and the
-// test is still ignored, because it still fails. What changed is that the old
-// text carried a clause that has become false: it said this "cannot be fixed in
-// isolation" because "a tail `if` … is also emitted with no return today".
-// D3b landed, and `fn f() -> i64 { if c { 1 } else { 2 } }` now emits a
-// `return` in both branches. Leaving a false statement inside a declared
-// expected-failure is the same disease this milestone exists to treat, so the
-// reason now says what is measurably still missing.
+// PAID. The `#[ignore = "XFAIL: …"]` this carried is gone and the row in
+// tests/rust-debt-manifest.txt moved `owed M1 …` -> `paid - -`; leaving the
+// attribute on a passing test is an XPASS and `make test-xfail` reports it.
+//
+// The reason it carried said the rest "needs a real flow analysis over the
+// whole body". That turned out to be an overestimate of the work and an
+// underestimate of what was already there: `returns_on_every_path` in
+// src/parser/mod.rs had been deciding exactly this question since D3b, and the
+// call site simply did not act on a `false` when no value had been written in
+// tail position. The declared return type is the evidence that was said to be
+// missing. See `CompileError::missing_return`.
+//
+// This test is the END-TO-END statement of the refusal and nothing more — one
+// program, one word in the message. The path shapes (empty body, `if` with no
+// `else` last, a loop that may not run) and, more importantly, the ACCEPT side
+// the refusal must not touch are receipted in tests/m1_missing_return.rs.
 #[test]
-#[ignore = "XFAIL: no missing-return diagnostic — `fn get_value() -> i64 { }` compiles silently and emits `long long get_value() { }`, so the caller reads garbage; scripts/check-c-returns.py sees it after the fact ('non-void function may fall off its end') but nothing refuses it. This is M1's own exit criterion ('nothing that parses, then breaks, without also being reported as an error'). D3b closed the half the parser can decide from what was WRITTEN: a value in tail position with no value on some other path is now refused (src/parser/mod.rs, CompileError::tail_value_not_on_every_path). What is left needs a real flow analysis over the whole body — an empty body, `if c { return 1; }` as the last statement, and a loop that may not be entered all fall off the end with no value written anywhere, so the parser has nothing to key on (owned by M1)"]
 fn test_missing_return_is_an_error() {
     compile_error_contains(
         "fn get_value() -> int { }
