@@ -561,9 +561,17 @@ echo "== the boundary must promise only what it delivers =="
 # that did not conclude was structurally unexpressible, and Withheld's repr said
 # the same. It is not: `r._out` and `v.withheld._b` both hold the bytes —
 # deliberately, because `spill()` needs them and because `run()` must hand them
-# back before `classify()` can read them. The prose now says exactly that. These
-# checks keep prose and code in step: each fails if a future edit re-grows a
+# back before `classify()` can read them. The prose now says exactly that.
+#
+# WHAT THESE CHECKS ARE, AT THEIR TRUE SIZE, because "they keep prose and code in
+# step" is what this comment said and that is bigger than any of them. Items 1-4
+# are BEHAVIOURAL and hold in general: they fail if a future edit re-grows a
 # promise the class cannot keep, or lets the bytes back onto a parsed stream.
+# Item 5 is LEXICAL and holds only over wordings already measured false here —
+# its own contract, stated where it lives, is that a KNOWN false claim cannot be
+# repeated. Collapsing whitespace before matching closes ONE evasion, a phrase
+# broken across a line wrap; a semantic paraphrase of the same false claim walks
+# past it untouched, and nothing in this file would notice.
 python3 - >"$TMP/o" 2>&1 <<'PY'
 import os, pathlib, re, subprocess, sys, tempfile
 sys.path.insert(0, "scripts")
@@ -1046,10 +1054,28 @@ fi
 # So: ONE definition, and the rows run FIRST. If the predicate does not do what
 # its rows say, the tree is NOT scanned and neither row passes — a scan verdict
 # produced by a predicate already known to be wrong is worse than no verdict,
-# because it is greppable as a pass. (`grep -c` on the two definition lines,
+# because it is greppable as a pass. (`grep -c` on the three definition lines,
 # just below this block, is what keeps a second copy from being pasted back in.)
+#
+# AND THE ROWS RUN THROUGH `scan_text`, NOT THROUGH `flagged`, WHICH IS THE
+# SECOND RETRACTION OF THE SAME DISEASE ONE LAYER DOWN. Unifying the rows and the
+# tree on one PREDICATE left a FOURTH hand-written statement of the property
+# standing in front of it: the per-line loop skipped any line not containing
+# `_out`, `_b` or `_rc` — three substrings against the predicate's four branches.
+# MEASURED, on the previous version: a tracked file holding
+#
+#     return res.withheld._secret
+#
+# matches `PRIVATE`'s `\.withheld\._` branch and contains none of the three, so
+# the loop `continue`d before `flagged` was ever called and the scan printed `ok`
+# with rc 0. All twelve rows stayed green throughout, because they called
+# `flagged` directly and never went near the loop. A control that enters the
+# system one function BELOW the thing in force certifies that function, not the
+# scan. So the rows now enter where the tree enters, the prefilter is deleted
+# (70ms -> 110ms for the whole tree, measured three runs each), and that line is
+# row 13 of the table below.
 python3 - >"$TMP/leaks.out" 2>&1 <<'LEAKPY'
-import pathlib, re, subprocess, sys
+import os, pathlib, re, stat, subprocess, sys
 
 PRIVATE = re.compile(r"\._out\b|\._b\b|\._rc\b|\.withheld\._")
 # The ONLY exempt shape: a backticked bare dotted name. Nothing is removed from
@@ -1064,6 +1090,21 @@ def flagged(line):
         not any(s <= m.start() and m.end() <= e for s, e in spans)
         for m in PRIVATE.finditer(line)
     )
+
+
+def scan_text(name, text):
+    """Every flagged line of `text`, as `path:line: text`.
+
+    THE ONE ENTRY POINT. The rows below and the tree walk further down both call
+    THIS, so any filtering, fast path or short-circuit added here is covered by
+    the rows — which is exactly what was not true of the substring prefilter this
+    replaces.
+    """
+    out = []
+    for n, line in enumerate(text.split("\n"), 1):
+        if flagged(line):
+            out.append("%s:%d: %s" % (name, n, line.strip()[:100]))
+    return out
 
 
 # STEP 1 — THE EXEMPTION IS FAULT-INJECTED, against the predicate above rather
@@ -1108,11 +1149,21 @@ ROWS = [
     ("# see `Run._out`() for the raw bytes", False,
      "and the documented fix works: the bare name is backticked, the call is "
      "not"),
+    # ROW 13 — the line the substring prefilter carried past the predicate for a
+    # whole round. `.withheld._` is `PRIVATE`'s fourth branch and none of `_out`,
+    # `_b`, `_rc` occurs in it, so the loop skipped it and the tree scan printed
+    # `ok`. It is red against the prefilter and green without it, which is the
+    # only reason it is here.
+    ("    return res.withheld._secret", True,
+     "a withheld slot whose name is none of the three: the prefilter that used "
+     "to guard this loop skipped the line before the predicate could see it"),
 ]
 
 bad = []
 for line, want, why in ROWS:
-    got = flagged(line)
+    # THROUGH `scan_text`, the function the tree walk calls — not through
+    # `flagged`, which is one layer below what is actually in force.
+    got = bool(scan_text("<row>", line))
     if got != want:
         bad.append("%r -> flagged=%s, wanted %s (%s)" % (line, got, want, why))
 if bad:
@@ -1121,26 +1172,65 @@ if bad:
     sys.exit(2)
 
 # STEP 2 — and only now, the tree.
-tracked = subprocess.run(["git", "ls-files", "-z"], capture_output=True).stdout
+#
+# FAIL CLOSED ON ENUMERATION. `git ls-files` used to be read for its stdout with
+# its status ignored, so a git that exited non-zero — wrong directory, broken
+# index, no git on PATH — yielded no paths, an empty `leaks`, and rc 0: the
+# scanner certified a tree it never read, and the certificate was greppable as a
+# pass. MEASURED, with a `git` on PATH that exits 128 and prints nothing: `ok`,
+# rc 0. That is the `Concluded` vs `Malfunction` distinction gate_probe.py draws
+# about its own producers, applied to this scanner's own input — a scan that
+# cannot enumerate the tree has not scanned it, and must say so with a status of
+# its own rather than borrow the clean one.
+proc = subprocess.run(["git", "ls-files", "-z"], capture_output=True)
+if proc.returncode != 0 or not proc.stdout:
+    print("MALFUNCTION: cannot enumerate the tree — `git ls-files -z` exited "
+          "%d with %d byte(s) of output. Nothing was scanned, so nothing is "
+          "certified." % (proc.returncode, len(proc.stdout)))
+    err = proc.stderr.decode("utf-8", "replace").strip()
+    if err:
+        print(err[:400])
+    sys.exit(3)
+
 leaks = []
-for raw in tracked.split(b"\0"):
+unreadable = []
+for raw in proc.stdout.split(b"\0"):
     if not raw:
         continue
     name = raw.decode("utf-8", "replace")
     if name in EXEMPT:
         continue
     path = pathlib.Path(name)
+    # `Path.is_file()` SWALLOWS OSError and answers False, so "cannot stat it"
+    # and "it is a directory" were the same answer. `os.stat` follows symlinks
+    # exactly as is_file() did, and FileNotFoundError keeps the one skip that was
+    # always intended: tracked in the index, absent from the worktree.
     try:
-        if not path.is_file():
-            continue
+        st = os.stat(path)
+    except FileNotFoundError:
+        continue
+    except OSError as e:
+        unreadable.append("%s: %s" % (name, e))
+        continue
+    if not stat.S_ISREG(st.st_mode):
+        continue
+    try:
         text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        continue                      # binary or unreadable: nothing to read
-    for n, line in enumerate(text.split("\n"), 1):
-        if "_out" not in line and "_b" not in line and "_rc" not in line:
-            continue
-        if flagged(line):
-            leaks.append("%s:%d: %s" % (name, n, line.strip()[:100]))
+    except UnicodeDecodeError:
+        continue                      # binary: there is no text to read
+    except OSError as e:
+        # A tracked file that IS there and cannot be read is a malfunction, not
+        # a file with nothing in it. Skipping it silently is the same fail-open
+        # one file at a time.
+        unreadable.append("%s: %s" % (name, e))
+        continue
+    leaks.extend(scan_text(name, text))
+
+if unreadable:
+    print("MALFUNCTION: %d tracked file(s) could not be read, so the tree was "
+          "scanned only in part:" % len(unreadable))
+    print("\n".join(unreadable[:20]))
+    sys.exit(3)
 
 print("\n".join(leaks) if leaks else "ok")
 sys.exit(1 if leaks else 0)
@@ -1158,6 +1248,12 @@ else
   if [ "$leak_rc" -eq 0 ]; then
     printf '  %sok%s   no consumer outside gate_probe.py names a withheld private slot\n' "$GREEN" "$NC"
     pass=$((pass+1))
+  elif [ "$leak_rc" -eq 3 ]; then
+    # NOT the same verdict as "a leak was found", and not the same as a pass
+    # either: the scan could not read the tree it was asked to certify.
+    printf '  %sFAIL%s no consumer outside gate_probe.py names a withheld private slot — NOT ESTABLISHED: the scan MALFUNCTIONED and never read the tree\n' "$RED" "$NC"
+    sed 's/^/        /' "$TMP/leaks.out"
+    fail=$((fail+1))
   else
     printf '  %sFAIL%s a consumer reaches past the boundary for withheld bytes:\n' "$RED" "$NC"
     sed 's/^/        /' "$TMP/leaks.out"
@@ -1176,16 +1272,90 @@ fi
 # (`PRIVATE` is also spelled in the ALLOWPY block above, as a tuple of the three
 # slot NAMES. That is not a third copy of this predicate: it answers a different
 # question — which function may LOAD a raw slot — with a different mechanism
-# (Python's own AST). The names are duplicated between them and nothing checks
-# that; recorded here rather than left for the next round to find.)
+# (Python's own AST). The names WERE duplicated between them with nothing
+# checking it, recorded as a known hole for a round; the two are now reconciled
+# below, because "recorded" is what the last two control/enforcer drifts were
+# each doing right up until they drifted.)
+#
+# `scan_text` IS COUNTED TOO, and that is the round-19 addition: the copy that
+# fooled the rows this time was not a copy of the predicate, it was a fourth
+# statement of the property (a three-substring prefilter) sitting in the scan
+# loop above `flagged`. Both the shared entry point and the predicate now have
+# to be single.
 flagged_defs=$(grep -c '^def flagged(line):$' scripts/test-gate-probe.sh)
+scan_defs=$(grep -c '^def scan_text(name, text):$' scripts/test-gate-probe.sh)
 private_defs=$(grep -c '^PRIVATE = re.compile' scripts/test-gate-probe.sh)
-if [ "$flagged_defs" -eq 1 ] && [ "$private_defs" -eq 1 ]; then
-  printf '  %sok%s   the predicate has exactly one definition in this file\n' "$GREEN" "$NC"
+if [ "$flagged_defs" -eq 1 ] && [ "$scan_defs" -eq 1 ] && [ "$private_defs" -eq 1 ]; then
+  printf '  %sok%s   the predicate and the scan entry point each have exactly one definition in this file\n' "$GREEN" "$NC"
   pass=$((pass+1))
 else
-  printf '  %sFAIL%s the private-slot predicate is defined %s time(s) and its pattern %s time(s) — a control that is a COPY of what it controls certifies nothing about the enforcer. Delete the copy and run the rows against the definition in force.\n' \
-    "$RED" "$NC" "$flagged_defs" "$private_defs"
+  printf '  %sFAIL%s the private-slot predicate is defined %s time(s), the scan entry point %s time(s) and the pattern %s time(s) — a control that is a COPY of what it controls certifies nothing about the enforcer. Delete the copy and run the rows against the definition in force.\n' \
+    "$RED" "$NC" "$flagged_defs" "$scan_defs" "$private_defs"
+  fail=$((fail+1))
+fi
+
+# AND THE TWO SPELLINGS OF THE SLOT NAMES ARE RECONCILED, rather than documented
+# as unreconciled. They cannot share a definition — they live in two separate
+# heredocs run as two separate interpreters, and merging them would put the AST
+# walk and the tree scan in one process for no reason but this. So the agreement
+# is EXECUTED: both spellings are read back out of this file and the derived name
+# sets are compared. That is the discipline tests/d3b_tail_if.rs:107-122 states
+# and the one both of this round's defects came from ignoring — a documented
+# disagreement is still a disagreement.
+python3 - >"$TMP/agree.out" 2>&1 <<'AGREEPY'
+import pathlib, re, sys
+
+src = pathlib.Path("scripts/test-gate-probe.sh").read_text()
+
+m_tuple = re.search(r'^PRIVATE = \((.*)\)$', src, re.M)
+m_regex = re.search(r'^PRIVATE = re\.compile\(r"(.*)"\)$', src, re.M)
+if not m_tuple or not m_regex:
+    print("one of the two PRIVATE spellings is no longer where this check reads "
+          "it (tuple=%s, regex=%s). Both must stay greppable or this agreement "
+          "stops being executed." % (bool(m_tuple), bool(m_regex)))
+    sys.exit(1)
+
+names_from_tuple = set(re.findall(r'"([^"]+)"', m_tuple.group(1)))
+
+# Each branch of the regex is either a NAME branch — `\._out\b` — or a nested
+# PREFIX branch — `\.withheld\._` — which guards any private field of a named
+# member and has no counterpart in the AST table by design.
+names_from_regex, prefixes = set(), set()
+for branch in m_regex.group(1).split("|"):
+    name = re.fullmatch(r"\\\.(_[A-Za-z0-9_]+)\\b", branch)
+    if name:
+        names_from_regex.add(name.group(1))
+        continue
+    prefix = re.fullmatch(r"\\\.([A-Za-z0-9_]+)\\\._", branch)
+    if prefix:
+        prefixes.add(prefix.group(1))
+        continue
+    print("branch %r matches neither shape this check knows. Teach it the shape "
+          "or the sets below are being compared against a partial reading of "
+          "the pattern." % branch)
+    sys.exit(1)
+
+if names_from_tuple != names_from_regex:
+    print("the two spellings of the private slot names disagree:\n"
+          "  ALLOWPY tuple : %s\n"
+          "  LEAKPY regex  : %s\n"
+          "  only in tuple : %s\n"
+          "  only in regex : %s"
+          % (sorted(names_from_tuple), sorted(names_from_regex),
+             sorted(names_from_tuple - names_from_regex),
+             sorted(names_from_regex - names_from_tuple)))
+    sys.exit(1)
+
+print("ok %d name(s), %d nested prefix branch(es): %s"
+      % (len(names_from_regex), len(prefixes), sorted(prefixes)))
+AGREEPY
+if [ $? -eq 0 ]; then
+  printf '  %sok%s   the AST tables slot names and the tree scans pattern name the same slots (%s)\n' \
+    "$GREEN" "$NC" "$(cat "$TMP/agree.out")"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s the two hand-written spellings of the private slot names have drifted:\n' "$RED" "$NC"
+  sed 's/^/        /' "$TMP/agree.out"
   fail=$((fail+1))
 fi
 
