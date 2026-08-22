@@ -1,0 +1,10 @@
+// NEGATIVE TEST -- the macro system accepts exactly one call shape.
+//
+// `vec![...]`, the spelling every Rust program uses and the one
+// src/macros/mod.rs:41 registers a builtin for, does not parse: the macro
+// parser requires `(` after the name, so the bracket form is a syntax error.
+// The builtin is reachable only as `vec!(...)`, which no documentation uses.
+fn main() {
+    let v = vec![7];
+    print_int(v[0]);
+}

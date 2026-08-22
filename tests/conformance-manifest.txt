@@ -95,6 +95,7 @@ tests/regression/array_reference_params.pd	run	-	expected	-	-
 tests/regression/for_over_array_param.pd	run	-	expected	-	-
 tests/regression/array_param_mut_write.pd	run	-	expected	-	-
 tests/regression/param_reused_after_call.pd	run	-	expected	-	-
+tests/regression/lifetimes_uninferred.pd	run	-	expected	-	-
 
 # tests/reject/ -- NEGATIVE TESTS. Each of these MUST be refused, and that is
 # correct behaviour, so they are owed to no milestone and counted as coverage.
@@ -126,6 +127,10 @@ tests/reject/mut_borrow_of_immutable.pd	reject	compile	cannot borrow `v` as muta
 tests/reject/ref_parameter.pd	reject	compile	Unexpected token: expected ')' (Expected ')'), found identifier 'String'	-	the spec writes a shared borrow `ref T` (N9); the implemented spelling is Rust's &/&mut, so `ref` is not a keyword and the parser sees an identifier where a type belongs
 tests/reject/total_attribute.pd	reject	compile	Unexpected character '#'	-	the totality surface is attributes, and the blocker is LEXICAL: there is no `#` token, so #[total] fails one level below the parser
 tests/reject/try_block.pd	reject	compile	Unknown struct type: try	-	`try` is not a keyword, so `try { }` is read as a struct literal for an undeclared struct; the diagnostic names the misreading, which is what a user actually sees
+tests/reject/uncalled_body_is_checked.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	PAIRED with tests/regression/lifetimes_uninferred.pd: proves the borrow checker reads the body of a function nothing calls, so its partner compiling is a statement about lifetimes and not about dead code being skipped
+tests/reject/const_generic_param.pd	reject	compile	Type mismatch: expected [Int; N], found [Int; 3]	-	const generic parameters parse (src/parser/mod.rs:58-60) and are never monomorphised, so N reaches typeck as a name; codegen is no better and emits the parameter name verbatim into C
+tests/reject/question_mark_operator.pd	reject	compile	the `?` operator is not implemented	-	D5's fix: `?` used to typecheck and then emit C referring to a struct Result layout codegen never defines, so the failure surfaced in gcc; it is refused by name before any C exists
+tests/reject/macro_invocation_bracket.pd	reject	compile	Expected '(' (Expected '(' after macro name!), but found '['	-	the macro parser accepts one call shape: vec![...] does not parse, so the registered vec! builtin is reachable only as vec!(...)
 
 # tests/stdlib/ — drivers for the language surface and the builtins a standard
 # library would rest on. stdlib/ itself has no rows here: 0 of its 21 files

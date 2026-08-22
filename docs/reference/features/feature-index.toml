@@ -86,8 +86,13 @@
 #
 # Measured at commit 2ef170f (2026-08-22):
 #   cargo build --release && scripts/conformance.sh tests examples
-#     -> fixtures=65 declared_in_scope=65 evaluated=65
-#        verified=45 untranscribed=0 vacuous=7 xfail=1 reject=10 skip=2 failures=0
+#     -> fixtures=70 declared_in_scope=70 evaluated=70
+#        verified=46 untranscribed=0 vacuous=7 xfail=1 reject=14 skip=2 failures=0
+#
+# These two numbers are no longer transcribed by hand. `make gate-receipts` runs each gate
+# the rows below cite, once, and requires every key=value and quoted span in a `gate:`
+# result to appear in what that gate printed in THAT run. The pair above went stale within
+# one commit of being written, and the receipt runner is what caught it.
 
 [meta]
 measured_at = "2ef170f"
@@ -100,11 +105,15 @@ description = "Lifetimes inferred; no 'a parameter lists. Explicit ref<'a> T onl
 spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
-  "cmd: grep -rn 'region\\|Region' src/ --include='*.rs' -> exit 1, 0 lines",
   "src: src/parser/mod.rs:553 lifetime_params, populated by the parser",
   "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> exit 0, 83 lines -- and they are REAL readers, not test fixtures: src/typeck/mod.rs clones the list into its own records and src/codegen/mod.rs branches on `lifetime_params.is_empty()` before emitting a type",
+  "conformance: tests/regression/lifetimes_uninferred.pd run",
+  "conformance: tests/reject/uncalled_body_is_checked.pd reject",
+  "src: src/ownership/borrow_checker.rs:404-407 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
+  "src: src/ownership/mod.rs:329-333 add_constraint, the only way an outlives relation could be recorded",
+  "cmd: grep -rn add_constraint src/ --include='*.rs' -> exit 0, 1 line -- that definition. Nothing calls it, so the constraint list is written by no one and read by no one",
 ]
-note = "This row used to rest on \"0 real readers; every hit is `lifetime_params: vec![]` in a test fixture\". Executed, that is false: 83 hits across 13 files, of which typeck and codegen are load-bearing. The correction does NOT change the verdict, it changes the argument. Explicit lifetime lists are parsed and carried end to end -- which is the annotation burden this feature exists to remove. What is absent is the INFERENCE: there is no region or constraint machinery anywhere (the `region|Region` probe above is empty), so nothing could infer a lifetime that was not written down."
+note = "Two corrections, one of them to an argument this file made while correcting others. (1) The row used to rest on \"0 real readers; every hit is `lifetime_params: vec![]` in a test fixture\". Executed, that is false: 83 hits across 13 files, of which typeck and codegen are load-bearing. Explicit lifetime lists are parsed and carried end to end -- which is the annotation burden this feature exists to remove. (2) It then argued that nothing could INFER a lifetime because `grep -rn 'region|Region'` was empty. That does not follow, and it was written in the same row that had just found 83 readers: the absence of two identifier spellings is not a statement about behaviour. The claim is now behavioural. tests/regression/lifetimes_uninferred.pd returns a reference to a local that dies at the closing brace -- the canonical lifetime error -- and it compiles, links and runs. Its paired reject fixture shows the borrow checker DOES read the body of a function nothing calls, so that is a statement about lifetimes rather than about dead code being skipped. The code path agrees: the return arm carries a TODO instead of a check, and add_constraint is referenced exactly once in the whole tree, by its own definition."
 
 [core_language.memory_management.reference_syntax]
 description = "ref / ref mut instead of & and &mut."
@@ -200,8 +209,9 @@ evidence = [
   "src: src/parser/mod.rs:58-60 the const-parameter branch of parse_generic_params",
   "src: src/codegen/mod.rs:1058 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
   "src: src/codegen/mod.rs:1059 ArraySize::Expr(_) => \"0\".to_string()",
+  "conformance: tests/reject/const_generic_param.pd reject",
 ]
-note = "Neither case is monomorphised."
+note = "Neither case is monomorphised, and the reject fixture is what shows it: the parameter reaches the type checker as the NAME N, so a call with a [i64; 3] does not match it. The three src: lines above prove the branches exist; only the fixture proves what happens when you use one."
 
 [core_language.control_flow.pattern_matching]
 description = "match with exhaustiveness checking, destructuring, guards, wildcards."
@@ -242,7 +252,7 @@ spec = "../../specification/language-spec.md#n3-program-structure-and-items"
 implementation = "implemented"
 evidence = [
   "conformance: tests/03_functions_basic.pd run",
-  "gate: make selfhost -> byte-identical fixed point, exercising every function in bootstrap/pdc.pd",
+  "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\", \"fixed point reached\" -- stage1 and stage2 compile bootstrap/pdc.pd to byte-identical C",
 ]
 note = "A tail expression in a function body with a declared return type is lowered to a return. A tail expression in a nested block is not."
 
@@ -253,7 +263,7 @@ implementation = "partial"
 evidence = [
   "conformance: tests/stdlib/stdlib_tail_return.pd run",
   "conformance: tests/stdlib/stdlib_tail_if_defect.pd run",
-  "gate: make stdlib-gate -> tests/stdlib/DRIVERS.tsv pins stdlib_tail_if_defect as known_violation:fib,classify, so the generated C is REQUIRED to lack a return on every path in exactly those two functions; the day the parser lowers a tail `if`, the gate reports XPASS",
+  "gate: make stdlib-gate -> \"generated C: 5 clean, 1 pinned to an open defect\" -- tests/stdlib/DRIVERS.tsv declares that one as known_violation:fib,classify, so the C is REQUIRED to lack a return on every path in exactly those two functions; the day the parser lowers a tail if, the gate reports XPASS",
   "src: src/codegen/mod.rs:1956 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return",
 ]
 note = "Defect D3 is half-fixed: a tail EXPRESSION becomes a return, a tail `if` does not, and the tail-`if` shape is the idiomatic one for a recursive function. CLAUDE.md:66 records D3 as fixed, which holds only for the expression case. The \"437 affected sites\" figure is an understatement -- the heuristic behind it cannot see a function ending in the else block's brace. A note on the evidence that used to sit here: it read `pdc compile 'fn fib(n: i64) -> i64 { ... fib(n-1)+fib(n-2) ... }' -> prints 8261746944`. Run, that program does not compile at all -- `fib(n-1)` lexes as `fib` applied to the literal -1, and the parser reports \"expected ')', found integer -1\". Spaced as `fib(n - 1)` it compiles and does print 8261746944, so the defect is real and the transcription was not. tests/stdlib/stdlib_tail_if_defect.pd, which spaces it, is what proves this now."
@@ -296,8 +306,9 @@ implementation = "partial"
 evidence = [
   "src: src/codegen/mod.rs:1932-1933 emits a struct Result temporary — a layout codegen never defines",
   "src: src/codegen/mod.rs:2569 the comment describing that layout",
+  "conformance: tests/reject/question_mark_operator.pd reject",
 ]
-note = "Silent breakage: it typechecks, and the failure surfaces in gcc."
+note = "No longer silent. This row used to read \"it typechecks, and the failure surfaces in gcc\" -- true of the codegen path the two citations above describe, and no longer true of the compiler: the type checker refuses `?` by name before any C exists (defect D5's fix). The lowering is still there and still refers to a layout nothing defines, which is why the citations stay and why this is `partial` rather than `unimplemented`."
 
 [error_handling.try_blocks]
 description = "`try { ... }` for scoped error handling."
@@ -404,7 +415,9 @@ evidence = [
   "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
   "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
   "src: src/parser/mod.rs:1274 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
+  "conformance: tests/reject/macro_invocation_bracket.pd reject",
 ]
+note = "The registered builtins are reachable through exactly one call shape. `vec![...]`, the spelling every Rust program uses and the one the vec! builtin was written for, does not parse -- the macro parser requires a parenthesis after the name. So `partial` here means four macros exist and one common way of calling them does not."
 
 [advanced_features.macro_system.hygiene]
 description = "Hygienic expansion by default."
@@ -437,8 +450,8 @@ description = "C code generation; the backend the compiler actually ships."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "implemented"
 evidence = [
-  "gate: make conformance -> fixtures=65 evaluated=65 verified=45 vacuous=7 xfail=1 reject=10 skip=2 failures=0",
-  "gate: make selfhost -> byte-identical fixed point",
+  "gate: make conformance -> fixtures=70 evaluated=70 verified=46 vacuous=7 xfail=1 reject=14 skip=2 failures=0",
+  "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\" -- the C backend is the one a Palladium compiler is built with",
 ]
 
 [advanced_features.compilation.llvm_backend]
@@ -468,8 +481,8 @@ description = "The compiler."
 spec = "../../specification/language-spec.md"
 implementation = "implemented"
 evidence = [
-  "gate: cargo build --release -> exit 0, produces target/release/pdc",
-  "gate: make conformance -> fixtures=65 evaluated=65 verified=45 vacuous=7 xfail=1 reject=10 skip=2 failures=0",
+  "gate: cargo build --release -> \"[optimized] target(s)\" -- the compiler builds, and target/release/pdc is what every other gate here runs",
+  "gate: make conformance -> fixtures=70 evaluated=70 verified=46 vacuous=7 xfail=1 reject=14 skip=2 failures=0",
 ]
 
 [tooling.compiler.bootstrapping]
@@ -477,7 +490,7 @@ description = "A Palladium compiler that compiles its own source to a fixed poin
 spec = "../../specification/bootstrap-subset.md"
 implementation = "implemented"
 evidence = [
-  "gate: make selfhost -> stage1 and stage2 outputs byte-identical",
+  "gate: make selfhost -> \"fixed point reached\", and the two stage transcripts hash alike",
 ]
 note = "The subset it implements is PBS-1, deliberately smaller than what pdc accepts."
 
@@ -496,6 +509,7 @@ spec = "PALLADIUM_V1_FEATURES.md#72-development-tools"
 implementation = "partial"
 evidence = [
   "src: Cargo.toml:53 [[bin]] for pls",
+  "gate: cargo test --release --lib lsp:: -> \"76 passed\" -- the only executed evidence for pls anywhere in this repository",
   "cmd: ls src/lsp/ -> exit 0, 11 lines -- `completion.rs`, `diagnostics.rs`, `hover.rs`, `references.rs`, `symbols.rs`, `analysis.rs`, `handlers.rs`, `server.rs` and two test files",
 ]
 note = "No conformance or integration row covers it -- which is why the previous evidence, \"completion.rs, diagnostics.rs and their tests\", could understate the surface by six files and nothing noticed. The listing is now the measurement. It bounds the surface, not the behaviour: no gate runs pls, so what these files DO is unmeasured, and `partial` here means \"a server exists and is unproven\", not \"these features work\"."
@@ -533,7 +547,7 @@ description = "Core types and traits, memory utilities, iterator protocol."
 spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
 implementation = "unimplemented"
 evidence = [
-  "gate: make stdlib-gate -> 21 stdlib files pinned against stdlib/MANIFEST.tsv: 0 compile, each re-proved at its recorded stage and blocker, and the forced-import probe (PALLADIUM_PATH=stdlib/std, import option) still fails with that same blocker",
+  "gate: make stdlib-gate -> \"21 stdlib files pinned\", \"38 builtins accounted for\" -- 0 of the 21 compile, each re-proved at its recorded stage and blocker against stdlib/MANIFEST.tsv, and the forced-import probe (PALLADIUM_PATH=stdlib/std, import option) still fails with that same blocker",
   "src: stdlib/MANIFEST.tsv:1 the pinned per-file verdict and blocker the gate above recomputes",
   "src: src/resolver/mod.rs:51 the resolver reads PALLADIUM_PATH, so this is not a dead-resolver problem",
   "cmd: grep -rn stdlib .github/ -> exit 1, 0 lines -- stdlib is not packaged by any workflow, and neither Homebrew formula installs it",
@@ -556,10 +570,12 @@ spec = "../../specification/language-spec.md#n14-builtins-and-the-standard-libra
 implementation = "partial"
 evidence = [
   "src: src/builtins.rs:1 the SSOT table the file and path builtins are generated from",
+  "conformance: tests/stdlib/stdlib_builtins_file.pd run",
   "cmd: grep -rniE 'socket|TcpStream|BufReader' src/runtime/ -> exit 0, 95 lines -- src/runtime/net.rs is a complete Rust-side TCP/UDP layer, and src/runtime/mod.rs declares it",
-  "cmd: grep -rniE 'socket|tcp|udp|listen|connect|bind' src/builtins.rs -> exit 1, 0 lines -- and NO builtin exposes any of it, so no Palladium program can reach a socket",
+  "cmd: grep -rniE 'socket|tcp|udp|listen|connect|bind' src/builtins.rs -> exit 1, 0 lines -- no builtin names one",
+  "cmd: grep -rniE 'socket|tcp|udp|listen|connect|bind' runtime/ -> exit 1, 0 lines -- and runtime/ is what a compiled program actually LINKS, so the question does not rest on the builtin table being the only bridge",
 ]
-note = "See reference/builtins.md, generated from src/builtins.rs. The evidence here used to read \"exit 1, 0 lines -- no network, no buffering\" over src/runtime/. Executed, that command returns 95 lines: a whole net.rs exists. It is dead Rust -- nothing outside the file references it and no builtin surfaces it -- so the CONCLUSION (a Palladium program cannot open a socket) survives, but it now rests on the builtin table, which is where the language surface actually is. This is the difference between \"the code is not there\" and \"the code is there and unreachable\", and only the second one is true."
+note = "See reference/builtins.md, generated from src/builtins.rs. The evidence here used to read \"exit 1, 0 lines -- no network, no buffering\" over src/runtime/. Executed, that command returns 95 lines: a whole net.rs exists. It is dead Rust, and the decisive point is WHERE it lives: src/runtime/ is compiled into the pdc binary, while a Palladium program links runtime/palladium_runtime.c, which has no socket surface at all. So the conclusion does not depend on src/builtins.rs being the only language-to-runtime bridge -- the code is on the other side of the compiler from anything a program could reach. This is the difference between \"the code is not there\" and \"the code is there and unreachable\", and only the second one is true."
 
 [ecosystem.interop.rust_ffi]
 description = "Call Rust from Palladium, share data structures."
@@ -578,7 +594,9 @@ implementation = "partial"
 evidence = [
   "src: src/driver/mod.rs:185 // Phase 4: Code generation — output is C, which gcc then links, so the ABI is C by construction",
   "cmd: grep -rn 'Extern\\|ExternBlock' src/ast/mod.rs src/parser/mod.rs -> exit 1, 0 lines -- no syntax for importing a C symbol",
+  "conformance: tests/03_functions_basic.pd run",
 ]
+note = "The ABI is C because the output IS C and gcc links it -- the conformance fixture above is a Palladium program that became an executable through that path, which is the whole of what `partial` claims here. What is missing is any syntax for naming a foreign symbol, which the probe above measures."
 
 [ecosystem.interop.wasm]
 description = "WASM target with WASI support."

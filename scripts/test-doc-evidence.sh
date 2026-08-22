@@ -26,7 +26,14 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
 TMP=$(mktemp -d) || exit 2
-trap 'rm -rf "$TMP"' EXIT
+# A scratch directory INSIDE the repository. Two cases below are about what a path inside
+# the repository may resolve to, and a symlink under /tmp cannot test that. Removed on
+# every exit path, including the failing ones.
+INREPO=.test-doc-evidence-tmp
+rm -rf "$INREPO"
+trap 'rm -rf "$TMP" "$INREPO"' EXIT
+mkdir -p "$INREPO/empty" || exit 2
+ln -sfn /etc "$INREPO/escape" || exit 2
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 pass=0; fail=0
 
@@ -94,15 +101,20 @@ expect_red() {
 
 echo "== the harness must be able to say YES before any NO is worth anything =="
 
-# CASE 1 (FATAL IF RED). Two true items: a positive count and an ABSENCE PROOF. The
-# absence proof is here on purpose. `exit 1, 0 lines` is the success case for most of
-# this corpus, and a checker written around `check_returncode()` would invert exactly
-# these -- passing the liars and failing the honest rows.
+# CASE 1 (FATAL IF RED). True items covering every shape the corpus uses: a positive
+# count, an ABSENCE PROOF, a real two-segment PIPELINE, a find with an expression, and a
+# conformance class. The absence proof is here on purpose -- `exit 1, 0 lines` is the
+# success case for most of this corpus, and a checker written around `check_returncode()`
+# would invert exactly these, passing the liars and failing the honest rows. The pipeline
+# is here because there was no green pipeline control at all in the first version, so
+# nothing established that the new per-segment status checks pass a working pipeline.
 index truth implemented \
   "cmd: ls scripts/ -> exit 0, $(ls scripts/ | wc -l | tr -d ' ') lines" \
   "cmd: grep -rn zzz_no_such_identifier_anywhere src/ --include='*.rs' -> exit 1, 0 lines -- the shape most of this corpus uses" \
+  "cmd: grep -rn 'pub fn' src/lexer/ --include='*.rs' | grep -v zzz_nothing -> exit 0, $(/usr/bin/grep -rn 'pub fn' src/lexer/ --include='*.rs' | /usr/bin/grep -v zzz_nothing | wc -l | tr -d ' ') lines" \
+  "cmd: find src -name '*.zzz' -> exit 0, 0 lines -- find's expression is an expression, not more paths" \
   "conformance: tests/reject/try_block.pd reject"
-expect_green truth "a TRUE index passes (count, absence proof, conformance class)"
+expect_green truth "a TRUE index passes (count, absence, PIPELINE, find expr, conformance)"
 if [ "$fail" -ne 0 ]; then
   echo
   echo "${RED}ABORT${NC}: the green control failed, so this harness cannot distinguish"
@@ -194,6 +206,197 @@ expect_red operator "a shell operator is refused" "shell operator"
 index not_allowed unimplemented \
   "cmd: python3 -c pass -> exit 0, 0 lines"
 expect_red not_allowed "a command outside the allowlist is refused" "allowlist"
+
+echo
+echo "== an absence proof must be shown CAPABLE of producing output =="
+#
+# Review found two more doors into the room Case 4b opens, and confirming them found two
+# more again. Every one produces `exit 1, 0 lines` -- a perfect absence proof -- from a
+# command that read nothing. They are listed as separate cases because each defeats a
+# DIFFERENT part of the parse, and a single fix that misses one is worth knowing about.
+
+# CASE 14. No path operand at all. grep falls back to stdin, is handed the gate's empty
+# stdin, and reports the canonical absence over nothing. This is the plainest form of the
+# whole class and the first version accepted it.
+index no_path unimplemented \
+  "cmd: grep -rn zzz_no_such_identifier_anywhere -> exit 1, 0 lines"
+expect_red no_path "a command naming NO path is refused" "names no path to read"
+
+# CASE 15. The pattern arrives through an option, so the one real path is what a
+# "drop the first operand, it is the pattern" rule throws away. Zero paths were checked.
+index pattern_opt unimplemented \
+  "cmd: grep -r --regexp=zzz_no_such_identifier_anywhere src/ -> exit 1, 0 lines"
+expect_red pattern_opt "an option-supplied pattern (--regexp=) is refused" \
+  "supplies its pattern through"
+
+# CASE 16. The same, clustered into a short-option bundle. A check that looked at the
+# whole token saw `-rne`, matched nothing in its table, and let the `e` through.
+index pattern_short unimplemented \
+  "cmd: grep -rne zzz_no_such_identifier_anywhere src/ -> exit 1, 0 lines"
+expect_red pattern_short "a clustered -e is refused" "clusters -e"
+
+# CASE 17. An option whose argument is separate would be counted as a path.
+index sep_arg unimplemented \
+  "cmd: grep -rn --include '*.rs' zzz_nothing src/ -> exit 1, 0 lines"
+expect_red sep_arg "an option taking a separate argument is refused" "separate argument"
+
+# CASE 18. THE MEASUREMENT, not the parse. Every case above is a door; this is the room.
+# The scope exists, is named, and is inside the repo -- and holds nothing, so the absence
+# is over an empty stream. No argv inspection can see this; only running it can.
+index empty_scope unimplemented \
+  "cmd: grep -rn zzz_no_such_identifier_anywhere $INREPO/empty/ -> exit 1, 0 lines"
+expect_red empty_scope "an absence over an EMPTY scope is refused (measured, not parsed)" \
+  "produces NOTHING even when asked to match everything"
+
+# CASE 19. And the same for a live directory filtered down to nothing by --include, which
+# is a scope census's blind spot: the path exists and has files, just none it will open.
+index filtered_to_nothing unimplemented \
+  "cmd: grep -rn zzz_nothing src/ --include='*.no_such_extension' -> exit 1, 0 lines"
+expect_red filtered_to_nothing "an absence filtered to an empty file set is refused" \
+  "produces NOTHING even when asked to match everything"
+
+# CASE 20. A downstream segment naming a file reads the file, not the pipe, so the
+# pipeline's number is not what it appears to be.
+index downstream_path unimplemented \
+  "cmd: grep -rn 'pub fn' src/lexer/ --include='*.rs' | grep -v zzz Cargo.toml -> exit 0, 1 lines"
+expect_red downstream_path "a downstream segment naming a path is refused" \
+  "downstream of a pipe but also names the path"
+
+echo
+echo "== 'no shell' must be a property of the process, not a claim in a comment =="
+
+# CASE 21. The allowlist compared basename(argv[0]), so any executable named grep was
+# accepted -- including one checked into this repository, whose interpreter can be a shell.
+index exe_by_path unimplemented \
+  "cmd: scripts/grep -rn zzz src/ -> exit 1, 0 lines"
+expect_red exe_by_path "an executable named by PATH is refused" "names the executable by path"
+
+# CASE 22. Operand paths were checked lexically and with exists(), neither of which
+# follows a link. A symlink committed inside the repo can point anywhere, and the gate
+# would be measuring unversioned content while reporting on this tree.
+index symlink_escape unimplemented \
+  "cmd: grep -rn zzz_nothing $INREPO/escape/ -> exit 1, 0 lines"
+expect_red symlink_escape "a symlink resolving outside the repository is refused" \
+  "outside"
+
+# CASE 23. PATH was inherited, so which binary answered `grep` was decided by whoever
+# invoked make. Here a saboteur `grep` is put first on PATH; the gate must still be green,
+# because it resolves tools on its own pinned PATH and runs them by absolute path.
+mkdir -p "$TMP/hijack"
+printf '#!/bin/sh\necho "HIJACKED"\nexit 0\n' > "$TMP/hijack/grep"
+printf '#!/bin/sh\necho "HIJACKED"\nexit 0\n' > "$TMP/hijack/ls"
+chmod +x "$TMP/hijack/grep" "$TMP/hijack/ls"
+OUT=$(PATH="$TMP/hijack:$PATH" python3 scripts/check_doc_evidence.py \
+        --index-only --index "$TMP/truth.toml" 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && ! printf '%s\n' "$OUT" | grep -qF HIJACKED; then
+  printf '  %sok%s   %s\n' "$GREEN" "$NC" "a hijacked PATH does not change what the gate runs"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s %s -- exit %s\n' "$RED" "$NC" \
+    "a hijacked PATH does not change what the gate runs" "$RC"
+  printf '%s\n' "$OUT" | sed 's/^/         | /' | head -10
+  fail=$((fail+1))
+fi
+
+echo
+echo "== every segment's status is a verdict, or the run establishes nothing =="
+#
+# WHITE-BOX, deliberately. On this five-command allowlist an upstream segment cannot
+# easily be made to fail without also writing to stderr (which is caught earlier), so
+# these drive run_pipeline directly with a saboteur argv -- the same fault-injection shape
+# scripts/test-gate-probe.sh uses on the stdlib gate's producers. The rule under test is
+# that a pipeline whose FIRST segment died still hands the last command an empty stream,
+# and the last command's exit code cannot tell that from a true absence.
+seg_case() {  # seg_case <name> <saboteur sh -c body> <expected fragment>
+  local name=$1 body=$2 want=$3
+  OUT=$(python3 - "$body" <<'PYEOF' 2>&1
+import sys, pathlib
+sys.path.insert(0, "scripts")
+import check_doc_evidence as C
+first = {"argv": ["/bin/sh", "-c", sys.argv[1]], "parsed": {"head": "grep"}}
+last = {"argv": [C.shutil.which("grep", path=C.SAFE_PATH), "-v", "zzz"], "parsed": {"head": "grep"}}
+rc, out, err = C.run_pipeline([first, last])
+print(f"rc={rc} lines={len(out.splitlines())} err={err}")
+PYEOF
+)
+  if printf '%s\n' "$OUT" | grep -qF "$want"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$name"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s -- wanted %s\n         | %s\n' "$RED" "$NC" "$name" "$want" "$OUT"
+    fail=$((fail+1))
+  fi
+}
+seg_case "an upstream segment exiting 3 is a MALFUNCTION, not a result" \
+  'exit 3' 'MALFUNCTIONED'
+seg_case "an upstream segment killed by a signal is a MALFUNCTION" \
+  'kill -9 $$' 'MALFUNCTIONED'
+seg_case "an upstream segment exiting 137 (shell convention) is a MALFUNCTION" \
+  'exit 137' 'MALFUNCTIONED'
+seg_case "an upstream segment exiting 1 (grep: no match) still concludes" \
+  'exit 1' 'err=None'
+
+echo
+echo "== gate: outcomes must come from a run, not from a memory =="
+
+# CASE 28. A `gate:` result with nothing a machine can disagree with is prose, and prose
+# is how `-> total=42 pass=39` outlived the output format that produced it.
+index gate_prose implemented \
+  "gate: make conformance -> everything looked fine to me"
+expect_red gate_prose "a gate: result with no checkable token is refused" \
+  "nothing checkable"
+
+# CASE 29. A checkable token the gate did not print. Validated against THIS run's receipt,
+# which scripts/gate-receipts.sh collects; without receipts the count says so and the
+# lint does not pretend otherwise.
+if [ -f build_output/gate-receipts/index.tsv ]; then
+  index gate_stale implemented \
+    "gate: make conformance -> verified=99999 fixtures=99999"
+  run_gate() {
+    OUT=$(python3 scripts/check_doc_evidence.py --index-only --index "$TMP/gate_stale.toml" \
+            --gate-receipts build_output/gate-receipts 2>&1); RC=$?
+  }
+  run_gate
+  if [ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -qF "did not print in this run"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "a gate: number the gate did not print is refused"
+    pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s -- exit %s\n' "$RED" "$NC" \
+      "a gate: number the gate did not print is refused" "$RC"
+    printf '%s\n' "$OUT" | sed 's/^/         | /' | head -8
+    fail=$((fail+1))
+  fi
+else
+  printf '  %sFAIL%s %s\n' "$RED" "$NC" \
+    "gate: receipt validation UNTESTED -- no receipts on disk; run make gate-receipts first"
+  fail=$((fail+1))
+fi
+
+echo
+echo "== a claim about what the compiler DOES needs evidence from a run =="
+
+# CASE 30. The durable form of the pdc/cargo/make blocklist. That list stops one spelling;
+# it does not stop a future author from deleting a compiler experiment, replacing it with
+# a source grep, and satisfying the schema. Which is how this index came to say a program
+# "compiles, links, prints 99, no diagnostic" about a program the compiler refuses.
+index dyn_claim partial \
+  "src: src/parser/mod.rs:553 lifetime_params, populated by the parser" \
+  "cmd: grep -rn zzz_no_such_identifier_anywhere src/ --include='*.rs' -> exit 1, 0 lines"
+expect_red dyn_claim "a partial/implemented row with only STATIC evidence is refused" \
+  "claim about what the compiler" "every item here is static"
+
+# CASE 31. And the same row passes the moment it carries something that came from a run,
+# so the rule is a demand for evidence rather than a demand for more items.
+index dyn_claim_ok partial \
+  "src: src/parser/mod.rs:553 lifetime_params, populated by the parser" \
+  "conformance: tests/reject/try_block.pd reject"
+expect_green dyn_claim_ok "the same row passes once it cites a fixture"
+
+# CASE 32. `unimplemented` is exempt on purpose: an absence is exactly what a `cmd:`
+# absence proof is for, and 16 real rows legitimately rest on one. If this went red the
+# rule would be demanding fixtures for features that do not exist.
+index dyn_absence unimplemented \
+  "cmd: grep -rn zzz_no_such_identifier_anywhere src/ --include='*.rs' -> exit 1, 0 lines"
+expect_green dyn_absence "an unimplemented row may still rest on an absence proof"
 
 echo
 echo "== conformance: evidence must agree with the manifest that runs it =="

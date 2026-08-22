@@ -41,6 +41,20 @@ jobs:
       - name: Documentation snippets
         run: bash scripts/check-docs.sh docs README.md
 
+      # These three had never run in CI. The job invoked check-docs.sh directly rather
+      # than `make check-docs`, so it skipped check-doc-evidence entirely — which is
+      # where every `cmd:` item is executed and every `gate:` outcome is checked against
+      # a receipt. Cheapest first: the probe proves the gate can still fail, the gate
+      # then runs, and the receipts runner re-runs the cited gates last.
+      - name: Evidence gate probe (must be able to go red)
+        run: bash scripts/test-doc-evidence.sh
+
+      - name: Documentation evidence
+        run: bash scripts/check-doc-evidence.sh
+
+      - name: Gate receipts
+        run: bash scripts/gate-receipts.sh
+
       - id: id
         run: echo "tag=preview-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 

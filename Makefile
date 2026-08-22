@@ -295,6 +295,17 @@ check-doc-evidence: ## Pin doc citations, the no-compile allowlist, and RUN ever
 test-doc-evidence: ## Prove the evidence gate goes RED on a deliberately false cmd: item
 	@bash scripts/test-doc-evidence.sh
 
+# `gate:` evidence cannot be validated by the doc lint: check-docs is a step of `gates`,
+# and the gates the index cites are conformance and selfhost, so the lint would recurse
+# into its own caller. Static linting and receipt collection are therefore separate
+# targets. This one runs each DISTINCT cited gate once — three rows cite `make selfhost`,
+# it runs once — and requires every declared outcome to appear in what that gate printed
+# in THIS run. It re-runs gates that `make gates` also runs directly (~31s measured); that
+# is the price of keeping their output streamed rather than buried in a receipt file.
+.PHONY: gate-receipts
+gate-receipts: build ## Run every gate the feature index cites, and validate its claims
+	@bash scripts/gate-receipts.sh
+
 # stdlib/ = library modules with no `fn main`; the only pinnable thing is a
 # compile verdict plus its blocker. tests/stdlib/*.pd are ordinary conformance
 # fixtures and are run + transcript-diffed by `make conformance`, NOT here.
@@ -307,7 +318,7 @@ test-gate-probe: build ## Fault-inject every producer the stdlib gate reads as e
 	@bash scripts/test-gate-probe.sh
 
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs test-doc-evidence selfhost stdlib-gate test-gate-probe ## Run every language-level gate
+gates: conformance test-conformance-runner check-docs test-doc-evidence gate-receipts selfhost stdlib-gate test-gate-probe ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------
