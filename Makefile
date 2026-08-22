@@ -268,31 +268,44 @@ test-conformance-runner: build ## Prove the conformance gate still goes RED when
 
 # M1's exit criterion, as a command.
 #
-# THERE ARE TWO OWNER INVENTORIES IN THIS REPO, AND THIS USED TO READ ONE.
+# THERE ARE THREE INVENTORIES IN THIS REPO, AND THIS USED TO READ ONE.
 #   tests/conformance-manifest.txt          owns .pd fixtures (`owner` column)
-#   #[ignore = "XFAIL: … (owned by M<n>)"]  owns Rust tests
-# Both use the same `(owned by M<n>)` grammar and both are enforceable, but this
-# target only ran the first. Measured at 2ef170f, the v0.3.0 release commit: it
-# exited 0 while THREE M1-owned #[ignore] rows were still failing, one of them
-# the tail-`if` miscompile M1 was named for — `fib(10)` printed 8261746944 and
-# exited 0. The release that exists to remove silent miscompiles shipped one,
-# and its own exit criterion could not see it.
+#   tests/rust-debt-manifest.txt            owns Rust tests, cross-checked
+#                                           against #[ignore = "… (owned by M<n>)"]
+#   the ordinary Rust suite                 owns everything not ignored
+# The first two use the same `(owned by M<n>)` grammar and both are enforceable,
+# but this target only ran the first. Measured at 2ef170f, the v0.3.0 release
+# commit: it exited 0 while THREE M1-owned #[ignore] rows were still failing,
+# one of them the tail-`if` miscompile M1 was named for — `fib(10)` printed
+# 8261746944 and exited 0. The release that exists to remove silent miscompiles
+# shipped one, and its own exit criterion could not see it.
 #
-# Both halves run even when the first is red: stopping at the first failure
-# reports half the debt and costs a round trip to discover the rest.
+# WHY THE ORDINARY SUITE IS HERE TOO (inventory 3). The Rust debt manifest is a
+# closed inventory of tests that are ALLOWED to fail. `paid` says a row's test
+# is no longer #[ignore]d — it does not say the test passes, and asking
+# scripts/test-xfail.py to prove that would mean running the suite anyway. So
+# the suite runs, once, here: a row transitioned to `paid` over a test that
+# still fails is red in this step. Without it, `paid` would be a way to retire a
+# failing test by editing one word.
+#
+# All three run even when an earlier one is red: stopping at the first failure
+# reports part of the debt and costs a round trip to discover the rest.
 .PHONY: m1-exit
-m1-exit: build ## M1's exit criterion: nothing in EITHER owner inventory still owed to M1
+m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1
 	@rc=0; \
-	echo "$(YELLOW)== inventory 1 of 2: .pd fixtures (tests/conformance-manifest.txt) ==$(NC)"; \
+	echo "$(YELLOW)== inventory 1 of 3: .pd fixtures (tests/conformance-manifest.txt) ==$(NC)"; \
 	CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests examples || rc=1; \
 	echo; \
-	echo "$(YELLOW)== inventory 2 of 2: Rust #[ignore] reasons ==$(NC)"; \
+	echo "$(YELLOW)== inventory 2 of 3: Rust debt (tests/rust-debt-manifest.txt + #[ignore] reasons) ==$(NC)"; \
 	TEST_XFAIL_FORBID_OWNER=M1 python3 scripts/test-xfail.py || rc=1; \
 	echo; \
+	echo "$(YELLOW)== inventory 3 of 3: the ordinary Rust suite (nothing here is allowed to fail) ==$(NC)"; \
+	$(CARGO) test --release --no-fail-fast || rc=1; \
+	echo; \
 	if [ $$rc -eq 0 ]; then \
-	  echo "$(GREEN)✓ M1 exit criterion met — nothing in either inventory is owed to M1$(NC)"; \
+	  echo "$(GREEN)✓ M1 exit criterion met — nothing in any inventory is owed to M1$(NC)"; \
 	else \
-	  echo "$(RED)✗ M1 is NOT finished — see the OWED_TO_M1 line(s) above$(NC)"; \
+	  echo "$(RED)✗ M1 is NOT finished — see the OWED_TO_M1 / failure line(s) above$(NC)"; \
 	fi; \
 	exit $$rc
 

@@ -76,7 +76,14 @@ clean.
 
 Note the same limit the conformance runner states about itself: the owner is an
 editable label, so retagging a row to another milestone slips this check. The
-authorisation boundary is REVIEW OF THE REASON TEXT, not this script.
+authorisation boundary is REVIEW OF THE REASON TEXT, not this script. What the
+debt manifest below adds is that the label now exists in TWO reviewed places
+which must agree, so a retag is a two-file edit rather than a one-word one.
+
+AND THE INVENTORY ITSELF IS CLOSED — see DEBT_MANIFEST below. Everything above
+is derived from cargo, which means a debt that leaves cargo's listing (the
+`#[ignore]` deleted, or the test deleted) leaves BOTH sides of the
+reconciliation at once and the gate goes green having established nothing.
 
 Env:
   TEST_XFAIL_FORBID_OWNER   fail if any still-failing XFAIL is owned by this
@@ -415,10 +422,14 @@ def owner_of(site):
     return m.group(1) if m else None
 
 
-def reconcile(listed, obs, index, forbid_owner=None):
+def reconcile(listed, obs, index, forbid_owner=None, state=None):
     """listed: [(target, path)]; obs: [(target, path, outcome)].
 
     Keys are (target, module path) on both sides. -> (counts, problems)
+
+    `state`, when given, is filled with the per-test `tags` and `sites` this
+    pass resolved, so `reconcile_debt` can cross-check the manifest against the
+    SAME reading of the `#[ignore]` attributes rather than doing its own.
 
     `forbid_owner` is the milestone-exit gate: when set to "M<n>", a declared
     XFAIL owned by that milestone which is STILL FAILING is reported as
@@ -468,6 +479,24 @@ def reconcile(listed, obs, index, forbid_owner=None):
                                  "1..9, or '(owned by unscheduled…)' for work "
                                  "under MILESTONES.md 'Not scheduled, and why'."
                                  % (loc, target, path)))
+            elif len({owner_of(c) for c in cands}) > 1:
+                # FAIL CLOSED. Candidates are validated for KIND above and for
+                # owner VALIDITY just above, but the milestone gate below reads
+                # ONE of them (`cands[0]`), so two well-formed arms owned by
+                # different milestones make "who owes this test" depend on which
+                # declaration appears first in the file. That is a verdict
+                # decided by source order, which is not a verdict. Both are
+                # named because the fix is to make them agree, and a reader
+                # needs to see what they currently say.
+                where = ", ".join("%s:%d [owned by %s]"
+                                  % (c["file"], c["line"], owner_of(c))
+                                  for c in cands)
+                problems.append(("TAG", "%s::%s: its candidate declarations "
+                                        "disagree about the OWNER (%s). "
+                                        "Milestone selection would depend on "
+                                        "which one is read first."
+                                 % (target, path, where)))
+                tags[key] = None
         elif tag == "SLOW":
             counts["declared_slow"] += 1
             if key not in SLOW_ALLOWLIST:
@@ -522,6 +551,169 @@ def reconcile(listed, obs, index, forbid_owner=None):
 
     counts["listed"] = len(listed_set)
     counts["observed"] = len(observed_keys)
+    if state is not None:
+        state["tags"], state["sites"] = tags, sites
+    return counts, problems
+
+
+# --------------------------------------------------------------------------
+# The closed debt inventory
+# --------------------------------------------------------------------------
+# WHY A MANIFEST WHEN CARGO ALREADY KNOWS WHAT IS IGNORED
+#
+# Everything above derives BOTH sides of the reconciliation from
+# `cargo test --list --ignored`. That answers "is every declared failure still
+# failing" and it cannot answer "is the debt still declared", because the debt
+# leaving the listing removes it from both sides at once:
+#
+#     delete `#[ignore]` from a still-failing test  -> gone from the listing
+#     delete the test                               -> gone from the listing
+#
+# Either way `make test-xfail` and `make m1-exit` go green having established
+# nothing. That is the shape of the failure that let v0.3.0 ship: a milestone
+# exit criterion that could not see its own debt. `scripts/conformance.sh`
+# solved this class for .pd fixtures by making the manifest a CLOSED INVENTORY —
+# a fixture on disk that is not declared is UNDECLARED, a row whose fixture is
+# gone is MISSING, and paying off an xfail is a row TRANSITION rather than a row
+# deletion. This is that shape, applied to the Rust suite.
+#
+#     owed  the test must exist, must still be `#[ignore]`d as XFAIL, and its
+#           `#[ignore]` owner must MATCH this row's owner. Retagging one of the
+#           two now disagrees with the other instead of silently moving a debt.
+#     paid  the test must exist and must NOT be ignored any more. Whether it
+#           PASSES is the ordinary suite's job — which is why `make m1-exit`
+#           now runs it (inventory 3 of 3). A row that says paid over a test
+#           that still fails is red there, not green here.
+#
+# WHAT DELETING BUYS YOU: nothing. Delete the row and the test is an undeclared
+# XFAIL (UNDECLARED_DEBT). Delete the test and the row is MISSING. Delete both
+# and you have edited a reviewed manifest to remove a named debt, which is the
+# same authorisation boundary conformance.sh states about itself: the runner
+# cannot tell an honest reclassification from an evasive one, REVIEW OF THE
+# MANIFEST is the boundary. What it does buy is that the evasion has to be
+# written down.
+DEBT_MANIFEST = "tests/rust-debt-manifest.txt"
+DEBT_CLASSES = ("owed", "paid")
+
+
+def read_debt_manifest(path):
+    """-> (rows, errors). A row is a dict; errors are strings."""
+    rows, errors, seen = [], [], {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw_lines = fh.read().splitlines()
+    except OSError as exc:
+        return None, ["cannot read %s: %s. The Rust debt is a CLOSED inventory; "
+                      "without the manifest this gate cannot know what left it"
+                      % (path, exc)]
+    for lineno, raw in enumerate(raw_lines, 1):
+        line = raw.rstrip("\r")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) != 4 or not all(c.strip() for c in cols):
+            errors.append("%s:%d: expected 4 tab-separated non-empty columns "
+                          "(target, test, class, owner), got: %r"
+                          % (path, lineno, line))
+            continue
+        target, test, cls, owner = (c.strip() for c in cols)
+        key = (target, test)
+        if key in seen:
+            errors.append("%s:%d: duplicate row for %s::%s (first at line %d)"
+                          % (path, lineno, target, test, seen[key]))
+            continue
+        seen[key] = lineno
+        if cls not in DEBT_CLASSES:
+            errors.append("%s:%d: unknown class %r (owed|paid)"
+                          % (path, lineno, cls))
+            continue
+        if cls == "owed" and not re.fullmatch(r"M[1-9]|unscheduled", owner):
+            errors.append("%s:%d: class=owed needs an owner M1..M9 or "
+                          "'unscheduled', got %r" % (path, lineno, owner))
+            continue
+        if cls == "paid" and owner != "-":
+            errors.append("%s:%d: class=paid must have owner '-' (it is not "
+                          "owed to anyone any more), got %r"
+                          % (path, lineno, owner))
+            continue
+        rows.append({"target": target, "test": test, "class": cls,
+                     "owner": owner, "line": lineno, "path": path})
+    return rows, errors
+
+
+def reconcile_debt(rows, listed, all_tests, tags, sites):
+    """Close the inventory both ways. -> (counts, problems)
+
+    `listed`    (target, path) cargo reports as IGNORED
+    `all_tests` (target, path) cargo lists AT ALL — the set a deleted test
+                leaves, and the only way to tell "the #[ignore] came off" from
+                "the test is gone".
+    """
+    problems = []
+    counts = {"owed": 0, "paid": 0}
+    listed_set, all_set = set(listed), set(all_tests)
+    declared = set()
+
+    for row in rows:
+        key = (row["target"], row["test"])
+        declared.add(key)
+        where = "%s:%d" % (row["path"], row["line"])
+        if key not in all_set:
+            problems.append(("DEBT_MISSING",
+                             "%s: %s::%s is declared %s but cargo does not list "
+                             "such a test at all — it was deleted, renamed, or "
+                             "moved to a target that no longer builds. Deleting "
+                             "a test is not how a debt is paid."
+                             % (where, row["target"], row["test"], row["class"])))
+            continue
+        if row["class"] == "owed":
+            counts["owed"] += 1
+            if key not in listed_set:
+                problems.append(("DEBT_STATE",
+                                 "%s: %s::%s is declared owed but is NOT "
+                                 "#[ignore]d any more. If it now passes, "
+                                 "transition this row to `paid` with owner '-'; "
+                                 "if it still fails, the #[ignore] must come "
+                                 "back. A debt does not stop existing by "
+                                 "leaving the ignored set."
+                                 % (where, row["target"], row["test"])))
+                continue
+            tag = tags.get(key)
+            if tag != "XFAIL":
+                problems.append(("DEBT_STATE",
+                                 "%s: %s::%s is declared owed but its #[ignore] "
+                                 "is tagged %s, not XFAIL"
+                                 % (where, row["target"], row["test"],
+                                    tag or "unreadable")))
+                continue
+            declared_owner = owner_of(sites[key]) if key in sites else None
+            if declared_owner != row["owner"]:
+                problems.append(("DEBT_OWNER",
+                                 "%s: %s::%s is owed to %s here, but its "
+                                 "#[ignore] at %s:%d says %s. The two "
+                                 "inventories must name the same milestone — "
+                                 "retagging one of them is how a debt moves "
+                                 "quietly."
+                                 % (where, row["target"], row["test"],
+                                    row["owner"], sites[key]["file"],
+                                    sites[key]["line"], declared_owner)))
+        else:  # paid
+            counts["paid"] += 1
+            if key in listed_set:
+                problems.append(("DEBT_STATE",
+                                 "%s: %s::%s is declared paid but is still "
+                                 "#[ignore]d, so it is not in the regression "
+                                 "net. Delete the #[ignore], or set the row "
+                                 "back to owed."
+                                 % (where, row["target"], row["test"])))
+
+    for key in sorted(listed_set):
+        if tags.get(key) == "XFAIL" and key not in declared:
+            problems.append(("UNDECLARED_DEBT",
+                             "%s::%s is an XFAIL cargo knows about, but no row "
+                             "in %s declares it. Every owed test must be in the "
+                             "inventory, or the inventory cannot tell you what "
+                             "left it." % (key[0], key[1], DEBT_MANIFEST)))
     return counts, problems
 
 
@@ -752,15 +944,116 @@ def self_test():
     check("an XPASS is reported as XPASS, not as owed",
           sorted(k for k, _ in problems), ["XPASS"])
 
+    # 11. OWNER AGREEMENT BETWEEN CANDIDATE DECLARATIONS. Two `#[cfg]` arms may
+    #     legitimately carry different reason TEXT, but not different owners:
+    #     the milestone gate reads one of them, so a disagreement makes "which
+    #     milestone owes this" depend on which arm appears first in the file.
+    disagree = """
+        #[cfg(unix)]
+        mod m { #[test] #[ignore = "XFAIL: unix (owned by M1)"] fn test_d() {} }
+        #[cfg(not(unix))]
+        mod m { #[test] #[ignore = "XFAIL: other (owned by M2)"] fn test_d() {} }
+    """
+    index = index_sites({"tests/p/main.rs": disagree})
+    _, problems = reconcile([("tests/p/main.rs", "m::test_d")],
+                            [("tests/p/main.rs", "m::test_d", "FAILED")], index)
+    check("arms that disagree about the owner are an error",
+          [k for k, _ in problems], ["TAG"])
+    check("the owner disagreement names BOTH owners",
+          ("owned by M1" in problems[0][1] and "owned by M2" in problems[0][1]),
+          True)
+    # ... and it must FAIL CLOSED: neither milestone may be told it is finished
+    # while the row's owner is undecided.
+    c, problems = reconcile([("tests/p/main.rs", "m::test_d")],
+                            [("tests/p/main.rs", "m::test_d", "FAILED")],
+                            index, forbid_owner="M1")
+    check("a disagreed owner is not silently attributed",
+          (c["owed"], sorted(k for k, _ in problems)), (0, ["TAG"]))
+
+    # 12. THE CLOSED DEBT INVENTORY. Every route by which a debt can leave the
+    #     `--list --ignored` reconciliation must be caught by the manifest.
+    debt_state = {}
+    debt_index = index_sites({
+        "tests/x_test.rs":
+            '#[test] #[ignore = "XFAIL: a (owned by M1)"] fn test_owed() {}'})
+    reconcile([("tests/x_test.rs", "test_owed")],
+              [("tests/x_test.rs", "test_owed", "FAILED")], debt_index,
+              state=debt_state)
+    tags, sites = debt_state["tags"], debt_state["sites"]
+    owed_row = [{"target": "tests/x_test.rs", "test": "test_owed",
+                 "class": "owed", "owner": "M1", "line": 1,
+                 "path": DEBT_MANIFEST}]
+    listed = [("tests/x_test.rs", "test_owed")]
+
+    _, problems = reconcile_debt(owed_row, listed, listed, tags, sites)
+    check("a declared, still-ignored, still-owed test is clean", problems, [])
+
+    # The row is gone but the test is not: an undeclared debt.
+    _, problems = reconcile_debt([], listed, listed, tags, sites)
+    check("deleting the ROW is not an escape hatch",
+          [k for k, _ in problems], ["UNDECLARED_DEBT"])
+
+    # The test is gone: this is the v0.3.0 failure — the debt left the
+    # inventory and every cargo-derived check went green.
+    _, problems = reconcile_debt(owed_row, [], [], tags, sites)
+    check("deleting the TEST is not an escape hatch",
+          [k for k, _ in problems], ["DEBT_MISSING"])
+
+    # The `#[ignore]` came off while the test still fails: it vanishes from the
+    # ignored listing, so only the manifest can see it.
+    _, problems = reconcile_debt(owed_row, [], listed, tags, sites)
+    check("removing #[ignore] while owed is caught",
+          [k for k, _ in problems], ["DEBT_STATE"])
+
+    # Retagging the `#[ignore]` to another milestone must disagree with the row.
+    moved = [dict(owed_row[0], owner="M2")]
+    _, problems = reconcile_debt(moved, listed, listed, tags, sites)
+    check("a debt retagged in only one inventory is caught",
+          [k for k, _ in problems], ["DEBT_OWNER"])
+    check("the owner disagreement names both milestones",
+          ("M2" in problems[0][1] and "M1" in problems[0][1]), True)
+
+    # `paid` is the transition, and it means "no longer ignored".
+    paid = [dict(owed_row[0], **{"class": "paid", "owner": "-"})]
+    _, problems = reconcile_debt(paid, [], listed, tags, sites)
+    check("a paid row over a test that is no longer ignored is clean",
+          problems, [])
+    _, problems = reconcile_debt(paid, listed, listed, tags, sites)
+    check("a paid row over a still-ignored test is caught",
+          [k for k, _ in problems], ["DEBT_STATE"])
+    _, problems = reconcile_debt(paid, [], [], tags, sites)
+    check("a paid row whose test was deleted is caught",
+          [k for k, _ in problems], ["DEBT_MISSING"])
+
+    # 13. Manifest syntax fails closed, naming the line.
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+        fh.write("# comment\n"
+                 "tests/x_test.rs\ttest_a\towed\tM1\n"
+                 "tests/x_test.rs\ttest_a\towed\tM1\n"
+                 "tests/x_test.rs\ttest_b\towed\tsomeday\n"
+                 "tests/x_test.rs\ttest_c\tmaybe\tM1\n"
+                 "tests/x_test.rs\ttest_d\tpaid\tM1\n"
+                 "two columns only\n")
+        tmp_manifest = fh.name
+    rows, errs = read_debt_manifest(tmp_manifest)
+    os.unlink(tmp_manifest)
+    check("manifest: one good row survives, five errors are named",
+          (len(rows), len(errs)), (1, 5))
+    rows, errs = read_debt_manifest("/nonexistent/rust-debt-manifest.txt")
+    check("a missing manifest is fatal, not empty", (rows, len(errs)), (None, 1))
+
     if failures:
         print("self-test FAILED:", file=sys.stderr)
         for f in failures:
             print("  " + f, file=sys.stderr)
         return False
-    print("self-test: 26 checks green (reason lookup incl. same name in two "
+    print("self-test: 41 checks green (reason lookup incl. same name in two "
           "modules and in two targets, shared module, missing and ambiguous "
-          "reasons, literal-safe scanning, cargo attribution, verdicts, and the "
-          "milestone-owner gate incl. its off state)")
+          "reasons, literal-safe scanning, cargo attribution, verdicts, the "
+          "milestone-owner gate incl. its off state, owner agreement between "
+          "candidate declarations, and the closed debt inventory incl. every "
+          "route out of it)")
     return True
 
 
@@ -806,6 +1099,16 @@ def main():
         return 1
     listed = parse_list(out_list)
 
+    # The full listing, not just the ignored subset. This is the ONLY way to
+    # tell "the #[ignore] came off" from "the test is gone" — and the second is
+    # the escape hatch the debt manifest exists to close.
+    _, out_all = run_cargo(["--list"])
+    err = build_error(out_all)
+    if err:
+        print("error: the test listing did not build: " + err, file=sys.stderr)
+        return 1
+    all_tests = parse_list(out_all)
+
     rc_run, out_run = run_cargo(["--ignored"])
     err = build_error(out_run)
     if err:
@@ -827,13 +1130,28 @@ def main():
               "(M1..M9 or 'unscheduled')" % forbid_owner, file=sys.stderr)
         return 1
 
+    state = {}
     counts, more = reconcile(listed, obs, index_sites(read_sources()),
-                             forbid_owner=forbid_owner)
+                             forbid_owner=forbid_owner, state=state)
     problems += more
+
+    rows, manifest_errors = read_debt_manifest(DEBT_MANIFEST)
+    for e in manifest_errors:
+        problems.append(("DEBT_MANIFEST", e))
+    if rows is None:
+        debt = {"owed": 0, "paid": 0}
+    else:
+        debt, more = reconcile_debt(rows, listed, all_tests,
+                                    state["tags"], state["sites"])
+        problems += more
 
     print("==============================================")
     print("cargo lists %d ignored test(s); %d of them ran"
           % (counts["listed"], counts["observed"]))
+    print("cargo lists %d test(s) in total (the set a deleted test leaves)"
+          % len(set(all_tests)))
+    print("debt inventory (%s): owed=%d paid=%d"
+          % (DEBT_MANIFEST, debt["owed"], debt["paid"]))
     print("declared: xfail=%d slow=%d"
           % (counts["declared_xfail"], counts["declared_slow"]))
     print("ran:      xfail=%d xpass=%d slow_pass=%d"
@@ -852,6 +1170,11 @@ def main():
     print("==============================================")
 
     titles = {
+        "DEBT_MANIFEST": "%s is malformed — the closed inventory cannot be read:" % DEBT_MANIFEST,
+        "DEBT_MISSING": "MISSING — declared in the debt inventory, but no such test exists:",
+        "DEBT_STATE": "the debt inventory and the #[ignore] attributes disagree about STATE:",
+        "DEBT_OWNER": "the debt inventory and the #[ignore] attributes disagree about the OWNER:",
+        "UNDECLARED_DEBT": "UNDECLARED — an XFAIL that no row of the debt inventory declares:",
         "OWED": ("OWED — still failing and still owed to %s, so that milestone is "
                  "not finished:" % forbid_owner),
         "XPASS": "XPASS — these now pass; delete the #[ignore] so they join the regression net:",
@@ -865,7 +1188,8 @@ def main():
         "CARGO": "Unexplained cargo status:",
     }
     for kind in ("OWED", "XPASS", "STALE", "UNDECLARED", "SLOWFAIL", "DUPLICATE",
-                 "TAG", "NO_RESULT", "BUILD", "CARGO"):
+                 "TAG", "DEBT_MANIFEST", "DEBT_MISSING", "DEBT_STATE",
+                 "DEBT_OWNER", "UNDECLARED_DEBT", "NO_RESULT", "BUILD", "CARGO"):
         items = [m for k, m in problems if k == kind]
         if items:
             print()
@@ -875,7 +1199,8 @@ def main():
 
     if not problems:
         print("✓ every ignored test cargo knows about has a declared reason, "
-              "and every declared failure is still failing")
+              "every declared failure is still failing, and every owed test is "
+              "declared in %s (and still exists)" % DEBT_MANIFEST)
         return 0
     sys.stdout.flush()
     print("\n%d problem(s) above." % len(problems), file=sys.stderr)

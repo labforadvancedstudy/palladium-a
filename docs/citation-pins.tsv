@@ -143,51 +143,51 @@ src/ownership/mod.rs	107-118	docs/specification/bootstrap-subset.md	d2bfec889bd9
 src/ownership/mod.rs	109-109	docs/reference/features/core-language/implicit-lifetimes.md	8103577ec368	let scope_lifetime = Lifetime::Scope(self.current_scope);
 src/ownership/mod.rs	27-27	docs/reference/features/core-language/implicit-lifetimes.md	e06a29f1a329	pub enum Lifetime {
 src/package/lockfile.rs	341-341	docs/reference/features/feature-index.toml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),
-src/parser/mod.rs	1039-1039	docs/design/trait_system_design.md	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
-src/parser/mod.rs	1039-1039	docs/reference/features/feature-index.toml	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
-src/parser/mod.rs	1039-1039	docs/specification/language-spec.md	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
-src/parser/mod.rs	1163-1163	docs/reference/features/feature-index.toml	cb78d967e569	self.consume(Token::LeftParen, "Expected '(' after method name")?;
-src/parser/mod.rs	1163-1163	docs/specification/language-spec.md	cb78d967e569	self.consume(Token::LeftParen, "Expected '(' after method name")?;
-src/parser/mod.rs	1332-1338	docs/specification/language-spec.md	2623da5935b7	if !self.check(&Token::Fn) { return Err(CompileError::UnexpectedToken { expec ... to_string(), found: self.peek()?.to_string(), span: self.current_span(), }); }
-src/parser/mod.rs	1550-1550	docs/specification/bootstrap-subset.md	bfe03ca491a1	Token::LeftBracket => AstToken::Punct('['),
-src/parser/mod.rs	1561-1561	docs/reference/features/feature-index.toml	7ffcc503358f	_ => AstToken::Ident(format!("{:?}", token)), // Fallback for other tokens
-src/parser/mod.rs	1561-1561	docs/specification/language-spec.md	7ffcc503358f	_ => AstToken::Ident(format!("{:?}", token)), // Fallback for other tokens
-src/parser/mod.rs	1611-1611	docs/specification/bootstrap-subset.md	6dc6a7bf7f11	} else if self.check(&Token::Semicolon) {
-src/parser/mod.rs	1617-1617	docs/specification/bootstrap-subset.md	bd8d9d6e4200	// Rewind and parse as statement
-src/parser/mod.rs	1634-1634	docs/specification/language-spec.md	efe2f78c7527	pub fn parse_statement(&mut self) -> Result<Stmt> {
-src/parser/mod.rs	1638-1638	docs/reference/features/feature-index.toml	3a905244830e	Token::If => self.parse_if(),
-src/parser/mod.rs	1638-1638	docs/specification/language-spec.md	3a905244830e	Token::If => self.parse_if(),
-src/parser/mod.rs	1643-1643	docs/specification/language-spec.md	88adfe6bdb8e	Token::Match => self.parse_match(),
-src/parser/mod.rs	1644-1644	docs/reference/features/feature-index.toml	eb07adc20e9e	Token::Unsafe => self.parse_unsafe(),
-src/parser/mod.rs	1718-1718	docs/specification/language-spec.md	cfbbcd16e936	fn parse_let(&mut self) -> Result<Stmt> {
-src/parser/mod.rs	1724-1724	docs/specification/bootstrap-subset.md	b5bea41b6c62	true
-src/parser/mod.rs	1754-1754	docs/specification/bootstrap-subset.md	6cec43a39e30	ty,
-src/parser/mod.rs	1792-1792	docs/reference/features/feature-index.toml	5659f666d863	self.consume(Token::LeftBrace, "Expected '{' after else")?;
-src/parser/mod.rs	1792-1792	docs/specification/language-spec.md	5659f666d863	self.consume(Token::LeftBrace, "Expected '{' after else")?;
-src/parser/mod.rs	2339-2339	docs/specification/language-spec.md	195425617880	match token {
-src/parser/mod.rs	2386-2392	docs/specification/bootstrap-subset.md	ace9f3f389fb	(Token::Identifier(lt), _) => { lifetime = Some(lt); } _ => { return Err(Comp ... oken { expected: "lifetime name".to_string(), found: self.peek()?.to_string(),
-src/parser/mod.rs	2403-2428	docs/specification/bootstrap-subset.md	6847ce1456d0	} // Parse the inner type let inner = self.parse_type()?; Ok(Type::Reference  ... " => Type::Bool, "String" => Type::String, _ => Type::Custom(name.clone()), };
-src/parser/mod.rs	2411-2419	docs/specification/language-spec.md	82c9da120f31	inner: Box::new(inner), }) } (Token::Identifier(name), _) => { // First check ... elf.type_params_in_scope.contains(&name) { return Ok(Type::TypeParam(name)); }
-src/parser/mod.rs	2413-2413	docs/specification/language-spec.md	d10b36aa74a5	}
-src/parser/mod.rs	2449-2459	docs/reference/features/feature-index.toml	25cd3fa9d387	Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() || c == '_') => ... rgs.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); } _ => {
-src/parser/mod.rs	2449-2459	docs/specification/language-spec.md	25cd3fa9d387	Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() || c == '_') => ... rgs.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); } _ => {
-src/parser/mod.rs	297-297	docs/reference/features/core-language/implicit-lifetimes.md	941171fa2fb0	let mut lifetime_params = Vec::new();
-src/parser/mod.rs	319-321	docs/reference/features/feature-index.toml	a90547973646	} else if self.check(&Token::Const) { // It's a const parameter self.advance()?; // consume 'const'
-src/parser/mod.rs	437-437	docs/reference/features/feature-index.toml	45976242aecd	while self.check(&Token::Import) {
-src/parser/mod.rs	437-437	docs/specification/language-spec.md	45976242aecd	while self.check(&Token::Import) {
-src/parser/mod.rs	520-520	docs/specification/language-spec.md	17c6d474e56f	if self.check(&Token::As) {
-src/parser/mod.rs	605-605	docs/specification/language-spec.md	9db1fcae3b35	fn parse_item(&mut self) -> Result<Item> {
-src/parser/mod.rs	615-615	docs/reference/features/async-system/async-as-effect.md	bf78a17122be	let is_async = if self.check(&Token::Async) {
-src/parser/mod.rs	626-626	docs/reference/features/async-system/async-as-effect.md	8f88aac7b00e	func.is_async = is_async;
-src/parser/mod.rs	640-640	docs/specification/language-spec.md	cc99843703d1	Token::Enum => Ok(Item::Enum(self.parse_enum()?)),
-src/parser/mod.rs	836-836	docs/internals/ARCHITECTURE.md	c5f143e3557a	Ok(Function {
-src/parser/mod.rs	836-836	docs/specification/language-spec.md	c5f143e3557a	Ok(Function {
-src/parser/mod.rs	840-840	docs/reference/features/core-language/implicit-lifetimes.md	3691b2469f5b	lifetime_params,
-src/parser/mod.rs	840-840	docs/reference/features/feature-index.toml	3691b2469f5b	lifetime_params,
-src/parser/mod.rs	840-840	docs/specification/language-spec.md	3691b2469f5b	lifetime_params,
-src/parser/mod.rs	852-852	docs/reference/features/async-system/async-as-effect.md	3497d410c0eb	effects: None, // Effects will be inferred during analysis
-src/parser/mod.rs	852-852	docs/reference/features/feature-index.toml	3497d410c0eb	effects: None, // Effects will be inferred during analysis
-src/parser/mod.rs	852-852	docs/specification/language-spec.md	3497d410c0eb	effects: None, // Effects will be inferred during analysis
+src/parser/mod.rs	1115-1115	docs/design/trait_system_design.md	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
+src/parser/mod.rs	1115-1115	docs/reference/features/feature-index.toml	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
+src/parser/mod.rs	1115-1115	docs/specification/language-spec.md	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
+src/parser/mod.rs	1239-1239	docs/reference/features/feature-index.toml	cb78d967e569	self.consume(Token::LeftParen, "Expected '(' after method name")?;
+src/parser/mod.rs	1239-1239	docs/specification/language-spec.md	cb78d967e569	self.consume(Token::LeftParen, "Expected '(' after method name")?;
+src/parser/mod.rs	1408-1414	docs/specification/language-spec.md	2623da5935b7	if !self.check(&Token::Fn) { return Err(CompileError::UnexpectedToken { expec ... to_string(), found: self.peek()?.to_string(), span: self.current_span(), }); }
+src/parser/mod.rs	1626-1626	docs/specification/bootstrap-subset.md	bfe03ca491a1	Token::LeftBracket => AstToken::Punct('['),
+src/parser/mod.rs	1637-1637	docs/reference/features/feature-index.toml	7ffcc503358f	_ => AstToken::Ident(format!("{:?}", token)), // Fallback for other tokens
+src/parser/mod.rs	1637-1637	docs/specification/language-spec.md	7ffcc503358f	_ => AstToken::Ident(format!("{:?}", token)), // Fallback for other tokens
+src/parser/mod.rs	1687-1687	docs/specification/bootstrap-subset.md	6dc6a7bf7f11	} else if self.check(&Token::Semicolon) {
+src/parser/mod.rs	1693-1693	docs/specification/bootstrap-subset.md	bd8d9d6e4200	// Rewind and parse as statement
+src/parser/mod.rs	1710-1710	docs/specification/language-spec.md	efe2f78c7527	pub fn parse_statement(&mut self) -> Result<Stmt> {
+src/parser/mod.rs	1714-1714	docs/reference/features/feature-index.toml	3a905244830e	Token::If => self.parse_if(),
+src/parser/mod.rs	1714-1714	docs/specification/language-spec.md	3a905244830e	Token::If => self.parse_if(),
+src/parser/mod.rs	1719-1719	docs/specification/language-spec.md	88adfe6bdb8e	Token::Match => self.parse_match(),
+src/parser/mod.rs	1720-1720	docs/reference/features/feature-index.toml	eb07adc20e9e	Token::Unsafe => self.parse_unsafe(),
+src/parser/mod.rs	1794-1794	docs/specification/language-spec.md	cfbbcd16e936	fn parse_let(&mut self) -> Result<Stmt> {
+src/parser/mod.rs	1800-1800	docs/specification/bootstrap-subset.md	b5bea41b6c62	true
+src/parser/mod.rs	1830-1830	docs/specification/bootstrap-subset.md	6cec43a39e30	ty,
+src/parser/mod.rs	1868-1868	docs/reference/features/feature-index.toml	5659f666d863	self.consume(Token::LeftBrace, "Expected '{' after else")?;
+src/parser/mod.rs	1868-1868	docs/specification/language-spec.md	5659f666d863	self.consume(Token::LeftBrace, "Expected '{' after else")?;
+src/parser/mod.rs	2415-2415	docs/specification/language-spec.md	195425617880	match token {
+src/parser/mod.rs	2462-2468	docs/specification/bootstrap-subset.md	ace9f3f389fb	(Token::Identifier(lt), _) => { lifetime = Some(lt); } _ => { return Err(Comp ... oken { expected: "lifetime name".to_string(), found: self.peek()?.to_string(),
+src/parser/mod.rs	2479-2504	docs/specification/bootstrap-subset.md	6847ce1456d0	} // Parse the inner type let inner = self.parse_type()?; Ok(Type::Reference  ... " => Type::Bool, "String" => Type::String, _ => Type::Custom(name.clone()), };
+src/parser/mod.rs	2487-2495	docs/specification/language-spec.md	82c9da120f31	inner: Box::new(inner), }) } (Token::Identifier(name), _) => { // First check ... elf.type_params_in_scope.contains(&name) { return Ok(Type::TypeParam(name)); }
+src/parser/mod.rs	2489-2489	docs/specification/language-spec.md	d10b36aa74a5	}
+src/parser/mod.rs	2525-2535	docs/reference/features/feature-index.toml	25cd3fa9d387	Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() || c == '_') => ... rgs.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); } _ => {
+src/parser/mod.rs	2525-2535	docs/specification/language-spec.md	25cd3fa9d387	Type::Custom(name) if name .chars() .all(|c| c.is_uppercase() || c == '_') => ... rgs.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), ))); } _ => {
+src/parser/mod.rs	373-373	docs/reference/features/core-language/implicit-lifetimes.md	941171fa2fb0	let mut lifetime_params = Vec::new();
+src/parser/mod.rs	395-397	docs/reference/features/feature-index.toml	a90547973646	} else if self.check(&Token::Const) { // It's a const parameter self.advance()?; // consume 'const'
+src/parser/mod.rs	513-513	docs/reference/features/feature-index.toml	45976242aecd	while self.check(&Token::Import) {
+src/parser/mod.rs	513-513	docs/specification/language-spec.md	45976242aecd	while self.check(&Token::Import) {
+src/parser/mod.rs	596-596	docs/specification/language-spec.md	17c6d474e56f	if self.check(&Token::As) {
+src/parser/mod.rs	681-681	docs/specification/language-spec.md	9db1fcae3b35	fn parse_item(&mut self) -> Result<Item> {
+src/parser/mod.rs	691-691	docs/reference/features/async-system/async-as-effect.md	bf78a17122be	let is_async = if self.check(&Token::Async) {
+src/parser/mod.rs	702-702	docs/reference/features/async-system/async-as-effect.md	8f88aac7b00e	func.is_async = is_async;
+src/parser/mod.rs	716-716	docs/specification/language-spec.md	cc99843703d1	Token::Enum => Ok(Item::Enum(self.parse_enum()?)),
+src/parser/mod.rs	912-912	docs/internals/ARCHITECTURE.md	c5f143e3557a	Ok(Function {
+src/parser/mod.rs	912-912	docs/specification/language-spec.md	c5f143e3557a	Ok(Function {
+src/parser/mod.rs	916-916	docs/reference/features/core-language/implicit-lifetimes.md	3691b2469f5b	lifetime_params,
+src/parser/mod.rs	916-916	docs/reference/features/feature-index.toml	3691b2469f5b	lifetime_params,
+src/parser/mod.rs	916-916	docs/specification/language-spec.md	3691b2469f5b	lifetime_params,
+src/parser/mod.rs	928-928	docs/reference/features/async-system/async-as-effect.md	3497d410c0eb	effects: None, // Effects will be inferred during analysis
+src/parser/mod.rs	928-928	docs/reference/features/feature-index.toml	3497d410c0eb	effects: None, // Effects will be inferred during analysis
+src/parser/mod.rs	928-928	docs/specification/language-spec.md	3497d410c0eb	effects: None, // Effects will be inferred during analysis
 src/resolver/mod.rs	51-51	docs/reference/features/feature-index.toml	891ba0920fa5	// Check for PALLADIUM_PATH environment variable
 src/resolver/mod.rs	51-52	docs/specification/language-spec.md	07ec7e442f32	// Check for PALLADIUM_PATH environment variable if let Ok(pd_path) = std::env::var("PALLADIUM_PATH") {
 src/runtime/string_ops.rs	398-398	docs/reference/features/advanced/totality-checking.md	b8736fb052c9	fn test_null_termination() {

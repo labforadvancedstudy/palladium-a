@@ -101,8 +101,8 @@ impl BlockTail {
 /// This walks the statements and the tail together, because the two carry
 /// different halves of the answer: the tail says which leaves are `;`-less
 /// expressions that the lowering below can rewrite, and the statements say
-/// which leaves already end in a `return` (or a call that does not come back)
-/// and so need no rewriting at all.
+/// which leaves cannot reach their closing brace at all (a `return`, a call
+/// that does not come back, a loop with no exit) and so need no rewriting.
 ///
 /// That second half is not a nicety. `if n > 0 { return n * 10; } else { n - 1 }`
 /// has a perfectly good value on both paths — one written as a `return`, one in
@@ -162,21 +162,97 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
     }
 }
 
-/// Does this statement list already end in something that does not fall
-/// through?
+/// Does this statement list have a path to its closing brace at all?
 ///
-/// Mirrors `NORETURN_RE` in `scripts/check-c-returns.py`: a trailing
-/// `panic("…")` aborts, so a branch that ends in one has no fall-through path
-/// even though it produces no value. Refusing that shape would reject a program
-/// whose C is correct.
+/// WHERE THIS AND `scripts/check-c-returns.py` MUST AGREE
+/// -----------------------------------------------------
+/// The two analyses answer the same question on either side of code
+/// generation — this one over Palladium statements, `terminates()` over the C
+/// that those statements become — so a shape one accepts and the other does not
+/// is a program that compiles here and is then flagged by the generated-C
+/// invariant, or (the silent direction) the reverse. They are kept in step case
+/// by case:
+///
+///   `Stmt::Return`            <-> `RETURN_RE`
+///   a trailing `panic("…")`   <-> `NORETURN_RE` (`__pd_panic` calls `abort()`,
+///                                 src/codegen/mod.rs `__pd_panic` wrapper)
+///   `while true { … }` with   <-> the `while\s*\(\s*1\s*\)` case plus
+///   no escaping `break`           `contains_break`. `Expr::Bool(true)` is
+///                                 emitted as the literal `1`
+///                                 (src/codegen/mod.rs, `Expr::Bool`), which is
+///                                 the exact spelling that case recognises —
+///                                 `while 1 == 1` emits `while ((1 == 1))` and
+///                                 is deliberately NOT treated as infinite on
+///                                 either side.
+///   `if`/`else`, both arms    <-> the `h.startswith("if")` case
+///
+/// `any` rather than "the last statement": anything written after a statement
+/// that cannot fall through is unreachable, so the list cannot fall through
+/// either. `scripts/check-c-returns.py` scans its item list the same way, and
+/// it has to — a branch of `if c { return 1; print_int(2); } else { 3 }` is
+/// entered by this side and read by that one.
+///
+/// The residual, stated so it is not mistaken for a general analysis: this only
+/// sees statements that terminate UNCONDITIONALLY. Unreachability that depends
+/// on evaluating a condition (`if false { … }`, a `while` whose guard is
+/// provably always true but not written `true`) is not modelled by either side,
+/// and the conservative answer there is "falls through", which refuses rather
+/// than miscompiles.
 fn already_terminates(stmts: &[Stmt]) -> bool {
-    match stmts.last() {
-        Some(Stmt::Return(_)) => true,
-        Some(Stmt::Expr(Expr::Call { func, .. })) => {
+    stmts.iter().any(stmt_terminates)
+}
+
+/// Does this single statement never fall through to the statement after it?
+fn stmt_terminates(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Return(_) => true,
+        Stmt::Expr(Expr::Call { func, .. }) => {
             matches!(func.as_ref(), Expr::Ident(name) if name == "panic")
         }
+        // An infinite loop has no exit edge — unless a `break` binds to it.
+        Stmt::While {
+            condition: Expr::Bool(true),
+            body,
+            ..
+        } => !contains_escaping_break(body),
+        // Needs BOTH arms. An `if` with no `else` does not match this pattern
+        // and so falls through to `false` below, which is the right answer: its
+        // false path reaches the next statement.
+        Stmt::If {
+            then_branch,
+            else_branch: Some(eb),
+            ..
+        } => already_terminates(then_branch) && already_terminates(eb),
+        Stmt::Unsafe { body, .. } => already_terminates(body),
         _ => false,
     }
+}
+
+/// Is there a `break` that escapes the loop whose body is `stmts`?
+///
+/// Mirrors `contains_break` in `scripts/check-c-returns.py`: a `break` written
+/// inside a nested loop binds to that loop, so it does not let control out of
+/// ours. Palladium has no labelled break (`Stmt::Break` carries only a span),
+/// so nesting is the whole rule.
+fn contains_escaping_break(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::Break { .. } => true,
+        Stmt::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            contains_escaping_break(then_branch)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|eb| contains_escaping_break(eb))
+        }
+        Stmt::Match { arms, .. } => arms.iter().any(|a| contains_escaping_break(&a.body)),
+        Stmt::Unsafe { body, .. } => contains_escaping_break(body),
+        // A `break` in here belongs to THAT loop, not to ours.
+        Stmt::While { .. } | Stmt::For { .. } => false,
+        _ => false,
+    })
 }
 
 /// Which path has no value, phrased for the diagnostic. Names the *first*

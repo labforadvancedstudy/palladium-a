@@ -102,15 +102,59 @@ printf 'long long deep(long long n) {\n' >"$TMP/deep.c"
 for _ in $(seq 1 4000); do printf '    if (n) {\n' >>"$TMP/deep.c"; done
 printf '    return 1;\n' >>"$TMP/deep.c"
 for _ in $(seq 1 4000); do printf '    }\n' >>"$TMP/deep.c"; done
-printf '}\nint main(void){return 0;}\n' >>"$TMP/deep.c"
+printf '}\nint main(void) {\n    return 0;\n}\n' >>"$TMP/deep.c"
 $PROBE generated-c "$TMP/deep.c" >"$TMP/o" 2>&1
 check "Net A, analyser raises (RecursionError)" 2 $?
 
 echo
+echo "== Net A coverage must be CLOSED, not sampled =="
+# THE HOLE THIS CLOSES. Net A's only coverage alarm used to be "ZERO functions
+# recognised", which cannot fire on a MIXED file: one definition in the shape it
+# knows makes the denominator nonzero while every other definition is skipped in
+# silence. Each fixture below pairs one recognised definition with one shape the
+# reader cannot account for, and every one of them must MALFUNCTION (2) — a
+# verdict of 0 would be the same disease as the `} else if` false negative that
+# certified a shipped milestone.
+mixed() {  # mixed <name> <second-definition-text>
+  { printf 'long long ok(long long n) {\n    return n;\n}\n'; printf '%b' "$2"; } >"$TMP/$1.c"
+  $PROBE generated-c "$TMP/$1.c" >"$TMP/o" 2>&1
+  check "Net A, mixed file: $1" 2 $?
+}
+mixed same_line_body     'long long hidden(void) { return 1; }\n'
+mixed multiline_def      'long long\nhidden(void)\n{\n    return 1;\n}\n'
+mixed conditional_cpp    '#ifdef X\nlong long hidden(void) {\n}\n#endif\n'
+mixed unclosed_body      'long long hidden(void) {\n    return 1;\n'
+# A `goto` out of `while (1)` makes the loop escapable; `contains_break` only
+# looks for `break`. This function DOES fall off its end (gcc: "control reaches
+# end of non-void function"), and with the loop as the first item of the body
+# the terminator scan would answer "cannot fall through" — a silent false
+# negative, and the only one the whole-list scan introduced. Detecting the
+# construct and malfunctioning is what pays for that scan.
+printf 'long long jumps(long long n) {\n    while (1) {\n        goto done;\n    }\ndone:\n    ;\n}\n' >"$TMP/goto.c"
+$PROBE generated-c "$TMP/goto.c" >"$TMP/o" 2>&1
+check "Net A, goto out of while(1) is not read as inescapable" 2 $?
+grep -q 'goto' "$TMP/o"
+check "  and the malfunction names the construct" 0 $?
+
+# The other direction: unreachable code after a `return` must NOT be reported as
+# a fall-through. The parser accepts this shape (src/parser/mod.rs,
+# already_terminates), so a Net A that refused it would go red on valid output.
+printf 'long long f(long long n) {\n    if (n) {\n        return 1;\n        n = n + 2;\n    } else {\n        return 2;\n    }\n}\n' >"$TMP/unreachable.c"
+$PROBE generated-c "$TMP/unreachable.c" >"$TMP/o" 2>&1
+check "Net A, statements after a return are unreachable, not a fall-through" 0 $?
+
+echo
 echo "== unrelated failures must not be read as the expected finding =="
-printf '#error no return statement\nlong long f(void){return 1;}\n' >"$TMP/wording.c"
+# The definition is multi-line ON PURPOSE: written on one line, Net A stops the
+# file as unaccounted-for and Net B — the thing this case is about — is never
+# reached. Measured at 199c7bd: the one-line form exited 2 from "no function
+# definitions recognised", so this check passed without ever running a C
+# compiler.
+printf '#error no return statement\nlong long f(void) {\n    return 1;\n}\n' >"$TMP/wording.c"
 $PROBE generated-c "$TMP/wording.c" >"$TMP/o" 2>&1
 check "Net B, unrelated error containing return-type wording" 2 $?
+grep -q 'Net B' "$TMP/o"
+check "  and it really was Net B that objected" 0 $?
 
 echo
 echo "== exec-layer faults must be malfunctions, not findings =="

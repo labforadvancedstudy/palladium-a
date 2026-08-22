@@ -218,6 +218,144 @@ fn main() {
     assert_eq!(out.trim(), "42");
 }
 
+/// A branch that ends in `while true { … }` with no `break` never reaches the
+/// closing brace, so it needs no value — exactly like the `panic` case above,
+/// and for the same reason.
+///
+/// MEASURED AT 199c7bd, BEFORE THIS FIX: refused with "a tail `if` that
+/// produces a value on some paths but not all". That is a correct program
+/// rejected, and the refusal's own justification ("nothing correct is lost")
+/// was therefore false.
+///
+/// The two analyses have to agree about this shape. `while true` emits
+/// `while (1)` (src/codegen/mod.rs, `Expr::Bool`), which is the exact spelling
+/// `scripts/check-c-returns.py` treats as an infinite loop, so the C this emits
+/// passes the generated-C invariant as well as gcc's `-Wreturn-type`.
+#[test]
+fn a_branch_that_loops_forever_is_not_refused() {
+    let c = compile_to_c(
+        r#"
+fn pick(c: bool) -> i64 {
+    if c {
+        1
+    } else {
+        while true {
+            print("spinning");
+        }
+    }
+}
+
+fn main() {
+    print_int(pick(true));
+}
+"#,
+        "d3b_infinite",
+    )
+    .expect("an `else` that cannot fall through needs no value");
+    assert!(
+        c.contains("while (1)"),
+        "`while true` must emit the literal `while (1)` that \
+         scripts/check-c-returns.py recognises:\n{}",
+        c
+    );
+    assert!(
+        c.contains("return 1;"),
+        "the valued branch must still be lowered to a return:\n{}",
+        c
+    );
+}
+
+/// The other half of that judgement: a loop that CAN be left falls through, so
+/// the same shape with a `break` must still be refused. Without this the fix
+/// above would read "any loop terminates", which is how a real fall-through
+/// gets cleared.
+#[test]
+fn a_branch_whose_loop_can_break_out_is_still_refused() {
+    let err = compile_to_c(
+        r#"
+fn pick(c: bool) -> i64 {
+    if c { 1 } else { while true { break; } }
+}
+
+fn main() {
+    print_int(pick(true));
+}
+"#,
+        "d3b_breakable",
+    )
+    .expect_err("a `break` reaches the closing brace with no value");
+    assert!(
+        err.contains("the `else` branch"),
+        "the note must name the branch that falls through, got:\n{}",
+        err
+    );
+}
+
+/// A `break` written inside a NESTED loop belongs to that loop, so the outer
+/// one is still inescapable. This mirrors `contains_break`'s depth rule in
+/// `scripts/check-c-returns.py`; a version that just grepped for `break` would
+/// refuse this program.
+#[test]
+fn a_break_in_a_nested_loop_does_not_escape_the_outer_one() {
+    let c = compile_to_c(
+        r#"
+fn pick(c: bool) -> i64 {
+    if c {
+        1
+    } else {
+        while true {
+            while true {
+                break;
+            }
+        }
+    }
+}
+
+fn main() {
+    print_int(pick(true));
+}
+"#,
+        "d3b_nested_break",
+    )
+    .expect("the inner `break` binds to the inner loop");
+    assert!(c.contains("return 1;"), "{}", c);
+}
+
+/// Statements written after a `return` are unreachable, so the branch they are
+/// in cannot fall through either.
+///
+/// MEASURED AT 199c7bd: refused, because the termination test looked only at
+/// the LAST statement of the branch. Both sides of code generation now scan the
+/// whole list (`already_terminates` here, `terminates` in
+/// scripts/check-c-returns.py) — they must agree, or a program this side
+/// accepts is flagged by that one.
+///
+/// The residual is stated rather than papered over: unreachability that needs a
+/// condition to be evaluated (`if false { … }`) is modelled by neither side.
+#[test]
+fn a_branch_with_unreachable_code_after_a_return_is_not_refused() {
+    let out = compile_and_run(
+        r#"
+fn mixed(n: i64) -> i64 {
+    if n > 0 {
+        return n * 10;
+        print_int(999);
+    } else {
+        n - 1
+    }
+}
+
+fn main() {
+    print_int(mixed(3));
+    print_int(mixed(-3));
+}
+"#,
+        "d3b_unreachable",
+    )
+    .expect("statements after a `return` do not make the branch fall through");
+    assert_eq!(out.trim(), "30\n-4");
+}
+
 // ---------------------------------------------------------------------------
 // Tail `match` — the same defect, through the `pattern => expression,` arm
 // ---------------------------------------------------------------------------
@@ -421,6 +559,87 @@ fn main() {
         !c.contains("return __pd_print_int"),
         "a void function must not return its tail value:\n{}",
         c
+    );
+}
+
+/// The guard above is `return_type.is_some()`, so it tests an OMITTED return
+/// type. An explicit `-> ()` is `Some(Type::Unit)` and DOES enter the lowering.
+/// These three tests pin what actually happens, because "it is guarded" was not
+/// true of the explicit spelling.
+///
+/// (a) `-> ()` with a unit-valued tail: lowered, and the emitted C returns a
+/// void expression from a void function. gcc and clang both accept that
+/// (returning a void expression from a void function is a documented
+/// extension), and the program runs correctly — verified here by running it,
+/// not by reading the C.
+#[test]
+fn an_explicit_unit_return_type_with_a_unit_tail_still_runs() {
+    let out = compile_and_run(
+        r#"
+fn f(n: i64) -> () {
+    if n > 0 { print_int(n) } else { print_int(0) }
+}
+
+fn main() {
+    f(3);
+    f(-3);
+}
+"#,
+        "d3b_explicit_unit",
+    )
+    .expect("an explicit `-> ()` function must compile, link and run");
+    assert_eq!(out.trim(), "3\n0");
+}
+
+/// (b) `-> ()` with a NON-unit tail. The lowering produces `return 5;` in a
+/// function declared to return nothing, and the semantic pass — not the C
+/// compiler — is what refuses it. This is the check that would be lost if the
+/// parser skipped lowering for `Some(Type::Unit)`: a bare expression statement
+/// would silently discard the value instead.
+#[test]
+fn an_explicit_unit_return_type_with_a_valued_tail_is_a_type_error() {
+    let err = compile_to_c(
+        r#"
+fn f() -> () {
+    5
+}
+
+fn main() {
+    f();
+}
+"#,
+        "d3b_explicit_unit_valued",
+    )
+    .expect_err("`-> ()` cannot return an i64");
+    assert!(
+        err.contains("expected ()") && err.contains("found Int"),
+        "the type checker must catch this before codegen, got:\n{}",
+        err
+    );
+}
+
+/// (c) The mirror: a unit-valued tail in a NON-unit function. The parser
+/// happily lowers `print_int(n)` to a `return`, and again it is the semantic
+/// pass that rejects it — before any C is emitted.
+#[test]
+fn a_unit_valued_tail_in_a_non_unit_function_is_a_type_error() {
+    let err = compile_to_c(
+        r#"
+fn f(n: i64) -> i64 {
+    if n > 0 { print_int(n) } else { print_int(0) }
+}
+
+fn main() {
+    print_int(f(3));
+}
+"#,
+        "d3b_unit_tail_in_i64",
+    )
+    .expect_err("`print_int` produces no value for an i64 function to return");
+    assert!(
+        err.contains("expected Int") && err.contains("found ()"),
+        "the type checker must catch this before codegen, got:\n{}",
+        err
     );
 }
 

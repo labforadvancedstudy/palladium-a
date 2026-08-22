@@ -41,13 +41,53 @@ it spliced the last arm's `return` into the enclosing block, which said
 "terminates" about an if/else-if chain with no final `else`. That is exactly the
 C a `match` lowers to.
 
+COVERAGE IS CLOSED, NOT SAMPLED
+-------------------------------
+The first version of this reader scanned for lines matching one definition
+shape and silently ignored every other line in the file. Its only coverage
+alarm was "ZERO functions recognised", which fires only on a file that is
+entirely unrecognised. In a MIXED file — one definition this reader knows, one
+it does not — the denominator is nonzero, the alarm never sounds, and the
+unrecognised definition is never analysed. The `} else if` false negative that
+certified a shipped milestone was exactly this shape of hole, so a second one
+in the same file is not acceptable.
+
+So the top level is now enumerated exhaustively. Every line at column 0 must be
+one of: blank, a comment, a `#include`-class directive, a declaration ending in
+`;`, a `struct`/`union`/`enum`/`typedef` block, or a function definition — and
+anything else STOPS the file with a HARNESS line naming it. There is no
+"skipped quietly" outcome left, which is the only way "analysed" can mean what
+it says.
+
+WHAT THE GENERATOR ACTUALLY EMITS (measured, 2026-08-22, 538 files in
+build_output/, and read in src/codegen/mod.rs)
+    cmd: python3 - <<classify every column-0 line of build_output/*.c>>
+         -> exactly 7 kinds: 23005 definitions matching DEF_RE, 23005 `}`
+            closers, 14994 lines ending in `;`, 3420 `//` comments,
+            2690 `#include`, 1614 `#define`, 684 `struct`/`enum`/`typedef`
+            openers. No other shape occurs.
+    cmd: grep -nE "goto|switch|#if|#ifdef|__attribute__" src/codegen/mod.rs
+         -> 1 line, src/codegen/mod.rs:765, and it is a PROTOTYPE
+            (`static void __pd_init() __attribute__((constructor));`), not a
+            definition
+    cmd: grep -cE "goto |switch|case |#if" build_output/*.c -> 0 in all 538
+So: no `goto`, no labels, no `switch`, no conditional compilation, and the
+opening brace of a definition is always the last character of its line
+(`function_signature()` builds one line, then `generate_function_with_name()`
+appends `" {\n"`). Those are INVARIANTS OF THE GENERATOR, not properties of C,
+so they are enforced here rather than assumed: if codegen ever emits one of
+them this reader says HARNESS instead of guessing. In particular `goto` would
+defeat `contains_break()` below silently — it would read an escapable loop as
+non-fallthrough — which is why its absence is checked rather than trusted.
+
 EXIT TAXONOMY — a finding and a malfunction must not share an exit code.
     0  every function analysed, none can fall off its end
     1  at least one genuine FINDING, and nothing malfunctioned
-    2  a HARNESS error: input missing, unreadable, or the analyser itself
-       raised. Harness errors DOMINATE: if anything malfunctioned the answer is
-       2 even when findings were also produced, because a partial analysis
-       cannot support "these are the defects".
+    2  a HARNESS error: input missing, unreadable, a top-level construct this
+       reader cannot account for, or the analyser itself raised. Harness errors
+       DOMINATE: if anything malfunctioned the answer is 2 even when findings
+       were also produced, because a partial analysis cannot support "these are
+       the defects".
 
 This matters because an uncaught exception exits 1 by default, which made a
 crashed analyser indistinguishable from a defect — the caller printed
@@ -62,8 +102,8 @@ import re
 import sys
 import traceback
 
-# A top-level definition: starts at column 0, has a parameter list, opens a
-# brace on the same line. Prototypes end in `);` and are skipped.
+# A top-level definition: starts at column 0, has a parameter list, and the
+# opening brace is the LAST character of the line. Prototypes end in `);`.
 DEF_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9 *]*\(.*\)[ \t]*\{[ \t]*$")
 # `void f(...)` is void; `void* f(...)` is NOT.
 VOID_RE = re.compile(r"^(?:static\s+)?(?:inline\s+)?void\s+[A-Za-z_]")
@@ -71,6 +111,24 @@ VOID_RE = re.compile(r"^(?:static\s+)?(?:inline\s+)?void\s+[A-Za-z_]")
 NORETURN_RE = re.compile(r"^(?:__pd_panic|abort|exit|__builtin_unreachable)\s*\(")
 # `return` as a whole word. `returning();` is a call, not a return statement.
 RETURN_RE = re.compile(r"^return\b")
+
+# A top-level type declaration that opens a brace: `enum FileMode {`,
+# `typedef struct Result {`, `typedef struct {`. It declares a type, never a
+# body, so it is skipped — but only after being RECOGNISED, and it is consumed
+# up to its own `};` / `} Name;` at column 0 so the scan stays in step.
+TYPE_OPEN_RE = re.compile(
+    r"^(?:typedef\s+|static\s+|const\s+)*(?:struct|union|enum)\b[^;()]*\{[ \t]*$")
+# Directives that cannot hide a function definition.
+CPP_SAFE_RE = re.compile(r"^#\s*(?:include|define|undef|pragma|line|error|warning)\b")
+# Directives that CAN: text between them may or may not be compiled, so which
+# definitions exist is no longer a question this reader can answer.
+CPP_COND_RE = re.compile(r"^#\s*(?:if|ifdef|ifndef|elif|else|endif)\b")
+
+# Constructs whose control flow this reader does not model. `goto` is the
+# dangerous one: `while (1) { … goto done; }` IS escapable, `contains_break`
+# below would not see it, and the result would be a silent "terminates".
+GOTO_RE = re.compile(r"^goto\b")
+LABEL_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*[ \t]*:(?!:)")
 
 
 # `} else if (...) {` — an else branch that is itself one compound statement.
@@ -154,18 +212,35 @@ def contains_break(items, depth=0):
 
 
 def terminates(items):
-    """Does this statement list definitely return / not fall through?"""
-    if not items:
-        return False
-    kind = items[-1]
-    if kind[0] == "stmt":
-        text = kind[1]
+    """Does this statement list definitely return / not fall through?
+
+    ANY item, not only the last. Anything written after a statement that cannot
+    fall through is unreachable, so the list as a whole cannot fall through
+    either:
+
+        if (n) { return 1; __pd_print_int(2); } else { return 2; }
+
+    Reading only the last item called the `if` arm a fall-through and reported
+    this correct function. That matters now that the parser side accepts the
+    same shape (`already_terminates` in src/parser/mod.rs uses `any` for the
+    same reason): a program one side accepts and the other flags is a gate that
+    goes red on valid code, which is how a gate gets switched off.
+    """
+    return any(item_terminates(item) for item in items)
+
+
+def item_terminates(item):
+    """Does this ONE statement or compound never fall through to the next?"""
+    if item[0] == "stmt":
+        text = item[1]
         return bool(RETURN_RE.match(text)) or bool(NORETURN_RE.match(text))
-    _, header, then_items, else_items = kind
+    _, header, then_items, else_items = item
     h = header.rstrip("{").strip()
     # An infinite loop never falls through — UNLESS it can `break` out of itself.
     # `while (1) { ... break; ... }` reaches the code after the loop, so treating
     # every `while (1)` as terminating would wrongly clear a real fall-through.
+    # `goto` would escape it too; see unmodelled_construct(), which stops the
+    # file rather than letting this read as "terminates".
     if re.match(r"^(while\s*\(\s*1\s*\)|for\s*\(\s*;\s*;\s*\))", h):
         return not contains_break(then_items)
     if h.startswith("if"):
@@ -182,12 +257,47 @@ def terminates(items):
     return False
 
 
+def unmodelled_construct(items):
+    """-> a description of the first construct this reader cannot model, or None.
+
+    Everything here is a construct the generator provably does not emit (see the
+    module docstring). Checking rather than assuming is the point: the moment
+    codegen grows one of them, this says HARNESS instead of quietly returning a
+    verdict its analysis no longer supports.
+    """
+    for item in items:
+        if item[0] == "stmt":
+            text = item[1]
+            if GOTO_RE.match(text):
+                return ("a `goto` (%s) — a jump can leave a loop that "
+                        "`contains_break` would call inescapable" % text[:40])
+            if re.match(r"^(?:case\b|default[ \t]*:)", text):
+                return "a `switch` case label (%s)" % text[:40]
+            if LABEL_RE.match(text):
+                return ("a label (%s) — it is a jump target, so control can "
+                        "arrive here from anywhere" % text[:40])
+            continue
+        _, _, then_items, else_items = item
+        found = unmodelled_construct(then_items)
+        if found:
+            return found
+        if else_items is not None:
+            found = unmodelled_construct(else_items)
+            if found:
+                return found
+    return None
+
+
 def check_file(path):
     """Return (violations, harness_errors, functions_recognised) for one file.
 
-    The third value is what makes "analysed" observable. Without it, a file whose
-    formatting this reader does not recognise — or an empty one — exits 0 after
-    inspecting ZERO functions, which is indistinguishable from a clean result.
+    The third value is what makes "analysed" observable, and the top-level scan
+    below is what makes it CLOSED: every line at column 0 is accounted for, so
+    `recognised` is the number of definitions in the file rather than the number
+    this reader happened to match. The first unaccounted-for construct stops the
+    file — once the scan is out of step with the braces, every verdict after it
+    is arbitrary, and an arbitrary "clean" is the outcome this whole gate exists
+    to prevent.
     """
     try:
         with open(path, "r", errors="replace") as fh:
@@ -198,28 +308,97 @@ def check_file(path):
         print(f"HARNESS {path}: cannot read: {exc}")
         return (0, 1, 0)
 
+    def unaccounted(lineno, what):
+        print(f"HARNESS {path}:{lineno}: {what}. This reader analyses the C that "
+              f"pdc emits; a shape it cannot account for means the scan is no "
+              f"longer in step with the file, so nothing after it was analysed")
+
     violations = 0
     recognised = 0
+    declarations = 0
+    n = len(lines)
     i = 0
-    while i < len(lines):
-        line = lines[i]
-        if DEF_RE.match(line):
+    while i < n:
+        raw = lines[i]
+        text = raw.strip()
+        if not text:
+            i += 1
+            continue
+        if raw[0] in " \t":
+            unaccounted(i + 1, f"indented line where a top-level construct was "
+                               f"expected: {text[:60]!r}")
+            return (violations, 1, recognised)
+        if text.startswith("//"):
+            i += 1
+            continue
+        if text.startswith("/*"):
+            j = i
+            while j < n and "*/" not in lines[j]:
+                j += 1
+            if j >= n:
+                unaccounted(i + 1, "block comment is never closed")
+                return (violations, 1, recognised)
+            i = j + 1
+            continue
+        if text.startswith("#"):
+            if CPP_COND_RE.match(text) or not CPP_SAFE_RE.match(text):
+                unaccounted(i + 1, f"preprocessor directive that can decide which "
+                                   f"definitions exist: {text[:60]!r}")
+                return (violations, 1, recognised)
+            while text.endswith("\\") and i + 1 < n:   # line continuation
+                i += 1
+                text = lines[i].strip()
+            i += 1
+            continue
+        if DEF_RE.match(raw):
             recognised += 1
             body, close = parse_block(lines, i + 1)
-            if not VOID_RE.match(line.strip()) and not terminates(body):
+            if close >= n:
+                unaccounted(i + 1, f"function body is never closed: {text[:60]!r}")
+                return (violations, 1, recognised)
+            bad = unmodelled_construct(body)
+            if bad:
+                unaccounted(i + 1, f"{text[:60]!r} contains {bad}")
+                return (violations, 1, recognised)
+            if not VOID_RE.match(text) and not terminates(body):
                 print(
                     f"FINDING {path}:{i + 1}: non-void function may fall off its end "
-                    f"(no return on every path): {line.strip()}"
+                    f"(no return on every path): {text}"
                 )
                 violations += 1
             i = close + 1
             continue
-        i += 1
+        if TYPE_OPEN_RE.match(text):
+            # A type declaration. Consumed to its own closer at column 0 so the
+            # scan stays in step; members are indented, so the first column-0
+            # `}` is this declaration's.
+            j = i + 1
+            while j < n and not lines[j].startswith("}"):
+                j += 1
+            if j >= n or not lines[j].rstrip().endswith(";"):
+                unaccounted(i + 1, "type declaration with no closing `};` at "
+                                   "column 0: %r" % text[:60])
+                return (violations, 1, recognised)
+            declarations += 1
+            i = j + 1
+            continue
+        if text.endswith(";"):
+            declarations += 1     # prototype, extern, global, typedef alias
+            i += 1
+            continue
+        unaccounted(i + 1, f"top-level construct this reader does not recognise: "
+                           f"{text[:60]!r} (a definition whose `{{` is not the last "
+                           f"character of its line, an attributed or multi-line "
+                           f"definition, …)")
+        return (violations, 1, recognised)
+
     if recognised == 0:
         # A C file pdc produced always defines functions. Zero means this reader
         # did not understand the file, not that the file is clean.
         print(f"HARNESS {path}: no function definitions recognised — nothing was analysed")
         return (0, 1, 0)
+    print(f"ACCOUNTED {path}: {recognised} definition(s) analysed, "
+          f"{declarations} declaration(s), 0 unaccounted")
     return (violations, 0, recognised)
 
 
@@ -244,6 +423,9 @@ def main(argv):
         harness += h
         recognised += r
     # Always report the denominator, so a caller can see that work was done.
+    # `recognised` is now the whole top level of every file that was accounted
+    # for, not the subset one regex matched — a file with an unaccounted-for
+    # construct contributes a HARNESS instead of a smaller number.
     print(f"ANALYSED {recognised} function definition(s) in {len(argv) - 1} file(s)")
     if harness:
         return 2
