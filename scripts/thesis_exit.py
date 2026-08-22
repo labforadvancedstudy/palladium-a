@@ -67,6 +67,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import os
@@ -118,6 +119,99 @@ GP = None  # the gate_probe module; loaded on first use
 
 # The rows that ARE the definition. Pinned, so the manifest and this command cannot drift
 # apart in either direction.
+# --- WHY THIS COMMAND SOMETIMES REFUSES TO ANSWER -----------------------------------
+#
+# Four rounds running, a safeguard for this gate's own weakness was checked by asking
+# whether an artifact existed. The ladder is visible in the history: a NAME exists -> a
+# TEST exists -> a test PASSES -> a TARGET exits 0. Each round the check climbed a level
+# and each level asked the same question, because ANY check on a not-yet-existing
+# artifact degenerates to "something by that name did not fail". An empty `#[test]`
+# satisfied the third level; `@true` satisfied the fourth. A fifth would find a fifth.
+#
+# So the two safeguards are no longer SCORED. They are PRECONDITIONS ON THIS COMMAND'S
+# ABILITY TO COMPUTE A VERDICT AT ALL, and — this is the part that cannot be faked — they
+# are decided by introspecting THIS FILE'S OWN WIRING, not by looking for an artifact:
+#
+#   * GI-11 is satisfied when TH-03/04/05 are DERIVED FROM A CALL GRAPH. Not when a test
+#     named after a call graph passes. The gate has to actually dispatch somewhere else,
+#     and `_wiring_matches_declaration()` fails if the constant below says it does while
+#     the dispatch table still says otherwise.
+#   * GI-12 is satisfied when a reject row is adjudicated by a diagnostic CODE. Not when
+#     a target exits 0.
+#
+# While either is outstanding, `make thesis-exit` EXITS 2 — "could not measure" — and
+# offers no verdict. That is stronger than a RED row: a RED row says "1.0 is not reached
+# yet", which is a measurement, and this command is not entitled to make one while the
+# things it would measure with are disclosed as unsound. It still prints every row's
+# state, because losing the dashboard would be a real cost and is not necessary to stop
+# the false certificate.
+#
+# Flipping either constant without doing the work is caught by the self-test, which
+# compares the declaration against the dispatch table.
+
+LIVENESS_MODEL = "lexical"        # -> "call-graph" when GI-11 lands
+ATTRIBUTION_MODEL = "substring"   # -> "code" when GI-12 lands
+
+# The dispatch each model implies. `_wiring_matches_declaration()` checks reality.
+LIVENESS_PROBES_LEXICAL = ("p_has_ref_param", "p_total_on_fn", "p_effect_is_transitive")
+
+PRECONDITIONS = (
+    ("GI-11", "LIVENESS_MODEL", "lexical", "call-graph",
+     "TH-03/04/05 are decided by a lexical model disclosed as unsound for liveness: it "
+     "answers P1 (the construct exists) and P2 (nothing names it), never whether the "
+     "construct is on a path the program runs"),
+    ("GI-12", "ATTRIBUTION_MODEL", "substring", "code",
+     "rejection attribution is decided by `grep -qF` over the whole ANSI-stripped log, "
+     "disclosed as unsound for attribution: measured, a fixture failing on a stray `@@@` "
+     "satisfies a pinned fingerprint that its source line merely contains"),
+)
+
+
+def wiring_matches_declaration(source: str) -> list[str]:
+    """Does the code do what LIVENESS_MODEL / ATTRIBUTION_MODEL say it does?
+
+    THIS IS WHAT STOPS THE CONSTANT FROM BEING THE NEW EMPTY TEST. Declaring
+    `LIVENESS_MODEL = "call-graph"` while TH-03/04/05 still dispatch to the lexical
+    probes is exactly the defect this whole redesign is about, one level up, so the
+    declaration is checked against the dispatch table rather than trusted.
+    """
+    problems = []
+    # Parse the DECLARATION out of the source being checked, so the self-test can hand in
+    # a modified copy. Reading the live globals made the check blind to exactly the edit
+    # it exists to catch.
+    def declared(const, default):
+        m = re.search(rf'^{const} = "([a-z-]+)"', source, re.M)
+        return m.group(1) if m else default
+    liveness = declared("LIVENESS_MODEL", LIVENESS_MODEL)
+    attribution = declared("ATTRIBUTION_MODEL", ATTRIBUTION_MODEL)
+    lexical_wired = all(f'"{p}"' in source or f": {p}" in source
+                        for p in LIVENESS_PROBES_LEXICAL)
+    if liveness == "call-graph" and lexical_wired:
+        problems.append(
+            "LIVENESS_MODEL says `call-graph` but TH-03/04/05 still dispatch to "
+            + ", ".join(LIVENESS_PROBES_LEXICAL)
+            + ". GI-11 requires REPLACING the probes, not passing a test named after one.")
+    if liveness == "lexical" and not lexical_wired:
+        problems.append("LIVENESS_MODEL says `lexical` but the lexical probes are not wired")
+    substring_wired = "want_fp.strip() != decl.strip()" in source
+    if attribution == "code" and substring_wired:
+        problems.append(
+            "ATTRIBUTION_MODEL says `code` but reject rows are still adjudicated by the "
+            "corpus fingerprint declaration, which conformance.sh matches as a substring.")
+    if attribution == "substring" and not substring_wired:
+        problems.append("ATTRIBUTION_MODEL says `substring` but that comparison is gone")
+    return problems
+
+
+def incomplete_definition() -> list[tuple[str, str]]:
+    """(requirement id, why no verdict is available). Empty means: a verdict is."""
+    out = []
+    for rid, const, unsound, sound, why in PRECONDITIONS:
+        if globals()[const] != sound:
+            out.append((rid, why))
+    return out
+
+
 AGGREGATE_ROW = "D1-01"          # cites this command as its evidence: it is the summary
 
 # THE COMPLETE THESIS CONTRACT, not just its ids. Pinning ids alone left three ways to
@@ -129,16 +223,19 @@ AGGREGATE_ROW = "D1-01"          # cites this command as its evidence: it is the
 # MF5: the requirement TEXT is pinned for the rows whose text IS the contract. Pinning
 # only (kind, evidence, fingerprint) left GI-11's detailed acceptance criteria — the thing
 # that makes it more than a name — weakenable with no harness error.
-PINNED_ACCEPTANCE = {
-    "GI-11": ("scoped call-site identities", "source-order-independent fixed point",
-              "provenance tied to the compiled unit", "may-complete/divergence per edge",
-              "conditions/initializers/return expressions",
-              "unresolved target = HARNESS FAILURE distinct from omission",
-              "fault injection", "feasible ordered paths from declared roots",
-              "DERIVES TH-03/04/05"),
-    "GI-12": ("stable diagnostic CODE", "pins a CODE not a phrase",
-              "Adjudicated OUTSIDE the substring matcher it replaces"),
+# MF4: the EXACT normalized acceptance text, by digest. Pinning selected substrings let
+# the indirect-target clause go unpinned entirely, and let a pinned phrase survive inside
+# NEGATED prose ("does not require scoped call-site identities" contains the phrase). A
+# digest over the whole normalized field has neither hole: any edit at all fails, and the
+# fix is to re-pin deliberately in the same commit.
+PINNED_ACCEPTANCE_SHA = {
+    "GI-11": "8eae233c60036ad7",
+    "GI-12": "f14b04ad415e5ee4",
 }
+
+
+def acceptance_digest(text: str) -> str:
+    return hashlib.sha256(" ".join(text.split()).encode()).hexdigest()[:16]
 
 EXPECTED_THESIS_CONTRACT = {
     "D1-01": ("gate", "make thesis-exit", "-"),
@@ -438,11 +535,14 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
 # while this weaker model is in use. The anti-ornament property is not abandoned; it is
 # moved to a mechanism that can prove it and made a precondition of 1.0.
 
-# grammar.ebnf:353 is `closure = [ "move" ] "|" [ params_untyped ] "|" ( expression | block )`
-# and a parameter list may span lines, so excluding newlines let a multiline closure
-# through the check that claims to reject ANY form. Bounded to keep a stray `||` or a pair
-# of unrelated pipes from matching half a file.
-CLOSURE_ANY = re.compile(r"\|[^|]{0,200}\|")
+# ANY `|` TOKEN, and the claim is now true in both directions. The bounded-pair form was
+# wrong twice at once: `a || b` — the ordinary logical-or — matched it and produced a
+# false refusal, and a parameter list longer than the bound escaped it and produced a
+# false answer. grammar.ebnf:353 puts a closure behind `|`, and `|` has no other use in
+# the language today (bitwise-or is unimplemented, A2), so refusing on the token is exact
+# now and conservative later: when bitwise-or lands, this refuses programs it need not,
+# which is a wrong exit-2 rather than a wrong verdict, and it is GI-11's job to remove it.
+CLOSURE_ANY = re.compile(r"\|")
 FN_TYPE_PARAM = re.compile(r":\s*fn\s*\(")
 METHOD_CALL = re.compile(r"\.\s*[A-Za-z_][A-Za-z_0-9]*\s*\(")
 
@@ -598,6 +698,10 @@ class Context:
     make_results: dict[str, int] | None = None     # injected `make <target>` exit codes
     effect_reports: dict[str, str] | None = None   # injected `pdc compile` output
     observable_results: dict[str, int] | None = None   # injected `cargo test` exit codes
+    # SELF-TEST ONLY. Lets the scoring machinery be exercised as if GI-11 and GI-12 had
+    # landed. A case asserts the REAL run never sets it, so this cannot become the fifth
+    # existence check by another name.
+    assume_definition_complete: bool = False
 
 
 def _probe(argv, cwd):
@@ -793,12 +897,13 @@ def thesis_rows(ctx: Context) -> list[dict]:
                 f"{r['id']}: the thesis contract changed, which changes the DEFINITION OF "
                 f"1.0. pinned {want}, manifest has {got}. Update EXPECTED_THESIS_CONTRACT "
                 "in this file in the same commit, deliberately.")
-        for phrase in PINNED_ACCEPTANCE.get(r["id"], ()):
-            if phrase not in r["req"]:
-                raise HarnessError(
-                    f"{r['id']}: its acceptance text lost {phrase!r}. That text IS the "
-                    "contract for this row — weakening it changes what 1.0 requires, so "
-                    "it is pinned. Update PINNED_ACCEPTANCE in the same commit.")
+        want_sha = PINNED_ACCEPTANCE_SHA.get(r["id"])
+        if want_sha and acceptance_digest(r["req"]) != want_sha:
+            raise HarnessError(
+                f"{r['id']}: its acceptance text changed (digest "
+                f"{acceptance_digest(r['req'])}, pinned {want_sha}). That text IS the "
+                "contract for this row — weakening it changes what 1.0 requires. Re-pin "
+                "PINNED_ACCEPTANCE_SHA in the same commit, deliberately.")
         if r["kind"] == "reject" and (not r["fp"] or r["fp"] == "-"):
             raise HarnessError(
                 f"{r['id']}: a thesis `reject` row with no required fingerprint. Any "
@@ -826,10 +931,13 @@ def evaluate(ctx: Context, rows: list[dict]) -> list[tuple[str, bool, str, str, 
             details.append(f"{w}: {d}")
         return all(oks), " · ".join(details)
 
+    precondition_ids = {rid for rid, *_ in PRECONDITIONS}
     for r in rows:
         rid, kind = r["id"], r["kind"]
         if rid == AGGREGATE_ROW:
             continue                              # it IS the summary; see the docstring
+        if rid in precondition_ids:
+            continue                              # a PRECONDITION, not a scored row
         if rid in probes:
             ok, d = over_witnesses(lambda w, f=probes[rid]: f(read_source(ctx.root, w)))
             results.append((rid, ok, r["milestone"], d, "C1"))
@@ -879,7 +987,7 @@ def evaluate(ctx: Context, rows: list[dict]) -> list[tuple[str, bool, str, str, 
             # have diverged, which is a failure to measure and not a red row.
             raise HarnessError(f"{rid}: evidence kind {kind!r} reaches no dispatch")
 
-    expected = {r["id"] for r in rows} - {AGGREGATE_ROW}
+    expected = {r["id"] for r in rows} - {AGGREGATE_ROW} - {p[0] for p in PRECONDITIONS}
     produced = [x[0] for x in results]
     if len(produced) != len(set(produced)) or set(produced) != expected:
         raise HarnessError(
@@ -900,6 +1008,10 @@ GROUPS = [
 
 def main(ctx: Context | None = None) -> int:
     ctx = ctx or Context()
+    drift = wiring_matches_declaration((ROOT / "scripts/thesis_exit.py").read_text())
+    if drift:
+        raise HarnessError("the gate's declared models do not match its wiring: "
+                           + "; ".join(drift))
     rows = thesis_rows(ctx)
     results = evaluate(ctx, rows)
     by_id = {r["id"]: r for r in rows}
@@ -920,7 +1032,31 @@ def main(ctx: Context | None = None) -> int:
                   f"{'' if ok else 'owed by ' + owner}")
             print(f"        {GREY}{detail}{OFF}")
 
+    blocked = [] if ctx.assume_definition_complete else incomplete_definition()
     red = [r for r in results if not r[1]]
+    if blocked:
+        print("\n" + "=" * 78)
+        print("  NO VERDICT IS AVAILABLE. THE DEFINITION OF 1.0 IS INCOMPLETE.")
+        print("=" * 78)
+        for rid, why in blocked:
+            print(f"  {RED}{rid}{OFF} outstanding — {why}")
+        print()
+        print("  These are not scored rows. They are preconditions on this command's")
+        print("  ability to compute a verdict, and they are decided by introspecting this")
+        print("  gate's own wiring — not by looking for an artifact. Four rounds running,")
+        print("  a check on a not-yet-existing artifact degenerated to 'something by that")
+        print("  name did not fail': an empty #[test] satisfied one, `@true` satisfied the")
+        print("  next. There is nothing here to satisfy by naming it.")
+        print()
+        print(f"  For information only, and NOT a verdict: {len(results) - len(red)} of "
+              f"{len(results)} evaluated rows would pass.")
+        print("  A green run is not merely unreached — it is UNAVAILABLE, and will stay so")
+        print("  until the two models above are replaced. `1.0 is not reached yet` is a")
+        print("  measurement, and this command is not entitled to make one with tools it")
+        print("  has itself disclosed as unsound.")
+        print("=" * 78)
+        return 2
+
     print("\n" + "-" * 78)
     print("  WHAT A GREEN VERDICT MEANS, AND WHAT IT DOES NOT")
     print("  Would mean: every differentiator's construct EXISTS in both witnesses, each")
@@ -1001,9 +1137,57 @@ RETRACTED_CLAIMS = (
 
 
 def stale_claims(text: str) -> list[str]:
-    """Retracted wording still present. Whole-file, by name."""
+    """Retracted wording still present. Whole-file, by name.
+
+    WHAT THIS DOES NOT CATCH, stated where the mechanism is described because a check
+    whose limits are undocumented is the thing this file keeps being rebuilt over:
+    a PARAPHRASE ("the function main can reach it"), a string assembled at runtime, and
+    wording in a file not passed to it. It catches the exact retracted phrases, which is
+    what stopped three of them surviving a deletion, and nothing more.
+    """
     return [f"{phrase!r} ({why})" for phrase, why in RETRACTED_CLAIMS if phrase in text]
 
+
+# Files the release path scans. The TSV is included because a retracted claim can as
+# easily live in a requirement's text as in a docstring.
+CLAIM_SCANNED = (
+    "scripts/thesis_exit.py",
+    "scripts/thesis-exit.sh",
+    "docs/contributing/MILESTONES.md",
+    "docs/contributing/1.0-requirements.tsv",
+)
+
+
+def check_retracted_claims() -> int:
+    """`make check-retracted-claims`. On the release path, not only under --self-test."""
+    bad = []
+    for rel in CLAIM_SCANNED:
+        text = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        if rel == "scripts/thesis_exit.py":
+            b, e = "# BANNED-LIST-" + "BEGIN", "# BANNED-LIST-" + "END"
+            text = text.split(b)[0] + text.split(e)[1]
+        for hit in stale_claims(text):
+            bad.append(f"{rel}: {hit}")
+    if bad:
+        print(f"{RED}retracted claims are back{OFF}:")
+        for b in bad:
+            print(f"  {b}")
+        print("Each was retracted by the round named. Re-asserting one is a claim that it "
+              "is true again; make that argument in the commit, or remove the wording.")
+        return 1
+    print(f"{GREEN}ok{OFF} no retracted claim in {len(CLAIM_SCANNED)} file(s); "
+          f"{len(RETRACTED_CLAIMS)} phrases banned by name")
+    return 0
+
+
+# The real acceptance text for the digest-pinned rows, read from the manifest, so the
+# synthetic corpus agrees with the pin instead of duplicating it.
+REAL_ACCEPTANCE = {
+    r.split("\t")[0]: r.split("\t")[3]
+    for r in (ROOT / "docs/contributing/1.0-requirements.tsv").read_text().split("\n")
+    if len(r.split("\t")) == 9 and not r.startswith("#")
+    and r.split("\t")[0] in PINNED_ACCEPTANCE_SHA
+}
 
 BASE_ROWS = [
     ("D1-01", "M9", "gate", "make thesis-exit", "-"),
@@ -1040,9 +1224,7 @@ def _rows(drop=None, retype=None, repoint=None, blank_fp=None, extra=""):
     for rid, ms, kind, ev, fp in BASE_ROWS:
         if rid == drop:
             continue
-        req = f"req {rid}"
-        if rid in PINNED_ACCEPTANCE:
-            req = req + " :: " + " ; ".join(PINNED_ACCEPTANCE[rid])
+        req = REAL_ACCEPTANCE.get(rid, f"req {rid}")
         if retype and rid == retype[0]:
             kind, ev = retype[1], retype[2]
         if repoint and rid == repoint[0]:
@@ -1147,7 +1329,8 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
            report=GOOD_REPORT, report_b=None, fingerprints=None, drop_witness_b=False,
            omit_report_b=False, real_conformance=None, real_pdc=None,
            unreadable_requirements=False, unreadable_makefile=False,
-           real_make=False, drop_observable=False, observables=None) -> int:
+           real_make=False, drop_observable=False, observables=None,
+           definition_incomplete=False) -> int:
     """Run the WHOLE gate against an injected repository state."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
@@ -1192,7 +1375,8 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
                       make_results=None if real_make else (GOOD_MAKE if make is None else make),
                       effect_reports=reports,
                       observable_results=(None if drop_observable
-                                          else (observables or GOOD_OBSERVABLE)))
+                                          else (observables or GOOD_OBSERVABLE)),
+                      assume_definition_complete=not definition_incomplete)
         if real_make:
             (tmp / "Makefile").write_text(
                 "".join(f"{tgt}:\n\t@true\n" for tgt in GOOD_MAKE))
@@ -1206,7 +1390,8 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
                           make_results=None,   # force the real Makefile read
                           effect_reports=reports,
                       observable_results=(None if drop_observable
-                                          else (observables or GOOD_OBSERVABLE)))
+                                          else (observables or GOOD_OBSERVABLE)),
+                      assume_definition_complete=not definition_incomplete)
         buf = io.StringIO()
         try:
             with redirect_stdout(buf):
@@ -1391,6 +1576,84 @@ def self_test() -> int:
     case("a green run states what green does and does not mean",
          "WHAT A GREEN VERDICT MEANS" in out, True, drives_main=False)
 
+    print("\n  the definition is INCOMPLETE, so no verdict is offered at all")
+    case("with GI-11/GI-12 outstanding the gate REFUSES — exit 2, not a RED verdict",
+         _drive(definition_incomplete=True), 2)
+    case("it refuses even when every scored row would pass",
+         _drive(definition_incomplete=True), 2)
+    _drive(definition_incomplete=True)
+    _out = _drive.last_output
+    case("the refusal says the DEFINITION is incomplete, not that 1.0 is unreached",
+         "THE DEFINITION OF 1.0 IS INCOMPLETE" in _out, True, drives_main=False)
+    case("it still prints the per-row dashboard, so no progress signal is lost",
+         "TH-06" in _out and "SH-01" in _out, True, drives_main=False)
+    case("it labels the row tally as information, NOT a verdict",
+         "NOT a verdict" in _out, True, drives_main=False)
+    case("it names both outstanding preconditions",
+         "GI-11" in _out and "GI-12" in _out, True, drives_main=False)
+    case("the real run never assumes the definition is complete",
+         Context().assume_definition_complete, False, drives_main=False)
+
+    print("\n  a precondition cannot be satisfied by naming an artifact")
+    case("both preconditions are outstanding right now",
+         sorted(r for r, _w in incomplete_definition()), ["GI-11", "GI-12"],
+         drives_main=False)
+    case("declaring `call-graph` while the lexical probes are still wired is caught",
+         bool(wiring_matches_declaration(
+             (ROOT / "scripts/thesis_exit.py").read_text()
+             .replace('LIVENESS_MODEL = "lexical"', 'LIVENESS_MODEL = "call-graph"'))),
+         True, drives_main=False)
+    case("declaring `code` while the substring comparison is still wired is caught",
+         bool(wiring_matches_declaration(
+             (ROOT / "scripts/thesis_exit.py").read_text()
+             .replace('ATTRIBUTION_MODEL = "substring"', 'ATTRIBUTION_MODEL = "code"'))),
+         True, drives_main=False)
+    case("the declaration and the wiring agree as committed",
+         wiring_matches_declaration((ROOT / "scripts/thesis_exit.py").read_text()), [],
+         drives_main=False)
+
+    print("\n  R4 — every closure form refuses, not only the brace form")
+    for form, label in [("|x| ornament(x)", "brace/ident body"), ("|x| (ornament(x))", "paren body"),
+                        ("|x| [ornament(x)]", "bracket body"), ("|x| -ornament(x)", "unary body")]:
+        case(f"a closure with a {label} is a HARNESS ERROR",
+             _drive(witness_b=GOOD_WITNESS + f"fn hof(mut c: C) {{ let f = {form}; }}\n"), 2)
+
+    print("\n  TH-05 — P2 applies to the caller (on the callee it is vacuous)")
+    case("a caller nothing names cannot supply the exhibited edge (P2 on the caller)",
+         _drive(witness_b="fn ghost_io(mut c: C) { file_write(c.out, \"x\"); }\n"
+                          "fn orphan(mut c: C) { ghost_io(c); }\n"
+                          "#[total]\nfn depth(n: i64) -> i64 { return n; }\n"
+                          "fn drive(x: ref String, mut c: C) -> i64 { return depth(1); }\n"
+                          "fn main() { drive(s, c); }\n",
+                report_b="Function 'orphan' has effects: [Io]\n"), 1)
+
+    print("\n  TH-04 — a FUNCTION-level attribute, not the crate-level one")
+    case("a witness carrying only `#![total]` does not satisfy TH-04",
+         _drive(witness_b=mutate(GOOD_WITNESS, "#[total]", "#![total]")), 1)
+
+    print("\n  retracted claims stay retracted, and the disclaimers are pinned to OUTPUT")
+    _self = (ROOT / "scripts/thesis_exit.py").read_text()
+    # Exclude this table itself, or the check would flag its own banned list.
+    _b, _e = "# BANNED-LIST-" + "BEGIN", "# BANNED-LIST-" + "END"
+    assert _b in _self and _e in _self, "banned-list sentinels missing"
+    _body = _self.split(_b)[0] + _self.split(_e)[1]
+    case("no retracted claim survives anywhere in this file",
+         stale_claims(_body), [], drives_main=False)
+    case("the phrase check CATCHES a re-asserted claim",
+         len(stale_claims("a docstring saying " + "REACHABLE" + " FROM main")), 1,
+         drives_main=False)
+    for doc in ("docs/contributing/MILESTONES.md", "scripts/thesis-exit.sh"):
+        case(f"no retracted claim survives in {doc}",
+             stale_claims((ROOT / doc).read_text()), [], drives_main=False)
+    _drive()
+    out = _drive.last_output
+    case("a green run SAYS liveness is not asserted, in its own output",
+         "liveness is NOT asserted" in out, True, drives_main=False)
+    case("a green run names the obligation that carries it",
+         "GI-11" in out, True, drives_main=False)
+    case("a green run states what green does and does not mean",
+         "WHAT A GREEN VERDICT MEANS" in out, True, drives_main=False)
+
     print("\n  the safeguards for this gate's weaknesses BLOCK green (MUST-FIX 5)")
     _req = (ROOT / "docs/contributing/1.0-requirements.tsv").read_text().split("\n")
     _disp = {r.split("\t")[0]: r.split("\t")[7] for r in _req
@@ -1402,16 +1665,8 @@ def self_test() -> int:
     case("both are in the pinned contract, so demoting one is a harness error",
          sorted(k for k in EXPECTED_THESIS_CONTRACT if k.startswith("GI-")),
          ["GI-11", "GI-12"], drives_main=False)
-    case("GI-11 absent -> the gate cannot be green, however good the witness is",
-         _drive(drop_observable=True), 1)
-    case("GI-12's gate failing -> not green",
-         _drive(make={**GOOD_MAKE, "check-diagnostic-codes": 1}), 1)
-    case("GI-12's gate absent -> not green (declared, absent)",
-         _drive(make={k: v for k, v in GOOD_MAKE.items() if k != "check-diagnostic-codes"}), 1)
     case("GI-12 is NOT a reject row — it cannot be judged by the matcher it replaces",
          _C["GI-12"][0] != "reject", True, drives_main=False)
-    case("an observable that merely EXISTS is not enough — it must run and pass",
-         _drive(observables={EXPECTED_THESIS_CONTRACT["GI-11"][1]: 1}), 1)
 
     print("\n  R4 — the detected set, and the name collision reviewers found")
     case("two functions sharing a name are a HARNESS ERROR, not a silent overwrite",
@@ -1671,6 +1926,8 @@ def _entry(argv: list[str]) -> int:
             pass
 
     try:
+        if "--check-retracted-claims" in argv:
+            return check_retracted_claims()
         if "--crash-for-self-test" in argv:
             # Exercised by the self-test: any unwrapped failure must leave as exit 2, the
             # measurement code, never as Python's default 1.

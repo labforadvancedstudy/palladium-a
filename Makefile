@@ -301,7 +301,7 @@ test-gate-probe: build ## Fault-inject every producer the stdlib gate reads as e
 	@bash scripts/test-gate-probe.sh
 
 .PHONY: gates
-gates: conformance test-conformance-runner check-docs selfhost stdlib-gate test-gate-probe ## Run every language-level gate
+gates: conformance test-conformance-runner check-docs selfhost stdlib-gate test-gate-probe check-retracted-claims ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # --- Expected failures in the Rust test suite ------------------------------
@@ -328,3 +328,9 @@ thesis-exit: build ## The definition of Palladium 1.0. RED until M9.
 .PHONY: test-thesis-runner
 test-thesis-runner: ## Fault-inject every thesis probe and prove it can still go RED
 	@bash scripts/thesis-exit.sh --self-test
+
+# The banned-list check belongs on the release path, not only under --self-test:
+# three retracted claims survived a deletion because nothing on this path looked.
+.PHONY: check-retracted-claims
+check-retracted-claims: ## Fail if wording a review round retracted has come back
+	@python3 scripts/thesis_exit.py --check-retracted-claims

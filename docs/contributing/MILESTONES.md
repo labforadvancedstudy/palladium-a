@@ -12,9 +12,11 @@ whole goal, and every milestone ships.
 `async` or `await` — still reaching a byte-identical stage1/stage2 fixed point, with a second
 witness program meeting the same conditions.**
 
-That gate is in the repository now, and it is **RED: 1 green, 23 RED** over the 24 rows it
-evaluates, plus `D1-01`, which cites the gate as its own evidence and is therefore the
-aggregate rather than a member — 25 `thesis` rows in total, answered by the summary ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
+That gate is in the repository now, and **it refuses to answer**. `make thesis-exit` exits 2:
+two of its 25 `thesis` rows — GI-11 and GI-12 — are not scored rows at all but
+**preconditions on the command's ability to compute a verdict**, and both are outstanding.
+It still prints every row's state (1 of 22 evaluated rows would pass), labelled as
+information rather than a verdict ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
 [`scripts/thesis_exit.py`](../../scripts/thesis_exit.py)). It is committed red on purpose: the
 definition of 1.0 has to live here as a command, because prose drifts and commands do not.
 
@@ -60,18 +62,28 @@ a release**.
 Stated here, and printed by the command itself on every run, because a green command called
 "the definition of Palladium 1.0" that meant less than its name is the worst available outcome.
 
-**It would mean**: every differentiator's construct exists in both witnesses; each has a
-non-vacuous conformance fixture and a reject twin refused at its declared fingerprint; and
-`bootstrap/pdc.pd` still reaches a byte-identical fixed point.
+**Today there is no green available at all.** The command exits 2. Two things it would have to
+reason with are disclosed as unsound — the lexical liveness model and the substring rejection
+matcher — so it declines to compute a verdict rather than reporting "not reached yet", which
+would itself be a measurement. That refusal is decided by introspecting the gate's own wiring,
+not by checking whether some artifact exists: four rounds running, a check on a not-yet-existing
+artifact degenerated to *"something by that name did not fail"* — an empty `#[test]` satisfied
+one level, `@true` satisfied the next.
+
+**When a verdict becomes available, green would mean**: every differentiator's construct exists
+in both witnesses; each has a non-vacuous conformance fixture and a reject twin refused at its
+declared fingerprint; and `bootstrap/pdc.pd` still reaches a byte-identical fixed point.
 
 **It would not mean** that any differentiator is used on a path the program runs — liveness is
 not asserted, after three lexical reachability models each failed open. **Nor** that a refusal
 was the one its row names — `grep -qF` over the whole log lets incidental text satisfy a
 fingerprint, which is measured, not argued.
 
-Those two gaps are **GI-11** and **GI-12**, and both are now `thesis` rows, so **green is
-unreachable until they land**. Until then this is a **fail-closed scaffold, not a language
-certificate** — which is the only form in which a weaker gate is defensible, and it is why the
+Those two gaps are **GI-11** and **GI-12**. They are not scored rows — scoring them was the
+defect: four rounds running the check degenerated to an existence test, and an empty `#[test]`
+then an `@true` target each satisfied one. They are **preconditions**, decided by introspecting
+the gate's own wiring, and while either is outstanding **no verdict is computed at all**. Until
+then this is a **fail-closed scaffold, not a language certificate** — which is the only form in which a weaker gate is defensible, and it is why the
 safeguards had to become preconditions rather than scheduled work.
 
 **What the gate asserts, and what it deliberately does not.** After three reachability heuristics
@@ -96,7 +108,7 @@ does not become the definition of the language.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| `thesis` | 25 (24 evaluated + `D1-01`, the aggregate) | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
+| `thesis` | 25 = 22 scored + `D1-01` (the aggregate) + GI-11 and GI-12 (preconditions) | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
 | `1.0` | 161 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
@@ -176,17 +188,16 @@ Retirement is a post-1.0 decision.
 
 ## Where the project actually is
 
-Measured at `e53ffa7` unless a row names its own command; the thesis and self-test
-figures are from this revision.
+Measured at this revision; every row names the command that produced it.
 
 | | | Command |
 |---|---|---|
-| **The thesis** | **1 green, 23 RED** over 24 evaluated rows + the aggregate | `make thesis-exit` |
+| **The thesis** | **exit 2 — no verdict available**; 1 of 22 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 103 cases — 61 drive the gate end to end against an injected repository state, 42 exercise a helper | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 232 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
+| Thesis gate itself | 123 cases — 65 drive the gate end to end against an injected repository state, 58 exercise a helper | `make test-thesis-runner` |
+| Documentation | every snippet compiles; 239 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 38 builtins accounted against a normative 34 | `make stdlib-gate` |
@@ -518,8 +529,9 @@ rather than as another prerelease.
 4. **Witness 2 in the dialect** (WT-02, TH-06).
 5. **Parity with `src/`, not retirement.**
 
-**Exit**: `make thesis-exit`. It reports **1 green and 23 RED** today; every RED line names the
-milestone that owes it, and every absent fixture says `DECLARED, ABSENT` rather than passing.
+**Exit**: `make thesis-exit`. Today it **exits 2 and offers no verdict** — see below. When a
+verdict is available, every RED line names the milestone that owes it and every absent fixture
+says `DECLARED, ABSENT` rather than passing.
 
 ## Scope: what is in 1.0, and what is not
 
