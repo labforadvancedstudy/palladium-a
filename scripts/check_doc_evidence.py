@@ -394,7 +394,8 @@ GREP_INVERT_SHORT = "v"
 # `-name X` to `-name '*'` would match nothing, and the probe would accuse an honest item.
 FIND_MATCH_PREDICATES = {"-name", "-iname", "-path", "-ipath"}    # neutralised in the probe
 FIND_TRAVERSAL_PREDICATES = {"-type", "-maxdepth", "-mindepth"}   # kept: they decide what is READ
-FIND_BARE = {"-o", "-a", "-print", "-print0"}
+FIND_ACTIONS = {"-print", "-print0"}
+FIND_TYPE_ARGS = {"f", "d", "l", "p", "s", "b", "c"}
 
 # 4 MiB. A broad recursive grep can emit far more than the gate needs, and an unbounded
 # read is an out-of-memory failure dressed as a doc check. The count is all that is
@@ -515,25 +516,74 @@ def parse_segment(argv):
 
 
 def check_find_expression(expr):
-    """Every token of a find expression must be in the enumerated set. -> error-or-None."""
-    i = 0
+    """The find grammar this gate permits, which is narrower than find's. -> error-or-None.
+
+        <traversal>*  [ <match> ( -o <match> )* ]  <action>?
+
+    A CONJUNCTION of traversal predicates, then at most one DISJUNCTION of matching
+    predicates, then an optional action. `-o` may not join a traversal predicate to
+    anything, and there is no `-a`, no negation, and no parentheses.
+
+    WHY THIS SHAPE AND NOT find's. The L3 guarantee is that a probe with the matching
+    predicates neutralised must produce output, so an empty result means an empty scope.
+    That reduction is only sound if neutralising matching WIDENS the result and traversal
+    still bounds it. Under `-o` mixing the two, it does not:
+
+        find empty-dir -type f -o -name '*.zzz'   -> 0 lines   (the real command)
+        find empty-dir -type f -o -name '*'       -> 1 line    (the probe: the dir itself)
+
+    One vacuous OR branch defeats the `-type f` bound entirely, so the probe answered a
+    question the command had not asked. The grammar is narrowed here rather than the
+    guarantee being narrowed there, because a guarantee with an exception is the thing
+    this whole branch exists to remove. THIS IS THE STATED LIMIT: L3 is total over the
+    grammar above, and a find outside it is refused rather than measured.
+    """
+    i, seen_match, seen_action = 0, False, False
     while i < len(expr):
         tok = expr[i]
-        if tok in FIND_BARE:
+        if tok in FIND_ACTIONS:
+            seen_action = True
             i += 1
-        elif tok in FIND_MATCH_PREDICATES or tok in FIND_TRAVERSAL_PREDICATES:
+            continue
+        if seen_action:
+            return f"puts {tok!r} after the action {expr[i-1]!r}"
+        if tok == "-o":
+            if not seen_match:
+                return ("uses `-o` before any matching predicate. In the grammar this gate "
+                        "permits, `-o` joins matching predicates to each other and nothing "
+                        "else — `find <dir> -type f -o -name '*.zzz'` reads as (type f) OR "
+                        "(name), so one vacuous branch removes the -type bound and the L3 "
+                        "probe would measure a scope the command never searched")
+            if i + 2 >= len(expr) + 1 or expr[i + 1] not in FIND_MATCH_PREDICATES:
+                return "has `-o` that is not followed by another matching predicate"
+            i += 1
+            continue
+        if tok in FIND_TRAVERSAL_PREDICATES:
+            if seen_match:
+                return (f"puts the traversal predicate {tok!r} after a matching one. "
+                        f"Traversal predicates bound WHAT IS READ and must come first, so "
+                        f"the probe can keep them while neutralising the match")
             if i + 1 >= len(expr):
                 return f"has {tok!r} with no argument"
-            i += 2                                  # predicate plus its argument
-        else:
-            allowed = sorted(FIND_BARE | FIND_MATCH_PREDICATES | FIND_TRAVERSAL_PREDICATES)
-            return (f"uses the find predicate {tok!r}, which is not in the observation set "
-                    f"({', '.join(allowed)}). A find expression is forwarded to a real "
-                    f"process, so `-exec` would run a program of this document's choosing "
-                    f"and `-delete` would alter the checkout — neither is caught by the "
-                    f"tool checks, because the program being run really is find. Negation "
-                    f"is excluded too: the L3 probe neutralises matching predicates, and "
-                    f"under a negation that rewrite would invert the result")
+            if tok == "-type" and expr[i + 1] not in FIND_TYPE_ARGS:
+                return (f"has -type {expr[i + 1]!r}; the argument must be one of "
+                        f"{', '.join(sorted(FIND_TYPE_ARGS))}")
+            i += 2
+            continue
+        if tok in FIND_MATCH_PREDICATES:
+            if i + 1 >= len(expr):
+                return f"has {tok!r} with no argument"
+            seen_match = True
+            i += 2
+            continue
+        allowed = sorted(FIND_ACTIONS | FIND_MATCH_PREDICATES | FIND_TRAVERSAL_PREDICATES)
+        return (f"uses the find predicate {tok!r}, which is not in the observation set "
+                f"({', '.join(allowed)}, -o). A find expression is forwarded to a real "
+                f"process, so `-exec` would run a program of this document's choosing and "
+                f"`-delete` would alter the checkout — neither is caught by the tool "
+                f"checks, because the program being run really is find. Negation and "
+                f"parentheses are excluded because the L3 probe neutralises matching "
+                f"predicates, and under either the rewrite would not widen the result")
     return None
 
 
@@ -545,13 +595,14 @@ def build_probe(parsed):
     the dialect. Inversion is removed — as a token and as a letter in a short cluster —
     because with it "matched everything" becomes "printed nothing".
 
-    find: the traversal is KEPT and only the matching predicates are neutralised, each
-    argument replaced by `*`. The previous version deleted the whole expression and
-    probed `find <paths>`, which prints the directory itself: `find empty-dir -type f`
-    returned nothing while its probe printed `empty-dir`, so the empty scope passed. That
-    made the L3 claim true for grep and FALSE for find, which is exactly the kind of
-    universal statement over an unsatisfying branch this gate exists to remove. With the
-    predicate set closed by check_find_expression, this rewrite is total.
+    find: the traversal conjunction is KEPT and the whole matching disjunction collapses
+    to a single `-name '*'`. Two earlier versions were wrong here. The first deleted the
+    expression entirely and probed `find <paths>`, which prints the directory itself, so
+    `find empty-dir -type f` passed. The second neutralised each matching predicate in
+    place, which is still defeated by `-type f -o -name '*.zzz'` — the OR branch removes
+    the -type bound. check_find_expression now permits only `<traversal>* [<match> (-o
+    <match>)*] <action>?`, over which collapsing the disjunction is exactly "match
+    anything the traversal admits", and the reduction is total.
     """
     head = parsed["head"]
     if head == "grep":
@@ -566,18 +617,22 @@ def build_probe(parsed):
             opts.append(o)
         return [head] + opts + [""] + parsed["paths"]
     if head == "find":
-        expr, i = [], 0
+        expr, i, matched = [], 0, False
         src = parsed["opts"]
         while i < len(src):
             tok = src[i]
             if tok in FIND_MATCH_PREDICATES:
-                expr += [tok, "*"]                  # neutralised: matches everything
+                if not matched:
+                    expr += ["-name", "*"]          # the whole disjunction, collapsed
+                    matched = True
                 i += 2
+            elif tok == "-o":
+                i += 1                              # folded into the single branch above
             elif tok in FIND_TRAVERSAL_PREDICATES:
-                expr += [tok, src[i + 1]]           # preserved: it decides what is read
+                expr += [tok, src[i + 1]]           # preserved: it bounds what is read
                 i += 2
             else:
-                expr.append(tok)
+                expr.append(tok)                    # an action
                 i += 1
         return [head] + parsed["paths"] + expr
     return None
@@ -921,38 +976,48 @@ def gate_mismatches(kv, quoted, output: str):
     for k, v in kv:
         if k not in seen:
             out.append(f"{k}={v} (the run printed no {k}= at all)")
-        elif v not in seen[k]:
+        elif seen[k] != {v}:
+            # MEMBERSHIP IS NOT AGREEMENT. Asking only whether the claim is one of the
+            # values observed let an output containing both `verified=46` and
+            # `verified=4` validate EITHER claim — so a gate that contradicts itself
+            # endorses whichever number the document happens to want. The run must have
+            # said one thing about this key, and it must be the thing claimed.
             got = ", ".join(sorted(seen[k]))
-            out.append(f"{k}={v} (the run printed {k}={got})")
+            out.append(f"{k}={v} (the run printed {k}={got})"
+                       if len(seen[k]) == 1 else
+                       f"{k}={v} (the run printed {k} with more than one value: {got} — "
+                       f"a self-contradicting gate endorses nothing)")
     for q in quoted:
         if norm(q) not in body:
             out.append(f"{q!r} (not in the run's output)")
     return out
 
 
-def load_receipts(dirpath: Path, run_id: str):
+def load_receipts(dirpath: Path):
     """-> ({command: (exit, output)}, None) or (None, error).
 
-    A RECEIPT FROM AN EARLIER RUN MUST NOT SATISFY THIS ONE. scripts/gate-receipts.sh
-    mints a fresh id on every invocation, writes it beside the receipts, and passes the
-    same id here; only the invocation that produced these files knows it. Without this the
-    directory is just bytes on disk that happen to look like evidence — and this branch has
-    already been bitten by exactly that, one layer up: the control that validates receipt
-    checking passed on a dirty tree because an earlier manual run had left its output
-    behind, so the certifying target could not have passed on a clean checkout.
+    A RECEIPT FROM AN EARLIER RUN MUST NOT SATISFY THIS ONE, and the previous attempt at
+    that was correlation rather than freshness: a run id written INTO the receipts
+    directory and compared against a caller-supplied string. The id sat next to the bytes
+    it authenticated, so `--gate-run-id "$(cat .../RUN_ID)"` replayed a week-old run — 
+    measured, it validated 10/10.
+
+    Freshness is now structural. scripts/gate-receipts.sh writes into a private mktemp
+    directory and removes it on exit, so nothing survives to be replayed and two concurrent
+    runs cannot share one. The one thing left to enforce here is that a receipts directory
+    may not live INSIDE the repository: a directory under version control is content, and
+    content can be committed to look like the outcome of a run that never happened.
     """
     idx = dirpath / "index.tsv"
     if not idx.exists():
         return None, f"no receipts at {dirpath} (run: make gate-receipts)"
-    stamp = dirpath / "RUN_ID"
-    if not stamp.exists():
-        return None, (f"receipts at {dirpath} carry no RUN_ID, so they cannot be shown to "
-                      f"come from this run (run: make gate-receipts)")
-    if stamp.read_text(encoding="utf-8").strip() != run_id:
-        return None, (f"receipts at {dirpath} are from a DIFFERENT run than the one "
-                      f"validating them. A gate outcome is evidence about the tree as it "
-                      f"is now; left-over output from an earlier run is not (run: make "
-                      f"gate-receipts)")
+    real = dirpath.resolve()
+    if real == ROOT or ROOT in real.parents:
+        return None, (f"receipts at {dirpath} are inside the repository. Receipts are the "
+                      f"output of a run, not content: a directory under version control "
+                      f"could be committed and would then validate a run that never "
+                      f"happened. scripts/gate-receipts.sh writes to a private temporary "
+                      f"directory and deletes it on exit.")
     out = {}
     for line in idx.read_text(encoding="utf-8").split("\n"):
         if not line.strip() or line.startswith("#"):
@@ -1245,13 +1310,7 @@ def main() -> int:
     receipts = None
     if "--gate-receipts" in sys.argv:
         rdir = Path(sys.argv[sys.argv.index("--gate-receipts") + 1])
-        if "--gate-run-id" not in sys.argv:
-            print("FAIL:\n  --gate-receipts requires --gate-run-id: a receipt directory "
-                  "must prove it came from the run validating it, or it is only bytes on "
-                  "disk that happen to look like evidence.")
-            return 1
-        receipts, rerr = load_receipts(
-            rdir, sys.argv[sys.argv.index("--gate-run-id") + 1])
+        receipts, rerr = load_receipts(rdir)
         if rerr:
             print(f"FAIL:\n  {rerr}")
             return 1

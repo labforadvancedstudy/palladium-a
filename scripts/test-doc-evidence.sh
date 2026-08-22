@@ -300,6 +300,46 @@ index find_negation unimplemented \
   "cmd: find src -not -name zzz -> exit 0, 0 lines"
 expect_red find_negation "find negation is refused: it would invert the L3 probe" "-not"
 
+# THE COMBINATIONS, not just the simple shapes. The previous round's find controls covered
+# one name predicate, an empty `-type f`, and forbidden predicates -- and a claim that the
+# grammar was total. It was not: `-o` between a traversal and a matching predicate reads
+# as (type f) OR (name), so one vacuous branch removes the -type bound and the probe
+# measures a scope the command never searched.
+index find_type_or unimplemented \
+  "cmd: find $INREPO/empty -type f -o -name '*.zzz' -> exit 0, 0 lines"
+expect_red find_type_or "-o joining a TRAVERSAL to a matching predicate is refused" \
+  "before any matching predicate"
+
+index find_match_then_type unimplemented \
+  "cmd: find src -name '*.zzz' -type f -> exit 0, 0 lines"
+expect_red find_match_then_type "a traversal predicate AFTER a match is refused" \
+  "must come first"
+
+index find_bad_type unimplemented \
+  "cmd: find src -type ff -name zzz -> exit 0, 0 lines"
+expect_red find_bad_type "an invalid multi-letter -type argument is refused" "-type"
+
+index find_dangling_o unimplemented \
+  "cmd: find src -name zzz -o -type f -> exit 0, 0 lines"
+expect_red find_dangling_o "-o not followed by a matching predicate is refused" "-o"
+
+# And the honest shapes must still be writable, or the grammar is just a wall.
+index find_disjunction unimplemented \
+  "cmd: find src stdlib -name '*.v' -o -name '*.thy' -o -name '*.lean' -> exit 0, 0 lines"
+expect_green find_disjunction "a two-plus-name disjunction over a real scope passes"
+
+index find_maxdepth unimplemented \
+  "cmd: find src -maxdepth 0 -name '*.zzz' -> exit 0, 0 lines"
+expect_green find_maxdepth "-maxdepth 0 is preserved by the probe, not neutralised"
+
+index find_type_and_name unimplemented \
+  "cmd: find src -type f -name '*.zzz' -> exit 0, 0 lines"
+expect_green find_type_and_name "traversal AND match (no -o) keeps the -type bound"
+
+index find_regular_file unimplemented \
+  "cmd: find Cargo.toml -name '*.zzz' -> exit 0, 0 lines"
+expect_green find_regular_file "a regular file as the starting path is a valid scope"
+
 echo
 echo "== 'no shell' must be a property of the process, not a claim in a comment =="
 
@@ -426,16 +466,15 @@ mkdir -p "$RCPT"
 printf 'fixtures=70 evaluated=70 verified=46 vacuous=7 reject=14 failures=0\nall gates green\n' \
   > "$RCPT/fake.out"
 printf 'make conformance\t0\tfake.out\n' > "$RCPT/index.tsv"
-printf 'RUNID-THIS-RUN\n' > "$RCPT/RUN_ID"
 
 # gate_receipt <index-name> <run-id> -> sets RC and OUT
 gate_receipt() {
   OUT=$(python3 scripts/check_doc_evidence.py --index-only --index "$TMP/$1.toml" \
-          --gate-receipts "$RCPT" --gate-run-id "$2" 2>&1); RC=$?
+          --gate-receipts "$RCPT" 2>&1); RC=$?
 }
-gate_case() {  # gate_case <index-name> <run-id> <expect green|red> <case> [fragment]
-  local name=$1 rid=$2 want=$3 case=$4 frag=${5:-}
-  gate_receipt "$name" "$rid"
+gate_case() {  # gate_case <index-name> <expect green|red> <case> [fragment]
+  local name=$1 want=$2 case=$3 frag=${4:-}
+  gate_receipt "$name"
   if [ "$want" = green ]; then
     if [ "$RC" -eq 0 ]; then
       printf '  %sok%s   %s\n' "$GREEN" "$NC" "$case"; pass=$((pass+1)); return
@@ -450,27 +489,124 @@ gate_case() {  # gate_case <index-name> <run-id> <expect green|red> <case> [frag
 
 # The green side first, so the four reds below cannot be the harness misfiring.
 index gate_true implemented "gate: make conformance -> verified=46 fixtures=70"
-gate_case gate_true RUNID-THIS-RUN green "a gate: result the run DID print validates"
+gate_case gate_true green "a gate: result the run DID print validates"
 
 # THE TRUNCATION HOLE. Tokens were compared by containment, so `verified=4` was found
 # inside `verified=46`. A number could drift downward and still validate, in the one
 # mechanism whose whole purpose is that a number cannot drift.
 index gate_truncated implemented "gate: make conformance -> verified=4 fixtures=7"
-gate_case gate_truncated RUNID-THIS-RUN red \
+gate_case gate_truncated red \
   "a TRUNCATED number (verified=4 vs verified=46) is refused" "the run printed verified=46"
 
 index gate_absent implemented "gate: make conformance -> verified=99999"
-gate_case gate_absent RUNID-THIS-RUN red \
+gate_case gate_absent red \
   "a number the gate did not print is refused" "the run printed verified=46"
 
-# STALENESS. Same receipts, different run. Evidence is about the tree as it is now.
-gate_case gate_true RUNID-SOME-OTHER-RUN red \
-  "receipts from a DIFFERENT run cannot validate this one" "from a DIFFERENT run"
+# MEMBERSHIP IS NOT AGREEMENT. `seen[key]` was a set and a claim validated if it was ANY
+# member, so a run printing both verified=46 and verified=4 endorsed either number.
+printf 'verified=46\nlater, verified=4\n' > "$RCPT/fake.out"
+gate_case gate_true red \
+  "a self-contradicting run endorses NEITHER value" "more than one value"
+printf 'fixtures=70 evaluated=70 verified=46 vacuous=7 reject=14 failures=0\nall gates green\n' \
+  > "$RCPT/fake.out"
 
-rm -f "$RCPT/RUN_ID"
-gate_case gate_true RUNID-THIS-RUN red \
-  "receipts with no RUN_ID at all are refused" "carry no RUN_ID"
-printf 'RUNID-THIS-RUN\n' > "$RCPT/RUN_ID"
+
+echo
+echo "== the receipt RUNNER, and the order the certifying target runs it in =="
+#
+# These cover scripts/gate-receipts.sh, the Makefile and the CI workflow. Until now every
+# control lived over scripts/check_doc_evidence.py, so fixes in those three files could be
+# reverted with nothing going red -- while the coverage runner printed "every fix has a
+# control". scripts/doc-evidence-fixes.tsv is now the reconciled denominator, and these
+# are the controls that make its `mutated` rows mean something.
+
+# A cited gate command is a string from a document. The grammar is enumerated, not a
+# prefix: `make `* accepted `make conformance CC=clang`, `-j 8` and `--always-make`, each
+# of which changes what the cited gate MEANS while being spelled like the gate it names.
+gr_allowed() {   # -> 0 if scripts/gate-receipts.sh would run this command
+  ( eval "$(sed -n '/^allowed() {/,/^}$/p' scripts/gate-receipts.sh)"; allowed "$1" )
+}
+gr_case() {      # gr_case <allow|refuse> <command>
+  local want=$1 cmd=$2 got=refuse
+  gr_allowed "$cmd" && got=allow
+  if [ "$got" = "$want" ]; then
+    printf '  %sok%s   gate command %-40s -> %s\n' "$GREEN" "$NC" "'$cmd'" "$want"
+    pass=$((pass+1))
+  else
+    printf '  %sFAIL%s gate command %-40s -> %s, wanted %s\n' "$RED" "$NC" "'$cmd'" "$got" "$want"
+    fail=$((fail+1))
+  fi
+}
+gr_case allow  "make conformance"
+gr_case allow  "cargo build --release"
+gr_case allow  "cargo test --release --lib lsp::"
+gr_case refuse "make conformance CC=clang"
+gr_case refuse "make conformance -j 8"
+gr_case refuse "make conformance --always-make"
+gr_case refuse "cargo build --release --features anything"
+gr_case refuse "make conformance; rm -rf /"
+
+# Receipts are invocation-private and must not outlive the run. The previous design wrote
+# a run id NEXT TO the bytes it authenticated, so `--gate-run-id "$(cat .../RUN_ID)"`
+# replayed an old run -- measured, it validated 10/10. Text-level on purpose: proving it
+# by running the real thing costs ~31s and `make gate-receipts` in the same target already
+# does that. What is asserted is that no shared path is used and the directory is trapped.
+CASE="receipts are invocation-private and removed on exit"
+if grep -q 'OUT=\$(mktemp -d' scripts/gate-receipts.sh \
+   && grep -q "trap 'rm -rf \"\$OUT\"' EXIT" scripts/gate-receipts.sh \
+   && ! grep -q 'OUT=build_output/gate-receipts' scripts/gate-receipts.sh; then
+  printf '  %sok%s   %s\n' "$GREEN" "$NC" "$CASE"; pass=$((pass+1))
+else
+  printf '  %sFAIL%s %s -- a shared, surviving directory is replayable, and two runs race\n' \
+    "$RED" "$NC" "$CASE"; fail=$((fail+1))
+fi
+
+# ... and the checker refuses a receipts directory that is repository content, so one
+# cannot be committed and then pointed at.
+mkdir -p "$INREPO/receipts"
+printf 'make conformance\t0\tfake.out\n' > "$INREPO/receipts/index.tsv"
+printf 'verified=46\n' > "$INREPO/receipts/fake.out"
+index gate_inrepo implemented "gate: make conformance -> verified=46"
+OUT=$(python3 scripts/check_doc_evidence.py --index-only --index "$TMP/gate_inrepo.toml" \
+        --gate-receipts "$INREPO/receipts" 2>&1); RC=$?
+CASE="a receipts directory inside the repository is refused"
+if [ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -qF "inside the repository"; then
+  printf '  %sok%s   %s\n' "$GREEN" "$NC" "$CASE"; pass=$((pass+1))
+else
+  printf '  %sFAIL%s %s -- it was accepted, exit %s\n' "$RED" "$NC" "$CASE" "$RC"
+  fail=$((fail+1))
+fi
+
+# ORDERING. `test-doc-evidence` ran before `gate-receipts` in both certifying paths, and
+# the control read whatever a previous target had left on disk -- so on a clean checkout
+# `make gates` failed, and it passed locally only because stale receipts were present.
+# The control is self-contained now, which makes the order redundant; it is asserted
+# anyway, because a certifying path should not rely on that redundancy holding.
+# `gates:` is one line, the workflow is many, so each is read the way it is written.
+if awk -F'gate-receipts' '/^gates:/ {n=split($0,_,""); \
+      pa=index($0,"gate-receipts"); pb=index($0,"test-doc-evidence"); \
+      found=1; exit !(pa && pb && pa < pb)} END{exit !found || 1-ok}' Makefile 2>/dev/null \
+   || awk '/^gates:/ {pa=index($0,"gate-receipts"); pb=index($0,"test-doc-evidence");
+           exit !(pa && pb && pa < pb)} END{}' Makefile; then
+  printf '  %sok%s   Makefile gates: runs gate-receipts before test-doc-evidence\n' \
+    "$GREEN" "$NC"; pass=$((pass+1))
+else
+  printf '  %sFAIL%s Makefile gates: runs gate-receipts before test-doc-evidence -- it does\n' \
+    "$RED" "$NC"
+  printf '         NOT, and on a clean checkout that ordering is how the certifying target\n'
+  printf '         came to pass only because an earlier run had left receipts on disk\n'
+  fail=$((fail+1))
+fi
+order_case() {   # order_case <file> <first> <second>   (line order, multi-line files)
+  if awk -v a="$2" -v b="$3" 'index($0,a){if(!pa)pa=NR} index($0,b){if(!pb)pb=NR}
+       END{exit !(pa && pb && pa < pb)}' "$1"; then
+    printf '  %sok%s   %s runs %s before %s\n' "$GREEN" "$NC" "$1" "$2" "$3"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s runs %s before %s -- it does NOT\n' "$RED" "$NC" "$1" "$2" "$3"
+    fail=$((fail+1))
+  fi
+}
+order_case .github/workflows/preview.yml gate-receipts.sh test-doc-evidence.sh
 
 echo
 echo "== a claim about what the compiler DOES needs evidence from a run =="

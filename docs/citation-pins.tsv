@@ -144,8 +144,10 @@ src/ownership/borrow_checker.rs	525-525	docs/reference/features/feature-index.to
 src/ownership/borrow_checker.rs	525-525	docs/specification/language-spec.md	d10b36aa74a5	}
 src/ownership/mod.rs	107-118	docs/specification/bootstrap-subset.md	d2bfec889bd9	/// Exit a scope, invalidating borrows pub fn exit_scope(&mut self) { let sco ... n this scope // TODO: Implement proper drop semantics self.current_scope -= 1;
 src/ownership/mod.rs	109-109	docs/reference/features/core-language/implicit-lifetimes.md	8103577ec368	let scope_lifetime = Lifetime::Scope(self.current_scope);
+src/ownership/mod.rs	132-141	docs/reference/features/feature-index.toml	653441c6cecb	pub fn end_borrows(&mut self, lifetime: &Lifetime) { let mut affected: Vec<Pl ... e == lifetime { affected.push(borrow.place.clone()); false } else { true } });
 src/ownership/mod.rs	27-27	docs/reference/features/core-language/implicit-lifetimes.md	e06a29f1a329	pub enum Lifetime {
 src/ownership/mod.rs	329-333	docs/reference/features/feature-index.toml	5d7e60bc0988	/// Add a lifetime constraint pub fn add_constraint(&mut self, longer: Lifeti ...  Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
+src/ownership/mod.rs	86-95	docs/reference/features/feature-index.toml	cbafa46d3323	/// Lifetime constraints (outlives relationships) constraints: Vec<LifetimeCo ... pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime, }
 src/package/lockfile.rs	341-341	docs/reference/features/feature-index.toml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),
 src/parser/mod.rs	1045-1051	docs/specification/language-spec.md	2623da5935b7	if !self.check(&Token::Fn) { return Err(CompileError::UnexpectedToken { expec ... to_string(), found: self.peek()?.to_string(), span: self.current_span(), }); }
 src/parser/mod.rs	1263-1263	docs/specification/bootstrap-subset.md	bfe03ca491a1	Token::LeftBracket => AstToken::Punct('['),
@@ -218,3 +220,5 @@ src/typeck/mod.rs	795-797	docs/reference/features/feature-index.toml	ac1124ff765
 src/typeck/mod.rs	795-797	docs/specification/language-spec.md	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
 src/typeck/mod.rs	947-947	docs/specification/language-spec.md	b283b5e48b13	self.symbols.enter_scope();
 stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
+tests/regression/lifetimes_uninferred.pd	26-29	docs/reference/features/feature-index.toml	72af1a529f72	fn dangling() -> &i64 { let x: i64 = 5; return &x; }
+tests/reject/uncalled_body_is_checked.pd	21-24	docs/reference/features/feature-index.toml	d225dd41e15a	fn bad() { let v: S = S { x: 0 }; borrow_it(&mut v); }

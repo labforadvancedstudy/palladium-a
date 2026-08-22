@@ -29,17 +29,30 @@
 # the way `-> total=42 pass=39` did. A result with no checkable token is prose and the
 # checker rejects it.
 #
-# STALENESS. The receipts directory is deleted and rebuilt on every invocation, and it is
-# only ever read by the invocation that wrote it — the checker is called from here, with
-# this run's directory. A leftover directory cannot be picked up as evidence, because
-# nothing else passes --gate-receipts.
+# STALENESS IS STRUCTURAL, NOT CORRELATIONAL. The previous design wrote a run id into the
+# receipts directory and asked the checker to compare it with a caller-supplied string.
+# That is correlation dressed as freshness: the id sat NEXT TO the bytes it was meant to
+# authenticate, so anyone could
+#     check_doc_evidence.py --gate-receipts build_output/gate-receipts \
+#                           --gate-run-id "$(cat build_output/gate-receipts/RUN_ID)"
+# and validate a week-old run. Measured — it printed 10/10. The comment claiming only the
+# producing invocation knew the id was simply false.
+#
+# Receipts now live in a private `mktemp -d` that is REMOVED WHEN THIS SCRIPT EXITS, on
+# every path including a failure or an interrupt. There is nothing to replay because
+# nothing outlives the run, and the checker additionally refuses a receipts directory
+# inside the repository, so one cannot be committed and pointed at. The same change
+# removes a race: every invocation used to share build_output/gate-receipts, so two
+# concurrent runs would tear each other's RUN_ID, truncate each other's receipts and
+# interleave index.tsv — one failing spuriously while the other validated mixed files.
 #
 # Usage: bash scripts/gate-receipts.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
-OUT=build_output/gate-receipts
+OUT=$(mktemp -d "${TMPDIR:-/tmp}/palladium-gate-receipts.XXXXXX") || exit 2
+trap 'rm -rf "$OUT"' EXIT INT TERM
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 
 # A cited command is A STRING FROM A DOCUMENT, and it used to be checked by PREFIX and
@@ -48,16 +61,39 @@ GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 # the shell. That is the same defect the `cmd:` executor exists to prevent, in the file
 # that validates it.
 #
-# Now: every character must come from a set that contains no shell syntax, the whole
-# string must match a fixed shape, and it is run as ARGV with no shell anywhere.
+# Now: every character must come from a set that contains no shell syntax, and the WORDS
+# must match an enumerated argv grammar. The intermediate version checked a PREFIX, which
+# is not a shape — `make `* accepted `make conformance CC=clang`, `make conformance -j 8`
+# and `make conformance --always-make`, each of which changes what the cited gate means
+# while still being spelled like the gate the document names.
+#
+# Adding a gate shape is a deliberate edit to this list, which is the point.
 allowed() {
   case "$1" in
     *[!A-Za-z0-9\ ._:=-]*) return 1 ;;   # anything outside this set, metacharacters included
   esac
-  case "$1" in
-    "make "[a-z0-9-]*)     return 0 ;;
-    "cargo build"*)        return 0 ;;
-    "cargo test"*)         return 0 ;;
+  local argv
+  read -ra argv <<< "$1"
+  case "${#argv[@]}:${argv[0]:-}" in
+    2:make)
+      # exactly one target, no options, no variable assignments
+      case "${argv[1]}" in
+        [a-z]*[!A-Za-z0-9-]*) return 1 ;;
+        [a-z]*) return 0 ;;
+      esac
+      return 1 ;;
+    3:cargo)
+      [ "${argv[1]}" = build ] && [ "${argv[2]}" = --release ] && return 0
+      return 1 ;;
+    5:cargo)
+      [ "${argv[1]}" = test ] || return 1
+      [ "${argv[2]}" = --release ] || return 1
+      [ "${argv[3]}" = --lib ] || return 1
+      case "${argv[4]}" in
+        *[!A-Za-z0-9_:]*) return 1 ;;
+        ?*) return 0 ;;
+      esac
+      return 1 ;;
   esac
   return 1
 }
@@ -71,14 +107,6 @@ run_cited() {   # run_cited <command-string> <output-file>
   "${argv[@]}" > "$2" 2>&1
 }
 
-rm -rf "$OUT" || exit 2
-mkdir -p "$OUT" || exit 2
-
-# A fresh id per invocation, written beside the receipts and passed to the checker, so a
-# receipt directory left behind by an earlier run cannot satisfy this one. Only the
-# invocation that wrote these files knows the id.
-RUN_ID="$(date -u +%Y%m%dT%H%M%S)-$$-${RANDOM:-0}${RANDOM:-0}"
-printf '%s\n' "$RUN_ID" > "$OUT/RUN_ID"
 
 # `mapfile` is bash 4; macOS ships bash 3.2 and every other script here reads with a
 # while loop for exactly that reason. A gate that only runs on the maintainer's shell is
@@ -109,7 +137,10 @@ for cmd in "${COMMANDS[@]}"; do
     failures=$((failures+1))
     continue
   fi
-  slug="receipt_$(printf '%s' "$cmd" | tr -c 'A-Za-z0-9' '_').out"
+  # Indexed, not transliterated: `tr -c 'A-Za-z0-9' '_'` is lossy, so two distinct
+  # allowed commands could map to one filename and silently overwrite each other's
+  # output — one gate's receipt validating another gate's claim.
+  slug="receipt_$(printf '%03d' "$n").out"
   # Combined stream: a gate's verdict banner may go to either, and the receipt is the
   # whole of what it said.
   run_cited "$cmd" "$OUT/$slug"
@@ -133,8 +164,7 @@ fi
 
 echo
 echo "validating every gate: result against the output above"
-python3 scripts/check_doc_evidence.py --index-only \
-        --gate-receipts "$OUT" --gate-run-id "$RUN_ID"
+python3 scripts/check_doc_evidence.py --index-only --gate-receipts "$OUT"
 rc=$?
 echo "=============================================="
 if [ "$rc" -eq 0 ]; then
