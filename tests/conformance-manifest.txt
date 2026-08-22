@@ -95,6 +95,44 @@ tests/projects/hello_pdm/tests/test_simple.pd	run	-	expected	-	-
 tests/regression/array_binding_scope.pd	run	-	expected	-	-
 tests/regression/array_reference_params.pd	run	-	expected	-	-
 tests/regression/for_over_array_param.pd	run	-	expected	-	-
+tests/regression/array_param_mut_write.pd	run	-	expected	-	-
+tests/regression/param_reused_after_call.pd	run	-	expected	-	-
+tests/regression/lifetimes_uninferred.pd	run	-	expected	-	-
+
+# tests/reject/ -- NEGATIVE TESTS. Each of these MUST be refused, and that is
+# correct behaviour, so they are owed to no milestone and counted as coverage.
+#
+# They were all prose until 2026-08-22: `cmd: pdc compile '<a whole program>'`
+# strings in docs/reference/features/feature-index.toml, whose commands no gate
+# ever ran. Executing them there would have given this repository two engines
+# that can disagree about whether a program is rejected, and a corpus of programs
+# in nobody's closed inventory -- unable to go MISSING, unable to be UNDECLARED.
+# So they moved here, where the runner already owns that question, and the index
+# now cites them as `conformance: <path> reject`.
+#
+# Two of them arrived FALSE. array_param_write_byvalue and mut_borrow_of_immutable
+# were recorded as accepted-and-miscompiled ("prints 99, no diagnostic";
+# "prints 77 -- an immutable local mutated with no diagnostic"); run, both are
+# refused. The claims had gone stale behind a check that only looked at the
+# shape of the string.
+#
+# Fingerprints deliberately omit line/column. A diagnostic's position moves when
+# a fixture's comment header is edited, and an expectation that breaks on a
+# comment edit trains people to rewrite expectations.
+tests/reject/array_param_write_byvalue.pd	reject	compile	cannot write to `a`: it is a by-value array parameter	-	OPEN DECISION N12.1: C decays array parameters to pointers, so a write through a by-value `[T; N]` would reach the caller either way; codegen refuses rather than guess which semantics the language will pick
+tests/reject/async_fn.pd	reject	compile	Type mismatch: expected Future<Int>, found Int	-	`async fn` lexes and parses, then the declared return type is rewritten to Future<T> and the body no longer matches it; the spec's position is that there is no async keyword at all
+tests/reject/closure_literal.pd	reject	compile	Expected expression, but found '|'	-	no Closure/Lambda node exists in src/ast/ or src/parser/, so `|` starts nothing in expression position
+tests/reject/extern_block.pd	reject	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	no `extern` block, so no foreign symbol can be named; the generated code is C, so the ABI is C by construction but there is no syntax to reach it
+tests/reject/generic_bound.pd	reject	compile	Expected '>' (Expected '>' after generic parameters), but found ':'	-	generic parameter lists accept bare names only; the `:` that introduces a trait bound ends the list
+tests/reject/loop_keyword.pd	reject	compile	Expected ';' (Expected ';' after expression), but found '{'	-	`loop` lexes as an identifier, so `loop { }` parses as an expression statement and the `{` is where a `;` was expected; write `while true`
+tests/reject/mut_borrow_of_immutable.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	feature-index.toml recorded this exact program as accepted and mutating an immutable local with no diagnostic; the borrow checker refuses it and names the repair
+tests/reject/ref_parameter.pd	reject	compile	Unexpected token: expected ')' (Expected ')'), found identifier 'String'	-	the spec writes a shared borrow `ref T` (N9); the implemented spelling is Rust's &/&mut, so `ref` is not a keyword and the parser sees an identifier where a type belongs
+tests/reject/total_attribute.pd	reject	compile	Unexpected character '#'	-	the totality surface is attributes, and the blocker is LEXICAL: there is no `#` token, so #[total] fails one level below the parser
+tests/reject/try_block.pd	reject	compile	Unknown struct type: try	-	`try` is not a keyword, so `try { }` is read as a struct literal for an undeclared struct; the diagnostic names the misreading, which is what a user actually sees
+tests/reject/uncalled_body_is_checked.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	PAIRED with tests/regression/lifetimes_uninferred.pd: proves the borrow checker reads the body of a function nothing calls, so its partner compiling is a statement about lifetimes and not about dead code being skipped
+tests/reject/const_generic_param.pd	reject	compile	Type mismatch: expected [Int; N], found [Int; 3]	-	const generic parameters parse (src/parser/mod.rs:58-60) and are never monomorphised, so N reaches typeck as a name; codegen is no better and emits the parameter name verbatim into C
+tests/reject/question_mark_operator.pd	reject	compile	the `?` operator is not implemented	-	D5's fix: `?` used to typecheck and then emit C referring to a struct Result layout codegen never defines, so the failure surfaced in gcc; it is refused by name before any C exists
+tests/reject/macro_invocation_bracket.pd	reject	compile	Expected '(' (Expected '(' after macro name!), but found '['	-	the macro parser accepts one call shape: vec![...] does not parse, so the registered vec! builtin is reachable only as vec!(...)
 
 # tests/stdlib/ — drivers for the language surface and the builtins a standard
 # library would rest on. stdlib/ itself has no rows here: 0 of its 21 files

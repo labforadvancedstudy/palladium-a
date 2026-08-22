@@ -1,0 +1,9 @@
+// NEGATIVE TEST -- `try { ... }` does not exist.
+//
+// `try` is not a keyword, so it lexes as an identifier and `try { }` is parsed
+// as a struct literal for a struct nobody declared. The diagnostic names the
+// misreading rather than the missing feature, which is why this is pinned: it
+// is the observable behaviour a user actually gets.
+fn main() {
+    try { }
+}

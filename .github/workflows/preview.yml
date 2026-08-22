@@ -25,6 +25,13 @@ jobs:
       tag: ${{ steps.id.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # scripts/test-doc-evidence-coverage.sh reconciles the files this branch
+          # changed against scripts/doc-evidence-fixes.tsv, and needs a base commit to
+          # do it. A default checkout is shallow: no main ref, no HEAD^, so the
+          # reconciliation would report NOT APPLICABLE on the one workflow that
+          # certifies. Full history is what makes that check real here.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -40,6 +47,40 @@ jobs:
 
       - name: Documentation snippets
         run: bash scripts/check-docs.sh docs README.md
+
+      # These three had never run in CI. The job invoked check-docs.sh directly rather
+      # than `make check-docs`, so it skipped check-doc-evidence entirely — which is
+      # where every `cmd:` item is executed and every `gate:` outcome is checked against
+      # a receipt. Cheapest first: the probe proves the gate can still fail, the gate
+      # then runs, and the receipts runner re-runs the cited gates last.
+      - name: Documentation evidence
+        run: bash scripts/check-doc-evidence.sh
+
+      - name: Gate receipts
+        run: bash scripts/gate-receipts.sh
+
+      # After the receipts, not before. The probe used to read whatever a previous
+      # target had left in build_output/, so on a clean checkout it failed — and it
+      # passed locally only because an earlier manual run's output was still there.
+      # It now mints its own receipts and is order-independent; the order is fixed
+      # here anyway, because a certifying path should not depend on that being true.
+      - name: Evidence gate probe (must be able to go red)
+        run: bash scripts/test-doc-evidence.sh
+
+      # Proves the probe above is not a suite of vacuous assertions: each fix is
+      # reverted in turn and the controls must notice. Needs a clean checkout of the
+      # file it mutates, which CI always has and a working tree often does not.
+      # THIS WORKFLOW PASSES NO BASE, and cannot: scripts/doc-evidence-fixes.tsv records
+      # the base it was built against and applies only where HEAD's merge-base with main
+      # is that base. This job runs on pushes to main, where the answer is
+      # `not-applicable why=head-is-on-main` — no base is needed, and supplying one there
+      # is an error rather than a way in. What runs here, and everywhere, is the control
+      # closure. (The plumbing that used to sit here computed github.event.before for a
+      # design that no longer exists, and survived three reported removals because this
+      # script's restore trap kept reverting the edit; scripts/test-doc-evidence.sh now
+      # carries a control that fails if it comes back.)
+      - name: Evidence gate probe coverage
+        run: bash scripts/test-doc-evidence-coverage.sh
 
       - id: id
         run: echo "tag=preview-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"

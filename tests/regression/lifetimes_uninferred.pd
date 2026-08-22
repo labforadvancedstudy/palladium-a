@@ -1,0 +1,34 @@
+// LIFETIMES ARE NOT INFERRED, AND NOT CHECKED. Behavioural half of a pair with
+// tests/reject/uncalled_body_is_checked.pd.
+//
+// `dangling` returns a reference to a local that dies at the closing brace. It
+// is the canonical lifetime error -- the first thing any lifetime analysis
+// rejects -- and this file compiles, links and runs.
+//
+// The row this fixture serves used to argue the point from two identifier
+// spellings: `grep -rn 'region\|Region' src/` is empty, therefore nothing could
+// infer a lifetime. That does not follow, and it was written in the same row
+// that had just recorded 83 real readers of lifetime_params. Absence of a name
+// is not absence of a behaviour. This is the behaviour.
+//
+// WHY main() DOES NOT CALL IT
+// Calling it dereferences a dead stack slot. Measured, it printed 8261746944
+// and exited 0; recording that in a transcript would bless undefined behaviour
+// as expected output, which is the failure tests/stdlib/ exists to prevent.
+// What is asserted here is that THE FILE COMPILES -- that no phase refused it.
+// The companion reject fixture proves the refusal machinery does run over
+// uncalled bodies, so "it compiles" is a statement about lifetimes and not
+// about dead-code elimination.
+//
+// PROMOTION: when lifetimes are checked, this file stops compiling, conformance
+// reports COMPILE_FAIL, and the row moves to tests/reject/ with the diagnostic
+// pinned. Do not "fix" this file; the gap is in the compiler.
+fn dangling() -> &i64 {
+    let x: i64 = 5;
+    return &x;
+}
+
+fn main() {
+    print("lifetimes_uninferred_fixture");
+    print("dangling() is defined above and deliberately not called");
+}

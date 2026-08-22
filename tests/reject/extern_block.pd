@@ -1,0 +1,11 @@
+// NEGATIVE TEST -- there is no `extern` block, so no C or Rust symbol can be
+// imported.
+//
+// The generated code IS C and gcc links it, so the ABI is C by construction;
+// what is missing is any syntax for naming a foreign symbol. `extern` is not a
+// keyword, so the item parser sees a token that starts no item it knows.
+extern "C" {
+    fn puts(s: String) -> i64;
+}
+
+fn main() {}
