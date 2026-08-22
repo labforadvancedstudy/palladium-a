@@ -77,16 +77,31 @@ pub struct CodeGenerator {
     array_bindings: std::collections::HashMap<String, ArrayBinding>,
     /// Map of parameter names to their mutability (for current function)
     mutable_params: std::collections::HashMap<String, bool>,
-    /// Does the function being generated have C return type `void`?
+    /// When the function being generated returns UNIT in Palladium, the C
+    /// return statement that must replace a value-bearing one — and `None`
+    /// when it genuinely returns a value.
     ///
-    /// `return <expression>;` in a void function is a C constraint violation
-    /// (C11 6.8.6.4p1) that gcc and clang accept as an extension. It was
-    /// reachable: the parser lowers a tail expression to `Stmt::Return` for any
-    /// annotated return type, and `-> ()` is an annotated return type, so
-    /// `fn f() -> () { print_int(7) }` emitted `return __pd_print_int(7);` while
-    /// the identical `fn f() { print_int(7) }` emitted `__pd_print_int(7);`.
-    /// Set per function alongside `mutable_params`.
-    current_fn_is_void: bool,
+    /// It is the statement rather than a bool because C `main` is the exception
+    /// and a bool made it a NAME-KEYED one. `Type::Unit` maps to C `void`
+    /// (`type_to_c`), but `main` is then rewritten to `int`
+    /// (`function_signature`, the `actual_return_type` special case), so the
+    /// right replacement differs: `return;` for an ordinary unit function,
+    /// `return 0;` for `main`. The first version of this field was
+    /// `current_fn_is_void: bool` set with `&& name != "main"`, which excluded
+    /// the one function every program has — and because C `main` returns `int`,
+    /// gcc does NOT extend the courtesy it extends to `void`:
+    ///
+    /// ```text
+    /// fn main() -> () { print_int(7) }
+    /// error: returning 'void' from a function with incompatible result
+    ///        type 'int'
+    /// ```
+    ///
+    /// A hard failure, in the defect that had just been closed, preserved by a
+    /// name-keyed exception. Set per function alongside `mutable_params`, and
+    /// also in `generate_async_function_with_name`, which is the other path
+    /// that feeds `generate_statement`.
+    current_fn_unit_return: Option<&'static str>,
     /// Imported modules
     imported_modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
     /// Generic function instantiations to generate
@@ -122,7 +137,7 @@ impl CodeGenerator {
         // Pre-allocate string capacity for better performance
         let initial_capacity = 64 * 1024; // 64KB initial capacity
         Ok(Self {
-            current_fn_is_void: false,
+            current_fn_unit_return: None,
             module_name: module_name.to_string(),
             output: String::with_capacity(initial_capacity),
             functions: std::collections::HashMap::new(),
@@ -2041,8 +2056,18 @@ impl CodeGenerator {
         self.array_bindings.clear();
         // BOTH spellings of the unit type, which is the whole point: `None` and
         // `Some(Type::Unit)` are one return type and must generate one shape.
-        self.current_fn_is_void =
-            matches!(func.return_type, None | Some(Type::Unit)) && name != "main";
+        // And `main` is INSIDE the rule, not an exception to it — it just needs
+        // a different replacement, because its C type is `int`.
+        self.current_fn_unit_return = if matches!(func.return_type, None | Some(Type::Unit))
+        {
+            if name == "main" {
+                Some("    return 0;\n")
+            } else {
+                Some("    return;\n")
+            }
+        } else {
+            None
+        };
 
         for param in &func.params {
             // Track if parameter is a pointer (either mutable or reference)
@@ -2204,19 +2229,22 @@ impl CodeGenerator {
                 self.output.push_str(";\n");
             }
             Stmt::Return(None) => {
-                self.output.push_str("    return;\n");
+                // `return;` from C `main` is the same constraint violation one
+                // step down: measured, `fn main() { return; }` emitted `return;`
+                // from `int main`. The unit replacement knows which is right.
+                self.output
+                    .push_str(self.current_fn_unit_return.unwrap_or("    return;\n"));
             }
             Stmt::Return(Some(expr)) => {
-                if self.current_fn_is_void {
+                if let Some(unit_return) = self.current_fn_unit_return {
                     // The expression is still EVALUATED — it is there for its
                     // effect, and dropping it would change what the program
                     // does — but its value is not returned, because this
-                    // function returns nothing. `return <expr>;` here is a C
-                    // constraint violation that compilers merely tolerate.
+                    // function returns nothing in Palladium.
                     self.output.push_str("    ");
                     self.generate_expression(expr)?;
                     self.output.push_str(";\n");
-                    self.output.push_str("    return;\n");
+                    self.output.push_str(unit_return);
                 } else {
                     self.output.push_str("    return ");
                     self.generate_expression(expr)?;
@@ -3136,7 +3164,20 @@ impl CodeGenerator {
         self.output.push_str("    if (future->state == 0) {\n");
         self.output.push_str("        future->state = 1;\n");
 
-        // Generate the actual function body
+        // Generate the actual function body.
+        //
+        // THIS PATH ALSO FEEDS `generate_statement`, so it must set the unit
+        // replacement or it becomes a second, path-keyed exception of exactly
+        // the shape `name != "main"` was. An async function's poll body returns
+        // `int` (the readiness flag), so a Palladium `return <expr>;` inside it
+        // must not become C `return <expr>;`. Async IS reachable: measured,
+        // `async fn f() { print_int(1) }` compiles and links today.
+        self.current_fn_unit_return = if matches!(func.return_type, None | Some(Type::Unit))
+        {
+            Some("        return 1; // Ready\n")
+        } else {
+            None
+        };
         self.output
             .push_str("        // Execute async function body\n");
         for stmt in &func.body {

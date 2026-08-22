@@ -83,6 +83,7 @@ tests/integration/test_break_simple.pd	run	-	expected	-	-
 tests/integration/test_optimizations.pd	run	-	expected	-	-
 tests/misc/test1.pd	run	-	expected	-	-
 tests/misc/test_llvm_example.pd	run	-	expected	-	-
+tests/misc/unit_return_spellings.pd	run	-	expected	-	-
 tests/misc/test_vec_i64.pd	run	-	expected	-	-
 tests/misc/test_vec_simple.pd	run	-	expected	-	-
 tests/projects/hello_pdm/package.pd	skip	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	package manifest; not Palladium source at all, so the parser rejects it outright

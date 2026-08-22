@@ -1059,6 +1059,58 @@ fn the_two_spellings_of_the_unit_return_type_generate_the_same_shape() {
         annotated
     );
 
+    // AND `main`, WHICH WAS A NAME-KEYED EXCEPTION TO THE FIX.
+    //
+    // `Type::Unit` maps to C `void`, but `main` is then rewritten to `int`, and
+    // the first version of the fix set its flag with `&& name != "main"` — so
+    // the one function every program has kept emitting
+    // `return <void expression>;`, now from a function returning `int`, which
+    // gcc REFUSES rather than tolerates:
+    //
+    //     error: returning 'void' from a function with incompatible result
+    //            type 'int'
+    //
+    // Both spellings of `main` must give the same shape, and it is `return 0;`
+    // because that is what C `main` returns.
+    let main_omitted = compile_to_c(
+        "fn main() { print_int(7) }\n",
+        "d3b_unit_main_omitted",
+    )
+    .expect("an omitted return type on main must compile");
+    let main_annotated = compile_to_c(
+        "fn main() -> () { print_int(7) }\n",
+        "d3b_unit_main_annotated",
+    )
+    .expect("`fn main() -> ()` must compile — it did not; gcc refused the C");
+    for (what, c) in [("main omitted", &main_omitted), ("main -> ()", &main_annotated)] {
+        assert!(
+            !c.contains("return __pd_print_int"),
+            "`{}` returns a void expression from `int main`, which gcc refuses \
+             outright:\n{}",
+            what,
+            c
+        );
+        assert!(
+            c.contains("    __pd_print_int(7);\n    return 0;\n"),
+            "`{}` must evaluate the tail and return 0 from C main:\n{}",
+            what,
+            c
+        );
+    }
+
+    // The same one step down: a bare `return;` written in a unit `main` was
+    // emitted as `return;` from `int main` — measured, three gcc errors.
+    let main_bare_return = compile_to_c(
+        "fn main() { return; }\n",
+        "d3b_unit_main_bare_return",
+    )
+    .expect("a bare return in main must compile");
+    assert!(
+        !main_bare_return.contains("    return;\n"),
+        "a bare `return;` from C `int main` is a constraint violation:\n{}",
+        main_bare_return
+    );
+
     // A NON-UNIT return type is untouched: its tail is still lowered to a
     // value-bearing return.
     let valued = compile_to_c(

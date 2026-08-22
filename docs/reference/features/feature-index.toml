@@ -82,12 +82,12 @@ description = "Whether a [T; N] parameter copies or aliases the caller's array. 
 spec = "../../specification/language-spec.md#n121-array-parameters-open-decision"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1066 Type::Array param lowered to a C array declarator, which decays to a pointer",
+  "src: src/codegen/mod.rs:1081 Type::Array param lowered to a C array declarator, which decays to a pointer",
   "cmd: pdc compile 'fn bump(mut a: [i64;3]) { a[0]=99; } fn main(){ let mut v:[i64;3]=[1,2,3]; bump(v); print_int(v[0]); }' -> generated C is `void bump(long long a[3])`; program prints 99",
   "cmd: pdc compile 'fn bump(a: [i64;3]) { a[0]=99; } ...' (no mut) -> compiles, links, prints 99, no diagnostic",
-  "src: src/codegen/mod.rs:1992 'Unsupported type in reference parameter' — &mut [T; N] does not compile at all",
+  "src: src/codegen/mod.rs:2007 'Unsupported type in reference parameter' — &mut [T; N] does not compile at all",
 ]
-note = "Marked unimplemented because no spelling copies. Under Option A (value semantics) this stays unimplemented and src/codegen/mod.rs:1066 is the gap. Under Option B (reference semantics) it becomes partial AT BEST, never implemented: Option B still needs a rule that does not exist — either the reference spellings are forbidden or &mut [T; N] becomes required for a written-through parameter — and current behaviour satisfies neither, permitting mutation through a bare non-mut array while rejecting &mut [T; N] outright. The specification states both options rather than picking silently; see language-spec.md N12.1 and A9.2."
+note = "Marked unimplemented because no spelling copies. Under Option A (value semantics) this stays unimplemented and src/codegen/mod.rs:1081 is the gap. Under Option B (reference semantics) it becomes partial AT BEST, never implemented: Option B still needs a rule that does not exist — either the reference spellings are forbidden or &mut [T; N] becomes required for a written-through parameter — and current behaviour satisfies neither, permitting mutation through a bare non-mut array while rejecting &mut [T; N] outright. The specification states both options rather than picking silently; see language-spec.md N12.1 and A9.2."
 
 [core_language.memory_management.borrow_checker]
 description = "Rust-compatible ownership: moves, borrows, no GC."
@@ -131,7 +131,7 @@ description = "Monomorphization-based generics, generic structs and enums, where
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1674 'Generic types in structs not yet supported'",
+  "src: src/codegen/mod.rs:1689 'Generic types in structs not yet supported'",
   "src: src/parser/mod.rs:2628-2638 all-uppercase name inside <...> reclassified as a const argument",
   "cmd: pdc compile 'fn f<T: Clone>(x: T) {} fn main(){}' -> error: expected '>' after generic parameters, found ':'",
   "conformance: tests/08_generics_basic.pd PASS (placeholder: only prints that generics are unimplemented)",
@@ -144,7 +144,7 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/parser/mod.rs:1218 fn parse_trait — traits do parse",
-  "src: src/codegen/mod.rs:1024 Item::Trait(_) => emits nothing",
+  "src: src/codegen/mod.rs:1039 Item::Trait(_) => emits nothing",
   "src: src/typeck/mod.rs:795-797 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
   "src: src/parser/mod.rs:1342 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd PASS (placeholder: only prints that traits are unimplemented)",
@@ -157,8 +157,8 @@ spec = "../../specification/language-spec.md#n4-types"
 implementation = "partial"
 evidence = [
   "src: src/parser/mod.rs:465-467 the const-parameter branch of parse_generic_params",
-  "src: src/codegen/mod.rs:980 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
-  "src: src/codegen/mod.rs:981 ArraySize::Expr(_) => \"0\".to_string()",
+  "src: src/codegen/mod.rs:803 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
+  "src: src/codegen/mod.rs:804 ArraySize::Expr(_) => \"0\".to_string()",
 ]
 note = "Neither case is monomorphised."
 
@@ -170,7 +170,7 @@ evidence = [
   "conformance: tests/06_pattern_matching.pd PASS",
   "src: src/ast/mod.rs:313 pub enum Pattern — three variants only",
   "src: src/typeck/mod.rs:1349 exhaustiveness runs only when the scrutinee is an enum",
-  "src: src/codegen/mod.rs:1967 match lowers to an if/else-if chain",
+  "src: src/codegen/mod.rs:1982 match lowers to an if/else-if chain",
 ]
 note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
 
@@ -182,7 +182,7 @@ evidence = [
   "conformance: tests/04_control_flow_for.pd PASS",
   "conformance: tests/04_control_flow_while.pd PASS",
   "cmd: pdc compile 'fn main() { loop { break; } }' -> error: expected ';' after expression, found '{'",
-  "src: src/codegen/mod.rs:1933 for-over-array emits sizeof(...) on a decayed pointer",
+  "src: src/codegen/mod.rs:1948 for-over-array emits sizeof(...) on a decayed pointer",
 ]
 
 [core_language.control_flow.conditionals]
@@ -212,7 +212,7 @@ implementation = "partial"
 evidence = [
   "cmd: pdc compile 'fn add(a: i64, b: i64) -> i64 { a + b } fn main(){ print_int(add(2,3)); }' -> prints 5 (tail expression is lowered)",
   "cmd: pdc compile 'fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n-1)+fib(n-2) } } fn main(){ print_int(fib(10)); }' -> compiles clean, prints 8261746944; the answer is 55",
-  "src: src/codegen/mod.rs:1967 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return",
+  "src: src/codegen/mod.rs:1982 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return",
 ]
 note = "Defect D3 is half-fixed: a tail EXPRESSION becomes a return, a tail `if` does not, and the tail-`if` shape is the idiomatic one for a recursive function. CLAUDE.md:66 records D3 as fixed, which holds only for the expression case. The \"437 affected sites\" figure is an understatement — the heuristic behind it cannot see a function ending in the else block's brace."
 
@@ -252,8 +252,8 @@ description = "`?` for error propagation with early return."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
-  "src: src/codegen/mod.rs:1943-1944 emits a struct Result temporary — a layout codegen never defines",
-  "src: src/codegen/mod.rs:2596 the comment describing that layout",
+  "src: src/codegen/mod.rs:1958-1959 emits a struct Result temporary — a layout codegen never defines",
+  "src: src/codegen/mod.rs:2624 the comment describing that layout",
 ]
 note = "Silent breakage: it typechecks, and the failure surfaces in gcc."
 
@@ -284,7 +284,7 @@ description = "No await operator; the compiler places async boundaries."
 spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:2544-2549 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
+  "src: src/codegen/mod.rs:2572-2577 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
   "cmd: pdc compile 'async fn g() -> i64 { return 1; } fn main(){}' -> error: Type mismatch: expected Future<Int>, found Int",
   "conformance: tests/10_async_await.pd PASS (placeholder: only prints that async/await is unimplemented)",
 ]
@@ -505,7 +505,7 @@ spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
 implementation = "unimplemented"
 evidence = [
   "src: src/macros/mod.rs:41 vec![e] is registered here and expands to a 1-element array, not a growable vector",
-  "src: src/codegen/mod.rs:1674 'Generic types in structs not yet supported' — no generic container can exist",
+  "src: src/codegen/mod.rs:1689 'Generic types in structs not yet supported' — no generic container can exist",
 ]
 
 [ecosystem.std_library.io]

@@ -767,64 +767,82 @@ grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
 # (`cmd_calibrate` read a raw `Run.rc` and never looked at `capture_error`).
 # A rule whose scope excludes the location of its own defect is not a rule.
 #
-# IT USES PYTHON'S OWN PARSER. Two earlier versions were hand-rolled and each
-# was defeated by ordinary Python:
-#   * comparing line CONTENT with `grep -vxF` is set membership where accounting
-#     was meant — a new reader could DUPLICATE an approved line in another
-#     function and pass;
-#   * a regex over `(class|def)\s+NAME` with an indentation stack does not know
-#     `async def`, and dotted names collide between two same-named definitions,
-#     so an approved read could MOVE into a nested async function, or into
-#     another `def` of the same name, without changing its key.
+# THREE VERSIONS, AND WHAT EACH ONE MISSED:
+#   1. line CONTENT via `grep -vxF` — set membership where accounting was meant:
+#      a new reader could DUPLICATE an approved line elsewhere and pass.
+#   2. a regex over `(class|def)\s+NAME` with an indentation stack — it did not
+#      know `async def`, so a read could move into a nested async function.
+#   3. `ast` with a JOINED NAME PATH — better, but a name is not an identity:
+#      two `def classify` at the same level, or two sibling lambdas, produce the
+#      same key, so a ONE-FOR-ONE RELOCATION between them passes unchanged. That
+#      is precisely the property the key was introduced to prevent.
 #
-# `ast` is in the standard library, so there is no reason to model Python badly:
-# the scope path comes from the tree (FunctionDef, AsyncFunctionDef, ClassDef,
-# Lambda) and every occurrence carries its own (line, column). Same move as
-# replacing this repo's hand-written Rust module scanner with
-# `cargo test --list`: ask the language, do not re-implement it.
+# So each definition now carries an ORDINAL among its same-named siblings —
+# `classify#0`, `<lambda>#1` — which is a structural identity rather than a
+# name, and the table is keyed by it. And only `ast.Load` counts: matching bare
+# `ast.Attribute` certified constructor ASSIGNMENTS as reads, so replacing a
+# write with a read preserved the approved count.
+#
+# WHAT IT STILL DOES NOT SEE, stated rather than left to the next review: a read
+# moved WITHIN one function (into or out of a comprehension, or to another line)
+# keeps its key. That is a relocation that does not change which function may
+# see a raw status, which is the property being defended.
 python3 - >"$TMP/allow.out" 2>&1 <<'ALLOWPY'
 import ast, collections, pathlib, sys
 
 PRIVATE = ("_out", "_b", "_rc")
 
-# (scope path, attribute, occurrences). Coordinates are reported on failure but
-# are deliberately NOT part of the key: moving a line within its own function is
-# not a change of meaning, adding or relocating a reader is.
+# (scope path with sibling ordinals, attribute) -> exact number of LOADS.
 ALLOWED = collections.Counter({
-    ("Withheld.__init__", "_b"): 1,
-    ("Withheld.spill", "_b"): 3,
-    ("Run.__init__", "_rc"): 1,
-    ("Run.__init__", "_out"): 1,
-    ("Run.signal_number", "_rc"): 4,
-    ("Run.describe", "_rc"): 2,
-    ("classify", "_rc"): 4,
-    ("classify", "_out"): 3,
-    ("report_malfunction", "_b"): 1,
+    ("Withheld#0.__init__#0", "_b"): 0,        # the assignment is a Store
+    ("Withheld#0.spill#0", "_b"): 3,
+    ("Run#0.__init__#0", "_rc"): 0,            # Store
+    ("Run#0.__init__#0", "_out"): 0,           # Store
+    ("Run#0.signal_number#0", "_rc"): 4,
+    ("Run#0.describe#0", "_rc"): 2,
+    ("classify#0", "_rc"): 4,
+    ("classify#0", "_out"): 3,
+    ("report_malfunction#0", "_b"): 1,
 })
+ALLOWED = collections.Counter({k: v for k, v in ALLOWED.items() if v})
 
 src = pathlib.Path("scripts/gate_probe.py").read_text()
 tree = ast.parse(src)
 
 found = collections.Counter()
 where = collections.defaultdict(list)
+SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 
 
-def walk(node, path):
+def scope_name(node, counts):
+    base = node.name if not isinstance(node, ast.Lambda) else "<lambda>"
+    n = counts[base]
+    counts[base] += 1
+    return "%s#%d" % (base, n)
+
+
+def walk(node, path, counts):
+    """`counts` disambiguates same-named siblings IN THIS SCOPE."""
     for child in ast.iter_child_nodes(node):
-        name = None
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            name = child.name
-        elif isinstance(child, ast.Lambda):
-            name = "<lambda>"
-        inner = path + [name] if name else path
-        if isinstance(child, ast.Attribute) and child.attr in PRIVATE:
-            key = (".".join(inner) or "<module>", child.attr)
+        if isinstance(child, ast.Attribute) and child.attr in PRIVATE \
+                and isinstance(child.ctx, ast.Load):
+            key = (".".join(path) or "<module>", child.attr)
             found[key] += 1
             where[key].append("%d:%d" % (child.lineno, child.col_offset))
-        walk(child, inner)
+        if isinstance(child, SCOPES):
+            # Decorators and argument defaults are evaluated in the ENCLOSING
+            # scope, so they are walked before the new one is entered.
+            for outer in list(getattr(child, "decorator_list", [])) \
+                    + list(getattr(child.args, "defaults", []) if hasattr(child, "args") else []):
+                walk(ast.Module(body=[ast.Expr(value=outer)], type_ignores=[]),
+                     path, counts)
+            walk(child, path + [scope_name(child, counts)],
+                 collections.Counter())
+        else:
+            walk(child, path, counts)
 
 
-walk(tree, [])
+walk(tree, [], collections.Counter())
 
 problems = []
 for key in sorted(set(ALLOWED) | set(found)):
@@ -833,19 +851,19 @@ for key in sorted(set(ALLOWED) | set(found)):
         continue
     at = ", ".join(where.get(key, [])) or "nowhere"
     if want == 0:
-        problems.append("UNAPPROVED read of .%s in %s (x%d, at %s)"
+        problems.append("UNAPPROVED load of .%s in %s (x%d, at %s)"
                         % (key[1], key[0], got, at))
     else:
-        problems.append("expected %d read(s) of .%s in %s, found %d (at %s)"
+        problems.append("expected %d load(s) of .%s in %s, found %d (at %s)"
                         % (want, key[1], key[0], got, at))
 print("\n".join(problems) if problems else "ok")
 sys.exit(1 if problems else 0)
 ALLOWPY
 if [ $? -eq 0 ]; then
-  printf '  %sok%s   every private-slot read inside gate_probe.py matches the reviewed (AST scope, attribute, count) table\n' "$GREEN" "$NC"
+  printf '  %sok%s   every private-slot LOAD inside gate_probe.py matches the reviewed (scope#ordinal, attribute, count) table\n' "$GREEN" "$NC"
   pass=$((pass+1))
 else
-  printf '  %sFAIL%s the private-slot reads inside gate_probe.py no longer match the table:\n' "$RED" "$NC"
+  printf '  %sFAIL%s the private-slot loads inside gate_probe.py no longer match the table:\n' "$RED" "$NC"
   sed 's/^/        /' "$TMP/allow.out"
   fail=$((fail+1))
 fi
