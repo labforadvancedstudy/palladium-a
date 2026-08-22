@@ -254,7 +254,7 @@ over the file and should be re-derived, not adjusted.)*
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| `thesis` | 25 = 22 scored + `D1-01` (the aggregate) + GI-11 and GI-12 (preconditions) | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
+| `thesis` | 26 = 23 scored + `D1-01` (the aggregate) + GI-11 and GI-12 (preconditions) | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
 | `1.0` | 161 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
@@ -342,10 +342,10 @@ Measured at this revision; every row names the command that produced it.
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=48 untranscribed=0 vacuous=7 xfail=1 reject=15 skip=2 failures=0` over 73 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one) | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 256 unique cases, **checked** and digest-pinned; 70 exercise the fault-injection branch, **16 adversaries on a generated label → score scoreboard (above) that rejects duplicate labels**, and **14 cases assert the exact failing row set and the stage (`original`/`mutation`) each row failed at**. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 243 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
-| Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
-| Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
+| Thesis gate itself | 291 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 224 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
+| Documentation | every snippet compiles; 404 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
+| Rust tests | 746 pass, **0 fail**, 55 ignored (534 lib + 212 integration, 22 binaries) | `make test-honest` |
+| Declared failures | 54 `xfail` + 1 `slow`, none passing; 54 of 54 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, and the registry is now exactly N14's normative 34 | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
 | 1.0 requirements | 34 satisfied · 151 owed · 8 blocked, over 193 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
@@ -391,7 +391,7 @@ by the requirement manifest; this is the reading list.
 | Block comments do not nest, which N2 requires | [F10](#f10-block-comments-do-not-nest-and-nothing-said-so) | N2-08 |
 | `a * -b` does not parse | [A6.3](../specification/language-spec.md#a63-expression-forms) | N5-16 |
 | Nested arrays work in neither locals nor parameters | [A5](../specification/language-spec.md#a5-types) | N4-10 |
-| Six builtins that cannot compile — the handle representation split in two | [A8](../specification/language-spec.md#a8-builtins) | N14-01, N14-03 |
+| Two normative builtins that cannot compile (`file_flush`, `file_seek`) — the handle representation split in two — plus four unreachable `__pd_*_ex` wrappers still emitted into every program | [A8](../specification/language-spec.md#a8-builtins) | N14-01, N14-03 |
 | `pub` on an enum discarded; `dbg!` undefined; `println!` takes one argument; no hygiene | [A4.6](../specification/language-spec.md#a46-macros) | N3-05, N3-12, N3-13 |
 | `Foo<T>` is parsed as a *const* generic argument; const generics are not monomorphised | [A5](../specification/language-spec.md#a5-types) | N10-03, N4-21 |
 | Traits emit no C; a trait method with a `self` receiver is a parse error | [A4.4](../specification/language-spec.md#a44-traits) | N10-06, N10-09 |
@@ -414,8 +414,14 @@ m5-exit: build
 
 **`scripts/requirements.py` now exists** (it was specified here as `requirements.sh`; it is the
 same contract with the parsing in Python, following `thesis-exit.sh` → `thesis_exit.py`) **and
-implements steps 1, 2 and 5 of the five below.** `make m2-exit` runs it as inventory four, and its
-exit code is three-valued for `thesis-exit`'s reason: 0 CLEAR, 1 OWED, **2 NO_VERDICT**. Steps 3
+implements steps 1, 2 and 5 of the five below, plus two closures the specification did not name:
+the manifest's own MANDATORY-COLUMN rule (every one of the nine, `-` being how a row says N/A) and
+a PINNED OWNERSHIP ROSTER, id by id.** The roster is why step 2 is worth anything: a row deleted or
+retagged to `-` leaves every milestone filter, and the three declared-failure inventories stay
+clean because a requirement nobody started produces no red test. `EXPECTED_THESIS_CONTRACT` in the
+thesis gate pins the 26 `thesis` rows and does not pin the milestone column, so all 46 M2 rows were
+pinned by nothing. `make m2-exit` runs the reader as inventory four, and its exit code is
+three-valued for `thesis-exit`'s reason: 0 CLEAR, 1 OWED, **2 NO_VERDICT**. Steps 3
 and 4 are NOT implemented, are named in the output of every run, and are why a milestone whose rows
 are all `satisfied` exits 2 rather than 0 — "no row says owed" is a statement about a status
 column, and a gate that returned 0 for it would be the M1 defect in a new inventory.
@@ -438,18 +444,24 @@ edit to the manifest, and the pin's own validator catches a defect in the pin.)
 4. Reconcile both debt inventories, in both directions. The conformance half is checkable today, by
    path. The Rust half needs a `req: <id>` tag in each `#[ignore]` reason.
 5. `make test-requirements-runner` plants a row for the milestone under test and proves the runner
-   goes RED for it. A filter nobody has watched fail is not a filter — which is why
+   goes RED for it — **and proves the exit target still reads every inventory, by running it**. A filter nobody has watched fail is not a filter — which is why
    `make test-thesis-runner` already exists for the thesis gate and caught a real defect in it
    ([F12](#f12-the-thesis-gates-first-lexer-could-not-fail-on-what-it-checked)).
-   **Done (GI-09):** 29 cases in `scripts/test-requirements-runner.sh`, and it grew a second half
+   **Done (GI-09):** 42 cases in `scripts/test-requirements-runner.sh`, and it grew a second half
    this specification did not ask for. Half one is the filter: planted `owed`, planted `blocked`,
    another milestone's row, a milestone with no rows, an unset and a typo'd `REQ_MILESTONE`, and
-   every structural check of step 1. Half two is the **target**: `make -n m2-exit` must still name
-   all four inventories against M2 and must not redirect the manifest. Without it, deleting one
-   line of the exit recipe is invisible — the dropped inventory simply stops being consulted and
-   every other gate in the repo stays green. Both halves are re-proved by reverting: removing
-   inventory four from `m2-exit` fails the runner's own self-test, and removing
-   `test-requirements-runner` from `gates` fails case 26.
+   every structural check of step 1. Half two is the **target, observed by its effects**:
+   `make m2-exit` is RUN, and each inventory must have PRODUCED something — with every number
+   recomputed in the test, independently, from the same source that inventory reads.
+   *(It was `make -n m2-exit | grep <command text>` for one round, and that was the `@true` rung
+   this repository has already climbed once: a recipe of `@echo 'REQ_MILESTONE=M2 python3
+   scripts/requirements.py'` satisfied every assertion in it while reading no inventory at all.
+   Re-proved by reverting — replacing inventory four with exactly that echo now fails four cases,
+   and replacing inventory one fails one.)*
+   The aggregation has its own driver too, because the real tree cannot exercise it: no inventory
+   returns NO_VERDICT today, so inverting the lattice changed nothing about a real run. It is
+   driven over all 81 four-inventory combinations plus order independence
+   (`scripts/m2-exit.sh --self-test`), and inverting it fails 51 of 82.
 
 **Why an aggregate and not an owner filter.** `CONFORMANCE_FORBID_OWNER` clears only *tagged
 proxies*: it proves no declared failure still names the milestone. It cannot prove the feature
@@ -542,9 +554,9 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
    the thesis gate's second witness at M9.
 8. **Gate integrity** (GI-06, GI-08, GI-09). **GI-06 and GI-09 CLOSED; GI-08 STILL OWED, and the
    residual is stated below rather than glossed.**
-   GI-06: `make gates` (`Makefile:556`) runs `test-honest` (`Makefile:388-393`), so a non-ignored
+   GI-06: `make gates` (`Makefile:553`) runs `test-honest` (`Makefile:385-390`), so a non-ignored
    compiler regression can no longer coexist with a green gate.
-   **`make m2-exit` now exists** (`Makefile:312-368`), and before this it did not: the Exit line
+   **`make m2-exit` now exists** (`Makefile:312-365`), and before this it did not: the Exit line
    below named a target that `grep "^m2-exit:" Makefile` could not find, so M2 had no exit
    criterion at all. That is exactly how v0.3.0 shipped under M1's name while `make m1-exit` was
    RED. It reads **four** inventories — `m1-exit`'s three with the owner changed to M2, plus
@@ -566,6 +578,16 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
    until items 1–7 land, so the row is measured by neither thing today.
    **`m2-exit` is RED and that is the correct state.** It reports 43 rows `OWED_TO_M2` — items 1–7
    of this list — and a green `m2-exit` before M2 is done would be the defect.
+   **Its verdict is three-valued and Make cannot carry it**, so the aggregation lives in
+   `scripts/m2-exit.sh` and the verdict is published on the last line of stdout as
+   `M2_EXIT_RESULT <code> <name>` — the contract `scripts/thesis-exit.sh` already defines, reused
+   rather than re-invented. *(The first version aggregated with `|| rc=1` inside the recipe.
+   Measured: `REQ_MILESTONE=M2 python3 scripts/requirements.py` exited **1 (OWED)** while
+   `make m2-exit` exited **2**, which in this repository's own vocabulary says NO_VERDICT. Not
+   lossy — wrong: a measurement reported as an abstention. `m1-exit` collapses the same way and is
+   deliberately NOT changed here; it is 0 today so the ambiguity is dormant, and giving a shipped
+   milestone's exit criterion a new contract is a decision about M1's ledger, not a side-effect of
+   building M2's.)*
    **What it does NOT yet do**: steps 3 and 4 of the specification below — resolve each evidence
    locator and *run* it, and reconcile the Rust debt inventory by `req:` id. Both are named in the
    output of every run, and a milestone whose rows are all `satisfied` therefore exits **2
@@ -586,7 +608,7 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
    grew the list independently and the conflict was resolved as a union. Both relocations were
    re-derived from content; neither was `--update`d onto whatever occupied the old line.)*
 
-**Exit**: `make m2-exit` (`Makefile:312-368`) — four inventories, RED until items 1–7 land.
+**Exit**: `make m2-exit` (`Makefile:312-365`) — four inventories, RED until items 1–7 land.
 
 ## M3 — Traits and generics (v0.5.0)
 

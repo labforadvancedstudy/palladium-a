@@ -1223,8 +1223,11 @@ mod tests {
     //
     // A built-in whose C wrapper disagrees with this table type-checks, borrow-
     // checks, and then dies in gcc — which is the same D2 drift class, one layer
-    // below the compiler. Six built-ins are in exactly that state today; see
-    // `PRELUDE_TYPE_MISMATCHES`.
+    // below the compiler. TWO built-ins are in exactly that state today,
+    // `file_flush` and `file_seek`; see `PRELUDE_TYPE_MISMATCHES`. It was six,
+    // and the four `*_ex` names left this table rather than being repaired —
+    // their wrappers are still emitted and still contradictory, and nothing here
+    // looks at them any more, because everything here iterates `BUILTINS`.
 
     /// The C shape of a value, recorded finely enough to see a lossy conversion.
     ///

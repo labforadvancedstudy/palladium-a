@@ -345,27 +345,24 @@ m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1
 # All four run even when an earlier one is red, for m1-exit's reason: stopping
 # at the first failure reports part of the debt and costs a round trip to
 # discover the rest.
+#
+# THE AGGREGATION IS IN A SCRIPT AND NOT HERE, AND THAT WAS A DEFECT FIX. This
+# recipe used to be four `|| rc=1` lines, which folded a NO_VERDICT into OWED;
+# then Make folded every nonzero recipe status to 2. Measured on that version:
+# `REQ_MILESTONE=M2 python3 scripts/requirements.py` exited 1 (OWED) while `make
+# m2-exit` exited 2, which in this repo's vocabulary says NO_VERDICT. Not lossy —
+# WRONG. scripts/m2-exit.sh keeps the three states and prints the verdict on its
+# last line as `M2_EXIT_RESULT <code> <name>`, which survives Make.
+#
+# `m1-exit` HAS THE SAME AMBIGUITY AND IS DELIBERATELY NOT CHANGED HERE. It also
+# collapses to 2 when red, so "M1 owes rows" and "an inventory would not measure"
+# are one number there too. It is 0 today, so the ambiguity is dormant rather
+# than misreporting, and giving M1's shipped exit criterion a new contract is a
+# decision about M1's ledger that belongs to whoever owns it — not a silent
+# side-effect of building M2's. Recorded, not fixed.
 .PHONY: m2-exit
 m2-exit: build ## M2's exit criterion: nothing in ANY inventory still owed to M2
-	@rc=0; \
-	echo "$(YELLOW)== inventory one of four: .pd fixtures (tests/conformance-manifest.txt) ==$(NC)"; \
-	CONFORMANCE_FORBID_OWNER=M2 bash scripts/conformance.sh tests examples || rc=1; \
-	echo; \
-	echo "$(YELLOW)== inventory two of four: Rust debt (tests/rust-debt-manifest.txt + #[ignore] reasons) ==$(NC)"; \
-	TEST_XFAIL_FORBID_OWNER=M2 python3 scripts/test-xfail.py || rc=1; \
-	echo; \
-	echo "$(YELLOW)== inventory three of four: the ordinary Rust suite (nothing here is allowed to fail) ==$(NC)"; \
-	$(CARGO) test --release --no-fail-fast || rc=1; \
-	echo; \
-	echo "$(YELLOW)== inventory four of four: requirements (docs/contributing/1.0-requirements.tsv) ==$(NC)"; \
-	REQ_MILESTONE=M2 python3 scripts/requirements.py || rc=1; \
-	echo; \
-	if [ $$rc -eq 0 ]; then \
-	  echo "$(GREEN)✓ M2 exit criterion met — nothing in any inventory is owed to M2$(NC)"; \
-	else \
-	  echo "$(RED)✗ M2 is NOT finished — see the OWED_TO_M2 / failure line(s) above$(NC)"; \
-	fi; \
-	exit $$rc
+	@bash scripts/m2-exit.sh
 
 # GI-09, and it is the reason `m2-exit` is allowed to be believed. An owner
 # filter nobody has watched fail is not a filter: `CONFORMANCE_FORBID_OWNER` has

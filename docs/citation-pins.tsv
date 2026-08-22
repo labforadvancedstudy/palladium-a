@@ -7,16 +7,16 @@ Cargo.toml	45-45	docs/reference/features/feature-index.toml	fa72a98b6370	[[bin]]
 Cargo.toml	49-49	docs/reference/features/feature-index.toml	fa72a98b6370	[[bin]]
 Cargo.toml	53-53	docs/reference/features/feature-index.toml	fa72a98b6370	[[bin]]
 Makefile	294-295	docs/contributing/MILESTONES.md	6909e0fabc7c	m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1 @rc=0; \
-Makefile	312-368	docs/contributing/MILESTONES.md	2f84a3acef58	# M2's exit criterion, as a command — GI-08. THIS TARGET DID NOT EXIST, and # ... finished — see the OWED_TO_M2 / failure line(s) above$(NC)"; \ fi; \ exit $$rc
-Makefile	388-393	docs/contributing/MILESTONES.md	3fecec465ff4	.PHONY: test-honest test-honest: ## Run EVERY test binary, including integrat ... on failures below went unnoticed.$(NC)" $(CARGO) test --release --no-fail-fast
-Makefile	556-556	docs/contributing/MILESTONES.md	f6a937dc2f61	gates: conformance test-conformance-runner check-docs gate-receipts test-doc- ... st-xfail test-requirements-runner test-honest ## Run every language-level gate
+Makefile	312-365	docs/contributing/MILESTONES.md	f51ed5d0773f	# M2's exit criterion, as a command — GI-08. THIS TARGET DID NOT EXIST, and # ...  criterion: nothing in ANY inventory still owed to M2 @bash scripts/m2-exit.sh
+Makefile	385-390	docs/contributing/MILESTONES.md	3fecec465ff4	.PHONY: test-honest test-honest: ## Run EVERY test binary, including integrat ... on failures below went unnoticed.$(NC)" $(CARGO) test --release --no-fail-fast
+Makefile	553-553	docs/contributing/MILESTONES.md	f6a937dc2f61	gates: conformance test-conformance-runner check-docs gate-receipts test-doc- ... st-xfail test-requirements-runner test-honest ## Run every language-level gate
 benchmarks/palladium/bubble_sort.pd	11-11	docs/specification/language-spec.md	df0f5c145b7b	fn bubble_sort(mut arr: [i64; 45000], n: i64) {
 bootstrap/pdc.pd	164-175	docs/contributing/MILESTONES.md	ab895892cab8	if n == 42 { i = i + 2; while i + 1 < len { if string_char_at(c.src, i) == 42 ... ing_char_at(c.src, i + 1) == 47 { i = i + 2; break; } } i = i + 1; } continue;
 bootstrap/pdc.pd	49-51	docs/contributing/MILESTONES.md	2176e84e9bc4	fn emit(mut c: C, s: String) { file_write(c.out, s); }
 bootstrap/pdc.pd	8-8	docs/contributing/MILESTONES.md	a673bb7b309d	// This file is written in exactly the subset it implements. That is the whole
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
-docs/contributing/MILESTONES.md	591-591	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
-docs/contributing/MILESTONES.md	625-631	tests/m3_imported_calls.rs	6ba8c2bda856	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... ce-manifest.txt:93`, cross-file imports) and the vacuous `12_modules_imports`.
+docs/contributing/MILESTONES.md	613-613	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
+docs/contributing/MILESTONES.md	647-653	tests/m3_imported_calls.rs	6ba8c2bda856	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... ce-manifest.txt:93`, cross-file imports) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	76-76	src/typeck/mod.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument

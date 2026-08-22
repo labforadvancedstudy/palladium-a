@@ -300,6 +300,10 @@ def score_bearing_files() -> list[str]:
 PINNED_PROSE_FIGURES = frozenset({
     "85%", "100%",          # quoted, in the passage listing retracted progress claims
     "1 of 23", "0 of 21",   # gate counts: evaluated thesis rows, stdlib files
+    # Added 2026-08-23 with the M2 exit criterion. Both are gate counts and neither is an
+    # adversary score, which is the distinction this list exists to make a reviewer state:
+    "54 of 54",             # test-xfail: owed rows failing for their DECLARED diagnostic
+    "51 of 82",             # the m2-exit aggregation lattice, under its own inversion control
 })
 
 
@@ -2227,7 +2231,10 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "1dd2b6838eafd12ff5af1ac4ed9d82fd56a40d2f618d88ff99619606d657146d"
+# RE-PINNED 2026-08-23 via `--print-case-digest`, deliberately: one case text changed
+# ("the two gate counts" -> "the four gate counts") when PINNED_PROSE_FIGURES took the
+# two figures the M2 exit criterion introduced. No case was added or removed.
+EXPECTED_CASE_SHA = "bc01d66e930638b3e1075722966a7526dcde527c61c8f1155440cb46fc3de690"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -3749,17 +3756,22 @@ def self_test() -> int:
     # the first place.
     _measured_tokens = {f"{ok}/{tot}" for ok, tot in _MEASURED.values()}
     _scan = score_bearing_files()
-    # `scripts/requirements.py` JOINED THIS SET on 2026-08-23, and its membership is the
-    # review this pin exists to force. It is the milestone-exit inventory reader (GI-08) and
-    # it cites `make thesis-exit` twice on purpose: once to say what it is NOT (it answers
-    # "does milestone X still owe a row", never "is 1.0 real"), and once because it copies
-    # this gate's three-valued exit contract, where NO_VERDICT is a distinct code from
-    # FALSE. It carries no adversary score, so the backstop below has nothing to find in it.
+    # THREE FILES JOINED THIS SET on 2026-08-23, and their membership is the review this
+    # pin exists to force. All three belong to the M2 milestone exit (GI-08/GI-09) and all
+    # three cite `thesis-exit` for the same two reasons: to say what they are NOT — they
+    # answer "does milestone X still owe a row", never "is 1.0 real" — and because they
+    # copy this gate's three-valued exit contract, where NO_VERDICT is a distinct code from
+    # FALSE, rather than inventing a second dialect for it.
+    #   scripts/requirements.py              the inventory reader
+    #   scripts/m2-exit.sh                   the aggregator that publishes the tri-state
+    #   scripts/test-requirements-runner.sh  GI-09, which drives both
+    # None carries an adversary score, so the backstop below has nothing to find in them.
     case("the scanned set is DERIVED from the tree, and is the reviewed one — a hand list "
          "of four was missing three files that cite this gate",
          _scan,
          ["Makefile", "docs/contributing/1.0-requirements.tsv",
-          "docs/contributing/MILESTONES.md", "scripts/requirements.py",
+          "docs/contributing/MILESTONES.md", "scripts/m2-exit.sh",
+          "scripts/requirements.py", "scripts/test-requirements-runner.sh",
           "scripts/thesis-exit.sh", "scripts/thesis_exit.py",
           "tests/callgraph-differential.tsv",
           "tests/liveness-differential.tsv"], drives_main=False)
@@ -3837,8 +3849,13 @@ def self_test() -> int:
          {rel: sorted(prose_figures((ROOT / rel).read_text()))
           for rel in _scan if prose_figures((ROOT / rel).read_text())}, {},
          drives_main=False)
-    case("the pinned prose figures are the two quoted retractions and the two gate counts",
-         sorted(PINNED_PROSE_FIGURES), ["0 of 21", "1 of 23", "100" + "%", "85" + "%"],
+    # The list is pinned HERE as well, so that adding to it is a two-line edit in one
+    # commit rather than one word — the same shape as the roster in
+    # scripts/requirements.py, and for the same reason: a declaration list nobody has to
+    # re-declare is a place to hide a figure.
+    case("the pinned prose figures are the two quoted retractions and the four gate counts",
+         sorted(PINNED_PROSE_FIGURES),
+         ["0 of 21", "1 of 23", "100" + "%", "51 of 82", "54 of 54", "85" + "%"],
          drives_main=False)
     case("the scan is NARROW and says so: an English spelling of a measurement passes",
          sorted(prose_figures("roughly half of the cases, most of them")), [],
