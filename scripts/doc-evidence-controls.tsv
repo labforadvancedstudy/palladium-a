@@ -21,19 +21,19 @@
 #                      "nothing kills it" is a statement rather than a gap.
 
 a TRUE index passes (count, absence, PIPELINE, find expr, conformance)	guard	the fatal green control: if it fails, detection cannot be told from breakage
-a false LINE COUNT is rejected, showing claimed and actual	kill	executed
-a false EXIT STATUS is rejected even when the count matches	kill	executed
+a false LINE COUNT is rejected, showing claimed and actual	kill	result-compare
+a false EXIT STATUS is rejected even when the count matches	kill	result-compare
 a command that COULD NOT LOOK is not a proof of absence	kill	l2-exists
 an absence over a MISSING PATH is rejected (--include hides it)	kill	l2-exists
 the same shape over an EXISTING path still passes	guard	L2 must not refuse a live path
 a clustered -rvn item is not falsely rejected by its own probe	guard	the probe must strip inversion
 a prose result is rejected: there is nothing to compare	kill	cmd-grammar
-a quote absent from the output is rejected	kill	executed
-an inline pdc program is refused and sent to conformance	kill	executed
-a build is refused and sent to gate:	kill	executed
-a build artifact is refused: not reproducible from a checkout	kill	executed
-a shell operator is refused	kill	executed
-a command outside the allowlist is refused	kill	executed
+a quote absent from the output is rejected	kill	quote-check
+an inline pdc program is refused and sent to conformance	kill	cmd-referred
+a build is refused and sent to gate:	kill	cmd-referred
+a build artifact is refused: not reproducible from a checkout	kill	cmd-artifact
+a shell operator is refused	kill	cmd-operators
+a command outside the allowlist is refused	kill	cmd-allowlist
 a command naming NO path is refused	kill	l1-path
 an option-supplied pattern (--regexp=) is refused	kill	l1-pattern-opt
 a clustered -e is refused	kill	l1-pattern-opt
@@ -42,9 +42,9 @@ an absence over an EMPTY scope is refused (measured, not parsed)	kill	l3-probe
 an absence filtered to an empty file set is refused	kill	l3-probe
 a downstream segment naming a path is refused	kill	l1-downstream
 an absence over an empty scope is refused for FIND too	kill	l3-find-probe
-find -exec is refused: it runs a program of the document's choosing	kill	find-allowlist
-find -delete is refused: an observation may not alter the tree	kill	find-allowlist
-find negation is refused: it would invert the L3 probe	kill	find-allowlist
+find -exec is refused: it runs a program of the document's choosing	kill	find-grammar
+find -delete is refused: an observation may not alter the tree	kill	find-grammar
+find negation is refused: it would invert the L3 probe	kill	find-grammar
 a find disjunction is refused outright, not reduced	kill	find-grammar
 a traversal predicate AFTER a match is refused	kill	find-grammar
 an invalid multi-letter -type argument is refused	kill	find-grammar
@@ -78,6 +78,10 @@ gate command 'make conformance -j 8'                  -> refuse	kill	gate-argv-g
 gate command 'make conformance --always-make'         -> refuse	kill	gate-argv-grammar
 gate command 'cargo build --release --features anything' -> refuse	kill	gate-argv-grammar
 gate command 'make conformance; rm -rf /'             -> refuse	kill	gate-argv-grammar
+gate command 'make publish'                           -> refuse	kill	gate-argv-grammar
+gate command 'make install'                           -> refuse	kill	gate-argv-grammar
+gate command 'make uninstall'                         -> refuse	kill	gate-argv-grammar
+gate command 'make clean'                             -> refuse	kill	gate-argv-grammar
 receipts are invocation-private and removed on exit	kill	gate-private-receipts
 a receipts directory inside the repository is refused	kill	gate-receipts-in-repo
 CI runs scripts/check-doc-evidence.sh	kill	ci-step-evidence

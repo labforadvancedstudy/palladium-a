@@ -17,14 +17,16 @@
 # while this runs green. That was claimed for two rounds and was false; the unit that IS
 # authoritative is the control, so the control is what is closed over.
 #
-# THE RESIDUAL, STATED EXACTLY. Reviewing the two inventories does NOT close it either —
-# an earlier version of this comment said it did, which was the same withdrawal made
-# incompletely. Neither table carries an identity for a fix, so a repair added inside an
-# already-declared file leaves both unchanged and both reconciling. What closes it is
-# reviewing THE BRANCH DIFF ITSELF against the mutation table and the control table: for
-# each behavioural change in the diff, is there a mutation that reverts it and a control
-# that dies. That is a human step, it is not performed here, and nothing in this script
-# should be read as having performed it.
+# THE RESIDUAL, AND IT IS NOT CLOSED BY ANYTHING HERE. Reviewing the two inventories does
+# not close it: neither carries an identity for a fix, so a repair added inside an
+# already-declared file leaves both unchanged and both reconciling. Reviewing THE BRANCH
+# DIFF against the two tables is the mitigation — for each behavioural change, is there a
+# mutation reverting it and a control that dies — and it is a FALLIBLE MANUAL one. It is
+# performed by a person who can miss a hunk, and its own test ("a mutation exists and a
+# control dies") is the same weak predicate this file has now been caught by twice: once
+# as ∃-per-mutation instead of ∀-over-rows, and once as a control dying without dying for
+# the reason it names. So the honest statement is that the gap is MITIGATED, not closed,
+# and the mitigation shares a failure mode with the mechanism it is mitigating.
 #
 # WHY TWO INVENTORIES.
 #   doc-evidence-controls.tsv  closes over the CONTROLS -- runtime-derived, works anywhere.
@@ -70,7 +72,7 @@ CONTROLS=scripts/doc-evidence-controls.tsv
 # where `merge-base main HEAD` is HEAD and the diff would be empty); the merge-base with
 # main or origin/main on a feature branch. If none resolves -- a shallow CI checkout has
 # no main ref and no HEAD^ -- the file reconciliation is NOT APPLICABLE and says so.
-BASE=""; BASE_WHY=""
+BASE=""; BASE_WHY=""; ON_BRANCH=no
 if [ -n "${COVERAGE_BASE:-}" ]; then
   # AN EXPLICIT REQUEST THAT CANNOT BE HONOURED IS AN ERROR, NOT A SKIP. Previously an
   # invalid COVERAGE_BASE fell through to the same green NOT APPLICABLE as "no base
@@ -83,7 +85,22 @@ if [ -n "${COVERAGE_BASE:-}" ]; then
     echo "       reconciliation that did not happen." >&2
     exit 2
   fi
-  BASE_WHY="COVERAGE_BASE"
+  # RESOLVING IS NOT ENOUGH. An unrelated commit resolves fine and would be reported as a
+  # meaningful "changed since"; HEAD itself resolves and yields an empty diff, which then
+  # degraded to a green NOT APPLICABLE — an explicitly requested reconciliation quietly
+  # not happening, which is the same defect as an unresolvable base, one step later.
+  if ! git merge-base --is-ancestor "$BASE" HEAD 2>/dev/null; then
+    echo "error: COVERAGE_BASE='${COVERAGE_BASE}' is not an ancestor of HEAD, so the diff" >&2
+    echo "       between them is not 'what this branch changed'." >&2
+    exit 2
+  fi
+  if [ "$BASE" = "$(git rev-parse HEAD)" ]; then
+    echo "error: COVERAGE_BASE='${COVERAGE_BASE}' IS HEAD, so the reconciliation would be" >&2
+    echo "       over an empty file set. A base was explicitly requested; an empty answer" >&2
+    echo "       is not one." >&2
+    exit 2
+  fi
+  BASE_WHY="COVERAGE_BASE"; ON_BRANCH=yes
 else
   # On a FEATURE BRANCH the base is the merge-base with main. Deliberately preferred over
   # HEAD^1 even when HEAD is a merge: a branch that merges main INTO itself has a first
@@ -96,10 +113,14 @@ else
       # HEAD is ON main: a push, a merge, or a squash. What that push introduced is
       # HEAD^1..HEAD — for a merge commit the first parent is the target branch, so this
       # is the incoming work; for a squash it is the whole branch.
+      # HEAD^1 is right for a merge or a squash, and WRONG for an ordinary push of
+      # several commits: it reconciles only the last one. CI supplies the push-before SHA
+      # (github.event.before) through COVERAGE_BASE, which is handled above; this is the
+      # local fallback and its limit is stated rather than hidden.
       BASE=$(git rev-parse --verify 'HEAD^1' 2>/dev/null) || BASE=""
-      [ -n "$BASE" ] && BASE_WHY="HEAD is $ref; first parent"
+      [ -n "$BASE" ] && BASE_WHY="HEAD is $ref; first parent (a multi-commit push needs COVERAGE_BASE)"
     else
-      BASE=$cand; BASE_WHY="merge-base with $ref"
+      BASE=$cand; BASE_WHY="merge-base with $ref"; ON_BRANCH=yes
     fi
     [ -n "$BASE" ] && break
   done
@@ -150,14 +171,31 @@ if [ -n "$CHANGED" ]; then
   done <<EOF2
 $CHANGED
 EOF2
+  # UNDECLARED is fatal everywhere: a file changed NOW with no row is a real gap whoever
+  # is looking. MISSING is fatal only on a feature branch, and here is why the two differ.
+  # The inventory describes ONE BRANCH's changes. Off that branch — on main, after the
+  # merge, for any later push — a declared file the current diff does not touch is not a
+  # defect in the inventory, it is the inventory being scoped to something else. Making it
+  # fatal there would turn every subsequent push red for a reason nobody could act on,
+  # which is how a gate teaches people to disable it.
+  missing_note=0
   while IFS=$'\t' read -r path disp _; do
     case "$path" in ''|'#'*) continue ;; esac
     if ! printf '%s\n' "$CHANGED" | grep -qxF -- "$path"; then
-      printf '  %sMISSING%s       %s -- declared %s, but this branch did not change it\n' \
-        "$RED" "$NC" "$path" "$disp"
-      recon=$((recon+1))
+      if [ "$ON_BRANCH" = yes ]; then
+        printf '  %sMISSING%s       %s -- declared %s, but this branch did not change it\n' \
+          "$RED" "$NC" "$path" "$disp"
+        recon=$((recon+1))
+      else
+        missing_note=$((missing_note+1))
+      fi
     fi
   done < "$INVENTORY"
+  if [ "$missing_note" -gt 0 ]; then
+    printf '  %snote%s          %d declared file(s) are outside this diff. Not an error here:\n' \
+      "$YEL" "$NC" "$missing_note"
+    printf '                the inventory is scoped to a branch and this is not that branch.\n'
+  fi
 fi
 
 # --- control closure: runtime labels vs declared roles, both directions -----------------
@@ -236,6 +274,18 @@ t = orig = p.read_text()
 
 if w == "executed":            # run the command at all (the original c199c19 defect)
     t = t.replace("    key = (cmd, want_n == 0)", "    return []\n    key = (cmd, want_n == 0)", 1)
+elif w == "cmd-referred":      # pdc/cargo/make are not observations
+    t = t.replace("        if os.path.basename(head) in CMD_REFERRED:", "        if False:", 1)
+elif w == "cmd-allowlist":     # only the five observation tools may run
+    t = t.replace("        if head not in CMD_ALLOWED:", "        if False:", 1)
+elif w == "cmd-artifact":      # a build artifact is not reproducible from a checkout
+    t = t.replace("            if tok.startswith(CMD_BUILD_ARTIFACT):", "            if False:", 1)
+elif w == "cmd-operators":     # a shell operator is not a pipeline
+    t = t.replace("        elif tok in CMD_OPERATORS:", "        elif False:", 1)
+elif w == "result-compare":    # the claimed exit status and line count are compared
+    t = t.replace("    if rc != want_rc or len(lines) != want_n:", "    if False:", 1)
+elif w == "quote-check":       # quoted prose must appear in the output
+    t = t.replace("    for q in QUOTED.finditer(rest):", "    for q in []:", 1)
 elif w == "l1-path":           # first segment must name a path
     t = t.replace('        if n == 0 and not parsed["paths"]:', "        if False:", 1)
 elif w == "l1-pattern-opt":    # the pattern may not arrive through an option
@@ -251,10 +301,11 @@ elif w == "l3-probe":          # an absence must be shown capable of producing o
 elif w == "l3-find-probe":     # find: keep the traversal bound in the probe
     t = t.replace('        return [head] + parsed["paths"] + expr',
                   '        return [head] + parsed["paths"]', 1)
-elif w == "find-allowlist":    # find's expression is enumerated (-exec, -delete, -not)
-    t = t.replace("        err = check_find_expression(opts)", "        err = None", 1)
 elif w == "find-grammar":      # the permitted expression: <traversal>* <match>?
-    t = t.replace("        err = check_find_expression(opts)\n        if err:", "        err = None\n        if err:", 1)
+    # ONE reversion. `find-allowlist` and `find-grammar` used to be two names for this
+    # same replacement, so "29 mutations" counted one twice. The nine controls that name
+    # it all exercise branches of this one function, which is the unit being reverted.
+    t = t.replace("        err = check_find_expression(opts)", "        err = None", 1)
 elif w == "exe-path":          # the tool may not be named by path
     t = t.replace('        if "/" in head:', "        if False:", 1)
 elif w == "tool-resolution":   # WHICH BINARY runs: resolved on a pinned PATH
@@ -321,13 +372,18 @@ PYEOF
 # scripts/doc-evidence-controls.tsv, once per control, and every row of that table is
 # checked. Keeping the expectation in one place is the fix for the defect below.
 MUTATIONS="executed|scripts/check_doc_evidence.py
+cmd-referred|scripts/check_doc_evidence.py
+cmd-allowlist|scripts/check_doc_evidence.py
+cmd-artifact|scripts/check_doc_evidence.py
+cmd-operators|scripts/check_doc_evidence.py
+result-compare|scripts/check_doc_evidence.py
+quote-check|scripts/check_doc_evidence.py
 l1-path|scripts/check_doc_evidence.py
 l1-pattern-opt|scripts/check_doc_evidence.py
 l2-exists|scripts/check_doc_evidence.py
 l2-symlink|scripts/check_doc_evidence.py
 l3-probe|scripts/check_doc_evidence.py
 l3-find-probe|scripts/check_doc_evidence.py
-find-allowlist|scripts/check_doc_evidence.py
 find-grammar|scripts/check_doc_evidence.py
 exe-path|scripts/check_doc_evidence.py
 tool-resolution|scripts/check_doc_evidence.py
@@ -407,6 +463,13 @@ while IFS= read -r entry; do
   if [ "$n" -eq 0 ]; then
     printf '  %sUNCOVERED%s     %-22s reverted, and NOT ONE control noticed\n' "$RED" "$NC" "$m"
     problems=$((problems+1))
+  elif ! awk -F'\t' -v m="$m" '$2=="kill" && $3==m {f=1} END{exit !f}' "$CONTROLS"; then
+    # No control is CREDITED to it. That is fine for a deliberate aggregate — `executed`
+    # removes the whole checker — but it has to be said, because "31 controls went red"
+    # otherwise reads as coverage for whatever those 31 controls are about. The reason
+    # each of them dies belongs to a narrower mutation, and that is where it is checked.
+    printf '  %sok%s            %-22s %2d red (AGGREGATE: no control is credited to it)\n' \
+      "$YEL" "$NC" "$m" "$n"
   else
     printf '  %sok%s            %-22s %2d control(s) went red\n' "$GREEN" "$NC" "$m" "$n"
   fi

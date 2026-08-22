@@ -71,7 +71,18 @@ jobs:
       # reverted in turn and the controls must notice. Needs a clean checkout of the
       # file it mutates, which CI always has and a working tree often does not.
       - name: Evidence gate probe coverage
-        run: bash scripts/test-doc-evidence-coverage.sh
+        # A push to main can carry several commits; HEAD^1 would reconcile only the last.
+        # github.event.before is the push's true base. It is all-zeros for the first push
+        # of a branch, so it is used only when it resolves — COVERAGE_BASE is strict by
+        # design and would (correctly) exit 2 on a value it cannot honour.
+        run: |
+          BASE='${{ github.event.before }}'
+          if [ -n "$BASE" ] && git rev-parse --verify "$BASE^{commit}" >/dev/null 2>&1 \
+             && git merge-base --is-ancestor "$BASE" HEAD 2>/dev/null \
+             && [ "$BASE" != "$(git rev-parse HEAD)" ]; then
+            export COVERAGE_BASE="$BASE"
+          fi
+          bash scripts/test-doc-evidence-coverage.sh
 
       - id: id
         run: echo "tag=preview-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"

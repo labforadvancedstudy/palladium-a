@@ -18,9 +18,11 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -761,8 +763,13 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
             errf = tempfile.TemporaryFile()
             errfiles.append(errf)
             try:
+                # Its own session, so the cleanup below can kill DESCENDANTS. Measured
+                # without it: a segment whose grandchild held stdout open made the whole
+                # pipeline take 30s under a 3s timeout — the timeout returned the right
+                # answer and the process kept the gate waiting anyway.
                 p = subprocess.Popen(seg["argv"], cwd=ROOT, env=env, stdin=prev,
-                                     stdout=subprocess.PIPE, stderr=errf)
+                                     stdout=subprocess.PIPE, stderr=errf,
+                                     start_new_session=True)
             except OSError as exc:
                 return None, "", f"could not start `{seg['argv'][0]}`: {exc}"
             if prev is not subprocess.DEVNULL:
@@ -770,19 +777,36 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
             prev = p.stdout
             procs.append(p)
 
-        out = b""
+        # THE READ IS BOUNDED BY THE TIMEOUT, WHICH IT WAS NOT. `stdout.read()` ran BEFORE
+        # the timeout-bearing `wait()`, so a final process that held stdout open without
+        # finishing blocked forever and CMD_TIMEOUT_S bounded nothing. The read happens on
+        # a daemon thread with a bounded join; if it is still going the pipeline is killed
+        # by the `finally` below, which unblocks it, and the daemon flag means a wedged
+        # reader cannot keep the interpreter alive.
+        box: dict = {}
+
+        def _drain():
+            try:
+                box["out"] = procs[-1].stdout.read(CMD_MAX_BYTES + 1)
+            except OSError as exc:                       # pipe torn down by the kill
+                box["err"] = exc
+
+        reader = threading.Thread(target=_drain, daemon=True)
+        reader.start()
+        reader.join(timeout)
+        if reader.is_alive():
+            return None, "", (f"did not finish within {timeout}s (its output stream was "
+                              f"still open)")
+        if "err" in box:
+            return None, "", f"could not read the pipeline's output: {box['err']}"
+        out = box.get("out", b"")
+        if len(out) > CMD_MAX_BYTES:
+            return None, "", (f"produced more than {CMD_MAX_BYTES} bytes. A `cmd:` "
+                              f"item is an observation, not a dump; narrow its scope")
         try:
-            # Bounded read: the count is what gets compared, so a command loud enough to
-            # exhaust memory is a badly scoped item and must be told so.
-            out = procs[-1].stdout.read(CMD_MAX_BYTES + 1)
-            if len(out) > CMD_MAX_BYTES:
-                return None, "", (f"produced more than {CMD_MAX_BYTES} bytes. A `cmd:` "
-                                  f"item is an observation, not a dump; narrow its scope")
             procs[-1].wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             return None, "", f"did not finish within {timeout}s"
-        except OSError as exc:
-            return None, "", f"could not read the pipeline's output: {exc}"
 
         for p in procs[:-1]:
             try:
@@ -812,6 +836,11 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
         # One cleanup path, unconditional: kill then reap. A process left running would
         # hold a pipe open for whoever comes next.
         for p in procs:
+            # The GROUP, not the process: a grandchild is what holds the pipe open.
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
             if p.poll() is None:
                 try:
                     p.kill()

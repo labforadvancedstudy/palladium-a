@@ -59,46 +59,37 @@ OUT=$(mktemp -d "${TMPDIR:-/tmp}/palladium-gate-receipts.XXXXXX") || exit 2
 trap 'rm -rf "$OUT"' EXIT INT TERM
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
 
-# A cited command is A STRING FROM A DOCUMENT, and it used to be checked by PREFIX and
-# then handed to `eval`. `make ` and `cargo test` are prefixes, so anything at all could
-# follow them — an operator, a substitution, a redirection — and the document controlled
-# the shell. That is the same defect the `cmd:` executor exists to prevent, in the file
-# that validates it.
+# A cited command is A STRING FROM A DOCUMENT, and this script EXECUTES it. Two earlier
+# designs got that wrong in two different ways:
 #
-# Now: every character must come from a set that contains no shell syntax, and the WORDS
-# must match an enumerated argv grammar. The intermediate version checked a PREFIX, which
-# is not a shape — `make `* accepted `make conformance CC=clang`, `make conformance -j 8`
-# and `make conformance --always-make`, each of which changes what the cited gate means
-# while still being spelled like the gate the document names.
+#   1. a prefix check plus `eval`, so the document controlled the shell;
+#   2. an argv grammar — `make <one lowercase target>` — which closed the shell and then
+#      admitted THE ENTIRE MAKEFILE. `make publish` is a lowercase target. It runs
+#      `cargo publish` (Makefile:236-239). So one line in a documentation file made the
+#      documentation-evidence gate publish this crate to crates.io, on the `gates` path
+#      and in CI. `make install`, `make uninstall` and `make clean` were accepted too.
 #
-# Adding a gate shape is a deliberate edit to this list, which is the point.
+# The lesson is the one the `find` grammar taught: when validating the SHAPE of a thing
+# keeps admitting things you did not mean, stop validating the shape and enumerate what
+# you actually need. Five commands are cited by the index today, and these are those five,
+# by exact string. Every one is read-only with respect to anything outside this checkout:
+# they compile, run fixtures, and print.
+#
+# ADDING ONE IS A DELIBERATE EDIT HERE, and the thing to ask before making it is not "does
+# it look like a gate" but "what does this do that cannot be undone".
+GATE_COMMANDS='make conformance
+make selfhost
+make stdlib-gate
+cargo build --release
+cargo test --release --lib lsp::'
+
 allowed() {
-  case "$1" in
-    *[!A-Za-z0-9\ ._:=-]*) return 1 ;;   # anything outside this set, metacharacters included
-  esac
-  local argv
-  read -ra argv <<< "$1"
-  case "${#argv[@]}:${argv[0]:-}" in
-    2:make)
-      # exactly one target, no options, no variable assignments
-      case "${argv[1]}" in
-        [a-z]*[!A-Za-z0-9-]*) return 1 ;;
-        [a-z]*) return 0 ;;
-      esac
-      return 1 ;;
-    3:cargo)
-      [ "${argv[1]}" = build ] && [ "${argv[2]}" = --release ] && return 0
-      return 1 ;;
-    5:cargo)
-      [ "${argv[1]}" = test ] || return 1
-      [ "${argv[2]}" = --release ] || return 1
-      [ "${argv[3]}" = --lib ] || return 1
-      case "${argv[4]}" in
-        *[!A-Za-z0-9_:]*) return 1 ;;
-        ?*) return 0 ;;
-      esac
-      return 1 ;;
-  esac
+  local c
+  while IFS= read -r c; do
+    [ "$1" = "$c" ] && return 0
+  done <<EOF
+$GATE_COMMANDS
+EOF
   return 1
 }
 

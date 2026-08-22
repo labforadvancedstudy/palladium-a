@@ -557,7 +557,11 @@ echo "== the receipt RUNNER, and the order the certifying target runs it in =="
 # prefix: `make `* accepted `make conformance CC=clang`, `-j 8` and `--always-make`, each
 # of which changes what the cited gate MEANS while being spelled like the gate it names.
 gr_allowed() {   # -> 0 if scripts/gate-receipts.sh would run this command
-  ( eval "$(sed -n '/^allowed() {/,/^}$/p' scripts/gate-receipts.sh)"; allowed "$1" )
+  # Both the list AND the matcher, because the list is what does the work now: the shape
+  # check it replaced accepted `make publish`, which runs `cargo publish`.
+  ( eval "$(sed -n "/^GATE_COMMANDS='/,/^cargo test [^']*'$/p" scripts/gate-receipts.sh)"
+    eval "$(sed -n '/^allowed() {/,/^}$/p' scripts/gate-receipts.sh)"
+    allowed "$1" )
 }
 gr_case() {      # gr_case <allow|refuse> <command>
   local want=$1 cmd=$2 got=refuse
@@ -579,6 +583,10 @@ gr_case refuse "make conformance -j 8"
 gr_case refuse "make conformance --always-make"
 gr_case refuse "cargo build --release --features anything"
 gr_case refuse "make conformance; rm -rf /"
+gr_case refuse "make publish"
+gr_case refuse "make install"
+gr_case refuse "make uninstall"
+gr_case refuse "make clean"
 
 # Receipts must not be DISCOVERABLE by or REUSABLE by the certifying path -- not "must not
 # outlive the run", which is false under SIGKILL or host failure and which the runner's own
@@ -622,12 +630,51 @@ fi
 # of the wrong thing. What DOES matter is that the workflow invokes the evidence gate at
 # all: before this branch it ran scripts/check-docs.sh directly and check-doc-evidence
 # appeared in no workflow, so every cmd: item and every gate: receipt went unrun in CI.
+# grep -qF proves TEXTUAL OCCURRENCE, which a comment, an inert string, or a step carrying
+# `if: false` all satisfy. What has to hold is that an ENABLED step runs the script. No
+# YAML library is guaranteed on this host, so the workflow is read by indentation, which
+# is enough for the one shape being asserted.
+ci_runs() {   # ci_runs <script-basename> -> 0 if an ENABLED step runs it
+  python3 - "$1" <<'PYCI'
+import re, sys
+want = sys.argv[1]
+steps, cur, key = [], None, None
+for line in open(".github/workflows/preview.yml", encoding="utf-8"):
+    if re.match(r"^      - ", line):
+        cur = {"if": None, "run": []}; steps.append(cur); key = None
+        line = "        " + line[8:]
+    if cur is None:
+        continue
+    m = re.match(r"^        ([A-Za-z_-]+):[ ]*(.*)$", line)
+    if m:
+        key = m.group(1)
+        if key == "if":
+            cur["if"] = m.group(2).strip()
+        elif key == "run":
+            cur["run"].append(m.group(2))
+    elif key == "run" and re.match(r"^          ", line):
+        cur["run"].append(line.strip())
+    elif re.match(r"^        \S", line):
+        key = None
+# A `#` in a run block starts a shell comment, so an "invocation" after one is not an
+# invocation. Without this, `run: echo skip  # bash scripts/check-doc-evidence.sh` passed.
+def live(body):
+    return "\n".join(l.split("#", 1)[0] for l in body.split("\n"))
+
+pat = re.compile(r"(^|\s)bash scripts/" + re.escape(want) + r"(\s|$)", re.M)
+for s in steps:
+    if pat.search(live("\n".join(s["run"]))) and s["if"] in (None, "", "true"):
+        sys.exit(0)
+sys.exit(1)
+PYCI
+}
 for step in check-doc-evidence.sh gate-receipts.sh test-doc-evidence.sh; do
-  if grep -qF "scripts/$step" .github/workflows/preview.yml; then
+  if ci_runs "$step"; then
     printf '  %sok%s   CI runs scripts/%s\n' "$GREEN" "$NC" "$step"; pass=$((pass+1))
   else
     printf '  %sFAIL%s CI runs scripts/%s\n' "$RED" "$NC" "$step"
-    printf '         (it does NOT, so that gate never runs on a push)\n'; fail=$((fail+1))
+    printf '         (no ENABLED step runs it, so that gate never runs on a push)\n'
+    fail=$((fail+1))
   fi
 done
 
