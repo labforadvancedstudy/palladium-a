@@ -947,8 +947,41 @@ impl Parser {
         // end of it: an `if` in the middle of a body still has ordinary
         // expression statements in its branches.
         //
-        // A unit function (`return_type == None`) keeps the plain expression
-        // statement: its tail value is simply discarded.
+        // A UNIT FUNCTION KEEPS THE PLAIN EXPRESSION STATEMENT, and "unit" means
+        // BOTH SPELLINGS OF IT. This comment used to say `return_type == None`
+        // while the condition below tested `is_some()`, and the two spellings
+        // therefore emitted different C:
+        //
+        //     fn f() { print_int(7) }        ->  void f() { __pd_print_int(7); }
+        //     fn f() -> () { print_int(7) }  ->  void f() { return __pd_print_int(7); }
+        //
+        // `parse_type` returns `Type::Unit` for `()`, `is_some()` is true for
+        // it, and the lowering ran — producing `return <void expression>;` from
+        // a `void` function, which is a C constraint violation that gcc and
+        // clang happen to accept as an extension. Two spellings of one type
+        // must not produce different output, and neither of them should produce
+        // that.
+        //
+        // WHERE THE FIX IS, AND WHY IT IS NOT HERE.
+        // The obvious repair is to exclude `Some(Type::Unit)` from this
+        // condition. MEASURED, that silently deletes a diagnostic:
+        //
+        //     fn f() -> () { 5 }
+        //       lowered    -> `return 5;` -> typeck: "expected (), found Int"
+        //       not lowered-> `5;`        -> compiles clean, value discarded
+        //
+        // The type checker only sees the mismatch through the `Stmt::Return`
+        // this lowering creates; a bare expression statement of the wrong type
+        // in a unit function is not a rule it has. Trading a real diagnostic
+        // for identical output would be the wrong way round for a branch about
+        // a compiler that must not accept what it cannot honour.
+        //
+        // So the lowering still runs for `-> ()`, and CODE GENERATION handles
+        // the void case: `src/codegen/mod.rs`, `Stmt::Return(Some(expr))` under
+        // `current_fn_is_void`, emits the expression as a statement followed by
+        // a bare `return;` rather than `return <void expression>;`. The
+        // constraint violation is gone, the diagnostic is kept, and the two
+        // spellings differ only by that inert `return;`.
         if return_type.is_some() {
             if returns_on_every_path(&body, &body_tail) {
                 lower_tail_to_return(&mut body, &body_tail);

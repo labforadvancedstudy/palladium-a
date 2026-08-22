@@ -62,7 +62,7 @@ spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
   "cmd: grep -rn 'region\\|Region' src/ --include='*.rs' -> exit 1, 0 lines",
-  "src: src/parser/mod.rs:986 lifetime_params, populated by the parser",
+  "src: src/parser/mod.rs:1019 lifetime_params, populated by the parser",
   "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> 0 real readers; every hit is `lifetime_params: vec![]` in an src/lsp or src/optimizer test fixture",
 ]
 
@@ -82,12 +82,12 @@ description = "Whether a [T; N] parameter copies or aliases the caller's array. 
 spec = "../../specification/language-spec.md#n121-array-parameters-open-decision"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1055 Type::Array param lowered to a C array declarator, which decays to a pointer",
+  "src: src/codegen/mod.rs:1066 Type::Array param lowered to a C array declarator, which decays to a pointer",
   "cmd: pdc compile 'fn bump(mut a: [i64;3]) { a[0]=99; } fn main(){ let mut v:[i64;3]=[1,2,3]; bump(v); print_int(v[0]); }' -> generated C is `void bump(long long a[3])`; program prints 99",
   "cmd: pdc compile 'fn bump(a: [i64;3]) { a[0]=99; } ...' (no mut) -> compiles, links, prints 99, no diagnostic",
-  "src: src/codegen/mod.rs:1981 'Unsupported type in reference parameter' — &mut [T; N] does not compile at all",
+  "src: src/codegen/mod.rs:1992 'Unsupported type in reference parameter' — &mut [T; N] does not compile at all",
 ]
-note = "Marked unimplemented because no spelling copies. Under Option A (value semantics) this stays unimplemented and src/codegen/mod.rs:1055 is the gap. Under Option B (reference semantics) it becomes partial AT BEST, never implemented: Option B still needs a rule that does not exist — either the reference spellings are forbidden or &mut [T; N] becomes required for a written-through parameter — and current behaviour satisfies neither, permitting mutation through a bare non-mut array while rejecting &mut [T; N] outright. The specification states both options rather than picking silently; see language-spec.md N12.1 and A9.2."
+note = "Marked unimplemented because no spelling copies. Under Option A (value semantics) this stays unimplemented and src/codegen/mod.rs:1066 is the gap. Under Option B (reference semantics) it becomes partial AT BEST, never implemented: Option B still needs a rule that does not exist — either the reference spellings are forbidden or &mut [T; N] becomes required for a written-through parameter — and current behaviour satisfies neither, permitting mutation through a bare non-mut array while rejecting &mut [T; N] outright. The specification states both options rather than picking silently; see language-spec.md N12.1 and A9.2."
 
 [core_language.memory_management.borrow_checker]
 description = "Rust-compatible ownership: moves, borrows, no GC."
@@ -109,7 +109,7 @@ description = "Restricted unsafe with side-channel protection; forbidden in #![t
 spec = "../../specification/language-spec.md#n12-memory-model"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:1790 Token::Unsafe => self.parse_unsafe()",
+  "src: src/parser/mod.rs:1823 Token::Unsafe => self.parse_unsafe()",
   "src: src/driver/mod.rs:164 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/11_unsafe_blocks.pd PASS (placeholder: only prints that the feature is unimplemented)",
@@ -131,8 +131,8 @@ description = "Monomorphization-based generics, generic structs and enums, where
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1663 'Generic types in structs not yet supported'",
-  "src: src/parser/mod.rs:2595-2605 all-uppercase name inside <...> reclassified as a const argument",
+  "src: src/codegen/mod.rs:1674 'Generic types in structs not yet supported'",
+  "src: src/parser/mod.rs:2628-2638 all-uppercase name inside <...> reclassified as a const argument",
   "cmd: pdc compile 'fn f<T: Clone>(x: T) {} fn main(){}' -> error: expected '>' after generic parameters, found ':'",
   "conformance: tests/08_generics_basic.pd PASS (placeholder: only prints that generics are unimplemented)",
 ]
@@ -143,10 +143,10 @@ description = "Trait definitions, impls, bounds on generics, associated types."
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/parser/mod.rs:1185 fn parse_trait — traits do parse",
-  "src: src/codegen/mod.rs:1013 Item::Trait(_) => emits nothing",
+  "src: src/parser/mod.rs:1218 fn parse_trait — traits do parse",
+  "src: src/codegen/mod.rs:1024 Item::Trait(_) => emits nothing",
   "src: src/typeck/mod.rs:795-797 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
-  "src: src/parser/mod.rs:1309 trait-method parameter loop, which has no self_param branch",
+  "src: src/parser/mod.rs:1342 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd PASS (placeholder: only prints that traits are unimplemented)",
 ]
 note = "Design detail: ../../design/trait_system_design.md"
@@ -157,8 +157,8 @@ spec = "../../specification/language-spec.md#n4-types"
 implementation = "partial"
 evidence = [
   "src: src/parser/mod.rs:465-467 the const-parameter branch of parse_generic_params",
-  "src: src/codegen/mod.rs:1058 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
-  "src: src/codegen/mod.rs:1059 ArraySize::Expr(_) => \"0\".to_string()",
+  "src: src/codegen/mod.rs:980 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
+  "src: src/codegen/mod.rs:981 ArraySize::Expr(_) => \"0\".to_string()",
 ]
 note = "Neither case is monomorphised."
 
@@ -170,7 +170,7 @@ evidence = [
   "conformance: tests/06_pattern_matching.pd PASS",
   "src: src/ast/mod.rs:313 pub enum Pattern — three variants only",
   "src: src/typeck/mod.rs:1349 exhaustiveness runs only when the scrutinee is an enum",
-  "src: src/codegen/mod.rs:1956 match lowers to an if/else-if chain",
+  "src: src/codegen/mod.rs:1967 match lowers to an if/else-if chain",
 ]
 note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
 
@@ -182,7 +182,7 @@ evidence = [
   "conformance: tests/04_control_flow_for.pd PASS",
   "conformance: tests/04_control_flow_while.pd PASS",
   "cmd: pdc compile 'fn main() { loop { break; } }' -> error: expected ';' after expression, found '{'",
-  "src: src/codegen/mod.rs:1922 for-over-array emits sizeof(...) on a decayed pointer",
+  "src: src/codegen/mod.rs:1933 for-over-array emits sizeof(...) on a decayed pointer",
 ]
 
 [core_language.control_flow.conditionals]
@@ -191,8 +191,8 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
   "conformance: tests/04_control_flow_if.pd PASS",
-  "src: src/parser/mod.rs:1938 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
-  "src: src/parser/mod.rs:1784 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
+  "src: src/parser/mod.rs:1971 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
+  "src: src/parser/mod.rs:1817 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
 ]
 
 [core_language.functions.function_definitions]
@@ -212,7 +212,7 @@ implementation = "partial"
 evidence = [
   "cmd: pdc compile 'fn add(a: i64, b: i64) -> i64 { a + b } fn main(){ print_int(add(2,3)); }' -> prints 5 (tail expression is lowered)",
   "cmd: pdc compile 'fn fib(n: i64) -> i64 { if n <= 1 { n } else { fib(n-1)+fib(n-2) } } fn main(){ print_int(fib(10)); }' -> compiles clean, prints 8261746944; the answer is 55",
-  "src: src/codegen/mod.rs:1956 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return",
+  "src: src/codegen/mod.rs:1967 match/if lower to bare statement forms, so a tail `if` emits expression statements with no return",
 ]
 note = "Defect D3 is half-fixed: a tail EXPRESSION becomes a return, a tail `if` does not, and the tail-`if` shape is the idiomatic one for a recursive function. CLAUDE.md:66 records D3 as fixed, which holds only for the expression case. The \"437 affected sites\" figure is an understatement — the heuristic behind it cannot see a function ending in the else block's brace."
 
@@ -252,8 +252,8 @@ description = "`?` for error propagation with early return."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
-  "src: src/codegen/mod.rs:1932-1933 emits a struct Result temporary — a layout codegen never defines",
-  "src: src/codegen/mod.rs:2569 the comment describing that layout",
+  "src: src/codegen/mod.rs:1943-1944 emits a struct Result temporary — a layout codegen never defines",
+  "src: src/codegen/mod.rs:2596 the comment describing that layout",
 ]
 note = "Silent breakage: it typechecks, and the failure surfaces in gcc."
 
@@ -272,7 +272,7 @@ spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
   "src: src/lexer/token.rs:111 #[token(\"async\")] — one of the two things the definition removes",
-  "src: src/parser/mod.rs:998 effects: None, // Effects will be inferred during analysis",
+  "src: src/parser/mod.rs:1031 effects: None, // Effects will be inferred during analysis",
   "src: src/driver/mod.rs:59 the analyser's result is println!ed and nothing else",
   "src: src/effects/mod.rs:283 'If function is unknown, we conservatively assume it's pure' — the unsound direction",
   "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> 1 line, src/driver/mod.rs:147",
@@ -284,7 +284,7 @@ description = "No await operator; the compiler places async boundaries."
 spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:2517-2522 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
+  "src: src/codegen/mod.rs:2544-2549 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
   "cmd: pdc compile 'async fn g() -> i64 { return 1; } fn main(){}' -> error: Type mismatch: expected Future<Int>, found Int",
   "conformance: tests/10_async_await.pd PASS (placeholder: only prints that async/await is unimplemented)",
 ]
@@ -360,7 +360,7 @@ implementation = "partial"
 evidence = [
   "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
   "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
-  "src: src/parser/mod.rs:1707 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
+  "src: src/parser/mod.rs:1740 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
 ]
 
 [advanced_features.macro_system.hygiene]
@@ -505,7 +505,7 @@ spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
 implementation = "unimplemented"
 evidence = [
   "src: src/macros/mod.rs:41 vec![e] is registered here and expands to a 1-element array, not a growable vector",
-  "src: src/codegen/mod.rs:1663 'Generic types in structs not yet supported' — no generic container can exist",
+  "src: src/codegen/mod.rs:1674 'Generic types in structs not yet supported' — no generic container can exist",
 ]
 
 [ecosystem.std_library.io]

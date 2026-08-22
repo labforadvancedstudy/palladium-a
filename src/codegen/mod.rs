@@ -77,6 +77,16 @@ pub struct CodeGenerator {
     array_bindings: std::collections::HashMap<String, ArrayBinding>,
     /// Map of parameter names to their mutability (for current function)
     mutable_params: std::collections::HashMap<String, bool>,
+    /// Does the function being generated have C return type `void`?
+    ///
+    /// `return <expression>;` in a void function is a C constraint violation
+    /// (C11 6.8.6.4p1) that gcc and clang accept as an extension. It was
+    /// reachable: the parser lowers a tail expression to `Stmt::Return` for any
+    /// annotated return type, and `-> ()` is an annotated return type, so
+    /// `fn f() -> () { print_int(7) }` emitted `return __pd_print_int(7);` while
+    /// the identical `fn f() { print_int(7) }` emitted `__pd_print_int(7);`.
+    /// Set per function alongside `mutable_params`.
+    current_fn_is_void: bool,
     /// Imported modules
     imported_modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
     /// Generic function instantiations to generate
@@ -112,6 +122,7 @@ impl CodeGenerator {
         // Pre-allocate string capacity for better performance
         let initial_capacity = 64 * 1024; // 64KB initial capacity
         Ok(Self {
+            current_fn_is_void: false,
             module_name: module_name.to_string(),
             output: String::with_capacity(initial_capacity),
             functions: std::collections::HashMap::new(),
@@ -2028,6 +2039,10 @@ impl CodeGenerator {
         self.mutable_params.clear();
         self.variables.clear(); // Clear variables from previous function
         self.array_bindings.clear();
+        // BOTH spellings of the unit type, which is the whole point: `None` and
+        // `Some(Type::Unit)` are one return type and must generate one shape.
+        self.current_fn_is_void =
+            matches!(func.return_type, None | Some(Type::Unit)) && name != "main";
 
         for param in &func.params {
             // Track if parameter is a pointer (either mutable or reference)
@@ -2192,9 +2207,21 @@ impl CodeGenerator {
                 self.output.push_str("    return;\n");
             }
             Stmt::Return(Some(expr)) => {
-                self.output.push_str("    return ");
-                self.generate_expression(expr)?;
-                self.output.push_str(";\n");
+                if self.current_fn_is_void {
+                    // The expression is still EVALUATED — it is there for its
+                    // effect, and dropping it would change what the program
+                    // does — but its value is not returned, because this
+                    // function returns nothing. `return <expr>;` here is a C
+                    // constraint violation that compilers merely tolerate.
+                    self.output.push_str("    ");
+                    self.generate_expression(expr)?;
+                    self.output.push_str(";\n");
+                    self.output.push_str("    return;\n");
+                } else {
+                    self.output.push_str("    return ");
+                    self.generate_expression(expr)?;
+                    self.output.push_str(";\n");
+                }
             }
             Stmt::Let {
                 name, ty, value, ..

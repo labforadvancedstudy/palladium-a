@@ -47,6 +47,20 @@ mk() { printf '%s\n' "$2" >"$TMP/$1"; chmod +x "$TMP/$1"; }
 # that is a loaded gun pointed at unrelated work: any `sleep 600`, anybody's.
 # The producers below now write the pid of the process they leave behind into a
 # file, and this kills that pid and nothing else.
+# ONLY ONE REAP REMAINS, and that is the point.
+#
+# `reap` authenticates by PID alone, so it is only safe against a process that
+# is still ALIVE and therefore still owns its pid — after `killpg` has already
+# killed something, its number can be reused and a later `kill -9` would hit an
+# unrelated process. Removing the calls is better than guarding them:
+#
+#   slow_desc  `sh -c "sleep 600" &`   IN the process group -> killpg reaches it
+#   in-group   `time.sleep(30)` fork   IN the process group -> killpg reaches it
+#   escapee    fork + setsid()         NOT in the group     -> killpg cannot
+#
+# So the first two reaps were redundant AND carried the reuse hazard; they are
+# gone. The third is the only one with anything left to kill, and its target is
+# alive by construction, so its pid cannot have been reused.
 reap() {   # reap <pidfile>
   [ -f "$1" ] || return 0
   while IFS= read -r pid; do
@@ -155,15 +169,25 @@ echo "== Net A coverage must be CLOSED, not sampled =="
 # reader cannot account for, and every one of them must MALFUNCTION (2) — a
 # verdict of 0 would be the same disease as the `} else if` false negative that
 # certified a shipped milestone.
-mixed() {  # mixed <name> <second-definition-text>
+mixed() {  # mixed <name> <second-definition-text> <expected reason>
   { printf 'long long ok(long long n) {\n    return n;\n}\n'; printf '%b' "$2"; } >"$TMP/$1.c"
   $PROBE generated-c "$TMP/$1.c" >"$TMP/o" 2>&1
   check "Net A, mixed file: $1" 2 $?
+  # ...FOR THE STATED REASON. Exit 2 conflates every harness failure, so the
+  # code alone cannot tell "this definition was not accounted for" from any
+  # other malfunction — the third pass over this class, and the sites the
+  # previous two did not reach.
+  grep -q "$3" "$TMP/o"
+  check "  and the reason is $3" 0 $?
 }
-mixed same_line_body     'long long hidden(void) { return 1; }\n'
-mixed multiline_def      'long long\nhidden(void)\n{\n    return 1;\n}\n'
-mixed conditional_cpp    '#ifdef X\nlong long hidden(void) {\n}\n#endif\n'
-mixed unclosed_body      'long long hidden(void) {\n    return 1;\n'
+mixed same_line_body     'long long hidden(void) { return 1; }\n' \
+      'top-level construct this reader does not recognise'
+mixed multiline_def      'long long\nhidden(void)\n{\n    return 1;\n}\n' \
+      'top-level construct this reader does not recognise'
+mixed conditional_cpp    '#ifdef X\nlong long hidden(void) {\n}\n#endif\n' \
+      'preprocessor directive that can decide which'
+mixed unclosed_body      'long long hidden(void) {\n    return 1;\n' \
+      'never closed'
 # A `goto` out of `while (1)` makes the loop escapable; `contains_break` only
 # looks for `break`. This function DOES fall off its end (gcc: "control reaches
 # end of non-void function"), and with the loop as the first item of the body
@@ -365,6 +389,8 @@ sed 's/name:/ident:/g; s/"\([a-z_0-9]*\) param/"\1 FIELD/g; s/"\([a-z_0-9]*\) re
   src/builtins.rs >"$TMP/broken_builtins.rs"
 $PROBE reconcile --src "$TMP/broken_builtins.rs" --manifest tests/stdlib/BUILTINS.tsv >"$TMP/o" 2>&1
 check "reconcile, parsing contract broken" 2 $?
+grep -qi 'no Support type\|parse\|contract' "$TMP/o"
+check "  and the reason is the broken parsing contract" 0 $?
 
 echo
 echo "== a descendant holding the pipe must not stall the harness =="
@@ -392,7 +418,7 @@ else
   printf '  %sFAIL%s descendant stalled the harness for %ss\n' "$RED" "$NC" "$elapsed"
   fail=$((fail+1))
 fi
-reap "$TMP/slow_desc.pid"
+# no reap: this descendant is in the process group, so killpg reached it
 
 echo
 echo "== EOF must be awaited BEFORE the writers are killed =="
@@ -426,7 +452,7 @@ grep -q 'did not reach EOF' "$TMP/o"
 check "  and the reason names the missing EOF, not the exit status" 0 $?
 grep -q 'WITHHELD_PARTIAL\|WITHHELD ' "$TMP/o"
 check "  and what was captured is not announced as the complete output" 0 $?
-reap "$TMP/ingroup.pid"
+# no reap: this descendant is in the process group, so killpg reached it
 
 echo
 echo "== a writer that outlives the process group must not read as concluded =="
@@ -497,6 +523,37 @@ else
   printf '  %sFAIL%s the harness blocked for %ss on its own capture buffer\n' "$RED" "$NC" "$elapsed"
   fail=$((fail+1))
 fi
+
+echo
+echo "== the abandoned-capture bound is enforced, not just written down =="
+# Each capture that never reaches EOF leaves a descriptor with the reader thread
+# that owns it, so the cost is real and `generated-c` takes an unbounded file
+# list. The bound is checked BEFORE the next process starts; this drives the
+# counter to the limit directly rather than spending ~45s reproducing it (the
+# nine-run reproduction is recorded beside MAX_ABANDONED_CAPTURES).
+python3 - >"$TMP/o" 2>&1 <<'CAPPY'
+import sys
+sys.path.insert(0, "scripts")
+import gate_probe as gp
+
+bad = []
+gp._abandoned_captures = gp.MAX_ABANDONED_CAPTURES
+v = gp.run_and_classify(["sh", "-c", "echo hi; exit 0"])
+if not isinstance(v, gp.Malfunction):
+    bad.append("at the limit, a further run was %s, not Malfunction"
+               % type(v).__name__)
+elif "refusing to run" not in v.how:
+    bad.append("the refusal does not name the bound: %r" % v.how[:80])
+gp._abandoned_captures = 0
+v = gp.run_and_classify(["sh", "-c", "echo hi; exit 0"])
+if not isinstance(v, gp.Concluded):
+    bad.append("below the limit an ordinary producer must still conclude, got %s"
+               % type(v).__name__)
+print("\n".join(bad) if bad else "ok")
+sys.exit(1 if bad else 0)
+CAPPY
+check "at the limit, run() refuses rather than leaking another descriptor" 0 $?
+grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
 
 echo
 echo "== the boundary must promise only what it delivers =="
@@ -710,86 +767,85 @@ grep -v '^ok$' "$TMP/o" | sed 's/^/        /' || true
 # (`cmd_calibrate` read a raw `Run.rc` and never looked at `capture_error`).
 # A rule whose scope excludes the location of its own defect is not a rule.
 #
-# IT IS KEYED BY (ENCLOSING FUNCTION, LINE, COUNT), NOT BY LINE TEXT.
-# The first version compared line CONTENT with `grep -vxF`: set membership where
-# accounting was meant. A new raw reader could DUPLICATE an approved line —
-# `if r._rc == 0:` — inside another function and pass unchanged, and identical
-# text in a different scope means a different thing. The table below records
-# which function each reader sits in and how many times it may appear there;
-# any difference, in either direction, is a failure.
+# IT USES PYTHON'S OWN PARSER. Two earlier versions were hand-rolled and each
+# was defeated by ordinary Python:
+#   * comparing line CONTENT with `grep -vxF` is set membership where accounting
+#     was meant — a new reader could DUPLICATE an approved line in another
+#     function and pass;
+#   * a regex over `(class|def)\s+NAME` with an indentation stack does not know
+#     `async def`, and dotted names collide between two same-named definitions,
+#     so an approved read could MOVE into a nested async function, or into
+#     another `def` of the same name, without changing its key.
+#
+# `ast` is in the standard library, so there is no reason to model Python badly:
+# the scope path comes from the tree (FunctionDef, AsyncFunctionDef, ClassDef,
+# Lambda) and every occurrence carries its own (line, column). Same move as
+# replacing this repo's hand-written Rust module scanner with
+# `cargo test --list`: ask the language, do not re-implement it.
 python3 - >"$TMP/allow.out" 2>&1 <<'ALLOWPY'
-import collections, pathlib, re, sys
+import ast, collections, pathlib, sys
 
+PRIVATE = ("_out", "_b", "_rc")
+
+# (scope path, attribute, occurrences). Coordinates are reported on failure but
+# are deliberately NOT part of the key: moving a line within its own function is
+# not a change of meaning, adding or relocating a reader is.
 ALLOWED = collections.Counter({
-    ("Withheld.__init__", "self._b = b"): 1,
-    ("Withheld.spill",
-     'data = self._b if isinstance(self._b, bytes) else str(self._b).encode('): 1,
-    ("Run.__init__", "self._rc = rc"): 1,
-    ("Run.__init__",
-     'self._out = out if isinstance(out, bytes) else str(out).encode("utf-8", "surrogateescape")'): 1,
-    ("Run.signal_number", "if self._rc < 0:"): 1,
-    ("Run.signal_number", "return -self._rc"): 1,
-    ("Run.signal_number", "if self._rc > 128:"): 1,
-    ("Run.signal_number", "return self._rc - 128"): 1,
-    ("Run.describe",
-     'how = f"killed by signal {s}" if s is not None else f"exit {self._rc}"'): 1,
-    ("Run.describe",
-     'return f"killed by signal {s}" if s is not None else f"exit {self._rc}"'): 1,
-    ("classify", "return Malfunction(r.describe(), Withheld(r._out, complete=False))"): 1,
-    ("classify", 'text = r._out.decode("utf-8", "replace")'): 1,
-    ("classify", "if r._rc == 0:"): 1,
-    ("classify", "return Concluded(text, r._rc, True)"): 1,
-    ("classify", "if r.signal_number is None and r._rc in reject_codes:"): 1,
-    ("classify", "return Concluded(text, r._rc, False)"): 1,
-    ("classify", "return Malfunction(r.describe(), Withheld(r._out, complete=True))"): 1,
-    ("report_malfunction",
-     'print(f"WITHHELD_PARTIAL {path} holds the {len(m.withheld._b)} "'): 1,
+    ("Withheld.__init__", "_b"): 1,
+    ("Withheld.spill", "_b"): 3,
+    ("Run.__init__", "_rc"): 1,
+    ("Run.__init__", "_out"): 1,
+    ("Run.signal_number", "_rc"): 4,
+    ("Run.describe", "_rc"): 2,
+    ("classify", "_rc"): 4,
+    ("classify", "_out"): 3,
+    ("report_malfunction", "_b"): 1,
 })
 
-PRIVATE = re.compile(r"\._out\b|\._b\b|\._rc\b|\.withheld\._")
-src = pathlib.Path("scripts/gate_probe.py").read_text().split("\n")
+src = pathlib.Path("scripts/gate_probe.py").read_text()
+tree = ast.parse(src)
 
-# "Which function" is answered by indentation, not by the nearest `def` above.
 found = collections.Counter()
-stack = []
-for raw in src:
-    line = raw.strip()
-    if not line:
-        continue
-    indent = len(raw) - len(raw.lstrip())
-    m = re.match(r"(class|def)\s+([A-Za-z_][A-Za-z_0-9]*)", line)
-    if m:
-        while stack and stack[-1][0] >= indent:
-            stack.pop()
-        stack.append((indent, m.group(2)))
-        continue
-    while stack and stack[-1][0] >= indent:
-        stack.pop()
-    if line.startswith("#") or "`" in line:
-        continue                      # a comment, or docstring prose
-    if not PRIVATE.search(line):
-        continue
-    where = ".".join(n for _, n in stack) or "<module>"
-    found[(where, line)] += 1
+where = collections.defaultdict(list)
+
+
+def walk(node, path):
+    for child in ast.iter_child_nodes(node):
+        name = None
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            name = child.name
+        elif isinstance(child, ast.Lambda):
+            name = "<lambda>"
+        inner = path + [name] if name else path
+        if isinstance(child, ast.Attribute) and child.attr in PRIVATE:
+            key = (".".join(inner) or "<module>", child.attr)
+            found[key] += 1
+            where[key].append("%d:%d" % (child.lineno, child.col_offset))
+        walk(child, inner)
+
+
+walk(tree, [])
 
 problems = []
-for key, want in sorted(ALLOWED.items()):
-    got = found.get(key, 0)
-    if got != want:
-        problems.append("expected %d of %r in %s, found %d"
-                        % (want, key[1], key[0], got))
-for key, got in sorted(found.items()):
-    if key not in ALLOWED:
-        problems.append("UNAPPROVED private-slot reader in %s (x%d): %r"
-                        % (key[0], got, key[1]))
+for key in sorted(set(ALLOWED) | set(found)):
+    want, got = ALLOWED.get(key, 0), found.get(key, 0)
+    if want == got:
+        continue
+    at = ", ".join(where.get(key, [])) or "nowhere"
+    if want == 0:
+        problems.append("UNAPPROVED read of .%s in %s (x%d, at %s)"
+                        % (key[1], key[0], got, at))
+    else:
+        problems.append("expected %d read(s) of .%s in %s, found %d (at %s)"
+                        % (want, key[1], key[0], got, at))
 print("\n".join(problems) if problems else "ok")
 sys.exit(1 if problems else 0)
 ALLOWPY
 if [ $? -eq 0 ]; then
-  printf '  %sok%s   every private-slot reader inside gate_probe.py matches the reviewed (function, line, count) table\n' "$GREEN" "$NC"
+  printf '  %sok%s   every private-slot read inside gate_probe.py matches the reviewed (AST scope, attribute, count) table\n' "$GREEN" "$NC"
   pass=$((pass+1))
 else
-  printf '  %sFAIL%s the private-slot readers inside gate_probe.py no longer match the table:\n' "$RED" "$NC"
+  printf '  %sFAIL%s the private-slot reads inside gate_probe.py no longer match the table:\n' "$RED" "$NC"
   sed 's/^/        /' "$TMP/allow.out"
   fail=$((fail+1))
 fi

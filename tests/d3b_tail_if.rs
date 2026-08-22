@@ -994,16 +994,85 @@ fn main() {
     );
 }
 
-/// The guard above is `return_type.is_some()`, so it tests an OMITTED return
-/// type. An explicit `-> ()` is `Some(Type::Unit)` and DOES enter the lowering.
-/// These three tests pin what actually happens, because "it is guarded" was not
-/// true of the explicit spelling.
+/// THE THREE BOUNDARIES OF THE UNIT RETURN TYPE, PINNED IN THE EMITTED C.
 ///
-/// (a) `-> ()` with a unit-valued tail: lowered, and the emitted C returns a
-/// void expression from a void function. gcc and clang both accept that
-/// (returning a void expression from a void function is a documented
-/// extension), and the program runs correctly — verified here by running it,
-/// not by reading the C.
+/// The two spellings of "returns nothing" used to generate different C, and one
+/// of them generated C that is not legal:
+///
+///     fn f() { print_int(7) }        ->  void f() { __pd_print_int(7); }
+///     fn f() -> () { print_int(7) }  ->  void f() { return __pd_print_int(7); }
+///
+/// `return <expression>;` in a `void` function is a C11 6.8.6.4p1 constraint
+/// violation that gcc and clang accept as an extension, so nothing objected —
+/// and no `.pd` file in this repository writes `-> ()` (measured: `git ls-files
+/// '*.pd' | xargs grep -l -- '->[[:space:]]*()'` returns nothing), which is why
+/// it survived eight rounds of review of this exact area.
+///
+/// The test below asserts the C, not the exit code, for all three cases: an
+/// OMITTED return type, an explicit `-> ()`, and a NON-UNIT return. Asserting
+/// the exit code is what let the divergence hide — both spellings compiled.
+#[test]
+fn the_two_spellings_of_the_unit_return_type_generate_the_same_shape() {
+    let omitted = compile_to_c(
+        "fn f() { print_int(7) }\n\nfn main() { f(); }\n",
+        "d3b_unit_omitted",
+    )
+    .expect("an omitted return type must compile");
+    let annotated = compile_to_c(
+        "fn f() -> () { print_int(7) }\n\nfn main() { f(); }\n",
+        "d3b_unit_annotated",
+    )
+    .expect("an explicit `-> ()` must compile");
+
+    for (what, c) in [("omitted", &omitted), ("-> ()", &annotated)] {
+        assert!(
+            c.contains("void f() {"),
+            "`{}` must give f a void C return type:\n{}",
+            what,
+            c
+        );
+        // THE DEFECT, stated as the assertion: no void function may return a
+        // value-bearing expression.
+        assert!(
+            !c.contains("return __pd_print_int"),
+            "`{}` emits `return <void expression>;` from a void function, a C \
+             constraint violation gcc merely tolerates:\n{}",
+            what,
+            c
+        );
+        assert!(
+            c.contains("    __pd_print_int(7);"),
+            "`{}` must still EVALUATE the tail expression — it is there for its \
+             effect:\n{}",
+            what,
+            c
+        );
+    }
+
+    // What still differs, said exactly rather than claimed away: the annotated
+    // form keeps the `Stmt::Return` the lowering produced, so codegen emits a
+    // bare `return;` after the expression. That is inert C and it is the price
+    // of keeping the type-checker diagnostic in the third case below.
+    assert!(
+        annotated.contains("    __pd_print_int(7);\n    return;\n"),
+        "the annotated form should evaluate then return nothing:\n{}",
+        annotated
+    );
+
+    // A NON-UNIT return type is untouched: its tail is still lowered to a
+    // value-bearing return.
+    let valued = compile_to_c(
+        "fn g(n: i64) -> i64 { n + 1 }\n\nfn main() { print_int(g(1)); }\n",
+        "d3b_unit_nonunit",
+    )
+    .expect("a non-unit return type must compile");
+    assert!(
+        valued.contains("return (n + 1);"),
+        "a non-unit tail must still be lowered to a value-bearing return:\n{}",
+        valued
+    );
+}
+
 #[test]
 fn an_explicit_unit_return_type_with_a_unit_tail_still_runs() {
     let out = compile_and_run(
@@ -1023,11 +1092,16 @@ fn main() {
     assert_eq!(out.trim(), "3\n0");
 }
 
-/// (b) `-> ()` with a NON-unit tail. The lowering produces `return 5;` in a
-/// function declared to return nothing, and the semantic pass — not the C
-/// compiler — is what refuses it. This is the check that would be lost if the
-/// parser skipped lowering for `Some(Type::Unit)`: a bare expression statement
-/// would silently discard the value instead.
+/// `-> ()` with a NON-unit tail. The lowering produces `return 5;` and the
+/// SEMANTIC PASS refuses it — not the C compiler.
+///
+/// THIS IS WHY THE LOWERING IS NOT GUARDED ON `Some(Type::Unit)`, which is the
+/// obvious repair and the one review proposed. Measured with that guard in
+/// place: `fn f() -> () { 5 }` compiles clean and emits `5;`, discarding the
+/// value in silence. The type checker only sees the mismatch through the
+/// `Stmt::Return` the lowering creates. So the lowering stays and code
+/// generation handles the void case; see the comment at the lowering site in
+/// src/parser/mod.rs.
 #[test]
 fn an_explicit_unit_return_type_with_a_valued_tail_is_a_type_error() {
     let err = compile_to_c(

@@ -167,6 +167,26 @@ DRAIN_JOIN_S = 5
 # accepted cost has to be an enforced one, or it is a hope in a comment.
 MAX_ABANDONED_CAPTURES = 8
 _abandoned_captures = 0
+# Reproduce the bound (the escapee producer forks, setsid()s, holds stdout):
+#   python3 - <<'EOF'
+#   import sys, textwrap, tempfile, pathlib
+#   sys.path.insert(0, "scripts"); import gate_probe as gp
+#   src = textwrap.dedent("""
+#       import os, sys, time
+#       if os.fork() == 0:
+#           os.setsid(); time.sleep(30); os._exit(0)
+#       sys.stdout.write("prefix\n"); sys.stdout.flush(); os._exit(0)
+#   """)
+#   f = pathlib.Path(tempfile.mkdtemp()) / "escapee.py"; f.write_text(src)
+#   for i in range(gp.MAX_ABANDONED_CAPTURES + 1):
+#       v = gp.run_and_classify([sys.executable, str(f)])
+#       print(i, type(v).__name__, gp._abandoned_captures)
+#   print(v.how)
+#   EOF
+# Measured 2026-08-22: eight Malfunctions, the counter reaching 8, then
+# "refusing to run: 8 earlier capture(s) ... never reached EOF". The gate itself
+# checks the enforcement directly rather than spending 45s reproducing it — see
+# scripts/test-gate-probe.sh, "the abandoned-capture bound is enforced".
 
 
 def _describe_target(path: Path) -> str:
@@ -879,6 +899,7 @@ def cmd_generated_c(args) -> int:
         return EXIT_MALFUNCTION
 
     violations = harness = recognised_total = 0
+    visited = 0
     for path in args.files:
         p = Path(path)
         if not p.is_file():
@@ -889,6 +910,7 @@ def cmd_generated_c(args) -> int:
             print(f"HARNESS {path}: is not readable — nothing was analysed")
             harness += 1
             continue
+        visited += 1
         try:
             v, h, recognised = net_a.check_file(path)
         except Exception as exc:  # noqa: BLE001
@@ -935,7 +957,17 @@ def cmd_generated_c(args) -> int:
             print(f"FINDING {e.strip()}")
         violations += len(errs)
 
-    print(f"ANALYSED {recognised_total} function definition(s) in {len(args.files)} file(s)")
+    # REQUESTED, VISITED, UNVISITED — because the loop can stop early (an
+    # abandoned capture costs a descriptor this process cannot reclaim, so it
+    # does not march on through the rest of the list). Reporting the requested
+    # count as though every file had been analysed is a denominator that
+    # overstates coverage, which is the defect this whole reader was rebuilt to
+    # remove. The malfunction already prevents a false green; this makes the
+    # number honest as well.
+    unvisited = len(args.files) - visited
+    print(f"ANALYSED {recognised_total} function definition(s) in {visited} of "
+          f"{len(args.files)} requested file(s)"
+          + (f"; {unvisited} NOT VISITED" if unvisited else ""))
     if harness:
         emit(outcome="malfunction", reason=f"{harness} input(s) could not be analysed")
         return EXIT_MALFUNCTION
