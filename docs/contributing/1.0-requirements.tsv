@@ -48,6 +48,7 @@
 #
 # COLUMNS (TAB-separated, all eight mandatory, `-` for N/A):
 #   id  milestone  source  requirement  evidence-kind  evidence  status  disposition
+#   fingerprint
 #
 # evidence-kind:
 #   fixture     a conformance row of class `run` with a recorded transcript.
@@ -80,6 +81,15 @@
 #               than dropped, so the omission cannot become the next generation's
 #               fiction.
 #
+# fingerprint: for a `reject` row, the diagnostic the refusal MUST carry; `-` otherwise.
+#   A rejection is not evidence of a language property unless it is the INTENDED
+#   rejection. "Refused because the prohibition is enforced" and "refused for
+#   incidental unsupported syntax" are the same verdict to a runner that only sees
+#   REJECTED — and a sibling branch can turn a reject fixture green with no compiler
+#   change at all. So a thesis reject row NAMES the fingerprint, and the corpus row for
+#   that fixture must declare it; scripts/conformance.sh has already matched the
+#   declared fingerprint against the actual diagnostic.
+#
 # A milestone's exit is: no row owned by it is `owed` or `blocked`, and the
 # reconciliation above holds. 1.0's exit is `make thesis-exit`.
 # See docs/contributing/MILESTONES.md.
@@ -87,231 +97,231 @@
 # id  milestone  source  requirement  evidence-kind  evidence  status  disposition
 
 # --- N1 Overview and design commitments ------------------------------------
-N1-01	M9	N1	Ahead-of-time compilation with no garbage collector	observable	tests/n1_no_gc.rs::no_collector_symbol_is_linked	owed	1.0
-N1-02	M9	N1	No runtime type information	observable	tests/n1_no_rtti.rs::generated_c_carries_no_type_tags	owed	1.0
-N1-03	M9	N1	Nothing in Part I depends on the target being C	gate	make selfhost-corpus	owed	1.0
+N1-01	M9	N1	Ahead-of-time compilation with no garbage collector	observable	tests/n1_no_gc.rs::no_collector_symbol_is_linked	owed	1.0	-
+N1-02	M9	N1	No runtime type information	observable	tests/n1_no_rtti.rs::generated_c_carries_no_type_tags	owed	1.0	-
+N1-03	M9	N1	Nothing in Part I depends on the target being C	gate	make selfhost-corpus	owed	1.0	-
 
 # --- N2 Lexical structure ---------------------------------------------------
-N2-01	-	N2	Identifiers	fixture	tests/01_lexical_literals.pd	satisfied	1.0
-N2-02	-	N2	Integer literals	fixture	tests/01_lexical_literals.pd	satisfied	1.0
-N2-03	M2	N2	Float literals	fixture	tests/02_types_floats.pd	owed	1.0
-N2-04	M2	N2	Char literals	fixture	tests/02_types_chars.pd	owed	1.0
-N2-05	-	N2	String literals	fixture	tests/01_lexical_literals.pd	satisfied	1.0
-N2-06	-	N2	Boolean literals	fixture	tests/01_lexical_literals.pd	satisfied	1.0
-N2-07	-	N2	Line comments	fixture	tests/01_lexical_comments.pd	satisfied	1.0
-N2-08	M2	N2	Block comments NEST	fixture	tests/01_lexical_comments.pd	owed	1.0
-N2-09	M2	N2	Escape sequences in char and string literals	fixture	tests/01_lexical_escapes.pd	owed	1.0
-N2-10	M2	N2	Attributes lex: #[name], #[name(args)], #![name(args)]	fixture	tests/02_attributes_lex.pd	owed	1.0
-N2-11	M2	N2	An unknown attribute is a compile error, not a silently ignored annotation	reject	tests/reject/unknown_attribute.pd	owed	1.0
+N2-01	-	N2	Identifiers	fixture	tests/01_lexical_literals.pd	satisfied	1.0	-
+N2-02	-	N2	Integer literals	fixture	tests/01_lexical_literals.pd	satisfied	1.0	-
+N2-03	M2	N2	Float literals	fixture	tests/02_types_floats.pd	owed	1.0	-
+N2-04	M2	N2	Char literals	fixture	tests/02_types_chars.pd	owed	1.0	-
+N2-05	-	N2	String literals	fixture	tests/01_lexical_literals.pd	satisfied	1.0	-
+N2-06	-	N2	Boolean literals	fixture	tests/01_lexical_literals.pd	satisfied	1.0	-
+N2-07	-	N2	Line comments	fixture	tests/01_lexical_comments.pd	satisfied	1.0	-
+N2-08	M2	N2	Block comments NEST	fixture	tests/01_lexical_comments.pd	owed	1.0	-
+N2-09	M2	N2	Escape sequences in char and string literals	fixture	tests/01_lexical_escapes.pd	owed	1.0	-
+N2-10	M2	N2	Attributes lex: #[name], #[name(args)], #![name(args)]	fixture	tests/02_attributes_lex.pd	owed	1.0	-
+N2-11	M2	N2	An unknown attribute is a compile error, not a silently ignored annotation	reject	tests/reject/unknown_attribute.pd	owed	1.0	-
 
 # --- N3 Program structure and items -----------------------------------------
-N3-01	-	N3	Functions with typed parameters and return types	fixture	tests/03_functions_basic.pd	satisfied	1.0
-N3-02	M2	N3	A function body's trailing expression is its value, in every tail position	fixture	tests/stdlib/stdlib_tail_return.pd	owed	1.0
-N3-03	M2	N3	A value-returning function with no value on some path is a compile error	reject	tests/reject/missing_return.pd	owed	1.0
-N3-04	-	N3	Structs	fixture	tests/02_types_structs.pd	satisfied	1.0
-N3-05	M2	N3	Enums with unit, tuple and struct variants	fixture	tests/02_types_enums.pd	owed	1.0
-N3-06	M3	N3	Traits as items	fixture	tests/07_traits_basic.pd	owed	1.0
-N3-07	-	N3	Impl blocks	fixture	examples/tutorial/04_structs.pd	satisfied	1.0
-N3-08	M3	N3	Type aliases emit a real type	fixture	tests/03_type_alias.pd	owed	1.0
-N3-09	M2	N3	Top-level const items	fixture	tests/03_const_items.pd	owed	1.0
-N3-10	M2	N3	Top-level static items	fixture	tests/03_static_items.pd	owed	1.0
-N3-11	M4	N3	Module items	fixture	tests/12_modules_imports.pd	owed	1.0
-N3-12	M2	N3	One macro system, pattern-based	fixture	tests/03_macros.pd	owed	1.0
-N3-13	M2	N3	Macros are hygienic by default	fixture	tests/03_macro_hygiene.pd	owed	1.0
-N3-14	M2	N3	There is no macro_rules!/proc-macro split — macro_rules! is refused	reject	tests/reject/macro_rules.pd	owed	1.0
+N3-01	-	N3	Functions with typed parameters and return types	fixture	tests/03_functions_basic.pd	satisfied	1.0	-
+N3-02	M2	N3	A function body's trailing expression is its value, in every tail position	fixture	tests/stdlib/stdlib_tail_return.pd	owed	1.0	-
+N3-03	M2	N3	A value-returning function with no value on some path is a compile error	reject	tests/reject/missing_return.pd	owed	1.0	-
+N3-04	-	N3	Structs	fixture	tests/02_types_structs.pd	satisfied	1.0	-
+N3-05	M2	N3	Enums with unit, tuple and struct variants	fixture	tests/02_types_enums.pd	owed	1.0	-
+N3-06	M3	N3	Traits as items	fixture	tests/07_traits_basic.pd	owed	1.0	-
+N3-07	-	N3	Impl blocks	fixture	examples/tutorial/04_structs.pd	satisfied	1.0	-
+N3-08	M3	N3	Type aliases emit a real type	fixture	tests/03_type_alias.pd	owed	1.0	-
+N3-09	M2	N3	Top-level const items	fixture	tests/03_const_items.pd	owed	1.0	-
+N3-10	M2	N3	Top-level static items	fixture	tests/03_static_items.pd	owed	1.0	-
+N3-11	M4	N3	Module items	fixture	tests/12_modules_imports.pd	owed	1.0	-
+N3-12	M2	N3	One macro system, pattern-based	fixture	tests/03_macros.pd	owed	1.0	-
+N3-13	M2	N3	Macros are hygienic by default	fixture	tests/03_macro_hygiene.pd	owed	1.0	-
+N3-14	M2	N3	There is no macro_rules!/proc-macro split — macro_rules! is refused	reject	tests/reject/macro_rules.pd	owed	1.0	-
 
 # --- N4 Types ----------------------------------------------------------------
-N4-01	-	N4	i32 i64 u32 u64	fixture	tests/02_types_primitives.pd	satisfied	1.0
-N4-02	M2	N4	f32 f64	fixture	tests/02_types_floats.pd	owed	1.0
-N4-03	-	N4	bool	fixture	tests/02_types_primitives.pd	satisfied	1.0
-N4-04	M2	N4	char	fixture	tests/02_types_chars.pd	owed	1.0
-N4-05	-	N4	String	fixture	tests/02_types_primitives.pd	satisfied	1.0
-N4-06	-	N4	unit ()	fixture	tests/03_functions_basic.pd	satisfied	1.0
-N4-07	-	N4	int is an alias for i64	fixture	tests/02_types_primitives.pd	satisfied	1.0
-N4-08	M7	N4	str and usize are named normatively — add them or rewrite the sites	decision	D3	blocked	1.0
-N4-09	-	N4	Arrays [T; N]	fixture	tests/02_types_arrays.pd	satisfied	1.0
-N4-10	M2	N4	Nested arrays [[T; M]; N], as locals and as parameters	fixture	tests/02_types_nested_arrays.pd	owed	1.0
-N4-11	M3	N4	Slices [T]	fixture	tests/02_types_slices.pd	owed	1.0
-N4-12	M2	N4	Tuples (A, B) with construction and .0 access	fixture	tests/02_types_tuples.pd	owed	1.0
-N4-13	M7	N4	References ref T / ref mut T are a distinct type to the checker	fixture	tests/05_references.pd	owed	1.0
-N4-14	M3	N4	Function types fn(A) -> B	fixture	tests/02_types_fn.pd	owed	1.0
-N4-15	M3	N4	Named generic types Name<A, B>, monomorphised	fixture	tests/08_generics_basic.pd	owed	1.0
-N4-16	M3	N4	Option<T> and Result<T, E> exist as generic types with working methods	fixture	tests/08_option_result.pd	owed	1.0
-N4-17	M8	N4	Option and Result are in the PRELUDE — in scope with no import	fixture	tests/08_prelude_in_scope.pd	owed	1.0
-N4-18	M3	N4	? propagates a Result error to the caller	fixture	tests/09_question_mark.pd	owed	1.0
-N4-19	M3	N4	? converts error types where a conversion exists	fixture	tests/09_question_mark_convert.pd	owed	1.0
-N4-20	-	N4	Local type inference needs no annotation on let	fixture	examples/tutorial/01_variables.pd	satisfied	1.0
-N4-21	M3	N4	Const generics are evaluated at compile time and monomorphised	fixture	tests/08_const_generics.pd	owed	1.0
+N4-01	-	N4	i32 i64 u32 u64	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
+N4-02	M2	N4	f32 f64	fixture	tests/02_types_floats.pd	owed	1.0	-
+N4-03	-	N4	bool	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
+N4-04	M2	N4	char	fixture	tests/02_types_chars.pd	owed	1.0	-
+N4-05	-	N4	String	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
+N4-06	-	N4	unit ()	fixture	tests/03_functions_basic.pd	satisfied	1.0	-
+N4-07	-	N4	int is an alias for i64	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
+N4-08	M7	N4	str and usize are named normatively — add them or rewrite the sites	decision	D3	blocked	1.0	-
+N4-09	-	N4	Arrays [T; N]	fixture	tests/02_types_arrays.pd	satisfied	1.0	-
+N4-10	M2	N4	Nested arrays [[T; M]; N], as locals and as parameters	fixture	tests/02_types_nested_arrays.pd	owed	1.0	-
+N4-11	M3	N4	Slices [T]	fixture	tests/02_types_slices.pd	owed	1.0	-
+N4-12	M2	N4	Tuples (A, B) with construction and .0 access	fixture	tests/02_types_tuples.pd	owed	1.0	-
+N4-13	M7	N4	References ref T / ref mut T are a distinct type to the checker	fixture	tests/05_references.pd	owed	1.0	-
+N4-14	M3	N4	Function types fn(A) -> B	fixture	tests/02_types_fn.pd	owed	1.0	-
+N4-15	M3	N4	Named generic types Name<A, B>, monomorphised	fixture	tests/08_generics_basic.pd	owed	1.0	-
+N4-16	M3	N4	Option<T> and Result<T, E> exist as generic types with working methods	fixture	tests/08_option_result.pd	owed	1.0	-
+N4-17	M8	N4	Option and Result are in the PRELUDE — in scope with no import	fixture	tests/08_prelude_in_scope.pd	owed	1.0	-
+N4-18	M3	N4	? propagates a Result error to the caller	fixture	tests/09_question_mark.pd	owed	1.0	-
+N4-19	M3	N4	? converts error types where a conversion exists	fixture	tests/09_question_mark_convert.pd	owed	1.0	-
+N4-20	-	N4	Local type inference needs no annotation on let	fixture	examples/tutorial/01_variables.pd	satisfied	1.0	-
+N4-21	M3	N4	Const generics are evaluated at compile time and monomorphised	fixture	tests/08_const_generics.pd	owed	1.0	-
 
 # --- N5 Statements and expressions -------------------------------------------
-N5-01	-	N5	let, assignment, return, break, continue, expression statements	fixture	examples/tutorial/05_control_flow.pd	satisfied	1.0
-N5-02	M5	N5	unsafe { } as a statement	fixture	tests/11_unsafe_blocks.pd	owed	1.0
-N5-03	M2	N5	if is an expression: let x = if c { 1 } else { 2 };	fixture	tests/04_if_expression.pd	owed	1.0
-N5-04	M2	N5	match is an expression	fixture	tests/06_match_expression.pd	owed	1.0
-N5-05	M2	N5	Blocks are expressions	fixture	tests/04_block_expression.pd	owed	1.0
-N5-06	M2	N5	else if	fixture	tests/04_else_if.pd	owed	1.0
-N5-07	M2	N5	loop, exited by break, which may carry a value	fixture	tests/04_loop_break_value.pd	owed	1.0
-N5-08	M3	N5	Closures with inferred capture, and a move form	fixture	tests/05_closures.pd	owed	1.0
-N5-09	M3	N5	try { } scopes error handling	fixture	tests/09_try_block.pd	owed	1.0
-N5-10	-	N5	Arithmetic and comparison operators	fixture	tests/02_types_primitives.pd	satisfied	1.0
-N5-11	-	N5	Logical operators	fixture	tests/04_control_flow_if.pd	satisfied	1.0
-N5-12	M2	N5	Bitwise operators & | ^ ~ << >>	fixture	tests/02_bitwise.pd	owed	1.0
-N5-13	M2	N5	Compound assignment += -= *= /= %=	fixture	tests/02_compound_assign.pd	owed	1.0
-N5-14	M2	N5	Ranges .. and ..= outside a for header	fixture	tests/04_ranges.pd	owed	1.0
-N5-15	M2	N5	as casts	fixture	tests/02_as_casts.pd	owed	1.0
-N5-16	M2	N5	Unary minus binds tighter than multiplication: a * -b	fixture	tests/02_unary_precedence.pd	owed	1.0
-N5-17	M2	N5	Method call syntax x.f()	fixture	tests/04_method_calls.pd	owed	1.0
+N5-01	-	N5	let, assignment, return, break, continue, expression statements	fixture	examples/tutorial/05_control_flow.pd	satisfied	1.0	-
+N5-02	M5	N5	unsafe { } as a statement	fixture	tests/11_unsafe_blocks.pd	owed	1.0	-
+N5-03	M2	N5	if is an expression: let x = if c { 1 } else { 2 };	fixture	tests/04_if_expression.pd	owed	1.0	-
+N5-04	M2	N5	match is an expression	fixture	tests/06_match_expression.pd	owed	1.0	-
+N5-05	M2	N5	Blocks are expressions	fixture	tests/04_block_expression.pd	owed	1.0	-
+N5-06	M2	N5	else if	fixture	tests/04_else_if.pd	owed	1.0	-
+N5-07	M2	N5	loop, exited by break, which may carry a value	fixture	tests/04_loop_break_value.pd	owed	1.0	-
+N5-08	M3	N5	Closures with inferred capture, and a move form	fixture	tests/05_closures.pd	owed	1.0	-
+N5-09	M3	N5	try { } scopes error handling	fixture	tests/09_try_block.pd	owed	1.0	-
+N5-10	-	N5	Arithmetic and comparison operators	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
+N5-11	-	N5	Logical operators	fixture	tests/04_control_flow_if.pd	satisfied	1.0	-
+N5-12	M2	N5	Bitwise operators & | ^ ~ << >>	fixture	tests/02_bitwise.pd	owed	1.0	-
+N5-13	M2	N5	Compound assignment += -= *= /= %=	fixture	tests/02_compound_assign.pd	owed	1.0	-
+N5-14	M2	N5	Ranges .. and ..= outside a for header	fixture	tests/04_ranges.pd	owed	1.0	-
+N5-15	M2	N5	as casts	fixture	tests/02_as_casts.pd	owed	1.0	-
+N5-16	M2	N5	Unary minus binds tighter than multiplication: a * -b	fixture	tests/02_unary_precedence.pd	owed	1.0	-
+N5-17	M2	N5	Method call syntax x.f()	fixture	tests/04_method_calls.pd	owed	1.0	-
 
 # --- N6 Patterns --------------------------------------------------------------
-N6-01	-	N6	Wildcard and identifier patterns	fixture	tests/06_pattern_matching.pd	satisfied	1.0
-N6-02	M2	N6	Literal patterns (integer, string, bool)	fixture	tests/06_literal_patterns.pd	owed	1.0
-N6-03	M2	N6	Range patterns	fixture	tests/06_range_patterns.pd	owed	1.0
-N6-04	-	N6	Enum path patterns with tuple and struct sub-patterns	fixture	tests/06_pattern_matching.pd	satisfied	1.0
-N6-05	M2	N6	Tuple patterns	fixture	tests/06_tuple_patterns.pd	owed	1.0
-N6-06	M3	N6	Slice patterns	fixture	tests/06_slice_patterns.pd	owed	1.0
-N6-07	M2	N6	Or-patterns A | B	fixture	tests/06_or_patterns.pd	owed	1.0
-N6-08	M2	N6	Binding patterns name @ pattern	fixture	tests/06_at_patterns.pd	owed	1.0
-N6-09	M2	N6	Guards: arm if cond	fixture	tests/06_guards.pd	owed	1.0
-N6-10	M2	N6	A non-exhaustive match is a compile error for EVERY scrutinee type	reject	tests/reject/nonexhaustive_int_match.pd	owed	1.0
-N6-11	M2	N6	A match that falls through no arm traps rather than continuing	observable	tests/n6_match.rs::unmatched_scrutinee_traps	owed	1.0
+N6-01	-	N6	Wildcard and identifier patterns	fixture	tests/06_pattern_matching.pd	satisfied	1.0	-
+N6-02	M2	N6	Literal patterns (integer, string, bool)	fixture	tests/06_literal_patterns.pd	owed	1.0	-
+N6-03	M2	N6	Range patterns	fixture	tests/06_range_patterns.pd	owed	1.0	-
+N6-04	-	N6	Enum path patterns with tuple and struct sub-patterns	fixture	tests/06_pattern_matching.pd	satisfied	1.0	-
+N6-05	M2	N6	Tuple patterns	fixture	tests/06_tuple_patterns.pd	owed	1.0	-
+N6-06	M3	N6	Slice patterns	fixture	tests/06_slice_patterns.pd	owed	1.0	-
+N6-07	M2	N6	Or-patterns A | B	fixture	tests/06_or_patterns.pd	owed	1.0	-
+N6-08	M2	N6	Binding patterns name @ pattern	fixture	tests/06_at_patterns.pd	owed	1.0	-
+N6-09	M2	N6	Guards: arm if cond	fixture	tests/06_guards.pd	owed	1.0	-
+N6-10	M2	N6	A non-exhaustive match is a compile error for EVERY scrutinee type	reject	tests/reject/nonexhaustive_int_match.pd	owed	1.0	-
+N6-11	M2	N6	A match that falls through no arm traps rather than continuing	observable	tests/n6_match.rs::unmatched_scrutinee_traps	owed	1.0	-
 
 # --- N7 Effects and asynchrony (differentiator 1) ------------------------------
-N7-01	M5	N7	There is no async keyword	reject	tests/reject/async_fn.pd	owed	thesis
-N7-02	M5	N7	There is no await operator	reject	tests/10_async_await.pd	owed	thesis
-N7-03	M5	N7	Effects are inferred from a body with no annotation	observable	tests/n7_effects.rs::io_builtin_makes_its_caller_effectful	owed	1.0
-N7-04	M5	N7	Effects propagate to callers transitively	fixture	tests/09_effects_propagate.pd	owed	thesis
-N7-05	M5	N7	Propagation is a FIXED POINT over the call graph, not a source-order pass	observable	tests/n7_effects.rs::callee_defined_below_its_caller_still_propagates	owed	1.0
-N7-06	M5	N7	An unresolved callee is NOT assumed pure	reject	tests/reject/unknown_callee_not_pure.pd	owed	1.0
-N7-07	M5	N7	Methods in impl blocks are effect-analysed	observable	tests/n7_effects.rs::impl_methods_are_analysed	owed	1.0
-N7-08	M5	N7	"This function is pure" is a checkable claim	reject	tests/reject/pure_function_calls_io.pd	owed	thesis
-N7-09	M5	N7	The effect vocabulary is io, memory, panic and unsafe on one footing	fixture	tests/09_effects_system.pd	owed	1.0
-N7-10	M5	N7	Effect contexts scope policy over a block	fixture	tests/09_effect_contexts.pd	owed	1.0
-N7-11	M5	N7	effect::sync { } forces sequential execution	observable	tests/n7_parallel.rs::effect_sync_serialises	owed	1.0
-N7-12	M5	N7	-> async T pins an asynchronous boundary	fixture	tests/09_async_boundary.pd	owed	1.0
-N7-13	P1	N7	Independent effectful operations are parallel BY DEFAULT	observable	tests/n7_parallel.rs::two_independent_waits_overlap_in_wall_clock	owed	post-1.0
-N7-14	P1	N7	May the compiler emit an unnamed execution substrate?	decision	D2	blocked	post-1.0
-N7-15	P1	N7	Sequencing, cancellation and error semantics of parallel-by-default	decision	D2	blocked	post-1.0
-N7-16	P1	N7	Effect tracking has no runtime representation	observable	tests/n7_parallel.rs::no_effect_metadata_in_generated_c	owed	post-1.0
-N7-17	P1	N7	Structured concurrency: no orphaned task survives its scope	observable	tests/n7_parallel.rs::scope_exit_joins_or_cancels_every_branch	owed	post-1.0
+N7-01	M5	N7	There is no async keyword	reject	tests/reject/async_fn.pd	owed	thesis	there is no `async` keyword
+N7-02	M5	N7	There is no await operator	reject	tests/10_async_await.pd	owed	thesis	there is no await operator
+N7-03	M5	N7	Effects are inferred from a body with no annotation	observable	tests/n7_effects.rs::io_builtin_makes_its_caller_effectful	owed	1.0	-
+N7-04	M5	N7	Effects propagate to callers transitively	fixture	tests/09_effects_propagate.pd	owed	thesis	-
+N7-05	M5	N7	Propagation is a FIXED POINT over the call graph, not a source-order pass	observable	tests/n7_effects.rs::callee_defined_below_its_caller_still_propagates	owed	1.0	-
+N7-06	M5	N7	An unresolved callee is NOT assumed pure	reject	tests/reject/unknown_callee_not_pure.pd	owed	1.0	-
+N7-07	M5	N7	Methods in impl blocks are effect-analysed	observable	tests/n7_effects.rs::impl_methods_are_analysed	owed	1.0	-
+N7-08	M5	N7	"This function is pure" is a checkable claim	reject	tests/reject/pure_function_calls_io.pd	owed	thesis	declared pure
+N7-09	M5	N7	The effect vocabulary is io, memory, panic and unsafe on one footing	fixture	tests/09_effects_system.pd	owed	1.0	-
+N7-10	M5	N7	Effect contexts scope policy over a block	fixture	tests/09_effect_contexts.pd	owed	1.0	-
+N7-11	M5	N7	effect::sync { } forces sequential execution	observable	tests/n7_parallel.rs::effect_sync_serialises	owed	1.0	-
+N7-12	M5	N7	-> async T pins an asynchronous boundary	fixture	tests/09_async_boundary.pd	owed	1.0	-
+N7-13	P1	N7	Independent effectful operations are parallel BY DEFAULT	observable	tests/n7_parallel.rs::two_independent_waits_overlap_in_wall_clock	owed	post-1.0	-
+N7-14	P1	N7	May the compiler emit an unnamed execution substrate?	decision	D2	blocked	post-1.0	-
+N7-15	P1	N7	Sequencing, cancellation and error semantics of parallel-by-default	decision	D2	blocked	post-1.0	-
+N7-16	P1	N7	Effect tracking has no runtime representation	observable	tests/n7_parallel.rs::no_effect_metadata_in_generated_c	owed	post-1.0	-
+N7-17	P1	N7	Structured concurrency: no orphaned task survives its scope	observable	tests/n7_parallel.rs::scope_exit_joins_or_cancels_every_branch	owed	post-1.0	-
 
 # --- N8 Totality (differentiator 2) --------------------------------------------
-N8-01	M6	N8	#[total] on a function	fixture	tests/13_total_attribute.pd	owed	thesis
-N8-02	M6	N8	#![total(strict)] on a crate	fixture	tests/13_total_strict.pd	owed	1.0
-N8-03	M6	N8	#[decreases(expr)] measure checking	fixture	tests/13_decreases.pd	owed	1.0
-N8-04	M6	N8	#[total(fuel = N)] bounded termination	fixture	tests/13_total_fuel.pd	owed	1.0
-N8-05	M6	N8	#[partial] opts out explicitly	fixture	tests/13_partial.pd	owed	1.0
-N8-06	M6	N8	Structural recursion on a MONOMORPHIC inductive type needs no measure	fixture	tests/13_structural_recursion.pd	owed	thesis
-N8-07	M6	N8	Structural recursion on a GENERIC inductive type needs no measure	fixture	tests/13_structural_recursion_generic.pd	owed	1.0
-N8-08	M6	N8	A #[total] function whose obligation cannot be discharged is a compile error	reject	tests/reject/total_unproven.pd	owed	thesis
-N8-09	M6	N8	A measure that does not strictly decrease is a compile error	reject	tests/reject/decreases_not_decreasing.pd	owed	1.0
-N8-10	M6	N8	A #[total] function calling a #[partial] one is a compile error	reject	tests/reject/total_calls_partial.pd	owed	1.0
-N8-11	M6	N8	unsafe is not permitted in a #![total(strict)] crate	reject	tests/reject/total_strict_unsafe.pd	owed	1.0
-N8-12	M6	N8	There is NO mode in which an unproven #[total] function is accepted	observable	tests/n8_totality.rs::no_flag_downgrades_an_unproven_obligation	owed	1.0
+N8-01	M6	N8	#[total] on a function	fixture	tests/13_total_attribute.pd	owed	thesis	-
+N8-02	M6	N8	#![total(strict)] on a crate	fixture	tests/13_total_strict.pd	owed	1.0	-
+N8-03	M6	N8	#[decreases(expr)] measure checking	fixture	tests/13_decreases.pd	owed	1.0	-
+N8-04	M6	N8	#[total(fuel = N)] bounded termination	fixture	tests/13_total_fuel.pd	owed	1.0	-
+N8-05	M6	N8	#[partial] opts out explicitly	fixture	tests/13_partial.pd	owed	1.0	-
+N8-06	M6	N8	Structural recursion on a MONOMORPHIC inductive type needs no measure	fixture	tests/13_structural_recursion.pd	owed	thesis	-
+N8-07	M6	N8	Structural recursion on a GENERIC inductive type needs no measure	fixture	tests/13_structural_recursion_generic.pd	owed	1.0	-
+N8-08	M6	N8	A #[total] function whose obligation cannot be discharged is a compile error	reject	tests/reject/total_unproven.pd	owed	thesis	cannot prove termination
+N8-09	M6	N8	A measure that does not strictly decrease is a compile error	reject	tests/reject/decreases_not_decreasing.pd	owed	1.0	-
+N8-10	M6	N8	A #[total] function calling a #[partial] one is a compile error	reject	tests/reject/total_calls_partial.pd	owed	1.0	-
+N8-11	M6	N8	unsafe is not permitted in a #![total(strict)] crate	reject	tests/reject/total_strict_unsafe.pd	owed	1.0	-
+N8-12	M6	N8	There is NO mode in which an unproven #[total] function is accepted	observable	tests/n8_totality.rs::no_flag_downgrades_an_unproven_obligation	owed	1.0	-
 
 # --- N9 References and lifetimes (differentiator 3) ----------------------------
-N9-01	M7	N9	ref T is a shared borrow	fixture	tests/05_ref_shared.pd	owed	thesis
-N9-02	M7	N9	ref mut T is a mutable borrow	fixture	tests/05_ref_mut.pd	owed	1.0
-N9-03	M7	N9	ref<'a> T names a region explicitly, and is ACCEPTED	fixture	tests/05_ref_named_region.pd	owed	thesis
-N9-04	M7	N9	There are no 'a parameter lists on functions, structs or impls	reject	tests/reject/lifetime_param_list.pd	owed	thesis
-N9-05	M7	N9	Lifetimes are inferred where they are not written	fixture	tests/05_lifetime_inference.pd	owed	1.0
-N9-06	M7	N9	Inference failure is a compile error NAMING the ambiguity, never a guess	reject	tests/reject/ambiguous_region.pd	owed	thesis
-N9-07	M7	N9	Use after free is rejected	reject	tests/reject/use_after_free.pd	owed	1.0
-N9-08	M7	N9	Two aliasing ref mut are rejected	reject	tests/reject/aliasing_ref_mut.pd	owed	1.0
-N9-09	M7	N9	Borrow checking costs nothing at run time	observable	tests/n9_regions.rs::generated_c_carries_no_region_data	owed	1.0
+N9-01	M7	N9	ref T is a shared borrow	fixture	tests/05_ref_shared.pd	owed	thesis	-
+N9-02	M7	N9	ref mut T is a mutable borrow	fixture	tests/05_ref_mut.pd	owed	1.0	-
+N9-03	M7	N9	ref<'a> T names a region explicitly, and is ACCEPTED	fixture	tests/05_ref_named_region.pd	owed	thesis	-
+N9-04	M7	N9	There are no 'a parameter lists on functions, structs or impls	reject	tests/reject/lifetime_param_list.pd	owed	thesis	lifetime parameter list
+N9-05	M7	N9	Lifetimes are inferred where they are not written	fixture	tests/05_lifetime_inference.pd	owed	1.0	-
+N9-06	M7	N9	Inference failure is a compile error NAMING the ambiguity, never a guess	reject	tests/reject/ambiguous_region.pd	owed	thesis	ambiguous region
+N9-07	M7	N9	Use after free is rejected	reject	tests/reject/use_after_free.pd	owed	1.0	-
+N9-08	M7	N9	Two aliasing ref mut are rejected	reject	tests/reject/aliasing_ref_mut.pd	owed	1.0	-
+N9-09	M7	N9	Borrow checking costs nothing at run time	observable	tests/n9_regions.rs::generated_c_carries_no_region_data	owed	1.0	-
 
 # --- N10 Traits and generics ----------------------------------------------------
-N10-01	M3	N10	A generic function is monomorphised per concrete argument	fixture	tests/08_generics_basic.pd	owed	1.0
-N10-02	M3	N10	A generic struct or enum is monomorphised	fixture	tests/08_generic_types.pd	owed	1.0
-N10-03	M3	N10	Foo<T> is a TYPE argument, not a const generic argument	fixture	tests/08_generics_basic.pd	owed	1.0
-N10-04	M3	N10	Type parameter bounds <T: Display>	fixture	tests/07_trait_bounds.pd	owed	1.0
-N10-05	M3	N10	where clauses	fixture	tests/07_where_clauses.pd	owed	1.0
-N10-06	M3	N10	Trait methods take a self receiver and it PARSES	fixture	tests/07_traits_basic.pd	owed	1.0
-N10-07	M3	N10	Trait method defaults	fixture	tests/07_trait_defaults.pd	owed	1.0
-N10-08	M3	N10	Associated types	fixture	tests/07_associated_types.pd	owed	1.0
-N10-09	M3	N10	Static dispatch through bounds — abstraction costs nothing at run time	observable	tests/n10_traits.rs::no_vtable_in_generated_c_for_a_bounded_call	owed	1.0
-N10-10	M3	N10	Associated constants	fixture	tests/07_associated_consts.pd	owed	1.0
-N10-11	M3	N7+N10	Function types and signatures reserve a LATENT EFFECT VARIABLE, so M5 does not redesign them	observable	tests/n10_effect_variable.rs::fn_type_carries_an_effect_slot	owed	1.0
+N10-01	M3	N10	A generic function is monomorphised per concrete argument	fixture	tests/08_generics_basic.pd	owed	1.0	-
+N10-02	M3	N10	A generic struct or enum is monomorphised	fixture	tests/08_generic_types.pd	owed	1.0	-
+N10-03	M3	N10	Foo<T> is a TYPE argument, not a const generic argument	fixture	tests/08_generics_basic.pd	owed	1.0	-
+N10-04	M3	N10	Type parameter bounds <T: Display>	fixture	tests/07_trait_bounds.pd	owed	1.0	-
+N10-05	M3	N10	where clauses	fixture	tests/07_where_clauses.pd	owed	1.0	-
+N10-06	M3	N10	Trait methods take a self receiver and it PARSES	fixture	tests/07_traits_basic.pd	owed	1.0	-
+N10-07	M3	N10	Trait method defaults	fixture	tests/07_trait_defaults.pd	owed	1.0	-
+N10-08	M3	N10	Associated types	fixture	tests/07_associated_types.pd	owed	1.0	-
+N10-09	M3	N10	Static dispatch through bounds — abstraction costs nothing at run time	observable	tests/n10_traits.rs::no_vtable_in_generated_c_for_a_bounded_call	owed	1.0	-
+N10-10	M3	N10	Associated constants	fixture	tests/07_associated_consts.pd	owed	1.0	-
+N10-11	M3	N7+N10	Function types and signatures reserve a LATENT EFFECT VARIABLE, so M5 does not redesign them	observable	tests/n10_effect_variable.rs::fn_type_carries_an_effect_slot	owed	1.0	-
 
 # --- N11 Modules -----------------------------------------------------------------
-N11-01	M4	N11	File-based modules with nested paths	fixture	tests/12_modules_imports.pd	owed	1.0
-N11-02	M4	N11	Public/private visibility is ENFORCED	reject	tests/reject/private_item_import.pd	owed	1.0
-N11-03	M4	N11	import std::math;	fixture	tests/12_import_plain.pd	owed	1.0
-N11-04	M4	N11	import std::io::{read, write};	fixture	tests/12_import_selective.pd	owed	1.0
-N11-05	M4	N11	import std::collections as col;	fixture	tests/12_import_alias.pd	owed	1.0
-N11-06	M4	N11	import std::prelude::*;	fixture	tests/12_import_glob.pd	owed	1.0
-N11-07	M4	N11	A cross-file call resolves	fixture	tests/projects/hello_pdm/tests/test_math.pd	owed	1.0
+N11-01	M4	N11	File-based modules with nested paths	fixture	tests/12_modules_imports.pd	owed	1.0	-
+N11-02	M4	N11	Public/private visibility is ENFORCED	reject	tests/reject/private_item_import.pd	owed	1.0	-
+N11-03	M4	N11	import std::math;	fixture	tests/12_import_plain.pd	owed	1.0	-
+N11-04	M4	N11	import std::io::{read, write};	fixture	tests/12_import_selective.pd	owed	1.0	-
+N11-05	M4	N11	import std::collections as col;	fixture	tests/12_import_alias.pd	owed	1.0	-
+N11-06	M4	N11	import std::prelude::*;	fixture	tests/12_import_glob.pd	owed	1.0	-
+N11-07	M4	N11	A cross-file call resolves	fixture	tests/projects/hello_pdm/tests/test_math.pd	owed	1.0	-
 
 # --- N12 Memory model --------------------------------------------------------------
-N12-01	-	N12	Each value has one owner; moves are the default	fixture	tests/05_ownership_basic.pd	satisfied	1.0
-N12-02	-	N12	Borrows are checked at compile time	fixture	tests/05_borrowing_references.pd	satisfied	1.0
-N12-03	M7	N12	Values with a destructor are dropped at end of scope	observable	tests/n12_drop.rs::drop_glue_runs_at_scope_exit	owed	1.0
-N12-04	M7	N12	String is an owned heap value with MOVE semantics	reject	tests/reject/use_of_moved_string.pd	owed	1.0
-N12-05	M7	N12	A moved-from binding cannot be read	reject	tests/reject/use_after_move.pd	owed	1.0
-N12-06	M7	N12	&mut / ref mut may be taken only of a binding declared mut — for EVERY referent type	reject	tests/reject/ref_mut_of_immutable_struct.pd	owed	1.0
-N12-07	M5	N12	unsafe { } is auditable and isolated	fixture	tests/11_unsafe_blocks.pd	owed	1.0
-N12-08	M7	N12	Do [T; N] parameters copy or alias?	decision	D4	blocked	1.0
-N12-09	M7	N12	Whatever D4 decides, the rule is enforced in the TYPE SYSTEM	reject	tests/reject/array_param_rule.pd	blocked	1.0
+N12-01	-	N12	Each value has one owner; moves are the default	fixture	tests/05_ownership_basic.pd	satisfied	1.0	-
+N12-02	-	N12	Borrows are checked at compile time	fixture	tests/05_borrowing_references.pd	satisfied	1.0	-
+N12-03	M7	N12	Values with a destructor are dropped at end of scope	observable	tests/n12_drop.rs::drop_glue_runs_at_scope_exit	owed	1.0	-
+N12-04	M7	N12	String is an owned heap value with MOVE semantics	reject	tests/reject/use_of_moved_string.pd	owed	1.0	-
+N12-05	M7	N12	A moved-from binding cannot be read	reject	tests/reject/use_after_move.pd	owed	1.0	-
+N12-06	M7	N12	&mut / ref mut may be taken only of a binding declared mut — for EVERY referent type	reject	tests/reject/ref_mut_of_immutable_struct.pd	owed	1.0	-
+N12-07	M5	N12	unsafe { } is auditable and isolated	fixture	tests/11_unsafe_blocks.pd	owed	1.0	-
+N12-08	M7	N12	Do [T; N] parameters copy or alias?	decision	D4	blocked	1.0	-
+N12-09	M7	N12	Whatever D4 decides, the rule is enforced in the TYPE SYSTEM	reject	tests/reject/array_param_rule.pd	blocked	1.0	-
 
 # --- N13 Execution model -------------------------------------------------------------
-N13-01	-	N13	Execution begins at fn main	fixture	tests/03_functions_basic.pd	satisfied	1.0
-N13-02	-	N13	A compilation unit without main is a library	skip	tests/projects/hello_pdm/src/math.pd	satisfied	1.0
-N13-03	M2	N13	Arguments are evaluated left to right	fixture	tests/03_arg_evaluation_order.pd	owed	1.0
+N13-01	-	N13	Execution begins at fn main	fixture	tests/03_functions_basic.pd	satisfied	1.0	-
+N13-02	-	N13	A compilation unit without main is a library	skip	tests/projects/hello_pdm/src/math.pd	satisfied	1.0	-
+N13-03	M2	N13	Arguments are evaluated left to right	fixture	tests/03_arg_evaluation_order.pd	owed	1.0	-
 
 # --- N14 Builtins and the standard library ---------------------------------------------
-N14-01	M2	N14	The builtin set is exactly the 34 normative names	gate	make stdlib-gate	owed	1.0
-N14-02	M2	N14	A program cannot define or shadow a builtin name	reject	tests/reject/shadow_builtin.pd	owed	1.0
-N14-03	M3	N14	Builtin signatures match N14 — filesystem builtins return Result	fixture	tests/stdlib/stdlib_builtins_file.pd	owed	1.0
-N14-04	M2	N14	string_char_at returns char	fixture	tests/stdlib/stdlib_builtins_string.pd	owed	1.0
-N14-05	M5	N14	The effect classification of every builtin is ENFORCED	reject	tests/reject/pure_calls_file_open.pd	owed	1.0
-N14-06	M8	N14	Every file under stdlib/ is accepted by the compiler	gate	make stdlib-gate	owed	1.0
-N14-07	M8	N14	stdlib/ is on the default search path with no configuration	observable	tests/n14_stdlib.rs::import_std_works_with_no_env	owed	1.0
-N14-08	M8	N14	stdlib/ is installed by every shipping package	observable	tests/n14_stdlib.rs::both_formulae_install_the_stdlib	owed	1.0
-N14-09	M8	N14	Collections: Vec<T>	fixture	tests/stdlib/std_vec.pd	owed	1.0
-N14-10	M8	N14	Collections: HashMap<K, V>	fixture	tests/stdlib/std_hashmap.pd	owed	1.0
-N14-11	M8	N14	String methods above the builtins	fixture	tests/stdlib/std_string.pd	owed	1.0
-N14-12	M8	N14	An iterator protocol, expressed as a trait	fixture	tests/stdlib/std_iterator.pd	owed	1.0
-N14-13	M8	N14	Math module	fixture	tests/stdlib/std_math.pd	owed	1.0
-N14-14	M8	N14	Buffered I/O	fixture	tests/stdlib/std_io_buffered.pd	owed	1.0
-N14-15	M8	N14	Networked I/O	fixture	tests/stdlib/std_net.pd	owed	1.0
-N14-16	M8	N14	Process and environment access	fixture	tests/stdlib/std_process.pd	owed	1.0
+N14-01	M2	N14	The builtin set is exactly the 34 normative names	gate	make stdlib-gate	owed	1.0	-
+N14-02	M2	N14	A program cannot define or shadow a builtin name	reject	tests/reject/shadow_builtin.pd	owed	1.0	-
+N14-03	M3	N14	Builtin signatures match N14 — filesystem builtins return Result	fixture	tests/stdlib/stdlib_builtins_file.pd	owed	1.0	-
+N14-04	M2	N14	string_char_at returns char	fixture	tests/stdlib/stdlib_builtins_string.pd	owed	1.0	-
+N14-05	M5	N14	The effect classification of every builtin is ENFORCED	reject	tests/reject/pure_calls_file_open.pd	owed	1.0	-
+N14-06	M8	N14	Every file under stdlib/ is accepted by the compiler	gate	make stdlib-gate	owed	1.0	-
+N14-07	M8	N14	stdlib/ is on the default search path with no configuration	observable	tests/n14_stdlib.rs::import_std_works_with_no_env	owed	1.0	-
+N14-08	M8	N14	stdlib/ is installed by every shipping package	observable	tests/n14_stdlib.rs::both_formulae_install_the_stdlib	owed	1.0	-
+N14-09	M8	N14	Collections: Vec<T>	fixture	tests/stdlib/std_vec.pd	owed	1.0	-
+N14-10	M8	N14	Collections: HashMap<K, V>	fixture	tests/stdlib/std_hashmap.pd	owed	1.0	-
+N14-11	M8	N14	String methods above the builtins	fixture	tests/stdlib/std_string.pd	owed	1.0	-
+N14-12	M8	N14	An iterator protocol, expressed as a trait	fixture	tests/stdlib/std_iterator.pd	owed	1.0	-
+N14-13	M8	N14	Math module	fixture	tests/stdlib/std_math.pd	owed	1.0	-
+N14-14	M8	N14	Buffered I/O	fixture	tests/stdlib/std_io_buffered.pd	owed	1.0	-
+N14-15	M8	N14	Networked I/O	fixture	tests/stdlib/std_net.pd	owed	1.0	-
+N14-16	M8	N14	Process and environment access	fixture	tests/stdlib/std_process.pd	owed	1.0	-
 
 # --- The thesis gate. 1.0 IS these rows: the differentiated dialect, proven on a compiler
 # --- that cannot pass them vacuously. `make thesis-exit`. ---------------------------------
-TH-01	M9	N7	bootstrap/pdc.pd contains no `async` and no `await` token	gate	make thesis-exit	owed	thesis
-TH-02	M9	N9	bootstrap/pdc.pd contains no lifetime PARAMETER LIST (ref<'a> stays legal)	gate	make thesis-exit	owed	thesis
-TH-03	M9	N9	bootstrap/pdc.pd declares at least one ref / ref mut parameter	gate	make thesis-exit	owed	thesis
-TH-04	M9	N8	bootstrap/pdc.pd carries at least one #[total] the compiler DISCHARGES	gate	make thesis-exit	owed	thesis
-TH-05	M9	N7	A file-IO function's inferred effect propagates to its caller and passes the gate	gate	make thesis-exit	owed	thesis
-TH-06	M9	N1	The second witness meets the same three conditions, so one program's shape is not the language	gate	make thesis-exit	owed	thesis
-WT-01	M2	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus	fixture	tests/witness/json_parser.pd	owed	1.0
-WT-02	M9	N1	Witness 2 is rewritten in the differentiated dialect and still runs	fixture	tests/witness/json_parser.pd	owed	thesis
+TH-01	M9	N7	bootstrap/pdc.pd contains no `async` and no `await` token	gate	make thesis-exit	owed	thesis	-
+TH-02	M9	N9	bootstrap/pdc.pd contains no lifetime PARAMETER LIST (ref<'a> stays legal)	gate	make thesis-exit	owed	thesis	-
+TH-03	M9	N9	bootstrap/pdc.pd declares at least one ref / ref mut parameter	gate	make thesis-exit	owed	thesis	-
+TH-04	M9	N8	bootstrap/pdc.pd carries at least one #[total] the compiler DISCHARGES	gate	make thesis-exit	owed	thesis	-
+TH-05	M9	N7	A file-IO function's inferred effect propagates to its caller and passes the gate	gate	make thesis-exit	owed	thesis	-
+TH-06	M9	N1	The second witness meets the same three conditions, so one program's shape is not the language	gate	make thesis-exit	owed	thesis	-
+WT-01	M2	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus	fixture	tests/witness/json_parser.pd	owed	1.0	-
+WT-02	M9	N1	Witness 2 is rewritten in the differentiated dialect and still runs	fixture	tests/witness/json_parser.pd	owed	thesis	-
 
 # --- C FFI. The one feature-list-only item kept in 1.0: the backend already emits C, and a
 # --- systems language whose IO cannot leave the builtin set is not 1.0. -------------------
-FFI-01	M8	V1-8	A Palladium program can call a C function declared to it	fixture	tests/ffi/call_c.pd	owed	1.0
-FFI-02	M8	V1-8	A Palladium function can be exported to C and called from it	observable	tests/ffi.rs::exported_symbol_is_callable_from_c	owed	1.0
-FFI-03	M8	V1-8	The FFI boundary is effect-classified, not a hole in N7	reject	tests/reject/ffi_escapes_effects.pd	owed	1.0
+FFI-01	M8	V1-8	A Palladium program can call a C function declared to it	fixture	tests/ffi/call_c.pd	owed	1.0	-
+FFI-02	M8	V1-8	A Palladium function can be exported to C and called from it	observable	tests/ffi.rs::exported_symbol_is_callable_from_c	owed	1.0	-
+FFI-03	M8	V1-8	The FFI boundary is effect-classified, not a hole in N7	reject	tests/reject/ffi_escapes_effects.pd	owed	1.0	-
 
 # --- Self-hosting: the project's own claim about pdc -------------------------------------
-SH-01	-	A12	bootstrap/pdc.pd compiles itself to a byte-identical fixed point over PBS-1	gate	make selfhost	satisfied	thesis
-SH-02	M9	A12	bootstrap/pdc.pd compiles EVERY fixture in the conformance corpus	gate	make selfhost-corpus	owed	thesis
-SH-03	M9	A12	Its output matches the Rust compiler's on every fixture, acceptances and refusals alike	gate	make selfhost-corpus	owed	thesis
-SH-04	M9	A12	PBS-1 is the whole 1.0 language, not a subset	gate	make selfhost-corpus	owed	thesis
+SH-01	-	A12	bootstrap/pdc.pd compiles itself to a byte-identical fixed point over PBS-1	gate	make selfhost	satisfied	thesis	-
+SH-02	M9	A12	bootstrap/pdc.pd compiles EVERY fixture in the conformance corpus	gate	make selfhost-corpus	owed	thesis	-
+SH-03	M9	A12	Its output matches the Rust compiler's on every fixture, acceptances and refusals alike	gate	make selfhost-corpus	owed	thesis	-
+SH-04	M9	A12	PBS-1 is the whole 1.0 language, not a subset	gate	make selfhost-corpus	owed	thesis	-
 
 # --- Gate integrity: the gates must be able to fail ---------------------------------------
-GI-01	-	A11	The conformance corpus is a closed inventory	gate	make conformance	satisfied	1.0
-GI-02	-	A11	The conformance runner still goes RED when it should	gate	make test-conformance-runner	satisfied	1.0
-GI-03	-	A8	Every evidence producer the stdlib gate reads is fault-injected	gate	make test-gate-probe	satisfied	1.0
-GI-04	-	-	Every documentation snippet compiles and every citation resolves	gate	make check-docs	satisfied	1.0
-GI-05	-	-	Every test binary runs, integration tests included	gate	make test-honest	satisfied	1.0
-GI-06	M2	-	make gates runs test-honest, so a non-ignored regression cannot coexist with a green gate	gate	make gates	owed	1.0
-GI-07	-	-	Every declared failure names an owning milestone and none of them passes	gate	make test-xfail	satisfied	1.0
-GI-08	M2	-	Every milestone exit reads BOTH debt inventories and this manifest	gate	make m2-exit	owed	1.0
-GI-09	M2	-	The owner filter is self-tested: it detects a row planted for the milestone under test	gate	make test-requirements-runner	owed	1.0
-GI-10	M9	-	1.0 exits on the whole manifest plus the gates plus test-honest	gate	make v1-exit	owed	1.0
+GI-01	-	A11	The conformance corpus is a closed inventory	gate	make conformance	satisfied	1.0	-
+GI-02	-	A11	The conformance runner still goes RED when it should	gate	make test-conformance-runner	satisfied	1.0	-
+GI-03	-	A8	Every evidence producer the stdlib gate reads is fault-injected	gate	make test-gate-probe	satisfied	1.0	-
+GI-04	-	-	Every documentation snippet compiles and every citation resolves	gate	make check-docs	satisfied	1.0	-
+GI-05	-	-	Every test binary runs, integration tests included	gate	make test-honest	satisfied	1.0	-
+GI-06	M2	-	make gates runs test-honest, so a non-ignored regression cannot coexist with a green gate	gate	make gates	owed	1.0	-
+GI-07	-	-	Every declared failure names an owning milestone and none of them passes	gate	make test-xfail	satisfied	1.0	-
+GI-08	M2	-	Every milestone exit reads BOTH debt inventories and this manifest	gate	make m2-exit	owed	1.0	-
+GI-09	M2	-	The owner filter is self-tested: it detects a row planted for the milestone under test	gate	make test-requirements-runner	owed	1.0	-
+GI-10	M9	-	1.0 exits on the whole manifest plus the gates plus test-honest	gate	make v1-exit	owed	1.0	-
 
 # --- Owner decisions. A blocked row above cannot be written until these are answered. -----
-D1-01	M9	F5	RESOLVED 2026-08-22: neither option. 1.0 IS the thesis gate; this manifest enumerates, it does not gate	gate	make thesis-exit	owed	thesis
-D2-01	P1	N7	May the compiler emit an unnamed execution substrate, and with what semantics?	decision	D2	blocked	post-1.0
-D3-01	M7	N4	str and usize: add the primitives, or rewrite the normative sites	decision	D3	blocked	1.0
-D4-01	M7	N12.1	Array parameters: value semantics or reference semantics	decision	D4	blocked	1.0
+D1-01	M9	F5	RESOLVED 2026-08-22: neither option. 1.0 IS the thesis gate; this manifest enumerates, it does not gate	gate	make thesis-exit	owed	thesis	-
+D2-01	P1	N7	May the compiler emit an unnamed execution substrate, and with what semantics?	decision	D2	blocked	post-1.0	-
+D3-01	M7	N4	str and usize: add the primitives, or rewrite the normative sites	decision	D3	blocked	1.0	-
+D4-01	M7	N12.1	Array parameters: value semantics or reference semantics	decision	D4	blocked	1.0	-

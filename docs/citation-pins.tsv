@@ -19,6 +19,7 @@ docs/specification/grammar.ebnf	216-216	docs/reference/features/async-system/asy
 docs/specification/grammar.ebnf	56-56	docs/reference/features/async-system/async-as-effect.md	16acbe64135a	| "unsafe" | "async" | "await" | "macro" ;
 docs/specification/grammar.ebnf	58-59	docs/reference/features/async-system/async-as-effect.md	41773243f31f	# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
 docs/specification/grammar.ebnf	91-91	docs/reference/features/async-system/async-as-effect.md	d4cfe0aa8434	function = [ "pub" ] [ "async" ] "fn" identifier [ generic_params ]
+grammar.ebnf	129-129	docs/contributing/MILESTONES.md	16519002b7db	generic_params = '<' generic_param { ',' generic_param } '>' ;
 grammar.ebnf	130-130	docs/reference/features/core-language/implicit-lifetimes.md	862cabb5d5a1	generic_param = "'" identifier (* lifetime *)
 grammar.ebnf	145-145	docs/reference/features/core-language/implicit-lifetimes.md	27eae3e7e3c5	reference = '&' [ "'" identifier ] [ "mut" ] type ;
 grammar.ebnf	58-59	docs/reference/features/core-language/implicit-lifetimes.md	41773243f31f	# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.

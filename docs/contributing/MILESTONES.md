@@ -12,8 +12,9 @@ whole goal, and every milestone ships.
 `async` or `await` — still reaching a byte-identical stage1/stage2 fixed point, with a second
 witness program meeting the same conditions.**
 
-That gate is in the repository now, and it is **RED: 1 green, 22 RED** over the 23 rows it
-reads ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
+That gate is in the repository now, and it is **RED: 1 green, 21 RED** over the 22 rows it
+evaluates, plus `D1-01`, which cites the gate as its own evidence and is therefore the
+aggregate rather than a member — it is answered by the summary ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
 [`scripts/thesis_exit.py`](../../scripts/thesis_exit.py)). It is committed red on purpose: the
 definition of 1.0 has to live here as a command, because prose drifts and commands do not.
 
@@ -68,7 +69,7 @@ does not become the definition of the language.
 
 | Disposition | Count | Meaning |
 |---|---|---|
-| `thesis` | 23 | `make thesis-exit` reads it directly. These rows *are* the definition |
+| `thesis` | 23 | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
 | `1.0` | 161 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
@@ -152,11 +153,11 @@ Measured at `7484bac`, not read from the previous version of this file.
 
 | | | Command |
 |---|---|---|
-| **The thesis** | **1 green, 22 RED** over 23 rows | `make thesis-exit` |
+| **The thesis** | **1 green, 21 RED** over 22 evaluated rows + the aggregate | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
 | Conformance | `verified=43 untranscribed=0 vacuous=7 xfail=1 reject=0 skip=2 failures=0` over 53 | `make conformance` |
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 29 fault-injection cases; two probe groups named as having no negative control | `make test-thesis-runner` |
+| Thesis gate itself | 40 cases, most driving the gate end to end against an injected repository state | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 232 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 620 pass, **0 fail**, 42 ignored (524 lib + 96 integration) | `make test-honest` |
 | Declared failures | 41 `xfail` + 1 `slow`, none passing | `make test-xfail` |
@@ -483,7 +484,7 @@ rather than as another prerelease.
 4. **Witness 2 in the dialect** (WT-02, TH-06).
 5. **Parity with `src/`, not retirement.**
 
-**Exit**: `make thesis-exit`. It reports **1 green and 22 RED** today; every RED line names the
+**Exit**: `make thesis-exit`. It reports **1 green and 21 RED** today; every RED line names the
 milestone that owes it, and every absent fixture says `DECLARED, ABSENT` rather than passing.
 
 ## Scope: what is in 1.0, and what is not
@@ -595,6 +596,57 @@ refuse `async fn` at codegen exactly as `.await` already is, ahead of M5 deletin
 
 Companion: `src/async_runtime/mod.rs` (498 lines, sole referrer `src/lib.rs:5`) is N7-19 and
 decision **D5**. Not deleted here.
+
+### F14. The gate that defines 1.0 could never say 1.0 was reached
+
+Round two closed "the gate cannot go RED". Round three found its mirror image, and it is the same
+disease: **the gate did not measure.** `D1-01` — the row whose evidence is `make thesis-exit`
+itself — was recorded `False` unconditionally, with no transition. Success required every row
+green, so **exit 0 was unreachable by construction**. A gate that can only ever say no is exactly
+as uninformative as one that can only ever say yes.
+
+A self-referential row is not a member of the set it measures; it *is* the aggregate. It is now
+excluded from evaluation and answered by the summary line, and the self-test's **first** case
+drives an all-green repository state and asserts **exit 0** — so this cannot return silently.
+
+Six more probes of the same family, each now with a control that fails on revert:
+
+| Was | Now |
+|---|---|
+| `run_conformance` ignored the exit status and had no timeout: a run that emitted parsable verdicts and then failed was accepted, and a hung one hung the gate | every subprocess goes through [`scripts/gate_probe.py`](../../scripts/gate_probe.py), whose `classify()` yields `Concluded` (has `.text`) or `Malfunction` (**no text attribute at all**), with the timeout inside `run()` |
+| TH-05 parsed effect output without requiring the compile to succeed | `effect_report` refuses to return text from a `pdc` that did not conclude *or* did not succeed |
+| a `HarnessError` from conformance or witness reading was caught and turned into ordinary red rows, so a failure to measure exited 1 | measurement failure propagates and exits **2**; only an artifact the repository does not contain is a finding, and it says `DECLARED, ABSENT` |
+| `p_effect_is_transitive` returned true for any reported function with no *recognised* builtin call — including one that called **nothing** | the edge `caller -> callee -> builtin` must be exhibited, with all three named |
+| `p_total_on_fn` called a function "live" if its name appeared in any body — a dead caller, or its **own recursive call**, sufficed | reachability from `main`, with self-edges excluded |
+| `thesis_rows` validated only the column count: an unknown kind, a duplicate id or a **retyped row** dropped out of dispatch while the summary still printed the full count | the id set is **pinned**, an unknown kind is a harness error, and one result per row is asserted |
+
+And the self-test itself, for the second time: it called the probe helpers directly, so deleting
+the production wiring left every case green. It now builds a temporary repository — requirements
+TSV, witnesses, conformance verdicts, `make` results, effect reports — and drives `main()`,
+asserting the **exit code**. Forty cases, four of which drop the injection entirely and drive the
+real subprocess boundary — a conformance run and a `pdc` that each print parsable output and then
+fail or get killed must both exit 2. The one probe group with no negative control (the real `make`
+subprocess) is pinned in `EXPECTED_UNCOVERED`, so emptying that list fails the self-test instead of
+printing "0 uncovered".
+
+Two things it caught that review did not. `fn f< 'a>(x: i64)` — a *spaced* lifetime parameter
+list — **compiles today**, and `grammar.ebnf:129` makes whitespace insignificant between tokens,
+so TH-02's adjacency-only `<'` missed a real violation. And running the repaired gate against the
+real repository showed TH-05 compiling a witness *before* checking whether it existed, so an
+absent witness exited 2 instead of reporting a finding — the very distinction that round's work
+was about, inverted, one function away from where it was being fixed.
+
+**The RED count moved 22 → 21, and no probe got weaker.** The only change is that `D1-01` left
+the evaluated set to become the aggregate. `SH-01` is still the sole green row, and it is green
+because `make selfhost` genuinely passes.
+
+Cross-branch constraint, now enforced rather than hoped for: a reject fixture can go green on a
+sibling branch **without a compiler change**, and a runner that sees only `REJECTED` cannot tell
+"refused because the prohibition is enforced" from "refused for incidental unsupported syntax".
+So the manifest gained a ninth column and each thesis reject row **names the diagnostic its
+refusal must carry**; the gate cross-checks that against the fingerprint the corpus declares,
+which `scripts/conformance.sh` has already matched against the actual diagnostic. A rejection at
+the wrong fingerprint is RED.
 
 ### F13. The first thesis gate was blind in the way M1 spent itself curing
 
