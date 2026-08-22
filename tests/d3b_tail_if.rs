@@ -55,6 +55,41 @@ fn compile_to_c_expecting(source: &str, name: &str, expect: NetA) -> Result<Stri
     fs::read_to_string(&c_file).map_err(|e| format!("reading {}: {}", c_file.display(), e))
 }
 
+/// Compile a two-file program: `lib.pd` imported by `app.pd`.
+///
+/// A SUBPROCESS, not `Driver`, and not because it is tidier: the resolver looks
+/// for `<module>.pd` beside the file being compiled and codegen writes into
+/// `build_output/` relative to the CURRENT DIRECTORY, so an in-process test
+/// would have to change the working directory of a process whose other tests
+/// are running in parallel threads. `pdc` with `current_dir` set has no such
+/// race.
+///
+/// -> Ok(stdout of the built binary) | Err(the compiler's diagnostics)
+fn compile_and_run_with_import(lib: &str, app: &str, name: &str) -> Result<String, String> {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("lib.pd"), lib).unwrap();
+    fs::write(dir.path().join("app.pd"), app).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .args(["compile", "app.pd", "-o", name])
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to run pdc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if !out.status.success() {
+        return Err(text);
+    }
+    let exe = dir.path().join("build_output").join(name);
+    let run = Command::new(&exe)
+        .output()
+        .map_err(|e| format!("running {}: {}", exe.display(), e))?;
+    Ok(String::from_utf8_lossy(&run.stdout).to_string())
+}
+
 /// Run `scripts/check-c-returns.py` over C THIS BUILD just emitted.
 ///
 /// WHY THIS EXISTS, AND WHY IT IS THE MOST IMPORTANT ASSERTION IN THIS FILE
@@ -1240,46 +1275,107 @@ fn async_main_is_refused_rather_than_compiled_into_a_program_that_does_nothing()
     );
 }
 
-/// `async fn main` is refused whatever the spelling, and from wherever it comes.
+/// `async fn main` is refused whatever the spelling — and REFUSED ONLY WHEN IT
+/// IS THE ENTRY POINT.
 ///
-/// The bare form was pinned in round 11. These are the three that were not:
-/// the GENERIC form (which is why the refusal sits before `check_function`'s
-/// generic skip), the `pub` form (visibility is not part of the contract), and
-/// the IMPORTED form — measured at 7d2fc0d, an imported `pub async fn main`
-/// bypassed the refusal entirely, because only local functions pass through
-/// `check_function`, and emitted `main_Future main()`: a program that linked,
-/// ran, exited 0 and printed nothing.
+/// The previous version of this test documented imported coverage and exercised
+/// none: it compiled single files, so breaking the import path would not have
+/// failed it. Verifying by hand is not pinning, which is the distinction this
+/// branch has enforced on everything else. These cases really import.
+///
+/// The controls matter more than the refusals. Refusing "an `async fn main` was
+/// declared anywhere" instead of "the effective entry point is async" rejected
+/// two valid programs — measured at fbcfc39 — and over-approximating a refusal
+/// fails closed onto working code, which is the same defect as accepting what
+/// cannot be honoured, pointing the other way.
 #[test]
-fn async_main_is_refused_in_every_spelling() {
-    // `pub` is not part of the contract: visibility does not change what the
-    // entry point would be.
+fn async_main_is_refused_only_when_it_is_the_entry_point() {
+    // REFUSED: the imported one IS the entry point.
+    let err = compile_and_run_with_import(
+        "pub async fn main() { print_int(1) }\n",
+        "import lib;\n\nfn helper() { print_int(2); }\n",
+        "d3b_imported_async_main",
+    )
+    .expect_err("an imported async main is still an async entry point");
+    assert!(
+        err.contains("`async fn main`"),
+        "an imported async main must be refused, got:\n{}",
+        err
+    );
+
+    // CONTROL: shadowed by a perfectly good local `main`. The imported one can
+    // never run, so there is nothing to refuse — and the local entry point must
+    // still be the one that is emitted and executed.
+    let out = compile_and_run_with_import(
+        "pub async fn main() { print_int(1) }\n",
+        "import lib;\n\nfn main() { print_int(7) }\n",
+        "d3b_shadowed_async_main",
+    )
+    .expect("a local `main` shadows an imported one; this program is valid");
+    assert_eq!(
+        out.trim(),
+        "7",
+        "the LOCAL main must be the entry point, and the imported one must not \
+         also be emitted"
+    );
+
+    // CONTROL: a PRIVATE imported `async fn main` is never registered, so it
+    // can never be called or become the entry point.
+    let out = compile_and_run_with_import(
+        "async fn main() { print_int(1) }\n",
+        "import lib;\n\nfn main() { print_int(7) }\n",
+        "d3b_private_async_main",
+    )
+    .expect("a private imported function is not even registered");
+    assert_eq!(out.trim(), "7");
+
+    // The `pub` spelling of a LOCAL async main: visibility is not part of the
+    // contract.
     let err = compile_to_c(
         "pub async fn main() { print_int(7) }",
         "d3b_async_main_pub",
     )
     .unwrap_err();
-    assert!(
-        err.contains("`async fn main`"),
-        "the `pub` spelling must be refused as async main, got:\n{}",
-        err
-    );
+    assert!(err.contains("`async fn main`"), "{}", err);
 
-    // The GENERIC spelling is refused too, but by a DIFFERENT rule, and saying
-    // so is the point: `async fn main<T>` is registered as a generic function
-    // rather than as a plain one, so it never satisfies the main-existence
-    // check and the program is rejected with "No main function found" before
-    // the async refusal is reached. The refusal is still placed before
-    // `check_function`'s generic skip — this test records which diagnostic
-    // actually fires, so a future change that makes a generic `main` an entry
-    // point has to change this line and look at the async case.
+    // The GENERIC spelling, with its EXACT current diagnostic pinned rather
+    // than an alternation that would accept the transition it warns about.
+    // `async fn main<T>` is registered as a generic function, so it never
+    // satisfies the main-existence check and is refused with "No main function
+    // found" BEFORE the async refusal is reached. If a change ever makes a
+    // generic `main` an entry point, this line fails and the async case has to
+    // be re-examined — which the previous `A || B` assertion would have let
+    // through in silence.
     let err = compile_to_c(
         "async fn main<T>() { print_int(7) }",
         "d3b_async_main_generic",
     )
     .unwrap_err();
     assert!(
-        err.contains("No main function found") || err.contains("`async fn main`"),
-        "the generic spelling must be refused somehow, got:\n{}",
+        err.contains("No main function found"),
+        "the generic spelling is currently refused by main-existence, not by \
+         the async rule; got:\n{}",
+        err
+    );
+}
+
+/// An imported `pub async fn` with a value-carrying return is refused too.
+///
+/// Same route as the entry-point case, one function over: only local functions
+/// reach `check_function`, so `set_imported_modules` has to perform the same
+/// validation. Unlike the entry-point case this does NOT depend on which
+/// function wins — nothing can honour the declaration wherever it sits.
+#[test]
+fn an_imported_async_value_return_is_refused() {
+    let err = compile_and_run_with_import(
+        "fn g() -> Future<()> { panic(\"x\"); }\npub async fn af() -> () { g() }\n",
+        "import lib;\n\nfn main() { print_int(7) }\n",
+        "d3b_imported_async_value_return",
+    )
+    .expect_err("an imported async fn may not carry a value return either");
+    assert!(
+        err.contains("`return` with a value inside an `async fn`"),
+        "got:\n{}",
         err
     );
 }
@@ -1327,6 +1423,46 @@ fn a_value_carrying_return_inside_an_async_fn_is_refused() {
         assert!(
             err.contains("readiness flag"),
             "the note must say WHY there is nowhere to put it:\n{}",
+            err
+        );
+    }
+
+    // NESTED value returns, one per traversal arm of `has_value_return`. The
+    // tail lowering puts the return in whichever branch was the tail, so a
+    // walker that only looked at the top level would miss every one of these;
+    // deleting any arm turns this red.
+    for (n, body) in [
+        // if / else
+        "if n > 0 { g() } else { g() }",
+        // match
+        "match n { _ => g(), }",
+        // while, with the return inside the loop body
+        "while n > 0 { return g(); }",
+        // for
+        "for i in 0..n { return g(); }",
+        // unsafe
+        "unsafe { return g(); }",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let program = format!(
+            "fn g() -> Future<()> {{ panic(\"x\"); }}\n\
+             async fn f(n: i64) -> () {{ {} }}\n\
+             fn main() {{ f(1); }}\n",
+            body
+        );
+        let err = compile_to_c(&program, &format!("d3b_async_nested_{}", n))
+            .expect_err(&format!(
+                "a value return nested in `{}` must still be refused — the \
+                 traversal arm for it is missing",
+                body
+            ));
+        assert!(
+            err.contains("`return` with a value inside an `async fn`")
+                || err.contains("Type mismatch"),
+            "nested in `{}`, got:\n{}",
+            body,
             err
         );
     }

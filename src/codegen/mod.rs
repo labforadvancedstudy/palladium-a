@@ -1300,13 +1300,32 @@ impl CodeGenerator {
             self.output.push('\n');
         }
 
-        // Generate functions from imported modules
+        // Generate functions from imported modules.
+        //
+        // A LOCAL DEFINITION SHADOWS AN IMPORTED ONE, and this loop emitted both.
+        // The type checker has always resolved the name to the local function —
+        // imported signatures are registered first and the local pass overwrites
+        // them — so emitting the imported body as well produces two C definitions
+        // of one name. Measured with a module declaring `pub async fn main` and a
+        // program declaring its own `fn main`: the C carried `main_Future main()`
+        // AND `int main(int, char**)`, and gcc refused it. It only became visible
+        // once typeck stopped rejecting that program outright, which it should
+        // never have been doing.
+        let local_names: std::collections::HashSet<&str> = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Function(f) => Some(f.name.as_str()),
+                _ => None,
+            })
+            .collect();
         for module_info in imported_modules.values() {
             for item in &module_info.ast.items {
                 if let Item::Function(func) = item {
-                    // Only generate public, non-generic functions
+                    // Only generate public, non-generic, non-shadowed functions
                     if matches!(func.visibility, crate::ast::Visibility::Public)
                         && func.type_params.is_empty()
+                        && !local_names.contains(func.name.as_str())
                     {
                         self.generate_function(func)?;
                     }

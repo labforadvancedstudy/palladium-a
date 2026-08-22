@@ -844,7 +844,16 @@ def record(node, path):
 
 
 def definition_time(node):
-    """Expressions of a def evaluated in the ENCLOSING scope, yielded ONCE.
+    """Definition-time expressions of a def, yielded ONCE, in the enclosing scope.
+
+    THE CONTRACT IS LEXICAL, NOT EVALUATION-TIME. Under `from __future__ import
+    annotations` (PEP 563) annotations are stored as strings and never
+    evaluated, so calling these "evaluated in the enclosing scope" would be
+    wrong for a file that opts in. What this walker actually guarantees is that
+    a private-slot name WRITTEN in one of these positions is attributed to the
+    enclosing scope rather than to the function, which is the conservative
+    reading and the one the table needs: the guard is about where a name may be
+    written, not about when it runs.
 
     Decorators, positional defaults, KEYWORD-ONLY defaults and annotations. The
     previous version walked decorators and positional defaults in the enclosing

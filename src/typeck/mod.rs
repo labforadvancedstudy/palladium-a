@@ -313,11 +313,17 @@ pub struct StructInstantiation {
 }
 
 pub struct TypeChecker {
-    /// An imported `pub async fn main`, recorded at import-registration time
-    /// and raised by `check`. Imported functions never reach `check_function`,
-    /// where the refusal lives, so without this an imported one reached code
-    /// generation and emitted a `main_Future main()` entry point.
+    /// A PUBLIC imported `async fn main`, recorded at import-registration time
+    /// and raised by `check` — but only if it is the EFFECTIVE ENTRY POINT.
+    /// Imported functions never reach `check_function`, where the refusal
+    /// lives, so without this an imported one reached code generation and
+    /// emitted a `main_Future main()` entry point.
     deferred_async_main: Option<Span>,
+    /// A PUBLIC imported `async fn` whose body contains a value-carrying
+    /// `return`, recorded for the same reason: `set_imported_modules` performs
+    /// no equivalent of `check_function`'s validation, so the class refused
+    /// there was still declarable through an import.
+    deferred_async_value_return: Option<Span>,
     /// Function signatures
     functions: HashMap<String, CheckerType>,
     /// Generic function definitions
@@ -380,6 +386,7 @@ impl TypeChecker {
 
         Self {
             deferred_async_main: None,
+            deferred_async_value_return: None,
             functions,
             generic_functions: HashMap::new(),
             instantiations: HashMap::new(),
@@ -420,21 +427,27 @@ impl TypeChecker {
             for item in &module_info.ast.items {
                 match item {
                     crate::ast::Item::Function(func) => {
-                        // AN IMPORTED `pub async fn main` BYPASSED THE REFUSAL.
-                        // Only LOCAL functions go through `check_function`,
-                        // where it lives, but imported functions are registered
-                        // under their unqualified name too — so an imported
-                        // `pub async fn main` satisfied the main-existence check
-                        // and reached code generation. Measured at 7d2fc0d: the
-                        // emitted entry point was `main_Future main()`, the
-                        // program linked, ran, exited 0 and printed nothing.
-                        // Recorded rather than returned, because this setter
-                        // has no fallible signature; `check` raises it.
-                        if func.is_async && func.name == "main" {
-                            self.deferred_async_main = Some(func.span);
-                        }
                         // Only process exported (public) functions
                         if matches!(func.visibility, crate::ast::Visibility::Public) {
+                            // WHAT AN IMPORT CAN SMUGGLE PAST `check_function`,
+                            // which only local functions reach. Both are
+                            // RECORDED rather than returned, because this setter
+                            // has no fallible signature; `check` raises them.
+                            //
+                            // INSIDE the visibility condition, deliberately. A
+                            // PRIVATE imported function is never registered, so
+                            // it can never be called and never becomes the entry
+                            // point — refusing it rejected a valid program.
+                            // Measured at fbcfc39: a private imported
+                            // `async fn main` killed compilation of a program
+                            // whose own `main` was perfectly good.
+                            if func.is_async && func.name == "main" {
+                                self.deferred_async_main = Some(func.span);
+                            } else if func.is_async
+                                && Self::has_value_return(&func.body)
+                            {
+                                self.deferred_async_value_return = Some(func.span);
+                            }
                             let qualified_name = format!("{}::{}", module_name, func.name);
 
                             if !func.type_params.is_empty() {
@@ -582,12 +595,31 @@ impl TypeChecker {
 
     /// Type check a program
     pub fn check(&mut self, program: &Program) -> Result<()> {
-        // Raised here because `set_imported_modules` cannot fail: an imported
-        // `pub async fn main` is registered under its unqualified name and so
-        // satisfies the main-existence check, but never passes through
-        // `check_function`.
+        // An imported `pub async fn` whose body carries a value return is
+        // refused wherever it was declared: nothing can honour it, and unlike
+        // the entry-point case that does not depend on which function wins.
+        if let Some(span) = self.deferred_async_value_return {
+            return Err(CompileError::async_value_return_unimplemented(span));
+        }
+
+        // THE ENTRY POINT, NOT ANY DECLARATION. An imported `pub async fn main`
+        // is only a defect if it IS the entry point. A local `main` shadows it —
+        // `set_imported_modules` registers imported functions first and the
+        // first pass below overwrites them — so the imported one can never run,
+        // and refusing then rejected a valid program (measured at fbcfc39: a
+        // program with its own good `main` failed to compile because a module it
+        // imported happened to declare one).
+        //
+        // Over-approximating a refusal fails closed onto valid programs, which
+        // is the mirror of accepting what cannot be honoured; both are the
+        // compiler making a claim it has not established.
         if let Some(span) = self.deferred_async_main {
-            return Err(CompileError::async_main_unimplemented(span));
+            let shadowed_by_a_local_main = program.items.iter().any(|item| {
+                matches!(item, Item::Function(f) if f.name == "main" && f.type_params.is_empty())
+            });
+            if !shadowed_by_a_local_main {
+                return Err(CompileError::async_main_unimplemented(span));
+            }
         }
 
         // First pass: collect all function signatures and struct definitions

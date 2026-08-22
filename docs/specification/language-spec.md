@@ -624,8 +624,8 @@ enums.
 
 **partial** — field types that parse and then fail in codegen (all three corrected from v0.2,
 which was ~250 lines low):
-- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1689`)
-- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1400`)
+- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1708`)
+- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1419`)
 - tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1151`)
 
 ### A4.3 Enums
@@ -637,8 +637,8 @@ field (`src/parser/mod.rs:786`, `src/ast/mod.rs:139`).
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1225`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1039`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:822-824`, corrected
-from `src/typeck/mod.rs:1032`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1039`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:854-856`, corrected
+from `src/typeck/mod.rs:1064`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1349`, corrected from line 863–897 of the pre-cleanup revision).
 
@@ -705,7 +705,7 @@ mixed-case names like `Vec<Item>` reach the type branch.
 **partial — const generics**: they parse, and in codegen an `ArraySize::ConstParam` is emitted
 into C verbatim as the parameter's *name* while an `ArraySize::Expr` becomes the literal `"0"`
 (`src/codegen/mod.rs:1083-1085`). Neither is monomorphised. *(v0.2 said "array sizes from a const
-parameter resolve to `0`" citing `src/codegen/mod.rs:1388`; that is the expression case, not the const-parameter
+parameter resolve to `0`" citing `src/codegen/mod.rs:1407`; that is the expression case, not the const-parameter
 case.)*
 
 `tests/08_generics_basic.pd` PASSES conformance while only printing that generics are
@@ -721,7 +721,7 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing is that `?` typechecks
-against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2606`, corrected from line 2495 of the pre-cleanup revision) — and
+against a `Generic{name:"Result"}` shape (`src/typeck/mod.rs:2638`, corrected from line 2495 of the pre-cleanup revision) — and
 then generates C for a `struct Result` layout that codegen never emits (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -770,9 +770,9 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 - unimplemented: tuple expressions and `.0` indexing.
 - unimplemented: `as` casts, string interpolation.
 - partial: ranges outside a `for` header — codegen error "Range expressions can only be used in
-  for loops" (`src/codegen/mod.rs:2522-2525`, corrected from line 2121 of the pre-cleanup revision).
+  for loops" (`src/codegen/mod.rs:2541-2544`, corrected from line 2121 of the pre-cleanup revision).
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:2807`, corrected from line 1874 of the pre-cleanup revision).
+  (`src/typeck/mod.rs:2839`, corrected from line 1874 of the pre-cleanup revision).
 
 **partial — precedence bug**: `parse_multiplication` calls `parse_postfix` (not `parse_unary`) for
 its right operand (`src/parser/mod.rs:2225`, corrected from line 1964 of the pre-cleanup revision), so `a * -b` fails to parse.
@@ -783,7 +783,7 @@ requires `a * -b`.
 
 **unimplemented.** `x.f()` parses as a call whose callee is a field access, and the typechecker
 rejects exactly that: **"Indirect function calls not yet supported"**
-(`src/typeck/mod.rs:1647`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
+(`src/typeck/mod.rs:1679`, corrected from line 1712 of the pre-cleanup revision). Verified against `pdc`.
 
 *(v0.2 also claimed a "same guard" in codegen at line 1870 of the pre-cleanup revision.
 `grep -n 'Indirect function calls' src/codegen/mod.rs` returns nothing; there is no such guard in
@@ -801,9 +801,9 @@ typecheck. The silent-breakage description is retracted.)*
 
 - `?` generates C that references a `struct Result { int is_ok; union {…} data; }` layout which
   **no other part of codegen emits** — user enums are generated with a `.tag` field and
-  `__Enum__Variant` constants instead (`src/codegen/mod.rs:2603-2624`, corrected from line 2160–2201 of the pre-cleanup revision). The result is C that does not compile.
+  `__Enum__Variant` constants instead (`src/codegen/mod.rs:2622-2643`, corrected from line 2160–2201 of the pre-cleanup revision). The result is C that does not compile.
 - `.await` emits `while (!<tmp>.poll(&<tmp>)) { }` and then reads `<tmp>.result`, calling a `poll`
-  member that is never generated (`src/codegen/mod.rs:2659-2670`, corrected from line 2208–2237 of the pre-cleanup revision —
+  member that is never generated (`src/codegen/mod.rs:2678-2689`, corrected from line 2208–2237 of the pre-cleanup revision —
   which is the builtin-name mapping table, unrelated).
 
 ```
@@ -835,8 +835,8 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`src/typeck/mod.rs:2441`, `src/typeck/mod.rs:2448`) and again by code
-generation (`src/codegen/mod.rs:2564`, `src/codegen/mod.rs:2576`), which is callable on its own.
+The refusal is raised by the type checker (`src/typeck/mod.rs:2473`, `src/typeck/mod.rs:2480`) and again by code
+generation (`src/codegen/mod.rs:2583`, `src/codegen/mod.rs:2595`), which is callable on its own.
 
 What they used to do:
 
@@ -845,7 +845,7 @@ What they used to do:
   constants instead. gcc reported `variable has incomplete type 'struct Result'`.
 - `.await` emitted `while (!f.poll(&f)) {}`. C has no member function calls, and the poll
   routine that *is* generated is the free function `<name>_poll`
-  (`src/codegen/mod.rs:2645`), which that call never names. There is no async runtime.
+  (`src/codegen/mod.rs:2664`), which that call never names. There is no async runtime.
 
 Both lowerings are deleted rather than kept behind a flag: they encoded a representation a real
 implementation must not reuse, and version control holds them.
@@ -949,9 +949,9 @@ pattern = "_"
 (`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
 bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1434`,
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1466`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
-(`src/codegen/mod.rs:1982`, `src/codegen/mod.rs:2003-2014`) with a wildcard arm becoming the final `else`; when no
+(`src/codegen/mod.rs:2001`, `src/codegen/mod.rs:2022-2033`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
 
 Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else` chains.
@@ -974,9 +974,9 @@ rather than `char`, because `char` is not a type ([A5](#a5-types)). **N14's effe
 is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
-checker derives its signature table from it (`src/typeck/mod.rs:370`) and so does the borrow
+checker derives its signature table from it (`src/typeck/mod.rs:376`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:2226`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+(`src/codegen/mod.rs:2245`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:520`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
@@ -1177,7 +1177,7 @@ to a pointer. **No spelling copies.** Measured at `abeb665`:
 |---|---|
 | `mut a: [i64; 3]` | compiles; generated C is `void bump(long long a[3]);` — a write is caller-visible. Program prints `99`. |
 | `a: [i64; 3]` (no `mut`) | compiles; a write is caller-visible; **no diagnostic**. Program prints `99`. |
-| `a: &mut [i64; 3]` | does not compile: "Unsupported type in reference parameter" (`src/codegen/mod.rs:2007`). |
+| `a: &mut [i64; 3]` | does not compile: "Unsupported type in reference parameter" (`src/codegen/mod.rs:2026`). |
 
 So today the reference spellings are not an alternative to the bare one — one of them is rejected
 outright, and the other two behave identically.
