@@ -47,12 +47,25 @@
 #        four   row/owned/owed counts from 1.0-requirements.tsv       -> the
 #               requirement reader's own three counts
 #
+#      AND NUMBERS ALONE WERE NOT ENOUGH — measured: an `echo` of the REAL
+#      conformance summary satisfied every anchor above, because a hard-coded
+#      string matches a recomputed number just as well as a real one does. So each
+#      inventory also has to have LEFT EVIDENCE OF ITS OWN INVOCATION, which an
+#      echo cannot fabricate:
+#
+#        one    build_output/cf_* — the conformance runner's own artefact naming
+#               (55 after a conformance run, 0 after a cargo-test-only run, which
+#               matters because inventory three writes 165 OTHER files there)
+#        two    build_output/test-xfail-run-receipt.txt, written by the producer
+#               before it prints anything, carrying the counts it read
+#        three  target/build/ — the fixtures the Rust suite compiles for itself
+#        four   the requirement reader is pure, and its three counts are checked
+#               against the manifest this file re-reads
+#
 #      WHAT THIS STILL DOES NOT ESTABLISH, said plainly rather than implied away:
-#      an adversary that READS THOSE SAME FILES and prints the numbers it finds
-#      would pass. Nothing short of running the inventory distinguishes that, and
-#      running it is what the target does — what these anchors buy is that the
-#      faker has to do the manifests' work and go stale the moment a row moves,
-#      instead of hard-coding a string.
+#      an adversary that reads the same files, prints the numbers it finds AND
+#      writes the same artefacts would pass. At that point it is doing the
+#      inventory's work, which is the only place this line of defence can end.
 #
 # Usage: bash scripts/test-requirements-runner.sh   (= make test-requirements-runner)
 
@@ -255,6 +268,8 @@ M2OUT=$(cd "$REPO" && make m2-exit 2>"$TMPROOT/m2.err"); M2RC=$?
 # it: 55 after a conformance run, 0 after a cargo-test-only run.
 fs_conformance=$(find "$REPO/build_output" -newer "$MARKER" -name 'cf_*' 2>/dev/null | wc -l | tr -d ' ')
 fs_cargo=$(find "$REPO/target/build" -newer "$MARKER" -type f 2>/dev/null | wc -l | tr -d ' ')
+XFAIL_RECEIPT=$REPO/build_output/test-xfail-run-receipt.txt
+fs_xfail=$(find "$XFAIL_RECEIPT" -newer "$MARKER" 2>/dev/null | wc -l | tr -d ' ')
 M2ERR=$(cat "$TMPROOT/m2.err")
 OUT=$M2OUT; RC=$M2RC
 
@@ -340,14 +355,27 @@ expect_out "inventory one of four" \
 M2FILE=$TMPROOT/m2out.txt
 printf '%s\n' "$M2OUT" | sed 's/\x1b\[[0-9;]*m//g' > "$M2FILE"
 
-# INVENTORY TWO HAS NO FILESYSTEM FOOTPRINT — it invokes cargo only to LIST, and
-# writes nothing. So it gets the two anchors below and no structural proof.
-# MEASURED, so the residual is stated at its real size rather than guessed:
-# replacing it with `echo` of its true `debt inventory (…): owed=54 paid=3` line
-# fails the internal-consistency check below, because that echo prints no
-# `[OWED_TO_M2]` detail lines for the 14 it would have to claim. An echo that
-# reproduced the count AND all fourteen lines would pass. That is the residual,
-# and it is the only inventory that has one.
+# INVENTORY TWO NOW HAS A FOOTPRINT TOO, and it had to be GIVEN one. It invokes
+# cargo only to LIST, so it writes nothing of its own; the previous round left it
+# with numeric anchors and an internal-consistency check, and recorded the
+# residual honestly: an echo reproducing the count AND all fourteen detail lines
+# would pass. That residual is closed rather than documented —
+# scripts/test-xfail.py writes build_output/test-xfail-run-receipt.txt before it
+# prints anything, and the receipt carries the counts, so it must both EXIST from
+# this run and AGREE with the manifest. An echo can print any output; it cannot
+# leave a file behind.
+start "effect: inventory two RAN — it left a run receipt this run, which an echo cannot"
+OUT="receipt newer than the marker: $fs_xfail ($XFAIL_RECEIPT)"
+if [ "$fs_xfail" -eq 1 ]; then ok
+else bad "no run receipt was written during this run"; fi
+
+start "effect: inventory two's receipt agrees with the debt manifest"
+r_owed=$(sed -n 's/^owed \([0-9]*\)$/\1/p' "$XFAIL_RECEIPT" 2>/dev/null)
+r_paid=$(sed -n 's/^paid \([0-9]*\)$/\1/p' "$XFAIL_RECEIPT" 2>/dev/null)
+OUT="receipt: owed=$r_owed paid=$r_paid; manifest: owed=$want_debt_owed paid=$want_debt_paid"
+if [ "$r_owed" = "$want_debt_owed" ] && [ "$r_paid" = "$want_debt_paid" ]; then ok
+else bad "the receipt and the debt manifest disagree"; fi
+
 start "effect: inventory two RAN — its debt counts are the debt manifest's own state counts"
 if grep -qF "debt inventory (tests/rust-debt-manifest.txt): owed=$want_debt_owed paid=$want_debt_paid" "$M2FILE"; then ok
 else bad "no line reporting owed=$want_debt_owed paid=$want_debt_paid"; fi

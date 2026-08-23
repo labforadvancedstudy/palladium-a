@@ -600,14 +600,15 @@ pub const BUILTINS: &[Builtin] = &[
     // which is the mistake N14 records having made once already when it
     // delegated its list to `docs/reference/builtins.md`.
     //
-    // THE C WRAPPERS ARE STILL EMITTED, AND THAT IS OWED. `src/codegen/mod.rs`
-    // writes `__pd_file_open_ex`, `__pd_file_close_ex`, `__pd_file_read_ex` and
-    // `__pd_file_write_ex` into the prelude of every generated program, and
-    // `runtime/pd_prelude.h` carries them for the bootstrap compiler. They are
-    // now unreachable — nothing in the language can name them — but they are
-    // dead C, not absent C, and no test below looks at a wrapper whose builtin
-    // is gone, because every test below iterates `BUILTINS`. Removing them is a
-    // codegen edit; it was not made here and is not claimed.
+    // THEIR C WRAPPERS ARE GONE TOO, as of the same day. `src/codegen/mod.rs` no
+    // longer writes `__pd_file_open_ex`, `__pd_file_close_ex`, `__pd_file_read_ex`
+    // or `__pd_file_write_ex` into the prelude, and `runtime/pd_prelude.h` is
+    // regenerated without them; the `FileHandle` typedef, the `FileMode` enum and
+    // the six `pd_file_*` externs that only they used went with them.
+    // *(For one round this comment said the wrappers were still emitted and their
+    // removal was owed. That was true when it was written — the codegen file was
+    // owned by another lane — and it is recorded here rather than silently
+    // overwritten, because a stale OWED is exactly as misleading as a stale DONE.)*
     //
     // The name set is pinned against N14 by
     // `test_registry_is_exactly_the_normative_builtin_set`, so re-adding any of
@@ -1689,6 +1690,15 @@ mod tests {
     /// carrying `Effect::Memory`. `arg_at` was the counter-example: it returned
     /// storage belonging to `argv` while claiming `Owned`, so the ownership pass was
     /// told the caller may free process memory. It is `BorrowedStatic` now.
+    ///
+    /// **THIS TEST IS NOT SUFFICIENT AND WAS TREATED AS IF IT WERE.** It compares
+    /// `ret_mode` against `effects` — TWO FIELDS OF THIS TABLE — so it certifies
+    /// that the metadata agrees with itself and says nothing about the C the
+    /// compiler emits. Measured: while it was green, four `Owned` builtins had
+    /// reachable branches returning the literal `""`, which is static storage they
+    /// did not allocate. Two matching declarations do not make an implementation
+    /// true. The test that reads the implementation is
+    /// `test_owned_wrappers_never_return_borrowed_storage`, immediately below.
     #[test]
     fn test_owned_returns_are_exactly_the_allocating_builtins() {
         for b in BUILTINS {
@@ -1822,6 +1832,159 @@ mod tests {
                     body
                 );
             }
+        }
+    }
+
+    /// THE IMPLEMENTATION-SIDE GATE FOR `Owned`: a built-in that declares it
+    /// allocates must not, on ANY branch, hand back storage it did not allocate.
+    ///
+    /// This is the test the metadata comparison above could not be. It reads the C
+    /// the compiler actually emits and rejects a returned string LITERAL, which is
+    /// static storage with the lifetime of the program — the one thing an owned
+    /// return may not be. Measured on `acda322` and for every revision before it:
+    /// four of the seven `Owned` built-ins failed this, on branches the corpus
+    /// reaches (`file_read_all` with a bad handle, `file_read_line` at EOF and with
+    /// a bad handle, `read_file_to_string` on a missing file, `string_substring`
+    /// with `start >= end`). They return `__pd_empty_owned()` now, which takes one
+    /// byte from the same bump pool every other owned string comes from.
+    ///
+    /// `arg_at` is the control, and it is why this cannot simply ban the literal
+    /// everywhere: it returns `""` out of range ON PURPOSE and declares
+    /// `BorrowedStatic`, so the same C is correct there. The filter is the
+    /// DECLARATION, which is what makes this a check on the pair rather than on
+    /// the text.
+    #[test]
+    fn test_owned_wrappers_never_return_borrowed_storage() {
+        let prelude = emitted_prelude();
+        let mut offenders: Vec<String> = Vec::new();
+
+        for b in BUILTINS.iter().filter(|b| b.ret_mode == ReturnMode::Owned) {
+            let needle = format!(" __pd_{}(", b.name);
+            let start = prelude
+                .find(&needle)
+                .unwrap_or_else(|| panic!("no wrapper for {}", b.name));
+            let body_start = start + prelude[start..].find('{').expect("wrapper body");
+            let end = body_start
+                + prelude[body_start..]
+                    .find("\n}")
+                    .expect("wrapper body ends");
+            let body = &prelude[body_start..end];
+
+            for value in returned_values(body) {
+                // A string literal is the only returnable expression that is
+                // storage the callee did not produce. `""` is the one that has
+                // actually occurred; any literal is rejected.
+                if value.starts_with('"') {
+                    offenders.push(format!("__pd_{} returns the literal {}", b.name, value));
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "a built-in declared ReturnMode::Owned hands back storage it did not \
+             allocate. src/ownership/borrow_checker.rs derives its signatures from \
+             this table, so the ownership model is wrong on that branch:\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
+    /// The control for the test above: `arg_at` DOES return a literal, and must,
+    /// because it is `BorrowedStatic`. Without this, the scan above could be
+    /// passing because it never finds a literal anywhere — the same "green by
+    /// looking at nothing" this milestone exists to remove.
+    #[test]
+    fn test_the_borrowed_literal_scan_can_still_see_a_literal() {
+        let prelude = emitted_prelude();
+        let start = prelude.find(" __pd_arg_at(").expect("arg_at wrapper");
+        let body_start = start + prelude[start..].find('{').expect("body");
+        let end = body_start + prelude[body_start..].find("\n}").expect("body ends");
+        let values = returned_values(&prelude[body_start..end]);
+        assert!(
+            values.iter().any(|v| v.starts_with('"')),
+            "arg_at no longer returns a literal, so the scan above has no positive \
+             case in the tree and may be vacuous: {:?}",
+            values
+        );
+        assert_eq!(
+            lookup("arg_at").expect("arg_at").ret_mode,
+            ReturnMode::BorrowedStatic,
+            "arg_at returns a literal, so it must not be Owned"
+        );
+    }
+
+    /// THE BEHAVIOURAL GATE for `Owned`: the ownership pass must actually reason
+    /// about a let-bound owned built-in result, on the branch that used to
+    /// hand back borrowed storage.
+    ///
+    /// The two tests above are about the registry and about the emitted C. This
+    /// one drives `BorrowChecker::check_program` — the pass that
+    /// `src/ownership/borrow_checker.rs:112` builds its signatures from — on real
+    /// source that takes each formerly-borrowed branch and then USES the value.
+    /// That is the live path a false `Owned` propagates into: it is not a
+    /// documentation defect, it is an input to the ownership model.
+    ///
+    /// What this establishes and what it does not: it proves the pass accepts and
+    /// tracks these values, so the consequence path is real and reachable. It
+    /// does NOT prove the declaration true — nothing at this level can, because
+    /// the pass reads the same declaration. `test_owned_wrappers_never_return_
+    /// borrowed_storage` is what makes it true, by reading the C.
+    #[test]
+    fn test_the_ownership_pass_reasons_about_owned_results_on_the_empty_branch() {
+        // Each program takes a branch that returned a static literal before
+        // 2026-08-23, stores the result in a `let`, and then consumes it.
+        const PROGRAMS: &[(&str, &str)] = &[
+            (
+                "string_substring, start >= end",
+                "fn main() {\n    let s: String = string_substring(\"abc\", 2, 1);\n    print_int(string_len(s));\n}\n",
+            ),
+            (
+                "file_read_all, bad handle",
+                "fn main() {\n    let s: String = file_read_all(0);\n    print_int(string_len(s));\n}\n",
+            ),
+            (
+                "file_read_line, bad handle",
+                "fn main() {\n    let s: String = file_read_line(-1);\n    print_int(string_len(s));\n}\n",
+            ),
+            (
+                "read_file_to_string, missing file",
+                "fn main() {\n    let s: String = read_file_to_string(\"definitely-absent\");\n    print_int(string_len(s));\n}\n",
+            ),
+        ];
+
+        for (label, source) in PROGRAMS {
+            let mut lexer = crate::lexer::Lexer::new(source);
+            let tokens = lexer
+                .collect_tokens()
+                .unwrap_or_else(|e| panic!("{}: lex failed: {:?}", label, e));
+            let program = crate::parser::Parser::new(tokens)
+                .parse()
+                .unwrap_or_else(|e| panic!("{}: parse failed: {:?}", label, e));
+
+            crate::typeck::TypeChecker::new()
+                .check(&program)
+                .unwrap_or_else(|e| panic!("{}: type check failed: {:?}", label, e));
+            crate::ownership::BorrowChecker::new()
+                .check_program(&program)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}: the ownership pass rejected a let-bound owned \
+                         built-in's result: {:?}",
+                        label, e
+                    )
+                });
+        }
+
+        // And the pass really is deriving `Owned` from this table for these names
+        // — otherwise the four programs above would prove nothing about ownership.
+        let bc = crate::ownership::BorrowChecker::new();
+        let registered = bc.registered_function_names();
+        for b in BUILTINS.iter().filter(|b| b.ret_mode == ReturnMode::Owned) {
+            assert!(
+                registered.contains(b.name),
+                "{} is Owned but the ownership pass does not know it",
+                b.name
+            );
         }
     }
 

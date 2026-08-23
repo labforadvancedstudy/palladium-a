@@ -171,8 +171,8 @@ emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:167-167
 `src/typeck/mod.rs:479-479`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: modules at `src/codegen/mod.rs:1276-1276` and `src/typeck/mod.rs:593-593`,
-the two later codegen walks off one sorted local (`src/codegen/mod.rs:1361-1361`), and the
+sites sorts before it emits: modules at `src/codegen/mod.rs:1302-1302` and `src/typeck/mod.rs:593-593`,
+the two later codegen walks off one sorted local (`src/codegen/mod.rs:1387-1387`), and the
 instantiation keys at `src/typeck/mod.rs:3499-3499` and `src/typeck/mod.rs:3560-3560`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
@@ -355,7 +355,7 @@ Measured at this revision; every row names the command that produced it.
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 291 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 224 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 404 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
-| Rust tests | 765 pass, **0 fail**, 55 ignored (535 lib + 230 integration, 23 binaries) | `make test-honest` |
+| Rust tests | 768 pass, **0 fail**, 55 ignored (538 lib + 230 integration, 23 binaries) | `make test-honest` |
 | Declared failures | 54 `xfail` + 1 `slow`, none passing; 54 of 54 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
@@ -572,12 +572,30 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
    `file_flush`/`file_seek` are `COVERED` by the first coverage either has ever had.
    **N14-01 is `satisfied`** (the name set is exactly N14's 34, both directions, pinned by
    `src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`), and **N14-17 was added
-   and is `satisfied`** — "every normative builtin is CALLABLE". That row is new because the
+   and is `satisfied`** — "every normative builtin is CALLABLE", evidenced by `make stdlib-gate`
+   rather than by a fixture, because the claim is universal and one driver spans one family. That row is new because the
    manifest had none: this item declared the re-base and the wrapper removal while no requirement
    row said so, which meant the M2 filter could have reached zero-owed with both builtins still
    uncallable and four dead wrappers still emitted. That is the unowned-requirement hole inventory
    four exists to close, reproduced inside it; the row closes it, and it goes red the moment any
    normative builtin is registered-and-refused again.
+   **A FALSE `ReturnMode::Owned`, found by review and fixed here.** Four builtins —
+   `string_substring`, `file_read_all`, `file_read_line`, `read_file_to_string` — declared that
+   they allocate their result while having **reachable branches returning the literal `""`**,
+   which is static storage they did not allocate. The corpus reaches all of them (bad handle, EOF,
+   missing file, `start >= end`). This is not a documentation defect:
+   `src/ownership/borrow_checker.rs:112` derives its signatures from this table, so the ownership
+   model was wrong on those branches. They return `__pd_empty_owned()` now — one byte from the
+   same bump pool every other owned string comes from, which is why allocating was the right fix
+   and `strdup` was not: it adds **no failure class the other owned returns do not already have**.
+   **The guard that should have caught it compared `ret_mode` against `effects` — two fields of
+   the same table.** Two matching declarations do not make an implementation true, and this is the
+   fourth time that shape has appeared on this branch and the first time it was in the compiler's
+   data rather than in an instrument. It now has a control that reads the emitted C
+   (`test_owned_wrappers_never_return_borrowed_storage`), a positive case so the scan cannot pass
+   by finding nothing (`arg_at` returns a literal ON PURPOSE and declares `BorrowedStatic`), and a
+   behavioural gate that drives `BorrowChecker::check_program` on a program taking each formerly
+   borrowed branch.
    **What is still owed, and it is M3's**: N14-03, signatures — the filesystem family returns
    `i64`/`bool` rather than `Result`, because `Result` is not built in.
    *(This item cited `N14-04` as well. `N14-04` is `string_char_at returns char`, which needs the
@@ -898,7 +916,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3303-3307` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3329-3333` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -922,7 +940,7 @@ representation."* A `struct` with a `state` field, emitted into the program's ow
 representation.
 
 **CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
-`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:2225-2231`), the
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:2251-2257`), the
 same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
 unreachable: a private method nothing calls is one edit away from being called again. No line of
 `src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and

@@ -32,6 +32,12 @@ static char* __pd_alloc_string(size_t size) {
     return ptr;
 }
 
+static const char* __pd_empty_owned() {
+    char* s = __pd_alloc_string(1);
+    if (s) s[0] = '\0';
+    return s;
+}
+
 static void __pd_cleanup_strings() {
     for (int i = 0; i < __pd_num_strings; i++) {
         free(__pd_allocated_strings[i]);
@@ -96,7 +102,7 @@ const char* __pd_string_substring(const char* str, long long start, long long en
     size_t len = strlen(str);
     if (start < 0) start = 0;
     if (end > (long long)len) end = len;
-    if (start >= end) return "";
+    if (start >= end) return __pd_empty_owned();
     size_t sub_len = end - start;
     char* result = __pd_alloc_string(sub_len + 1);
     strncpy(result, str + start, sub_len);
@@ -149,7 +155,7 @@ long long __pd_file_open(const char* path) {
 }
 
 const char* __pd_file_read_all(long long handle) {
-    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return "";
+    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return __pd_empty_owned();
     FILE* f = __pd_file_handles[handle];
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
@@ -161,7 +167,7 @@ const char* __pd_file_read_all(long long handle) {
 }
 
 const char* __pd_file_read_line(long long handle) {
-    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return "";
+    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return __pd_empty_owned();
     static char line_buffer[4096];
     FILE* f = __pd_file_handles[handle];
     if (fgets(line_buffer, sizeof(line_buffer), f)) {
@@ -171,7 +177,7 @@ const char* __pd_file_read_line(long long handle) {
         strcpy(result, line_buffer);
         return result;
     }
-    return "";
+    return __pd_empty_owned();
 }
 
 int __pd_file_write(long long handle, const char* content) {
@@ -260,7 +266,7 @@ char* __pd_read_file_to_string(const char* path) {
     if (pd_read_file_to_string(path, strlen(path), &out_str, &out_len) == 0) {
         return out_str;
     }
-    return "";
+    return __pd_empty_owned();
 }
 
 int __pd_write_string_to_file(const char* path, const char* data) {

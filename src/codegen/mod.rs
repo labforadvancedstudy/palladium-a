@@ -895,6 +895,32 @@ impl CodeGenerator {
         self.output.push_str("    return ptr;\n");
         self.output.push_str("}\n\n");
 
+        // AN OWNED EMPTY STRING. `src/builtins.rs` declares seven builtins
+        // `ReturnMode::Owned`, and the ownership pass derives its signatures from
+        // that table (src/ownership/borrow_checker.rs:112). Four of them —
+        // string_substring, file_read_all, file_read_line, read_file_to_string —
+        // had REACHABLE branches returning the literal `""`, which is static
+        // storage the builtin did not allocate. The declaration was false against
+        // the code on a live path, and the guard that should have caught it
+        // compared `Owned` against the declared `Effect::Memory`: two metadata
+        // fields in the same table agreeing with each other.
+        //
+        // Fixed by making the declaration TRUE rather than by weakening it to a
+        // conditional-ownership model the language has no way to express.
+        // MEASURED, because allocating on a failure path is not free: this goes
+        // through __pd_alloc_string like every other owned string, so it takes one
+        // byte from the 64KB bump pool and introduces NO failure class that the
+        // other owned returns do not already have — a pool-exhausted malloc that
+        // fails returns NULL there too. `strdup` would have added libc's own
+        // failure mode for nothing.
+        self.output
+            .push_str("static const char* __pd_empty_owned() {\n");
+        self.output
+            .push_str("    char* s = __pd_alloc_string(1);\n");
+        self.output.push_str("    if (s) s[0] = '\\0';\n");
+        self.output.push_str("    return s;\n");
+        self.output.push_str("}\n\n");
+
         // Cleanup function
         self.output
             .push_str("static void __pd_cleanup_strings() {\n");
@@ -989,7 +1015,7 @@ impl CodeGenerator {
         self.output.push_str("    if (start < 0) start = 0;\n");
         self.output
             .push_str("    if (end > (long long)len) end = len;\n");
-        self.output.push_str("    if (start >= end) return \"\";\n");
+        self.output.push_str("    if (start >= end) return __pd_empty_owned();\n");
         self.output.push_str("    size_t sub_len = end - start;\n");
         self.output
             .push_str("    char* result = __pd_alloc_string(sub_len + 1);\n");
@@ -1068,7 +1094,7 @@ impl CodeGenerator {
         // file_read_all
         self.output
             .push_str("const char* __pd_file_read_all(long long handle) {\n");
-        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return \"\";\n");
+        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return __pd_empty_owned();\n");
         self.output
             .push_str("    FILE* f = __pd_file_handles[handle];\n");
         self.output.push_str("    fseek(f, 0, SEEK_END);\n");
@@ -1084,7 +1110,7 @@ impl CodeGenerator {
         // file_read_line
         self.output
             .push_str("const char* __pd_file_read_line(long long handle) {\n");
-        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return \"\";\n");
+        self.output.push_str("    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return __pd_empty_owned();\n");
         self.output.push_str("    static char line_buffer[4096];\n");
         self.output
             .push_str("    FILE* f = __pd_file_handles[handle];\n");
@@ -1101,7 +1127,7 @@ impl CodeGenerator {
             .push_str("        strcpy(result, line_buffer);\n");
         self.output.push_str("        return result;\n");
         self.output.push_str("    }\n");
-        self.output.push_str("    return \"\";\n");
+        self.output.push_str("    return __pd_empty_owned();\n");
         self.output.push_str("}\n\n");
 
         // file_write
@@ -1255,7 +1281,7 @@ impl CodeGenerator {
         // (string_len -> strlen). Returning NULL here made a missing file a
         // SIGSEGV rather than an error the program could see. This matches
         // __pd_arg_at, which returns "" out of range for the same reason.
-        self.output.push_str("    return \"\";\n");
+        self.output.push_str("    return __pd_empty_owned();\n");
         self.output.push_str("}\n\n");
         
         self.output.push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");

@@ -396,8 +396,16 @@ sed 's/Support::Callable/Support::Unsupported("x")/; s/name:/ident:/g' \
   src/builtins.rs >"$TMP/broken_builtins.rs"
 $PROBE reconcile --src "$TMP/broken_builtins.rs" --manifest tests/stdlib/BUILTINS.tsv >"$TMP/o" 2>&1
 check "reconcile, unsupported entry whose name will not parse" 2 $?
-grep -qi 'name could not be parsed\|contract broke' "$TMP/o"
-check "  and the reason is the broken parsing contract" 0 $?
+grep -qi 'could be parsed from them' "$TMP/o"
+check "  and the reason is that reconciliation would have seen a subset" 0 $?
+# (c) THE COMPLETENESS CASE: one unsupported entry parses and a second does not.
+# "At least one of each" is satisfied here and proves nothing — the malformed
+# entry would be silently dropped from the reconciliation.
+python3 scripts/mk_partial_registry.py "$TMP/partial_builtins.rs"
+$PROBE reconcile --src "$TMP/partial_builtins.rs" --manifest tests/stdlib/BUILTINS.tsv >"$TMP/o" 2>&1
+check "reconcile, one unsupported entry parses and one does not" 2 $?
+grep -qi 'could be parsed from them' "$TMP/o"
+check "  and the reason is that reconciliation would have seen a subset" 0 $?
 sed 's/Builtin {/Builtn {/g' src/builtins.rs >"$TMP/noblocks_builtins.rs"
 $PROBE reconcile --src "$TMP/noblocks_builtins.rs" --manifest tests/stdlib/BUILTINS.tsv >"$TMP/o" 2>&1
 check "reconcile, no Builtin entry parses at all" 2 $?

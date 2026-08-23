@@ -108,7 +108,14 @@
 # See docs/contributing/MILESTONES.md.
 #
 # N14-17 WAS ADDED 2026-08-23, and an added row is a contract transition like any
-# other. MILESTONES.md's M2 item 6 DECLARED that `file_flush` and `file_seek` get
+# other. Its evidence is `make stdlib-gate` and NOT a fixture: the row says EVERY
+# normative builtin is callable, and a single driver spans a few of them. The gate
+# holds the whole-registry invariant — Phase 3 requires the manifest's name set to
+# equal the registry's, that no row is UNUSABLE, and that `reconcile` finds no
+# `Support::Unsupported` entry at all. Evidence has to be as wide as the claim; the
+# first version of this row cited `tests/stdlib/stdlib_builtins_file.pd`, which
+# exercises the file family while the string and char/argument families are covered
+# by other drivers entirely. MILESTONES.md's M2 item 6 DECLARED that `file_flush` and `file_seek` get
 # re-based and that the four `*_ex` wrappers go, and no row of this manifest said
 # so — which meant the M2 filter could have reached zero-owed with both builtins
 # still uncallable and four dead wrappers still emitted into every program. That
@@ -296,7 +303,7 @@ N14-01	M2	N14	The builtin set is exactly the 34 normative names	observable	src/b
 N14-02	M2	N14	A program cannot define or shadow a builtin name	reject	tests/reject/shadow_builtin.pd	owed	1.0	-
 N14-03	M3	N14	Builtin signatures match N14 — filesystem builtins return Result	fixture	tests/stdlib/stdlib_builtins_file.pd	owed	1.0	-
 N14-04	M2	N14	string_char_at returns char	fixture	tests/stdlib/stdlib_builtins_string.pd	owed	1.0	-
-N14-17	M2	N14	Every normative builtin is CALLABLE — none is registered-and-refused	fixture	tests/stdlib/stdlib_builtins_file.pd	satisfied	1.0	-
+N14-17	M2	N14	Every normative builtin is CALLABLE — none is registered-and-refused	gate	make stdlib-gate	satisfied	1.0	-
 N14-05	M5	N14	The effect classification of every builtin is ENFORCED	reject	tests/reject/pure_calls_file_open.pd	owed	1.0	-
 N14-06	M8	N14	Every file under stdlib/ is accepted by the compiler	gate	make stdlib-gate	owed	1.0	-
 N14-07	M8	N14	stdlib/ is on the default search path with no configuration	observable	tests/n14_stdlib.rs::import_std_works_with_no_env	owed	1.0	-
@@ -329,7 +336,7 @@ FFI-03	M8	V1-8	The FFI boundary is effect-classified, not a hole in N7	reject	te
 
 # --- Self-hosting: the project's own claim about pdc -------------------------------------
 SH-01	-	A12	bootstrap/pdc.pd compiles itself to a byte-identical fixed point over PBS-1 - MEASURED UNDER TWO EXCLUSIONS THIS ROW NOW STATES, NOT ONE: the unit imports NOTHING (grep -c '^import' bootstrap/pdc.pd = 0) and uses NO GENERICS (grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd = 0; docs/specification/bootstrap-subset.md:76 excludes them from PBS-1), and pdc.pd:8 states the exclusion as a virtue - 'This file is written in exactly the subset it implements'. So THIS ROW IS EVIDENCE THAT PBS-1 AVOIDS BOTH UNORDERED EMISSION SOURCES, NOT THAT THE COMPILER IS DETERMINISTIC. Byte identity for a unit that imports OR is generic is SH-05	gate	make selfhost	satisfied	thesis	-
-SH-05	M9	src/codegen/mod.rs:81	Module emission AND generic-instantiation emission are ORDER-DETERMINISTIC, so the fixed point survives the rewrite. TWO INDEPENDENT SOURCES, SEPARATED BY MEASUREMENT AND NOT BY INFERENCE. (a) MODULES: imported modules live in a HashMap (src/codegen/mod.rs:81) emitted by iterating .values() (src/codegen/mod.rs:1114, :1193, :1278); measured, 8 compiles of one unchanged two-module program produced 2 distinct SHA-1s, 4 each - a pure ordering swap of two function bodies. (b) GENERICS: instantiations live in HashMaps (src/typeck/mod.rs:321, :329) emitted by iterating .keys() (src/typeck/mod.rs:2931, :2948) and consumed at src/codegen/mod.rs:1290, :1774; measured, six generics with ZERO imports produced 30 distinct outputs in 30 compiles - generics alone break byte-stability with no module in sight, and six modules with no generics was byte-identical. NEITHER HALF DISCHARGES THE OTHER: ordering the module iteration leaves (b) standing, and ordering the instantiation iteration leaves (a) standing. NEITHER IS A DEFECT REPORT FILED AGAINST SOMEONE ELSE: repairing a mechanism retires no part of this row, because the requirement is that byte identity survive the REWRITE of pdc.pd into the differentiated dialect, which uses imports and generics both. This row is satisfied only by a rewritten unit that exercises both and still reaches the fixed point	gate	make selfhost-determinism	owed	thesis	-
+SH-05	M9	src/codegen/mod.rs:81	Module emission AND generic-instantiation emission are ORDER-DETERMINISTIC, so the fixed point survives the rewrite. TWO INDEPENDENT SOURCES, SEPARATED BY MEASUREMENT AND NOT BY INFERENCE. (a) MODULES: imported modules live in a HashMap (src/codegen/mod.rs:81) emitted by iterating .values() (src/codegen/mod.rs:1140, :1193, :1278); measured, 8 compiles of one unchanged two-module program produced 2 distinct SHA-1s, 4 each - a pure ordering swap of two function bodies. (b) GENERICS: instantiations live in HashMaps (src/typeck/mod.rs:321, :329) emitted by iterating .keys() (src/typeck/mod.rs:2931, :2948) and consumed at src/codegen/mod.rs:1316, :1774; measured, six generics with ZERO imports produced 30 distinct outputs in 30 compiles - generics alone break byte-stability with no module in sight, and six modules with no generics was byte-identical. NEITHER HALF DISCHARGES THE OTHER: ordering the module iteration leaves (b) standing, and ordering the instantiation iteration leaves (a) standing. NEITHER IS A DEFECT REPORT FILED AGAINST SOMEONE ELSE: repairing a mechanism retires no part of this row, because the requirement is that byte identity survive the REWRITE of pdc.pd into the differentiated dialect, which uses imports and generics both. This row is satisfied only by a rewritten unit that exercises both and still reaches the fixed point	gate	make selfhost-determinism	owed	thesis	-
 SH-02	M9	A12	bootstrap/pdc.pd compiles EVERY fixture in the conformance corpus	gate	make selfhost-corpus	owed	thesis	-
 SH-03	M9	A12	Its output matches the Rust compiler's on every fixture, acceptances and refusals alike	gate	make selfhost-corpus	owed	thesis	-
 SH-04	M9	A12	PBS-1 is the whole 1.0 language, not a subset	gate	make selfhost-corpus	owed	thesis	-

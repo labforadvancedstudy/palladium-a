@@ -1039,11 +1039,22 @@ def cmd_reconcile(args) -> int:
     # out of step with the registry, which is a malfunction and not an empty set.
     # This is the half of the discriminator that survives once every builtin is
     # callable — "no names" alone stopped meaning "parser broke" on 2026-08-23.
-    if unsupported_blocks and not names:
+    # EQUALITY, NOT "AT LEAST ONE". Every block that says `Support::Unsupported`
+    # must yield exactly one name; if the counts differ, some entry was silently
+    # omitted and the manifest was reconciled against a SUBSET with nobody told.
+    #
+    # This read `if unsupported_blocks and not names`, which one readable entry
+    # satisfies beside any number of malformed ones. That is the same EXISTENCE
+    # shape as the bug it replaced — "no names means the parser broke", written
+    # when the registry always had unsupported builtins, which reported a
+    # malfunction on 2026-08-23 when the set legitimately went empty. Twice now a
+    # completeness question has been answered with an existence check.
+    if unsupported_blocks != len(names):
         emit(outcome="malfunction",
-             reason=f"{args.src} has {unsupported_blocks} `Support::Unsupported` entr"
-                    f"{'y' if unsupported_blocks == 1 else 'ies'} whose name could not be "
-                    "parsed — the parsing contract broke")
+             reason=f"{args.src} has {unsupported_blocks} `Support::Unsupported` "
+                    f"entr{'y' if unsupported_blocks == 1 else 'ies'} but "
+                    f"{len(names)} name(s) could be parsed from them — the "
+                    "reconciliation would have run against a subset")
         return EXIT_MALFUNCTION
     if not names:
         arr = re.search(r"PRELUDE_TYPE_MISMATCHES[^=]*=\s*&\[(.*?)\];", src, re.S)
