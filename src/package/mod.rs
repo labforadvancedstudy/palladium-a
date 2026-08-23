@@ -712,17 +712,11 @@ fn main() {
         let opt = crate::linker::OptLevel::for_release(release);
         println!("🔗 Linking executable ({})...", opt.flag());
 
-        let gcc_output = crate::linker::link_command(&c_file, &exe_file, opt)?
-            .output()
-            .map_err(|e| CompileError::Generic(format!("Failed to run gcc: {}", e)))?;
-
-        if !gcc_output.status.success() {
-            let stderr = String::from_utf8_lossy(&gcc_output.stderr);
-            return Err(CompileError::Generic(format!(
-                "gcc compilation failed:\n{}",
-                stderr
-            )));
-        }
+        // Shared policy — see src/linker.rs. This site's private copy is why
+        // `pdm run` could disagree with `pdc compile` about the same C.
+        let notes = crate::linker::link(&c_file, &exe_file, opt)
+            .map_err(|e| CompileError::Generic(e.to_string()))?;
+        crate::linker::report_notes(&notes);
 
         // Run the executable
         println!("🚀 Running '{}'...", manifest.name);
@@ -737,12 +731,17 @@ fn main() {
 
         println!("─────────────────────────────────────");
 
+        // Same lie as the driver's, same fix: a launcher may not report success
+        // for a program that died.
         if !status.success() {
-            let exit_code = status.code().unwrap_or(-1);
-            println!("⚠️  Program exited with code: {}", exit_code);
-        } else {
-            println!("✅ Program completed successfully");
+            let detail = match status.code() {
+                Some(c) => format!("exited with code {}", c),
+                None => "terminated abnormally".to_string(),
+            };
+            println!("⚠️  Program {}", detail);
+            return Err(CompileError::Generic(format!("program {}", detail)));
         }
+        println!("✅ Program completed successfully");
 
         Ok(())
     }

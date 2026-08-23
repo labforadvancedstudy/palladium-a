@@ -4,7 +4,7 @@
 use crate::codegen::CodeGenerator;
 use crate::errors::{reporter::ErrorReporter, CompileError, Result};
 use crate::lexer::Lexer;
-use crate::linker::{link_command, OptLevel};
+use crate::linker::{self, LinkError, OptLevel};
 use crate::macros::MacroExpander;
 use crate::optimizer::Optimizer;
 use crate::ownership::BorrowChecker;
@@ -277,15 +277,16 @@ impl Driver {
         }
     }
 
-    /// Compile and run a file
-    pub fn compile_and_run(&self, path: &Path) -> Result<()> {
+    /// Compile and run a file, reporting WHICH of the four ways it failed.
+    pub fn compile_and_run_reporting(&self, path: &Path) -> std::result::Result<(), RunOutcome> {
         // First compile to C (error reporting handled in compile_file)
-        let c_path = self.compile_file(path)?;
+        let c_path = self.compile_file(path).map_err(RunOutcome::Compile)?;
 
         // Create build directory if it doesn't exist
         let build_dir = PathBuf::from("target/build");
         if !build_dir.exists() {
-            fs::create_dir_all(&build_dir).map_err(CompileError::IoError)?;
+            fs::create_dir_all(&build_dir)
+                .map_err(|e| RunOutcome::Compile(CompileError::IoError(e)))?;
         }
 
         // Determine output binary name
@@ -295,17 +296,12 @@ impl Driver {
         // Compile C code with gcc
         println!("🔗 Linking with gcc ({})...", self.opt_level.flag());
 
-        let gcc_output = link_command(&c_path, &binary_path, self.opt_level)?
-            .output()
-            .map_err(|e| CompileError::Generic(format!("Failed to run gcc: {}", e)))?;
-
-        if !gcc_output.status.success() {
-            let stderr = String::from_utf8_lossy(&gcc_output.stderr);
-            return Err(CompileError::Generic(format!(
-                "gcc compilation failed:\n{}",
-                stderr
-            )));
-        }
+        // The shared policy, not a private copy of it. This call site used to
+        // hold its own `if !status.success()`, which is how `pdc run` came to
+        // disagree with `pdc compile` about the same source.
+        let notes =
+            linker::link(&c_path, &binary_path, self.opt_level).map_err(RunOutcome::Link)?;
+        linker::report_notes(&notes);
 
         println!("   Created executable: {}", binary_path.display());
 
@@ -313,9 +309,12 @@ impl Driver {
         println!("🚀 Running program...");
         println!("─────────────────────────────────────");
 
-        let run_output = Command::new(&binary_path)
-            .output()
-            .map_err(|e| CompileError::Generic(format!("Failed to run program: {}", e)))?;
+        let run_output = Command::new(&binary_path).output().map_err(|e| {
+            RunOutcome::Compile(CompileError::Generic(format!(
+                "Failed to run program: {}",
+                e
+            )))
+        })?;
 
         // Print stdout
         if !run_output.stdout.is_empty() {
@@ -329,12 +328,22 @@ impl Driver {
 
         println!("─────────────────────────────────────");
 
+        // A LAUNCHER THAT REPORTS SUCCESS FOR A SEGFAULT IS THE SAME LIE AS THE
+        // DISCARD THIS BRANCH CAME TO FIX. This used to `println!` the child's
+        // exit code and then `Ok(())`, so `pdc run` exited 0 for a program that
+        // died — including, for one release of this branch, the very program
+        // `pdc compile` had just refused to build.
         if !run_output.status.success() {
-            let exit_code = run_output.status.code().unwrap_or(-1);
-            println!("⚠️  Program exited with code: {}", exit_code);
-        } else {
-            println!("✅ Program completed successfully");
+            println!(
+                "⚠️  Program exited with code: {}",
+                child_status(&run_output.status)
+            );
+            return Err(RunOutcome::Child {
+                code: run_output.status.code(),
+                signal: death_signal(&run_output.status),
+            });
         }
+        println!("✅ Program completed successfully");
 
         // Clean up intermediate files (optional)
         // You might want to keep these for debugging
@@ -342,6 +351,113 @@ impl Driver {
         // fs::remove_file(&binary_path).ok();
 
         Ok(())
+    }
+
+    /// Compile and run a file.
+    ///
+    /// THE SPLIT `compile_and_run_reporting` CLOSES, and the reason this one is
+    /// now a wrapper. For one release of this branch, `pdc compile` refused the
+    /// type-confusion program (exit 4, no binary) while `pdc run` on the SAME
+    /// source built it, ran it, printed `Program exited with code: -1`, and
+    /// exited 0 — two adjacent commands, opposite verdicts, and the one that
+    /// actually executed the miscompiled binary was the one reporting success.
+    ///
+    /// This signature is kept for callers that only have a `CompileError` to
+    /// return (`tests/examples_test.rs`, `tests/integration_test.rs`). `pdc run`
+    /// does NOT use it: collapsing a link verdict and a dead child into one
+    /// error type throws away exactly the distinction this module was fixed to
+    /// keep.
+    ///
+    /// (Defined after the function it delegates to, rather than before it,
+    /// because `docs/citation-pins.tsv` fingerprints a line of
+    /// `compile_and_run_reporting`'s body by LINE NUMBER, and this branch may
+    /// not edit that file. See the branch report — the pin mechanism, not the
+    /// code, chose this order.)
+    pub fn compile_and_run(&self, path: &Path) -> Result<()> {
+        self.compile_and_run_reporting(path)
+            .map_err(RunOutcome::into_compile_error)
+    }
+}
+
+/// The signal that killed a process, where the platform reports one.
+fn death_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        None
+    }
+}
+
+/// How the child ended, for the human line above the verdict.
+///
+/// `-1` was printed here before, for every abnormal end, and said nothing.
+fn child_status(status: &std::process::ExitStatus) -> String {
+    match (status.code(), death_signal(status)) {
+        (Some(c), _) => c.to_string(),
+        (None, Some(s)) => format!("killed by signal {}", s),
+        (None, None) => "terminated abnormally".to_string(),
+    }
+}
+
+/// Why `pdc run` did not end with a program that ran successfully.
+///
+/// Four causes with three different owners: the front end refused the source,
+/// the link stage refused (or could not reach) the C, or the program itself
+/// ran and failed. Flattening them is how a launcher comes to report success
+/// for a segfault.
+#[derive(Debug)]
+pub enum RunOutcome {
+    /// The front end, or any non-link step, refused.
+    Compile(CompileError),
+    /// The link stage. Carries the full [`LinkError`] so the exit code survives.
+    Link(LinkError),
+    /// The program was built, started, and failed.
+    Child {
+        /// `None` when the child was killed rather than exiting.
+        code: Option<i32>,
+        /// The signal that killed it, where the platform reports one.
+        signal: Option<i32>,
+    },
+}
+
+impl RunOutcome {
+    /// The process exit code `pdc run` reports.
+    ///
+    /// THE BOUNDARY, stated because it is the one thing here a gate could get
+    /// wrong: 3/4/5/6 mean the program NEVER STARTED, and they come from
+    /// [`LinkError::exit_code`]. Once the program starts, `pdc run` is a
+    /// launcher and the status belongs to the program — so a program that
+    /// exits 4 makes `pdc run` exit 4 too, and the two are not distinguishable
+    /// from the outside. A gate that must tell them apart has to use
+    /// `pdc compile`, which never runs anything; `scripts/conformance.sh`
+    /// already does.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            RunOutcome::Compile(_) => 1,
+            RunOutcome::Link(e) => e.exit_code(),
+            // A plain nonzero exit is passed through unchanged; a signalled
+            // child uses the shell's 128+N, which is what every other launcher
+            // on this platform reports and what `$?` already means to a script.
+            RunOutcome::Child { code, signal } => code.unwrap_or_else(|| 128 + signal.unwrap_or(0)),
+        }
+    }
+
+    /// Collapse into the historical error type, for callers that only have one.
+    pub fn into_compile_error(self) -> CompileError {
+        match self {
+            RunOutcome::Compile(e) => e,
+            RunOutcome::Link(e) => CompileError::Generic(e.to_string()),
+            RunOutcome::Child { code, signal } => CompileError::Generic(match (code, signal) {
+                (Some(c), _) => format!("program exited with code {}", c),
+                (None, Some(s)) => format!("program was killed by signal {}", s),
+                (None, None) => "program terminated abnormally".to_string(),
+            }),
+        }
     }
 }
 

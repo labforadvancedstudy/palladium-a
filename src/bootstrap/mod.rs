@@ -52,17 +52,12 @@ impl BootstrapCompiler {
 
         // The bootstrap compiler is a real workload (it compiles Palladium), so
         // it gets the same default optimization as any other binary.
-        let gcc_output = crate::linker::link_command(output_c, output_exe, OptLevel::default())?
-            .output()
-            .map_err(|e| CompileError::Generic(format!("Failed to run gcc: {}", e)))?;
-
-        if !gcc_output.status.success() {
-            let stderr = String::from_utf8_lossy(&gcc_output.stderr);
-            return Err(CompileError::Generic(format!(
-                "Failed to compile bootstrap compiler: {}",
-                stderr
-            )));
-        }
+        // Shared policy. This site had its own `if !status.success()` and its
+        // own wording ("Failed to compile bootstrap compiler"), so a killed gcc
+        // and a rejected translation unit were one sentence here too.
+        let notes = crate::linker::link(output_c, output_exe, OptLevel::default())
+            .map_err(|e| CompileError::Generic(format!("bootstrap compiler: {}", e)))?;
+        crate::linker::report_notes(&notes);
 
         println!("✅ Bootstrap compiler built successfully!");
 

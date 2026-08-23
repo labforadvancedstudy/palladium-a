@@ -363,15 +363,10 @@ impl BuildSystem {
             let opt = crate::linker::OptLevel::for_release(self.context.config.release);
             println!("🔗 Linking {} ({})", exe_name, opt.flag());
 
-            let output = crate::linker::link_command(&c_file, &exe_file, opt)?.output()?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(CompileError::Generic(format!(
-                    "Linking failed:\n{}",
-                    stderr
-                )));
-            }
+            // Shared policy — see src/linker.rs.
+            let notes = crate::linker::link(&c_file, &exe_file, opt)
+                .map_err(|e| CompileError::Generic(e.to_string()))?;
+            crate::linker::report_notes(&notes);
         }
 
         // Run the executable
@@ -490,21 +485,16 @@ impl BuildSystem {
         // Link to executable
         let exe_path = output_dir.join(test_name);
 
-        // Tests link like any other binary: optimized unless told otherwise.
-        let gcc_output = crate::linker::link_command(
+        // Tests link like any other binary: optimized unless told otherwise,
+        // and under the same policy. A test binary built from ill-typed C is
+        // not a test result.
+        let notes = crate::linker::link(
             &output_path,
             &exe_path,
             crate::linker::OptLevel::for_release(self.context.config.release),
-        )?
-        .output()?;
-
-        if !gcc_output.status.success() {
-            let stderr = String::from_utf8_lossy(&gcc_output.stderr);
-            return Err(CompileError::Generic(format!(
-                "Test compilation failed:\n{}",
-                stderr
-            )));
-        }
+        )
+        .map_err(|e| CompileError::Generic(format!("test: {}", e)))?;
+        crate::linker::report_notes(&notes);
 
         // Run the test
         let output = std::process::Command::new(&exe_path).output()?;

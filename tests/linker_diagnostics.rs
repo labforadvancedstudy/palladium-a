@@ -46,7 +46,15 @@
 //! 4. `the_refusal_reads_stderr_not_status` — gcc EXITED 0 on the C in (1).
 //! 5. `a_killed_gcc_is_not_a_rejection`     — case 2 is not reportable as case 1.
 //! 6. `a_missing_gcc_is_not_a_rejection`    — the other half of case 2.
-//! 7. `the_three_outcomes_are_three_codes`  — and a shell can tell them apart.
+//! 7. `the_outcomes_are_distinct_codes`     — and a shell can tell them apart.
+//! 8. `a_localized_gcc_still_fires`        — the escalation is not an English
+//!    feature, and a `LANG` on a developer's box cannot silently turn it off.
+//! 9. `every_shape_of_ill_typed_c_is_fatal`— the fatal list is derived from the
+//!    PROPERTY by asking the real toolchain, not from what somebody recalled.
+//! 10. `every_gcc_invocation_goes_through_link` — all six discard sites, as a
+//!     source fact rather than a claim in a commit message.
+//! 11. `pdc_run_agrees_with_pdc_compile`   — and does not report success for a
+//!     program that died.
 //!
 //! (4) and (5) are the whole change, one per direction of the old lie. Without
 //! (4) the suite cannot tell this fix from the bug: every other assertion here
@@ -59,7 +67,8 @@
 //! failing to compile is the intended outcome of this change, not a regression.
 
 use palladium::linker::{
-    self, LinkError, OptLevel, EXIT_BACKEND_ILL_TYPED, EXIT_BACKEND_REJECT, EXIT_TOOLCHAIN,
+    self, LinkError, OptLevel, EXIT_BACKEND_ILL_TYPED, EXIT_BACKEND_REJECT, EXIT_GCC_UNEXPLAINED,
+    EXIT_TOOLCHAIN,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -104,6 +113,18 @@ fn pdc_compile(source: &str, stem: &str) -> PdcRun {
 /// runs its tests on threads, and a `set_var("PATH", ...)` here would be a race
 /// with every other test that spawns anything.
 fn pdc_compile_with_path(source: &str, stem: &str, path: Option<&Path>) -> PdcRun {
+    match path {
+        Some(p) => pdc_compile_with_env(source, stem, &[("PATH", &p.to_string_lossy())]),
+        None => pdc_compile_with_env(source, stem, &[]),
+    }
+}
+
+/// As `pdc_compile`, with arbitrary environment on the child.
+///
+/// Needed for the locale control: proving pdc does not INHERIT a hostile
+/// `LC_ALL` means setting one, and setting it on this process would race every
+/// other test in the binary.
+fn pdc_compile_with_env(source: &str, stem: &str, env: &[(&str, &str)]) -> PdcRun {
     let dir = TempDir::new().expect("tempdir");
     let src = dir.path().join(format!("{}.pd", stem));
     fs::write(&src, source).expect("write source");
@@ -117,8 +138,8 @@ fn pdc_compile_with_path(source: &str, stem: &str, path: Option<&Path>) -> PdcRu
         .arg(&src)
         .arg("-o")
         .arg(stem);
-    if let Some(p) = path {
-        cmd.env("PATH", p);
+    for (k, v) in env {
+        cmd.env(k, v);
     }
     let out = cmd.output().expect("run pdc");
 
@@ -196,12 +217,21 @@ fn the_type_confusion_is_now_refused() {
 /// warning — which is in every compile in this tree — did not become fatal.
 #[test]
 fn an_ordinary_program_still_runs() {
-    // No `&` anywhere. Deliberate, and it is a finding rather than a
-    // convenience: the blast-radius scan for this change showed that ANY
-    // `string_len(&s)` — the spelling the tutorials use — already emits
-    // `-Wincompatible-pointer-types`, so a "control" program written the
-    // obvious way would be testing the open `&T` forwarding defect instead of
-    // the accept side. See the branch report for the corpus numbers.
+    // No `&` anywhere, and the reason is measured rather than assumed.
+    //
+    // AN EARLIER VERSION OF THIS COMMENT WAS FALSE. It said `string_len(&s)` is
+    // "the spelling the tutorials use". It is not: `grep -rn 'string_len(&'`
+    // over every .pd, doc and example in this tree returns ZERO hits, and
+    // docs/user-guide/tutorial.md passes the String by value —
+    // `string_len(joined)`, `string_len(s)`, `string_len(text)`. The claim was
+    // inferred from a probe I wrote myself and then stated about the corpus, in
+    // a file whose whole argument is that claims must be measured.
+    //
+    // What IS measured: the three probes in the branch report (`string_len(&t)`
+    // on a local, and two-hop `&String` forwarding) do emit
+    // `-Wincompatible-pointer-types`. So a control written with `&` would be
+    // exercising the open `&T` forwarding defect instead of the accept side —
+    // the right conclusion, reached from evidence that exists.
     let run = pdc_compile(
         "fn add(a: i64, b: i64) -> i64 { return a + b; }\n\
          fn main() { print_int(add(40, 2)); }\n",
@@ -229,7 +259,7 @@ fn an_ordinary_program_still_runs() {
     let stderr = gcc_stderr_for(&run.c_file);
     if stderr.contains("-Wincompatible-pointer-types-discards-qualifiers") {
         assert!(
-            linker::fatal_diagnostics(&stderr).is_empty(),
+            linker::fatal_diagnostics(&stderr, &run.c_file).is_empty(),
             "the prelude warning present in every compile was escalated"
         );
     } else {
@@ -264,7 +294,7 @@ fn gcc_giving_up_is_unchanged() {
         .expect_err("gcc must reject a file that is not C");
 
     assert!(
-        matches!(err, LinkError::GccFailed(_)),
+        matches!(err, LinkError::GccRejected(_)),
         "a gcc that GAVE UP was classified as something else: {:?}",
         err
     );
@@ -335,7 +365,7 @@ fn the_refusal_reads_stderr_not_status() {
     );
 
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let fatal = linker::fatal_diagnostics(&stderr);
+    let fatal = linker::fatal_diagnostics(&stderr, &run.c_file);
     assert!(
         !fatal.is_empty(),
         "gcc exited 0 and said nothing this change can act on:\n{}",
@@ -356,6 +386,22 @@ fn the_refusal_reads_stderr_not_status() {
 /// A tiny program that reaches the link stage. Any valid program does; this one
 /// is chosen for having nothing else that could fail.
 const TRIVIAL_SOURCE: &str = "fn main() { print_int(1); }\n";
+
+/// A program that compiles, links, runs, produces output, and THEN fails.
+///
+/// `panic` lowers to `__pd_panic`, which prints and calls `abort()`
+/// (runtime/pd_prelude.h), so the child dies on a signal rather than exiting —
+/// the case the old `status.code().unwrap_or(-1)` printed as `-1` and then
+/// returned `Ok(())` for.
+const CHILD_FAILS_SOURCE: &str = "fn main() { print_int(7); panic(\"deliberate\"); }\n";
+
+/// Shell that sets `$c` to the first `.c` on gcc's command line.
+///
+/// The shims must name the REAL translation unit: since diagnostics are
+/// filtered to the file under compilation (so a defect in the C runtime cannot
+/// condemn the user's program), a shim that invents a path like `x.c` is
+/// correctly classified as somebody else's problem and proves nothing.
+const SHIM_FIND_TU: &str = "#!/bin/sh\nc=\"\"\nfor a in \"$@\"; do case \"$a\" in *.c) if [ -z \"$c\" ]; then c=\"$a\"; fi;; esac; done\n";
 
 /// Put an executable `gcc` of our own first on `PATH`, and hand back that PATH.
 ///
@@ -459,7 +505,10 @@ fn a_gcc_that_says_no_is_still_a_rejection() {
     let dir = TempDir::new().expect("tempdir");
     let path = shim_path(
         dir.path(),
-        "#!/bin/sh\necho 'x.c:1:1: error: gcc says no' >&2\nexit 1\n",
+        &format!(
+            "{}echo \"$c:1:1: error: gcc says no\" >&2\nexit 1\n",
+            SHIM_FIND_TU
+        ),
     );
     let run = pdc_compile_with_path(TRIVIAL_SOURCE, "linkdiag_reject", Some(Path::new(&path)));
 
@@ -488,8 +537,13 @@ fn a_gcc_that_says_no_is_still_a_rejection() {
 /// Pinning them here is what makes renumbering a deliberate act with a failing
 /// test attached, rather than a silent reclassification of every fixture.
 #[test]
-fn the_three_outcomes_are_three_codes() {
-    let codes = [EXIT_BACKEND_REJECT, EXIT_BACKEND_ILL_TYPED, EXIT_TOOLCHAIN];
+fn the_outcomes_are_distinct_codes() {
+    let codes = [
+        EXIT_BACKEND_REJECT,
+        EXIT_BACKEND_ILL_TYPED,
+        EXIT_TOOLCHAIN,
+        EXIT_GCC_UNEXPLAINED,
+    ];
     for (i, a) in codes.iter().enumerate() {
         for b in &codes[i + 1..] {
             assert_ne!(a, b, "two outcomes share an exit code");
@@ -507,16 +561,323 @@ fn the_three_outcomes_are_three_codes() {
         EXIT_TOOLCHAIN
     );
     assert_eq!(
-        LinkError::GccDied(String::new()).exit_code(),
+        LinkError::GccAbnormal(String::new()).exit_code(),
         EXIT_TOOLCHAIN
     );
     assert_eq!(
-        LinkError::GccFailed(String::new()).exit_code(),
+        LinkError::GccRejected(String::new()).exit_code(),
         EXIT_BACKEND_REJECT
     );
     assert_eq!(
         LinkError::IllTypedC(String::new()).exit_code(),
         EXIT_BACKEND_ILL_TYPED
+    );
+    assert_eq!(
+        LinkError::GccUnexplained(String::new()).exit_code(),
+        EXIT_GCC_UNEXPLAINED
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 8-12. what the second round of review found
+// ---------------------------------------------------------------------------
+
+/// A NONZERO gcc THAT NEVER MENTIONED OUR FILE IS NOT A REJECTION OF IT.
+///
+/// The overclaim this closes: the first version mapped every nonzero exit onto
+/// a code documented as "gcc rejected the translation unit this compiler
+/// emitted", while the only thing observed was the status. A full disk, an
+/// unwritable output path, a missing assembler, an internal error in gcc —
+/// nonzero, none of them about our C. Structuring that signal did not make it
+/// truer; it made a false accusation machine-readable for a gate being built to
+/// consume it.
+#[test]
+#[cfg(unix)]
+fn a_nonzero_gcc_that_never_named_our_file_is_not_a_rejection() {
+    let dir = TempDir::new().expect("tempdir");
+    // The shape of a disk or permission failure: gcc says something real, exits
+    // nonzero, and never diagnoses the translation unit.
+    let path = shim_path(
+        dir.path(),
+        "#!/bin/sh\necho 'gcc: fatal error: cannot write output: No space left on device' >&2\nexit 1\n",
+    );
+    let run = pdc_compile_with_path(
+        TRIVIAL_SOURCE,
+        "linkdiag_unexplained",
+        Some(Path::new(&path)),
+    );
+
+    assert_eq!(
+        run.code,
+        Some(EXIT_GCC_UNEXPLAINED),
+        "a failure nobody attributed to our C was reported with the code that \
+         means 'this compiler emitted C that will not compile'\n{}",
+        run.log
+    );
+    assert!(
+        !run.log.contains("gcc compilation failed"),
+        "the marker a gate reads as 'gcc refused our C' was printed for a \
+         failure that never named it\n{}",
+        run.log
+    );
+    assert!(
+        run.log.contains("No space left on device"),
+        "gcc's own text was dropped\n{}",
+        run.log
+    );
+}
+
+/// THE ESCALATION IS NOT AN ENGLISH LANGUAGE FEATURE.
+///
+/// `diagnostic_tags` matches the literal `": warning: "`. GNU gcc localizes its
+/// diagnostic prose and does NOT localize the `[-Wname]` tag, so on a box with
+/// `LANG=ja_JP.UTF-8` the parser would match nothing, `link` would return `Ok`,
+/// and the segfaulting binary would ship with pdc printing `Created
+/// executable` — byte-identical to the original bug, re-enabled by an
+/// environment variable, with no signal that a check had been skipped. A
+/// fail-OPEN in the one place this branch exists to make fail closed.
+///
+/// The fix is `LC_ALL=C` on the child. The shim answers in German unless it is
+/// told otherwise, so the test does not need a localized toolchain installed,
+/// and pdc is run under a hostile ambient locale so that inheriting it would
+/// fail here.
+#[test]
+#[cfg(unix)]
+fn a_localized_gcc_still_fires() {
+    let dir = TempDir::new().expect("tempdir");
+    let path = shim_path(
+        dir.path(),
+        &format!(
+            "{}if [ \"$LC_ALL\" = C ]; then\n\
+             echo \"$c:1:1: warning: incompatible pointer types [-Wincompatible-pointer-types]\" >&2\n\
+             else\n\
+             echo \"$c:1:1: Warnung: inkompatible Zeigertypen [-Wincompatible-pointer-types]\" >&2\n\
+             fi\nexit 0\n",
+            SHIM_FIND_TU
+        ),
+    );
+    let run = pdc_compile_with_env(
+        TYPE_CONFUSING_SOURCE,
+        "linkdiag_locale",
+        &[
+            ("PATH", path.as_str()),
+            ("LC_ALL", "de_DE.UTF-8"),
+            ("LANG", "de_DE.UTF-8"),
+        ],
+    );
+
+    assert_eq!(
+        run.code,
+        Some(EXIT_BACKEND_ILL_TYPED),
+        "under an ambient LC_ALL=de_DE the escalation did not fire. gcc's tag \
+         is not localized but its prose is, so the check silently switched \
+         itself off — the original defect, re-enabled by an environment \
+         variable.\n{}",
+        run.log
+    );
+}
+
+/// THE FATAL LIST IS DERIVED FROM THE PROPERTY, BY THE TOOLCHAIN.
+///
+/// `FATAL_DIAGNOSTIC_TAGS` states a rule: a tag belongs there when no Palladium
+/// program can ask for the C gcc is objecting to. A hand-written list does not
+/// enforce its own rule — the first version had ONE member and a review found
+/// three more tags satisfying it verbatim, recorded nowhere. `-Wint-conversion`
+/// is the expensive one: CLAUDE.md says a gcc error is the only thing stopping
+/// six `file_*` builtins from dereferencing an integer as a `FILE*`, and that
+/// diagnostic is only an ERROR on newer clang — on GNU gcc 13 and earlier,
+/// which is what this repo's Linux CI runs, it is a warning that exits 0.
+///
+/// So the list is checked against the real compiler, one snippet per shape.
+#[test]
+fn every_shape_of_ill_typed_c_is_fatal() {
+    let shapes: &[(&str, &str)] = &[
+        (
+            "a pointer of the wrong depth",
+            "void f(char **p); void g(char *p){ f(p); }",
+        ),
+        (
+            "an integer used as a pointer",
+            "void f(char *p); void g(long n){ f(n); }",
+        ),
+        (
+            "a pointer used as an integer",
+            "void f(long n); void g(char *p){ f(p); }",
+        ),
+        (
+            "a function pointer of the wrong signature",
+            "void f(int (*p)(char)); int h(long); void g(void){ f(h); }",
+        ),
+        (
+            "a call to a function that was never declared",
+            "long g(void){ return nosuchfn(); }",
+        ),
+    ];
+
+    let dir = TempDir::new().expect("tempdir");
+    for (what, src) in shapes {
+        let c = dir.path().join("shape.c");
+        fs::write(&c, src).expect("write c");
+        let out = Command::new("gcc")
+            .env("LC_ALL", "C")
+            .arg("-c")
+            .arg(&c)
+            .arg("-o")
+            .arg(dir.path().join("shape.o"))
+            .output()
+            .expect("run gcc");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+
+        let tags: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains(": warning: ") || l.contains(": error: "))
+            .filter_map(|l| l.trim_end().strip_suffix(']'))
+            .filter_map(|l| l.rfind("[-W").map(|i| &l[i + 1..]))
+            .flat_map(|t| t.split(','))
+            .collect();
+
+        assert!(
+            !tags.is_empty(),
+            "this toolchain says nothing about `{}` ({}), so the shape cannot \
+             be checked here:\n{}",
+            what,
+            src,
+            stderr
+        );
+        assert!(
+            tags.iter()
+                .any(|t| linker::FATAL_DIAGNOSTIC_TAGS.contains(t)),
+            "`{}` is C that no Palladium program can ask for, and the tag this \
+             toolchain gives it ({:?}) is in neither FATAL_DIAGNOSTIC_TAGS nor \
+             any recorded decision at all. That is the membership rule going \
+             unenforced.\nsource: {}\n{}",
+            what,
+            tags,
+            src,
+            stderr
+        );
+    }
+}
+
+/// ALL SIX DISCARD SITES, AS A SOURCE FACT.
+///
+/// The defect was one policy copied into six places, so "they were all
+/// migrated" has to be checked rather than asserted in a commit message. It is
+/// also what makes `LC_ALL=C` a property of the compiler rather than of one
+/// call site: `link_command` cannot carry the env itself, because its body is
+/// content-pinned in docs/citation-pins.tsv (a file this branch may not edit),
+/// so the guarantee is "every production invocation goes through `link`".
+#[test]
+fn every_gcc_invocation_goes_through_link() {
+    let mut offenders = Vec::new();
+    let mut stack = vec![repo_root().join("src")];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).expect("read src") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            // linker.rs defines it and its own unit tests assert on the command
+            // it builds; the llvm backend's uses are inside `#[cfg(test)]`.
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "linker.rs" || name == "llvm_text_backend.rs" {
+                continue;
+            }
+            let text = fs::read_to_string(&path).expect("read rs");
+            for (i, line) in text.lines().enumerate() {
+                if line.contains("link_command(") && !line.trim_start().starts_with("//") {
+                    offenders.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these call sites build the gcc command themselves instead of going \
+         through `linker::link`, so each has its own copy of the status/stderr \
+         policy — the defect this branch exists to remove, and how `pdc run` \
+         came to disagree with `pdc compile`:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// `pdc run` AND `pdc compile` MUST NOT DISAGREE ABOUT THE SAME SOURCE.
+///
+/// Measured on this branch before the migration: `pdc compile B3.pd` refused
+/// (exit 4, no binary) while `pdc run B3.pd` built it, ran it, printed
+/// `Program exited with code: -1`, and exited 0. Two adjacent commands,
+/// opposite verdicts, and the one that actually executed the miscompiled
+/// binary was the one reporting success.
+#[test]
+fn pdc_run_agrees_with_pdc_compile() {
+    let dir = TempDir::new().expect("tempdir");
+    let src = dir.path().join("linkdiag_runagree.pd");
+    fs::write(&src, TYPE_CONFUSING_SOURCE).expect("write source");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .current_dir(repo_root())
+        .arg("run")
+        .arg(&src)
+        .output()
+        .expect("run pdc");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        !out.status.success(),
+        "`pdc run` accepted and EXECUTED a program `pdc compile` refuses\n{}",
+        log
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(EXIT_BACKEND_ILL_TYPED),
+        "`pdc run` and `pdc compile` disagree about the same source\n{}",
+        log
+    );
+    assert!(!log.contains("Program completed successfully"), "{}", log);
+}
+
+/// A launcher may not report success for a program that died.
+///
+/// The other half of the same site: `compile_and_run` used to `println!` the
+/// child's exit code and then return `Ok(())`.
+#[test]
+fn pdc_run_propagates_a_failing_child() {
+    let dir = TempDir::new().expect("tempdir");
+    let src = dir.path().join("linkdiag_deadchild.pd");
+    // A program that runs correctly and then fails. `RunOutcome::exit_code`
+    // documents the boundary this exercises: once the program starts, the
+    // status is the program's.
+    fs::write(&src, CHILD_FAILS_SOURCE).expect("write source");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .current_dir(repo_root())
+        .arg("run")
+        .arg(&src)
+        .output()
+        .expect("run pdc");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        log.contains('7'),
+        "the program did not run, so this proves nothing about its status\n{}",
+        log
+    );
+    assert!(
+        !out.status.success(),
+        "`pdc run` exited 0 for a program that failed\n{}",
+        log
     );
 }
 
@@ -531,4 +892,44 @@ fn gcc_stderr_for(c_file: &Path) -> String {
         .output()
         .expect("run gcc");
     String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+// ---------------------------------------------------------------------------
+// The consumer this change has NOT been reconciled with
+// ---------------------------------------------------------------------------
+
+/// `scripts/gate_probe.py` treats any pdc exit outside `(0, 1)` as a MALFUNCTION.
+///
+/// WHY THIS IS A DEBT AND NOT A BUG IN THIS BRANCH. `classify(r, reject_codes=(1,))`
+/// is reached from `scripts/stdlib-gate.sh` at six call sites and from
+/// `scripts/check_doc_evidence.py`, so `make stdlib-gate` and `make check-docs`
+/// are both exposed. A `Malfunction` WITHHOLDS the producer's output, so the
+/// first fixture to exit 3 or 4 would give an operator strictly less than the
+/// same fixture gave before this change.
+///
+/// THE RIGHT SHAPE, and it is not mine to apply: `reject_codes=(1, 3, 4)` at the
+/// two pdc call sites. Exits 3 and 4 ARE conclusions — gcc reached a verdict, or
+/// pdc reached one about gcc's output — which is exactly the `Concluded` half of
+/// the distinction `gate_probe` already draws. Exit 5 (and 6) must STAY a
+/// malfunction: an absent, killed, or unexplained toolchain establishes nothing,
+/// which is the same argument, in the same words, as this module's own reason
+/// for not calling those a backend rejection.
+///
+/// WHY IT IS UNREACHED TODAY AND THAT IS NOT A DEFENCE: no .pd in the corpus
+/// reaches a gcc-stage failure (measured: 191 files, 0 hits for `gcc
+/// compilation failed`), so no gate exits 3-6 today. "Unreached today" is a
+/// measurement with a shelf life, and writing it in a commit message is how it
+/// stops being anybody's. `scripts/gate_probe.py` belongs to another agent
+/// right now, so this row holds the obligation instead.
+#[test]
+#[ignore = "XFAIL: scripts/gate_probe.py classify() pins reject_codes=(1,), so a pdc exit of 3 (backend reject) or 4 (backend emitted ill-typed C) is reported as MALFUNCTION — and a Malfunction withholds the output the operator needs. Fix is reject_codes=(1, 3, 4) at the two pdc call sites in stdlib-gate.sh and check_doc_evidence.py; exits 5 and 6 must remain malfunctions. Not applied here: scripts/gate_probe.py is reserved for another agent on a concurrent branch. (owned by unscheduled: it is a cross-branch reconciliation, and no milestone owns the gate harness)"]
+fn the_gate_probe_accepts_the_codes_a_backend_failure_now_reports() {
+    let probe = repo_root().join("scripts/gate_probe.py");
+    let text = fs::read_to_string(&probe)
+        .expect("scripts/gate_probe.py is the consumer this row is about");
+    assert!(
+        text.contains("reject_codes=(1, 3, 4)"),
+        "gate_probe.classify still pins reject_codes=(1,), so pdc exit 3 and 4 \
+         are reported as MALFUNCTION with the output withheld"
+    );
 }
