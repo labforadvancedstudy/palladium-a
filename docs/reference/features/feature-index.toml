@@ -132,7 +132,7 @@ evidence = [
   "src: tests/regression/lifetimes_uninferred.pd:26-29 \"fn dangling() -> &i64\" returning \"return &x;\", a reference to a local that dies at the closing brace",
   "conformance: tests/reject/uncalled_body_is_checked.pd reject",
   "src: tests/reject/uncalled_body_is_checked.pd:21-24 \"fn bad()\" is called by nothing and still refused, which is what makes the fixture above a statement about lifetimes",
-  "gate: make conformance -> reject=22 verified=51 -- the pair above is in the corpus those numbers count",
+  "gate: make conformance -> reject=22 verified=52 -- the pair above is in the corpus those numbers count",
   "src: src/ownership/borrow_checker.rs:731-734 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
   "src: src/ownership/mod.rs:25-33 \"pub enum Lifetime\" -- the four variants a lifetime can be, none of which carries a relation to another",
   "src: src/ownership/mod.rs:101-126 \"constraints: Vec<LifetimeConstraint>\" at :101 and \"pub struct LifetimeConstraint\" at :124 with its longer/shorter pair -- the only type in the module that RELATES two lifetimes",
@@ -489,7 +489,7 @@ description = "C code generation; the backend the compiler actually ships."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "implemented"
 evidence = [
-  "gate: make conformance -> fixtures=83 evaluated=83 verified=51 vacuous=7 xfail=1 reject=22 skip=2 failures=0",
+  "gate: make conformance -> fixtures=84 evaluated=84 verified=52 vacuous=7 xfail=1 reject=22 skip=2 failures=0",
   "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\" -- the C backend is the one a Palladium compiler is built with",
 ]
 
@@ -521,7 +521,7 @@ spec = "../../specification/language-spec.md"
 implementation = "implemented"
 evidence = [
   "gate: cargo build --release -> \"[optimized] target(s)\" -- the compiler builds, and target/release/pdc is what every other gate here runs",
-  "gate: make conformance -> fixtures=83 evaluated=83 verified=51 vacuous=7 xfail=1 reject=22 skip=2 failures=0",
+  "gate: make conformance -> fixtures=84 evaluated=84 verified=52 vacuous=7 xfail=1 reject=22 skip=2 failures=0",
 ]
 
 [tooling.compiler.bootstrapping]
