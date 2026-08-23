@@ -19,7 +19,13 @@
 #                     check would be unreachable for every file here, and the
 #                     gate would be unable to report the one thing it promises.
 #   COMPILE_FAIL      rejected by the lexer, parser or type checker
-#   LINK_FAIL         accepted by the compiler, rejected by gcc
+#   LINK_FAIL         REFUSED, no longer declarable. It meant "accepted by the
+#                     compiler, rejected by gcc", which is never a property of a
+#                     FILE: if pdc accepted the source, C that will not build is a
+#                     defect in pdc. scripts/stdlib-gate.sh now rejects a row that
+#                     names it, and gate_probe no longer emits it — that outcome
+#                     comes back as BACKEND_REJECT / BACKEND_UNRESOLVED, which fail
+#                     the gate whatever this file declares. Zero rows used it.
 #
 # BLOCKER is the FIRST construct pdc rejects, which is a floor and not the full
 # bill: lexing is a whole-file pass, so a lexer-level blocker anywhere in a file
