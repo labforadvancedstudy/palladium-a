@@ -1890,7 +1890,7 @@ def p_verdict(ctx, verdicts, path, kind, want_fp) -> tuple[bool, str]:
         # EQUALITY, not substring. Both sides of this comparison are ours — the row's
         # pin and the corpus's declaration — so there is no reason to be loose, and
         # `conformance.sh` is already substring-matching the declaration against the real
-        # diagnostic (`grep -qF`, scripts/conformance.sh:204-211,825). Being loose here
+        # diagnostic (`grep -qF`, scripts/conformance.sh:204-211,870). Being loose here
         # too would compound two approximations into one unstated one.
         decl = declared_fingerprint(ctx, path)
         if want_fp.strip() != decl.strip():

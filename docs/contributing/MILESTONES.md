@@ -1035,12 +1035,12 @@ the diagnostic and `grep -qF` searches the whole log. That is requirement **GI-1
 can appear anywhere. Until it lands, a `reject` row proves *the compiler refused this program* and
 *a declared phrase appears in the log* — not that the refusal was the one the row names.
 
-The chain, stated exactly, because condition 3 rests on it: `scripts/conformance.sh:825` runs
+The chain, stated exactly, because condition 3 rests on it: `scripts/conformance.sh:870` runs
 `grep_status F "$fp" "$TMPROOT/diag"`, and `grep_status` (`scripts/conformance.sh:204-211`)
 mode `F` is `grep -qF`. So the corpus's declared fingerprint is matched as a **literal
-substring of any line of the ANSI-stripped compiler log** (`scripts/conformance.sh:824`) — not
+substring of any line of the ANSI-stripped compiler log** (`scripts/conformance.sh:869`) — not
 an equality, not a regex. A log it cannot read is a third outcome, `HARNESS_ERROR`, kept
-distinct from "did not match" (`scripts/conformance.sh:875-880`). The thesis gate then requires
+distinct from "did not match" (`scripts/conformance.sh:920-925`). The thesis gate then requires
 the corpus's declaration to **equal** the fingerprint its row pins. Equality on the half this
 gate owns, substring on the half `conformance.sh` owns, and both stated rather than assumed —
 a sibling branch was caught doing substring where it meant equality.

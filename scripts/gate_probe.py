@@ -899,6 +899,10 @@ def clear_emitted_c(file: str, cwd=None) -> Path:
 # for all of these, which is UNRESOLVED and under-claims by design.
 BACKEND_REJECT_CODES = (3, 4)
 BACKEND_TOOLCHAIN_CODE = 5
+# Every code that is a STATEMENT BY THE PRODUCER about what happened after
+# codegen. Each is conclusive ON ITS OWN — see backend_reached(), and the
+# conjunction it deliberately is not.
+BACKEND_CODES = BACKEND_REJECT_CODES + (BACKEND_TOOLCHAIN_CODE,)
 # Structured rejections are CONCLUDED experiments, not malfunctions. Without
 # them in reject_codes the first fixture to exit 3 would be reported by
 # `make stdlib-gate` as "pdc MALFUNCTIONED", turning a real backend defect into
@@ -917,6 +921,22 @@ def backend_verdict(rc: int) -> str:
     return "BACKEND_REJECT" if rc in BACKEND_REJECT_CODES else "BACKEND_UNRESOLVED"
 
 
+def backend_reached(rc: int, tu: Path) -> bool:
+    """Did the front end accept, so that the failure is after codegen?
+
+    TWO INDEPENDENT WITNESSES, EITHER SUFFICIENT — and this is an `or` on
+    purpose. The translation unit on disk was the right answer while exit 1 was
+    all there was: codegen is the last phase, so the file exists iff the front
+    end accepted. A structured code is a second, better witness, and requiring
+    BOTH would make the pair fail OPEN whenever one is missing. Concretely: pdc
+    exits 3 while codegen names its output differently than `emitted_c_path`
+    derives it, and an `and` would hand that to the `compile` stage, which
+    `--expect-stage compile` is allowed to bless. The whole point of this change
+    is that the outcome is unblessable.
+    """
+    return rc in BACKEND_CODES or tu.is_file()
+
+
 def cmd_pdc_verdict(args) -> int:
     tu = clear_emitted_c(args.file)
     res = run_and_classify([args.pdc, "compile", args.file, "-o", args.out],
@@ -931,7 +951,7 @@ def cmd_pdc_verdict(args) -> int:
     errs = error_lines(res.text)
     no_main = [e for e in errs if "No main function found" in e]
     others = [e for e in errs if "No main function found" not in e]
-    if tu.is_file():
+    if backend_reached(res.rc, tu):
         # The front end ACCEPTED this file and the build failed anyway. Was
         # LINK_FAIL, a verdict stdlib/MANIFEST.tsv could pin as a file's
         # expected state. It is now one of BACKEND_VERDICTS, which no manifest
@@ -970,7 +990,7 @@ def cmd_pdc_reject(args) -> int:
 
     plain = strip_ansi(res.text)
     first = next(iter(error_lines(res.text)), "")
-    if tu.is_file():
+    if backend_reached(res.rc, tu):
         # Never `rejected-as-expected`, whatever --expect-stage says: the caller
         # is not permitted to declare that the C this compiler emits does not
         # compile. `link` is no longer an offered choice either, so there is no
@@ -979,7 +999,12 @@ def cmd_pdc_reject(args) -> int:
              verdict=backend_verdict(res.rc),
              reason=("pdc accepted this file and the build then failed: the C at "
                      f"{tu} is the compiler's own output. A caller may not pin this "
-                     "as an expectation — fix the backend."))
+                     "as an expectation — fix the backend."
+                     if tu.is_file() else
+                     f"pdc accepted this file (exit {res.rc}) and the build then failed. "
+                     f"No translation unit is at {tu}, but the exit code is a "
+                     "sufficient witness on its own. A caller may not pin this as "
+                     "an expectation — fix the backend."))
         if first:
             print(f"DIAG {first}")
         return EXIT_OK

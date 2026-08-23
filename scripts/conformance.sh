@@ -681,13 +681,33 @@ while IFS= read -r f; do
   pdc_rc=$?
   diag=$(strip_ansi <"$log" | grep -m1 -E 'error' | head -c 200)
 
+  # TWO INDEPENDENT WITNESSES THAT THE FRONT END ACCEPTED, and either is enough.
+  # Requiring BOTH would turn a sufficient condition into a conjunction, and a
+  # conjunction fails OPEN on the half that is missing: pdc exits 3 (gcc refused
+  # the translation unit) while codegen names or locates its output differently
+  # than this gate derives it, or the file is cleaned up mid-run — and the
+  # contradiction check below does not fire, because the sibling branch replaced
+  # the legacy `gcc compilation failed` prose it looks for. The fixture would
+  # fall through to stage `compile`, where `reject|compile` is a row a manifest
+  # is allowed to write, and the outcome this branch calls unblessable would be
+  # blessed. So:
+  #
+  #   * a STRUCTURED exit code (3/4/5) is conclusive on its own. It is a
+  #     statement by the producer about what happened and needs no corroboration.
+  #   * the TRANSLATION UNIT on disk still decides the UNSTRUCTURED case, which
+  #     is every failure today's pdc can produce, and still detects the
+  #     contradiction in the front-end arm below.
+  backend_code=0
+  case "$pdc_rc" in 3|4|5) backend_code=1 ;; esac
+
   stage_act=""; detail=""
-  if [ "$pdc_rc" -ne 0 ] && [ -f "$emitted_c" ]; then
-    # The front end ACCEPTED this program (codegen ran and wrote the C above),
-    # and the build still failed. Never expectable, exactly like NO_BINARY: if
-    # pdc said yes to the source, C it cannot build is a defect in pdc. There is
-    # no manifest column that excuses this — the verdict is reached before the
-    # declared class is consulted, and stage `link` is refused at parse time.
+  if [ "$pdc_rc" -ne 0 ] && { [ "$backend_code" -eq 1 ] || [ -f "$emitted_c" ]; }; then
+    # The front end ACCEPTED this program (codegen ran and wrote the C, or pdc
+    # said so with its exit code), and the build still failed. Never expectable,
+    # exactly like NO_BINARY: if pdc said yes to the source, C it cannot build is
+    # a defect in pdc. There is no manifest column that excuses this — the
+    # verdict is reached before the declared class is consulted, and stage `link`
+    # is refused at parse time.
     #
     # What this does NOT do: find such defects. The corpus only contains programs
     # someone wrote down, so a program nobody added stays unprotected — measured,
@@ -727,6 +747,20 @@ while IFS= read -r f; do
     # one "because scripts/conformance.sh matches on it" — this file no longer
     # does, so that coupling can be dropped when the two are reconciled.)
     #
+    # MERGE ORDER IS DECIDED, AND IT IS NOT A PREFERENCE: THIS FILE LANDS FIRST.
+    # Invariant-first is safe in both directions — against today's flattened
+    # exit 1 every post-codegen failure stays red as HARNESS_ERROR, so nothing is
+    # blessed while the codes are missing. The reverse is NOT protected: the new
+    # codes would exist while the old declarable `link` classifier was still
+    # live, and a caller could pin the outcome for the length of that window.
+    #
+    # AND WHEN THE SIBLING LANDS, REPLACE THE STUBS WITH AN INTEGRATION RECEIPT.
+    # The controls in scripts/test-conformance-runner.sh manufacture these codes,
+    # which is what makes them permanent — but a stub reproduces the numbers
+    # WRITTEN DOWN HERE, so it agrees with this comment by construction and
+    # cannot detect the producer renumbering them. Only the real binary can:
+    # compile a program whose emitted C gcc refuses and assert pdc exits 3.
+    #
     # `$diag` is the FIRST line matching `error`, which on this path is always
     # pdc's own wrapper `error: gcc compilation failed:` — a line that tells the
     # reader nothing the verdict has not already said. For a message whose whole
@@ -737,20 +771,31 @@ while IFS= read -r f; do
               | tail -n +2 | grep -m1 -E 'error' | head -c 200)
     [ -n "$cdiag" ] || cdiag=$diag
 
+    # Say where the C is, or say that it is missing. When the exit code is the
+    # witness the file need not exist, and naming a path that is not there would
+    # be the same over-claim this block exists to avoid, one sentence down.
+    if [ -f "$emitted_c" ]; then
+      where="($emitted_c)"
+    else
+      where="(no translation unit at $emitted_c — pdc's exit code is the witness that the front end accepted, and it is sufficient on its own)"
+    fi
+
     case "$pdc_rc" in
       3)
         printf '%-52s %s\n' "$f" "BACKEND_REJECT"
-        fail "$f [BACKEND_REJECT] pdc accepted this source and then gcc refused the C it emitted ($emitted_c). That is a defect in this compiler, not a property of the fixture, and no manifest column may declare it: there is no valid Palladium program whose emitted C is allowed not to compile. Fix the backend. Diagnostic: $cdiag"
+        fail "$f [BACKEND_REJECT] pdc accepted this source and then gcc refused the C it emitted $where. That is a defect in this compiler, not a property of the fixture, and no manifest column may declare it: there is no valid Palladium program whose emitted C is allowed not to compile. Fix the backend. Diagnostic: $cdiag"
         ;;
       4)
         printf '%-52s %s\n' "$f" "BACKEND_REJECT"
-        fail "$f [BACKEND_REJECT] pdc accepted this source and then emitted C that the C compiler diagnosed as ill-typed ($emitted_c). gcc did not refuse it — this compiler generated it, which makes it an internal defect rather than anything the fixture asked for. Fix the backend. Diagnostic: $cdiag"
+        fail "$f [BACKEND_REJECT] pdc accepted this source and then emitted C that the C compiler diagnosed as ill-typed $where. gcc did not refuse it — this compiler generated it, which makes it an internal defect rather than anything the fixture asked for. Fix the backend. Diagnostic: $cdiag"
         ;;
       5)
         printf '%-52s %s\n' "$f" "HARNESS_ERROR"
-        fail "$f [HARNESS_ERROR] the front end accepted this program and emitted $emitted_c, but the C toolchain never reached a verdict (gcc could not be spawned, or was killed by a signal). Nothing is established about the emitted C, so nothing is claimed about it: $cdiag"
+        fail "$f [HARNESS_ERROR] the front end accepted this program $where, but the C toolchain never reached a verdict (gcc could not be spawned, or was killed by a signal). Nothing is established about the emitted C, so nothing is claimed about it: $cdiag"
         ;;
       *)
+        # Only reachable with the translation unit on disk: an unstructured code
+        # is not a witness, so the file is the only thing that got us here.
         printf '%-52s %s\n' "$f" "HARNESS_ERROR"
         fail "$f [HARNESS_ERROR] the front end accepted this program and emitted $emitted_c, and the build then failed — but pdc exited $pdc_rc, which does not say whether gcc REFUSED that C or died before finishing. This gate will not call it a compiler defect on evidence that cannot distinguish the two; the exit codes that resolve it land with fix/gcc-diagnostics-discarded. Either way it is not a fixture property and no manifest column excuses it: $cdiag"
         ;;

@@ -23,6 +23,20 @@ if [ ! -x "$REPO/target/release/pdc" ]; then
   exit 2
 fi
 
+# A WORKING C COMPILER IS A PRECONDITION, not an outcome to be classified.
+# Several stubs below run a real gcc and derive an exit code from its status, and
+# a missing or unexecutable compiler exits 126/127 — which this branch's contract
+# calls a TOOLCHAIN outcome (code 5), not a backend rejection. The stubs map it
+# correctly, so without this preflight an absent gcc would surface as controls
+# failing to observe BACKEND_REJECT: a true statement about the machine, read as
+# a false statement about the classifier. Name the precondition instead.
+if ! printf 'int main(void){return 0;}\n' | gcc -x c -o /dev/null - 2>/dev/null; then
+  echo "error: no working C compiler on PATH. The fault-injection stubs below run" >&2
+  echo "       a real gcc and derive a structured exit code from its status; without" >&2
+  echo "       one this suite cannot establish anything and must not report green." >&2
+  exit 2
+fi
+
 TMPROOT=$(mktemp -d) || exit 2
 trap 'rm -rf "$TMPROOT"' EXIT
 
@@ -67,6 +81,13 @@ stub_pdc() {
 # scripts/conformance.sh consumes, which is what makes this a fault injection
 # rather than a canned string. Codes are fix/gcc-diagnostics-discarded's
 # (src/linker.rs:247-261 at aa63982): 3 refused, 4 ill-typed C, 5 no verdict.
+#
+# 126 and 127 map to 5, NOT to 3. A missing or unexecutable gcc is a TOOLCHAIN
+# outcome by this branch's own contract, and calling it a backend rejection
+# would be the exact conflation the branch exists to remove, reproduced inside
+# the harness that proves it was removed. The suite also refuses to start
+# without a working C compiler (see the preflight above), so an absent gcc is
+# reported as what it is rather than surfacing as a wrong-looking verdict.
 stub_backend_reject='#!/bin/sh
 f=$2; stem=`basename "$f" .pd`
 mkdir -p build_output
@@ -77,7 +98,7 @@ err=`gcc -o /dev/null "build_output/$stem.c" 2>&1`; st=$?
 if [ "$st" -eq 0 ]; then exit 0; fi
 echo "error: gcc compilation failed:" >&2
 echo "$err" >&2
-if [ "$st" -ge 128 ]; then exit 5; fi
+if [ "$st" -ge 128 ] || [ "$st" -eq 126 ] || [ "$st" -eq 127 ]; then exit 5; fi
 exit 3'
 
 # gcc exited 0 and diagnosed C that pdc generated: an ICE, and a compiler defect
@@ -102,7 +123,7 @@ echo "Linking with gcc (-O2)..."
 sh -c "kill -9 \$\$" >/dev/null 2>&1; st=$?
 echo "error: gcc compilation failed:" >&2
 echo "gcc terminated by a signal" >&2
-if [ "$st" -ge 128 ]; then exit 5; fi
+if [ "$st" -ge 128 ] || [ "$st" -eq 126 ] || [ "$st" -eq 127 ]; then exit 5; fi
 exit 3'
 
 # TODAY'"'"'S REAL pdc: a translation unit, a failed build, and the flattened
@@ -915,7 +936,16 @@ start "backend/injected: and it quotes gcc's line, not pdc's wrapper"
 # The whole message is "go fix the backend", so the useful diagnostic is the
 # first error line AFTER `error: gcc compilation failed:` — the wrapper is what
 # the first `error` match used to be, and it says nothing.
-expect_out "undeclared identifier" && ok
+#
+# Asserted on the PLANTED IDENTIFIER, not on the C compiler's sentence around
+# it. `undeclared identifier` is clang's wording; GNU gcc says
+# `'x' undeclared (first use in this function)` for the same error, so the
+# earlier assertion would have gone red on Linux while the classification was
+# perfectly correct. Both wordings quote the identifier, and nothing else in
+# this runner's output can contain that token by accident. It matters more than
+# usual here: the repo's Actions are billing-locked, so Linux never runs this
+# suite and a portability defect merged this way is never caught afterwards.
+expect_out "not_a_declared_identifier" && ok
 
 start "backend/injected: declaring it xfail does NOT excuse it"
 manifest "$D" 'tests/any.pd|xfail|compile|undeclared identifier|M1|claims the defect is expected'
@@ -990,6 +1020,80 @@ expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && 
 
 start "backend/contract: ...and it names the code it could not interpret"
 expect_out "pdc exited 42" && ok
+
+# --- the structured code stands alone ---------------------------------------
+# The witness used to be a conjunction: a structured code was examined only if
+# the translation unit was also on disk. That fails OPEN on the half that is
+# missing — pdc exits 3 while codegen names its output differently than this gate
+# derives it, and the fixture falls through to stage `compile`, which
+# `reject|compile` is allowed to declare. These three drive each structured code
+# with NO .c on disk AND no legacy `gcc compilation failed` prose in the log,
+# which is exactly the combination the old guard could not see: the previous
+# no-TU coverage was exit 1 WITH the wrapper, the one case that already worked.
+stub_no_tu_3='#!/bin/sh
+echo "Linking with gcc (-O2)..."
+echo "error: the C compiler refused the generated translation unit" >&2
+echo "somewhere.c:1:25: error: not_a_declared_identifier" >&2
+exit 3'
+stub_no_tu_4='#!/bin/sh
+echo "error: the generated translation unit is ill-typed" >&2
+exit 4'
+stub_no_tu_5='#!/bin/sh
+echo "error: the C compiler could not be started" >&2
+exit 5'
+
+start "backend/no-tu: exit 3 alone is conclusive, with no .c and no wrapper text"
+D=$(new_repo backendnotu3)
+stub_pdc "$D" "$stub_no_tu_3"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && ok
+
+start "backend/no-tu: ...and it says the exit code is the witness"
+expect_out "no translation unit at" && expect_out "sufficient on its own" && ok
+
+start "backend/no-tu: ...and a reject|compile row still cannot bless it"
+# The regression this whole item is about: under the old AND-guard this landed
+# in the front-end arm and this row made the gate GREEN.
+manifest "$D" 'tests/any.pd|reject|compile|not_a_declared_identifier|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
+
+start "backend/no-tu: ...nor an xfail|compile row"
+manifest "$D" 'tests/any.pd|xfail|compile|not_a_declared_identifier|M1|claims a debt'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "xfail=1" && ok
+
+start "backend/no-tu: exit 4 alone is conclusive too"
+D=$(new_repo backendnotu4)
+stub_pdc "$D" "$stub_no_tu_4"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|reject|compile|ill-typed|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
+
+start "backend/no-tu: exit 5 alone is conclusive, and still claims nothing"
+D=$(new_repo backendnotu5)
+stub_pdc "$D" "$stub_no_tu_5"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|reject|compile|could not be started|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" \
+  && expect_not_out "reject=1" && ok
+
+start "backend/no-tu: an UNSTRUCTURED code with no .c is still a front-end refusal"
+# The other half of the same boundary: exit 1 is not a witness, so with no .c on
+# disk this is an ordinary front-end rejection and MUST stay declarable. A guard
+# that answered "backend" here would break every negative test in the corpus.
+D=$(new_repo backendnotu1)
+stub_pdc "$D" '#!/bin/sh
+echo "error: Expected function, struct, enum" >&2
+exit 1'
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|reject|compile|Expected function, struct, enum|-|a real negative test'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && expect_not_out "BACKEND_REJECT" && ok
 
 # --- the contradiction check ------------------------------------------------
 start "backend/contradiction: gcc ran but no translation unit exists is refused"

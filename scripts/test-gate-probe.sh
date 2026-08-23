@@ -225,6 +225,37 @@ $PROBE pdc-verdict "$TMP/be_probe.pd" --pdc "$TMP/pdc_frontend_reject" --out t_b
 check "pdc-verdict, a front-end refusal is COMPILE_FAIL" 0 $?
 grep -q '^VERDICT COMPILE_FAIL' "$TMP/o"
 check "  and carries no backend accusation" 0 $?
+
+# THE STRUCTURED CODE STANDS ALONE. The witness used to be a conjunction — a
+# code was examined only if the translation unit was also on disk — which fails
+# OPEN on the half that is missing: pdc exits 3 while codegen names its output
+# differently than emitted_c_path derives it, and `--expect-stage compile`
+# blesses the outcome. No .c, no legacy wrapper prose, structured code only.
+mk pdc_no_tu_3 '#!/bin/sh
+echo "error: the C compiler refused the generated translation unit" >&2
+exit 3'
+mk pdc_no_tu_5 '#!/bin/sh
+echo "error: the C compiler could not be started" >&2
+exit 5'
+rm -f build_output/be_probe.c
+$PROBE pdc-reject "$TMP/be_probe.pd" --pdc "$TMP/pdc_no_tu_3" --out t_b7 \
+  --expect-stage compile --require "refused the generated translation unit" >"$TMP/o" 2>&1
+check "pdc-reject, exit 3 with NO translation unit is still conclusive" 0 $?
+grep -q '^OUTCOME backend-reject' "$TMP/o"
+check "  --expect-stage compile did not bless it (was: rejected-as-expected)" 0 $?
+grep -q 'sufficient witness on its own' "$TMP/o"
+check "  and the reason says the exit code is the witness" 0 $?
+rm -f build_output/be_probe.c
+$PROBE pdc-reject "$TMP/be_probe.pd" --pdc "$TMP/pdc_no_tu_5" --out t_b8 \
+  --expect-stage compile --require "could not be started" >"$TMP/o" 2>&1
+check "pdc-reject, exit 5 with NO translation unit is conclusive too" 0 $?
+grep -q '^VERDICT BACKEND_UNRESOLVED' "$TMP/o"
+check "  and still claims nothing about the C" 0 $?
+rm -f build_output/be_probe.c
+$PROBE pdc-verdict "$TMP/be_probe.pd" --pdc "$TMP/pdc_no_tu_3" --out t_b9 >"$TMP/o" 2>&1
+check "pdc-verdict, exit 3 with NO translation unit" 0 $?
+grep -q '^VERDICT BACKEND_REJECT' "$TMP/o"
+check "  is BACKEND_REJECT, not the pinnable COMPILE_FAIL" 0 $?
 rm -f build_output/be_probe.c
 
 echo

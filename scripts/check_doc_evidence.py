@@ -305,6 +305,25 @@ def citing_sources():
     `docs/contributing/claude-md-coverage.md`.
     """
     out = []
+    # KNOWN BLIND SPOT: `scripts/` IS NOT IN THIS TUPLE.
+    #
+    # Every `path:line` citation written inside a gate script is therefore
+    # unpinned and unchecked, and a green check-docs says nothing about any of
+    # them. Measured 2026-08-23: 40 distinct citations across scripts/*.py and
+    # scripts/*.sh, the largest groups being src/codegen/mod.rs (9),
+    # src/linker.rs (6), scripts/conformance.sh (6) and src/main.rs (4). Eight of
+    # them broke when fix/gcc-stage-invariant shifted scripts/conformance.sh and
+    # were repaired by hand; nothing would have caught them.
+    #
+    # SIZING, so whoever takes this does not underestimate it: adding
+    # `scripts/**/*.py` and `scripts/**/*.sh` here does not pin eight citations,
+    # it pins ALL FORTY at once, and every one must first be reconciled by
+    # CONTENT — the ones nobody has touched are exactly the ones most likely to
+    # have drifted onto an unrelated line, which is the defect this module
+    # already found 25 times across 220 citations (see the NON-SEMANTIC rule
+    # above). Budget for that reconciliation, not for the glob edit. The
+    # alternative, pinning these citations individually, is smaller but leaves
+    # the surface open for the next one written.
     for doc in (sorted(ROOT.glob("*.md")) + sorted(ROOT.glob("docs/**/*.md"))
                 + sorted(ROOT.glob("docs/**/*.toml"))
                 + sorted(ROOT.glob("src/**/*.rs")) + sorted(ROOT.glob("tests/**/*.rs"))):

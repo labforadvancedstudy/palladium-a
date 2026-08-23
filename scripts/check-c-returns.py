@@ -193,8 +193,8 @@ So: the gap is real, and it is currently empty. It is NOT closed here on
 purpose. The natural home for a structural verdict on those fixtures is a
 column in tests/conformance-manifest.txt — that runner's design is that every
 row declares its own expectation and an undeclared one fails
-(scripts/conformance.sh:10-13 lists the four failure directions, :121-135 the six
-columns every row must supply, :572 UNDECLARED and :904 MISSING are the two
+(scripts/conformance.sh:10-13 lists the four failure directions, :121-132 the six
+columns every row must supply, :572 UNDECLARED and :949 MISSING are the two
 reconciliation directions; tests/conformance-manifest.txt:1-4 says the same in
 its own header). Bolting a second, undeclared verdict source onto it from
 elsewhere would recreate the two-
