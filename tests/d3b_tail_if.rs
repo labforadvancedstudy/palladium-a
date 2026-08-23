@@ -1798,7 +1798,7 @@ fn selective_import_excludes_a_symbol_from_the_consumers() {
 /// THE SCOPE OF THIS ROW ALSO COVERS DECLARATION IDENTITY, and it is bounded
 /// here rather than fixed. Imported generics are stored by BARE NAME
 /// (`TypeChecker.generic_functions`), and the deferred-refusal lists that
-/// src/typeck/mod.rs:2193-2214 filters carry `(name, span)` and nothing else.
+/// src/typeck/mod.rs:2307-2328 filters carry `(name, span)` and nothing else.
 /// So with two same-named imported generic `async fn`s, the refusal is raised
 /// off whichever declaration was RECORDED and the body that would have been
 /// emitted is whichever won a `HashMap`: THE REFUSAL MAY NAME A DECLARATION
@@ -1880,8 +1880,8 @@ fn two_modules_exporting_one_name_are_deterministic() {
 ///
 /// THE SHAPE. Two imported modules both export a generic `async fn agen<T>`.
 /// Only `a.pd`'s returns a value, so only `a.pd`'s is recorded in
-/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:1313-1324), and the
-/// refusal is raised for it at src/typeck/mod.rs:2153-2159 once the call site
+/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:1434-1445), and the
+/// refusal is raised for it at src/typeck/mod.rs:2267-2273 once the call site
 /// has instantiated the name. But `generic_functions` is keyed by BARE NAME and
 /// `set_imported_modules` iterates a `HashMap`, so WHICH module's body that key
 /// holds — and therefore which body `get_instantiations` would have handed to

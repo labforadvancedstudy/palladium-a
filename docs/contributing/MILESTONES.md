@@ -167,13 +167,13 @@ generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec ex
 `bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
 subset it implements"*). Both exclusions mattered because there were **two independent unordered
 emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:169-169`) emitted by iterating
-`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:944-944`,
-`src/typeck/mod.rs:952-952`) emitted by iterating `.keys()`.
+`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:1039-1039`,
+`src/typeck/mod.rs:1047-1047`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: modules at `src/codegen/mod.rs:1358-1358` and `src/typeck/mod.rs:1280-1280`,
-the two later codegen walks off one sorted local (`src/codegen/mod.rs:1463-1463`), and the
-instantiation keys at `src/typeck/mod.rs:4489-4489` and `src/typeck/mod.rs:4550-4550`. Pinned by
+sites sorts before it emits: modules at `src/codegen/mod.rs:1354-1354` and `src/typeck/mod.rs:1401-1401`,
+the two later codegen walks off one sorted local (`src/codegen/mod.rs:1459-1459`), and the
+instantiation keys at `src/typeck/mod.rs:4603-4603` and `src/typeck/mod.rs:4664-4664`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -289,7 +289,7 @@ are marked, because both changed the plan.
 | | Capability | What it is | Required by | Waits on |
 |---|---|---|---|---|
 | **C0** | Abstraction | Traits, generics, bounds, `where` clauses. Trait/generic/module conformance is **zero** today | the effect system's *signatures* · a bootstrap compiler that can grow · the standard library | the surface |
-| **C1** | Reference typing | `Type::Reference` is a distinct type carrying mutability. Today it is mapped to its inner type, so `&i64` and `i64` are the same type (`src/typeck/mod.rs:593-597`) | N9 in full · N12's move semantics and drop glue · moving the array rule out of codegen ([A9.2](../specification/language-spec.md#a92-array-parameters)) · C4 · **soundness** of C0's borrows | nothing |
+| **C1** | Reference typing | `Type::Reference` is a distinct type carrying mutability. Today it is mapped to its inner type, so `&i64` and `i64` are the same type (`src/typeck/mod.rs:688-692`) | N9 in full · N12's move semantics and drop glue · moving the array rule out of codegen ([A9.2](../specification/language-spec.md#a92-array-parameters)) · C4 · **soundness** of C0's borrows | nothing |
 | **C2** | Call-graph fixed point | Per-function summaries propagated to a fixed point, unknown callees not assumed pure, `impl` methods included. Today a single source-order pass whose fallback is "conservatively assume it's pure" (`src/effects/mod.rs:283-287`) | N7's inference and gating · N8's propagation of totality to callees, the same shape | C0, for signatures to carry effects |
 | **C3** | Inductive pattern support | Patterns rich enough for structural recursion to have subterms. Enums, construction and `match` already work ([A4.3](../specification/language-spec.md#a43-enums)); literal, range, or-, tuple and guard forms are missing | N6 in full · N8's automatic structural termination | the parser |
 | **C4** | Alias-sensitive scheduling | Deciding two effectful operations are independent, which is an aliasing question | N7's parallel-by-default and structured concurrency only | C1, and decision **D2** |
@@ -927,7 +927,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3737-3741` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3733-3737` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -951,7 +951,7 @@ representation."* A `struct` with a `state` field, emitted into the program's ow
 representation.
 
 **CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
-`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:2637-2643`), the
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:2633-2639`), the
 same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
 unreachable: a private method nothing calls is one edit away from being called again. No line of
 `src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and

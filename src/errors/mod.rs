@@ -293,8 +293,10 @@ impl CompileError {
     /// Raised without inspecting the operand, so the wording may not assume one
     /// — `3?` and `unknown()?` reach here too. It also may not imply that the
     /// `match` alternative generalises further than it does: code generation
-    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1386-1387`,
-    /// `src/codegen/mod.rs:1387-1387`, `src/codegen/mod.rs:1435-1435`), so `Result<T, E>` is
+    /// skips generic enum definitions entirely — at all four sites, the two that
+    /// COLLECT (`src/codegen/mod.rs:1507-1511`, `src/codegen/mod.rs:1543-1547`)
+    /// and the two that EMIT (`src/codegen/mod.rs:1607-1612`,
+    /// `src/codegen/mod.rs:1637-1641`) — so `Result<T, E>` is
     /// not a compilable replacement and the help says so rather than leaving the
     /// reader to discover it.
     ///
@@ -348,17 +350,15 @@ impl CompileError {
     pub fn async_value_return_unimplemented(span: Span) -> Self {
         CompileError::Unimplemented {
             construct: "a `return` with a value inside an `async fn`".to_string(),
-            consequence:
-                "the body is emitted into a poll function that returns only an `int` \
+            consequence: "the body is emitted into a poll function that returns only an `int` \
                  readiness flag, so there is nowhere to put the value: it would be \
                  evaluated and discarded, and for a non-unit output the emitted C does \
                  not compile at all"
-                    .to_string(),
-            workaround:
-                "make the function ordinary (`fn`) and return the value directly. There \
+                .to_string(),
+            workaround: "make the function ordinary (`fn`) and return the value directly. There \
                  is no async runtime, so a future's result has nowhere to live and \
                  nothing to deliver it"
-                    .to_string(),
+                .to_string(),
             span: Some(span),
         }
     }
@@ -414,11 +414,10 @@ impl CompileError {
                  language does not have (§N7) — and nothing would ever call the poll routine, \
                  so the body would not run"
                     .to_string(),
-            workaround:
-                "delete the `async` keyword and write an ordinary `fn`. There is no async \
+            workaround: "delete the `async` keyword and write an ordinary `fn`. There is no async \
                  runtime to drive a future, so `async` cannot change what the function does; \
                  if the body returns a `Future<T>`, that declaration has to become `T` as well"
-                    .to_string(),
+                .to_string(),
             span: Some(span),
         }
     }
@@ -515,16 +514,14 @@ impl CompileError {
     pub fn async_main_unimplemented(span: Span) -> Self {
         CompileError::Unimplemented {
             construct: "`async fn main`".to_string(),
-            consequence:
-                "the entry point would be emitted as `main_Future main()` rather than \
+            consequence: "the entry point would be emitted as `main_Future main()` rather than \
                  `int main(int, char**)`, with the body inside a `main_poll` function that \
                  nothing calls — so the program links, runs, exits 0 and does nothing"
-                    .to_string(),
-            workaround:
-                "make `main` an ordinary function: `fn main() { … }`. There is no async \
+                .to_string(),
+            workaround: "make `main` an ordinary function: `fn main() { … }`. There is no async \
                  runtime to drive a future returned from the entry point, so nothing else \
                  can give it its meaning"
-                    .to_string(),
+                .to_string(),
             span: Some(span),
         }
     }
@@ -709,19 +706,18 @@ impl CompileError {
                     .with_suggestion("Add a closing `*/`", Some("*/".to_string()))
             }
 
-            CompileError::UnknownEscape { ch, known, span } => Diagnostic::error(format!(
-                "unknown escape sequence `\\{}` in a literal",
-                ch
-            ))
-            .with_span(span.unwrap_or(Span::dummy()))
-            .with_note(format!(
-                "the escapes this compiler accepts are: {}",
-                known.join(" ")
-            ))
-            .with_suggestion(
-                "write `\\\\` if a literal backslash was meant",
-                Some("\\\\".to_string()),
-            ),
+            CompileError::UnknownEscape { ch, known, span } => {
+                Diagnostic::error(format!("unknown escape sequence `\\{}` in a literal", ch))
+                    .with_span(span.unwrap_or(Span::dummy()))
+                    .with_note(format!(
+                        "the escapes this compiler accepts are: {}",
+                        known.join(" ")
+                    ))
+                    .with_suggestion(
+                        "write `\\\\` if a literal backslash was meant",
+                        Some("\\\\".to_string()),
+                    )
+            }
 
             CompileError::NulInStringLiteral { known, span } => Diagnostic::error(
                 "`\\0` is not allowed in a string literal".to_string(),
@@ -1107,7 +1103,7 @@ mod tests {
         let span1 = Span::new(10, 20, 5, 3);
         let span2 = Span::new(15, 25, 6, 5);
         let extended = span1.extend_to(&span2);
-        
+
         assert_eq!(extended.start, 10);
         assert_eq!(extended.end, 25);
         assert_eq!(extended.line, 5);
@@ -1119,7 +1115,7 @@ mod tests {
         let span1 = Span::new(10, 20, 5, 10);
         let span2 = Span::new(5, 15, 5, 5);
         let extended = span1.extend_to(&span2);
-        
+
         assert_eq!(extended.start, 5);
         assert_eq!(extended.end, 20);
         assert_eq!(extended.line, 5);
@@ -1134,7 +1130,10 @@ mod tests {
             col: 5,
             span: None,
         };
-        assert_eq!(err.to_string(), "Unexpected character '$' at line 10, column 5");
+        assert_eq!(
+            err.to_string(),
+            "Unexpected character '$' at line 10, column 5"
+        );
 
         let err = CompileError::UnterminatedString {
             line: 42,
@@ -1184,9 +1183,12 @@ mod tests {
             col: 5,
             span: Some(Span::new(100, 101, 10, 5)),
         };
-        
+
         let diag = err.to_diagnostic();
-        assert_eq!(diag.message, "Unexpected character '€' at line 10, column 5");
+        assert_eq!(
+            diag.message,
+            "Unexpected character '€' at line 10, column 5"
+        );
         assert_eq!(diag.notes.len(), 1);
         assert_eq!(diag.suggestions.len(), 1);
         assert!(diag.span.is_some());
@@ -1201,7 +1203,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("to_string()")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("to_string()")));
 
         // string to int
         let err = CompileError::TypeMismatch {
@@ -1210,7 +1215,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("parse_int()")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("parse_int()")));
 
         // bool suggestion
         let err = CompileError::TypeMismatch {
@@ -1219,7 +1227,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("true") && s.message.contains("false")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("true") && s.message.contains("false")));
     }
 
     #[test]
@@ -1230,7 +1241,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.replacement == Some("println".to_string())));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.replacement == Some("println".to_string())));
 
         // printf -> println
         let err = CompileError::UndefinedFunction {
@@ -1238,7 +1252,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.replacement == Some("println".to_string())));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.replacement == Some("println".to_string())));
 
         // generic function
         let err = CompileError::UndefinedFunction {
@@ -1246,7 +1263,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("fn myFunc()")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("fn myFunc()")));
     }
 
     #[test]
@@ -1259,8 +1279,13 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.message.contains("expects 2 arguments, but 1 was provided"));
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("Add 1 more argument")));
+        assert!(diag
+            .message
+            .contains("expects 2 arguments, but 1 was provided"));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("Add 1 more argument")));
 
         // Too many arguments
         let err = CompileError::ArgumentCountMismatch {
@@ -1270,8 +1295,13 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.message.contains("expects 1 argument, but 3 were provided"));
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("Remove 2 arguments")));
+        assert!(diag
+            .message
+            .contains("expects 1 argument, but 3 were provided"));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("Remove 2 arguments")));
     }
 
     #[test]
@@ -1281,7 +1311,10 @@ mod tests {
         };
         let diag = err.to_diagnostic();
         assert_eq!(diag.message, "Missing semicolon after statement");
-        assert!(diag.suggestions.iter().any(|s| s.replacement == Some(";".to_string())));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.replacement == Some(";".to_string())));
     }
 
     #[test]
@@ -1292,7 +1325,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("Add a pattern for: None")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("Add a pattern for: None")));
 
         // Multiple missing patterns (<=3)
         let err = CompileError::NonExhaustiveMatch {
@@ -1300,15 +1336,27 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("Red, Green, Blue")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("Red, Green, Blue")));
 
         // Many missing patterns (>3)
         let err = CompileError::NonExhaustiveMatch {
-            missing_patterns: vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string(), "E".to_string()],
+            missing_patterns: vec![
+                "A".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                "D".to_string(),
+                "E".to_string(),
+            ],
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("wildcard pattern (_)")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("wildcard pattern (_)")));
     }
 
     #[test]
@@ -1325,9 +1373,7 @@ mod tests {
         };
         assert_eq!(err.to_string(), "Use of uninitialized value: y");
 
-        let err = CompileError::CannotMoveOutOfBorrowedContent {
-            span: None,
-        };
+        let err = CompileError::CannotMoveOutOfBorrowedContent { span: None };
         assert_eq!(err.to_string(), "Cannot move out of borrowed content");
     }
 
@@ -1337,14 +1383,17 @@ mod tests {
             operation: "raw pointer dereference".to_string(),
             span: Span::new(0, 10, 1, 1),
         };
-        assert_eq!(err.to_string(), "Unsafe operation 'raw pointer dereference' requires unsafe block");
+        assert_eq!(
+            err.to_string(),
+            "Unsafe operation 'raw pointer dereference' requires unsafe block"
+        );
     }
 
     #[test]
     fn test_generic_error() {
         let err = CompileError::Generic("Something went wrong".to_string());
         assert_eq!(err.to_string(), "Something went wrong");
-        
+
         let diag = err.to_diagnostic();
         assert_eq!(diag.message, "Something went wrong");
     }

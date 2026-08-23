@@ -129,12 +129,107 @@ pub struct RecursiveLayout {
     cut_any: bool,
 }
 
+/// The item set a layout analysis is allowed to see.
+///
+/// A newtype with ONE constructor, and that is the whole point of it. The
+/// analysis keys every declaration by BARE NAME, and both callers used to hand
+/// it `program.items` chained onto every imported module's items, unfiltered. So
+/// an imported declaration merged into the local graph under its name whether or
+/// not the program could name it — and this is the pass that decides whether a
+/// program is ACCEPTED.
+///
+/// ```text
+/// lib.pd    struct B { x: i64 }        // private, never named downstream
+///           struct A { b: B }          // private, never named downstream
+///
+/// main.pd   import lib;
+///           enum A { End, More(B) }    // cuts at the enum payload slot
+///           struct B { a: A }
+///           fn main() { let b: B = B { a: A::End }; print("built"); }
+/// ```
+///
+/// was refused with `recursive type `A` has no layout ... (A -> B -> A)`, and
+/// the same file with the `import` line deleted compiled and ran. The cycle
+/// existed only because the hidden imported `struct A { b: B }` was merged into
+/// the local graph by name. So an `import` of PRIVATE types the program never
+/// mentions decided whether a valid program compiled — N3-15's own headline, one
+/// axis over, and failing CLOSED onto a valid program, which is the worse
+/// polarity of the two.
+///
+/// WHY A TYPE RATHER THAN A FILTER AT EACH CALL SITE. `local_type_shadows_import`
+/// already governed registration and emission; the layout analysis was a THIRD
+/// consumer and nobody remembered it. Adding a third filter call leaves a fourth
+/// consumer free to be written wrong the same way. Passing a `LayoutItems` makes
+/// the unfiltered input unconstructible: there is no way to call `analyze`
+/// without going through `of`, so forgetting is not available.
+pub struct LayoutItems<'a> {
+    items: Vec<&'a Item>,
+}
+
+impl<'a> LayoutItems<'a> {
+    /// The program's own items, plus the imported ones the program can NAME.
+    ///
+    /// Visible and unshadowed, by exactly the two rules the registration and
+    /// emission walks apply — `Visibility::Public` and
+    /// `crate::ast::local_type_shadows_import` — so all three consumers of the
+    /// predicate agree about which `A` is meant.
+    ///
+    /// Only `struct`, `enum` and `type` are taken from imports because those are
+    /// the only kinds `analyze` reads; taking more would be a set the caller
+    /// cannot reason about. Local items pass through whole: a local declaration
+    /// is always nameable, and `analyze` ignores the kinds it does not want.
+    ///
+    /// Modules are visited in sorted key order. `imported_modules` is a
+    /// `HashMap` and `RandomState` reseeds per process, and this set feeds both
+    /// the emission ORDER and the choice of WHICH declaration a refusal names,
+    /// so an unsorted walk puts the hash seed into the emitted C and into the
+    /// diagnostic.
+    pub fn of(
+        program: &'a Program,
+        imported: &'a HashMap<String, crate::resolver::ModuleInfo>,
+    ) -> Self {
+        let mut items: Vec<&'a Item> = program.items.iter().collect();
+
+        let mut sorted: Vec<_> = imported.iter().collect();
+        sorted.sort_by_key(|(name, _)| *name);
+        for (_, module_info) in sorted {
+            for item in &module_info.ast.items {
+                let (name, public) = match item {
+                    Item::Struct(def) => (
+                        &def.name,
+                        matches!(def.visibility, crate::ast::Visibility::Public),
+                    ),
+                    Item::Enum(def) => (
+                        &def.name,
+                        matches!(def.visibility, crate::ast::Visibility::Public),
+                    ),
+                    Item::TypeAlias(def) => (
+                        &def.name,
+                        matches!(def.visibility, crate::ast::Visibility::Public),
+                    ),
+                    _ => continue,
+                };
+                if public && !crate::ast::local_type_shadows_import(program, name) {
+                    items.push(item);
+                }
+            }
+        }
+
+        LayoutItems { items }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &'a Item> + Clone + '_ {
+        self.items.iter().copied()
+    }
+}
+
 impl RecursiveLayout {
     /// Analyse every `struct`, `enum` and `type` item reachable by the program,
     /// including the ones it imported. Generic definitions are skipped: they are
     /// monomorphized into concrete items elsewhere, and `type_to_c` erases their
     /// parameters to `void*` today, which is a separate open defect.
-    pub fn analyze<'a>(items: impl Iterator<Item = &'a Item> + Clone) -> Self {
+    pub fn analyze(items: &LayoutItems<'_>) -> Self {
+        let items = items.iter();
         let mut layout = RecursiveLayout::default();
 
         for item in items.clone() {
@@ -1051,8 +1146,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1394-1395`, `src/typeck/mod.rs:1397-1399`,
-    /// `src/typeck/mod.rs:1494-1495`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1515-1516`, `src/typeck/mod.rs:1518-1520`,
+    /// `src/typeck/mod.rs:1615-1616`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -1148,6 +1243,32 @@ impl TypeChecker {
     ///
     /// A local `enum` of the same name needs nothing here — it overwrites the
     /// entry itself, a few lines further on, which is the same last-writer rule.
+    ///
+    /// THE FOURTH SITE THAT ASKS THE SHADOWING QUESTION, and the one that does
+    /// not ask it through `local_type_shadows_import`. Named here beside its
+    /// three siblings — `enum_names_in_scope`, code generation's emission walk,
+    /// and `LayoutItems::of` — because a predicate consulted wherever somebody
+    /// remembered to consult it is the exact shape this branch spent its budget
+    /// removing, and an unnamed fourth is how a fifth gets written.
+    ///
+    /// It is deliberate and it is NARROWER: the shared predicate answers "has a
+    /// local declaration taken this name", and the `.any(...)` below asks the
+    /// different question "is the local declaration that took it an `enum`",
+    /// which the shared one cannot express. A local `enum` must NOT have its
+    /// imported twin's registration dropped, because the local registration
+    /// overwrites it a few lines on and dropping it would leave the name with
+    /// nothing. Widening the shared predicate to carry the kind would give three
+    /// callers a distinction only this one uses.
+    ///
+    /// KNOWN FRAGILITY IN THE CONSTRUCTOR FILTER BELOW, recorded rather than
+    /// fixed: it keys on the STRING `"<name>::"` / `"::<name>::"`, so a module
+    /// whose name equals a shadowed type's name loses every qualified function
+    /// it exports — `import Color; struct Color {...}` would drop
+    /// `Color::helper`. There is no witness for it (module and type names have
+    /// not collided in any tracked program) and closing it means keying the
+    /// function table by a structured name rather than a string, which is
+    /// `docs/contributing/citation-and-predicate-debt.md`'s to own, not this
+    /// method's.
     fn drop_imports_shadowed_by_local_types(&mut self, program: &Program) {
         let taken: Vec<String> = self
             .imported_modules
@@ -1712,19 +1833,12 @@ impl TypeChecker {
         // C-level error for a Palladium-level mistake it had already accepted.
         // Nothing is lost by refusing: a value on a by-value cycle with no enum
         // on it is infinite, so no program could ever have constructed one.
-        // Sorted for the same reason the identical call in code generation is:
-        // this is a `HashMap` and the analysis it feeds decides emission order.
-        // Here it decides WHICH declaration is named when several have no
-        // layout, so an unsorted walk makes the DIAGNOSTIC depend on the hash
-        // seed even where the C does not.
-        let mut sorted_imports: Vec<_> = self.imported_modules.iter().collect();
-        sorted_imports.sort_by_key(|(name, _)| *name);
-        let layout = RecursiveLayout::analyze(
-            program
-                .items
-                .iter()
-                .chain(sorted_imports.iter().flat_map(|(_, m)| &m.ast.items)),
-        );
+        // `LayoutItems::of` owns the selection AND the sort. This used to chain
+        // `program.items` onto every imported module's items here, unfiltered,
+        // which merged private imported declarations into the local graph by
+        // name and refused valid programs; and it sorted the modules at the call
+        // site, which is a second thing a fourth caller could forget.
+        let layout = RecursiveLayout::analyze(&LayoutItems::of(program, &self.imported_modules));
         if let Some((name, cycle)) = layout.declarations_without_layout().first() {
             // WHAT THIS MESSAGE MAY CLAIM. It used to say "only an `enum`
             // payload slot can be stored behind a pointer", which reads as a
@@ -2091,7 +2205,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:2381-2383`), and walking an imported
+        // return (`src/typeck/mod.rs:2495-2497`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -4457,7 +4571,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:3869-3933`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:3865-3929`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that

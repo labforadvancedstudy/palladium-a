@@ -117,12 +117,22 @@ had to be reverted whole:
 
 > **Fix a citation when your change broke it, when a reviewer names it, or when
 > you are already editing the sentence that carries it. Leave every other
-> pre-existing wrong citation alone, and NAME IT AS DEBT in your report.**
+> pre-existing wrong citation alone, and RECORD IT AS DEBT in
+> [`docs/contributing/citation-and-predicate-debt.md`](docs/contributing/citation-and-predicate-debt.md).**
 
 Both halves are load-bearing. Fixing beyond that line turns a bug fix into a
 tree-wide edit nobody can review, and each "fix" is a fresh chance to relocate a
 citation onto unrelated code. Staying silent about the ones you leave turns
-known debt into invisible debt, which is how they got there.
+known debt into invisible debt, which is how they got there — and "silent"
+includes naming it only in a review thread, which is why the register is a file
+in the tree.
+
+**A mechanical remap is not a fix.** Relocating a citation with a line map
+preserves *what it pointed at*, faithfully — including when what it pointed at
+was already the wrong code. A remapped citation is DEBT until somebody re-derives
+it BY CONTENT, and in a diff it is indistinguishable from a re-verified one. That
+is not hypothetical: one sentence in `src/codegen/mod.rs` carries two citations,
+one hand-re-derived and one mechanically shifted, and they look identical.
 
 When you do relocate, the procedure is in `scripts/check_doc_evidence.py`'s
 docstring, and it is not optional: correct the citation BY CONTENT first, then run

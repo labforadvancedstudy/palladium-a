@@ -735,9 +735,9 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:3859-3859`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:3973`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
-    /// (`src/ownership/borrow_checker.rs:556`). So `fn f(xs: &[i64; 3])` could
+    /// (`src/ownership/borrow_checker.rs:579-581`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
     /// the callee's mutable binding, where it is legitimate. Measured, before
     /// this check: the caller's `v[0]` came back 99 through both a shared and a
@@ -902,24 +902,20 @@ impl CodeGenerator {
         // plus every imported module's items, which land in this translation
         // unit too.
         //
-        // SORTED BY MODULE NAME, for the reason the comment ~600 lines below
-        // spells out and this call used to ignore: `imported_modules` is a
-        // `HashMap`, `RandomState` reseeds per process, and this analysis feeds
-        // `definition_order`, which decides the ORDER TYPE DEFINITIONS ARE
-        // EMITTED IN. Walking `.values()` therefore put the hash seed into the
-        // emitted C whenever two imported modules declare the same type name --
-        // the same defect that once made eight compiles of one unchanged
-        // two-module program produce two distinct outputs. It is latent rather
-        // than measurable today, and `make selfhost`'s fixed point cannot see it
-        // because `bootstrap/pdc.pd` imports nothing, which is exactly the
-        // condition under which this class survives.
-        let mut sorted_imports: Vec<_> = self.imported_modules.iter().collect();
-        sorted_imports.sort_by_key(|(name, _)| *name);
+        // The SAME set the type checker analysed, built by the same constructor.
+        // Two passes deriving one item set independently is how they came to
+        // disagree; `LayoutItems::of` owns the visibility filter, the shadowing
+        // filter and the module sort, so neither pass can supply a set the other
+        // would not have.
+        //
+        // The sort is inside it because `RandomState` reseeds per process and
+        // this analysis feeds `definition_order`, which decides the ORDER TYPE
+        // DEFINITIONS ARE EMITTED IN — an unsorted walk put the hash seed into
+        // the emitted C whenever two imported modules declare one type name.
+        // `make selfhost`'s fixed point cannot see it, because `bootstrap/pdc.pd`
+        // imports nothing.
         self.recursive_layout = crate::typeck::RecursiveLayout::analyze(
-            program
-                .items
-                .iter()
-                .chain(sorted_imports.iter().flat_map(|(_, m)| &m.ast.items)),
+            &crate::typeck::LayoutItems::of(program, &self.imported_modules),
         );
 
         self.output.push_str("#include <stdio.h>\n");
