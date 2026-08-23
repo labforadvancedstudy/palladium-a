@@ -13,7 +13,7 @@ whole goal, and every milestone ships.
 witness program meeting the same conditions.**
 
 That gate is in the repository now, and **it refuses to answer**. `make thesis-exit` exits 2:
-two of its 25 `thesis` rows — GI-11 and GI-12 — are not scored rows at all but
+two of its 26 `thesis` rows — GI-11 and GI-12 — are not scored rows at all but
 **preconditions on the command's ability to compute a verdict**, and both are outstanding.
 It still prints every row's state (1 of 23 evaluated rows would pass), labelled as
 information rather than a verdict ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
@@ -171,8 +171,8 @@ emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:167-167
 `src/typeck/mod.rs:479-479`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: modules at `src/codegen/mod.rs:1271-1271` and `src/typeck/mod.rs:593-593`,
-the two later codegen walks off one sorted local (`src/codegen/mod.rs:1356-1356`), and the
+sites sorts before it emits: modules at `src/codegen/mod.rs:1276-1276` and `src/typeck/mod.rs:593-593`,
+the two later codegen walks off one sorted local (`src/codegen/mod.rs:1361-1361`), and the
 instantiation keys at `src/typeck/mod.rs:3499-3499` and `src/typeck/mod.rs:3560-3560`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
@@ -243,7 +243,7 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **193 rows, 34 satisfied · 151 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **194 rows, 35 satisfied · 151 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
@@ -266,7 +266,7 @@ command has been re-run.)*
 | Disposition | Count | Meaning |
 |---|---|---|
 | `thesis` | 26 = 23 scored + `D1-01` (the aggregate) + GI-11 and GI-12 (preconditions) | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
-| `1.0` | 161 | the witnesses exercise it, or a `thesis` row rests on it |
+| `1.0` | 162 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
 Nothing is dropped silently. A requirement the thesis does not exercise is marked `post-1.0` in
@@ -355,11 +355,11 @@ Measured at this revision; every row names the command that produced it.
 | Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 291 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 224 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 404 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
-| Rust tests | 764 pass, **0 fail**, 55 ignored (534 lib + 230 integration, 23 binaries) | `make test-honest` |
+| Rust tests | 765 pass, **0 fail**, 55 ignored (535 lib + 230 integration, 23 binaries) | `make test-honest` |
 | Declared failures | 54 `xfail` + 1 `slow`, none passing; 54 of 54 failing for their DECLARED diagnostic | `make test-xfail` |
-| `stdlib/` | 0 of 21 files compile; 34 builtins accounted, and the registry is now exactly N14's normative 34 | `make stdlib-gate` |
+| `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 34 satisfied · 151 owed · 8 blocked, over 193 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 35 satisfied · 151 owed · 8 blocked, over 194 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -402,7 +402,7 @@ by the requirement manifest; this is the reading list.
 | Block comments do not nest, which N2 requires | [F10](#f10-block-comments-do-not-nest-and-nothing-said-so) | N2-08 |
 | `a * -b` does not parse | [A6.3](../specification/language-spec.md#a63-expression-forms) | N5-16 |
 | Nested arrays work in neither locals nor parameters | [A5](../specification/language-spec.md#a5-types) | N4-10 |
-| Two normative builtins that cannot compile (`file_flush`, `file_seek`) — the handle representation split in two — plus four unreachable `__pd_*_ex` wrappers still emitted into every program | [A8](../specification/language-spec.md#a8-builtins) | N14-01, N14-03 |
+| Filesystem builtins return `i64`/`bool` rather than `Result`, because `Result` is not built in *(the handle-representation split that made six of them uncallable is closed — M2)* | [A8](../specification/language-spec.md#a8-builtins) | N14-03 |
 | `pub` on an enum discarded; `dbg!` undefined; `println!` takes one argument; no hygiene | [A4.6](../specification/language-spec.md#a46-macros) | N3-05, N3-12, N3-13 |
 | `Foo<T>` is parsed as a *const* generic argument; const generics are not monomorphised | [A5](../specification/language-spec.md#a5-types) | N10-03, N4-21 |
 | Traits emit no C; a trait method with a `self` receiver is a parse error | [A4.4](../specification/language-spec.md#a44-traits) | N10-06, N10-09 |
@@ -455,7 +455,12 @@ edit to the manifest, and the pin's own validator catches a defect in the pin.)
 4. Reconcile both debt inventories, in both directions. The conformance half is checkable today, by
    path. The Rust half needs a `req: <id>` tag in each `#[ignore]` reason.
 5. `make test-requirements-runner` plants a row for the milestone under test and proves the runner
-   goes RED for it — **and proves the exit target still reads every inventory, by running it**. A filter nobody has watched fail is not a filter — which is why
+   goes RED for it — **and proves the exit target still reads every inventory, by running it and
+   anchoring each one's output to a number recomputed from a tracked file**
+   (`tests/conformance-manifest.txt` class counts · `tests/rust-debt-manifest.txt` state counts ·
+   those plus the SLOW allowlist for the ignored total · `1.0-requirements.tsv` row counts). What
+   that does not establish, and the runner says so: an adversary that reads the same files and
+   prints what it finds would pass. Only running distinguishes it, which is what the target does. A filter nobody has watched fail is not a filter — which is why
    `make test-thesis-runner` already exists for the thesis gate and caught a real defect in it
    ([F12](#f12-the-thesis-gates-first-lexer-could-not-fail-on-what-it-checked)).
    **Done (GI-09):** 42 cases in `scripts/test-requirements-runner.sh`, and it grew a second half
@@ -466,9 +471,11 @@ edit to the manifest, and the pin's own validator catches a defect in the pin.)
    recomputed in the test, independently, from the same source that inventory reads.
    *(It was `make -n m2-exit | grep <command text>` for one round, and that was the `@true` rung
    this repository has already climbed once: a recipe of `@echo 'REQ_MILESTONE=M2 python3
-   scripts/requirements.py'` satisfied every assertion in it while reading no inventory at all.
-   Re-proved by reverting — replacing inventory four with exactly that echo now fails four cases,
-   and replacing inventory one fails one.)*
+   scripts/requirements.py'` satisfied every assertion in it while reading no inventory at all. The
+   repair then got one of the four right and left the other three as token searches — the same
+   finding one layer in — so every inventory now carries an anchor recomputed from a tracked file
+   it does not share with the test. Re-proved by reverting: replacing any inventory with that echo
+   fails its anchor.)*
    The aggregation has its own driver too, because the real tree cannot exercise it: no inventory
    returns NO_VERDICT today, so inverting the lattice changed nothing about a real run. It is
    driven over all 81 four-inventory combinations plus order independence
@@ -516,7 +523,7 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
 
-**Owns 46 requirement rows, 43 of them still owed**, seventeen declared `#[ignore]` failures
+**Owns 47 requirement rows, 43 of them still owed**, seventeen declared `#[ignore]` failures
 (fourteen tagged M2, three tagged M1), and the vacuous `tests/02_types_enums.pd`. *(It read "45
 rows" while GI-06 was `owed`; GI-06, GI-09 and N14-01 are now `satisfied`, and 46 is the count of
 rows owned, not of rows outstanding — the two were being used interchangeably.)*
@@ -546,24 +553,33 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
    comments** ([F10](#f10-block-comments-do-not-nest-and-nothing-said-so)), and **the `#` attribute
    token** — the token only. An attribute that lexes and is then ignored would recreate the class M1
    removed, so N2-11 makes an unknown attribute a compile error from the day `#` lexes.
-6. **The six builtins that cannot compile** (N14-01): the four `*_ex` names are not part of the
-   language and leave `BUILTINS`; `file_flush` and `file_seek` are normative and get re-based.
-   **HALF DONE, and the half that is done is the removal.** The four `*_ex` names are out of
-   `src/builtins.rs` — measured before deleting, rather than deleted on this paragraph's authority:
-   all four were refused at typecheck (`Built-in file_open_ex is registered but not callable`,
-   exit 1) and `grep -rn --include=*.pd` over the tree found **zero callers**, so none of them was
-   quietly working and the disposition above was accurate. **N14-01 is now `satisfied`**: the
-   registry is exactly N14's thirty-four names in both directions, pinned by
-   `src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`, which parses the
-   normative table out of the specification instead of restating a count.
-   **STILL OWED, and both live in `src/codegen/mod.rs`**: (a) the `file_flush` / `file_seek`
-   re-base onto the `long long` handle table (`__pd_file_handles`), which is the only thing that
-   makes either callable — they are still `Support::Unsupported` and still refused; and (b) four
-   now-unreachable C wrappers, `__pd_file_open_ex`, `__pd_file_close_ex`, `__pd_file_read_ex` and
-   `__pd_file_write_ex`, still emitted into every generated program and into
-   `runtime/pd_prelude.h`. `PRELUDE_TYPE_MISMATCHES` going from eleven dimensions to three is a
-   **deletion, not a repair**: the C that produced the other eight is unchanged, it is merely
-   unreachable.
+6. **The six builtins that cannot compile** (N14-01, N14-17). **DONE, both halves.**
+   The four `*_ex` names are out of `src/builtins.rs` — measured before deleting rather than
+   deleted on this paragraph's authority: all four were refused at typecheck (`Built-in
+   file_open_ex is registered but not callable`, exit 1) and `grep -rn --include=*.pd` over the
+   tree found **zero callers**. `file_flush` and `file_seek` are **re-based and callable**: their C
+   wrappers are lowered onto `__pd_file_handles`, the `long long` handle table `file_write` and
+   `file_close` already use. `file_seek` takes `whence` 0, 1 or 2 (start, current, end) and returns
+   the new absolute position or `-1`, refusing any other `whence` rather than treating it as a
+   seek; `file_flush` returns 1 on success and 0 on failure, its siblings' convention. Measured end to end: `1 · 3 · 5 · 10 · -1 · 0` for flush,
+   SEEK_SET/CUR/END, a rejected whence and a bad handle.
+   The four dead C wrappers are **gone from `src/codegen/mod.rs`** as well, and with them the
+   `FileHandle` typedef, the `FileMode` enum and the six `pd_file_*` externs only they used.
+   `PRELUDE_TYPE_MISMATCHES` is now **empty** — eleven dimensions to zero, which is one deletion
+   (eight of them) and one repair (three), not one achievement; the constant is derived from
+   `BUILTINS` × the emitted prelude on every run, so empty is the strongest form of the assertion
+   rather than a disabled check. `tests/stdlib/BUILTINS.tsv` has **no `UNUSABLE` rows left**, and
+   `file_flush`/`file_seek` are `COVERED` by the first coverage either has ever had.
+   **N14-01 is `satisfied`** (the name set is exactly N14's 34, both directions, pinned by
+   `src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`), and **N14-17 was added
+   and is `satisfied`** — "every normative builtin is CALLABLE". That row is new because the
+   manifest had none: this item declared the re-base and the wrapper removal while no requirement
+   row said so, which meant the M2 filter could have reached zero-owed with both builtins still
+   uncallable and four dead wrappers still emitted. That is the unowned-requirement hole inventory
+   four exists to close, reproduced inside it; the row closes it, and it goes red the moment any
+   normative builtin is registered-and-refused again.
+   **What is still owed, and it is M3's**: N14-03, signatures — the filesystem family returns
+   `i64`/`bool` rather than `Result`, because `Result` is not built in.
    *(This item cited `N14-04` as well. `N14-04` is `string_char_at returns char`, which needs the
    `char` type and belongs to item 4; nothing about the six builtins bears on it. Corrected rather
    than quietly dropped.)*
@@ -581,9 +597,12 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
    closes the hole in the other three: all three are registers of *declared failures*, so a
    requirement nobody has started on leaves every one of them clean.
    **GI-09 is CLOSED: `make test-requirements-runner`** plants a row for the milestone under test
-   and requires the runner to go RED for it, refuses a filter with no subject, and requires
-   `make -n m2-exit` to still read all four inventories — weakening the exit target is otherwise
-   invisible to every other gate in the repo. It is in `gates`; `m2-exit` is not, for
+   and requires the runner to go RED for it, refuses a filter with no subject, and **runs
+   `make m2-exit`**, requiring each of the four inventories to have produced output that matches a
+   number this test recomputes from a tracked file — weakening the exit target is otherwise
+   invisible to every other gate in the repo. *(It said `make -n m2-exit` for one round. `make -n`
+   proves a recipe names a command, never that the command ran, which is the whole finding it was
+   written to fix.)* It is in `gates`; `m2-exit` is not, for
    `thesis-exit`'s reason: a target that is RED by design can never be in that list.
    **GI-08 stays `owed`, and the residual is one sentence: `make m1-exit` does not read inventory
    four.** GI-08 says *every* milestone exit reads both debt inventories **and this manifest**, and
@@ -777,8 +796,8 @@ claim that this is the earliest correct start.
 **Waits on**: everything. **This milestone's exit is the definition of 1.0**, so it ships as `1.0.0`
 rather than as another prerelease.
 
-**Owns 15 requirement rows**; 25 rows across the manifest carry `disposition = thesis` —
-22 scored, `D1-01` the aggregate, and GI-11 and GI-12 as preconditions.
+**Owns 16 requirement rows**; 26 rows across the manifest carry `disposition = thesis` —
+23 scored, `D1-01` the aggregate, and GI-11 and GI-12 as preconditions.
 
 1. **Rewrite `bootstrap/pdc.pd` in the differentiated dialect** — `ref`/`ref mut` parameters with
    inferred regions, at least one discharged `#[total]`, inferred effects reaching callers, no
@@ -879,7 +898,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3298-3302` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:3303-3307` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -903,7 +922,7 @@ representation."* A `struct` with a `state` field, emitted into the program's ow
 representation.
 
 **CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
-`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:2220-2226`), the
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:2225-2231`), the
 same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
 unreachable: a private method nothing calls is one edit away from being called again. No line of
 `src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and

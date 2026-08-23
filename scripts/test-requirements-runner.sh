@@ -26,11 +26,33 @@
 #      RUNG THIS REPOSITORY HAS ALREADY CLIMBED ONCE. A recipe of
 #        @echo 'REQ_MILESTONE=M2 python3 scripts/requirements.py'
 #      satisfied every assertion in it while reading no inventory at all. So the
-#      target is now RUN, and every inventory has to have PRODUCED something —
-#      with each number recomputed here, independently, from the same source the
-#      inventory reads. An echo cannot make `verified=` appear beside
-#      `failures=0`, cannot make cargo report 500+ passing tests, and cannot make
-#      the requirement reader's row count equal that of a file it never opened.
+#      target is RUN, and every inventory must have PRODUCED something.
+#
+#      AND THE FIRST REPAIR ONLY GOT ONE OF THE FOUR RIGHT, which is the same
+#      finding one layer in. Inventory four was recomputed independently;
+#      inventory one was a search for summary TOKENS, inventory two compared one
+#      field of the captured output against other lines of THAT SAME output —
+#      internally consistent, externally unanchored — and inventory three
+#      accepted any output claiming 500+ passes. Tailored `echo` recipes satisfy
+#      all three. Every one of the four now has a number RECOMPUTED IN THIS FILE
+#      from a tracked source the inventory reads and this test does not share
+#      with it:
+#
+#        one    class counts from tests/conformance-manifest.txt      -> the
+#               runner's verified/reject/skip/vacuous/xfail summary
+#        two    state counts from tests/rust-debt-manifest.txt        -> the
+#               xfail runner's `debt inventory (…): owed=N paid=M`
+#        three  owed rows + the SLOW allowlist in scripts/test-xfail.py -> the
+#               total `ignored` cargo reports across every binary
+#        four   row/owned/owed counts from 1.0-requirements.tsv       -> the
+#               requirement reader's own three counts
+#
+#      WHAT THIS STILL DOES NOT ESTABLISH, said plainly rather than implied away:
+#      an adversary that READS THOSE SAME FILES and prints the numbers it finds
+#      would pass. Nothing short of running the inventory distinguishes that, and
+#      running it is what the target does — what these anchors buy is that the
+#      faker has to do the manifests' work and go stale the moment a row moves,
+#      instead of hard-coding a string.
 #
 # Usage: bash scripts/test-requirements-runner.sh   (= make test-requirements-runner)
 
@@ -211,8 +233,28 @@ expect_rc 0 && ok
 # that the last-line contract can be checked on the stream it is defined over —
 # a merged stream ends with Make's own `*** [m2-exit] Error 2`, which is exactly
 # the mis-read scripts/thesis-exit.sh warns consumers about.
+# FILESYSTEM EVIDENCE, taken across the run. Numbers can be hard-coded — measured:
+# replacing the conformance call with `echo` of its real summary line satisfied
+# every numeric anchor below, which is the reviewer's finding surviving its own
+# first repair. Two of the four inventories WRITE while they work, and an `echo`
+# does not: the conformance runner compiles every fixture into build_output/, and
+# the Rust suite compiles its own fixtures into target/build/. That is a
+# structural difference rather than a comparison, and it is what actually
+# distinguishes running from printing.
+MARKER=$TMPROOT/before-m2-exit
+touch "$MARKER"
+sleep 1                          # 1s filesystem timestamp granularity
+
 echo "  .. running \`make m2-exit\` for real (this is the expensive part, twice) .."
 M2OUT=$(cd "$REPO" && make m2-exit 2>"$TMPROOT/m2.err"); M2RC=$?
+# `cf_*` ONLY, not all of build_output/. Measured: the ordinary Rust suite
+# (inventory three) also compiles .pd programs into build_output/ — 165 files on
+# one run — so "something under build_output changed" is satisfied by inventory
+# three alone, and an `echo` replacing the conformance call still passed. The
+# `cf_<n>_<path>` naming is the conformance runner's own and nothing else writes
+# it: 55 after a conformance run, 0 after a cargo-test-only run.
+fs_conformance=$(find "$REPO/build_output" -newer "$MARKER" -name 'cf_*' 2>/dev/null | wc -l | tr -d ' ')
+fs_cargo=$(find "$REPO/target/build" -newer "$MARKER" -type f 2>/dev/null | wc -l | tr -d ' ')
 M2ERR=$(cat "$TMPROOT/m2.err")
 OUT=$M2OUT; RC=$M2RC
 
@@ -221,6 +263,21 @@ REQ_TSV=$REPO/docs/contributing/1.0-requirements.tsv
 want_rows=$(awk -F'\t' 'NF==9 && $1 !~ /^#/' "$REQ_TSV" | wc -l | tr -d ' ')
 want_m2=$(awk -F'\t' 'NF==9 && $2=="M2"' "$REQ_TSV" | wc -l | tr -d ' ')
 want_owed=$(awk -F'\t' 'NF==9 && $2=="M2" && $7!="satisfied"' "$REQ_TSV" | wc -l | tr -d ' ')
+
+CONF_MANIFEST=$REPO/tests/conformance-manifest.txt
+cls() { awk -F'\t' -v c="$1" '!/^#/ && NF>=2 && $2==c' "$CONF_MANIFEST" | wc -l | tr -d ' '; }
+want_run=$(cls run); want_reject=$(cls reject); want_skip=$(cls skip)
+want_vacuous=$(cls vacuous); want_cxfail=$(cls xfail)
+
+DEBT=$REPO/tests/rust-debt-manifest.txt
+st() { awk -F'\t' -v s="$1" '!/^#/ && NF>=3 && $3==s' "$DEBT" | wc -l | tr -d ' '; }
+want_debt_owed=$(st owed); want_debt_paid=$(st paid)
+# The ignored set cargo reports = every owed debt row (each is an #[ignore]d
+# XFAIL) + the reviewed SLOW allowlist, which is a literal set in the xfail
+# runner. Both are read from files here; neither comes out of the target's own
+# output.
+want_slow=$(awk '/^SLOW_ALLOWLIST = \{/,/^\}/' "$REPO/scripts/test-xfail.py" | grep -c '^    ("')
+want_ignored=$((want_debt_owed + want_slow))
 
 # --- MF1: the tri-state has to survive to the caller -----------------------
 LAST=$(printf '%s\n' "$M2OUT" | tail -1)
@@ -262,14 +319,19 @@ start "verdict: and make's own code is 2 — which is why the LINE is the contra
 # reason the machine contract is a printed line, and not `$?`, stays visible.
 if [ "$M2RC" -eq 2 ]; then ok; else bad "expected make's usual 2, got $M2RC"; fi
 
-# --- MF4: each inventory must have actually produced its own evidence ------
-start "effect: inventory one RAN — the conformance runner's own summary is present"
-OUT=$M2OUT
-expect_out "inventory one of four" && expect_out "verified=" && expect_out "failures=0" && ok
+# --- MF4: each inventory must have produced evidence this file can ANCHOR ----
+start "effect: inventory one RAN — it COMPILED fixtures, which an echo cannot do"
+# The decisive check. `echo` of the exact summary line satisfies the anchor
+# below; it cannot leave a hundred freshly written .c files behind.
+OUT="build_output/cf_* artefacts written during the run: $fs_conformance"
+if [ "$fs_conformance" -ge 40 ]; then ok
+else bad "the conformance runner writes ~55 cf_* artefacts; $fs_conformance appeared"; fi
 
-start "effect: inventory two RAN — the xfail runner counted cargo's ignored listing"
+start "effect: inventory one's summary is the conformance manifest's own class counts"
 OUT=$M2OUT
-expect_out "cargo lists " && expect_out " ignored test(s); " && ok
+expect_out "inventory one of four" \
+  && expect_out "verified=$want_run untranscribed=0 vacuous=$want_vacuous xfail=$want_cxfail reject=$want_reject skip=$want_skip failures=0" \
+  && ok
 
 # Counting is done over a FILE rather than through a pipe: `printf … | grep -q`
 # kills printf with SIGPIPE the moment grep matches, and under `set -o pipefail`
@@ -278,16 +340,45 @@ expect_out "cargo lists " && expect_out " ignored test(s); " && ok
 M2FILE=$TMPROOT/m2out.txt
 printf '%s\n' "$M2OUT" | sed 's/\x1b\[[0-9;]*m//g' > "$M2FILE"
 
+# INVENTORY TWO HAS NO FILESYSTEM FOOTPRINT — it invokes cargo only to LIST, and
+# writes nothing. So it gets the two anchors below and no structural proof.
+# MEASURED, so the residual is stated at its real size rather than guessed:
+# replacing it with `echo` of its true `debt inventory (…): owed=54 paid=3` line
+# fails the internal-consistency check below, because that echo prints no
+# `[OWED_TO_M2]` detail lines for the 14 it would have to claim. An echo that
+# reproduced the count AND all fourteen lines would pass. That is the residual,
+# and it is the only inventory that has one.
+start "effect: inventory two RAN — its debt counts are the debt manifest's own state counts"
+if grep -qF "debt inventory (tests/rust-debt-manifest.txt): owed=$want_debt_owed paid=$want_debt_paid" "$M2FILE"; then ok
+else bad "no line reporting owed=$want_debt_owed paid=$want_debt_paid"; fi
+
 start "effect: inventory two's OWED count matches the lines it printed"
+# Kept as well as the anchor above: this one is INTERNAL consistency, which
+# catches a runner whose count and detail disagree — a different fault from a
+# runner that did not run, and neither check subsumes the other.
 n_decl=$(sed -n 's/.*TEST_XFAIL_FORBID_OWNER=M2 -> \([0-9]*\) of .*/\1/p' "$M2FILE" | head -1)
 n_lines=$(grep -c "\[OWED_TO_M2\] class=xfail" "$M2FILE")
 if [ -n "$n_decl" ] && [ "$n_decl" = "$n_lines" ]; then ok
 else bad "declared=$n_decl but $n_lines line(s) printed"; fi
 
-start "effect: inventory three RAN — the ordinary Rust suite really executed"
+start "effect: inventory three RAN — its IGNORED total is the debt manifest's owed rows plus the SLOW allowlist"
+# `\w` is a GNU extension that BSD sed does not have, and it silently matches
+# nothing rather than erroring — measured: this anchor read 0 ignored on macOS
+# and would have been permanently red. Character classes only, here and above.
+n_ign=$(sed -n 's/^test result: [a-zA-Z]*\. [0-9]* passed; [0-9]* failed; \([0-9]*\) ignored.*/\1/p' "$M2FILE" | awk '{s+=$1} END {print s+0}')
+if [ "$n_ign" = "$want_ignored" ]; then ok
+else bad "cargo reported $n_ign ignored, the manifests predict $want_ignored ($want_debt_owed owed + $want_slow slow)"; fi
+
+start "effect: inventory three RAN — the suite COMPILED its own fixtures"
+OUT="target/build files written during the run: $fs_cargo"
+if [ "$fs_cargo" -ge 5 ]; then ok
+else bad "the Rust suite compiles fixtures into target/build; $fs_cargo were written"; fi
+
+start "effect: inventory three RAN — and it is the whole suite, not one binary"
 n_pass=$(sed -n 's/^test result: ok\. \([0-9]*\) passed.*/\1/p' "$M2FILE" | awk '{s+=$1} END {print s+0}')
-if [ "$n_pass" -ge 500 ]; then ok
-else bad "expected 500+ passing tests in the output, got $n_pass"; fi
+n_bins=$(grep -c "^test result: " "$M2FILE")
+if [ "$n_pass" -ge 500 ] && [ "$n_bins" -ge 20 ]; then ok
+else bad "expected 500+ passes over 20+ binaries, got $n_pass over $n_bins"; fi
 
 start "effect: inventory four RAN — and its row count equals this file's own count of the manifest"
 if grep -qF "requirement inventory (docs/contributing/1.0-requirements.tsv): $want_rows row(s)" "$M2FILE"; then ok

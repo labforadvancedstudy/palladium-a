@@ -117,7 +117,7 @@ MILESTONE_ROSTER = {
         "GI-06", "GI-08", "GI-09", "GI-12", "N13-03", "N14-01", "N14-02",
         "N14-04", "N2-03", "N2-04", "N2-08", "N2-09", "N2-10", "N2-11",
         "N3-02", "N3-03", "N3-05", "N3-09", "N3-10", "N3-12", "N3-13",
-        "N3-14", "N4-02", "N4-04", "N4-10", "N4-12", "N5-03", "N5-04",
+        "N14-17", "N3-14", "N4-02", "N4-04", "N4-10", "N4-12", "N5-03", "N5-04",
         "N5-05", "N5-06", "N5-07", "N5-12", "N5-13", "N5-14", "N5-15",
         "N5-16", "N5-17", "N6-02", "N6-03", "N6-05", "N6-07", "N6-08",
         "N6-09", "N6-10", "N6-11", "WT-01",
@@ -325,8 +325,22 @@ def roster_drift(rows):
 
 LEDGER = ROOT / "docs/contributing/MILESTONES.md"
 
+# The three ids that carry `disposition = thesis` without being SCORED rows: the
+# aggregate and the two preconditions. Held here because MILESTONES.md states the
+# scored count in prose and nothing could otherwise derive it.
+THESIS_UNSCORED = ("D1-01", "GI-11", "GI-12")
+
+
 def ledger_claims(rows):
     """-> list of (label, regex, expected) the ledger must state.
+
+    EVERY figure in MILESTONES.md that is a count over this manifest is here.
+    The first version governed five patterns chosen by hand, and the reviewer's
+    finding was exact: the document went on saying "25 `thesis` rows / 22 scored"
+    in two other places while the gated disposition table said 26 / 23, and a
+    checker for derived figures that leaves contradictory derived figures green
+    is not yet a checker. The governed set is now the whole class, and the check
+    prints it.
 
     Each regex must match exactly once. A regex that stops matching is a FAILURE
     and never a skip: the sentence being rewritten is precisely when the number
@@ -335,19 +349,49 @@ def ledger_claims(rows):
     total = len(rows)
     status = {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES}
     disp = {d: sum(1 for r in rows if r["disposition"] == d) for d in DISPOSITIONS}
-    return [
+    scored = sum(1 for r in rows
+                 if r["disposition"] == "thesis" and r["id"] not in THESIS_UNSCORED)
+    owned = lambda m: sum(1 for r in rows if r["milestone"] == m)
+    owed_by = lambda m: sum(1 for r in rows
+                            if r["milestone"] == m and r["status"] != "satisfied")
+
+    claims = [
         ("row count + status breakdown (prose)",
          r"\*\*(\d+) rows, (\d+) satisfied · (\d+) owed · (\d+) blocked\*\*",
          (total, status["satisfied"], status["owed"], status["blocked"])),
         ("row count + status breakdown (status table)",
          r"\| (\d+) satisfied · (\d+) owed · (\d+) blocked, over (\d+) rows \|",
          (status["satisfied"], status["owed"], status["blocked"], total)),
-        ("disposition `thesis`",
-         r"\| `thesis` \| (\d+) = ", (disp["thesis"],)),
+        ("disposition `thesis` (table)",
+         r"\| `thesis` \| (\d+) = (\d+) scored ", (disp["thesis"], scored)),
         ("disposition `1.0`", r"\| `1\.0` \| (\d+) \|", (disp["1.0"],)),
-        ("disposition `post-1\\.0`",
+        ("disposition `post-1.0`",
          r"\| `post-1\.0` \| (\d+) \|", (disp["post-1.0"],)),
+        # The two sites the first version of this check did not govern, and which
+        # contradicted the table above for a full round.
+        ("thesis rows, stated in the opening section",
+         r"two of its (\d+) `thesis` rows", (disp["thesis"],)),
+        ("thesis rows + scored, stated under M9",
+         r"(\d+) rows across the manifest carry `disposition = thesis` —\n(\d+) scored,",
+         (disp["thesis"], scored)),
+        ("evaluated rows, stated in the opening section",
+         r"\(1 of (\d+) evaluated rows would pass\)", (scored,)),
     ]
+    # Per-milestone ownership, every milestone that states one. These were never
+    # governed and three of them were already wrong.
+    for m, pattern in (
+        ("M2", r"\*\*Owns (\d+) requirement rows, (\d+) of them still owed\*\*"),
+        ("M3", r"\*\*Owns (\d+) requirement rows\*\* and the 18 `#\[ignore\]` rows"),
+        ("M4", r"\*\*Owns (\d+) requirement rows\*\* — N3-11 and N11-01"),
+        ("M5", r"\*\*Owns (\d+) requirement rows\*\*, the five `#\[ignore\]` rows"),
+        ("M6", r"\*\*Owns (\d+) requirement rows\.\*\* It owns no `#\[ignore\]` row"),
+        ("M7", r"\*\*Owns (\d+) requirement rows\*\* and two of the owner's decisions"),
+        ("M8", r"\*\*Owns (\d+) requirement rows\.\*\* What the library needs"),
+        ("M9", r"\*\*Owns (\d+) requirement rows\*\*; \d+ rows across the manifest"),
+    ):
+        want = (owned(m), owed_by(m)) if m == "M2" else (owned(m),)
+        claims.append(("%s ownership" % m, pattern, want))
+    return claims
 
 
 def report_ledger(rows, out=sys.stdout):

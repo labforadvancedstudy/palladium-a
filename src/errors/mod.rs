@@ -227,8 +227,8 @@ impl CompileError {
     /// Raised without inspecting the operand, so the wording may not assume one
     /// — `3?` and `unknown()?` reach here too. It also may not imply that the
     /// `match` alternative generalises further than it does: code generation
-    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1298-1299`,
-    /// `src/codegen/mod.rs:1299-1299`, `src/codegen/mod.rs:1335-1335`), so `Result<T, E>` is
+    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1303-1304`,
+    /// `src/codegen/mod.rs:1304-1304`, `src/codegen/mod.rs:1340-1340`), so `Result<T, E>` is
     /// not a compilable replacement and the help says so rather than leaving the
     /// reader to discover it.
     ///

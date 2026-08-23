@@ -196,25 +196,7 @@ int __pd_file_exists(const char* path) {
     return 0;
 }
 
-// Enhanced I/O runtime functions
-// File handle type (opaque pointer)
-typedef void* FileHandle;
-
-// File modes
-enum FileMode {
-    FileMode_Read = 0,
-    FileMode_Write = 1,
-    FileMode_Append = 2,
-    FileMode_ReadWrite = 3
-};
-
 // External runtime I/O functions
-extern FileHandle pd_file_open(const char* path, size_t path_len, int mode);
-extern int pd_file_close(FileHandle handle);
-extern int64_t pd_file_read(FileHandle handle, char* buffer, size_t len);
-extern int64_t pd_file_write(FileHandle handle, const char* buffer, size_t len);
-extern int64_t pd_file_seek(FileHandle handle, uint8_t whence, int64_t offset);
-extern int pd_file_flush(FileHandle handle);
 extern int pd_path_exists(const char* path, size_t path_len);
 extern int pd_path_is_file(const char* path, size_t path_len);
 extern int pd_path_is_dir(const char* path, size_t path_len);
@@ -226,28 +208,18 @@ extern int pd_remove_dir_all(const char* path, size_t path_len);
 extern int pd_read_file_to_string(const char* path, size_t path_len, char** out_str, size_t* out_len);
 extern int pd_write_string_to_file(const char* path, size_t path_len, const char* data, size_t data_len);
 
-FileHandle __pd_file_open_ex(const char* path, int mode) {
-    return pd_file_open(path, strlen(path), mode);
+long long __pd_file_seek(long long handle, long long whence, long long offset) {
+    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return -1;
+    if (whence != 0 && whence != 1 && whence != 2) return -1;
+    int w = whence == 0 ? SEEK_SET : (whence == 1 ? SEEK_CUR : SEEK_END);
+    FILE* f = __pd_file_handles[handle];
+    if (fseek(f, (long)offset, w) != 0) return -1;
+    return (long long)ftell(f);
 }
 
-int __pd_file_close_ex(FileHandle handle) {
-    return pd_file_close(handle);
-}
-
-int64_t __pd_file_read_ex(FileHandle handle, char* buffer, size_t len) {
-    return pd_file_read(handle, buffer, len);
-}
-
-int64_t __pd_file_write_ex(FileHandle handle, const char* buffer, size_t len) {
-    return pd_file_write(handle, buffer, len);
-}
-
-int64_t __pd_file_seek(FileHandle handle, uint8_t whence, int64_t offset) {
-    return pd_file_seek(handle, whence, offset);
-}
-
-int __pd_file_flush(FileHandle handle) {
-    return pd_file_flush(handle);
+long long __pd_file_flush(long long handle) {
+    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;
+    return fflush(__pd_file_handles[handle]) == 0;
 }
 
 int __pd_path_exists(const char* path) {

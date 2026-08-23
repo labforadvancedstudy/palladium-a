@@ -535,16 +535,21 @@ pub const BUILTINS: &[Builtin] = &[
         effects: IO,
         doc: "Write a string to the file at `path`",
     },
+    // RE-BASED 2026-08-23, and now callable. Both were `Support::Unsupported`
+    // because their C wrappers took the enhanced file API's opaque `FileHandle`
+    // (`typedef void*`) while this table types every handle as `I64` — a call
+    // type-checked, borrow-checked, and then could not be compiled. The wrappers
+    // are lowered onto `__pd_file_handles`, the `long long` table `file_write`
+    // and `file_close` already use, so the representation split that made them
+    // uncallable is gone rather than described.
     Builtin {
         name: "file_flush",
         params: &[p("handle", I64, ByCopy)],
         ret: I64,
         ret_mode: ReturnMode::Copy,
-        support: Support::Unsupported(
-            "the enhanced file API takes an opaque FileHandle (typedef void*), while a Palladium handle is an i64; a call does not compile. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
-        ),
+        support: Support::Callable,
         effects: IO,
-        doc: "Flush buffered writes on an open file",
+        doc: "Flush buffered writes on an open file (1 on success, 0 on failure)",
     },
     Builtin {
         name: "file_seek",
@@ -555,11 +560,9 @@ pub const BUILTINS: &[Builtin] = &[
         ],
         ret: I64,
         ret_mode: ReturnMode::Copy,
-        support: Support::Unsupported(
-            "the enhanced file API takes an opaque FileHandle (typedef void*), while a Palladium handle is an i64; a call does not compile. Its `whence` also narrows to uint8_t. see PRELUDE_TYPE_MISMATCHES in src/builtins.rs",
-        ),
+        support: Support::Callable,
         effects: IO,
-        doc: "Move the read/write position of an open file",
+        doc: "Move the read/write position of an open file (whence 0=start, 1=current, 2=end); returns the new position, or -1",
     },
     // The section that was here — "Enhanced file operations with mode support" —
     // IS GONE, 2026-08-23. Its `// ---- … ----` marker is deliberately not left
@@ -1461,47 +1464,47 @@ mod tests {
 
     /// The built-ins whose C wrapper contradicts this table today.
     ///
-    /// TWO NOW, AND IT WAS SIX. Both take the *enhanced* file API's handle, which
-    /// is `FileHandle` (`typedef void*`, a cast FILE*), while this table types
-    /// every handle as `I64`. They pass the type checker and the borrow checker
-    /// and then fail to compile:
+    /// **EMPTY, since 2026-08-23, and empty is a real state rather than a
+    /// disabled check.** The test below DERIVES this set from `BUILTINS` × the
+    /// emitted prelude on every run and requires it to equal exactly this
+    /// constant, so an empty list is the strongest form of the assertion: any
+    /// new disagreement between the registry and the C it generates is a new
+    /// string and fails.
+    ///
+    /// It held ELEVEN dimensions across SIX built-ins, all of them the enhanced
+    /// file API's opaque `FileHandle` (`typedef void*`, a cast FILE*) meeting a
+    /// table that types every handle as `I64`. They passed the type checker and
+    /// the borrow checker and then failed to compile:
     ///
     ///   incompatible integer to pointer conversion passing 'long long'
     ///   to parameter of type 'FileHandle' (aka 'void *')
     ///
-    /// The other four — the `*_ex` names — are not on this list because they are
-    /// not in `BUILTINS` any more, and this list is DERIVED by the test below
-    /// from `BUILTINS` × the emitted prelude. **Nothing was fixed.** Their
-    /// wrappers are still emitted with the same contradictory C types; they are
-    /// simply no longer named by anything the language can call. Do not read the
-    /// six-to-two change as six-minus-four-repaired: `file_flush` and
-    /// `file_seek` are the two that are normative, still broken, and still owed
-    /// a re-base onto the `long long` handle table the rest of the file API uses
-    /// (`__pd_file_handles` in src/codegen/mod.rs).
+    /// The eleven closed in two unrelated ways, and the difference is worth
+    /// keeping straight because "eleven to zero" reads like one achievement:
     ///
-    /// Every way in which the C prelude contradicts this table today, one entry per
-    /// *dimension* — not one per function.
+    ///   * EIGHT belonged to `file_open_ex`, `file_close_ex`, `file_read_ex` and
+    ///     `file_write_ex`, which N14 does not define. Those names left this
+    ///     table, and their C wrappers have now been deleted from
+    ///     `src/codegen/mod.rs` as well — nothing emits them any more.
+    ///   * THREE belonged to `file_flush` and `file_seek`, which N14 does
+    ///     define. Those were REPAIRED: the wrappers are lowered onto
+    ///     `__pd_file_handles`, the `long long` handle table the rest of the
+    ///     file API uses, and both builtins are `Support::Callable` and
+    ///     exercised by `tests/stdlib/stdlib_builtins_file.pd`.
     ///
-    /// Pinning by function name was not enough: a second defect added to a function
-    /// already on the list left the set unchanged and the gate green. These strings
-    /// are produced by the test below, so a new defect on an already-broken function
-    /// is a new string and turns it red.
+    /// The narrowing measurements that produced the deleted entries, kept
+    /// because they are what a future handle representation has to survive:
+    /// with gcc, `256` passed to a `uint8_t whence` arrives as `0`, `-1` passed
+    /// to a `size_t len` arrives as `18446744073709551615`, and `2^32` passed to
+    /// an `int mode` arrives as `0`. The `char* (writable)` entry was the
+    /// memory-safety one: `file_read_ex` wanted a destination to write into, and
+    /// a Palladium String may be a literal in read-only memory — writing through
+    /// it is SIGBUS.
     ///
-    /// Every entry belongs to the enhanced file API, whose handle is an opaque
-    /// `FileHandle` (`typedef void*`) that no Palladium type can hold. The narrowing
-    /// entries were measured with gcc: `whence` 256 arrives as 0, a length of -1
-    /// arrives as 18446744073709551615, a `mode` of 2^32 arrives as 0. The
-    /// `char* (writable)` entry is the memory-safety one: `file_read_ex` wants a
-    /// destination to write into, and a Palladium String may be a literal in
-    /// read-only memory — writing through it is SIGBUS.
-    ///
-    /// This list states a known defect; it is not permission. Fixing any dimension
+    /// This list states known defects; it is not permission. Fixing a dimension
     /// must delete its line, and the test fails if it does not.
-    const PRELUDE_TYPE_MISMATCHES: &[&str] = &[
-        "file_flush param 0 (handle): i64 -> opaque pointer",
-        "file_seek param 0 (handle): i64 -> opaque pointer",
-        "file_seek param 1 (whence): i64 -> u8",
-    ];
+    const PRELUDE_TYPE_MISMATCHES: &[&str] = &[];
+
 
     /// THE SEAM GATE: for every built-in, the C wrapper the compiler emits must be
     /// able to carry the values this table describes — every parameter and the
@@ -1573,9 +1576,42 @@ mod tests {
         );
     }
 
+    /// THE UNSUPPORTED SET IS EMPTY, AND THAT IS SAID OUT LOUD BECAUSE THE
+    /// BEHAVIOURAL GATE BELOW NOW ITERATES NOTHING.
+    ///
+    /// Every built-in in this table is callable as of 2026-08-23. That is the
+    /// good state, and it makes `test_calling_an_unsupported_builtin_is_rejected
+    /// _by_typeck` a loop over an empty set — a test that passes while proving
+    /// nothing, which is the exact species this milestone exists to remove. It
+    /// is not deleted (the machinery it guards is still live in
+    /// `src/typeck/mod.rs:2105-2113` and the moment any built-in is marked
+    /// unsupported the loop has work again), and it is not left to look like
+    /// coverage either. This assertion is the declaration: if it ever fails,
+    /// the loop below has become meaningful again and this comment is stale.
+    #[test]
+    fn test_the_unsupported_builtin_set_is_empty_so_the_gate_below_is_vacuous() {
+        let unsupported: Vec<&str> = BUILTINS
+            .iter()
+            .filter(|b| !b.support.is_callable())
+            .map(|b| b.name)
+            .collect();
+        assert_eq!(
+            unsupported,
+            Vec::<&str>::new(),
+            "a built-in is unsupported again — which is fine, but it means \
+             test_calling_an_unsupported_builtin_is_rejected_by_typeck is no \
+             longer vacuous and this test's own comment must be updated to say so"
+        );
+    }
+
     /// THE BEHAVIOURAL GATE for support status: a program that calls an unsupported
     /// built-in must be rejected by the type checker, naming the built-in and the
     /// reason — not passed through to gcc to fail there in generated C.
+    ///
+    /// **VACUOUS TODAY.** Its iteration set is `BUILTINS` filtered to the
+    /// unsupported, and that set is empty; see the test above, which declares the
+    /// emptiness so this one cannot be mistaken for coverage. Kept because the
+    /// rejection path is still live and this is the only test that drives it.
     #[test]
     fn test_calling_an_unsupported_builtin_is_rejected_by_typeck() {
         for b in BUILTINS.iter().filter(|b| !b.support.is_callable()) {

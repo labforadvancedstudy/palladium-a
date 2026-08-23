@@ -1141,27 +1141,19 @@ impl CodeGenerator {
 
         // Enhanced I/O Runtime Function Declarations
         // External function declarations for runtime I/O
-        self.output.push_str("// Enhanced I/O runtime functions\n");
-        self.output.push_str("// File handle type (opaque pointer)\n");
-        self.output.push_str("typedef void* FileHandle;\n\n");
-        
-        // File mode enum
-        self.output.push_str("// File modes\n");
-        self.output.push_str("enum FileMode {\n");
-        self.output.push_str("    FileMode_Read = 0,\n");
-        self.output.push_str("    FileMode_Write = 1,\n");
-        self.output.push_str("    FileMode_Append = 2,\n");
-        self.output.push_str("    FileMode_ReadWrite = 3\n");
-        self.output.push_str("};\n\n");
-        
-        // External function declarations
+        //
+        // THE `FileHandle` (typedef void*) API IS GONE FROM THIS PRELUDE, 2026-08-23.
+        // It existed to back six builtins that could not be called: this compiler
+        // types every file handle as `i64` (`src/builtins.rs`), an `i64` cannot hold
+        // an opaque pointer, and so every one of the six was refused at typecheck.
+        // Four of them — `file_open_ex`, `file_close_ex`, `file_read_ex`,
+        // `file_write_ex` — are not in N14 and left the registry; their wrappers are
+        // deleted here, and with them the last reference to `FileHandle`, the
+        // `FileMode` enum and the `pd_file_open/close/read/write/seek/flush` externs.
+        // The other two are normative and are LOWERED ONTO `__pd_file_handles`
+        // below, beside `__pd_file_write` and `__pd_file_close`, which is the handle
+        // representation the language actually has.
         self.output.push_str("// External runtime I/O functions\n");
-        self.output.push_str("extern FileHandle pd_file_open(const char* path, size_t path_len, int mode);\n");
-        self.output.push_str("extern int pd_file_close(FileHandle handle);\n");
-        self.output.push_str("extern int64_t pd_file_read(FileHandle handle, char* buffer, size_t len);\n");
-        self.output.push_str("extern int64_t pd_file_write(FileHandle handle, const char* buffer, size_t len);\n");
-        self.output.push_str("extern int64_t pd_file_seek(FileHandle handle, uint8_t whence, int64_t offset);\n");
-        self.output.push_str("extern int pd_file_flush(FileHandle handle);\n");
         self.output.push_str("extern int pd_path_exists(const char* path, size_t path_len);\n");
         self.output.push_str("extern int pd_path_is_file(const char* path, size_t path_len);\n");
         self.output.push_str("extern int pd_path_is_dir(const char* path, size_t path_len);\n");
@@ -1174,36 +1166,49 @@ impl CodeGenerator {
         self.output.push_str("extern int pd_write_string_to_file(const char* path, size_t path_len, const char* data, size_t data_len);\n\n");
         
         // Wrapper functions that call the external pd_* functions
-        // pd_file_open wrapper (enhanced version with mode)
-        self.output.push_str("FileHandle __pd_file_open_ex(const char* path, int mode) {\n");
-        self.output.push_str("    return pd_file_open(path, strlen(path), mode);\n");
+
+        // file_seek, over the SAME `long long` handle table as file_write and
+        // file_close. `whence` is the Palladium-level 0/1/2 that
+        // src/runtime/io.rs::pd_file_seek also uses, mapped here to the C
+        // constants rather than passed through: an unrecognised value is -1, not
+        // an out-of-range seek. Returns the new absolute position, or -1.
+        self.output
+            .push_str("long long __pd_file_seek(long long handle, long long whence, long long offset) {\n");
+        self.output.push_str(
+            "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return -1;\n",
+        );
+        // Written as brace-free statements each ending in `;`, like every other
+        // wrapper in this prelude. That is not a style preference:
+        // scripts/gate_probe.py's structural reader parses the emitted C on that
+        // invariant, and a single-line `if (…) { … }` here made it report
+        // MALFUNCTION on all seven stdlib drivers — a checker that cannot account
+        // for a shape stops analysing, which it says rather than guessing.
+        self.output
+            .push_str("    if (whence != 0 && whence != 1 && whence != 2) return -1;\n");
+        self.output.push_str(
+            "    int w = whence == 0 ? SEEK_SET : (whence == 1 ? SEEK_CUR : SEEK_END);\n",
+        );
+        self.output
+            .push_str("    FILE* f = __pd_file_handles[handle];\n");
+        self.output
+            .push_str("    if (fseek(f, (long)offset, w) != 0) return -1;\n");
+        self.output.push_str("    return (long long)ftell(f);\n");
         self.output.push_str("}\n\n");
-        
-        // pd_file_close wrapper (enhanced version)
-        self.output.push_str("int __pd_file_close_ex(FileHandle handle) {\n");
-        self.output.push_str("    return pd_file_close(handle);\n");
+
+        // file_flush. 1 on success, 0 on failure — the convention its siblings
+        // __pd_file_write and __pd_file_close already use, NOT the 0-ok/-1-fail
+        // of the deleted `pd_file_flush`. N14 spells both of these as
+        // `Result<…, IoError>`; `Result` is not built in yet, and this divergence
+        // is recorded in the specification's A8 with the rest of the family.
+        self.output
+            .push_str("long long __pd_file_flush(long long handle) {\n");
+        self.output.push_str(
+            "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return 0;\n",
+        );
+        self.output
+            .push_str("    return fflush(__pd_file_handles[handle]) == 0;\n");
         self.output.push_str("}\n\n");
-        
-        // pd_file_read wrapper (enhanced version)
-        self.output.push_str("int64_t __pd_file_read_ex(FileHandle handle, char* buffer, size_t len) {\n");
-        self.output.push_str("    return pd_file_read(handle, buffer, len);\n");
-        self.output.push_str("}\n\n");
-        
-        // pd_file_write wrapper (enhanced version)
-        self.output.push_str("int64_t __pd_file_write_ex(FileHandle handle, const char* buffer, size_t len) {\n");
-        self.output.push_str("    return pd_file_write(handle, buffer, len);\n");
-        self.output.push_str("}\n\n");
-        
-        // pd_file_seek wrapper
-        self.output.push_str("int64_t __pd_file_seek(FileHandle handle, uint8_t whence, int64_t offset) {\n");
-        self.output.push_str("    return pd_file_seek(handle, whence, offset);\n");
-        self.output.push_str("}\n\n");
-        
-        // pd_file_flush wrapper
-        self.output.push_str("int __pd_file_flush(FileHandle handle) {\n");
-        self.output.push_str("    return pd_file_flush(handle);\n");
-        self.output.push_str("}\n\n");
-        
+
         // Path manipulation functions
         self.output.push_str("int __pd_path_exists(const char* path) {\n");
         self.output.push_str("    return pd_path_exists(path, strlen(path));\n");
