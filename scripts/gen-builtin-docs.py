@@ -7,6 +7,23 @@ what keeps the documentation from drifting away from the compiler — which is h
 this repository ended up with 508 non-compiling documentation snippets.
 
 Run after changing src/builtins.rs:  python3 scripts/gen-builtin-docs.py
+Check without writing (a gate reads this):  python3 scripts/gen-builtin-docs.py --check
+
+THE PARAMETER PARSER WAS BROKEN AND THE FILE IT GENERATES IS OLDER THAN IT.
+Measured at `acda322`, before this branch touched anything: the regex below read
+`p(Ty, Mode)` — two arguments — while `src/builtins.rs` has written
+`p("name", Ty, Mode)` since `BuiltinParam` gained its user-visible parameter name.
+It matched 0 of 51 call sites, so running this generator on `main` rewrote every
+signature in docs/reference/builtins.md from `print(String)` to `print()` and
+dropped every "borrows its string argument" note. The committed reference is a
+fossil emitted by an older version of this script.
+
+That is a two-sided defect and both sides are closed here. The regex is fixed, so
+regenerating is no longer destructive; and `--check` exists so that the file
+being stale is a red test rather than something discovered by whoever next runs
+the generator. src/builtins.rs::test_generated_builtin_reference_is_not_stale
+calls it, which is the same shape as the check that keeps runtime/pd_prelude.h
+from going stale against the compiler that emits it.
 """
 
 import re
@@ -37,10 +54,11 @@ SECTION_BLURB = {
     ),
     "Path and directory operations": "Queries and mutations on the filesystem.",
     "Whole-file helpers": "Read or write a whole file in one call.",
-    "Extended file API": (
-        "A second handle API that mirrors the runtime's `pd_file_*` symbols more "
-        "directly. Prefer the plain `file_*` functions."
-    ),
+    # "Extended file API" was here, for the `*_ex` builtins. They left
+    # src/builtins.rs on 2026-08-23 (N14 does not define them), so the section
+    # has no entries and this blurb would never be printed. Removed rather than
+    # kept "in case": a blurb for a section that cannot occur is a claim about a
+    # part of the language that does not exist.
 }
 
 
@@ -71,8 +89,20 @@ def parse():
         params_raw = re.search(r"params:\s*&\[(.*?)\]", entry, re.S)
         params = []
         if params_raw:
-            for m in re.finditer(r"p\((\w+),\s*(\w+)\)", params_raw.group(1)):
-                params.append((TYPE_NAMES.get(m.group(1), m.group(1)), m.group(2)))
+            # `p("name", Ty, Mode)`. The first argument is the user-visible
+            # parameter name and is not rendered here; the reference shows types.
+            # An entry that declares parameters and parses to none is a parser
+            # failure, not a nullary builtin — see the module docstring for the
+            # run in which exactly that produced `print()`.
+            for m in re.finditer(r'p\("(\w+)",\s*(\w+),\s*(\w+)\)', params_raw.group(1)):
+                params.append((TYPE_NAMES.get(m.group(2), m.group(2)), m.group(3)))
+            declared = params_raw.group(1).count("p(")
+            if declared != len(params):
+                print("error: %s declares %d parameter(s) and %d parsed — the "
+                      "shape of src/builtins.rs changed and this generator would "
+                      "emit a wrong signature"
+                      % (name, declared, len(params)), file=sys.stderr)
+                return None
 
         ret = re.search(r"ret:\s*(\w+)", entry)
         ret = TYPE_NAMES.get(ret.group(1), ret.group(1)) if ret else "()"
@@ -90,7 +120,11 @@ def signature(e):
 
 
 def main():
+    check_only = "--check" in sys.argv[1:]
+
     entries = parse()
+    if entries is None:
+        return 1
     if not entries:
         print("error: no builtins parsed — did src/builtins.rs change shape?", file=sys.stderr)
         return 1
@@ -149,8 +183,34 @@ def main():
         "",
     ]
 
+    generated = "\n".join(lines)
+
+    if check_only:
+        try:
+            on_disk = OUT.read_text()
+        except OSError as exc:
+            print("error: cannot read %s: %s" % (OUT, exc), file=sys.stderr)
+            return 1
+        if on_disk == generated:
+            print(f"{OUT.relative_to(ROOT)} is in sync with src/builtins.rs "
+                  f"({len(entries)} builtins, {len(order)} sections)")
+            return 0
+        # Name the first divergent line rather than the whole diff: the file is
+        # 60 lines and the useful signal is which builtin moved.
+        want, got = generated.split("\n"), on_disk.split("\n")
+        first = next((i for i, (a, b) in enumerate(zip(want, got)) if a != b), None)
+        detail = ("first difference at line %d:\n  from src/builtins.rs: %s\n"
+                  "  on disk:              %s" % (first + 1, want[first], got[first])
+                  if first is not None else
+                  "lengths differ: generated %d lines, on disk %d"
+                  % (len(want), len(got)))
+        print("error: %s is stale — regenerate with `python3 %s`\n%s"
+              % (OUT.relative_to(ROOT), pathlib.Path(__file__).name, detail),
+              file=sys.stderr)
+        return 1
+
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text("\n".join(lines))
+    OUT.write_text(generated)
     print(f"wrote {OUT.relative_to(ROOT)} ({len(entries)} builtins, {len(order)} sections)")
     return 0
 

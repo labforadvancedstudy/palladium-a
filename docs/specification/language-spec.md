@@ -358,7 +358,7 @@ a `main` is a library.
 
 ## N14. Builtins and the standard library
 
-<sub>Non-normative pointer, not part of the definition: **implementation status → [A8 — partial: 38 builtins exist, 4 of them outside the normative set; stdlib/ does not parse](#a8-builtins)**</sub>
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A8 — partial: the registry is exactly these 34 names and all 34 are callable; signatures still differ (no `Result`); stdlib/ does not parse](#a8-builtins)**</sub>
 
 A **builtin** is an operation the compiler knows intrinsically: it is in scope without an import,
 its name is reserved, and it has no Palladium definition a program could read or replace. The
@@ -416,23 +416,36 @@ conforming implementation provides all of them with these signatures.
 Thirty-four names. `File`, `OpenMode`, `SeekFrom`, `IoError` and `ParseError` are prelude types
 ([N4](#n4-types)); a `File` is an opaque handle, not an integer.
 
-> **Reconciliation against `src/builtins.rs`, name by name.** The implementation defines **38**
+> **Reconciliation against `src/builtins.rs`, name by name.** The implementation defines **34**
 > names; this table defines **34**. Set arithmetic, computed from the table above and the compiler's
 > own registry:
 >
 > - normative − implemented = **none**. Every one of the 34 names exists in `pdc`.
-> - implemented − normative = **exactly four**: `file_open_ex`, `file_close_ex`, `file_read_ex`,
->   `file_write_ex`. They are a parallel handle API that exists because `OpenMode` does not, and
->   they are not part of the language.
+> - implemented − normative = **none**, since 2026-08-23.
 >
-> 34 + 4 = 38, so the accounting closes. What does *not* match is signatures: the filesystem
-> builtins return `i64`/`bool` handles rather than `Result`, and `string_char_at` returns `i64`
-> rather than `char` because `char` is not a type yet. Itemised in [A8](#a8-builtins).
+> The two sets are equal, and that equality is now **a check rather than a paragraph**:
+> `src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set` parses the table above out
+> of this file and compares it against the registry in both directions, so a thirty-fifth builtin
+> is a red test and not a reader's job.
+>
+> *(Until 2026-08-23 the implementation defined **38**, and `implemented − normative` was
+> `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex` — a parallel handle API that
+> existed because `OpenMode` does not. None of the four was callable, all four were refused at
+> typecheck, and no `.pd` file in the tree named one. They were REMOVED FROM THE REGISTRY rather
+> than repaired: a compiler table that carries names this section does not define is a second
+> definition of the builtin surface. Their C wrappers are still emitted — dead code in
+> `src/codegen/mod.rs`, recorded as owed in [A8](#a8-builtins) and not as done.)*
+>
+> What does *not* match is **signatures**, and closing the name sets did nothing about that: the
+> filesystem builtins return `i64`/`bool` handles rather than `Result`, and `string_char_at`
+> returns `i64` rather than `char` because `char` is not a type yet. Itemised in
+> [A8](#a8-builtins). *(A third divergence — `file_flush` and `file_seek` registered but not
+> callable, their C wrappers taking an opaque `FileHandle` no Palladium type can hold — was closed
+> on 2026-08-23 by re-basing both onto the `long long` handle table.)*
 >
 > *(A previous version of this annex said "36 builtins", inherited from the pre-cleanup
-> specification's section heading. It was never right: `src/builtins.rs` has had 38 since
-> `191f8c1` made it the single table, and the generated `reference/builtins.md` says 38. Corrected
-> at every site.)*
+> specification's section heading. It was never right: `src/builtins.rs` had 38 from `191f8c1`,
+> which made it the single table, until the four `*_ex` names left it. Corrected at every site.)*
 >
 > This table is the definition, and it is written independently of the generated one on purpose —
 > an earlier draft delegated to it, which would have let `pdc` redefine Palladium by adding a row.
@@ -475,7 +488,7 @@ command that was run.
 | [N11 Modules](#n11-modules) | partial | [A3](#a3-program-structure) — `import` works; no `mod` item |
 | [N12 Memory model](#n12-memory-model) | partial | [A9](#a9-memory-model) — checked but not typed; `String` is Copy; array parameters [A9.2](#a92-array-parameters); `&mut` of an immutable local refused [A9.3](#a93-mut-of-an-immutable-local-is-refused-was-accepted) |
 | [N13 Execution model](#n13-execution-model) | implemented | [A10](#a10-execution-model) |
-| [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtins) — 38 builtins exist against a normative 34; signatures differ; `stdlib/` does not parse |
+| [N14 Builtins and stdlib](#n14-builtins-and-the-standard-library) | partial | [A8](#a8-builtins) — the registry is exactly the normative 34 and all are callable; signatures differ (no `Result`); `stdlib/` does not parse |
 
 ## A1. Pipeline and backends
 
@@ -625,9 +638,9 @@ enums.
 
 **partial** — field types that parse and then fail in codegen (all three corrected from v0.2,
 which was ~250 lines low):
-- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1848-1848`)
-- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1559-1559`)
-- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1861-1865`)
+- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:1879-1879`)
+- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1590-1590`)
+- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:1892-1896`)
 
 ### A4.3 Enums
 
@@ -638,7 +651,7 @@ field (`src/parser/mod.rs:816`, `src/ast/mod.rs:139`).
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1286`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1492-1495`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:1094-1096`, corrected
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1523-1526`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:1094-1096`, corrected
 from `src/typeck/mod.rs:1422-1422`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1410`, corrected from line 863–897 of the pre-cleanup revision).
@@ -655,7 +668,10 @@ impl_block = "impl" [ generic_params ] [ type "for" ] type "{" { function } "}" 
 ```
 
 **implemented**: methods become mangled free functions `__pd_Type_method`
-(`src/codegen/mod.rs:1174-1180`, corrected from line 1861 of the pre-cleanup revision).
+(`src/codegen/mod.rs:1537-1543`, corrected TWICE: from line 1861 of the pre-cleanup revision, and
+again on 2026-08-23 from `1174-1180`, which was the file-I/O prelude and had nothing to do with
+method mangling — the line numbers had been tracked through an edit while the target was never
+re-read).
 **unimplemented**: associated constants and associated types are rejected — an impl body may
 contain only `fn` (`src/parser/mod.rs:1579-1585`, corrected from line 1030 of the pre-cleanup revision).
 **partial**: methods cannot be called with `.` syntax — see [A6.4](#a64-method-calls). Call them
@@ -692,7 +708,7 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 | `&T`, `&mut T` | partial | parses, but the typechecker is a **no-op**: `Type::Reference` maps to its inner type — "For now, treat references as the inner type / TODO: Proper reference type handling" (`src/typeck/mod.rs:121-125`, corrected from line 2470–2486 of the pre-cleanup revision). `&i64` and `i64` are indistinguishable to it. |
 | `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
 | `Name<A, B>` | partial | see below |
-| `(A, B)` | partial | becomes `void*` in C (`src/codegen/mod.rs:1232-1235`, corrected from line 828 of the pre-cleanup revision); no tuple expression exists, so no tuple is constructible |
+| `(A, B)` | partial | becomes `void*` in C (`src/codegen/mod.rs:1596-1599`, corrected from line 828 of the pre-cleanup revision); no tuple expression exists, so no tuple is constructible |
 | `f32`, `f64`, `char`, `str`, `u8`, `usize` | unimplemented | not in the primitive table |
 | `fn(A) -> B` | unimplemented | function types are unparseable |
 | `[T]` slices, `dyn T`, `impl T` | unimplemented | |
@@ -705,7 +721,9 @@ mixed-case names like `Vec<Item>` reach the type branch.
 
 **partial — const generics**: they parse, and in codegen an `ArraySize::ConstParam` is emitted
 into C verbatim as the parameter's *name* while an `ArraySize::Expr` becomes the literal `"0"`
-(`src/codegen/mod.rs:1204-1206`). Neither is monomorphised. *(v0.2 said "array sizes from a const
+(`src/codegen/mod.rs:1566-1570`, corrected on 2026-08-23 from `1204-1206`, which was
+`return pd_file_flush(handle);` — a citation about const generics pointing at the file-I/O
+prelude). Neither is monomorphised. *(v0.2 said "array sizes from a const
 parameter resolve to `0`" citing `src/codegen/mod.rs:348-348`; that is the expression case, not the const-parameter
 case.)*
 
@@ -723,7 +741,7 @@ enum is compiled to. Use `match`.
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
 rejected outright by the type checker (`src/typeck/mod.rs:2904-2904`) and again by code generation
-(`src/codegen/mod.rs:3286-3290`). It used to typecheck against a `Generic{name:"Result"}` shape
+(`src/codegen/mod.rs:3317-3321`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -772,7 +790,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 - unimplemented: tuple expressions and `.0` indexing.
 - unimplemented: `as` casts, string interpolation.
 - partial: ranges outside a `for` header — codegen error "Range expressions can only be used in
-  for loops" (`src/codegen/mod.rs:2710-2713`, corrected from line 2121 of the pre-cleanup revision).
+  for loops" (`src/codegen/mod.rs:2741-2744`, corrected from line 2121 of the pre-cleanup revision).
 - partial: empty array literal `[]` — typeck cannot infer the element type
   (`src/typeck/mod.rs:3254-3258`, corrected from line 1874 of the pre-cleanup revision).
 
@@ -833,14 +851,14 @@ that what precedes `?` is a Result, because in those programs it is not.
 The `match` alternative is bounded, and the help says where it stops rather than leaving it to be
 discovered. Measured: dispatch works, propagation out of a helper works, payload types other than
 `i64` work — but a generic `Result<T, E>` does **not** compile, because code generation skips
-generic enum definitions (`src/codegen/mod.rs:2791-2812`, `src/codegen/mod.rs:2847-2858`, `src/codegen/mod.rs:988-988`) and generic enum construction
+generic enum definitions (`src/codegen/mod.rs:2822-2843`, `src/codegen/mod.rs:2878-2889`, `src/codegen/mod.rs:1014-1014`) and generic enum construction
 infers only the parameters a variant mentions, so `Result::Err(e)` yields `Result<(), E>`. One
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:2904-2904`, `.await` at
-`src/typeck/mod.rs:2911-2911`) and again by code generation (`?` at `src/codegen/mod.rs:3286-3290`,
-`.await` at `src/codegen/mod.rs:3298-3302`), which is callable on its own.
+`src/typeck/mod.rs:2911-2911`) and again by code generation (`?` at `src/codegen/mod.rs:3317-3321`,
+`.await` at `src/codegen/mod.rs:3329-3333`), which is callable on its own.
 
 What they used to do:
 
@@ -849,7 +867,7 @@ What they used to do:
   constants instead. gcc reported `variable has incomplete type 'struct Result'`.
 - `.await` emitted `while (!f.poll(&f)) {}`. C has no member function calls, and the poll
   routine that *is* generated is the free function `<name>_poll`
-  (`src/codegen/mod.rs:2833-2833`), which that call never names. There is no async runtime.
+  (`src/codegen/mod.rs:2864-2864`), which that call never names. There is no async runtime.
 
 Both lowerings are deleted rather than kept behind a flag: they encoded a representation a real
 implementation must not reuse, and version control holds them.
@@ -955,32 +973,56 @@ bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires 
 
 Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:1884-1885`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
-(`src/codegen/mod.rs:2169-2169`, `src/codegen/mod.rs:2190-2201`) with a wildcard arm becoming the final `else`; when no
+(`src/codegen/mod.rs:2200-2200`, `src/codegen/mod.rs:2221-2232`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
 
 Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else` chains.
 
 ## A8. Builtins
 
-**partial.** 38 builtins exist and work — the 34 that [N14](#n14-builtins-and-the-standard-library)
-defines, plus `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex`, which are not
-part of the language. They are evidence about the implementation, not the
-definition of the builtin surface — that is [N14](#n14-builtins-and-the-standard-library).
-The generated table [`docs/reference/builtins.md`](../reference/builtins.md) is produced by
+**partial.** 34 builtins are registered — exactly the 34 that
+[N14](#n14-builtins-and-the-standard-library) defines — and **all 34 can be called**. Registry
+membership and callability are different claims and the earlier wording ("38 builtins exist and
+work") conflated them; `file_flush` and `file_seek` had never been callable at all until
+2026-08-23, when their C wrappers were re-based onto the `long long` handle table. The generated
+table [`docs/reference/builtins.md`](../reference/builtins.md) is produced by
 `scripts/gen-builtin-docs.py` from `src/builtins.rs` and is the authoritative record of *what
-`pdc` provides today*.
+`pdc` provides today*; it is checked against the registry on every test run
+(`src/builtins.rs::test_generated_builtin_reference_is_not_stale`), which it was not when it went
+four names stale.
 
-Measured against N14: every normative name is present (`normative − implemented = none`), and
-four extra names are not (`implemented − normative = the four *_ex names`). Two signature-level
-divergences: **filesystem builtins return `i64`/`bool` handles rather than `Result`**, because
-`Result` is not built in ([A5.1](#a51-option-and-result)); and `string_char_at` returns `i64`
-rather than `char`, because `char` is not a type ([A5](#a5-types)). **N14's effect classification
-is unenforced**, because effects gate nothing ([A4.1](#a41-functions)).
+Measured against N14: the name sets are **equal in both directions** — `normative − implemented =
+none` and `implemented − normative = none` — and that is a test, not a reading
+(`src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`). *(Until 2026-08-23 there
+were 38, the extra four being `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex`;
+see the reconciliation note under [N14](#n14-builtins-and-the-standard-library).)*
+
+One divergence remains, and two are closed:
+
+- **Signatures — OPEN.** Filesystem builtins return `i64`/`bool` handles rather than `Result`,
+  because `Result` is not built in ([A5.1](#a51-option-and-result)); and `string_char_at` returns
+  `i64` rather than `char`, because `char` is not a type ([A5](#a5-types)). This is N14-03 and it
+  belongs to M3, which is where `Result` arrives.
+- *(CLOSED 2026-08-23 — **`file_flush` and `file_seek` could not be compiled**. Both were declared
+  over an `i64` handle here and over an opaque `FileHandle` (`typedef void*`) in the emitted C
+  prelude, and `file_seek`'s `whence` narrowed to `uint8_t`, so `256` arrived as `0`. The type
+  checker refused the calls rather than letting gcc fail on generated code. Their wrappers are now
+  lowered onto `__pd_file_handles`, the `long long` table `file_write` and `file_close` already
+  use. `file_seek` takes `whence` 0/1/2 and returns the new absolute position or `-1`, refusing any
+  other `whence` rather than treating it as a seek; `file_flush` returns 1 or 0, its siblings'
+  convention. Both are exercised by `tests/stdlib/stdlib_builtins_file.pd`.)*
+- *(CLOSED 2026-08-23 — **dead C wrappers**. `__pd_file_open_ex`, `__pd_file_close_ex`,
+  `__pd_file_read_ex` and `__pd_file_write_ex` were still written into the prelude of every
+  generated program although no builtin named them. They are deleted, and with them the
+  `FileHandle` typedef, the `FileMode` enum and the six `pd_file_*` externs that only they used.)*
+
+**N14's effect classification is unenforced**, because effects gate nothing
+([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:513-513`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:2414-2414`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+(`src/codegen/mod.rs:2445-2445`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:630-630`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
@@ -996,10 +1038,8 @@ became the SSOT; it is no longer the mechanism.)*
 
 **File I/O (handle = i64)**: `file_open(String)->i64`, `file_read_all(i64)->String`,
 `file_read_line(i64)->String`, `file_write(i64,String)->bool`, `file_close(i64)->bool`,
-`file_exists(String)->bool`, `file_flush(i64)->i64`, `file_seek(i64,i64,i64)->i64`
-
-**Extended handle API**: `file_open_ex(String,i64)->i64`, `file_close_ex`, `file_read_ex`,
-`file_write_ex`
+`file_exists(String)->bool`, `file_flush(i64)->i64` (1 ok, 0 fail),
+`file_seek(i64,i64,i64)->i64` (whence 0=start, 1=current, 2=end; new position, or -1)
 
 **Paths and directories**: `path_exists`, `path_is_file`, `path_is_dir`, `create_dir`,
 `create_dir_all`, `remove_file`, `remove_dir`, `remove_dir_all`
@@ -1009,9 +1049,14 @@ became the SSOT; it is no longer the mechanism.)*
 
 `String` also supports `+` for concatenation.
 
-> The `*_ex`, path, and directory builtins are thin wrappers over `extern` symbols supplied at
-> link time by `runtime/palladium_runtime.c`. Before that file existed, every one of these — and
-> in fact every Palladium program — failed to link.
+*(An "Extended handle API" section stood here listing `file_open_ex`, `file_close_ex`,
+`file_read_ex` and `file_write_ex`. Those names left `src/builtins.rs` on 2026-08-23 and no
+Palladium program can name them; the section is deleted rather than marked, because a builtin
+listing is a list of what a program may call.)*
+
+> The path and directory builtins are thin wrappers over `extern` symbols supplied at link time by
+> `runtime/palladium_runtime.c`. Before that file existed, every one of these — and in fact every
+> Palladium program — failed to link.
 
 **The standard library above them is unimplemented, and unshipped.** Measured at `abeb665`:
 

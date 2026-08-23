@@ -162,10 +162,10 @@ description = "Whether a [T; N] parameter copies or aliases the caller's array. 
 spec = "../../specification/language-spec.md#n121-array-parameters-open-decision"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:2123-2126 the Type::Array parameter arm, \"In C, array parameters are passed as pointers\"",
+  "src: src/codegen/mod.rs:2155-2155 the Type::Array parameter arm, \"In C, array parameters are passed as pointers\"",
   "conformance: tests/regression/array_param_mut_write.pd run",
   "conformance: tests/reject/array_param_write_byvalue.pd reject",
-  "src: src/codegen/mod.rs:2143-2153 the reference arm lowers `&[T; N]` and `&mut [T; N]` through the same declarator: \"C decays both to a pointer to the first element\"",
+  "src: src/codegen/mod.rs:2174-2184 the reference arm lowers `&[T; N]` and `&mut [T; N]` through the same declarator: \"C decays both to a pointer to the first element\"",
   "conformance: tests/regression/array_reference_params.pd run",
 ]
 note = "Marked unimplemented because no spelling copies: every array parameter decays to a pointer in C, so a callee that writes always reaches the caller's storage. The previous note described two behaviours this compiler no longer has -- it said mutation through a bare non-mut array was permitted, and that &mut [T; N] was rejected outright. Both were re-measured on 2026-08-22 and both are false: the bare by-value write is refused by codegen with a diagnostic naming the open decision, and &mut [T; N] compiles and is covered by a passing fixture. What remains open is the specification question, not a hole in the implementation: nothing here COPIES, so Option A (value semantics) is unimplemented, and Option B (reference semantics) would still need a rule that does not exist. See language-spec.md N12.1 and A9.2."
@@ -212,7 +212,7 @@ description = "Monomorphization-based generics, generic structs and enums, where
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1848-1848 'Generic types in structs not yet supported'",
+  "src: src/codegen/mod.rs:1879-1879 'Generic types in structs not yet supported'",
   "src: src/parser/mod.rs:2696-2706 all-uppercase name inside <...> reclassified as a const argument",
   "conformance: tests/reject/generic_bound.pd reject",
   "conformance: tests/08_generics_basic.pd vacuous",
@@ -225,7 +225,7 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/parser/mod.rs:1286 fn parse_trait — traits do parse",
-  "src: src/codegen/mod.rs:1492-1495 Item::Trait(_) => emits nothing",
+  "src: src/codegen/mod.rs:1523-1526 Item::Trait(_) => emits nothing",
   "src: src/typeck/mod.rs:1107-1109 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
   "src: src/parser/mod.rs:1410 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd vacuous",
@@ -238,8 +238,8 @@ spec = "../../specification/language-spec.md#n4-types"
 implementation = "partial"
 evidence = [
   "src: src/parser/mod.rs:495-497 the const-parameter branch of parse_generic_params",
-  "src: src/codegen/mod.rs:1537-1537 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
-  "src: src/codegen/mod.rs:1538-1538 ArraySize::Expr(_) => \"0\".to_string()",
+  "src: src/codegen/mod.rs:1568-1568 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
+  "src: src/codegen/mod.rs:1569-1569 ArraySize::Expr(_) => \"0\".to_string()",
   "conformance: tests/reject/const_generic_param.pd reject",
 ]
 note = "Neither case is monomorphised, and the reject fixture is what shows it: the parameter reaches the type checker as the NAME N, so a call with a [i64; 3] does not match it. The three src: lines above prove the branches exist; only the fixture proves what happens when you use one."
@@ -252,7 +252,7 @@ evidence = [
   "conformance: tests/06_pattern_matching.pd run",
   "src: src/ast/mod.rs:353 pub enum Pattern — three variants only",
   "src: src/typeck/mod.rs:1884-1885 exhaustiveness runs only when the scrutinee is an enum",
-  "src: src/codegen/mod.rs:2169-2169 match lowers to an if/else-if chain",
+  "src: src/codegen/mod.rs:2200-2200 match lowers to an if/else-if chain",
 ]
 note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
 
@@ -264,7 +264,7 @@ evidence = [
   "conformance: tests/04_control_flow_for.pd run",
   "conformance: tests/04_control_flow_while.pd run",
   "conformance: tests/reject/loop_keyword.pd reject",
-  "src: src/codegen/mod.rs:2135-2135 for-over-array emits sizeof(...) on a decayed pointer",
+  "src: src/codegen/mod.rs:2166-2166 for-over-array emits sizeof(...) on a decayed pointer",
 ]
 
 [core_language.control_flow.conditionals]
@@ -338,8 +338,8 @@ description = "`?` for error propagation with early return."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
-  "src: src/codegen/mod.rs:2145-2146 emits a struct Result temporary — a layout codegen never defines",
-  "src: src/codegen/mod.rs:2812-2812 the comment describing that layout",
+  "src: src/codegen/mod.rs:2176-2177 emits a struct Result temporary — a layout codegen never defines",
+  "src: src/codegen/mod.rs:2843-2843 the comment describing that layout",
   "conformance: tests/reject/question_mark_operator.pd reject",
 ]
 note = "No longer silent. This row used to read \"it typechecks, and the failure surfaces in gcc\" -- true of the codegen path the two citations above describe, and no longer true of the compiler: the type checker refuses `?` by name before any C exists (defect D5's fix). The lowering is still there and still refers to a layout nothing defines, which is why the citations stay and why this is `partial` rather than `unimplemented`."
@@ -372,7 +372,7 @@ description = "No await operator; the compiler places async boundaries."
 spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:2760-2765 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
+  "src: src/codegen/mod.rs:2791-2796 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
   "conformance: tests/reject/async_fn.pd reject",
   "conformance: tests/10_async_await.pd vacuous",
 ]
@@ -590,7 +590,7 @@ description = "Core types and traits, memory utilities, iterator protocol."
 spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
 implementation = "unimplemented"
 evidence = [
-  "gate: make stdlib-gate -> \"21 stdlib files pinned\", \"38 builtins accounted for\" -- 0 of the 21 compile, each re-proved at its recorded stage and blocker against stdlib/MANIFEST.tsv, and the forced-import probe (PALLADIUM_PATH=stdlib/std, import option) still fails with that same blocker",
+  "gate: make stdlib-gate -> \"21 stdlib files pinned\", \"34 builtins accounted for\" -- 0 of the 21 compile, each re-proved at its recorded stage and blocker against stdlib/MANIFEST.tsv, and the forced-import probe (PALLADIUM_PATH=stdlib/std, import option) still fails with that same blocker",
   "src: stdlib/MANIFEST.tsv:1 the pinned per-file verdict and blocker the gate above recomputes",
   "src: src/resolver/mod.rs:51 the resolver reads PALLADIUM_PATH, so this is not a dead-resolver problem",
   "cmd: grep -rn stdlib .github/ -> exit 1, 0 lines -- stdlib is not packaged by any workflow, and neither Homebrew formula installs it",
@@ -604,7 +604,7 @@ spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
 implementation = "unimplemented"
 evidence = [
   "src: src/macros/mod.rs:41 vec![e] is registered here and expands to a 1-element array, not a growable vector",
-  "src: src/codegen/mod.rs:1848-1848 'Generic types in structs not yet supported' — no generic container can exist",
+  "src: src/codegen/mod.rs:1879-1879 'Generic types in structs not yet supported' — no generic container can exist",
 ]
 
 [ecosystem.std_library.io]

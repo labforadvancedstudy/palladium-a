@@ -300,6 +300,10 @@ def score_bearing_files() -> list[str]:
 PINNED_PROSE_FIGURES = frozenset({
     "85%", "100%",          # quoted, in the passage listing retracted progress claims
     "1 of 23", "0 of 21",   # gate counts: evaluated thesis rows, stdlib files
+    # Added 2026-08-23 with the M2 exit criterion. Both are gate counts and neither is an
+    # adversary score, which is the distinction this list exists to make a reviewer state:
+    "54 of 54",             # test-xfail: owed rows failing for their DECLARED diagnostic
+    "51 of 82",             # the m2-exit aggregation lattice, under its own inversion control
 })
 
 
@@ -1296,11 +1300,17 @@ WITNESSES = ("bootstrap/pdc.pd", "tests/witness/json_parser.pd")
 
 # N14's effectful set. `string_*`, `char_*` and `int_to_string` are pure and deliberately
 # absent: a caller of those is not evidence of an IO effect.
+#
+# `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex` WERE members and
+# are gone, 2026-08-23. They were never N14's — this comment said "N14's effectful set"
+# while four of its members were names the specification does not define — and they have
+# now left src/builtins.rs as well, so nothing can call one. A name here that no program
+# can name classifies nothing; leaving it would make this set the place a deleted builtin
+# lives on.
 IO_BUILTINS = frozenset({
     "print", "print_int", "panic",
     "file_open", "file_read_all", "file_read_line", "file_write", "file_close",
     "file_exists", "file_flush", "file_seek",
-    "file_open_ex", "file_close_ex", "file_read_ex", "file_write_ex",
     "path_exists", "path_is_file", "path_is_dir",
     "create_dir", "create_dir_all", "remove_file", "remove_dir", "remove_dir_all",
     "read_file_to_string", "write_string_to_file", "arg_count", "arg_at",
@@ -2221,7 +2231,10 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "1dd2b6838eafd12ff5af1ac4ed9d82fd56a40d2f618d88ff99619606d657146d"
+# RE-PINNED 2026-08-23 via `--print-case-digest`, deliberately: one case text changed
+# ("the two gate counts" -> "the four gate counts") when PINNED_PROSE_FIGURES took the
+# two figures the M2 exit criterion introduced. No case was added or removed.
+EXPECTED_CASE_SHA = "bc01d66e930638b3e1075722966a7526dcde527c61c8f1155440cb46fc3de690"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -3061,10 +3074,17 @@ def self_test() -> int:
     case("no THESIS row is an `observable`, so `make thesis-exit` cannot reach that dispatch",
          [f[0] for f in _kinds if f[7] == "thesis" and f[4] == "observable"], [],
          drives_main=False)
+    # 18 -> 19 on 2026-08-23: N14-01 ("the builtin set is exactly the 34 normative names")
+    # changed evidence-kind from `gate make stdlib-gate` to
+    # `observable src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`. Its
+    # old evidence compared the registry against tests/stdlib/BUILTINS.tsv — a second copy
+    # of the compiler's own opinion — and so could not have gone red on the defect the row
+    # is about. The count is a DEMAND figure, and this one is real demand: the row is
+    # `satisfied` today by a test `make v1-exit` would have to dispatch.
     case("the manifest carries `observable` rows nothing dispatches yet — DEMAND for the "
          "1.0 gate GI-10 owes, not evidence that this code is live; retention is debt "
          "against that row, and an empty set here makes it a deletion",
-         len([f for f in _kinds if f[4] == "observable"]), 18, drives_main=False)
+         len([f for f in _kinds if f[4] == "observable"]), 19, drives_main=False)
     case("...and the gate that would dispatch them does not exist yet, which is what makes "
          "this debt rather than liveness",
          (ROOT / "Makefile").read_text().count("\nv1-exit:"), 0, drives_main=False)
@@ -3736,12 +3756,24 @@ def self_test() -> int:
     # the first place.
     _measured_tokens = {f"{ok}/{tot}" for ok, tot in _MEASURED.values()}
     _scan = score_bearing_files()
+    # THREE FILES JOINED THIS SET on 2026-08-23, and their membership is the review this
+    # pin exists to force. All three belong to the M2 milestone exit (GI-08/GI-09) and all
+    # three cite `thesis-exit` for the same two reasons: to say what they are NOT — they
+    # answer "does milestone X still owe a row", never "is 1.0 real" — and because they
+    # copy this gate's three-valued exit contract, where NO_VERDICT is a distinct code from
+    # FALSE, rather than inventing a second dialect for it.
+    #   scripts/requirements.py              the inventory reader
+    #   scripts/m2-exit.sh                   the aggregator that publishes the tri-state
+    #   scripts/test-requirements-runner.sh  GI-09, which drives both
+    # None carries an adversary score, so the backstop below has nothing to find in them.
     case("the scanned set is DERIVED from the tree, and is the reviewed one — a hand list "
          "of four was missing three files that cite this gate",
          _scan,
          ["Makefile", "docs/contributing/1.0-requirements.tsv",
-          "docs/contributing/MILESTONES.md", "scripts/thesis-exit.sh",
-          "scripts/thesis_exit.py", "tests/callgraph-differential.tsv",
+          "docs/contributing/MILESTONES.md", "scripts/m2-exit.sh",
+          "scripts/requirements.py", "scripts/test-requirements-runner.sh",
+          "scripts/thesis-exit.sh", "scripts/thesis_exit.py",
+          "tests/callgraph-differential.tsv",
           "tests/liveness-differential.tsv"], drives_main=False)
 
     def _outside_block(text):
@@ -3817,8 +3849,13 @@ def self_test() -> int:
          {rel: sorted(prose_figures((ROOT / rel).read_text()))
           for rel in _scan if prose_figures((ROOT / rel).read_text())}, {},
          drives_main=False)
-    case("the pinned prose figures are the two quoted retractions and the two gate counts",
-         sorted(PINNED_PROSE_FIGURES), ["0 of 21", "1 of 23", "100" + "%", "85" + "%"],
+    # The list is pinned HERE as well, so that adding to it is a two-line edit in one
+    # commit rather than one word — the same shape as the roster in
+    # scripts/requirements.py, and for the same reason: a declaration list nobody has to
+    # re-declare is a place to hide a figure.
+    case("the pinned prose figures are the two quoted retractions and the four gate counts",
+         sorted(PINNED_PROSE_FIGURES),
+         ["0 of 21", "1 of 23", "100" + "%", "51 of 82", "54 of 54", "85" + "%"],
          drives_main=False)
     case("the scan is NARROW and says so: an English spelling of a measurement passes",
          sorted(prose_figures("roughly half of the cases, most of them")), [],

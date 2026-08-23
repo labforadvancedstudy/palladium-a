@@ -176,8 +176,8 @@ is EMPIRICAL over N files, not proved from the generator:
                 i += 1
     print(dict(odd) or "none")     # measured 2026-08-22 over 400 files: none
 
-The source-side support is src/codegen/mod.rs:2162-2170 (`generate_block`) and
-src/codegen/mod.rs:2212- (`generate_statement`, leaf arms ending `";\n"` at
+The source-side support is src/codegen/mod.rs:2193-2201 (`generate_block`) and
+src/codegen/mod.rs:2243- (`generate_statement`, leaf arms ending `";\n"` at
 :2186-2190 and :2191-2198). That is a reading of one function rather than a
 proof over every arm, which is why the empirical sweep is the basis and this is
 the corroboration.
@@ -474,8 +474,8 @@ def unmodelled_construct(items):
             #
             # HOW THAT IS KNOWN, at both strengths, because one of them reads
             # stronger than it is. SOURCE SIDE: `generate_block`
-            # (src/codegen/mod.rs:2162-2170) writes an indent and delegates to
-            # `generate_statement` (src/codegen/mod.rs:2212-), whose leaf arms
+            # (src/codegen/mod.rs:2193-2201) writes an indent and delegates to
+            # `generate_statement` (src/codegen/mod.rs:2243-), whose leaf arms
             # terminate with `";\n"` — `Stmt::Expr` at :2186-2190, `Stmt::Return`
             # at :2191-2198 — while compound arms emit their own `{`-terminated
             # headers. That is a reading of one function, not a proof over every

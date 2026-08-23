@@ -31,7 +31,7 @@ never load `stdlib/`" would have been false. What is true is narrower, and every
 **The conclusion, stated exactly:** no default configuration loads anything under `stdlib/`;
 nothing packages or installs it; and even when a user deliberately forces it onto the resolver's
 path, every module fails to load with the blocker recorded below. A Palladium program today gets
-the 38 builtins in `src/builtins.rs` and nothing else.
+the 34 builtins in `src/builtins.rs`, all of them callable, and nothing else.
 
 That matches the status table in `docs/contributing/MILESTONES.md` — "Standard library — none" —
 and contradicts the old `stdlib/README.md`, which claimed ✅ for collections, strings, math, I/O,
@@ -394,22 +394,32 @@ change and no new test.
    loop that may not be entered — is still absent, because deciding it needs a flow analysis the
    parser does not have. Net A catches all of them after the fact; nothing refuses them.
 
-1. **Six builtins are registered but cannot be called.** `file_flush`, `file_seek`,
-   `file_open_ex`, `file_close_ex`, `file_read_ex` and `file_write_ex` are declared in
-   `src/builtins.rs` over an `I64` handle, while `runtime/pd_prelude.h:229-251` declares the same
-   functions over `FileHandle` (`void*`). `fix/m1-builtin-registry` enumerates **eleven** distinct
-   mismatch dimensions across the six — beyond the handle, `whence` narrows `i64 -> u8` (so 256
-   silently becomes 0), lengths convert to `size_t`, and `file_read_ex` wants a writable `char*`
-   where Palladium can only supply an immutable `String`. All eleven were re-verified against this
-   tree's runtime.
+1. **CLOSED 2026-08-23: no builtin is registered-and-refused any more.** There were six.
+   `src/builtins.rs` declared the file-handle family over `I64` while `runtime/pd_prelude.h`
+   declared the same functions over `FileHandle` (`void*`), and `fix/m1-builtin-registry`
+   enumerated **eleven** distinct mismatch dimensions across the six — beyond the handle, `whence`
+   narrowed `i64 -> u8` (so 256 silently became 0), lengths converted to `size_t`, and
+   `file_read_ex` wanted a writable `char*` where Palladium can only supply an immutable `String`.
 
-   **Status changed 2026-08-22.** That branch has landed. The type checker now refuses these calls
-   with `Built-in <name> is registered but not callable: …`, so they fail at **compile**, not in
-   gcc. `tests/stdlib/BUILTINS.tsv` pins the new stage and diagnostic; the reconciliation check
-   against `Support::Unsupported` is now **active** rather than dormant. Worth recording how that
-   transition was noticed: the gate went red on the first run after rebasing, with
-   `NOT THE RECORDED DEFECT: expected rejection at link, got compile` for all six. The pin refused
-   to absorb a changed world silently, which is the only reason it is a pin.
+   **2026-08-22:** that branch landed `Support::Unsupported`, so the type checker refused these
+   calls with `Built-in <name> is registered but not callable: …` and they failed at **compile**
+   rather than in gcc. This gate found the transition rather than absorbing it — all six went red
+   with `NOT THE RECORDED DEFECT: expected rejection at link, got compile` on the first run after
+   the rebase, which is the pinning working as designed.
+
+   **2026-08-23:** the eleven went to zero, in two unrelated ways, and the difference matters more
+   than the number. Four names — `file_open_ex`, `file_close_ex`, `file_read_ex`, `file_write_ex` —
+   are not in N14 and were **deleted**: they left the registry, and their C wrappers, the
+   `FileHandle` typedef, the `FileMode` enum and the six `pd_file_*` externs that only they used
+   have now left `src/codegen/mod.rs` too. Eight of the eleven dimensions were theirs. The other
+   two — `file_flush` and `file_seek` — are normative and were **repaired**: both wrappers are
+   lowered onto `__pd_file_handles`, the `long long` handle table `file_write` and `file_close`
+   already use, and both are exercised by `tests/stdlib/stdlib_builtins_file.pd` with the first
+   coverage either has ever had (`file_seek` over SEEK_SET/CUR/END, a rejected `whence`, a bad
+   handle, and a read proving the reported position is the position it reads from).
+
+   What this does NOT mean: that signatures match N14. The filesystem family still returns
+   `i64`/`bool` rather than `Result`, which is N14-03 and belongs to M3.
 
 2. **`read_file_to_string` returns NULL on failure** (`runtime/pd_prelude.h:285`), unlike `arg_at`,
    which deliberately returns `""` so that "every string built-in assumes a non-NULL `const char*`"

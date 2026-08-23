@@ -507,6 +507,12 @@ $PROBE reconcile --src src/builtins.rs --manifest "$BUILTIN_MANIFEST" >"$recon_l
 case $? in
   0) case "$(field OUTCOME "$recon_log")" in
        dormant) printf '  %s..%s   %s\n' "$GREEN" "$NC" "$(field REASON "$recon_log")" ;;
+       # No unsupported builtin exists to reconcile. Reported as its own line
+       # rather than as "0 checked", because those read identically and mean
+       # opposite things — one is an empty inventory, the other a check that
+       # looked at nothing.
+       none-unsupported)
+                ok "reconciled with src/builtins.rs — NO unsupported builtin exists ($(field ANALYSED "$recon_log") entries parsed); nothing to cross-check" ;;
        *)       ok "reconciled with src/builtins.rs — $(field CHECKED "$recon_log") unsupported builtin(s) checked" ;;
      esac ;;
   1) while IFS= read -r m; do note "RECONCILE: ${m#FINDING }"; done \

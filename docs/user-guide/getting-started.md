@@ -155,6 +155,6 @@ Usually a top-level `const`, `static`, `mod` or `use` — none of which exist. I
   `scripts/check-docs.sh`.
 - [Language specification](../specification/language-spec.md) — every construct with its status
   and the source location that proves it.
-- [Builtin reference](../reference/builtins.md) — all 38 builtins, generated from the compiler's
-  own table.
+- [Builtin reference](../reference/builtins.md) — all 34 builtins, generated from the compiler's
+  own table, and all of them callable.
 - [Palladium vs Rust](../contributing/palladium_vs_rust_comparison.md) — measured comparison.

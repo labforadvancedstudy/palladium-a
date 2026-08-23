@@ -472,4 +472,4 @@ several of them fail *without an error message* — see the
   and the source location that proves it.
 - [Bootstrap subset](../specification/bootstrap-subset.md) — the subset the self-hosting compiler
   is written in, and the self-hosting gate.
-- [Builtin reference](../reference/builtins.md) — all 38 builtin functions with signatures.
+- [Builtin reference](../reference/builtins.md) — all 34 builtin functions with signatures.

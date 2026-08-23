@@ -83,6 +83,7 @@ fn main() {
     let data_path = "build_output/stdlib_gate_tmp/data.txt";
     let handle_path = "build_output/stdlib_gate_tmp/handle.txt";
     let absent = "build_output/stdlib_gate_tmp/definitely-absent.txt";
+    let flush_path = "build_output/stdlib_gate_tmp/flush.txt";
 
     // Leftovers from an earlier run would make the transcript depend on
     // history, so clear the tree first. The result is deliberately not
@@ -165,6 +166,48 @@ fn main() {
     expect_str("file_read_line_2", file_read_line(h3), "line2");
     expect_str("file_read_line_eof", file_read_line(h3), "");
     expect_true("file_close_lines", file_close(h3));
+
+    // ---- file_seek / file_flush ----
+    // These two were REGISTERED BUT NOT CALLABLE until 2026-08-23: their C
+    // wrappers took the enhanced API's opaque `FileHandle` while a Palladium
+    // handle is an i64, so `let r = file_seek(1, 0, 0);` was refused at
+    // typecheck. They are lowered onto `__pd_file_handles` now, and this is the
+    // first coverage either has ever had.
+    //
+    // Provenance, read off the emitted wrappers rather than documentation:
+    //   __pd_file_seek(handle, whence, offset) -> new absolute position, or -1.
+    //     whence 0 = SEEK_SET, 1 = SEEK_CUR, 2 = SEEK_END; anything else is -1,
+    //     which is a REFUSAL and not an out-of-range seek.
+    //   __pd_file_flush(handle) -> 1 on success, 0 on failure — the convention
+    //     __pd_file_write and __pd_file_close already use.
+    // The file holds "line1\nline2\n", which is 12 bytes.
+    let h4 = file_open(handle_path);
+    expect_true("file_open_seek", h4 >= 1);
+    let pos_set = file_seek(h4, 0, 6);
+    covers_i64("file_seek", pos_set);
+    expect_i64("file_seek_set", pos_set, 6);
+    expect_i64("file_seek_cur", file_seek(h4, 1, 2), 8);
+    expect_i64("file_seek_end", file_seek(h4, 2, 0), 12);
+    // ...and the position it reports is the position it reads from.
+    expect_i64("file_seek_rewind", file_seek(h4, 0, 6), 6);
+    expect_str("file_seek_reads_from_there", file_read_line(h4), "line2");
+    // An unrecognised whence is refused, not treated as SEEK_SET.
+    expect_i64("file_seek_bad_whence", file_seek(h4, 9, 0), -1);
+    expect_i64("file_seek_bad_handle", file_seek(9999, 0, 0), -1);
+    expect_true("file_close_seek", file_close(h4));
+
+    let h5 = file_open(flush_path);
+    expect_true("file_open_flush", h5 >= 1);
+    expect_true("file_write_flush", file_write(h5, "flushed"));
+    let flushed = file_flush(h5);
+    covers_i64("file_flush", flushed);
+    expect_i64("file_flush_ok", flushed, 1);
+    // The point of flushing: the bytes are readable before the handle is closed.
+    let h5r = file_open(flush_path);
+    expect_str("file_flush_is_observable", file_read_all(h5r), "flushed");
+    expect_true("file_close_flush_reader", file_close(h5r));
+    expect_true("file_close_flush", file_close(h5));
+    expect_i64("file_flush_bad_handle", file_flush(9999), 0);
 
     // Invalid handles are rejected rather than dereferenced.
     expect_false("file_write_bad_handle", file_write(0, "nope"));
