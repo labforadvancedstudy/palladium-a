@@ -76,6 +76,16 @@ field() { awk -v k="$1" '$1==k{$1="";sub(/^ /,"");print;exit}' "$2"; }
 
 is_accepted() { [ "$1" = "COMPILE_OK" ] || [ "$1" = "ACCEPTED_NO_MAIN" ]; }
 
+# The backend refusing its own output is not a verdict this manifest may declare.
+# If pdc accepted a file and the build then failed, that is a defect in pdc, not
+# a property of the file — so `gate_probe` reports it as BACKEND_REJECT (gcc
+# reached a judgement) or BACKEND_UNRESOLVED (it did not, or we cannot tell),
+# and BOTH fail here before the manifest is ever consulted. The old spelling was
+# `LINK_FAIL`, still documented in stdlib/MANIFEST.tsv as a declarable verdict;
+# it is now refused on both sides — nothing emits it, and a row that names it is
+# a manifest error rather than a comparison that happens not to match.
+is_backend_verdict() { [ "$1" = "BACKEND_REJECT" ] || [ "$1" = "BACKEND_UNRESOLVED" ]; }
+
 # ---------------------------------------------------------------------------
 echo "== Phase 0: negative control (can this harness fail at all?) =="
 # CALIBRATION FIRST. Every verdict below rests on pdc exiting 0 for a valid
@@ -237,6 +247,15 @@ while IFS=$'\t' read -r path want_verdict want_blocker; do
   got_blocker=$(field BLOCKER "$log")
   if is_accepted "$got_verdict"; then accepted=$((accepted+1)); else rejected=$((rejected+1)); fi
   printf '  %-42s %-16s %s\n' "$path" "$got_verdict" "$got_blocker"
+  if [ "$want_verdict" = "LINK_FAIL" ] || is_backend_verdict "$want_verdict"; then
+    note "$path declares '$want_verdict' in $MANIFEST: that gcc is expected to refuse the C this compiler emits. A file cannot declare a compiler defect as its expected state — fix the backend, or record the verdict the language actually gives it."
+    continue
+  fi
+  if is_backend_verdict "$got_verdict"; then
+    note "BACKEND: $path was accepted by the front end and the build then failed ($got_verdict). The C is this compiler's own output, so this is a defect in pdc and not a property of the file. No row in $MANIFEST can excuse it."
+    field DIAG "$log" | sed 's/^/        /'
+    continue
+  fi
   if [ "$got_verdict" != "$want_verdict" ]; then
     if is_accepted "$want_verdict"; then
       note "REGRESSION: $path was $want_verdict, now $got_verdict"
@@ -476,6 +495,9 @@ while IFS=$'\t' read -r name status stage fp detail note; do
              rejected-as-expected) ;;
              accepted)
                note "XPASS: builtin '$name' is recorded UNUSABLE but now compiles — update $BUILTIN_MANIFEST" ;;
+             backend-reject)
+               note "BACKEND: builtin '$name' is accepted by the front end and the build then fails ($(field VERDICT "$plog")). That is a defect in pdc, not a property of the builtin, and no row in $BUILTIN_MANIFEST may declare it: $(field REASON "$plog")"
+               field DIAG "$plog" | sed 's/^/        /' ;;
              *)
                note "NOT THE RECORDED DEFECT: '$name' — $(field REASON "$plog")"
                field DIAG "$plog" | sed 's/^/        /' ;;

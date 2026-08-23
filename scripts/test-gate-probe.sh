@@ -118,11 +118,145 @@ $PROBE pdc-reject stdlib/std/option.pd --pdc "$TMP/pdc_blocker_sigkill" --out t_
 check "pdc-reject, SIGKILL after the expected blocker" 2 $?
 grep -q 'killed by signal 9' "$TMP/o"
 check "  and the reason is the signal, not the blocker" 0 $?
+# `--expect-stage link` is GONE (gate_probe.py: a caller may not declare that
+# gcc is expected to refuse the C this compiler emits). This control never
+# depended on it: a Malfunction short-circuits before any stage is classified,
+# so the flag was never read. The scenario — a gcc-stage diagnostic already on
+# stderr, then a kill — is unchanged, which is what the case is actually about.
 $PROBE pdc-reject stdlib/std/option.pd --pdc "$TMP/pdc_gcc_sigkill" --out t_r2 \
-  --expect-stage link --require "incompatible integer to pointer conversion" >"$TMP/o" 2>&1
+  --require "incompatible integer to pointer conversion" >"$TMP/o" 2>&1
 check "pdc-reject, SIGKILL after the expected link diagnostic" 2 $?
 grep -q 'killed by signal 9' "$TMP/o"
 check "  and the reason is the signal, not the diagnostic" 0 $?
+$PROBE pdc-reject stdlib/std/option.pd --pdc "$TMP/pdc_gcc_sigkill" --out t_r2x \
+  --expect-stage link --require "anything" >"$TMP/o" 2>&1
+check "pdc-reject, --expect-stage link is refused at parse time" 2 $?
+grep -q "invalid choice: 'link'" "$TMP/o"
+check "  and argparse names the rejected choice" 0 $?
+
+echo
+echo "== the backend refusing its own output is not a declarable verdict =="
+# Same rule scripts/conformance.sh enforces for .pd fixtures, on the stdlib
+# corpus. Fault-injected on purpose: the only programs that reach this outcome
+# on a healthy tree are live compiler defects, so a control that borrowed one
+# would evaporate the day it was fixed. These stubs manufacture it, so every
+# branch fires on demand, forever.
+printf 'fn main() {\n    print("ok");\n}\n' >"$TMP/be_probe.pd"
+
+# Writes a translation unit, then exits 3 — fix/gcc-diagnostics-discarded's
+# EXIT_BACKEND_REJECT (src/linker.rs:247 at aa63982), i.e. gcc ran to completion
+# and refused the C. An exit code, not a string: no fixture text has a route to
+# it. Also exercises the widened reject_codes — before that, exit 3 would have
+# been reported as "pdc MALFUNCTIONED" instead of as the defect it is.
+mk pdc_backend_reject '#!/bin/sh
+mkdir -p build_output
+printf "int main(void) { return nope; }\n" > build_output/be_probe.c
+echo "error: gcc compilation failed:" >&2
+echo "build_output/be_probe.c:1:25: error: use of undeclared identifier" >&2
+exit 3'
+# TODAY'"'"'S REAL pdc: a translation unit, a failed build, and the flattened
+# exit 1 that cannot say whether gcc refused the C or died (src/main.rs:137-139).
+mk pdc_backend_unresolved '#!/bin/sh
+mkdir -p build_output
+printf "int main(void) { return nope; }\n" > build_output/be_probe.c
+echo "error: gcc compilation failed:" >&2
+echo "build_output/be_probe.c:1:25: error: use of undeclared identifier" >&2
+exit 1'
+# The log says gcc ran, but nothing was emitted. A contradiction, not a
+# front-end refusal — and `compile` IS a pinnable stage, so it must not land there.
+mk pdc_contradiction '#!/bin/sh
+echo "error: gcc compilation failed:" >&2
+echo "somewhere.c:1:1: error: broken" >&2
+exit 1'
+# A genuine front-end refusal: no translation unit, no gcc.
+mk pdc_frontend_reject '#!/bin/sh
+echo "error: Expected '"'"'fn'"'"' for method, but found '"'"'pub'"'"'" >&2
+exit 1'
+
+$PROBE pdc-reject "$TMP/be_probe.pd" --pdc "$TMP/pdc_backend_reject" --out t_b1 \
+  --expect-stage compile --require "undeclared identifier" >"$TMP/o" 2>&1
+check "pdc-reject, front end accepted then the build failed" 0 $?
+grep -q '^OUTCOME backend-reject' "$TMP/o"
+check "  outcome is backend-reject, NOT rejected-as-expected" 0 $?
+grep -q '^VERDICT BACKEND_REJECT' "$TMP/o"
+check "  and the provenance resolves it to BACKEND_REJECT" 0 $?
+grep -q 'rejected-as-expected' "$TMP/o"
+check "  --expect-stage compile did not bless it" 1 $?
+
+$PROBE pdc-reject "$TMP/be_probe.pd" --pdc "$TMP/pdc_backend_unresolved" --out t_b2 \
+  --expect-stage compile --require "undeclared identifier" >"$TMP/o" 2>&1
+check "pdc-reject, no structured provenance" 0 $?
+grep -q '^VERDICT BACKEND_UNRESOLVED' "$TMP/o"
+check "  under-claims: BACKEND_UNRESOLVED, not an accusation" 0 $?
+grep -q 'rejected-as-expected' "$TMP/o"
+check "  and it is still not blessable" 1 $?
+
+mk pdc_toolchain '#!/bin/sh
+mkdir -p build_output
+printf "int main(void) { return 0; }\n" > build_output/be_probe.c
+echo "error: gcc could not be spawned" >&2
+exit 5'
+$PROBE pdc-reject "$TMP/be_probe.pd" --pdc "$TMP/pdc_toolchain" --out t_b2b \
+  --expect-stage compile --require "could not be spawned" >"$TMP/o" 2>&1
+check "pdc-reject, gcc never reached a verdict (exit 5)" 0 $?
+grep -q '^VERDICT BACKEND_UNRESOLVED' "$TMP/o"
+check "  is not an accusation against the backend" 0 $?
+
+$PROBE pdc-reject "$TMP/be_probe.pd" --pdc "$TMP/pdc_contradiction" --out t_b3 \
+  --expect-stage compile --require "broken" >"$TMP/o" 2>&1
+check "pdc-reject, log says gcc ran but nothing was emitted" 0 $?
+grep -q 'cannot both be true' "$TMP/o"
+check "  the contradiction is named, not filed under 'compile'" 0 $?
+
+$PROBE pdc-reject "$TMP/be_probe.pd" --pdc "$TMP/pdc_frontend_reject" --out t_b4 \
+  --expect-stage compile --require "Expected 'fn' for method" >"$TMP/o" 2>&1
+check "pdc-reject, a genuine front-end refusal is unaffected" 0 $?
+grep -q '^OUTCOME rejected-as-expected' "$TMP/o"
+check "  and is still rejected-as-expected (discrimination)" 0 $?
+
+$PROBE pdc-verdict "$TMP/be_probe.pd" --pdc "$TMP/pdc_backend_reject" --out t_b5 >"$TMP/o" 2>&1
+check "pdc-verdict, the same outcome on the verdict surface" 0 $?
+grep -q '^VERDICT BACKEND_REJECT' "$TMP/o"
+check "  reports BACKEND_REJECT, not the pinnable LINK_FAIL" 0 $?
+grep -q 'LINK_FAIL' "$TMP/o"
+check "  LINK_FAIL is not emitted anywhere any more" 1 $?
+
+$PROBE pdc-verdict "$TMP/be_probe.pd" --pdc "$TMP/pdc_frontend_reject" --out t_b6 >"$TMP/o" 2>&1
+check "pdc-verdict, a front-end refusal is COMPILE_FAIL" 0 $?
+grep -q '^VERDICT COMPILE_FAIL' "$TMP/o"
+check "  and carries no backend accusation" 0 $?
+
+# THE STRUCTURED CODE STANDS ALONE. The witness used to be a conjunction — a
+# code was examined only if the translation unit was also on disk — which fails
+# OPEN on the half that is missing: pdc exits 3 while codegen names its output
+# differently than emitted_c_path derives it, and `--expect-stage compile`
+# blesses the outcome. No .c, no legacy wrapper prose, structured code only.
+mk pdc_no_tu_3 '#!/bin/sh
+echo "error: the C compiler refused the generated translation unit" >&2
+exit 3'
+mk pdc_no_tu_5 '#!/bin/sh
+echo "error: the C compiler could not be started" >&2
+exit 5'
+rm -f build_output/be_probe.c
+$PROBE pdc-reject "$TMP/be_probe.pd" --pdc "$TMP/pdc_no_tu_3" --out t_b7 \
+  --expect-stage compile --require "refused the generated translation unit" >"$TMP/o" 2>&1
+check "pdc-reject, exit 3 with NO translation unit is still conclusive" 0 $?
+grep -q '^OUTCOME backend-reject' "$TMP/o"
+check "  --expect-stage compile did not bless it (was: rejected-as-expected)" 0 $?
+grep -q 'sufficient witness on its own' "$TMP/o"
+check "  and the reason says the exit code is the witness" 0 $?
+rm -f build_output/be_probe.c
+$PROBE pdc-reject "$TMP/be_probe.pd" --pdc "$TMP/pdc_no_tu_5" --out t_b8 \
+  --expect-stage compile --require "could not be started" >"$TMP/o" 2>&1
+check "pdc-reject, exit 5 with NO translation unit is conclusive too" 0 $?
+grep -q '^VERDICT BACKEND_UNRESOLVED' "$TMP/o"
+check "  and still claims nothing about the C" 0 $?
+rm -f build_output/be_probe.c
+$PROBE pdc-verdict "$TMP/be_probe.pd" --pdc "$TMP/pdc_no_tu_3" --out t_b9 >"$TMP/o" 2>&1
+check "pdc-verdict, exit 3 with NO translation unit" 0 $?
+grep -q '^VERDICT BACKEND_REJECT' "$TMP/o"
+check "  is BACKEND_REJECT, not the pinnable COMPILE_FAIL" 0 $?
+rm -f build_output/be_probe.c
 
 echo
 echo "== a signaled C compiler that ALREADY printed a return-type error =="
