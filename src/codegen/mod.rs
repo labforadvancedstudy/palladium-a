@@ -735,7 +735,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:2857-2857`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:3619-3619`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:548`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -1514,6 +1514,7 @@ impl CodeGenerator {
         // the hash seed into the emitted C.
         let mut imported_modules: Vec<_> = self.imported_modules.clone().into_iter().collect();
         imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let mut imported_defs: Vec<(String, Item)> = Vec::new();
         for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 match item {
@@ -1523,39 +1524,47 @@ impl CodeGenerator {
                             if struct_def.type_params.is_empty()
                                 && struct_def.lifetime_params.is_empty()
                             {
-                                self.generate_struct(struct_def)?;
+                                imported_defs.push((struct_def.name.clone(), item.clone()));
                             }
                         }
                     }
                     Item::Enum(enum_def) => {
                         // Skip generic enums - they should only be generated when instantiated
                         if enum_def.type_params.is_empty() && enum_def.lifetime_params.is_empty() {
-                            self.generate_enum(enum_def)?;
+                            imported_defs.push((enum_def.name.clone(), item.clone()));
                         }
                     }
                     _ => {}
                 }
             }
         }
+        self.generate_type_definitions(&imported_defs)?;
 
         // Generate struct and enum definitions from main program
+        //
+        // The two phases stay separate, and in this order, because the
+        // dependency direction between them is fixed: a module cannot name a
+        // type declared in the program that imports it, so every cross-phase
+        // edge points backwards into the imports, which are already emitted.
+        let mut local_defs: Vec<(String, Item)> = Vec::new();
         for item in &program.items {
             match item {
                 Item::Struct(struct_def) => {
                     // Skip generic structs - they should only be generated when instantiated
                     if struct_def.type_params.is_empty() && struct_def.lifetime_params.is_empty() {
-                        self.generate_struct(struct_def)?;
+                        local_defs.push((struct_def.name.clone(), item.clone()));
                     }
                 }
                 Item::Enum(enum_def) => {
                     // Skip generic enums - they should only be generated when instantiated
                     if enum_def.type_params.is_empty() && enum_def.lifetime_params.is_empty() {
-                        self.generate_enum(enum_def)?;
+                        local_defs.push((enum_def.name.clone(), item.clone()));
                     }
                 }
                 _ => {}
             }
         }
+        self.generate_type_definitions(&local_defs)?;
 
         // Generate monomorphized versions of generic structs FIRST
         if !self.generic_struct_instantiations.is_empty() {
@@ -2057,6 +2066,67 @@ impl CodeGenerator {
         let constructors = self.output.split_off(constructors_start);
         self.enum_constructors.push_str(&constructors);
 
+        Ok(())
+    }
+
+    /// Emit one phase's `struct` and `enum` definitions, DEPENDENCIES FIRST.
+    ///
+    /// Not source order. C gives a field a size from a complete type, so a
+    /// `struct S { e: E }` written above `enum E { A, B }` emitted in the order
+    /// it was written produces
+    ///
+    /// ```text
+    /// error: field has incomplete type 'struct E'
+    /// ```
+    ///
+    /// from gcc — and swapping the two declarations, which changes nothing about
+    /// the program, makes it compile. A language does not get to have
+    /// order-dependent type declarations, and the failure landing in gcc rather
+    /// than in a diagnostic is the same shape the recursive-layout refusal exists
+    /// to remove.
+    ///
+    /// The order comes from `RecursiveLayout::definition_order`, over the SAME
+    /// cut containment graph the layout analysis built for its refusal. That is
+    /// the point of asking it rather than walking the fields here: a payload slot
+    /// that became a `struct V*` needs only the tag and constrains nothing, and a
+    /// second opinion about which slots those are is a second thing to keep in
+    /// step with the four emission sites that already share the first one.
+    ///
+    /// A cycle among these names is refused rather than emitted. It cannot come
+    /// from a program the type checker accepted — `declarations_without_layout`
+    /// is exactly that refusal — so reaching here means code generation was
+    /// driven directly, and emitting C gcc will reject would be the one outcome
+    /// worth avoiding.
+    fn generate_type_definitions(&mut self, defs: &[(String, Item)]) -> Result<()> {
+        let names: Vec<String> = defs.iter().map(|(name, _)| name.clone()).collect();
+        let order = self
+            .recursive_layout
+            .definition_order(&names)
+            .map_err(|cycle| {
+                CompileError::Generic(format!(
+                    "type definitions cannot be ordered: they store each other by value \
+                     ({}), so no emission order gives every field a complete type. This \
+                     should have been refused as a recursive type with no layout before \
+                     code generation ran",
+                    cycle.join(" -> ")
+                ))
+            })?;
+
+        // By name, and every definition carrying that name, so two declarations
+        // sharing one are both emitted (and gcc reports the redefinition) rather
+        // than one being silently dropped by a lookup.
+        for name in &order {
+            for (def_name, item) in defs {
+                if def_name != name {
+                    continue;
+                }
+                match item {
+                    Item::Struct(struct_def) => self.generate_struct(struct_def)?,
+                    Item::Enum(enum_def) => self.generate_enum(enum_def)?,
+                    _ => {}
+                }
+            }
+        }
         Ok(())
     }
 

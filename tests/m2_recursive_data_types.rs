@@ -570,3 +570,337 @@ fn no_diagnostic_names_the_same_type_on_both_sides() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Declaration order: a program's validity must not depend on it
+// ---------------------------------------------------------------------------
+
+/// The reviewer's program, verbatim. `struct S { e: E }` above `enum E`.
+///
+/// The front end accepted this and gcc did not:
+///
+/// ```text
+/// build_output/declorder.c:271:14: error: field has incomplete type 'struct E'
+///   271 |     struct E e;
+/// ```
+///
+/// Reversing the two declarations made it compile and run. So the program's
+/// validity depended on the order its declarations happened to be written in,
+/// and the failure landed in gcc rather than in a diagnostic — the same
+/// "front end successful, gcc failed" shape the layout refusal exists to remove,
+/// reached by a program with no recursion in it at all.
+#[test]
+fn a_struct_may_be_declared_above_the_enum_it_stores() {
+    assert_eq!(
+        compile_and_run(
+            r#"
+struct S { e: E }
+enum E { A, B }
+fn main() { let s: S = S { e: E::A }; print("ok"); }
+"#,
+            "declorder_struct_over_enum",
+        )
+        .expect("declaration order must not decide whether a program compiles"),
+        "ok\n"
+    );
+}
+
+/// The same question one container over: a struct above the struct it stores.
+#[test]
+fn a_struct_may_be_declared_above_the_struct_it_stores() {
+    assert_eq!(
+        compile_and_run(
+            r#"
+struct Outer { inner: Inner, tag: i64 }
+struct Inner { x: i64 }
+fn main() {
+    let o: Outer = Outer { inner: Inner { x: 7 }, tag: 1 };
+    print_int(o.inner.x);
+}
+"#,
+            "declorder_struct_over_struct",
+        )
+        .expect("declaration order must not decide whether a program compiles"),
+        "7\n"
+    );
+}
+
+/// A chain, declared in exactly the wrong order end to end.
+///
+/// One swap can be got right by an ordering rule that only looks at pairs; a
+/// three-link chain reversed needs a real traversal.
+#[test]
+fn a_reversed_containment_chain_is_still_emitted_dependencies_first() {
+    assert_eq!(
+        compile_and_run(
+            r#"
+struct A { b: B }
+struct B { c: C }
+struct C { n: i64 }
+fn main() {
+    let a: A = A { b: B { c: C { n: 42 } } };
+    print_int(a.b.c.n);
+}
+"#,
+            "declorder_chain",
+        )
+        .expect("declaration order must not decide whether a program compiles"),
+        "42\n"
+    );
+}
+
+/// EVERY order of one program's declarations gives one answer.
+///
+/// The property, rather than an instance of it. Three declarations have six
+/// orders and exactly one of them is the order source-order emission needed; the
+/// other five are what the old code got wrong, and asserting one of them would
+/// have left the shape of the fix unpinned.
+#[test]
+fn every_declaration_order_of_one_program_gives_the_same_answer() {
+    let decls = [
+        "struct Holder { p: Pair }",
+        "struct Pair { k: Kind, n: i64 }",
+        "enum Kind { First, Second }",
+    ];
+    let orders = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    for (i, order) in orders.iter().enumerate() {
+        let source = format!(
+            "{}\n{}\n{}\nfn main() {{\n    let h: Holder = Holder {{ p: Pair {{ k: Kind::First, n: 9 }} }};\n    print_int(h.p.n);\n}}\n",
+            decls[order[0]], decls[order[1]], decls[order[2]]
+        );
+        assert_eq!(
+            compile_and_run(&source, &format!("declorder_perm_{}", i))
+                .unwrap_or_else(|e| panic!("order {:?} was refused: {}", order, e)),
+            "9\n",
+            "order {:?} gave a different answer",
+            order
+        );
+    }
+}
+
+/// The ordering is over the CUT graph, so a pointer payload does not constrain
+/// it — and the recursive enum still works when declared before its user.
+///
+/// `enum V`'s own payload is a `struct V*`, which needs only the tag, so `V`
+/// imposes no order on itself; `struct Root { v: V }` stores a `V` by value and
+/// does. If the ordering had been derived from the UNCUT graph, `V -> V` would
+/// have been read as a cycle and this program refused.
+#[test]
+fn a_pointer_payload_imposes_no_order_but_a_by_value_field_does() {
+    assert_eq!(
+        compile_and_run(
+            r#"
+struct Root { v: V, label: i64 }
+enum V { Leaf(i64), Pair(V, V) }
+fn sum(v: V) -> i64 {
+    match v {
+        V::Leaf(x) => { return x; }
+        V::Pair(a, b) => { return sum(a) + sum(b); }
+    }
+}
+fn main() {
+    let l1: V = V::Leaf(4);
+    let l2: V = V::Leaf(5);
+    let r: Root = Root { v: V::Pair(l1, l2), label: 1 };
+    print_int(sum(r.v));
+}
+"#,
+            "declorder_cut_graph",
+        )
+        .expect("a cut payload slot must not constrain emission order"),
+        "9\n"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The zero-length array: an excluded case, said out loud
+// ---------------------------------------------------------------------------
+
+/// `struct Z { xs: [Z; 0] }` is refused, and the message says the cycle IS
+/// bounded and why the declaration is refused anyway.
+///
+/// The refusal itself is not the interesting half — the message is. The old one
+/// said "Only an `enum` payload slot can be stored behind a pointer, and this
+/// cycle has no such slot to store there", which reads as a theorem about what
+/// can bound a recursive type, and as a theorem it is FALSE for this program:
+/// `[Z; 0]` stores no `Z`, so the size is finite with no enum anywhere. A
+/// diagnostic that names a mechanism the code does not implement is worse than a
+/// terse one, because it is acted on.
+#[test]
+fn a_zero_length_array_self_reference_is_refused_and_the_message_says_why() {
+    let err = compile(
+        r#"
+struct Z { xs: [Z; 0] }
+fn main() { print("ok"); }
+"#,
+        "zero_len_self",
+    )
+    .expect_err("a `[Z; 0]` field is an array of an incomplete element type");
+
+    assert!(err.contains("has no layout"), "expected a layout refusal: {}", err);
+    for expected in [
+        // The exclusion, named, with the requirement row that carries it.
+        "zero-length arrays are OUT OF SCOPE here on purpose (requirement N4-22)",
+        // Reason one: there is no C to emit.
+        "incomplete element type",
+        // Reason two: there is no value to lay out.
+        "Empty array literals are not supported (cannot infer type)",
+        // And the concession that makes the message honest rather than a
+        // restatement of the general rule.
+        "does bound the size",
+    ] {
+        assert!(
+            err.contains(expected),
+            "the refusal must say `{}`, got: {}",
+            expected,
+            err
+        );
+    }
+}
+
+/// No layout refusal claims that ONLY an enum can stop a cycle.
+///
+/// The false sentence, pinned by its text, over every shape that reaches the
+/// refusal — including the ones for which it happens to be true. A theorem is
+/// not allowed to be stated conditionally on the reader not having found the
+/// counterexample.
+#[test]
+fn no_layout_refusal_claims_only_an_enum_can_bound_a_cycle() {
+    for (source, name) in [
+        ("struct Node { next: Node }\nfn main() { print_int(3); }", "false_thm_self"),
+        (
+            "struct A { b: B }\nstruct B { a: A }\nfn main() { print_int(3); }",
+            "false_thm_pair",
+        ),
+        ("struct Z { xs: [Z; 0] }\nfn main() { print(\"ok\"); }", "false_thm_zero"),
+        (
+            "enum V { Leaf(i64), Many([V; 3]) }\nfn main() { print_int(3); }",
+            "false_thm_array",
+        ),
+    ] {
+        let err = compile(source, name).expect_err("this shape has no layout");
+        assert!(
+            !err.contains("Only an `enum` payload slot can be stored behind a pointer"),
+            "`{}` still asserts the false theorem: {}",
+            name,
+            err
+        );
+        assert!(
+            err.contains("The one indirection it introduces"),
+            "`{}` should describe the mechanism this compiler has: {}",
+            name,
+            err
+        );
+    }
+}
+
+/// A zero-length array that is NOT on the cycle must not drag the carve-out
+/// sentence into an unrelated refusal.
+#[test]
+fn the_zero_length_sentence_appears_only_when_the_cycle_uses_one() {
+    let err = compile(
+        r#"
+struct Pad { zs: [i64; 0] }
+struct Node { pad: Pad, next: Node }
+fn main() { print_int(3); }
+"#,
+        "zero_len_elsewhere",
+    )
+    .expect_err("`Node` stores itself by value");
+    assert!(err.contains("has no layout"), "expected a layout refusal: {}", err);
+    assert!(
+        !err.contains("zero-length arrays are OUT OF SCOPE"),
+        "this cycle is Node -> Node and uses no zero-length array: {}",
+        err
+    );
+}
+
+/// An unevaluated array length is NOT treated as zero.
+///
+/// `[Z; N]` with a const parameter is a length this compiler has not computed,
+/// and calling an unknown zero would be the unsound direction — it would label
+/// the edge as bounded on no evidence.
+#[test]
+fn an_unevaluated_array_length_is_not_labelled_zero() {
+    let err = compile(
+        r#"
+struct Z<const N: usize> { xs: [Z; N] }
+fn main() { print_int(3); }
+"#,
+        "zero_len_const_param",
+    )
+    .expect_err("a self-storing struct is not laid out");
+    // Asserted FIRST, so this test cannot pass by the program dying somewhere
+    // else: a parse error contains no zero-length sentence either.
+    assert!(
+        err.contains("has no layout"),
+        "this must reach the layout refusal to say anything about it: {}",
+        err
+    );
+    assert!(
+        !err.contains("zero-length arrays are OUT OF SCOPE"),
+        "an unevaluated length must not be reported as zero: {}",
+        err
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The arena, past its first capacity
+// ---------------------------------------------------------------------------
+
+/// The arena's `realloc` path, which nothing else here reaches.
+///
+/// `__pd_rec_alloc` starts at capacity 0, takes 64 on the first allocation and
+/// DOUBLES when the count reaches it. Every other test in this file builds a
+/// handful of nodes, so all of them stop inside the first block and the growth
+/// branch — the one place a pointer to already-recorded cells is moved — was
+/// exercised by nothing. A manual sanitizer run is not regression protection;
+/// this is.
+///
+/// Both sides of the boundary, because "it grew" and "it did not grow one
+/// allocation too early" are two claims: 64 exactly fills the first block, and
+/// 65 is the first allocation that cannot fit in it. The sums are the check —
+/// a `realloc` that lost the cells would take the recursive walk through freed
+/// or moved memory rather than merely returning early.
+#[test]
+fn the_recursive_arena_grows_past_its_first_capacity() {
+    const LIST: &str = r#"
+enum L { Nil, Cons(i64, L) }
+
+fn total(l: L) -> i64 {
+    match l {
+        L::Nil => { return 0; }
+        L::Cons(v, rest) => { return v + total(rest); }
+    }
+}
+
+fn main() {
+    let mut l: L = L::Nil;
+    let mut i: i64 = 0;
+    while i < COUNT {
+        l = L::Cons(i, l);
+        i = i + 1;
+    }
+    print_int(total(l));
+}
+"#;
+
+    // n cells for n `Cons` nodes; sum is 0 + 1 + ... + (n-1).
+    for (count, sum) in [(64, 2016), (65, 2080), (200, 19900)] {
+        let source = LIST.replace("COUNT", &count.to_string());
+        assert_eq!(
+            compile_and_run(&source, &format!("arena_{}", count))
+                .unwrap_or_else(|e| panic!("{} nodes: {}", count, e)),
+            format!("{}\n", sum),
+            "{} recursive cells did not survive the arena",
+            count
+        );
+    }
+}

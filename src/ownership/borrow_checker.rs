@@ -170,7 +170,7 @@ impl BorrowChecker {
     /// imported function can be checked at all.
     ///
     /// Takes exactly what `TypeChecker::set_imported_modules` takes
-    /// (`src/typeck/mod.rs:850-850`), because the driver has one resolver result and
+    /// (`src/typeck/mod.rs:1109-1109`), because the driver has one resolver result and
     /// two passes that need it; a second shape here would be a second thing to
     /// keep in sync. Registration itself is deferred to `check_program`, which is
     /// where the ordering against local definitions is decided.
@@ -213,7 +213,7 @@ impl BorrowChecker {
     ///
     /// Public-only, and imports-before-locals, for the same reasons as functions
     /// below; the type checker registers imported layouts under exactly the same
-    /// filter (`src/typeck/mod.rs:717-718`), so the two passes agree on which
+    /// filter (`src/typeck/mod.rs:1277-1278`), so the two passes agree on which
     /// `P` is meant.
     ///
     /// AND THE REMAINING WINDOW IS UNREACHABLE, which is a stronger statement than
@@ -377,7 +377,7 @@ impl BorrowChecker {
         // ONLY `Item::Function` IS WALKED, and an imported `impl` method is not a
         // gap in that. Codegen's imported walk matches `Item::Struct` and
         // `Item::Enum` (`src/codegen/mod.rs:1415-1432`) and, separately,
-        // `Item::Function` (`src/codegen/mod.rs:1520-1520`) — there is no `Item::Impl`
+        // `Item::Function` (`src/codegen/mod.rs:1655-1655`) — there is no `Item::Impl`
         // arm anywhere in it. So an imported impl method is not merely uncallable:
         // IT DOES NOT EXIST IN THE OUTPUT. Measured — a module exporting
         // `pub struct P { a: i64 }` with `impl P { fn get(self) -> i64 { … } }`
@@ -419,7 +419,7 @@ impl BorrowChecker {
                     // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
                     // "produces no C, because the codegen guard is the same
                     // predicate". That is true of the DIRECT imported-emission path
-                    // (`src/codegen/mod.rs:1522-1524`, public and non-generic) and
+                    // (`src/codegen/mod.rs:1657-1659`, public and non-generic) and
                     // false of MONOMORPHIZATION, which is a different path and emits
                     // `name__T` from the same template. Measured on the guard:
                     //

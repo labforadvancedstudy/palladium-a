@@ -45,6 +45,15 @@ use trait_resolution::TraitResolver;
 ///
 /// Whatever still reaches itself after the cuts has no layout and is refused.
 ///
+/// The cut graph is kept, because it answers a SECOND question with the same
+/// edges: in what order must the definitions be emitted. An edge `A -> B` that
+/// survived the cut is exactly a `B` stored inside an `A` by value, which is a
+/// C field of a complete type, so `B`'s definition must precede `A`'s. A cut
+/// edge imposes nothing, because a `struct B*` field only needs the tag.
+/// `definition_order` is that answer, and it reads these edges rather than
+/// deriving its own — a second notion of "contains by value" is a second thing
+/// to keep in sync with this one.
+///
 /// # Why cutting at enums is enough for every type a program can build
 ///
 /// A value of a type on a by-value cycle is infinite unless some point on the
@@ -61,6 +70,36 @@ use trait_resolution::TraitResolver;
 /// that slot a pointer would change the shape of the array rather than the
 /// element. It therefore survives to the refusal, which is the failing-closed
 /// direction.
+///
+/// # The one place the paragraph above OVER-APPROXIMATES, and why it stays
+///
+/// "An inhabited cycle contains an `enum` node" is a claim about what can stop
+/// a cycle, and an `enum` variant is not the only thing that can: CARDINALITY
+/// can. `struct Z { xs: [Z; 0] }` stores zero `Z`s, so its size is finite and
+/// the cycle is broken with no `enum` anywhere. This analysis counts that edge
+/// anyway — `[T; N]` contributes an edge for every `N`, including `0` — and so
+/// refuses a declaration whose size it could in principle have computed.
+///
+/// That is a DECISION, recorded here and named in the diagnostic, not an
+/// oversight of a discarded `_`:
+///
+///   * There is nothing to emit. A `[Z; 0]` field is `struct Z xs[0];` inside
+///     the definition of `struct Z` itself — an array of an INCOMPLETE element
+///     type, which C has no spelling for and gcc rejects with
+///     `array has incomplete element type`. Accepting the declaration here only
+///     moves the failure from a diagnostic into gcc, which is the exact shape
+///     this analysis exists to remove.
+///   * There is nothing to construct. `[T; 0]` is uninhabited in this language
+///     today: the only expression that could produce one is the empty array
+///     literal, and the type checker refuses it ("Empty array literals are not
+///     supported (cannot infer type)", measured on `Holder { xs: [] }`). So the
+///     refusal fails closed onto a type no program has a value of.
+///
+/// Both halves are pinned: `tests/reject/zero_length_array_self_reference.pd`
+/// holds the refusal and its fingerprint, and requirement `N4-22` states the
+/// exclusion so the decision outlives the current limitation. If the empty
+/// array literal is ever inferrable, this is the site to revisit — and the
+/// first thing to check is the C, not this graph.
 #[derive(Debug, Clone, Default)]
 pub struct RecursiveLayout {
     /// Non-generic type aliases, so `type Tree = V;` names the same node as `V`.
@@ -69,6 +108,15 @@ pub struct RecursiveLayout {
     /// value of `a` can store inside itself, at any depth. Seeded from
     /// successors, so `a` appears in its own set only when `a` is on a cycle.
     reaches: HashMap<String, HashSet<String>>,
+    /// The containment graph AFTER the cuts: `contains_cut[a]` is every named
+    /// type stored inside an `a` by value, one hop, in declared order. This is
+    /// what `definition_order` walks.
+    contains_cut: HashMap<String, Vec<String>>,
+    /// Edges whose ONLY route is through a zero-length array, so the diagnostic
+    /// can say that this particular cycle is the over-approximated case rather
+    /// than assert a mechanism that does not apply to it. An `(a, b)` pair is in
+    /// here only when no other field or payload of `a` stores a `b` directly.
+    zero_length_edges: HashSet<(String, String)>,
     /// Names that still store themselves after every cut, each with the cycle
     /// that proves it, so the diagnostic can show the path rather than assert
     /// it.
@@ -99,45 +147,56 @@ impl RecursiveLayout {
         for item in items.clone() {
             match item {
                 Item::Struct(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
-                    let edges = contains.entry(def.name.clone()).or_default();
+                    let mut occ = Vec::new();
                     for (_, ty) in &def.fields {
-                        layout.named_occurrences(ty, edges);
+                        layout.labelled_occurrences(ty, false, &mut occ);
                     }
+                    layout.record_edges(&def.name, occ, &mut contains);
                 }
                 Item::Enum(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
-                    let edges = contains.entry(def.name.clone()).or_default();
+                    let mut occ = Vec::new();
                     for variant in &def.variants {
                         for ty in Self::payload_types(&variant.data) {
-                            layout.named_occurrences(ty, edges);
+                            layout.labelled_occurrences(ty, false, &mut occ);
                         }
                     }
+                    layout.record_edges(&def.name, occ, &mut contains);
                 }
                 _ => {}
             }
         }
         layout.reaches = Self::close(&contains);
 
+        // The zero-length labels are a property of the CUT graph, because that
+        // is the graph `path_back_to` reports a cycle over. Keeping the uncut
+        // pass's labels too would be harmless — they are a subset — but it
+        // would leave a reader to derive that, so the pass that matters owns
+        // them alone.
+        layout.zero_length_edges.clear();
+
         // Cut, then look for what survived.
         let mut cut: HashMap<String, Vec<String>> = HashMap::new();
         for item in items.clone() {
             match item {
                 Item::Struct(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
-                    let edges = cut.entry(def.name.clone()).or_default();
+                    let mut occ = Vec::new();
                     for (_, ty) in &def.fields {
-                        layout.named_occurrences(ty, edges);
+                        layout.labelled_occurrences(ty, false, &mut occ);
                     }
+                    layout.record_edges(&def.name, occ, &mut cut);
                 }
                 Item::Enum(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
-                    let edges = cut.entry(def.name.clone()).or_default();
+                    let mut occ = Vec::new();
                     for variant in &def.variants {
                         for ty in Self::payload_types(&variant.data) {
                             if layout.payload_is_indirect(&def.name, ty) {
                                 layout.cut_any = true;
                                 continue;
                             }
-                            layout.named_occurrences(ty, edges);
+                            layout.labelled_occurrences(ty, false, &mut occ);
                         }
                     }
+                    layout.record_edges(&def.name, occ, &mut cut);
                 }
                 _ => {}
             }
@@ -152,6 +211,7 @@ impl RecursiveLayout {
                 layout.no_layout.push((name.clone(), path));
             }
         }
+        layout.contains_cut = cut;
         layout
     }
 
@@ -174,6 +234,98 @@ impl RecursiveLayout {
     /// that proves it.
     pub fn declarations_without_layout(&self) -> &[(String, Vec<String>)] {
         &self.no_layout
+    }
+
+    /// Is this reported cycle held together only by zero-length arrays?
+    ///
+    /// True when at least one hop of the path is an edge whose only route is a
+    /// `[T; 0]`. The diagnostic asks, because on such a cycle the size IS
+    /// bounded and a message that says otherwise is false — see the type-level
+    /// documentation for why the declaration is refused anyway.
+    pub fn cycle_crosses_a_zero_length_array(&self, cycle: &[String]) -> bool {
+        cycle
+            .windows(2)
+            .any(|hop| self.zero_length_edges.contains(&(hop[0].clone(), hop[1].clone())))
+    }
+
+    /// The order in which these type definitions must be EMITTED, dependencies
+    /// first.
+    ///
+    /// C needs a complete type to give a field a size, so `B` must be defined
+    /// before `A` whenever an `A` stores a `B` by value. Source order does not
+    /// deliver that — `struct S { e: E }` written above `enum E { A, B }` is a
+    /// perfectly ordinary program, and emitting it in source order produced
+    /// `field has incomplete type 'struct E'` from gcc, making the program's
+    /// validity depend on the order its declarations happen to be written in.
+    ///
+    /// The edges are `contains_cut`, i.e. THE SAME cut this analysis performed
+    /// for the layout refusal, not a second traversal of the AST. A cut edge is
+    /// a `struct B*` field, which needs only the tag, so it constrains nothing;
+    /// an edge that survived the cut is a by-value field, which constrains
+    /// everything. Deriving a second containment predicate here is how the two
+    /// would come to disagree.
+    ///
+    /// STABLE: a set already in a valid order comes back unchanged, so the C
+    /// emitted for every program that compiled before this existed does not
+    /// move. Names not in `names` are not traversed — they are either emitted
+    /// in an earlier phase (imports) or not emitted at all (generic templates,
+    /// which this analysis skips) and in neither case do they order anything
+    /// here.
+    ///
+    /// `Err(cycle)` is a by-value containment cycle among the requested names.
+    /// It cannot arise from a program the type checker accepted, because that
+    /// is precisely what `declarations_without_layout` refuses; a caller that
+    /// gets one must refuse rather than emit C gcc will reject.
+    pub fn definition_order(&self, names: &[String]) -> std::result::Result<Vec<String>, Vec<String>> {
+        let wanted: HashSet<&str> = names.iter().map(String::as_str).collect();
+        let mut done: HashSet<String> = HashSet::new();
+        let mut in_path: HashSet<String> = HashSet::new();
+        let mut path: Vec<String> = Vec::new();
+        let mut order: Vec<String> = Vec::new();
+
+        // Explicit stack rather than recursion: the depth is the length of a
+        // containment chain in the source, which nothing bounds.
+        for root in names {
+            if done.contains(root) {
+                continue;
+            }
+            let mut work: Vec<(String, bool)> = vec![(root.clone(), false)];
+            while let Some((name, expanded)) = work.pop() {
+                if expanded {
+                    in_path.remove(&name);
+                    path.pop();
+                    if done.insert(name.clone()) {
+                        order.push(name);
+                    }
+                    continue;
+                }
+                if done.contains(&name) {
+                    continue;
+                }
+                if in_path.contains(&name) {
+                    let from = path.iter().position(|n| *n == name).unwrap_or(0);
+                    let mut cycle: Vec<String> = path[from..].to_vec();
+                    cycle.push(name);
+                    return Err(cycle);
+                }
+                in_path.insert(name.clone());
+                path.push(name.clone());
+                work.push((name.clone(), true));
+
+                let mut children: Vec<&String> = Vec::new();
+                for child in self.contains_cut.get(&name).into_iter().flatten() {
+                    if wanted.contains(child.as_str()) && !children.contains(&child) {
+                        children.push(child);
+                    }
+                }
+                // Reversed, so the stack pops them in declared order and the
+                // result is source order whenever source order already works.
+                for child in children.into_iter().rev() {
+                    work.push((child.clone(), false));
+                }
+            }
+        }
+        Ok(order)
     }
 
     /// Did anything become a pointer? Programs where nothing did must emit the
@@ -208,19 +360,65 @@ impl RecursiveLayout {
         None
     }
 
-    /// Every named type a value of `ty` stores inside itself, appended to `out`.
+    /// Every named type a value of `ty` stores inside itself, appended to `out`,
+    /// each paired with whether the route to it crossed a zero-length array.
+    ///
     /// `Reference` contributes nothing on purpose: it is a pointer already.
-    fn named_occurrences(&self, ty: &Type, out: &mut Vec<String>) {
+    ///
+    /// A `[T; 0]` still contributes its edge — the analysis over-approximates on
+    /// purpose and the type-level documentation says why — but it contributes a
+    /// LABELLED one, so the refusal can describe the cycle it actually found
+    /// instead of asserting a mechanism that does not apply to it. Only
+    /// `ArraySize::Literal(0)` counts: a `ConstParam` or an `Expr` length is a
+    /// length this compiler has not evaluated, and treating an unknown as zero
+    /// would be the unsound direction.
+    fn labelled_occurrences(&self, ty: &Type, crossed_zero: bool, out: &mut Vec<(String, bool)>) {
         match self.resolve_alias(ty) {
-            Some(Type::Custom(name)) => out.push(name),
-            Some(Type::Array(elem, _)) => self.named_occurrences(&elem, out),
+            Some(Type::Custom(name)) => out.push((name, crossed_zero)),
+            Some(Type::Array(elem, size)) => {
+                let zero = matches!(size, ArraySize::Literal(0));
+                self.labelled_occurrences(&elem, crossed_zero || zero, out);
+            }
             Some(Type::Tuple(types)) => {
                 for t in &types {
-                    self.named_occurrences(t, out);
+                    self.labelled_occurrences(t, crossed_zero, out);
                 }
             }
             _ => {}
         }
+    }
+
+    /// File one declaration's occurrences into a containment graph, and label
+    /// the edges that exist ONLY because of a zero-length array.
+    ///
+    /// The "only" is load-bearing: `struct Q { a: Z, b: [Z; 0] }` reaches `Z`
+    /// directly as well, so `Q -> Z` is an ordinary by-value edge and saying
+    /// otherwise in a diagnostic would be a second false sentence in place of
+    /// the first.
+    ///
+    /// The entry is created even when there are no occurrences, because `close`
+    /// iterates the keys and a declaration missing from them is a declaration
+    /// with no reachability set at all.
+    fn record_edges(
+        &mut self,
+        owner: &str,
+        occurrences: Vec<(String, bool)>,
+        into: &mut HashMap<String, Vec<String>>,
+    ) {
+        let direct: HashSet<&str> = occurrences
+            .iter()
+            .filter(|(_, crossed_zero)| !crossed_zero)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        for (name, crossed_zero) in &occurrences {
+            if *crossed_zero && !direct.contains(name.as_str()) {
+                self.zero_length_edges
+                    .insert((owner.to_string(), name.clone()));
+            }
+        }
+        into.entry(owner.to_string())
+            .or_default()
+            .extend(occurrences.into_iter().map(|(name, _)| name));
     }
 
     /// Transitive closure seeded from successors, so a name lands in its own set
@@ -842,8 +1040,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:687-688`, `src/typeck/mod.rs:712-712`,
-    /// `src/typeck/mod.rs:727-727`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1237-1238`, `src/typeck/mod.rs:1272-1272`,
+    /// `src/typeck/mod.rs:1295-1295`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -860,14 +1058,91 @@ impl TypeChecker {
     /// `test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc` declares
     /// that — but it makes it the same wrong answer every run, which is the
     /// precondition for anyone noticing it is wrong.
+    /// Rewrite the `Struct(name)` leaves of an already-converted type to
+    /// `Enum(name)` wherever `name` is known to be an enum.
+    ///
+    /// The repair for `CheckerType::from` applied where that conversion is used
+    /// on an import and the context it lacks is at hand. A free function over
+    /// the set rather than a method, so it can be called while the loop that
+    /// needs it holds a borrow of `self.imported_modules` and writes to
+    /// `self.functions` — three disjoint fields, which is the only reason this
+    /// does not have to clone every imported module's AST in order to run.
+    ///
+    /// Every other leaf comes back unchanged, so a program that imports no enum
+    /// is converted exactly as it was.
+    fn as_enums_where_known(enum_names: &HashSet<String>, ty: CheckerType) -> CheckerType {
+        match ty {
+            CheckerType::Struct(name) if enum_names.contains(&name) => CheckerType::Enum(name),
+            CheckerType::Array(elem, size) => CheckerType::Array(
+                Box::new(Self::as_enums_where_known(enum_names, *elem)),
+                size,
+            ),
+            CheckerType::Tuple(types) => CheckerType::Tuple(
+                types
+                    .into_iter()
+                    .map(|t| Self::as_enums_where_known(enum_names, t))
+                    .collect(),
+            ),
+            CheckerType::Function(params, ret) => CheckerType::Function(
+                params
+                    .into_iter()
+                    .map(|t| Self::as_enums_where_known(enum_names, t))
+                    .collect(),
+                Box::new(Self::as_enums_where_known(enum_names, *ret)),
+            ),
+            CheckerType::Generic { name, args } => CheckerType::Generic {
+                name,
+                args: args
+                    .into_iter()
+                    .map(|arg| match arg {
+                        GenericArgValue::Type(t) => {
+                            GenericArgValue::Type(Self::as_enums_where_known(enum_names, t))
+                        }
+                        other => other,
+                    })
+                    .collect(),
+            },
+            other => other,
+        }
+    }
+
     pub fn set_imported_modules(&mut self, modules: HashMap<String, crate::resolver::ModuleInfo>) {
         self.imported_modules = modules;
 
+
         // Enum names first, for the same reason `check` collects them first:
-        // the registration below converts imported field and payload types, and
-        // an imported enum used as a payload was `Struct` under the incremental
-        // map. Local enums are absent here and that is correct — an imported
-        // module cannot name a type from the program importing it.
+        // the registration below converts imported field, parameter, return and
+        // payload types, and an imported enum in any of those positions was
+        // `Struct`. Local enums are absent here and that is correct — an
+        // imported module cannot name a type from the program importing it.
+        //
+        // COLLECTING THE SET IS HALF A FIX. This comment used to stop at the
+        // paragraph above while every conversion below still went through
+        // `CheckerType::from`, whose `Custom` arm is an associated function that
+        // can consult no set at all and answers `Struct` for every named type.
+        // The set was gathered and then never read, so the comment described
+        // work nobody had done. Measured:
+        //
+        // ```text
+        // lib9.pd:  pub enum Color { Red, Green }
+        //           pub fn red() -> Color { return Color::Red; }
+        //           pub fn kind(c: Color) -> i64 { return 7; }
+        // main.pd:  import lib9;
+        //           fn main() { let c: Color = red(); print_int(kind(c)); }
+        // ```
+        //
+        // was refused with `Type mismatch: expected Color, found Color` — the
+        // same diagnostic naming one type on both sides that this branch removed
+        // for local declarations, reached one container over. `let c: Color` is
+        // converted by the context-aware path and is an `Enum`; `red`'s return
+        // type was registered here and was a `Struct`.
+        //
+        // Every conversion below is wrapped in `as_enums_where_known`, which
+        // rewrites exactly the `Struct(name)` leaves whose name is in this set
+        // and touches nothing else. Deliberately NOT `ast_type_to_checker_type`:
+        // that one also resolves type aliases out of a map THIS LOOP IS STILL
+        // FILLING, so it would make an imported signature depend on which module
+        // was processed first — trading a wrong answer for an unstable one.
         for module_info in self.imported_modules.values() {
             for item in &module_info.ast.items {
                 if let crate::ast::Item::Enum(enum_def) = item {
@@ -970,13 +1245,23 @@ impl TypeChecker {
                                 let param_types: Vec<CheckerType> = func
                                     .params
                                     .iter()
-                                    .map(|param| CheckerType::from(&param.ty))
+                                    .map(|param| {
+                                        Self::as_enums_where_known(
+                                            &self.enum_names,
+                                            CheckerType::from(&param.ty),
+                                        )
+                                    })
                                     .collect();
 
                                 let return_type = func
                                     .return_type
                                     .as_ref()
-                                    .map(CheckerType::from)
+                                    .map(|ty| {
+                                        Self::as_enums_where_known(
+                                            &self.enum_names,
+                                            CheckerType::from(ty),
+                                        )
+                                    })
                                     .unwrap_or(CheckerType::Unit);
 
                                 let func_type =
@@ -995,7 +1280,15 @@ impl TypeChecker {
                             let fields: Vec<(String, CheckerType)> = struct_def
                                 .fields
                                 .iter()
-                                .map(|(name, ty)| (name.clone(), CheckerType::from(ty)))
+                                .map(|(name, ty)| {
+                                    (
+                                        name.clone(),
+                                        Self::as_enums_where_known(
+                                            &self.enum_names,
+                                            CheckerType::from(ty),
+                                        ),
+                                    )
+                                })
                                 .collect();
 
                             // Add both qualified and unqualified names
@@ -1009,6 +1302,77 @@ impl TypeChecker {
                         {
                             // Store enum type information
                             let enum_type = CheckerType::Enum(enum_def.name.clone());
+
+                            // THE ENUM'S OWN SHAPE, not only its constructors.
+                            //
+                            // The loop below registers `Color::Red` as a
+                            // FUNCTION, which is what an expression in call
+                            // position needs. Two other questions are asked of
+                            // `self.enums` instead — what variants does this
+                            // enum have (the `Enum::Variant` path expression and
+                            // the `match` pattern both look the variant up
+                            // there) and is the match exhaustive — and nothing
+                            // put an imported enum into that map, so
+                            //
+                            // ```text
+                            // error: Undefined enum type: Color
+                            // ```
+                            //
+                            // was every program that named one. That was the
+                            // break BEHIND the conversion break above: with the
+                            // kinds fixed and this map still empty, no program
+                            // could reach the fix, so the fix would have had no
+                            // witness. Both are closed together and
+                            // `tests/m3_imported_calls.rs` runs the whole chain.
+                            //
+                            // Shape-for-shape the mirror of the local
+                            // registration in `check`, with
+                            // `as_enums_where_known` where that one uses
+                            // `ast_type_to_checker_type`, for the reason given
+                            // at the top of this method. Last writer wins, and
+                            // `check` runs after this, so a local enum of the
+                            // same name displaces the imported one — the same
+                            // direction shadowing takes everywhere else here.
+                            let variants: Vec<EnumVariant> = enum_def
+                                .variants
+                                .iter()
+                                .map(|variant| EnumVariant {
+                                    name: variant.name.clone(),
+                                    fields: match &variant.data {
+                                        crate::ast::EnumVariantData::Unit => EnumVariantFields::Unit,
+                                        crate::ast::EnumVariantData::Tuple(types) => {
+                                            EnumVariantFields::Tuple(
+                                                types
+                                                    .iter()
+                                                    .map(|ty| {
+                                                        Self::as_enums_where_known(
+                                                            &self.enum_names,
+                                                            CheckerType::from(ty),
+                                                        )
+                                                    })
+                                                    .collect(),
+                                            )
+                                        }
+                                        crate::ast::EnumVariantData::Struct(fields) => {
+                                            EnumVariantFields::Named(
+                                                fields
+                                                    .iter()
+                                                    .map(|(n, ty)| {
+                                                        (
+                                                            n.clone(),
+                                                            Self::as_enums_where_known(
+                                                                &self.enum_names,
+                                                                CheckerType::from(ty),
+                                                            ),
+                                                        )
+                                                    })
+                                                    .collect(),
+                                            )
+                                        }
+                                    },
+                                })
+                                .collect();
+                            self.enums.insert(enum_def.name.clone(), variants);
 
                             // Add variant constructors as functions
                             for variant in &enum_def.variants {
@@ -1024,8 +1388,15 @@ impl TypeChecker {
                                     }
                                     crate::ast::EnumVariantData::Tuple(types) => {
                                         // Tuple variant: parameters from tuple fields
-                                        let param_types: Vec<CheckerType> =
-                                            types.iter().map(CheckerType::from).collect();
+                                        let param_types: Vec<CheckerType> = types
+                                            .iter()
+                                            .map(|ty| {
+                                                Self::as_enums_where_known(
+                                                    &self.enum_names,
+                                                    CheckerType::from(ty),
+                                                )
+                                            })
+                                            .collect();
                                         CheckerType::Function(
                                             param_types,
                                             Box::new(enum_type.clone()),
@@ -1035,7 +1406,12 @@ impl TypeChecker {
                                         // Named variant: parameters from named fields
                                         let param_types: Vec<CheckerType> = fields
                                             .iter()
-                                            .map(|(_, ty)| CheckerType::from(ty))
+                                            .map(|(_, ty)| {
+                                                Self::as_enums_where_known(
+                                                    &self.enum_names,
+                                                    CheckerType::from(ty),
+                                                )
+                                            })
                                             .collect();
                                         CheckerType::Function(
                                             param_types,
@@ -1200,17 +1576,40 @@ impl TypeChecker {
                 .chain(self.imported_modules.values().flat_map(|m| &m.ast.items)),
         );
         if let Some((name, cycle)) = layout.declarations_without_layout().first() {
-            return Err(CompileError::Generic(format!(
+            // WHAT THIS MESSAGE MAY CLAIM. It used to say "only an `enum`
+            // payload slot can be stored behind a pointer", which reads as a
+            // theorem about what can bound a recursive type, and as a theorem
+            // it is false: `struct Z { xs: [Z; 0] }` stores no `Z` at all, so
+            // its size is finite with no enum anywhere on the cycle. The
+            // sentence is now about the mechanism this compiler HAS — one
+            // indirection, at an enum payload slot — and the zero-length case
+            // is named where it applies instead of being contradicted
+            // everywhere.
+            let mut message = format!(
                 "recursive type `{}` has no layout: it stores itself by value ({}), \
-                 so its size would be unbounded. Only an `enum` payload slot can be \
-                 stored behind a pointer, and this cycle has no such slot to store \
-                 there. Break the cycle by routing it through an `enum` variant that \
-                 can stop, e.g. `enum {}Link {{ End, More({}) }}`",
+                 so this compiler cannot give it a size. The one indirection it \
+                 introduces is an `enum` payload slot whose type reaches its own \
+                 enum again, and this cycle has no such slot. Break the cycle by \
+                 routing it through an `enum` variant that can stop, e.g. \
+                 `enum {}Link {{ End, More({}) }}`",
                 name,
                 cycle.join(" -> "),
                 name,
                 name
-            )));
+            );
+            if layout.cycle_crosses_a_zero_length_array(cycle) {
+                message.push_str(
+                    ". This cycle runs through a zero-length array, which stores no \
+                     elements and therefore does bound the size — zero-length arrays \
+                     are OUT OF SCOPE here on purpose (requirement N4-22), not \
+                     overlooked: the field would have to be emitted as an array of an \
+                     incomplete element type, which C cannot spell, and `[T; 0]` has \
+                     no values to lay out in the first place because an empty array \
+                     literal is refused (\"Empty array literals are not supported \
+                     (cannot infer type)\")",
+                );
+            }
+            return Err(CompileError::Generic(message));
         }
 
         // First pass: collect all function signatures and struct definitions
@@ -1524,7 +1923,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:727-727`), and walking an imported
+        // return (`src/typeck/mod.rs:1295-1295`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3894,7 +4293,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:3492-3556`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:3787-3851`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
