@@ -598,7 +598,7 @@ def contained(rel: str):
 
     `Path.resolve()` follows symlinks, which a lexical check cannot: a link committed
     inside the repo can point anywhere, and the gate would then be measuring unversioned
-    content while reporting on this tree. scripts/conformance.sh:523-535 refuses the same
+    content while reporting on this tree. scripts/conformance.sh:600-612 refuses the same
     thing for the same reason.
     """
     if rel.startswith(("/", "~")):
@@ -943,7 +943,7 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
     began with two dashes, grep read it as an option, exited 2, and printed its usage to
     stderr. Nothing was ever searched. (That probe is also why no comment here may spell
     the flag out: it greps scripts/, so a mention would BE a hit.)
-    scripts/conformance.sh:140-152 draws the same distinction for the same reason.
+    scripts/conformance.sh:199-211 draws the same distinction for the same reason.
 
     stderr goes to a temporary FILE, never a pipe, so a chatty segment cannot deadlock the
     gate against a full pipe buffer while nobody is reading it. There is exactly one
@@ -1277,7 +1277,7 @@ def load_manifest():
 
     None means the manifest could not be read, which is a gate failure and never a reason
     to accept a `conformance:` item unchecked — the runner that owns this file exits 2
-    rather than report a green run without it (scripts/conformance.sh:112-116).
+    rather than report a green run without it (scripts/conformance.sh:171-175).
     """
     if not MANIFEST.exists():
         return None
@@ -1352,7 +1352,7 @@ def check_index(receipts=None):
     that is deliberate: a skipped item that reports nothing is the same unmeasured
     denominator one layer down, and the conformance runner this file borrows its
     discipline from treats a fixture it cannot read as a failure rather than a skip
-    (scripts/conformance.sh:512-517). An item the gate cannot run hermetically is a lint
+    (scripts/conformance.sh:589-594). An item the gate cannot run hermetically is a lint
     error naming the gate that owns the question, not a quiet exemption.
     """
     counts = {"cmd": 0, "conformance": 0, "src": 0, "gate": 0, "gate_validated": 0}

@@ -147,10 +147,10 @@ enum NetA {
     ///   1. `tests/stdlib/DRIVERS.tsv:31`, row `stdlib_tail_match`: column 3 is
     ///      `known_violation:area_code,sides`; promote it to `clean`.
     ///      `make stdlib-gate` announces that transition itself — the
-    ///      known_violation branch is scripts/stdlib-gate.sh:360-362, the XPASS
+    ///      known_violation branch is scripts/stdlib-gate.sh:379-381, the XPASS
     ///      note it prints when the C goes clean is
-    ///      scripts/stdlib-gate.sh:371, and a CHANGED violation set (a
-    ///      different function list) is scripts/stdlib-gate.sh:379. Both are
+    ///      scripts/stdlib-gate.sh:390, and a CHANGED violation set (a
+    ///      different function list) is scripts/stdlib-gate.sh:398. Both are
     ///      `note`, which is what makes that gate red.
     ///   2. This expectation: `StillFindsTheOpenMatchDefect` -> `Accepts`, at
     ///      its single use in `tail_match_arms_are_lowered_to_returns`.
@@ -1998,8 +1998,8 @@ fn the_generic_async_refusal_carries_no_declaration_identity() {
 /// `make test-honest` and in `make m1-exit` inventory 3.
 ///
 /// THE CROSS-GATE HALF, cited rather than asserted: the promotion is not
-/// optional. `scripts/stdlib-gate.sh:360` enters the `known_violation:*` arm
-/// for that row; `scripts/stdlib-gate.sh:370-372` turns a CLEAN result into
+/// optional. `scripts/stdlib-gate.sh:379` enters the `known_violation:*` arm
+/// for that row; `scripts/stdlib-gate.sh:389-391` turns a CLEAN result into
 /// `note "XPASS: … is recorded known_violation:… but its C is now CLEAN …
 /// promote it to 'clean'"`, and `note` is what makes that gate red. So the
 /// moment codegen emits the final `else`, `make stdlib-gate` fails until the
