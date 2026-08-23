@@ -203,6 +203,23 @@ pub struct CodeGenerator {
     /// from naming an incomplete tag, which would make the tag local to the
     /// prototype's parameter list and conflict with the definition.
     defined_structs: std::collections::HashSet<String>,
+    /// Which enum payload slots are stored behind a pointer.
+    ///
+    /// NOT DERIVED HERE. The type checker owns the definition
+    /// (`crate::typeck::RecursiveLayout`) because it also owns the refusal for
+    /// the declarations this scheme cannot lay out, and a second derivation in
+    /// this file is exactly how the two passes would come to disagree about
+    /// which slot is a pointer — the class of defect this repository has closed
+    /// twice, in `builtins.rs` and in `local_definition_shadows_import`.
+    ///
+    /// Filled in `compile_escaped` from the ESCAPED program, because the layout
+    /// is keyed by type name and `escape_reserved_names` can rename one.
+    recursive_layout: crate::typeck::RecursiveLayout,
+    /// Variant constructors, held back until every type definition has been
+    /// emitted. They are the only output that needs a payload type COMPLETE,
+    /// and for a terminating mutual recursion no ordering of the definitions
+    /// can give them that in place.
+    enum_constructors: String,
 }
 
 impl CodeGenerator {
@@ -227,6 +244,8 @@ impl CodeGenerator {
             generic_struct_instantiation_map: std::collections::HashMap::new(),
             async_functions: std::collections::HashSet::new(),
             defined_structs: std::collections::HashSet::new(),
+            recursive_layout: crate::typeck::RecursiveLayout::default(),
+            enum_constructors: String::new(),
         })
     }
 
@@ -853,6 +872,17 @@ impl CodeGenerator {
         // For v0.1, we'll generate a simple C file that we can compile with gcc
         // This is a temporary solution until LLVM integration is complete
 
+        // Ask the type checker's analysis which payload slots are pointers,
+        // over the same item set it will be emitting: the escaped main program
+        // plus every imported module's items, which land in this translation
+        // unit too.
+        self.recursive_layout = crate::typeck::RecursiveLayout::analyze(
+            program
+                .items
+                .iter()
+                .chain(self.imported_modules.values().flat_map(|m| &m.ast.items)),
+        );
+
         self.output.push_str("#include <stdio.h>\n");
         self.output.push_str("#include <string.h>\n");
         self.output.push_str("#include <stdlib.h>\n");
@@ -933,11 +963,85 @@ impl CodeGenerator {
         self.output.push_str("    __pd_string_pool_offset = 0;\n");
         self.output.push_str("}\n\n");
 
+        // STORAGE FOR THE PAYLOAD SLOTS THAT BECAME POINTERS.
+        //
+        // EMITTED ONLY WHEN A SLOT ACTUALLY BECAME ONE. A program with no
+        // recursive type must emit the C it emitted before this analysis
+        // existed, byte for byte, or the differential over the corpus stops
+        // being a measurement of this change.
+        //
+        // Freed once at exit rather than per value, which is not a shortcut but
+        // the memory model this language already has: there is no drop glue and
+        // no per-value free anywhere in it, which is the stated reason `String`
+        // is a Copy type (src/ownership/borrow_checker.rs, `is_copy_type`).
+        // Under that model a `match` binding may copy a node whose children are
+        // shared with the value it came from, because nothing can free a child
+        // while the program is running. Introducing per-value frees HERE, for
+        // one type constructor, would break that invariant everywhere else.
+        //
+        // The cap grows instead of being fixed. `MAX_STRINGS` above silently
+        // stops recording past 1024 and leaks the rest, which is survivable for
+        // strings and is not for a tree, where the count is the program's data
+        // size rather than its literal count.
+        if self.recursive_layout.cuts_anything() {
+            self.output
+                .push_str("// Heap cells for recursive enum payload slots\n");
+            self.output.push_str("static void** __pd_rec_nodes = 0;\n");
+            self.output
+                .push_str("static size_t __pd_rec_count = 0;\n");
+            self.output.push_str("static size_t __pd_rec_cap = 0;\n");
+            self.output
+                .push_str("static void* __pd_rec_alloc(size_t size) {\n");
+            self.output.push_str("    void* cell = malloc(size);\n");
+            self.output.push_str("    if (!cell) {\n");
+            self.output.push_str(
+                "        fprintf(stderr, \"palladium: out of memory building a recursive value\\n\");\n",
+            );
+            self.output.push_str("        exit(1);\n");
+            self.output.push_str("    }\n");
+            self.output
+                .push_str("    if (__pd_rec_count == __pd_rec_cap) {\n");
+            self.output.push_str(
+                "        size_t grown = __pd_rec_cap ? __pd_rec_cap * 2 : 64;\n",
+            );
+            self.output.push_str(
+                "        void** moved = (void**)realloc(__pd_rec_nodes, grown * sizeof(void*));\n",
+            );
+            self.output.push_str("        if (!moved) {\n");
+            self.output.push_str(
+                "            fprintf(stderr, \"palladium: out of memory building a recursive value\\n\");\n",
+            );
+            self.output.push_str("            exit(1);\n");
+            self.output.push_str("        }\n");
+            self.output.push_str("        __pd_rec_nodes = moved;\n");
+            self.output.push_str("        __pd_rec_cap = grown;\n");
+            self.output.push_str("    }\n");
+            self.output
+                .push_str("    __pd_rec_nodes[__pd_rec_count++] = cell;\n");
+            self.output.push_str("    return cell;\n");
+            self.output.push_str("}\n\n");
+            self.output
+                .push_str("static void __pd_cleanup_rec_nodes() {\n");
+            self.output
+                .push_str("    for (size_t i = 0; i < __pd_rec_count; i++) {\n");
+            self.output.push_str("        free(__pd_rec_nodes[i]);\n");
+            self.output.push_str("    }\n");
+            self.output.push_str("    free(__pd_rec_nodes);\n");
+            self.output.push_str("    __pd_rec_nodes = 0;\n");
+            self.output.push_str("    __pd_rec_count = 0;\n");
+            self.output.push_str("    __pd_rec_cap = 0;\n");
+            self.output.push_str("}\n\n");
+        }
+
         // Register cleanup with atexit
         self.output
             .push_str("static void __pd_init() __attribute__((constructor));\n");
         self.output.push_str("static void __pd_init() {\n");
         self.output.push_str("    atexit(__pd_cleanup_strings);\n");
+        if self.recursive_layout.cuts_anything() {
+            self.output
+                .push_str("    atexit(__pd_cleanup_rec_nodes);\n");
+        }
         self.output.push_str("}\n\n");
 
         // Command-line arguments, captured by main() on entry
@@ -1451,6 +1555,28 @@ impl CodeGenerator {
             self.output.push('\n');
         }
 
+        // Variant constructors, after EVERY type definition rather than each one
+        // straight after its own enum.
+        //
+        // They are the only emitted code that needs a payload type COMPLETE
+        // rather than merely named: an indirect slot takes `sizeof(struct S)`,
+        // and every constructor takes its argument by value. Emitted in place,
+        // `enum E { Leaf(i64), Node(S) }` over `struct S { e: E }` — a mutual
+        // recursion that terminates, so a program CAN build one — put
+        // `E_Node__new(struct S arg0)` above the definition of `struct S`, and
+        // gcc reported `variable has incomplete type` and `invalid application
+        // of sizeof`. No ordering of the two definitions fixes it, because `S`
+        // stores an `E` by value and so must come second.
+        //
+        // This moves the constructors of EVERY enum, not only recursive ones.
+        // Deferring conditionally would make the shape of the output depend on
+        // a predicate rather than on the language, and the emitted C is the
+        // artefact this compiler is judged on: one shape is worth measuring.
+        if !self.enum_constructors.is_empty() {
+            let constructors = std::mem::take(&mut self.enum_constructors);
+            self.output.push_str(&constructors);
+        }
+
         // Forward-declare every user function before any body is emitted, so that
         // a call to a function defined later in the file (and mutual recursion,
         // which no ordering can satisfy) compiles under C99.
@@ -1600,6 +1726,72 @@ impl CodeGenerator {
         }
     }
 
+    /// The C type of one enum payload slot.
+    ///
+    /// THE ONE DERIVATION, called by both places that declare a slot, so the
+    /// tuple form and the named form cannot drift into declaring the same
+    /// recursive type two different ways. The three places that USE a slot —
+    /// the two constructor writers and the `match` reader — ask
+    /// `RecursiveLayout::payload_is_indirect` with the same AST node, so all
+    /// five are answering one question about one input.
+    fn payload_slot_c_type(&self, enum_name: &str, ty: &Type) -> String {
+        let base = self.type_to_c(ty);
+        if self.recursive_layout.payload_is_indirect(enum_name, ty) {
+            format!("{}*", base)
+        } else {
+            base
+        }
+    }
+
+    /// Store one constructor argument into its payload slot.
+    ///
+    /// THE ONE WRITER, shared by the tuple form and the named form. An indirect
+    /// slot takes a cell first and the value into the cell; a direct slot is the
+    /// assignment it always was, character for character, so the C emitted for a
+    /// program with no recursive type does not move.
+    ///
+    /// It takes the VARIANT, not an already-derived member name, and derives the
+    /// member here. Handing it a string would have put
+    /// `c_ident::c_enum_payload_member` at the call sites — which is what
+    /// `tests/m1_c_keyword_idents.rs::every_payload_member_emission_uses_the_one_derivation`
+    /// caught, and it was right to: a writer that accepts a member name accepts
+    /// an underived one.
+    fn emit_payload_store(
+        &mut self,
+        enum_name: &str,
+        variant: &str,
+        slot: &str,
+        source: &str,
+        ty: &Type,
+    ) {
+        if self.recursive_layout.payload_is_indirect(enum_name, ty) {
+            let cell = self.type_to_c(ty);
+            self.output.push_str(&format!(
+                "    result.data.{}.{} = ({}*)__pd_rec_alloc(sizeof({}));
+",
+                c_ident::c_enum_payload_member(variant),
+                slot,
+                cell,
+                cell
+            ));
+            self.output.push_str(&format!(
+                "    *result.data.{}.{} = {};
+",
+                c_ident::c_enum_payload_member(variant),
+                slot,
+                source
+            ));
+        } else {
+            self.output.push_str(&format!(
+                "    result.data.{}.{} = {};
+",
+                c_ident::c_enum_payload_member(variant),
+                slot,
+                source
+            ));
+        }
+    }
+
     /// Generate code for an enum definition
     fn generate_enum(&mut self, enum_def: &EnumDef) -> Result<()> {
         self.defined_structs.insert(enum_def.name.clone());
@@ -1635,7 +1827,7 @@ impl CodeGenerator {
                     if !types.is_empty() {
                         self.output.push_str("typedef struct {\n");
                         for (i, ty) in types.iter().enumerate() {
-                            let c_type = self.type_to_c(ty);
+                            let c_type = self.payload_slot_c_type(&enum_def.name, ty);
                             self.output.push_str(&format!(
                                 "    {} field{};
 ",
@@ -1652,7 +1844,7 @@ impl CodeGenerator {
                 EnumVariantData::Struct(fields) => {
                     self.output.push_str("typedef struct {\n");
                     for (field_name, field_type) in fields {
-                        let c_type = self.type_to_c(field_type);
+                        let c_type = self.payload_slot_c_type(&enum_def.name, field_type);
                         self.output.push_str(&format!(
                             "    {} {};
 ",
@@ -1729,7 +1921,14 @@ impl CodeGenerator {
             enum_def.name
         ));
 
-        // Generate constructor functions for each variant
+        // Generate constructor functions for each variant.
+        //
+        // Written through `self.output` and then cut off it, rather than into a
+        // second sink: `emit_payload_store` and every line below push to
+        // `output`, and giving them a destination argument would put the choice
+        // of sink at each call site — one more thing that can be got wrong per
+        // site. One cut, at the end, cannot be.
+        let constructors_start = self.output.len();
         for variant in &enum_def.variants {
             match &variant.data {
                 EnumVariantData::Unit => {
@@ -1772,16 +1971,14 @@ impl CodeGenerator {
                         enum_def.name, enum_def.name, variant.name
                     ));
 
-                    if !types.is_empty() {
-                        for i in 0..types.len() {
-                            self.output.push_str(&format!(
-                                "    result.data.{}.field{} = arg{};
-",
-                                c_ident::c_enum_payload_member(&variant.name),
-                                i,
-                                i
-                            ));
-                        }
+                    for (i, ty) in types.iter().enumerate() {
+                        self.emit_payload_store(
+                            &enum_def.name,
+                            &variant.name,
+                            &format!("field{}", i),
+                            &format!("arg{}", i),
+                            ty,
+                        );
                     }
 
                     self.output.push_str(
@@ -1812,14 +2009,14 @@ impl CodeGenerator {
                         enum_def.name, enum_def.name, variant.name
                     ));
 
-                    for (field_name, _) in fields {
-                        self.output.push_str(&format!(
-                            "    result.data.{}.{} = {};
-",
-                            c_ident::c_enum_payload_member(&variant.name),
+                    for (field_name, field_type) in fields {
+                        self.emit_payload_store(
+                            &enum_def.name,
+                            &variant.name,
                             field_name,
-                            field_name
-                        ));
+                            field_name,
+                            field_type,
+                        );
                     }
 
                     self.output.push_str(
@@ -1830,6 +2027,8 @@ impl CodeGenerator {
                 }
             }
         }
+        let constructors = self.output.split_off(constructors_start);
+        self.enum_constructors.push_str(&constructors);
 
         Ok(())
     }
@@ -2835,9 +3034,26 @@ impl CodeGenerator {
                                                 {
                                                     if let Pattern::Ident(name) = pattern {
                                                         let c_type = self.type_to_c(ty);
+                                                        // An indirect slot holds
+                                                        // a cell; the binding is
+                                                        // the value, so it reads
+                                                        // through. Asked of the
+                                                        // layout by FIELD rather
+                                                        // than through a `&self`
+                                                        // method for the same
+                                                        // borrow reason as the
+                                                        // writes below.
+                                                        let read = if self
+                                                            .recursive_layout
+                                                            .payload_is_indirect(enum_name, ty)
+                                                        {
+                                                            "*"
+                                                        } else {
+                                                            ""
+                                                        };
                                                         self.output.push_str(&format!(
-                                                            "            {} {} = _match_expr.data.{}.field{};\n",
-                                                            c_type, name, c_ident::c_enum_payload_member(variant), i
+                                                            "            {} {} = {}_match_expr.data.{}.field{};\n",
+                                                            c_type, name, read, c_ident::c_enum_payload_member(variant), i
                                                         ));
                                                         // The binding is a real
                                                         // variable; type it for
@@ -2869,9 +3085,18 @@ impl CodeGenerator {
                                                             .find(|(fname, _)| fname == field_name)
                                                         {
                                                             let c_type = self.type_to_c(field_type);
+                                                            let read = if self
+                                                                .recursive_layout
+                                                                .payload_is_indirect(
+                                                                    enum_name, field_type,
+                                                                ) {
+                                                                "*"
+                                                            } else {
+                                                                ""
+                                                            };
                                                             self.output.push_str(&format!(
-                                                                "            {} {} = _match_expr.data.{}.{};\n",
-                                                                c_type, name, c_ident::c_enum_payload_member(variant), field_name
+                                                                "            {} {} = {}_match_expr.data.{}.{};\n",
+                                                                c_type, name, read, c_ident::c_enum_payload_member(variant), field_name
                                                             ));
                                                             self.variables
                                                                 .insert(name.clone(), c_type);

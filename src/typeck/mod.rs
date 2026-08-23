@@ -3,7 +3,7 @@
 
 use crate::ast::{AssignTarget, UnaryOp, *};
 use crate::errors::{CompileError, Result, Span};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 mod suggestions;
 use suggestions::TypeErrorHelper;
@@ -13,6 +13,257 @@ use exhaustiveness::{EnumInfo, ExhaustivenessChecker, VariantInfo};
 
 mod trait_resolution;
 use trait_resolution::TraitResolver;
+
+/// Which enum payload slots must be stored behind a pointer, and which type
+/// declarations have no layout at all.
+///
+/// THE ONE DEFINITION OF THAT QUESTION, because it is asked in five places: the
+/// type checker refuses the declarations that have no layout, and code
+/// generation chooses the C type of every payload slot, allocates in every
+/// constructor, and dereferences in every `match` binding. When it was asked in
+/// zero places, `enum V { Leaf(i64), Pair(V, V) }` passed the parser, the type
+/// checker AND the borrow checker, and then emitted
+///
+/// ```c
+/// typedef struct { struct V field0; struct V field1; } V__Pair_Data;
+/// ```
+///
+/// inside the definition of `struct V` itself, which gcc rejects
+/// (`field has incomplete type 'struct V'`). Splitting the question between the
+/// two passes is exactly how they would come to disagree about which slot is a
+/// pointer, so both passes read this one answer.
+///
+/// # The rule
+///
+/// Build the by-value containment graph over the named types: an edge `A -> B`
+/// means a value of `A` stores a value of `B` inside itself. `&T` contributes
+/// no edge — a reference is already a pointer in C, so it can close a cycle in
+/// the source without closing one in the layout.
+///
+/// Cut the edge out of an `enum` payload slot whose declared type is *directly*
+/// a named type that can reach that enum again. Those slots become pointers.
+///
+/// Whatever still reaches itself after the cuts has no layout and is refused.
+///
+/// # Why cutting at enums is enough for every type a program can build
+///
+/// A value of a type on a by-value cycle is infinite unless some point on the
+/// cycle can stop, and the only construct in this language that can stop is an
+/// `enum` variant that does not recurse. So an inhabited cycle contains an
+/// `enum` node, and the edge leaving an `enum` node is a payload slot: exactly
+/// the edge this rule cuts. What survives the cuts is uninhabited — no program
+/// can construct a `struct Node { next: Node }` — so refusing it loses nothing
+/// a program could have used, and it is refused in the type checker, before any
+/// C exists, rather than by gcc.
+///
+/// The rule is deliberately narrow in one direction: recursion reached through
+/// an array or a tuple (`enum V { Many([V; 3]) }`) is NOT cut, because making
+/// that slot a pointer would change the shape of the array rather than the
+/// element. It therefore survives to the refusal, which is the failing-closed
+/// direction.
+#[derive(Debug, Clone, Default)]
+pub struct RecursiveLayout {
+    /// Non-generic type aliases, so `type Tree = V;` names the same node as `V`.
+    aliases: HashMap<String, Type>,
+    /// Reachability over the uncut graph: `reaches[a]` is every named type a
+    /// value of `a` can store inside itself, at any depth. Seeded from
+    /// successors, so `a` appears in its own set only when `a` is on a cycle.
+    reaches: HashMap<String, HashSet<String>>,
+    /// Names that still store themselves after every cut, each with the cycle
+    /// that proves it, so the diagnostic can show the path rather than assert
+    /// it.
+    no_layout: Vec<(String, Vec<String>)>,
+    /// Whether any slot was cut. Programs with none must emit byte-identical C
+    /// to what they emitted before this analysis existed.
+    cut_any: bool,
+}
+
+impl RecursiveLayout {
+    /// Analyse every `struct`, `enum` and `type` item reachable by the program,
+    /// including the ones it imported. Generic definitions are skipped: they are
+    /// monomorphized into concrete items elsewhere, and `type_to_c` erases their
+    /// parameters to `void*` today, which is a separate open defect.
+    pub fn analyze<'a>(items: impl Iterator<Item = &'a Item> + Clone) -> Self {
+        let mut layout = RecursiveLayout::default();
+
+        for item in items.clone() {
+            if let Item::TypeAlias(alias) = item {
+                if alias.type_params.is_empty() && alias.lifetime_params.is_empty() {
+                    layout.aliases.insert(alias.name.clone(), alias.ty.clone());
+                }
+            }
+        }
+
+        // Edges, before any cut.
+        let mut contains: HashMap<String, Vec<String>> = HashMap::new();
+        for item in items.clone() {
+            match item {
+                Item::Struct(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
+                    let edges = contains.entry(def.name.clone()).or_default();
+                    for (_, ty) in &def.fields {
+                        layout.named_occurrences(ty, edges);
+                    }
+                }
+                Item::Enum(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
+                    let edges = contains.entry(def.name.clone()).or_default();
+                    for variant in &def.variants {
+                        for ty in Self::payload_types(&variant.data) {
+                            layout.named_occurrences(ty, edges);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        layout.reaches = Self::close(&contains);
+
+        // Cut, then look for what survived.
+        let mut cut: HashMap<String, Vec<String>> = HashMap::new();
+        for item in items.clone() {
+            match item {
+                Item::Struct(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
+                    let edges = cut.entry(def.name.clone()).or_default();
+                    for (_, ty) in &def.fields {
+                        layout.named_occurrences(ty, edges);
+                    }
+                }
+                Item::Enum(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
+                    let edges = cut.entry(def.name.clone()).or_default();
+                    for variant in &def.variants {
+                        for ty in Self::payload_types(&variant.data) {
+                            if layout.payload_is_indirect(&def.name, ty) {
+                                layout.cut_any = true;
+                                continue;
+                            }
+                            layout.named_occurrences(ty, edges);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let survived = Self::close(&cut);
+        let mut names: Vec<&String> = survived.keys().collect();
+        names.sort();
+        for name in names {
+            if survived[name].contains(name) {
+                let path = Self::path_back_to(name, &cut).unwrap_or_else(|| vec![name.clone()]);
+                layout.no_layout.push((name.clone(), path));
+            }
+        }
+        layout
+    }
+
+    /// Does this enum payload slot become a pointer?
+    ///
+    /// The four emission sites in code generation and the refusal in the type
+    /// checker all call this with the same AST node they already hold, so none
+    /// of them can form its own opinion about which slot is indirect.
+    pub fn payload_is_indirect(&self, enum_name: &str, ty: &Type) -> bool {
+        match self.resolve_alias(ty) {
+            Some(Type::Custom(target)) => self
+                .reaches
+                .get(&target)
+                .is_some_and(|set| set.contains(enum_name)),
+            _ => false,
+        }
+    }
+
+    /// The declarations with no layout, each paired with the containment cycle
+    /// that proves it.
+    pub fn declarations_without_layout(&self) -> &[(String, Vec<String>)] {
+        &self.no_layout
+    }
+
+    /// Did anything become a pointer? Programs where nothing did must emit the
+    /// C they emitted before, byte for byte.
+    pub fn cuts_anything(&self) -> bool {
+        self.cut_any
+    }
+
+    fn payload_types(data: &EnumVariantData) -> Vec<&Type> {
+        match data {
+            EnumVariantData::Unit => vec![],
+            EnumVariantData::Tuple(types) => types.iter().collect(),
+            EnumVariantData::Struct(fields) => fields.iter().map(|(_, ty)| ty).collect(),
+        }
+    }
+
+    /// Follow `type` aliases to whatever they finally name. Returns `None` on an
+    /// alias that never lands, so a cyclic alias cannot spin here — it is a
+    /// separate defect and this analysis will not be the place it appears as a
+    /// hang.
+    fn resolve_alias(&self, ty: &Type) -> Option<Type> {
+        let mut current = ty.clone();
+        for _ in 0..self.aliases.len() + 1 {
+            match &current {
+                Type::Custom(name) => match self.aliases.get(name) {
+                    Some(next) => current = next.clone(),
+                    None => return Some(current),
+                },
+                _ => return Some(current),
+            }
+        }
+        None
+    }
+
+    /// Every named type a value of `ty` stores inside itself, appended to `out`.
+    /// `Reference` contributes nothing on purpose: it is a pointer already.
+    fn named_occurrences(&self, ty: &Type, out: &mut Vec<String>) {
+        match self.resolve_alias(ty) {
+            Some(Type::Custom(name)) => out.push(name),
+            Some(Type::Array(elem, _)) => self.named_occurrences(&elem, out),
+            Some(Type::Tuple(types)) => {
+                for t in &types {
+                    self.named_occurrences(t, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Transitive closure seeded from successors, so a name lands in its own set
+    /// only by way of a cycle.
+    fn close(edges: &HashMap<String, Vec<String>>) -> HashMap<String, HashSet<String>> {
+        let mut out: HashMap<String, HashSet<String>> = HashMap::new();
+        for start in edges.keys() {
+            let mut seen: HashSet<String> = HashSet::new();
+            let mut stack: Vec<String> = edges[start].clone();
+            while let Some(node) = stack.pop() {
+                if !seen.insert(node.clone()) {
+                    continue;
+                }
+                if let Some(next) = edges.get(&node) {
+                    stack.extend(next.iter().cloned());
+                }
+            }
+            out.insert(start.clone(), seen);
+        }
+        out
+    }
+
+    /// A concrete cycle from `start` back to `start`, for the diagnostic.
+    fn path_back_to(start: &str, edges: &HashMap<String, Vec<String>>) -> Option<Vec<String>> {
+        let mut stack = vec![(start.to_string(), vec![start.to_string()])];
+        let mut seen: HashSet<String> = HashSet::new();
+        while let Some((node, path)) = stack.pop() {
+            for next in edges.get(&node).into_iter().flatten() {
+                if next == start {
+                    let mut done = path.clone();
+                    done.push(next.clone());
+                    return Some(done);
+                }
+                if seen.insert(next.clone()) {
+                    let mut deeper = path.clone();
+                    deeper.push(next.clone());
+                    stack.push((next.clone(), deeper));
+                }
+            }
+        }
+        None
+    }
+}
 
 /// Type representation for type checker (wraps AST Type)
 #[derive(Debug, Clone, PartialEq)]
@@ -479,6 +730,16 @@ pub struct TypeChecker {
     struct_instantiations: HashMap<StructInstantiation, CheckerType>,
     /// Enum definitions with their variants
     enums: HashMap<String, Vec<EnumVariant>>,
+    /// EVERY name declared by an `enum` item, local or imported, filled before
+    /// any type is converted.
+    ///
+    /// `enums` above cannot answer that question while it is still being built:
+    /// its entry for an enum lands only after that enum's own variants have
+    /// been converted, so `enum V { Pair(V, V) }` asked about `V` and was told
+    /// no, and an enum declared below its user was told no as well. Deciding
+    /// `Struct` vs `Enum` from a half-filled map is how the same name got two
+    /// kinds and printed one word on both sides of a mismatch.
+    enum_names: HashSet<String>,
     /// Generic enum definitions
     generic_enums: HashMap<String, GenericEnum>,
     /// Type alias definitions
@@ -537,6 +798,7 @@ impl TypeChecker {
             trait_resolver: TraitResolver::new(),
             struct_instantiations: HashMap::new(),
             enums: HashMap::new(),
+            enum_names: HashSet::new(),
             generic_enums: HashMap::new(),
             type_aliases: HashMap::new(),
             generic_type_aliases: HashMap::new(),
@@ -587,6 +849,19 @@ impl TypeChecker {
     /// precondition for anyone noticing it is wrong.
     pub fn set_imported_modules(&mut self, modules: HashMap<String, crate::resolver::ModuleInfo>) {
         self.imported_modules = modules;
+
+        // Enum names first, for the same reason `check` collects them first:
+        // the registration below converts imported field and payload types, and
+        // an imported enum used as a payload was `Struct` under the incremental
+        // map. Local enums are absent here and that is correct — an imported
+        // module cannot name a type from the program importing it.
+        for module_info in self.imported_modules.values() {
+            for item in &module_info.ast.items {
+                if let crate::ast::Item::Enum(enum_def) = item {
+                    self.enum_names.insert(enum_def.name.clone());
+                }
+            }
+        }
 
         // Process imported functions and add them to our function table
         let mut sorted_modules: Vec<_> = self.imported_modules.iter().collect();
@@ -865,6 +1140,66 @@ impl TypeChecker {
             }
         }
 
+        // WHICH NAMES ARE ENUMS, BEFORE ANY TYPE IS CONVERTED.
+        //
+        // `CheckerType::from` maps every `Custom(n)` to `Struct(n)` because it
+        // has no table to consult. Enum payloads and struct fields were
+        // registered through it while expressions were checked through
+        // `ast_type_to_checker_type`, which does consult one. The two disagreed
+        // about the SAME name, and since both spellings print as just the name,
+        // the disagreement surfaced as `Type mismatch: expected V, found V` — a
+        // diagnostic naming one type on both sides, which no reader can act on.
+        //
+        // It was not a recursion defect. MEASURED on programs with no recursion
+        // anywhere: `enum W { A, B } enum V { Wrap(W) }` and `struct S { w: W }`
+        // both failed this way, so NO enum could carry an enum and NO struct
+        // could hold one.
+        //
+        // The set is collected up front rather than filled as items are walked,
+        // because an enum's own payload names the enum, and because an enum may
+        // be declared after its user; both were `Struct` under the incremental
+        // map.
+        for item in &program.items {
+            if let Item::Enum(enum_def) = item {
+                self.enum_names.insert(enum_def.name.clone());
+            }
+        }
+        for module_info in self.imported_modules.values() {
+            for item in &module_info.ast.items {
+                if let Item::Enum(enum_def) = item {
+                    self.enum_names.insert(enum_def.name.clone());
+                }
+            }
+        }
+
+        // DECLARATIONS WITH NO LAYOUT ARE REFUSED HERE, BEFORE ANY C EXISTS.
+        //
+        // `struct Node { val: i64, next: Node }` used to pass this pass, the
+        // borrow checker AND code generation, and then die in gcc with
+        // `field has incomplete type 'struct Node'` — the compiler reporting a
+        // C-level error for a Palladium-level mistake it had already accepted.
+        // Nothing is lost by refusing: a value on a by-value cycle with no enum
+        // on it is infinite, so no program could ever have constructed one.
+        let layout = RecursiveLayout::analyze(
+            program
+                .items
+                .iter()
+                .chain(self.imported_modules.values().flat_map(|m| &m.ast.items)),
+        );
+        if let Some((name, cycle)) = layout.declarations_without_layout().first() {
+            return Err(CompileError::Generic(format!(
+                "recursive type `{}` has no layout: it stores itself by value ({}), \
+                 so its size would be unbounded. Only an `enum` payload slot can be \
+                 stored behind a pointer, and this cycle has no such slot to store \
+                 there. Break the cycle by routing it through an `enum` variant that \
+                 can stop, e.g. `enum {}Link {{ End, More({}) }}`",
+                name,
+                cycle.join(" -> "),
+                name,
+                name
+            )));
+        }
+
         // First pass: collect all function signatures and struct definitions
         for item in &program.items {
             match item {
@@ -921,11 +1256,17 @@ impl TypeChecker {
                         self.generic_structs
                             .insert(struct_def.name.clone(), generic_struct);
                     } else {
-                        // Convert field types to CheckerType for non-generic structs
+                        // Convert field types to CheckerType for non-generic
+                        // structs. Through `ast_type_to_checker_type`, not
+                        // `CheckerType::from`: the latter calls every named type
+                        // a struct, so `struct S { w: W }` over an `enum W`
+                        // recorded the field as `Struct(W)` while every
+                        // expression producing a `W` had type `Enum(W)`, and the
+                        // program was refused with `expected W, found W`.
                         let fields: Vec<(String, CheckerType)> = struct_def
                             .fields
                             .iter()
-                            .map(|(name, ty)| (name.clone(), CheckerType::from(ty)))
+                            .map(|(name, ty)| (name.clone(), self.ast_type_to_checker_type(ty)))
                             .collect();
 
                         self.structs.insert(struct_def.name.clone(), fields);
@@ -951,17 +1292,28 @@ impl TypeChecker {
                         let mut variants = Vec::new();
 
                         for variant in &enum_def.variants {
+                            // Payload types go through `ast_type_to_checker_type`
+                            // for the same reason struct fields do, and the
+                            // symptom here was the reported one:
+                            // `enum V { Pair(V, V) }` recorded its payload as
+                            // `Struct(V)` while `V::Leaf(1)` had type `Enum(V)`,
+                            // so constructing the recursive variant was refused
+                            // with `expected V, found V`.
                             let variant_fields = match &variant.data {
                                 crate::ast::EnumVariantData::Unit => EnumVariantFields::Unit,
                                 crate::ast::EnumVariantData::Tuple(types) => {
-                                    let field_types: Vec<CheckerType> =
-                                        types.iter().map(CheckerType::from).collect();
+                                    let field_types: Vec<CheckerType> = types
+                                        .iter()
+                                        .map(|ty| self.ast_type_to_checker_type(ty))
+                                        .collect();
                                     EnumVariantFields::Tuple(field_types)
                                 }
                                 crate::ast::EnumVariantData::Struct(fields) => {
                                     let named_fields: Vec<(String, CheckerType)> = fields
                                         .iter()
-                                        .map(|(name, ty)| (name.clone(), CheckerType::from(ty)))
+                                        .map(|(name, ty)| {
+                                            (name.clone(), self.ast_type_to_checker_type(ty))
+                                        })
                                         .collect();
                                     EnumVariantFields::Named(named_fields)
                                 }
@@ -981,14 +1333,16 @@ impl TypeChecker {
                                     CheckerType::Function(vec![], Box::new(enum_type.clone()))
                                 }
                                 crate::ast::EnumVariantData::Tuple(types) => {
-                                    let param_types: Vec<CheckerType> =
-                                        types.iter().map(CheckerType::from).collect();
+                                    let param_types: Vec<CheckerType> = types
+                                        .iter()
+                                        .map(|ty| self.ast_type_to_checker_type(ty))
+                                        .collect();
                                     CheckerType::Function(param_types, Box::new(enum_type.clone()))
                                 }
                                 crate::ast::EnumVariantData::Struct(fields) => {
                                     let param_types: Vec<CheckerType> = fields
                                         .iter()
-                                        .map(|(_, ty)| CheckerType::from(ty))
+                                        .map(|(_, ty)| self.ast_type_to_checker_type(ty))
                                         .collect();
                                     CheckerType::Function(param_types, Box::new(enum_type.clone()))
                                 }
@@ -1304,8 +1658,17 @@ impl TypeChecker {
                     return self.ast_type_to_checker_type(aliased_type);
                 }
 
-                // Check if it's an enum
-                if self.enums.contains_key(name) {
+                // Check if it's an enum.
+                //
+                // `enum_names` is consulted BESIDE `enums`, not instead of it:
+                // `enums` is the half-filled map this pass builds as it walks,
+                // and `enum_names` is the complete set collected before the walk
+                // begins. Reading only the first gave the same name two kinds
+                // depending on WHEN it was asked (an enum's own payload, and any
+                // enum declared after its user, both came back `Struct`); the
+                // union makes the answer a property of the program instead of a
+                // property of the walk position.
+                if self.enums.contains_key(name) || self.enum_names.contains(name) {
                     CheckerType::Enum(name.clone())
                 } else {
                     CheckerType::Struct(name.clone())

@@ -61,10 +61,10 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 
 **Excluded from PBS-1** (verified unsupported downstream):
 - Tuples — `type_to_c` yields `void*` (`src/codegen/mod.rs:1596-1599`), and a tuple in a struct
-  field is a hard error (`src/codegen/mod.rs:1894-1894`). No tuple *expressions* exist at all, so no
+  field is a hard error (`src/codegen/mod.rs:2093-2093`). No tuple *expressions* exist at all, so no
   tuple is constructible.
 - Generic types in struct fields — error at `src/codegen/mod.rs:1879-1879`.
-- Reference types in struct fields — error at `src/codegen/mod.rs:1884-1884`.
+- Reference types in struct fields — error at `src/codegen/mod.rs:2083-2083`.
 - Returning an array from a function — error at `src/codegen/mod.rs:2117-2121`.
 - `f32`/`f64`, `char`, `str`, `u8`, `usize` — no such primitives (`src/parser/mod.rs:2633-2639`).
 - Trait bounds (`<T: Display>`) — a parse error; `parse_generic_params` accepts bare names only.
@@ -163,7 +163,7 @@ precedence.
 | `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:2904-2904`). It used to emit C referencing an undefined `struct Result`. |
 | `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:2911-2911`). It used to emit a `poll` member call that is never generated. |
 | closures | no closure token path, no closure AST node |
-| ranges outside `for` | codegen error (`src/codegen/mod.rs:2380-2380`) |
+| ranges outside `for` | codegen error (`src/codegen/mod.rs:2579-2579`) |
 | empty array literal `[]` | typeck error — element type uninferrable (`src/typeck/mod.rs:2378-2378`) |
 | tuple expressions, `.0` indexing | unparseable |
 | `dbg!` | expands to `print_debug`, which is not defined anywhere (`src/macros/mod.rs:107`) |

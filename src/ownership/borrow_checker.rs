@@ -170,7 +170,7 @@ impl BorrowChecker {
     /// imported function can be checked at all.
     ///
     /// Takes exactly what `TypeChecker::set_imported_modules` takes
-    /// (`src/typeck/mod.rs:588-588`), because the driver has one resolver result and
+    /// (`src/typeck/mod.rs:850-850`), because the driver has one resolver result and
     /// two passes that need it; a second shape here would be a second thing to
     /// keep in sync. Registration itself is deferred to `check_program`, which is
     /// where the ordering against local definitions is decided.
