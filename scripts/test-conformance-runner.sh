@@ -79,8 +79,8 @@ stub_pdc() {
 # Writes C that gcc genuinely refuses, runs a REAL gcc on it, and exits with the
 # code derived from gcc's actual status — the producer half of the contract
 # scripts/conformance.sh consumes, which is what makes this a fault injection
-# rather than a canned string. Codes are fix/gcc-diagnostics-discarded's
-# (src/linker.rs:247-261 at aa63982): 3 refused, 4 ill-typed C, 5 no verdict.
+# rather than a canned string. Codes are src/linker.rs's EXIT_* constants:
+# 3 refused, 4 ill-typed C, 5 no verdict, 6 a verdict nobody could attribute.
 #
 # 126 and 127 map to 5, NOT to 3. A missing or unexecutable gcc is a TOOLCHAIN
 # outcome by this branch's own contract, and calling it a backend rejection
@@ -126,11 +126,11 @@ echo "gcc terminated by a signal" >&2
 if [ "$st" -ge 128 ] || [ "$st" -eq 126 ] || [ "$st" -eq 127 ]; then exit 5; fi
 exit 3'
 
-# TODAY'"'"'S REAL pdc: a translation unit, a failed build, and the flattened
-# exit 1 that cannot say which of the two happened (src/main.rs:137-139 emits
-# the same string, and the same status, for a rejected C and for a gcc that
-# died). The gate must under-claim here. This is the regression pin for the
-# accusation being withheld.
+# AN UNSTRUCTURED pdc: a translation unit, a failed build, and a flattened exit
+# 1 that cannot say which of the two happened — one string and one status for a
+# rejected C and for a gcc that died. No longer what this repo's pdc emits; kept
+# as the regression pin for the accusation being withheld when a producer (an
+# older pdc, a third-party one) gives the gate nothing structured.
 stub_no_provenance='#!/bin/sh
 f=$2; stem=`basename "$f" .pd`
 mkdir -p build_output
@@ -974,13 +974,13 @@ run_case "$D"
 expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
 
 # --- the accusation is WITHHELD when the evidence cannot support it ---------
-# `gcc compilation failed` is emitted for every unsuccessful gcc status
-# (src/main.rs:137-139), so it cannot separate "gcc refused our C" from "gcc
-# died". These pin the under-claim: same never-expectable outcome, same red
-# gate, no defect asserted.
+# An UNSTRUCTURED producer emits `gcc compilation failed` for every unsuccessful
+# gcc status, so it cannot separate "gcc refused our C" from "gcc died". These
+# pin the under-claim: same never-expectable outcome, same red gate, no defect
+# asserted.
 start "backend/ambiguous: no structured signal is HARNESS_ERROR, never BACKEND_REJECT"
-# This is TODAY'S REAL pdc. Until fix/gcc-diagnostics-discarded lands, every
-# fixture that reaches this point takes this path.
+# Not this repo's pdc any more — it emits 3/4/5/6. Kept because the gate must
+# still under-claim for any producer that gives it nothing structured.
 D=$(new_repo backendambiguous)
 stub_pdc "$D" "$stub_no_provenance"
 fixture "$D" tests/any.pd "$good_program"

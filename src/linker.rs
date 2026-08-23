@@ -391,94 +391,121 @@ pub fn fatal_diagnostics<'a>(stderr: &'a str, c_file: &Path) -> Vec<&'a str> {
 #[derive(Debug, Default)]
 pub struct Classified<'a> {
     /// Fatal-tagged diagnostics attributed to the translation unit under
-    /// compilation. These, and only these, stop the build.
+    /// compilation.
+    ///
+    /// `fatal` and `foreign` BOTH stop the build. They differ in OWNERSHIP, not
+    /// in effect: this one says the defect is in the C generated from the user's
+    /// program, the other says it is in C this compiler ships. (This comment
+    /// said "these, and only these, stop the build" for one round after
+    /// `foreign` became a refusal, which is the same shape of stale claim the
+    /// module keeps finding elsewhere.)
     pub fatal: Vec<&'a str>,
     /// Diagnostics on our translation unit whose tag is in NEITHER list: a gap
     /// in this compiler's policy.
     pub unclassified: Vec<&'a str>,
     /// Fatal-tagged diagnostics attributed to some OTHER file — the C runtime,
-    /// a system header. A real defect if it appears, but not this program's and
-    /// not this program's to fail for.
+    /// a system header, or a unit this parser could not attribute at all.
+    ///
+    /// ALSO STOPS THE BUILD. Not this program's defect, and refused anyway: the
+    /// runtime is linked into every executable this compiler produces, so
+    /// shipping it ill-typed puts the same miscompile in every program built
+    /// here. Unattributable fatal diagnostics land here too, which is the
+    /// fail-closed direction — refuse without naming a culprit.
     pub foreign: Vec<&'a str>,
 }
 
-/// Which file a diagnostic header names, if it names one.
-///
-/// gcc's header is `<path>:<line>:<col>: <severity>: ...`. Anything without
-/// that shape (a bare `ld: symbol not found`, a summary line) has no path and
-/// is not attributed to anybody.
-fn diagnostic_path(line: &str) -> Option<&str> {
-    // ANCHORED AT COLUMN 0, AND THIS IS THE FORGERY DEFENCE.
-    //
-    // This module argues that an exit code cannot be forged by fixture text
-    // because gcc echoes the generated C and the generated C carries the
-    // fixture's identifiers. That argument condemns any scan that reads the
-    // ECHO as if it were a header. A Palladium string literal spelling
-    // `x.c:1:1: error: ...` is echoed to stderr, and a search that merely FINDS
-    // `": error: "` anywhere on the line will parse the echo and attribute it —
-    // turning an honest exit 6 into an accusing exit 3, chosen by the fixture.
-    //
-    // Every diagnostic header gcc and clang emit begins at column 0. Every echo
-    // of source is indented (`  279 |     return ...`), as is every caret line
-    // and every `from` continuation. So a line that starts with whitespace is
-    // not a header, and the path must start at index 0.
-    if line.starts_with(|c: char| c.is_whitespace()) {
-        return None;
-    }
-    let sev = line
-        .find(": warning: ")
-        .or_else(|| line.find(": error: "))
-        .or_else(|| line.find(": note: "))?;
-    let head = &line[..sev];
-    // Walk back over `:<col>` and `:<line>`; whatever remains is the path. Done
-    // by trimming numeric tail components rather than by splitting on the first
-    // `:`, so a Windows drive letter survives.
-    let mut path = head;
-    for _ in 0..2 {
-        if let Some(colon) = path.rfind(':') {
-            if path[colon + 1..].chars().all(|c| c.is_ascii_digit())
-                && !path[colon + 1..].is_empty()
-            {
-                path = &path[..colon];
-            }
-        }
-    }
-    Some(path)
+/// What a diagnostic header says about severity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Severity {
+    Error,
+    Warning,
+    Note,
 }
 
-/// Is this diagnostic about the translation unit we asked gcc to compile?
+/// Parse this line as a diagnostic header ABOUT `tu`, and say how severe.
 ///
-/// EXACT COMPONENTS, NOT A SUFFIX. The first version asked
-/// `path.ends_with(name)` on the raw string, which is satisfied by any path
-/// whose text merely ENDS with our file's name: ask about `runtime.c` and a
-/// diagnostic in the bundled `runtime/palladium_runtime.c` matches, producing
-/// exit 3 — "this compiler emitted C that will not compile" — about C the user
-/// never caused. A module whose entire argument is that a claim must be
-/// attributable cannot attribute by substring.
+/// ONE PARSE, ONE ANSWER — and this shape is the fix for the same defect
+/// relocating four times. Every previous version SEARCHED the raw line for the
+/// thing it wanted (a substring of the path, then a base name, then `": error: "`
+/// anywhere) and each search could be satisfied by text that is not the header
+/// field it was standing in for. Two independent scans of one line also meant
+/// the exit-0 path and the nonzero path could disagree about whose file it was.
 ///
-/// Full-path equality first, because gcc echoes the path exactly as it appeared
-/// on the command line and `link_command` passes ours verbatim; exact
-/// `file_name()` equality second, for the case where a driver normalises it.
-/// Both are component-wise. Residual, stated rather than hidden: two DIFFERENT
-/// files with the same base name in different directories are still
-/// indistinguishable to the second test. That is a much narrower window than
-/// the suffix test, and it is not reachable from the two units this compiler
-/// actually hands gcc, whose base names differ.
-fn attributed_to(line: &str, c_file: &Path) -> bool {
-    let Some(raw) = diagnostic_path(line) else {
-        // No path on the line at all — `ld: symbol not found`, a summary line.
-        // Cannot be attributed to anybody, so it is not attributed. Fails
-        // towards not accusing, like everything else in this module.
-        return false;
+/// So attribution is not a search at all. `link_command` puts the translation
+/// units on the command line itself, and gcc echoes a path verbatim, so the
+/// question "is this line a header for THAT unit" is answered by matching the
+/// unit's exact path as a PREFIX at column 0 and then requiring gcc's header
+/// grammar — `:<line>[:<col>]: <severity>: ` — immediately after it.
+///
+/// WHAT THAT CLOSES, in the order the review found them:
+///
+/// * **Basename collision.** `palladium_runtime.pd` compiles to
+///   `build_output/palladium_runtime.c`, and `runtime_paths::RUNTIME_C_FILE` is
+///   `palladium_runtime.c`. Identical base names, and the generated one is
+///   chosen by whoever names the `.pd` file — so NO comparison ending at the
+///   base name can separate the compiler's runtime from the user's program. The
+///   full path can: the two differ in their directories, which is exactly what
+///   we put on the command line.
+/// * **A file name that contains a severity marker.** `foo: error: forged.pd`
+///   is a legal name, so the ordinary prelude WARNING arrives as
+///   `build_output/foo: error: forged.c:263:12: warning: …`. A scan for
+///   `": error: "` finds it in the PATH, at column 0, past the echo anchor.
+///   Here the marker is only ever read at the one offset the grammar puts it,
+///   after the whole known path — so a name cannot supply it. Note the residual
+///   is in the safe direction: a name could contain `:1:1: error: ` and cause
+///   this parser to see NO header at all for that unit, which loses a
+///   diagnostic rather than inventing an accusation.
+///
+/// The column-0 anchor is still here and still necessary — it is what excludes
+/// gcc's indented source echo and caret lines — but it was never sufficient,
+/// because a file name is at column 0 too and the user picks it.
+fn header_severity(line: &str, tu: &Path) -> Option<Severity> {
+    let tu = tu.to_str()?;
+    // Column 0, exact path, nothing before it. Anything indented is an echo, a
+    // caret, or an `In file included from` continuation.
+    let rest = line.strip_prefix(tu)?.strip_prefix(':')?;
+
+    // `<line>` then optionally `:<col>`, each a non-empty run of digits.
+    let (digits, rest) = split_digits(rest)?;
+    if digits.is_empty() {
+        return None;
+    }
+    let rest = match rest.strip_prefix(':') {
+        Some(after) => match split_digits(after) {
+            Some((col, r)) if !col.is_empty() => r,
+            // `path:12:` with no column — gcc does this for whole-file
+            // diagnostics.
+            _ => rest,
+        },
+        None => rest,
     };
-    let p = Path::new(raw);
-    if p == c_file {
-        return true;
+
+    let rest = rest.strip_prefix(": ")?;
+    for (word, sev) in [
+        ("error: ", Severity::Error),
+        ("warning: ", Severity::Warning),
+        ("note: ", Severity::Note),
+        // GNU emits these for -Werror promotions and ICEs; both are refusals.
+        ("fatal error: ", Severity::Error),
+        ("internal compiler error: ", Severity::Error),
+    ] {
+        if rest.starts_with(word) {
+            return Some(sev);
+        }
     }
-    match (p.file_name(), c_file.file_name()) {
-        (Some(a), Some(b)) => a == b,
-        _ => false,
-    }
+    None
+}
+
+/// Split a leading run of ASCII digits from `s`.
+fn split_digits(s: &str) -> Option<(&str, &str)> {
+    let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    Some((&s[..end], &s[end..]))
+}
+
+/// Is this diagnostic a header about the translation unit we asked gcc to
+/// compile?
+fn attributed_to(line: &str, c_file: &Path) -> bool {
+    header_severity(line, c_file).is_some()
 }
 
 /// Tags that say something about the CODE, as opposed to how the compiler was
@@ -732,10 +759,16 @@ impl std::error::Error for LinkError {}
 /// downgrades a rejection to [`LinkError::GccUnexplained`]. A missed accusation
 /// costs a sharper message; a fabricated one costs a gate certifying a defect
 /// that was never shown.
-fn attributes_an_error_to(stderr: &str, c_file: &Path) -> bool {
+pub fn stderr_rejects(stderr: &str, c_file: &Path) -> bool {
+    // The SEVERITY COMES FROM THE PARSE, not from a second scan of the line.
+    // `line.contains(": error: ")` was the whole bug: a file named
+    // `foo: error: forged.pd` puts that substring in the PATH of an ordinary
+    // warning, at column 0, and the accusation became a property of the file
+    // name. One parser answers both "whose file" and "how severe", so the two
+    // can no longer be sourced from different text.
     stderr
         .lines()
-        .any(|line| line.contains(": error: ") && attributed_to(line, c_file))
+        .any(|line| header_severity(line, c_file) == Some(Severity::Error))
 }
 
 /// How a process ended, when it did not end by exiting.
@@ -969,7 +1002,7 @@ pub fn link(
     // will not compile". Everything else exits nonzero too and means something
     // else entirely, so it gets a code that accuses nobody.
     if !gcc_output.status.success() {
-        if attributes_an_error_to(stderr, c_file) {
+        if stderr_rejects(stderr, c_file) {
             // Byte-identical to the message pdc printed before this change.
             return Err(LinkError::GccRejected(format!(
                 "gcc compilation failed:\n{}",

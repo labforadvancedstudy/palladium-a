@@ -70,13 +70,13 @@
 # `link` is a manifest error so the excuse cannot be reintroduced as a column
 # value. Same shape as NO_BINARY below, same reason.
 #
-# WHAT IT IS CALLED depends on how much is established, and today that is less
-# than the paragraph above would let you assume. `BACKEND_REJECT` says gcc
-# refused our C; the evidence pdc currently gives a shell gate cannot separate
-# that from a gcc that died mid-run, so the verdict that actually fires is
-# `HARNESS_ERROR` with the ambiguity named. Both are never-expectable and both
-# fail the gate — the invariant is ENFORCED either way; only the accusation is
-# withheld. See the verdict section for the contract that removes the ambiguity.
+# WHAT IT IS CALLED depends on how much the producer established, and since
+# fix/gcc-diagnostics-discarded landed it establishes a lot. `BACKEND_REJECT`
+# fires on exit 3 (gcc refused our C) and on exit 4 (gcc exited 0 and diagnosed
+# ill-typed C we emitted). `HARNESS_ERROR` fires on 5 (gcc never reached a
+# verdict) and on 6 (it reached one nobody could attribute to our C). All four
+# are never-expectable and all four fail the gate — the invariant is ENFORCED
+# either way; only the accusation is withheld. See the verdict section.
 #
 # Be exact about the size of that claim. This makes the outcome INADMISSIBLE FOR
 # EVERY FIXTURE THE CORPUS RUNS. It does not find backend-reject defects: a
@@ -715,19 +715,19 @@ while IFS= read -r f; do
     # so this gate would not have caught either. It makes the OUTCOME inadmissible
     # for every fixture the corpus runs. Coverage is a separate, open debt.
     #
-    # WHICH of the two things happened is a SEPARATE question, and this gate is
-    # not allowed to guess it. On this tree `gcc compilation failed` is emitted
-    # for EVERY unsuccessful gcc status (src/main.rs:137-139 tests
-    # `status.success()`), so a translation unit gcc refused and a gcc that died
-    # on SIGSEGV or SIGKILL produce the same string. Naming the first accuses
-    # codegen of a defect on evidence that cannot tell it from the machine
-    # running out of memory, and a heuristic over gcc's stderr would be exactly
-    # the forgeable classifier this whole change exists to remove, one level down.
+    # WHICH of them happened is a SEPARATE question, and this gate is not
+    # allowed to guess it. Before the producer was fixed, `gcc compilation
+    # failed` was emitted for EVERY unsuccessful gcc status, so a translation
+    # unit gcc refused and a gcc killed by SIGKILL produced the same string.
+    # Naming the first accuses codegen on evidence that cannot tell it from the
+    # machine running out of memory, and a heuristic over gcc's stderr would be
+    # exactly the forgeable classifier this change exists to remove, one level
+    # down.
     #
     # SO THE ANSWER COMES FROM THE EXIT CODE, WHICH FIXTURE TEXT HAS NO ROUTE TO.
-    # Branch fix/gcc-diagnostics-discarded (aa63982) splits the flattened status;
-    # read from its src/linker.rs:247-261 and its LinkError variants, not from a
-    # summary of them:
+    # Read src/linker.rs's EXIT_* constants and its LinkError variants directly,
+    # not a summary of them — including this one, which is a summary. The codes
+    # this gate acts on:
     #
     #   3 EXIT_BACKEND_REJECT     GccFailed  — gcc ran to completion and exited
     #                             nonzero: it REFUSED the translation unit.
@@ -745,7 +745,7 @@ while IFS= read -r f; do
     #                             the link stage lands here, and so does a full
     #                             disk. Refused, and not attributed to anyone.
     #
-    # AND WHEN THE SIBLING LANDS, REPLACE THE STUBS WITH AN INTEGRATION RECEIPT.
+    # THE STUBS STILL OWE AN INTEGRATION RECEIPT; IT DID NOT LAND WITH THEM.
     # The controls in scripts/test-conformance-runner.sh manufacture these codes,
     # which is what makes them permanent — but a stub reproduces the numbers
     # WRITTEN DOWN HERE, so it agrees with this comment by construction and

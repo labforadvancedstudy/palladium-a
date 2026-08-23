@@ -1217,3 +1217,164 @@ fn a_known_tag_does_not_hide_an_unknown_one_beside_it() {
         c
     );
 }
+
+// ---------------------------------------------------------------------------
+// 23-26. the fourth relocation of the same defect: one line, scanned twice
+// ---------------------------------------------------------------------------
+//
+// Both controls below failed when they were written. They are the same root
+// cause: `attributed_to` and `attributes_an_error_to` each scanned the raw line
+// for what they needed instead of parsing the header once and using the parse,
+// so each could be satisfied by text that is not a header field at all.
+
+/// EXACT BASENAMES COLLIDE, AND THE COLLIDING NAME IS USER-CHOSEN.
+///
+///     palladium_runtime.pd  ->  build_output/palladium_runtime.c
+///     src/runtime_paths.rs  ->  RUNTIME_C_FILE = "palladium_runtime.c"
+///
+/// Round two replaced `ends_with` with a `file_name()` comparison and called it
+/// component comparison. The hole narrowed and did not close: the GENERATED
+/// basename is chosen by whoever names the .pd file, so no test that ends at the
+/// basename can separate the compiler's runtime from the user's program. A fatal
+/// diagnostic in the bundled runtime was then attributed to the user's C — an
+/// ICE naming the wrong file on the exit-0 path, and code 3 instead of 6 on the
+/// nonzero one.
+///
+/// The previous collision controls used `runtime.c` vs `palladium_runtime.c`,
+/// which is the SUFFIX case; they cannot reach this one.
+#[test]
+fn the_runtime_and_a_program_sharing_its_exact_name_are_still_told_apart() {
+    // What the driver hands gcc for a program called `palladium_runtime.pd`,
+    // and what `link_command` hands it for the runtime, on the same line.
+    let ours = Path::new("build_output/palladium_runtime.c");
+    let runtime_tu = palladium::runtime_paths::runtime_c().expect("runtime resolves");
+
+    let line = format!(
+        "{}:12:5: warning: incompatible pointer types assigning to 'char **' \
+         from 'char *' [-Wincompatible-pointer-types]",
+        runtime_tu.display()
+    );
+    let c = linker::classify_diagnostics(&line, ours);
+    assert!(
+        c.fatal.is_empty(),
+        "a defect in the compiler's own runtime was charged to a user program \
+         that merely shares its file name. The ICE would name {} and quote a \
+         diagnostic about {}.\n{:?}",
+        ours.display(),
+        runtime_tu.display(),
+        c.fatal
+    );
+    assert_eq!(c.foreign.len(), 1, "{:?}", c);
+
+    // And the user's own file is still attributed when it really is the one
+    // named, so the fix is not "attribute nothing".
+    let mine = "build_output/palladium_runtime.c:9:9: warning: incompatible \
+                pointer types [-Wincompatible-pointer-types]";
+    let c2 = linker::classify_diagnostics(mine, ours);
+    assert_eq!(c2.fatal.len(), 1, "{:?}", c2);
+    assert!(c2.foreign.is_empty(), "{:?}", c2);
+}
+
+/// A FILENAME IS AT COLUMN 0 TOO, AND THE USER PICKS IT.
+///
+/// `attributes_an_error_to` asked whether `": error: "` occurred ANYWHERE on the
+/// line. `foo: error: forged.pd` is a legal file name, so the ordinary prelude
+/// warning arrives as
+///
+///     build_output/foo: error: forged.c:263:12: warning: … [-W…]
+///
+/// and the FILENAME supplies the substring, past the column-0 anchor that was
+/// added to stop gcc's source echo. Link then fails for an unrelated reason and
+/// an honest 6 becomes an accusing 3 — chosen by the name of the source file.
+#[test]
+fn a_filename_containing_a_severity_marker_cannot_forge_a_rejection() {
+    let ours = Path::new("build_output/foo: error: forged.c");
+    // The prelude warning every compile produces, under that file name. No
+    // `error:` is being reported here at all: the substring is part of the path.
+    let stderr = "build_output/foo: error: forged.c:263:12: warning: returning \
+                  'const char *' from a function with result type 'char *' \
+                  discards qualifiers [-Wincompatible-pointer-types-discards-qualifiers]\n\
+                  ld: symbol(s) not found for architecture arm64\n";
+    assert!(
+        !linker::stderr_rejects(stderr, ours),
+        "a file NAME supplied the `: error: ` substring, so gcc's ordinary \
+         warning was read as gcc rejecting our translation unit"
+    );
+
+    // Negative control: a real error on the same oddly-named file IS a
+    // rejection, so the fix is not "never attribute".
+    let real = "build_output/foo: error: forged.c:1:1: error: use of undeclared \
+                identifier 'x'\n";
+    assert!(
+        linker::stderr_rejects(real, ours),
+        "a genuine error naming our translation unit stopped being attributed"
+    );
+}
+
+/// The basename collision, end to end through the real binary.
+///
+/// The unit control above proves the classifier; this proves the wiring, with a
+/// program actually named `palladium_runtime.pd` and a shim that diagnoses only
+/// the bundled runtime. Before the fix this was exit 3 — "pdc accepted this
+/// source and then gcc refused the C it emitted" — about a file gcc never
+/// mentioned.
+#[test]
+#[cfg(unix)]
+fn a_program_named_after_the_runtime_is_not_blamed_for_it() {
+    let runtime_tu = palladium::runtime_paths::runtime_c().expect("runtime resolves");
+    let dir = TempDir::new().expect("tempdir");
+    let path = shim_path(
+        dir.path(),
+        &format!(
+            "#!/bin/sh\necho \"{}:12:5: error: something wrong in the runtime\" >&2\nexit 1\n",
+            runtime_tu.display()
+        ),
+    );
+    // Stem chosen so codegen emits `build_output/palladium_runtime.c`, whose
+    // base name is byte-identical to `runtime_paths::RUNTIME_C_FILE`.
+    let run = pdc_compile_with_path(TRIVIAL_SOURCE, "palladium_runtime", Some(Path::new(&path)));
+
+    assert_eq!(
+        run.code,
+        Some(EXIT_GCC_UNEXPLAINED),
+        "an error naming ONLY the bundled runtime was attributed to a user \
+         program that shares its file name, which is exit 3: 'this compiler \
+         emitted C that will not compile'\n{}",
+        run.log
+    );
+    assert_ne!(run.code, Some(EXIT_BACKEND_REJECT), "{}", run.log);
+}
+
+/// The file-name forgery, end to end.
+///
+/// A source file whose NAME contains `: error: `, compiled with a shim that
+/// fails for an unrelated reason and emits only a warning. The substring is in
+/// the path; nothing here is an error. Before the fix the file name chose the
+/// exit code.
+#[test]
+#[cfg(unix)]
+fn a_source_file_named_with_a_severity_marker_cannot_choose_the_exit_code() {
+    let dir = TempDir::new().expect("tempdir");
+    let path = shim_path(
+        dir.path(),
+        &format!(
+            "{}\
+             echo \"$c:263:12: warning: returning 'const char *' discards qualifiers \
+             [-Wincompatible-pointer-types-discards-qualifiers]\" >&2\n\
+             echo \"ld: symbol(s) not found for architecture arm64\" >&2\n\
+             exit 1\n",
+            SHIM_FIND_TU
+        ),
+    );
+    let run = pdc_compile_with_path(TRIVIAL_SOURCE, "foo: error: forged", Some(Path::new(&path)));
+
+    assert_eq!(
+        run.code,
+        Some(EXIT_GCC_UNEXPLAINED),
+        "the NAME of the source file supplied a `: error: ` substring, so an \
+         undefined-symbol link failure was reported as gcc rejecting the C this \
+         compiler emitted. The accusation was chosen by the file name.\n{}",
+        run.log
+    );
+    assert!(!run.log.contains("gcc compilation failed"), "{}", run.log);
+}
