@@ -22,44 +22,44 @@ docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-
 docs/specification/bootstrap-subset.md	105-105	src/codegen/mod.rs	f860a38420cd	3. **Struct and array parameters that are written are declared `mut`.**
 docs/specification/bootstrap-subset.md	85-85	src/typeck/mod.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
 docs/specification/bootstrap-subset.md	85-85	tests/m3_imported_calls.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
-docs/specification/grammar.ebnf	113-113	docs/reference/features/async-system/async-as-effect.md	d4cfe0aa8434	function = [ "pub" ] [ "async" ] "fn" identifier [ generic_params ]
-docs/specification/grammar.ebnf	188-188	src/parser/mod.rs	4afa88eb2002	assign_stmt = place '=' expression ';' ;
-docs/specification/grammar.ebnf	189-189	tests/advanced_features_test.rs	d68f8f43ca3c	place = identifier | place '[' expression ']' | place '.' identifier
-docs/specification/grammar.ebnf	209-209	tests/integration_test.rs	7d31dda4ec9c	block = '{' { statement } [ expression ] '}' ;
-docs/specification/grammar.ebnf	238-238	docs/reference/features/async-system/async-as-effect.md	adf6911b8a98	| ".await" } ;
-docs/specification/grammar.ebnf	68-72	tests/advanced_features_test.rs	747cea4926cb	keyword = "fn" | "let" | "mut" | "if" | "else" | "while" | "return" | "true"  ...  "Self" | "self" | "type" | "const" | "unsafe" | "async" | "await" | "macro" ;
-docs/specification/grammar.ebnf	72-72	docs/reference/features/async-system/async-as-effect.md	16acbe64135a	| "unsafe" | "async" | "await" | "macro" ;
-docs/specification/grammar.ebnf	74-75	docs/reference/features/async-system/async-as-effect.md	41773243f31f	# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
-grammar.ebnf	121-121	tests/advanced_e2e_test.rs	15fd3a3c2784	# Effect clauses (`![io]`) do NOT exist in the surface syntax; effects are
-grammar.ebnf	121-121	tests/advanced_features_test.rs	15fd3a3c2784	# Effect clauses (`![io]`) do NOT exist in the surface syntax; effects are
-grammar.ebnf	124-125	tests/advanced_e2e_test.rs	6d2230dbb6c3	struct_def = [ "pub" ] "struct" identifier [ generic_params ] '{' [ field { ',' field } [ ',' ] ] '}' ;
-grammar.ebnf	124-125	tests/advanced_features_test.rs	6d2230dbb6c3	struct_def = [ "pub" ] "struct" identifier [ generic_params ] '{' [ field { ',' field } [ ',' ] ] '}' ;
-grammar.ebnf	128-128	tests/compiler_comprehensive_test.rs	bd5e922ac90a	enum_def = "enum" identifier [ generic_params ]
-grammar.ebnf	136-136	tests/advanced_features_test.rs	a45dc3e02652	'{' { trait_item } '}' ;
-grammar.ebnf	140-140	tests/advanced_e2e_test.rs	c1a6c86e375c	# A trait method declared with a `self` receiver is a PARSE ERROR: trait methods
-grammar.ebnf	140-140	tests/advanced_features_test.rs	c1a6c86e375c	# A trait method declared with a `self` receiver is a PARSE ERROR: trait methods
-grammar.ebnf	141-141	tests/advanced_e2e_test.rs	546233a2de72	# use a parameter loop that does not accept `self`. Traits also emit no code.
-grammar.ebnf	141-141	tests/advanced_features_test.rs	546233a2de72	# use a parameter loop that does not accept `self`. Traits also emit no code.
-grammar.ebnf	151-151	docs/contributing/MILESTONES.md	16519002b7db	generic_params = '<' generic_param { ',' generic_param } '>' ;
-grammar.ebnf	152-152	docs/reference/features/core-language/implicit-lifetimes.md	862cabb5d5a1	generic_param = "'" identifier (* lifetime *)
-grammar.ebnf	167-167	docs/reference/features/core-language/implicit-lifetimes.md	27eae3e7e3c5	reference = '&' [ "'" identifier ] [ "mut" ] type ;
-grammar.ebnf	172-172	tests/advanced_e2e_test.rs	94eb43526249	# No f32/f64, char, str, u8, usize. No function types, slices, `dyn` or `impl`
-grammar.ebnf	192-192	tests/compiler_comprehensive_test.rs	b3bb37c9181f	# There is NO `else if`: after `else` the parser requires '{'.
-grammar.ebnf	200-200	tests/compiler_comprehensive_test.rs	3b1382bc7781	match_stmt = "match" expression '{' { match_arm } '}' ;
-grammar.ebnf	209-217	tests/compiler_comprehensive_test.rs	9cd8b7892f8c	block = '{' { statement } [ expression ] '}' ; # A trailing expression in a f ...  =============================================================================
-grammar.ebnf	242-242	tests/advanced_e2e_test.rs	4425a6711347	| macro_call ;
-grammar.ebnf	242-242	tests/advanced_features_test.rs	4425a6711347	| macro_call ;
-grammar.ebnf	242-242	tests/compiler_comprehensive_test.rs	4425a6711347	| macro_call ;
-grammar.ebnf	245-245	tests/advanced_e2e_test.rs	4248d06c3f5b	field_init = identifier ':' expression ;
-grammar.ebnf	245-245	tests/advanced_features_test.rs	4248d06c3f5b	field_init = identifier ':' expression ;
-grammar.ebnf	245-245	tests/compiler_comprehensive_test.rs	4248d06c3f5b	field_init = identifier ':' expression ;
-grammar.ebnf	246-247	tests/advanced_features_test.rs	4cceee868e13	field_init_list = field_init { ',' field_init } [ ',' ] ;
-grammar.ebnf	263-263	tests/advanced_e2e_test.rs	a7adb2aa6aa4	# Known precedence bug: multiplication parses its RIGHT operand with `postfix`
-grammar.ebnf	263-263	tests/compiler_comprehensive_test.rs	a7adb2aa6aa4	# Known precedence bug: multiplication parses its RIGHT operand with `postfix`
-grammar.ebnf	74-75	docs/reference/features/core-language/implicit-lifetimes.md	41773243f31f	# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
-grammar.ebnf	82-83	docs/reference/features/advanced/totality-checking.md	0a4005d0a56b	punctuation = '(' | ')' | '{' | '}' | '[' | ']' | ';' | ',' | ':' | '.' | ".." | "->" | "::" | '_' | "=>" | '\'' | '?' | '#' | "#!" ;
-grammar.ebnf	91-92	tests/advanced_features_test.rs	25c88d699a44	# ============================================================================= # Program
-grammar.ebnf	91-92	tests/compiler_comprehensive_test.rs	25c88d699a44	# ============================================================================= # Program
+docs/specification/grammar.ebnf	119-119	docs/reference/features/async-system/async-as-effect.md	d4cfe0aa8434	function = [ "pub" ] [ "async" ] "fn" identifier [ generic_params ]
+docs/specification/grammar.ebnf	194-194	src/parser/mod.rs	4afa88eb2002	assign_stmt = place '=' expression ';' ;
+docs/specification/grammar.ebnf	195-195	tests/advanced_features_test.rs	d68f8f43ca3c	place = identifier | place '[' expression ']' | place '.' identifier
+docs/specification/grammar.ebnf	215-215	tests/integration_test.rs	7d31dda4ec9c	block = '{' { statement } [ expression ] '}' ;
+docs/specification/grammar.ebnf	244-244	docs/reference/features/async-system/async-as-effect.md	adf6911b8a98	| ".await" } ;
+docs/specification/grammar.ebnf	74-78	tests/advanced_features_test.rs	747cea4926cb	keyword = "fn" | "let" | "mut" | "if" | "else" | "while" | "return" | "true"  ...  "Self" | "self" | "type" | "const" | "unsafe" | "async" | "await" | "macro" ;
+docs/specification/grammar.ebnf	78-78	docs/reference/features/async-system/async-as-effect.md	16acbe64135a	| "unsafe" | "async" | "await" | "macro" ;
+docs/specification/grammar.ebnf	80-81	docs/reference/features/async-system/async-as-effect.md	41773243f31f	# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
+grammar.ebnf	127-127	tests/advanced_e2e_test.rs	15fd3a3c2784	# Effect clauses (`![io]`) do NOT exist in the surface syntax; effects are
+grammar.ebnf	127-127	tests/advanced_features_test.rs	15fd3a3c2784	# Effect clauses (`![io]`) do NOT exist in the surface syntax; effects are
+grammar.ebnf	130-131	tests/advanced_e2e_test.rs	6d2230dbb6c3	struct_def = [ "pub" ] "struct" identifier [ generic_params ] '{' [ field { ',' field } [ ',' ] ] '}' ;
+grammar.ebnf	130-131	tests/advanced_features_test.rs	6d2230dbb6c3	struct_def = [ "pub" ] "struct" identifier [ generic_params ] '{' [ field { ',' field } [ ',' ] ] '}' ;
+grammar.ebnf	134-134	tests/compiler_comprehensive_test.rs	bd5e922ac90a	enum_def = "enum" identifier [ generic_params ]
+grammar.ebnf	146-146	tests/advanced_e2e_test.rs	c1a6c86e375c	# A trait method declared with a `self` receiver is a PARSE ERROR: trait methods
+grammar.ebnf	146-146	tests/advanced_features_test.rs	c1a6c86e375c	# A trait method declared with a `self` receiver is a PARSE ERROR: trait methods
+grammar.ebnf	147-147	tests/advanced_e2e_test.rs	546233a2de72	# use a parameter loop that does not accept `self`. Traits also emit no code.
+grammar.ebnf	147-147	tests/advanced_features_test.rs	546233a2de72	# use a parameter loop that does not accept `self`. Traits also emit no code.
+grammar.ebnf	155-155	tests/advanced_features_test.rs	ee25302436e0	macro_def = "macro" identifier '!' '(' [ pattern ] ')' block ;
+grammar.ebnf	157-157	docs/contributing/MILESTONES.md	16519002b7db	generic_params = '<' generic_param { ',' generic_param } '>' ;
+grammar.ebnf	158-158	docs/reference/features/core-language/implicit-lifetimes.md	862cabb5d5a1	generic_param = "'" identifier (* lifetime *)
+grammar.ebnf	173-173	docs/reference/features/core-language/implicit-lifetimes.md	27eae3e7e3c5	reference = '&' [ "'" identifier ] [ "mut" ] type ;
+grammar.ebnf	178-178	tests/advanced_e2e_test.rs	94eb43526249	# No f32/f64, char, str, u8, usize. No function types, slices, `dyn` or `impl`
+grammar.ebnf	198-198	tests/compiler_comprehensive_test.rs	b3bb37c9181f	# There is NO `else if`: after `else` the parser requires '{'.
+grammar.ebnf	206-206	tests/compiler_comprehensive_test.rs	3b1382bc7781	match_stmt = "match" expression '{' { match_arm } '}' ;
+grammar.ebnf	215-223	tests/compiler_comprehensive_test.rs	9cd8b7892f8c	block = '{' { statement } [ expression ] '}' ; # A trailing expression in a f ...  =============================================================================
+grammar.ebnf	248-248	tests/advanced_e2e_test.rs	4425a6711347	| macro_call ;
+grammar.ebnf	248-248	tests/advanced_features_test.rs	4425a6711347	| macro_call ;
+grammar.ebnf	248-248	tests/compiler_comprehensive_test.rs	4425a6711347	| macro_call ;
+grammar.ebnf	251-251	tests/advanced_e2e_test.rs	4248d06c3f5b	field_init = identifier ':' expression ;
+grammar.ebnf	251-251	tests/advanced_features_test.rs	4248d06c3f5b	field_init = identifier ':' expression ;
+grammar.ebnf	251-251	tests/compiler_comprehensive_test.rs	4248d06c3f5b	field_init = identifier ':' expression ;
+grammar.ebnf	252-253	tests/advanced_features_test.rs	4cceee868e13	field_init_list = field_init { ',' field_init } [ ',' ] ;
+grammar.ebnf	269-269	tests/advanced_e2e_test.rs	a7adb2aa6aa4	# Known precedence bug: multiplication parses its RIGHT operand with `postfix`
+grammar.ebnf	269-269	tests/compiler_comprehensive_test.rs	a7adb2aa6aa4	# Known precedence bug: multiplication parses its RIGHT operand with `postfix`
+grammar.ebnf	80-81	docs/reference/features/core-language/implicit-lifetimes.md	41773243f31f	# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
+grammar.ebnf	88-89	docs/reference/features/advanced/totality-checking.md	0a4005d0a56b	punctuation = '(' | ')' | '{' | '}' | '[' | ']' | ';' | ',' | ':' | '.' | ".." | "->" | "::" | '_' | "=>" | '\'' | '?' | '#' | "#!" ;
+grammar.ebnf	97-98	tests/advanced_features_test.rs	25c88d699a44	# ============================================================================= # Program
+grammar.ebnf	97-98	tests/compiler_comprehensive_test.rs	25c88d699a44	# ============================================================================= # Program
 runtime/palladium_runtime.c	470-470	src/builtins.rs	28f6c8c7868d	buf = (char *)malloc(cap);
 scripts/check_doc_evidence.py	308-310	docs/contributing/claude-md-coverage.md	a4f02106e0cf	for doc in (sorted(ROOT.glob("*.md")) + sorted(ROOT.glob("docs/**/*.md")) + s ... l")) + sorted(ROOT.glob("src/**/*.rs")) + sorted(ROOT.glob("tests/**/*.rs"))):
 scripts/conformance.sh	145-152	docs/contributing/MILESTONES.md	e383a707f766	grep_status() { local mode=$1 pat=$2 file=$3 case "$mode" in E) grep -qE -- " ... " 2>/dev/null ;; F) grep -qF -- "$pat" "$file" 2>/dev/null ;; esac return $? }
@@ -228,12 +228,12 @@ src/effects/mod.rs	266-266	docs/reference/features/async-system/async-as-effect.
 src/effects/mod.rs	283-287	docs/contributing/MILESTONES.md	0e62bcd75db9	} else if let Some(func_effects) = self.function_effects.get(func_name) { eff ... nc_effects); } // If function is unknown, we conservatively assume it's pure }
 src/effects/mod.rs	283-287	docs/reference/features/async-system/async-as-effect.md	0e62bcd75db9	} else if let Some(func_effects) = self.function_effects.get(func_name) { eff ... nc_effects); } // If function is unknown, we conservatively assume it's pure }
 src/effects/mod.rs	286-286	docs/reference/features/feature-index.toml	2ac8aa9dd67a	// If function is unknown, we conservatively assume it's pure
-src/lexer/token.rs	184-184	docs/specification/bootstrap-subset.md	d88acb4bceb1	#[regex(r"-?[0-9]+", |lex| lex.slice().parse().ok())]
-src/lexer/token.rs	191-191	docs/reference/features/feature-index.toml	b97e219c157c	#[token("fn")]
-src/lexer/token.rs	191-191	docs/specification/language-spec.md	b97e219c157c	#[token("fn")]
-src/lexer/token.rs	269-269	docs/reference/features/feature-index.toml	85cf6095e7f9	#[token("async")]
-src/lexer/token.rs	269-273	docs/reference/features/async-system/async-as-effect.md	b95041e6d755	#[token("async")] Async, #[token("await")] Await,
-src/lexer/token.rs	275-275	docs/reference/features/feature-index.toml	4ef16b8da51c	#[token("macro")]
+src/lexer/token.rs	225-225	docs/specification/bootstrap-subset.md	d88acb4bceb1	#[regex(r"-?[0-9]+", |lex| lex.slice().parse().ok())]
+src/lexer/token.rs	232-232	docs/reference/features/feature-index.toml	b97e219c157c	#[token("fn")]
+src/lexer/token.rs	232-232	docs/specification/language-spec.md	b97e219c157c	#[token("fn")]
+src/lexer/token.rs	310-310	docs/reference/features/feature-index.toml	85cf6095e7f9	#[token("async")]
+src/lexer/token.rs	310-314	docs/reference/features/async-system/async-as-effect.md	b95041e6d755	#[token("async")] Async, #[token("await")] Await,
+src/lexer/token.rs	316-316	docs/reference/features/feature-index.toml	4ef16b8da51c	#[token("macro")]
 src/lib.rs	43-46	tests/version_matches_cargo_toml.rs	019c46c96750	// A FOURTH SPELLING OF THE VERSION USED TO LIVE HERE, AND IT WAS DELETED. // ... at!( // "Alan von Palladium Compiler v", env!("CARGO_PKG_VERSION"), "-alpha");
 src/lib.rs	5-5	docs/contributing/MILESTONES.md	edf3e84c20a2	pub mod async_runtime;
 src/lib.rs	5-5	docs/reference/features/feature-index.toml	edf3e84c20a2	pub mod async_runtime;
@@ -405,7 +405,7 @@ src/typeck/mod.rs	712-712	tests/m3_imported_calls.rs	d60e1ee18e1a	self.functions
 src/typeck/mod.rs	717-718	src/ownership/borrow_checker.rs	0984e6d24e1c	crate::ast::Item::Struct(struct_def) => { if matches!(struct_def.visibility, crate::ast::Visibility::Public) {
 src/typeck/mod.rs	727-727	src/typeck/mod.rs	98e70a8620b3	self.structs.insert(struct_def.name.clone(), fields.clone());
 stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
-tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	88ba6d574ca1	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:136 defines only `macro name ... n) block`, so `macro_rules! vec { … }` is not an item (owned by M5, tooling)"]
+tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	017ffd67eec1	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:155 defines only `macro name ... n) block`, so `macro_rules! vec { … }` is not an item (owned by M5, tooling)"]
 tests/compiler_comprehensive_test.rs	583-583	docs/contributing/MILESTONES.md	33e1b803ccb2	fn test_missing_return_is_an_error() {
 tests/conformance-manifest.txt	96-96	docs/contributing/MILESTONES.md	2b0254e17595	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... from src/math.pd; needs cross-file module imports (no use/mod in the language)
 tests/e2e_test.rs	277-277	docs/contributing/MILESTONES.md	da9d5556e31e	fn test_c_keyword_identifier_still_links() {

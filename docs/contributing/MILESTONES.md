@@ -1009,7 +1009,7 @@ emptying *or rewording* it fails the self-test. It is not a derived check, and s
 computes which probes lack a control.
 
 Two things it caught that review did not. `fn f< 'a>(x: i64)` — a *spaced* lifetime parameter
-list — **compiles today**, and `grammar.ebnf:151` makes whitespace insignificant between tokens,
+list — **compiles today**, and `grammar.ebnf:157` makes whitespace insignificant between tokens,
 so TH-02's adjacency-only `<'` missed a real violation. And running the repaired gate against the
 real repository showed TH-05 compiling a witness *before* checking whether it existed, so an
 absent witness exited 2 instead of reporting a finding — the very distinction that round's work

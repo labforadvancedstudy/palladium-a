@@ -3,7 +3,7 @@
 //
 // The specification's position (async-system/async-as-effect.md) is that async
 // is an inferred effect and there is no `async` keyword at all. What exists is
-// the opposite: `#[token("async")]` at src/lexer/token.rs:269, an `async fn`
+// the opposite: `#[token("async")]` at src/lexer/token.rs:310, an `async fn`
 // whose declared return type is rewritten to `Future<T>`, and a body that then
 // fails to match it. The refusal is the useful part; the keyword is the debt.
 // WHICH refusal changed on branch fix/d3b-tail-if. `return 1;` below is now

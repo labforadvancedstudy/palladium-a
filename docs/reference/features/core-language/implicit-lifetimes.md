@@ -197,7 +197,7 @@ annotations become unnecessary, not that ambiguity becomes tolerable.
 Measured at commit `abeb665`.
 
 **1. `ref` is not a keyword, so the normative reference syntax does not parse.**
-`grep -n '"ref"' src/lexer/token.rs` returns nothing, and `grammar.ebnf:74-75` lists `ref` among
+`grep -n '"ref"' src/lexer/token.rs` returns nothing, and `grammar.ebnf:80-81` lists `ref` among
 the words that "lex as ordinary identifiers". Compiling
 `fn longest(x: ref String, y: ref String) -> ref String { return x; }` gives:
 
@@ -208,8 +208,8 @@ error: Unexpected token: expected ')' (Expected ')'), found identifier 'String'
 — `ref` was consumed as the parameter's type and `String` was then unexpected.
 
 **2. The implementation uses Rust's syntax, including the `'a` parameters this design removes.**
-`reference = '&' [ "'" identifier ] [ "mut" ] type` (`grammar.ebnf:167`), and generic parameter
-lists accept lifetimes (`generic_param` at `grammar.ebnf:152`, parsed at
+`reference = '&' [ "'" identifier ] [ "mut" ] type` (`grammar.ebnf:173`), and generic parameter
+lists accept lifetimes (`generic_param` at `grammar.ebnf:158`, parsed at
 `src/parser/mod.rs:516`). Measured: `fn f<'a>(x: &'a String) -> &'a String { return x; }`
 compiles and links. So the annotation burden the design deletes is currently the only supported
 spelling.

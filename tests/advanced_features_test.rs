@@ -97,7 +97,7 @@ fn test_async_await_multiple() {
 }
 
 #[test]
-#[ignore = "XFAIL: effect declarations — grammar.ebnf:121 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:127 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_effects_system() {
     let source = r#"
     effect IO {
@@ -132,7 +132,7 @@ fn test_effects_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:140 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
+#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:146 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
 fn test_trait_system() {
     let source = r#"
     trait Display {
@@ -166,7 +166,7 @@ fn test_trait_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: `self` as an assignment target — docs/specification/grammar.ebnf:189 `place = identifier | place '[' … | place '.' … | '*' identifier` and `self` is a keyword (docs/specification/grammar.ebnf:68-72), not an identifier, so `self.data[0] = item` does not parse (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: `self` as an assignment target — docs/specification/grammar.ebnf:195 `place = identifier | place '[' … | place '.' … | '*' identifier` and `self` is a keyword (docs/specification/grammar.ebnf:74-78), not an identifier, so `self.data[0] = item` does not parse (owned by M2, surface syntax)"]
 fn test_generic_collections() {
     let source = r#"
     struct Vec<T> {
@@ -252,7 +252,7 @@ fn test_pattern_matching_advanced() {
 }
 
 #[test]
-#[ignore = "XFAIL: closures — grammar.ebnf:245 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: closures — grammar.ebnf:251 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closures() {
     let source = r#"
     fn main() {
@@ -277,7 +277,7 @@ fn test_closures() {
 }
 
 #[test]
-#[ignore = "XFAIL: method-call syntax `x.f()` — grammar.ebnf:242 says it parses and is then rejected with 'Indirect function calls not yet supported' (owned by M2, item 1)"]
+#[ignore = "XFAIL: method-call syntax `x.f()` — grammar.ebnf:248 says it parses and is then rejected with 'Indirect function calls not yet supported' (owned by M2, item 1)"]
 fn test_lifetime_annotations() {
     let source = r#"
     struct Ref<'a, T> {
@@ -306,7 +306,7 @@ fn test_lifetime_annotations() {
 }
 
 #[test]
-#[ignore = "XFAIL: raw pointer types and `as` casts — grammar.ebnf:245 'no `as` casts'; there is no `*mut T` type either (owned by M4, 'A real reference type')"]
+#[ignore = "XFAIL: raw pointer types and `as` casts — grammar.ebnf:251 'no `as` casts'; there is no `*mut T` type either (owned by M4, 'A real reference type')"]
 fn test_unsafe_operations() {
     let source = r#"
     fn main() {
@@ -337,7 +337,7 @@ fn test_unsafe_operations() {
 }
 
 #[test]
-#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:136 defines only `macro name!(pattern) block`, so `macro_rules! vec { … }` is not an item (owned by M5, tooling)"]
+#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:155 defines only `macro name!(pattern) block`, so `macro_rules! vec { … }` is not an item (owned by M5, tooling)"]
 fn test_macros() {
     let source = r#"
     macro_rules! vec {
@@ -374,7 +374,7 @@ fn test_macros() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:141 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1704-1713) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:147 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1704-1713) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics() {
     let source = r#"
     struct Array<T, const N: int> {
@@ -408,7 +408,7 @@ fn test_const_generics() {
 }
 
 #[test]
-#[ignore = "XFAIL: inline `mod` blocks — grammar.ebnf:91-92 lists no module item, so `mod math { … }` is not an item (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: inline `mod` blocks — grammar.ebnf:97-98 lists no module item, so `mod math { … }` is not an item (owned by M2, surface syntax)"]
 fn test_module_system() {
     let source = r#"
     mod math {
@@ -450,7 +450,7 @@ fn test_module_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:124-125 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
+#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:130-131 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
 fn test_iterator_protocol() {
     let source = r#"
     trait Iterator {
@@ -495,7 +495,7 @@ fn test_iterator_protocol() {
 }
 
 #[test]
-#[ignore = "XFAIL: constructing a variant of a multi-parameter generic enum does not infer the other type argument — `Result::Err(\"…\")` in a function returning `Result<int, String>` is checked as `Result<(), String>`, so this fixture dies at that type mismatch before it reaches the `?` operator it was written for (grammar.ebnf:246-247; `?` is separately refused outright with 'the `?` operator is not implemented' since 439b241). Both are owed; this is the one that fires (owned by M4, exit criterion: `?` works against the real Result)"]
+#[ignore = "XFAIL: constructing a variant of a multi-parameter generic enum does not infer the other type argument — `Result::Err(\"…\")` in a function returning `Result<int, String>` is checked as `Result<(), String>`, so this fixture dies at that type mismatch before it reaches the `?` operator it was written for (grammar.ebnf:252-253; `?` is separately refused outright with 'the `?` operator is not implemented' since 439b241). Both are owed; this is the one that fires (owned by M4, exit criterion: `?` works against the real Result)"]
 fn test_error_handling_sugar() {
     let source = r#"
     enum Result<T, E> {

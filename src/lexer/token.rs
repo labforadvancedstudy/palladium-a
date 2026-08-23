@@ -26,42 +26,75 @@ pub enum LexError {
     /// `\` followed by something outside the escape set. Carries the offending
     /// character so the diagnostic can name it.
     UnknownEscape(char),
-    /// `''` — a char literal with nothing in it.
-    EmptyCharLiteral,
+    /// `\0` inside a STRING literal. Legal in a char literal, where it is just
+    /// the integer 0, and refused in a string, where the representation cannot
+    /// carry it. See `ESCAPES`.
+    NulInStringLiteral,
 }
 
-/// The escape sequences a string or char literal may contain.
+/// The escape sequences a literal may contain, and WHERE each one is legal.
 ///
-/// `grammar.ebnf` records five (`\n \t \r \" \\`); `\0` and `\'` are the two
-/// this table adds, and both are forced rather than chosen. `\0` because
-/// `tests/01_lexical_literals.pd` has written `"null\0terminator"` since before
-/// this repository had a gate, and the old lexer passed it through as the two
-/// characters `\` and `0` — a literal that says NUL and a binary that contains
-/// a backslash. `\'` because `char_literal = "'" ( char | escape ) "'"` has no
-/// other way to spell a quote.
+/// `grammar.ebnf` records five (`\n \t \r \" \\`); `\'` and `\0` are the two
+/// this table adds. `\'` because `char_literal = "'" ( char | escape ) "'"` has
+/// no other way to spell a quote.
+///
+/// `\0` IS LEGAL IN A CHAR LITERAL AND REFUSED IN A STRING, and that asymmetry
+/// is the whole point of the third column.
+///
+/// It was accepted in both for one round, with the consequence written down: a
+/// Palladium String is a non-NULL, NUL-terminated `const char*` (N14,
+/// `src/builtins.rs`), so `print("a\0b")` printed `a` and `string_len("a\0b")`
+/// was 1 — a literal whose value no String operation can observe. Documenting
+/// that is not the same as preventing it. **A representation leak that is
+/// pinned is still a representation leak, and shipping the acceptance is what
+/// promotes it to language semantics** — exactly what N2-11 refuses one
+/// construct along, where an attribute that lexes and is ignored would make the
+/// source say one thing and the binary another.
+///
+/// So the string form is refused, by name, and the char form stays: `'\0'` is
+/// the integer 0 and every consumer of a character code can hold it. The way
+/// back in is length-aware String semantics (a pointer plus a length), which is
+/// an N4/N14 change and not a lexer one.
 ///
 /// Anything not in this table is `LexError::UnknownEscape`, NOT a pass-through.
-/// Pass-through is how `"\q"` became the two characters `\q` with no diagnostic,
-/// which is the same defect as an attribute that lexes and is then ignored
-/// (N2-11), one layer down: the source says one thing and the bytes say another.
-const ESCAPES: &[(char, char)] = &[
-    ('n', '\n'),
-    ('t', '\t'),
-    ('r', '\r'),
-    ('"', '"'),
-    ('\\', '\\'),
-    ('0', '\0'),
-    ('\'', '\''),
+/// Pass-through is how `"\q"` became the two characters `\q` with no diagnostic.
+const ESCAPES: &[(char, char, Where)] = &[
+    ('n', '\n', Where::Both),
+    ('t', '\t', Where::Both),
+    ('r', '\r', Where::Both),
+    ('"', '"', Where::Both),
+    ('\\', '\\', Where::Both),
+    ('\'', '\'', Where::Both),
+    ('0', '\0', Where::CharOnly),
 ];
 
-/// Resolve one escape character (the one *after* the backslash).
-pub fn escape_char(c: char) -> Option<char> {
-    ESCAPES.iter().find(|(k, _)| *k == c).map(|(_, v)| *v)
+/// Which kind of literal an escape may appear in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Where {
+    Both,
+    /// Legal in `'x'`, refused in `"x"`: the value exists, and the String
+    /// representation cannot carry it.
+    CharOnly,
 }
 
-/// The escape set, spelled as source, for a diagnostic to list.
+/// Resolve one escape character (the one *after* the backslash), for a CHAR
+/// literal — where every row of the table is legal.
+pub fn escape_char(c: char) -> Option<char> {
+    ESCAPES.iter().find(|(k, _, _)| *k == c).map(|(_, v, _)| *v)
+}
+
+/// The escapes legal in a STRING literal, spelled as source, for a diagnostic.
+pub fn string_escape_spellings() -> Vec<String> {
+    ESCAPES
+        .iter()
+        .filter(|(_, _, w)| *w == Where::Both)
+        .map(|(k, _, _)| format!("\\{}", k))
+        .collect()
+}
+
+/// The escapes legal in a CHAR literal, spelled as source.
 pub fn escape_spellings() -> Vec<String> {
-    ESCAPES.iter().map(|(k, _)| format!("\\{}", k)).collect()
+    ESCAPES.iter().map(|(k, _, _)| format!("\\{}", k)).collect()
 }
 
 /// Unescape the body of a string literal.
@@ -78,8 +111,9 @@ fn unescape(body: &str) -> Result<String, LexError> {
         // error; treat it as an unknown escape of the backslash itself instead
         // of panicking.
         let e = chars.next().unwrap_or('\\');
-        match escape_char(e) {
-            Some(v) => out.push(v),
+        match ESCAPES.iter().find(|(k, _, _)| *k == e) {
+            Some((_, _, Where::Both)) => out.push(escape_char(e).expect("in the table")),
+            Some((_, _, Where::CharOnly)) => return Err(LexError::NulInStringLiteral),
             None => return Err(LexError::UnknownEscape(e)),
         }
     }
@@ -161,7 +195,14 @@ pub enum Token {
         let s = lex.slice();
         let body = &s[1..s.len()-1];
         let mut chars = body.chars();
-        let c = chars.next().ok_or(LexError::EmptyCharLiteral)?;
+        // The regex requires exactly one character or escape between the
+        // quotes, so `body` is never empty here. `''` does not reach this
+        // callback at all -- it fails to match the char rule and the two ticks
+        // lex as `SingleQuote SingleQuote`, which the parser refuses. There was
+        // a `LexError::EmptyCharLiteral` for this; it was DELETED rather than
+        // left, because a diagnostic that cannot fire is a claim that cannot
+        // fail. `an_empty_char_literal_is_refused` pins what actually happens.
+        let c = chars.next().unwrap_or('\0');
         if c != '\\' {
             return Ok::<char, LexError>(c);
         }

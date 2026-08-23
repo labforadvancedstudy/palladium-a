@@ -566,20 +566,27 @@ Neither has a printer. N14's builtin set is closed and contains no `float_to_str
 digits cannot reach stdout at all; `tests/02_types_floats.pd` asserts values by bracketing them
 between comparisons instead.
 
-**implemented — escapes (N2-09).** The set is `\n \t \r \" \\ \0 \'`, in both string and char
-literals. Anything else is a **compile error** that lists the set; it is not passed through. It
-used to be: `"\q"` produced the two characters `\` and `q` with no diagnostic, and `"\\n"`
-produced a backslash and a LINE FEED because the unescaper was a chain of `.replace()` calls in
-which the `\n` rule reached the second backslash's `n` first.
+**implemented — escapes (N2-09).** In a string literal the set is
+`\n \t \r \" \\ \'`; a char literal takes those **and `\0`**. Anything else is a
+**compile error** that lists the set; it is not passed through. It used to be: `"\q"`
+produced the two characters `\` and `q` with no diagnostic, and `"\\n"` produced a backslash
+and a LINE FEED because the unescaper was a chain of `.replace()` calls in which the `\n` rule
+reached the second backslash's `n` first.
 
-> **OPEN: `\0` in a *string* literal.** It denotes a NUL, and a Palladium String is a non-NULL,
-> NUL-terminated `const char*` ([N14](#n14-builtins-and-the-standard-library)), so everything after
-> it is unreachable — `print("a\0b")` prints `a` and `string_len("a\0b")` is 1. That is consistent
-> with the representation and it is also a literal whose value the representation cannot carry.
-> The two ways out are to **refuse** `\0` in a string literal (keeping it in char literals, where
-> it is just the integer 0) or to **keep** it with this consequence written into N2. It is flagged
-> rather than decided because it is a language-surface change and N2 does not currently say either.
-> Pinned by `tests/m2_lexical.rs::a_nul_in_a_string_ends_it_for_every_consumer_because_a_string_is_a_c_string`.
+**`\0` is refused in a string literal and legal in a char literal**, and the asymmetry is the
+decision rather than an omission. A String is a non-NULL, NUL-terminated `const char*`
+([N14](#n14-builtins-and-the-standard-library)), so `"a\0b"` denotes three characters and every
+String operation sees one: `print` stops at `a`, `string_len` answers 1. That was ACCEPTED for one
+round, with the consequence documented here — and documenting a representation leak does not stop
+it, it records that it shipped. A literal whose value no operation in the language can observe is
+the same defect [N2-11](#n2-lexical-structure) refuses one construct along, where an attribute that
+lexes and is ignored makes the source say one thing and the binary another.
+
+`'\0'` stays legal because a char literal is a Unicode scalar held as `i64` and zero is an
+ordinary value there, so nothing that was expressible is lost. The route to making the string form
+legal is **length-aware String semantics** — a pointer plus a length — which is an N4/N14 change
+and not a lexer one. Pinned by
+`tests/m2_lexical.rs::{a_nul_in_a_string_literal_is_refused, a_nul_in_a_char_literal_is_still_the_value_zero, the_string_escape_set_is_the_char_set_minus_nul}`.
 
 **unimplemented**: hex (`0x`), binary (`0b`), octal, numeric separators, raw strings, `\xNN` and
 `\u{}` escapes, string interpolation. No lexer rule produces any of them.
@@ -601,7 +608,7 @@ requests a property and a binary without it, which is the defect class M1 was sp
 [N8](#n8-totality) is therefore no longer blocked *lexically*; it is blocked on M6 having something
 to discharge the obligation with.
 
-The 29 keywords the lexer recognizes (`src/lexer/token.rs:191`):
+The 29 keywords the lexer recognizes (`src/lexer/token.rs:232`):
 
 ```
 fn let mut if else while return true false for in break continue

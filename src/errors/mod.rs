@@ -46,6 +46,27 @@ pub enum CompileError {
         span: Option<Span>,
     },
 
+    /// `\0` inside a STRING literal (N2-09).
+    ///
+    /// Its own variant, and its own refusal, because the alternative is the
+    /// defect one construct along from N2-11. A Palladium String is a non-NULL,
+    /// NUL-terminated `const char*` (N14), so `"a\0b"` denotes three characters
+    /// and every String operation sees one: `print` stops at `a`, `string_len`
+    /// answers 1. Accepting it and DOCUMENTING the consequence was the previous
+    /// disposition; it is wrong for the reason documentation cannot fix — a
+    /// representation leak that ships becomes the language's semantics, and the
+    /// pin only records that it did.
+    ///
+    /// `'\0'` stays legal: a char literal is a Unicode scalar held as i64, and
+    /// zero is an ordinary value there. The way to make the string form legal
+    /// is length-aware String semantics, which is an N4/N14 change.
+    #[error("`\\0` is not allowed in a string literal")]
+    NulInStringLiteral {
+        /// The escapes a STRING may carry, for the note.
+        known: Vec<String>,
+        span: Option<Span>,
+    },
+
     /// An attribute the compiler does not know (N2-11).
     ///
     /// The attribute surface exists so that N8's totality obligations have
@@ -635,6 +656,14 @@ impl CompileError {
         }
     }
 
+    /// `\0` in a string literal (N2-09).
+    pub fn nul_in_string_literal(known: &[String], span: Span) -> Self {
+        CompileError::NulInStringLiteral {
+            known: known.to_vec(),
+            span: Some(span),
+        }
+    }
+
     /// An attribute this compiler does not implement (N2-11).
     pub fn unknown_attribute(name: &str, known: &[&str], span: Span) -> Self {
         CompileError::UnknownAttribute {
@@ -692,6 +721,24 @@ impl CompileError {
             .with_suggestion(
                 "write `\\\\` if a literal backslash was meant",
                 Some("\\\\".to_string()),
+            ),
+
+            CompileError::NulInStringLiteral { known, span } => Diagnostic::error(
+                "`\\0` is not allowed in a string literal".to_string(),
+            )
+            .with_span(span.unwrap_or(Span::dummy()))
+            .with_note(
+                "a String is a NUL-terminated `const char*`, so a NUL inside one ends it for \
+                 every operation that reads it: `print` would stop there and `string_len` \
+                 would count only the characters before it",
+            )
+            .with_note(format!(
+                "the escapes a string literal accepts are: {}",
+                known.join(" ")
+            ))
+            .with_suggestion(
+                "use a char literal `'\\0'` if the value 0 was meant, or split the string",
+                Some("'\\0'".to_string()),
             ),
 
             CompileError::UnknownAttribute { name, known, span } => {

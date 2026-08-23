@@ -98,7 +98,7 @@ unimplementable in a single-pass translator.
    infers `let` types since D7 was fixed; the bootstrap compiler does not, and does not need to.)
 
 2. **Always put spaces around binary `-`.** Write `i - 1`, never `i-1`.
-   The lexer's integer rule is `-?[0-9]+` (`src/lexer/token.rs:184`), so the minus sign binds
+   The lexer's integer rule is `-?[0-9]+` (`src/lexer/token.rs:225`), so the minus sign binds
    into the literal when it is adjacent to digits: `i-1` lexes as `i` followed by `-1`, two
    adjacent expressions, and misparses. With a space, `-` lexes as the operator.
 

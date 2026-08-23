@@ -7,12 +7,17 @@
 //   "\\n"  denoted a backslash followed by `n`      and produced backslash + LINE FEED
 //   "\0"   denoted a NUL                            and produced backslash + `0`
 //
+// `\0` is now REFUSED in a string literal (it stays legal in a char literal,
+// where the value is just the integer 0): a String is a NUL-terminated
+// `const char*`, so a NUL inside one is a value no String operation can see.
+// See docs/specification/language-spec.md A2.
+//
 // The cause was a chain of `.replace()` calls: `"\\n"` was rewritten by the
 // `\n` rule before the `\\` rule could claim the backslash. So every assertion
 // below is on the RENDERED CHARACTERS, printed between markers, and the
 // transcript is the contract.
 //
-// The escape set is `\n \t \r \" \\ \0 \'`. Anything else is a compile error
+// The escape set is `\n \t \r \" \\ \'` in strings (`\0` in chars only). Anything else is a compile error
 // (tests/reject/unknown_escape.pd), not a pass-through.
 
 fn main() {

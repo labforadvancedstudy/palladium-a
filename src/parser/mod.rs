@@ -2378,7 +2378,7 @@ impl Parser {
                 self.consume(Token::RightBrace, "Expected '}' after match arm body")?;
 
                 // `match_arm = pattern "=>" ( block | expression ) [ ',' ]`
-                // (docs/specification/grammar.ebnf:188). The comma is optional
+                // (docs/specification/grammar.ebnf:194). The comma is optional
                 // after a block body too; leaving it unconsumed made the next
                 // iteration read it as a pattern.
                 if self.check(&Token::Comma) {
@@ -4219,7 +4219,7 @@ mod tests {
     }
 
     /// `match_arm = pattern "=>" ( block | expression ) [ ',' ]`
-    /// (docs/specification/grammar.ebnf:188) — the comma is optional after
+    /// (docs/specification/grammar.ebnf:194) — the comma is optional after
     /// EITHER form. The parser used to consume it only after an expression
     /// body, so a comma after a block body was re-read as the next pattern
     /// and reported as "Expected pattern, but found ','".

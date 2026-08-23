@@ -1,7 +1,7 @@
 // Lexical scanner for Palladium
 // "Reading the runes of modern sorcery"
 
-use super::token::{escape_spellings, LexError, Token};
+use super::token::{escape_spellings, string_escape_spellings, LexError, Token};
 use crate::errors::{CompileError, Result, Span};
 use logos::{Lexer as LogosLexer, Logos};
 
@@ -46,7 +46,19 @@ impl<'a> Lexer<'a> {
                             ch,
                             line,
                             col,
-                            span: Some(Span::new(start_pos, start_pos + 1, line, col)),
+                            // `len_utf8()`, not 1. The span is a BYTE range, and
+                            // a one-byte span over a multi-byte character ends
+                            // INSIDE a UTF-8 code point — every consumer that
+                            // slices the source with it then panics or renders
+                            // a broken caret. `'한'` is three bytes and this is
+                            // reachable from ordinary source now that char
+                            // literals and non-ASCII strings lex.
+                            span: Some(Span::new(
+                                start_pos,
+                                start_pos + ch.len_utf8(),
+                                line,
+                                col,
+                            )),
                         }
                     }
                     LexError::UnterminatedBlockComment => {
@@ -55,23 +67,37 @@ impl<'a> Lexer<'a> {
                     LexError::UnknownEscape(c) => {
                         CompileError::unknown_escape(c, &escape_spellings(), here)
                     }
-                    LexError::EmptyCharLiteral => CompileError::SyntaxError {
-                        message: "empty character literal: `''` has no character in it".to_string(),
-                        span: Some(here),
-                    },
+                    LexError::NulInStringLiteral => {
+                        CompileError::nul_in_string_literal(&string_escape_spellings(), here)
+                    }
                 })
             }
             None => Ok(None),
         }
     }
 
-    /// Calculate line and column for a byte position
+    /// Line and column (both 1-based) for a BYTE position.
+    ///
+    /// `char_indices()`, not `chars().enumerate()`. `pos` is a byte offset —
+    /// logos spans are byte ranges — and the old loop compared it against a
+    /// CHARACTER ORDINAL. The two agree only while the source is pure ASCII, so
+    /// one `한` or `é` or `—` earlier in the file made every subsequent
+    /// diagnostic point at the wrong place, by one column per extra byte, and
+    /// eventually at the wrong LINE.
+    ///
+    /// This was unreachable-by-accident before: nothing in the language could
+    /// produce a non-ASCII token, so non-ASCII only ever appeared in comments,
+    /// which are skipped but still counted here. Char literals and non-ASCII
+    /// string content are now ordinary source, which is why it is fixed with
+    /// them rather than after them.
+    ///
+    /// The column is counted in CHARACTERS, which is what a reader counts.
     fn position_at(&self, pos: usize) -> (usize, usize) {
         let mut line = 1;
         let mut col = 1;
 
-        for (i, ch) in self.source.chars().enumerate() {
-            if i >= pos {
+        for (byte, ch) in self.source.char_indices() {
+            if byte >= pos {
                 break;
             }
             if ch == '\n' {

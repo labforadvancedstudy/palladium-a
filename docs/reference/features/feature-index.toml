@@ -153,7 +153,7 @@ implementation = "unimplemented"
 evidence = [
   "cmd: grep -nE '#\\[token\\(\"ref\"\\)\\]' src/lexer/token.rs -> exit 1, 0 lines",
   "conformance: tests/reject/ref_parameter.pd reject",
-  "src: src/lexer/token.rs:191 #[token(\"fn\")] — start of the 29-keyword block; ref is not in it",
+  "src: src/lexer/token.rs:232 #[token(\"fn\")] — start of the 29-keyword block; ref is not in it",
 ]
 note = "The implemented spelling is Rust's & / &mut with 'a parameter lists — the exact annotation burden the definition removes."
 
@@ -358,7 +358,7 @@ description = "Async is an algebraic effect: no async keyword, no .await, effect
 spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/lexer/token.rs:269 #[token(\"async\")] — one of the two things the definition removes",
+  "src: src/lexer/token.rs:310 #[token(\"async\")] — one of the two things the definition removes",
   "src: src/parser/mod.rs:1265 effects: None, // Effects will be inferred during analysis",
   "src: src/driver/mod.rs:59 the analyser's result is println!ed by the driver and feeds no later phase",
   "src: src/effects/mod.rs:286 'If function is unknown, we conservatively assume it's pure' — the unsound direction",
@@ -383,7 +383,7 @@ spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
   "cmd: grep -nE '#\\[token\\(\"(with|effect)\"\\)\\]' src/lexer/token.rs -> exit 1, 0 lines",
-  "src: src/lexer/token.rs:275 the last token attribute of the keyword block",
+  "src: src/lexer/token.rs:316 the last token attribute of the keyword block",
 ]
 
 [async_and_effects.automatic_parallelization]

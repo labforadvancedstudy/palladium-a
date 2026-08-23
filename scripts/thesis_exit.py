@@ -1417,13 +1417,13 @@ ASYNC_TOKEN = re.compile(r"(?:^|[^A-Za-z_0-9])(async|await)(?:[^A-Za-z_0-9]|$)")
 
 # `ref<'a> T` is the ONE place N9 permits a region name, so it is exempt — with an
 # identifier boundary, because without one `myref<'a>` was rewritten to `my` and the
-# forbidden list vanished. WHITESPACE IS INSIGNIFICANT between tokens: grammar.ebnf:151
+# forbidden list vanished. WHITESPACE IS INSIGNIFICANT between tokens: grammar.ebnf:157
 # is `generic_params = '<' generic_param …`, and `fn f< 'a>(x: i64)` compiles today, so
 # an adjacency-only `<'` misses a real lifetime parameter list.
 REF_REGION = re.compile(r"(?<![A-Za-z_0-9])ref\s*<\s*'[A-Za-z_0-9]*\s*>")
 LIFETIME_LIST = re.compile(r"<\s*'")
 
-# grammar.ebnf:113-114 is `"fn" identifier [ generic_params ] '('`, so the generic
+# grammar.ebnf:119-120 is `"fn" identifier [ generic_params ] '('`, so the generic
 # parameter list is OPTIONAL AND MUST BE MATCHED. Without it `fn generic<T>(x: T)`
 # matched nothing at all: the function was not in `bodies`, so it was neither a
 # reachable target nor a caller — invisible in both directions.
@@ -1604,7 +1604,7 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
 # ANY `|` TOKEN, and the claim is now true in both directions. The bounded-pair form was
 # wrong twice at once: `a || b` — the ordinary logical-or — matched it and produced a
 # false refusal, and a parameter list longer than the bound escaped it and produced a
-# false answer. grammar.ebnf:378 puts a closure behind `|`, and `|` has no other use in
+# false answer. grammar.ebnf:384 puts a closure behind `|`, and `|` has no other use in
 # the language today (bitwise-or is unimplemented, A2), so refusing on the token is exact
 # now and conservative later: when bitwise-or lands, this refuses programs it need not,
 # which is a wrong exit-2 rather than a wrong verdict, and it is GI-11's job to remove it.
@@ -2253,7 +2253,19 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-# RE-PINNED TWICE, and this value is neither side's — it is recomputed on the merge.
+# RE-PINNED AGAIN on the review rework, for a reason worth naming: A CASE LABEL
+# CARRIES A CITATION, so this digest is coupled to line numbers in grammar.ebnf.
+# The label `\`fn q< 'a>\` SPACED goes RED — grammar.ebnf:151` became `:157` when
+# N2-09's `char_escape` production was added four lines above `generic_params`.
+# No control was added, removed or weakened; one label's citation moved with its
+# target. Verified by diffing the CASE-NAME SET against the pre-rework tree: 293
+# labels on both sides, exactly one differing, and it is that one.
+#
+# That coupling is a property of the pin, not a defect introduced here — but it
+# means any edit to grammar.ebnf re-pins this digest, and a reviewer should
+# always ask WHICH label moved rather than accepting the new value.
+#
+# RE-PINNED TWICE BEFORE THAT, and that value was neither side's — recomputed on the merge.
 #
 # `fix/m2-builtins-exit` re-pinned it because one case text changed ("the two gate
 # counts" -> "the four gate counts") when PINNED_PROSE_FIGURES took the two figures the
@@ -2269,7 +2281,7 @@ VARIANT_OF_BASE = {
 # Both are true of the merged tree and neither branch's digest is, which is the whole
 # reason this pin exists. Recomputed here via `--print-case-digest`.
 # Superseded: 1dd2b683... (base), 2bc2aabd... (lexical), bc01d66e... (builtins-exit).
-EXPECTED_CASE_SHA = "545137db30f9dbb596476995ad8c5ad3cbc865d116d542eeca3603f9f2efd99a"
+EXPECTED_CASE_SHA = "60351814c29ebdb9a29d2ba34b3f00f6edc7cef61535adde4115f84a7c0f4897"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -2916,7 +2928,7 @@ def self_test() -> int:
          _why(_drive(witness_b=GOOD_WITNESS + "async fn g() { }\n")), '1 RED=TH-01,TH-06')
     case("`fn q<'a>` goes RED",
          _why(_drive(witness_b=GOOD_WITNESS + "fn q<'a>(x: i64) -> i64 { return x; }\n")), '1 RED=TH-02,TH-06')
-    case("`fn q< 'a>` SPACED goes RED — grammar.ebnf:151, and it compiles today",
+    case("`fn q< 'a>` SPACED goes RED — grammar.ebnf:157, and it compiles today",
          _why(_drive(witness_b=GOOD_WITNESS + "fn q< 'a>(x: i64) -> i64 { return x; }\n")), '1 RED=TH-02,TH-06')
     case("`myref<'a>` goes RED — the ref<'…> exemption needs an identifier boundary",
          _why(_drive(witness_b=GOOD_WITNESS + "fn myref<'a>(x: i64) -> i64 { return x; }\n")), '1 RED=TH-02,TH-06')
@@ -3109,6 +3121,16 @@ def self_test() -> int:
     case("no THESIS row is an `observable`, so `make thesis-exit` cannot reach that dispatch",
          [f[0] for f in _kinds if f[7] == "thesis" and f[4] == "observable"], [],
          drives_main=False)
+    # 19 -> 20 on 2026-08-23: N2-10 ("attributes lex: #[name], #[name(args)],
+    # #![name(args)]") changed evidence-kind from `fixture` to `observable
+    # tests/m2_lexical.rs::every_attribute_shape_is_refused_by_name`. `fixture` was
+    # UNSATISFIABLE rather than unmet — it demands a conformance row of class `run`, and
+    # N2-11 makes every attribute a compile error, so no program containing one can run —
+    # and no single reject fixture can carry a claim about THREE shapes. This is real
+    # demand of the same kind as N14-01's: the row is `satisfied` today by a test
+    # `make v1-exit` would have to dispatch, and the +1 is the price of the kind change,
+    # recorded here rather than absorbed.
+    #
     # 18 -> 19 on 2026-08-23: N14-01 ("the builtin set is exactly the 34 normative names")
     # changed evidence-kind from `gate make stdlib-gate` to
     # `observable src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`. Its
@@ -3119,7 +3141,7 @@ def self_test() -> int:
     case("the manifest carries `observable` rows nothing dispatches yet — DEMAND for the "
          "1.0 gate GI-10 owes, not evidence that this code is live; retention is debt "
          "against that row, and an empty set here makes it a deletion",
-         len([f for f in _kinds if f[4] == "observable"]), 19, drives_main=False)
+         len([f for f in _kinds if f[4] == "observable"]), 20, drives_main=False)
     case("...and the gate that would dispatch them does not exist yet, which is what makes "
          "this debt rather than liveness",
          (ROOT / "Makefile").read_text().count("\nv1-exit:"), 0, drives_main=False)

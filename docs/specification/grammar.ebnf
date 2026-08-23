@@ -50,11 +50,17 @@ integer        = [ '-' ] digit { digit } ;
 
 string         = '"' { string_char | escape } '"' ;
 string_char    = any_unicode - '"' - '\' ;
-char           = "'" ( any_unicode - "'" - '\' | escape ) "'" ;
+char           = "'" ( any_unicode - "'" - '\' | char_escape ) "'" ;
 
-# CLOSED. A backslash followed by anything else is a compile error, not a
-# pass-through: "\q" used to lex as the two characters \ and q.
-escape         = '\' ( 'n' | 't' | 'r' | '"' | '\' | '0' | "'" ) ;
+# CLOSED, and SPLIT BY LITERAL KIND. A backslash followed by anything else is a
+# compile error, not a pass-through: "\q" used to lex as the two characters \
+# and q.
+#
+# `\0` is legal in a CHAR literal and refused in a STRING: a String is a
+# NUL-terminated const char*, so a NUL inside one ends it for every operation
+# that reads it. See language-spec.md A2.
+escape         = '\' ( 'n' | 't' | 'r' | '"' | '\' | "'" ) ;
+char_escape    = escape | '\' '0' ;
 
 boolean        = "true" | "false" ;
 

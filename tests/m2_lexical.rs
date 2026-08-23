@@ -40,12 +40,28 @@ use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// Compile, link with gcc, run, and return stdout.
+/// Compile, link with gcc, run, and return stdout — ONLY if the program exited 0.
 ///
 /// Linking is not optional here even though nothing in this file is about C
-/// syntax: `\0` is emitted INTO a C string literal, and the first
-/// implementation put a raw zero byte there. A test that read the generated
-/// text and stopped would have passed on a `.c` file no editor can round-trip.
+/// syntax: an escape is emitted INTO a C string literal, and the first
+/// implementation of `\0` put a raw zero byte there. A test that read the
+/// generated text and stopped would have passed on a `.c` file no editor can
+/// round-trip.
+///
+/// THE EXIT STATUS IS PART OF THE OBSERVATION, and this function did not check
+/// it for one round. It compared `out.status` for gcc and then took
+/// `run.stdout` unconditionally, so a program could print the expected prefix,
+/// crash, and pass — `assert_eq!(out.trim(), "42")` cannot tell a clean run
+/// from an aborted one that got as far as printing.
+///
+/// That is this branch's own discipline undone one layer down. Every case here
+/// asserts a VALUE rather than "it compiled", precisely because a char literal
+/// that lexes and yields the wrong byte is worse than one that fails — and the
+/// harness was accepting a run that died. THE ASSERTION CEILING WAS SET BY THE
+/// HARNESS, NOT BY THE CASES.
+///
+/// `the_harness_rejects_a_program_that_prints_and_then_dies` is the control:
+/// it prints exactly what a passing test would print and then aborts.
 fn compile_and_run(source: &str, name: &str) -> Result<String, String> {
     let dir = TempDir::new().unwrap();
     let src = dir.path().join(format!("{}.pd", name));
@@ -68,6 +84,23 @@ fn compile_and_run(source: &str, name: &str) -> Result<String, String> {
     }
 
     let run = Command::new(&exe).output().map_err(|e| format!("run: {}", e))?;
+    if !run.status.success() {
+        // Status AND stderr AND the stdout it managed to produce: a crash after
+        // partial output is the case this exists for, and "the program failed"
+        // without the bytes it printed sends the reader back to re-run it by
+        // hand. `code()` is None when a signal killed it (SIGABRT from `panic`
+        // is exactly that), so both spellings are reported.
+        return Err(format!(
+            "the program exited {} (signal: {}); stderr:\n{}\nstdout so far:\n{}",
+            run.status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            run.status,
+            String::from_utf8_lossy(&run.stderr),
+            String::from_utf8_lossy(&run.stdout)
+        ));
+    }
     Ok(String::from_utf8_lossy(&run.stdout).to_string())
 }
 
@@ -90,6 +123,155 @@ fn refusal(source: &str, name: &str) -> String {
     match Driver::new().compile_file(&src) {
         Ok(_) => panic!("expected a refusal, but the program compiled:\n{}", source),
         Err(e) => e.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The harness itself
+// ---------------------------------------------------------------------------
+
+/// THE CONTROL FOR THE HARNESS, and the shape of the defect it closes.
+///
+/// This program prints `42` — the exact stdout several cases below assert — and
+/// then aborts. Under the harness that ignored the run's exit status it was
+/// indistinguishable from a clean run, so EVERY value assertion in this file
+/// was capped at "printed the right thing at some point before it died".
+///
+/// It fails when the `run.status.success()` check is reverted.
+#[test]
+fn the_harness_rejects_a_program_that_prints_and_then_dies() {
+    let err = compile_and_run(
+        r#"fn main() { print_int(42); panic("after the output"); }"#,
+        &unique_module_name("harness_crash"),
+    )
+    .expect_err(
+        "a program that printed and then aborted was accepted: the exit status is not \
+         being checked, so every value assertion in this file is capped at `printed the \
+         right bytes at some point before dying`",
+    );
+    assert!(
+        err.contains("the program exited"),
+        "the failure must name the exit status, got: {}",
+        err
+    );
+    assert!(
+        err.contains("after the output"),
+        "the failure must carry stderr, got: {}",
+        err
+    );
+    assert!(
+        err.contains("42"),
+        "the failure must carry the stdout the program did produce, got: {}",
+        err
+    );
+}
+
+/// …and the other direction: an ordinary program is still accepted, so the
+/// status check did not simply reject everything.
+#[test]
+fn the_harness_still_accepts_a_program_that_exits_cleanly() {
+    let out = compile_and_run(
+        "fn main() { print_int(42); }",
+        &unique_module_name("harness_ok"),
+    )
+    .expect("a clean program must still pass");
+    assert_eq!(out.trim(), "42");
+}
+
+// ---------------------------------------------------------------------------
+// Source positions, once non-ASCII source became reachable
+// ---------------------------------------------------------------------------
+
+/// A DIAGNOSTIC AFTER A MULTI-BYTE CHARACTER MUST LAND WHERE THE ASCII ONE DOES.
+///
+/// `position_at` takes a BYTE offset — logos spans are byte ranges — and used to
+/// walk `chars().enumerate()`, comparing that offset against a CHARACTER
+/// ORDINAL. The two agree only while the source is pure ASCII.
+///
+/// Measured on the same program before the fix: with `한글 中文 🎉` in a string
+/// two lines above the error, a four-line file reported the error at **5:1** —
+/// past its own end. The ASCII twin reported 3:14. Now both report 3:14.
+///
+/// This is asserted as EQUALITY BETWEEN THE TWO PROGRAMS rather than against a
+/// hardcoded column, because the reporter has a separate, uniform off-by-one
+/// (the ASCII control also says 14 for a character in column 13) that predates
+/// this branch and is not what this test is about. Equality is the property
+/// that breaks when the byte/char confusion returns; the absolute number is
+/// not.
+#[test]
+fn a_diagnostic_after_a_multibyte_literal_lands_where_the_ascii_one_does() {
+    let ascii = refusal(
+        "fn main() {\n    print(\"ascii only\");\n    let x = $;\n}\n",
+        &unique_module_name("pos_ascii"),
+    );
+    let utf8 = refusal(
+        "fn main() {\n    print(\"한글 中文 🎉\");\n    let x = $;\n}\n",
+        &unique_module_name("pos_utf8"),
+    );
+    let line_col = |d: &str| {
+        d.lines()
+            .find(|l| l.contains("line") && l.contains("column"))
+            .map(str::to_string)
+    };
+    assert_eq!(
+        utf8, ascii,
+        "the two programs differ only in the CONTENT of a string literal two lines \
+         above the error, so their diagnostics must be identical.\n  ascii: {}\n  utf8:  {}",
+        ascii,
+        utf8
+    );
+    let _ = line_col;
+}
+
+/// …and the same property through the compiler's own position machinery, where
+/// the numbers are visible rather than compared as opaque strings.
+#[test]
+fn position_at_counts_bytes_not_character_ordinals() {
+    use palladium::errors::CompileError;
+    use palladium::lexer::Lexer;
+
+    // `$` is a token, so drive the LEXER-level error directly with a character
+    // no rule matches. `€` is three bytes, `한` is three, `🎉` is four.
+    let src = "fn a() { }\nlet s = \"한글 🎉\";\n§\n";
+    let mut lex = Lexer::new(src);
+    let mut err = None;
+    loop {
+        match lex.next_token() {
+            Ok(Some(_)) => continue,
+            Ok(None) => break,
+            Err(e) => {
+                err = Some(e);
+                break;
+            }
+        }
+    }
+    let err = err.expect("`§` matches no token rule, so the lexer must refuse it");
+    match err {
+        CompileError::UnexpectedChar {
+            ch, line, col, span, ..
+        } => {
+            assert_eq!(ch, '§');
+            assert_eq!(line, 3, "`§` is on line 3; a char-ordinal walk drifts past it");
+            assert_eq!(col, 1, "it is the first character on that line");
+            let span = span.expect("the refusal must carry a span");
+            // THE SPAN IS A BYTE RANGE AND MUST END ON A CHARACTER BOUNDARY.
+            // `start + 1` over a two-byte `§` ends INSIDE the code point, and
+            // anything that slices the source with it panics.
+            assert!(
+                src.is_char_boundary(span.start) && src.is_char_boundary(span.end),
+                "span {}..{} does not land on character boundaries in {:?}",
+                span.start,
+                span.end,
+                src
+            );
+            assert_eq!(
+                span.end - span.start,
+                '§'.len_utf8(),
+                "the span must cover the whole character, not one byte of it"
+            );
+            assert_eq!(&src[span.start..span.end], "§");
+        }
+        other => panic!("expected UnexpectedChar, got {:?}", other),
     }
 }
 
@@ -253,52 +435,83 @@ fn an_unknown_escape_is_refused_and_the_message_lists_the_set() {
     );
 }
 
-/// `\0` is a NUL byte, and it reaches the generated C as an OCTAL ESCAPE.
+/// `\0` IS REFUSED IN A STRING LITERAL, and this is the row that changed.
 ///
-/// The first implementation of this put a raw zero byte inside a C string
-/// literal. gcc accepted it, which is the worst available outcome: a `.c` file
-/// that is no longer text, produced silently.
+/// It was accepted for one round, with the consequence pinned: a String is a
+/// non-NULL, NUL-terminated `const char*` (N14), so `print("a\0b")` printed `a`
+/// and `string_len("a\0b")` was 1. That test passed and the pin was accurate,
+/// and it was still the wrong disposition — **a representation leak that is
+/// documented is still a representation leak, and shipping the acceptance is
+/// what promotes it to language semantics.** The previous version of this file
+/// asserted the leak as behaviour, which is how a caveat becomes a contract.
+///
+/// So the string form is a compile error and the char form is not. `'\0'` is
+/// the integer 0, every consumer of a character code can hold it, and nothing
+/// that was expressible has been lost. The route back for strings is
+/// length-aware String semantics — a pointer plus a length — which is an N4/N14
+/// change and not a lexer one.
 #[test]
-fn a_nul_escape_reaches_the_c_as_three_octal_digits_and_never_as_a_raw_byte() {
-    let c = compile_to_c(
+fn a_nul_in_a_string_literal_is_refused() {
+    let msg = refusal(
         r#"fn main() { print("a\0b"); }"#,
-        &unique_module_name("esc_nul_c"),
-    )
-    .expect("N2-09");
-    assert!(
-        c.contains(r#""a\000b""#),
-        "expected an octal escape in the generated C, got:\n{}",
-        c.lines()
-            .filter(|l| l.contains("__pd_print"))
-            .collect::<Vec<_>>()
-            .join("\n")
+        &unique_module_name("esc_nul_str"),
     );
     assert!(
-        !c.contains('\0'),
-        "a raw NUL byte reached the generated C source"
+        msg.contains("`\\0` is not allowed in a string literal"),
+        "expected the NUL refusal, got: {}",
+        msg
     );
 }
 
-/// …and what that NUL then MEANS at run time, pinned rather than discovered.
-///
-/// A Palladium String is a non-NULL, NUL-terminated `const char*` (N14), so a
-/// NUL inside a literal ends the string for every operation that consumes one.
-/// This is a declared consequence of the representation, not a truncation bug,
-/// and whether a `\0` in a STRING literal should instead be refused outright is
-/// an open question recorded in `language-spec.md` A2.
+/// …and the value is still reachable, in the literal whose representation can
+/// carry it. Without this the refusal above would read as "Palladium has no
+/// way to write a zero byte", which is false.
 #[test]
-fn a_nul_in_a_string_ends_it_for_every_consumer_because_a_string_is_a_c_string() {
+fn a_nul_in_a_char_literal_is_still_the_value_zero() {
     let out = compile_and_run(
-        r#"
-fn main() {
-    print("a\0b");
-    print_int(string_len("a\0b"));
-}
-"#,
-        &unique_module_name("esc_nul_run"),
+        r#"fn main() { print_int('\0'); print_int('
+'); }"#,
+        &unique_module_name("esc_nul_char"),
     )
-    .expect("N2-09");
-    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["a", "1"]);
+    .expect("`'\\0'` is an ordinary char literal");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["0", "10"]);
+}
+
+/// THE CONTROL FOR THE SPLIT: the escape table is consulted per literal KIND,
+/// not globally. A table that answered the same question for both would make
+/// one of the two tests above unsatisfiable, and this states which way.
+#[test]
+fn the_string_escape_set_is_the_char_set_minus_nul() {
+    use palladium::lexer::token::{escape_spellings, string_escape_spellings};
+    let chars = escape_spellings();
+    let strings = string_escape_spellings();
+    assert!(chars.contains(&"\\0".to_string()), "char escapes: {:?}", chars);
+    assert!(
+        !strings.contains(&"\\0".to_string()),
+        "`\\0` is still offered to string literals: {:?}",
+        strings
+    );
+    let mut expected: Vec<String> = chars.iter().filter(|e| *e != "\\0").cloned().collect();
+    expected.sort();
+    let mut got = strings.clone();
+    got.sort();
+    assert_eq!(
+        got, expected,
+        "the two sets must differ by exactly `\\0`; anything else is a second \
+         asymmetry nobody decided"
+    );
+}
+
+/// The generated C still escapes a NUL if one ever reaches it. No string
+/// literal can carry one now, so this is a unit-level guard on the emitter
+/// rather than a reachable path — kept because `c_string_body` is the ONE
+/// derivation and the next caller may not be a string literal.
+#[test]
+fn the_c_emitter_still_refuses_to_write_a_raw_nul() {
+    use palladium::codegen::c_literal::c_string_body;
+    let got = c_string_body("a\u{0}b");
+    assert_eq!(got, "a\\000b");
+    assert!(!got.contains('\0'));
 }
 
 /// The escapes that already worked still work — the control for a rewrite of
@@ -582,6 +795,103 @@ fn main() {
     )
     .expect("`1..5` must still be a range");
     assert_eq!(out.trim(), "10");
+}
+
+/// `''` — WHAT ACTUALLY HAPPENS, now that the diagnostic that claimed to
+/// handle it is gone.
+///
+/// There was a `LexError::EmptyCharLiteral` reading "empty character literal:
+/// `''` has no character in it". It could never fire: the char rule is
+/// `'([^'\\]|\\.)'`, which REQUIRES one character or escape between the ticks,
+/// so `''` never reaches the callback at all — the two ticks fall back to
+/// `Token::SingleQuote` twice and the parser refuses the second one.
+///
+/// A diagnostic that cannot fire is a claim that cannot fail, so it was DELETED
+/// rather than left as coverage nobody had, and this test pins the real
+/// behaviour in its place. Making `''` a dedicated lexical error would be a
+/// better message and is a separate change; what is not acceptable is a message
+/// in the source that no program can produce.
+#[test]
+fn an_empty_char_literal_is_refused() {
+    let msg = refusal(
+        "fn main() { let c = ''; }",
+        &unique_module_name("chr_empty"),
+    );
+    assert!(
+        !msg.contains("empty character literal"),
+        "the deleted diagnostic is back without a rule that can reach it: {}",
+        msg
+    );
+    assert!(
+        msg.contains("expected expression") && msg.contains('\''),
+        "`''` lexes as two SingleQuote tokens and dies in the parser, naming the tick; \
+         got: {}",
+        msg
+    );
+}
+
+/// THE SIGN IS PART OF THE FLOAT TOKEN, exactly as it is for `Integer`, and
+/// this is the contract test that says so out loud.
+///
+/// `x-1.5` therefore lexes as `x` then `-1.5` — two expressions with no
+/// operator between them — and must be written `x - 1.5`. That is the same
+/// gotcha `-?[0-9]+` already has for integers (`i-1` is `i` then `-1`,
+/// grammar.ebnf and A2 both say so), and matching it was the choice: one
+/// convention for both numeric literals rather than two.
+///
+/// IT IS A CHOICE AND IT HAS AN EXIT. When N5-16 brings unary minus into the
+/// expression grammar, sign handling moves there and BOTH tokens lose their
+/// leading `-` together. Until then this test fails if either half drifts —
+/// which is the point, because the suite had no operator-adjacent literal at
+/// all and the convention was only asserted in a doc comment.
+#[test]
+fn the_float_token_carries_its_sign_exactly_as_the_integer_token_does() {
+    // Spaced: subtraction, for both kinds.
+    let out = compile_and_run(
+        r#"
+fn main() {
+    let x: f64 = 4.0;
+    let d = x - 1.5;
+    if d > 2.49 { if d < 2.51 { print("float spaced subtracts"); } }
+    let i: i64 = 4;
+    print_int(i - 1);
+}
+"#,
+        &unique_module_name("flt_sign_spaced"),
+    )
+    .expect("spaced arithmetic must work for both");
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        vec!["float spaced subtracts", "3"]
+    );
+
+    // Unspaced: the sign binds to the literal, so this is NOT subtraction and
+    // must not silently compile as if it were. Both kinds, same verdict.
+    for (label, src) in [
+        ("float", "fn main() { let x: f64 = 4.0; let d = x-1.5; }"),
+        ("int", "fn main() { let i: i64 = 4; let d = i-1; }"),
+    ] {
+        let msg = refusal(src, &unique_module_name("flt_sign_unspaced"));
+        assert!(
+            !msg.is_empty(),
+            "{}: `a-b` unspaced must not be read as subtraction",
+            label
+        );
+    }
+
+    // A negative literal in a value position is an ordinary literal.
+    let out = compile_and_run(
+        r#"
+fn main() {
+    let n: f64 = -2.5;
+    if n < -2.49 { if n > -2.51 { print("negative float"); } }
+    print_int(-3);
+}
+"#,
+        &unique_module_name("flt_sign_neg"),
+    )
+    .expect("a negative literal is a literal");
+    assert_eq!(out.lines().collect::<Vec<_>>(), vec!["negative float", "-3"]);
 }
 
 // ---------------------------------------------------------------------------
