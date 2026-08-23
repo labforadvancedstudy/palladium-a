@@ -251,6 +251,7 @@ mod tests {
             imports: vec![],
             items: vec![
                 Item::Enum(EnumDef {
+                    visibility: crate::ast::Visibility::Private,
                     name: "Option".to_string(),
                     lifetime_params: vec![],
                     type_params: vec![],

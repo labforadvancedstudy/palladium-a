@@ -456,6 +456,7 @@ mod tests {
             imports: vec![],
             items: vec![
                 Item::Enum(EnumDef {
+                    visibility: crate::ast::Visibility::Private,
                     name: "Option".to_string(),
                     lifetime_params: vec![],
                     type_params: vec![],
@@ -500,6 +501,7 @@ mod tests {
             imports: vec![],
             items: vec![
                 Item::Enum(EnumDef {
+                    visibility: crate::ast::Visibility::Private,
                     name: "Message".to_string(),
                     lifetime_params: vec![],
                     type_params: vec![],
@@ -652,6 +654,7 @@ mod tests {
                     span: Span::new(22, 40, 0, 0),
                 }),
                 Item::Enum(EnumDef {
+                    visibility: crate::ast::Visibility::Private,
                     name: "Status".to_string(),
                     lifetime_params: vec![],
                     type_params: vec![],

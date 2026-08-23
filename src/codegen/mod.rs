@@ -735,9 +735,9 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:3619-3619`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:3859-3859`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
-    /// (`src/ownership/borrow_checker.rs:548`). So `fn f(xs: &[i64; 3])` could
+    /// (`src/ownership/borrow_checker.rs:556`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
     /// the callee's mutable binding, where it is legitimate. Measured, before
     /// this check: the caller's `v[0]` came back 99 through both a shared and a
@@ -901,11 +901,25 @@ impl CodeGenerator {
         // over the same item set it will be emitting: the escaped main program
         // plus every imported module's items, which land in this translation
         // unit too.
+        //
+        // SORTED BY MODULE NAME, for the reason the comment ~600 lines below
+        // spells out and this call used to ignore: `imported_modules` is a
+        // `HashMap`, `RandomState` reseeds per process, and this analysis feeds
+        // `definition_order`, which decides the ORDER TYPE DEFINITIONS ARE
+        // EMITTED IN. Walking `.values()` therefore put the hash seed into the
+        // emitted C whenever two imported modules declare the same type name --
+        // the same defect that once made eight compiles of one unchanged
+        // two-module program produce two distinct outputs. It is latent rather
+        // than measurable today, and `make selfhost`'s fixed point cannot see it
+        // because `bootstrap/pdc.pd` imports nothing, which is exactly the
+        // condition under which this class survives.
+        let mut sorted_imports: Vec<_> = self.imported_modules.iter().collect();
+        sorted_imports.sort_by_key(|(name, _)| *name);
         self.recursive_layout = crate::typeck::RecursiveLayout::analyze(
             program
                 .items
                 .iter()
-                .chain(self.imported_modules.values().flat_map(|m| &m.ast.items)),
+                .chain(sorted_imports.iter().flat_map(|(_, m)| &m.ast.items)),
         );
 
         self.output.push_str("#include <stdio.h>\n");
@@ -995,6 +1009,15 @@ impl CodeGenerator {
         // existed, byte for byte, or the differential over the corpus stops
         // being a measurement of this change.
         //
+        // WHAT "FREED AT EXIT" COSTS, said once so it is not only an argument for
+        // safety. The arena grows with the number of constructions a run performs,
+        // not with the number of nodes alive at any moment, so a loop that builds
+        // and discards recursive values retains every one of them until the process
+        // ends; and where the string pool merely stops recording past its cap and
+        // leaks, this one calls `exit(1)` when `malloc` or `realloc` fails. That is
+        // the right failure for a compiler that cannot free, and it is a liveness
+        // ceiling rather than a leak that degrades.
+        //
         // Freed once at exit rather than per value, which is not a shortcut but
         // the memory model this language already has: there is no drop glue and
         // no per-value free anywhere in it, which is the stated reason `String`
@@ -1012,8 +1035,7 @@ impl CodeGenerator {
             self.output
                 .push_str("// Heap cells for recursive enum payload slots\n");
             self.output.push_str("static void** __pd_rec_nodes = 0;\n");
-            self.output
-                .push_str("static size_t __pd_rec_count = 0;\n");
+            self.output.push_str("static size_t __pd_rec_count = 0;\n");
             self.output.push_str("static size_t __pd_rec_cap = 0;\n");
             self.output
                 .push_str("static void* __pd_rec_alloc(size_t size) {\n");
@@ -1026,9 +1048,8 @@ impl CodeGenerator {
             self.output.push_str("    }\n");
             self.output
                 .push_str("    if (__pd_rec_count == __pd_rec_cap) {\n");
-            self.output.push_str(
-                "        size_t grown = __pd_rec_cap ? __pd_rec_cap * 2 : 64;\n",
-            );
+            self.output
+                .push_str("        size_t grown = __pd_rec_cap ? __pd_rec_cap * 2 : 64;\n");
             self.output.push_str(
                 "        void** moved = (void**)realloc(__pd_rec_nodes, grown * sizeof(void*));\n",
             );
@@ -1099,7 +1120,8 @@ impl CodeGenerator {
 
         // Generate panic function wrapper
         self.output.push_str("void __pd_panic(const char* msg) {\n");
-        self.output.push_str("    fprintf(stderr, \"panic: %s\\n\", msg);\n");
+        self.output
+            .push_str("    fprintf(stderr, \"panic: %s\\n\", msg);\n");
         self.output.push_str("    abort();\n");
         self.output.push_str("}\n\n");
 
@@ -1144,7 +1166,8 @@ impl CodeGenerator {
         self.output.push_str("    if (start < 0) start = 0;\n");
         self.output
             .push_str("    if (end > (long long)len) end = len;\n");
-        self.output.push_str("    if (start >= end) return __pd_empty_owned();\n");
+        self.output
+            .push_str("    if (start >= end) return __pd_empty_owned();\n");
         self.output.push_str("    size_t sub_len = end - start;\n");
         self.output
             .push_str("    char* result = __pd_alloc_string(sub_len + 1);\n");
@@ -1309,17 +1332,25 @@ impl CodeGenerator {
         // below, beside `__pd_file_write` and `__pd_file_close`, which is the handle
         // representation the language actually has.
         self.output.push_str("// External runtime I/O functions\n");
-        self.output.push_str("extern int pd_path_exists(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_path_is_file(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_path_is_dir(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_create_dir(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_create_dir_all(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_remove_file(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_remove_dir(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_remove_dir_all(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_path_exists(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_path_is_file(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_path_is_dir(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_create_dir(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_create_dir_all(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_remove_file(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_remove_dir(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_remove_dir_all(const char* path, size_t path_len);\n");
         self.output.push_str("extern int pd_read_file_to_string(const char* path, size_t path_len, char** out_str, size_t* out_len);\n");
         self.output.push_str("extern int pd_write_string_to_file(const char* path, size_t path_len, const char* data, size_t data_len);\n\n");
-        
+
         // Wrapper functions that call the external pd_* functions
 
         // file_seek, over the SAME `long long` handle table as file_write and
@@ -1327,8 +1358,9 @@ impl CodeGenerator {
         // src/runtime/io.rs::pd_file_seek also uses, mapped here to the C
         // constants rather than passed through: an unrecognised value is -1, not
         // an out-of-range seek. Returns the new absolute position, or -1.
-        self.output
-            .push_str("long long __pd_file_seek(long long handle, long long whence, long long offset) {\n");
+        self.output.push_str(
+            "long long __pd_file_seek(long long handle, long long whence, long long offset) {\n",
+        );
         self.output.push_str(
             "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return -1;\n",
         );
@@ -1365,44 +1397,63 @@ impl CodeGenerator {
         self.output.push_str("}\n\n");
 
         // Path manipulation functions
-        self.output.push_str("int __pd_path_exists(const char* path) {\n");
-        self.output.push_str("    return pd_path_exists(path, strlen(path));\n");
+        self.output
+            .push_str("int __pd_path_exists(const char* path) {\n");
+        self.output
+            .push_str("    return pd_path_exists(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_path_is_file(const char* path) {\n");
-        self.output.push_str("    return pd_path_is_file(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_path_is_file(const char* path) {\n");
+        self.output
+            .push_str("    return pd_path_is_file(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_path_is_dir(const char* path) {\n");
-        self.output.push_str("    return pd_path_is_dir(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_path_is_dir(const char* path) {\n");
+        self.output
+            .push_str("    return pd_path_is_dir(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
+
         // Directory operations
-        self.output.push_str("int __pd_create_dir(const char* path) {\n");
-        self.output.push_str("    return pd_create_dir(path, strlen(path));\n");
+        self.output
+            .push_str("int __pd_create_dir(const char* path) {\n");
+        self.output
+            .push_str("    return pd_create_dir(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_create_dir_all(const char* path) {\n");
-        self.output.push_str("    return pd_create_dir_all(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_create_dir_all(const char* path) {\n");
+        self.output
+            .push_str("    return pd_create_dir_all(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_remove_file(const char* path) {\n");
-        self.output.push_str("    return pd_remove_file(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_remove_file(const char* path) {\n");
+        self.output
+            .push_str("    return pd_remove_file(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_remove_dir(const char* path) {\n");
-        self.output.push_str("    return pd_remove_dir(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_remove_dir(const char* path) {\n");
+        self.output
+            .push_str("    return pd_remove_dir(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_remove_dir_all(const char* path) {\n");
-        self.output.push_str("    return pd_remove_dir_all(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_remove_dir_all(const char* path) {\n");
+        self.output
+            .push_str("    return pd_remove_dir_all(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
+
         // Enhanced file operations with string helpers
-        self.output.push_str("char* __pd_read_file_to_string(const char* path) {\n");
+        self.output
+            .push_str("char* __pd_read_file_to_string(const char* path) {\n");
         self.output.push_str("    char* out_str = NULL;\n");
         self.output.push_str("    size_t out_len = 0;\n");
-        self.output.push_str("    if (pd_read_file_to_string(path, strlen(path), &out_str, &out_len) == 0) {\n");
+        self.output.push_str(
+            "    if (pd_read_file_to_string(path, strlen(path), &out_str, &out_len) == 0) {\n",
+        );
         self.output.push_str("        return out_str;\n");
         self.output.push_str("    }\n");
         // Failure returns the empty string, never NULL: a Palladium String is a
@@ -1412,9 +1463,12 @@ impl CodeGenerator {
         // __pd_arg_at, which returns "" out of range for the same reason.
         self.output.push_str("    return __pd_empty_owned();\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");
-        self.output.push_str("    return pd_write_string_to_file(path, strlen(path), data, strlen(data));\n");
+
+        self.output
+            .push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");
+        self.output.push_str(
+            "    return pd_write_string_to_file(path, strlen(path), data, strlen(data));\n",
+        );
         self.output.push_str("}\n\n");
 
         // First pass: collect function signatures, type aliases, and enum definitions from imported modules
@@ -1514,12 +1568,34 @@ impl CodeGenerator {
         // the hash seed into the emitted C.
         let mut imported_modules: Vec<_> = self.imported_modules.clone().into_iter().collect();
         imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
+        //
+        // TWO FILTERS, AND BOTH ARE THE TYPE-NAMESPACE HALF OF A RULE THE
+        // FUNCTION WALK FURTHER DOWN ALREADY APPLIES.
+        //
+        // `crate::ast::local_type_shadows_import` is the sibling of the
+        // `local_definition_shadows_import` that walk calls, and it is called
+        // here for the same reason: a local declaration replaces an imported
+        // one, so emitting both puts two definitions of one C tag in the
+        // translation unit. Measured, with `pub enum Color` in a module and
+        // `struct Color { v: i64 }` in the program:
+        // `main.c:280:16: error: redefinition of 'Color'`. The type checker's
+        // half of this fix removed the `Type mismatch: expected Color, found
+        // Color` in front of it and left this behind it, which is the whole
+        // reason both passes ask the shared predicate rather than each pass
+        // deciding.
+        //
+        // The `Public` test on the enum arm matches the struct arm above it. It
+        // could not exist before 2026-08-23 — `EnumDef` had no visibility field
+        // and the parser dropped the `pub` — so every enum in every imported
+        // module was emitted into every program that imported it.
         let mut imported_defs: Vec<(String, Item)> = Vec::new();
         for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 match item {
                     Item::Struct(struct_def) => {
-                        if matches!(struct_def.visibility, crate::ast::Visibility::Public) {
+                        if matches!(struct_def.visibility, crate::ast::Visibility::Public)
+                            && !crate::ast::local_type_shadows_import(program, &struct_def.name)
+                        {
                             // Skip generic structs - they should only be generated when instantiated
                             if struct_def.type_params.is_empty()
                                 && struct_def.lifetime_params.is_empty()
@@ -1529,9 +1605,15 @@ impl CodeGenerator {
                         }
                     }
                     Item::Enum(enum_def) => {
-                        // Skip generic enums - they should only be generated when instantiated
-                        if enum_def.type_params.is_empty() && enum_def.lifetime_params.is_empty() {
-                            imported_defs.push((enum_def.name.clone(), item.clone()));
+                        if matches!(enum_def.visibility, crate::ast::Visibility::Public)
+                            && !crate::ast::local_type_shadows_import(program, &enum_def.name)
+                        {
+                            // Skip generic enums - they should only be generated when instantiated
+                            if enum_def.type_params.is_empty()
+                                && enum_def.lifetime_params.is_empty()
+                            {
+                                imported_defs.push((enum_def.name.clone(), item.clone()));
+                            }
                         }
                     }
                     _ => {}
@@ -2453,7 +2535,10 @@ impl CodeGenerator {
                     // In C, array parameters are passed as pointers.
                     // We'll generate: type name[size] for clarity, though it decays to pointer
                     sig.push_str(&Self::array_param_declarator(
-                        elem_type, size, &param.name, false,
+                        elem_type,
+                        size,
+                        &param.name,
+                        false,
                     )?);
                 }
                 Type::Custom(_) => {
@@ -2475,7 +2560,10 @@ impl CodeGenerator {
                     // is why examples/practical/simple_sort.pd did not compile.
                     if let Type::Array(elem_type, size) = inner.as_ref() {
                         sig.push_str(&Self::array_param_declarator(
-                            elem_type, size, &param.name, !*mutable,
+                            elem_type,
+                            size,
+                            &param.name,
+                            !*mutable,
                         )?);
                         continue;
                     }
@@ -2575,8 +2663,7 @@ impl CodeGenerator {
         // `Some(Type::Unit)` are one return type and must generate one shape.
         // And `main` is INSIDE the rule, not an exception to it — it just needs
         // a different replacement, because its C type is `int`.
-        self.current_fn_unit_return = if matches!(func.return_type, None | Some(Type::Unit))
-        {
+        self.current_fn_unit_return = if matches!(func.return_type, None | Some(Type::Unit)) {
             if name == "main" {
                 Some("    return 0;\n")
             } else {
@@ -2718,7 +2805,9 @@ impl CodeGenerator {
     /// the block is generated, so snapshotting inside `generate_block` captured
     /// the already-overwritten map and the binder outlived its own scope: after
     /// `for v in xs { }`, an outer `v` still had the loop variable's type.
-    fn open_binding_scope(&self) -> (
+    fn open_binding_scope(
+        &self,
+    ) -> (
         std::collections::HashMap<String, ArrayBinding>,
         std::collections::HashMap<String, String>,
     ) {
@@ -2980,9 +3069,7 @@ impl CodeGenerator {
                         let (elem_type, _) = Self::split_array_dims(&self.infer_expr_type(iter));
                         let len = self.array_len_of_expr(iter);
                         let storage = match iter {
-                            Expr::Ident(name) => {
-                                self.array_bindings.get(name).map(|b| b.storage)
-                            }
+                            Expr::Ident(name) => self.array_bindings.get(name).map(|b| b.storage),
                             _ => None,
                         };
 
@@ -3164,10 +3251,8 @@ impl CodeGenerator {
                                                         // `&mut self` would
                                                         // conflict. Same two
                                                         // operations.
-                                                        self.variables
-                                                            .insert(name.clone(), c_type);
-                                                        self.array_bindings
-                                                            .remove(name.as_str());
+                                                        self.variables.insert(name.clone(), c_type);
+                                                        self.array_bindings.remove(name.as_str());
                                                     }
                                                 }
                                             }
@@ -3283,10 +3368,7 @@ impl CodeGenerator {
                         // parameter list by name (the previous approach) both
                         // missed `&[T; N]` parameters and could answer with an
                         // unrelated function's parameter of the same name.
-                        let is_array = self
-                            .variables
-                            .get(name)
-                            .is_some_and(|ty| ty.contains('['));
+                        let is_array = self.variables.get(name).is_some_and(|ty| ty.contains('['));
 
                         if is_array {
                             // Arrays are already pointers, don't dereference
@@ -4569,7 +4651,11 @@ mod tests {
         )
         .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("cannot pass an array to `print_int`"), "{}", msg);
+        assert!(
+            msg.contains("cannot pass an array to `print_int`"),
+            "{}",
+            msg
+        );
         assert!(msg.contains("does not know that callee"), "{}", msg);
     }
 
@@ -4588,7 +4674,11 @@ mod tests {
         )
         .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("cannot establish where the array came from"), "{}", msg);
+        assert!(
+            msg.contains("cannot establish where the array came from"),
+            "{}",
+            msg
+        );
         assert!(msg.contains("field access"), "{}", msg);
     }
 
@@ -4658,7 +4748,11 @@ mod tests {
         )
         .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("cannot establish where the array came from"), "{}", msg);
+        assert!(
+            msg.contains("cannot establish where the array came from"),
+            "{}",
+            msg
+        );
         assert!(msg.contains("array index"), "{}", msg);
     }
 
@@ -4742,7 +4836,12 @@ mod tests {
         .unwrap();
         assert!(c.contains("long long head(long long xs[]);"), "{}", c);
         assert!(c.contains("long long head(long long xs[]) {"), "{}", c);
-        assert_eq!(c.matches("long long head(long long xs[]").count(), 2, "{}", c);
+        assert_eq!(
+            c.matches("long long head(long long xs[]").count(),
+            2,
+            "{}",
+            c
+        );
     }
 
     // The supported element types are exactly what the declarator enumerates.

@@ -5,7 +5,7 @@
 // over-approximates. `[Z; 0]` stores no `Z`, so `Z` has a finite size and the
 // cycle is broken with no `enum` on it -- the general rule ("an inhabited cycle
 // contains an enum node") does not hold for this program. The analysis counts
-// the edge anyway, because `named_occurrences` contributes an edge for `[T; N]`
+// the edge anyway, because `labelled_occurrences` contributes an edge for `[T; N]`
 // at every `N`.
 //
 // It is refused for two measured reasons, both named in the diagnostic:
@@ -24,7 +24,8 @@
 // This fixture exists so the decision outlives the second reason. If the empty
 // array literal ever becomes inferrable, the refusal is still correct on the
 // first reason alone, and this row is where that is written down. Requirement
-// N4-22 carries the same exclusion.
+// N4-23 carries the same exclusion. (N4-22 is the POSITIVE row -- an enum
+// payload naming its own enum -- and says nothing about arrays.)
 struct Z {
     xs: [Z; 0],
 }

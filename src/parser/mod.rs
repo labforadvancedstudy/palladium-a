@@ -112,12 +112,9 @@ impl BlockTail {
                 else_tail,
                 ..
             } => {
-                then_tail.writes_a_value()
-                    || else_tail.as_ref().is_some_and(|e| e.writes_a_value())
+                then_tail.writes_a_value() || else_tail.as_ref().is_some_and(|e| e.writes_a_value())
             }
-            BlockTail::Match { arm_tails, .. } => {
-                arm_tails.iter().any(|t| t.writes_a_value())
-            }
+            BlockTail::Match { arm_tails, .. } => arm_tails.iter().any(|t| t.writes_a_value()),
         }
     }
 
@@ -136,7 +133,6 @@ impl BlockTail {
             _ => "if",
         }
     }
-
 }
 
 /// Can every path out of `stmts` be made to end in a `return`?
@@ -180,8 +176,7 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
             // nothing to return, whatever the `if` branch does.
             match (else_branch, else_tail) {
                 (Some(eb), Some(et)) => {
-                    returns_on_every_path(then_branch, then_tail)
-                        && returns_on_every_path(eb, et)
+                    returns_on_every_path(then_branch, then_tail) && returns_on_every_path(eb, et)
                 }
                 _ => false,
             }
@@ -211,24 +206,24 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 /// 4,000-line file: it is five functions and one call site, and nothing else in
 /// this file participates.
 ///
-///   `src/parser/mod.rs:78-140`    `BlockTail` — the shape of the block's final
+///   `src/parser/mod.rs:78-136`    `BlockTail` — the shape of the block's final
 ///                                statement as the parser SAW it, plus
 ///                                `writes_a_value()`, which decides whether a
 ///                                refusal is owed at all
-///   `src/parser/mod.rs:159-206`  `returns_on_every_path` — the decision, with
-///                                the NOTE at :151-159 recording the one
+///   `src/parser/mod.rs:155-201`  `returns_on_every_path` — the decision, with
+///                                the NOTE at :150-154 recording the one
 ///                                declared residual (a `match` lowers to an
 ///                                if/else-if chain with no final `else`)
-///   `src/parser/mod.rs:281-283`  `already_terminates` — `any`, not "the last
+///   `src/parser/mod.rs:276-278`  `already_terminates` — `any`, not "the last
 ///                                statement", because anything after an
 ///                                unconditional terminator is unreachable
-///   `src/parser/mod.rs:286-309`  `stmt_terminates` — the four cases, each
+///   `src/parser/mod.rs:281-304`  `stmt_terminates` — the four cases, each
 ///                                paired with its counterpart in
 ///                                scripts/check-c-returns.py by the table above
-///   `src/parser/mod.rs:337-369`  `contains_escaping_break` +
+///   `src/parser/mod.rs:332-364`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1148-1172`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1146-1170`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -418,9 +413,7 @@ fn missing_path(stmts: &[Stmt], tail: &BlockTail) -> String {
                 return "some path".to_string();
             };
             match (else_branch, else_tail) {
-                (None, _) | (_, None) => {
-                    "there is no `else` branch, so the false path".to_string()
-                }
+                (None, _) | (_, None) => "there is no `else` branch, so the false path".to_string(),
                 (Some(eb), Some(et)) => {
                     if !returns_on_every_path(then_branch, then_tail) {
                         "the `if` branch".to_string()
@@ -746,7 +739,8 @@ impl Parser {
             }
         }
 
-        let close_span = self.consume(Token::RightBracket, "Expected ']' to close the attribute")?;
+        let close_span =
+            self.consume(Token::RightBracket, "Expected ']' to close the attribute")?;
         let span = Span::new(
             open_span.start,
             close_span.end,
@@ -979,7 +973,11 @@ impl Parser {
                 struct_def.visibility = visibility;
                 Ok(Item::Struct(struct_def))
             }
-            Token::Enum => Ok(Item::Enum(self.parse_enum()?)),
+            Token::Enum => {
+                let mut enum_def = self.parse_enum()?;
+                enum_def.visibility = visibility;
+                Ok(Item::Enum(enum_def))
+            }
             Token::Trait => {
                 let mut trait_def = self.parse_trait()?;
                 trait_def.visibility = visibility;
@@ -1046,7 +1044,7 @@ impl Parser {
                     });
                 } else if self.check(&Token::Ampersand) {
                     self.advance()?; // consume '&'
-                    
+
                     // Check for optional 'mut' after '&'
                     let mutable = if self.check(&Token::Mut) {
                         self.advance()?; // consume 'mut'
@@ -1054,7 +1052,7 @@ impl Parser {
                     } else {
                         false
                     };
-                    
+
                     // Now must be 'self'
                     if self.check(&Token::SelfParam) {
                         self.advance()?; // consume 'self'
@@ -1434,6 +1432,7 @@ impl Parser {
         let end_span = self.consume(Token::RightBrace, "Expected '}' after enum variants")?;
 
         Ok(EnumDef {
+            visibility: crate::ast::Visibility::Private,
             name,
             lifetime_params,
             type_params,
@@ -2389,7 +2388,7 @@ impl Parser {
             } else {
                 // Single expression body
                 let expr = self.parse_expression()?;
-                
+
                 // Comma is optional if this is the last arm
                 if !self.check(&Token::RightBrace) {
                     self.consume(Token::Comma, "Expected ',' after match arm expression")?;
@@ -2397,7 +2396,7 @@ impl Parser {
                     // Allow optional trailing comma
                     self.advance()?;
                 }
-                
+
                 // `Red => 1,` is a value in tail position: the arm body is a
                 // single `Stmt::Expr` that was never terminated by a `;`.
                 arm_tail = BlockTail::Expr;
@@ -2906,30 +2905,30 @@ impl Parser {
             (Token::LeftParen, _) => {
                 // Parse tuple type: (), (T,), (T1, T2), etc.
                 let mut types = Vec::new();
-                
+
                 // Check for unit type
                 if self.check(&Token::RightParen) {
                     self.advance()?; // consume ')'
                     return Ok(Type::Unit);
                 }
-                
+
                 // Parse first element
                 types.push(self.parse_type()?);
-                
+
                 // Parse remaining elements
                 while self.check(&Token::Comma) {
                     self.advance()?; // consume ','
-                    
+
                     // Allow trailing comma
                     if self.check(&Token::RightParen) {
                         break;
                     }
-                    
+
                     types.push(self.parse_type()?);
                 }
-                
+
                 self.consume(Token::RightParen, "Expected ')' after tuple type")?;
-                
+
                 // All tuples, including single element ones
                 Ok(Type::Tuple(types))
             }

@@ -744,17 +744,25 @@ fn main() { print("ok"); }
     )
     .expect_err("a `[Z; 0]` field is an array of an incomplete element type");
 
-    assert!(err.contains("has no layout"), "expected a layout refusal: {}", err);
+    assert!(
+        err.contains("has no layout"),
+        "expected a layout refusal: {}",
+        err
+    );
     for expected in [
-        // The exclusion, named, with the requirement row that carries it.
-        "zero-length arrays are OUT OF SCOPE here on purpose (requirement N4-22)",
+        // The exclusion, named, with the row that actually carries it. N4-23 is
+        // the non-overstatement row; N4-22 is the positive one and says nothing
+        // about arrays. This string is the conformance fingerprint too, so the
+        // two move together or `make conformance` goes red.
+        "the refusal is a deliberate exclusion (requirement N4-23)",
         // Reason one: there is no C to emit.
         "incomplete element type",
         // Reason two: there is no value to lay out.
         "Empty array literals are not supported (cannot infer type)",
-        // And the concession that makes the message honest rather than a
-        // restatement of the general rule.
-        "does bound the size",
+        // The concession that makes the message honest rather than a
+        // restatement of the general rule -- and the absence of the head that
+        // used to contradict it in the same run of sentences.
+        "the size IS bounded",
     ] {
         assert!(
             err.contains(expected),
@@ -774,12 +782,18 @@ fn main() { print("ok"); }
 #[test]
 fn no_layout_refusal_claims_only_an_enum_can_bound_a_cycle() {
     for (source, name) in [
-        ("struct Node { next: Node }\nfn main() { print_int(3); }", "false_thm_self"),
+        (
+            "struct Node { next: Node }\nfn main() { print_int(3); }",
+            "false_thm_self",
+        ),
         (
             "struct A { b: B }\nstruct B { a: A }\nfn main() { print_int(3); }",
             "false_thm_pair",
         ),
-        ("struct Z { xs: [Z; 0] }\nfn main() { print(\"ok\"); }", "false_thm_zero"),
+        (
+            "struct Z { xs: [Z; 0] }\nfn main() { print(\"ok\"); }",
+            "false_thm_zero",
+        ),
         (
             "enum V { Leaf(i64), Many([V; 3]) }\nfn main() { print_int(3); }",
             "false_thm_array",
@@ -792,8 +806,24 @@ fn no_layout_refusal_claims_only_an_enum_can_bound_a_cycle() {
             name,
             err
         );
+        // EXACTLY ONE of the two explanations, and never both. The message used
+        // to be a head plus an appended clause, and the head asserted "so this
+        // compiler cannot give it a size" while the clause said "does bound the
+        // size" — two contradictory causal claims about one program in one run of
+        // sentences. It is built as one explanation per branch now, so asserting
+        // that the branches are MUTUALLY EXCLUSIVE is what pins that.
+        let unbounded = err.contains("so the size\n                     is unbounded")
+            || err.contains("so the size is unbounded");
+        let bounded = err.contains("the size IS bounded");
         assert!(
-            err.contains("The one indirection it introduces"),
+            unbounded != bounded,
+            "`{}` must give exactly one account of the size, and gave {}: {}",
+            name,
+            if bounded { "both" } else { "neither" },
+            err
+        );
+        assert!(
+            err.contains("The one indirection this compiler introduces") || bounded,
             "`{}` should describe the mechanism this compiler has: {}",
             name,
             err
@@ -814,7 +844,11 @@ fn main() { print_int(3); }
         "zero_len_elsewhere",
     )
     .expect_err("`Node` stores itself by value");
-    assert!(err.contains("has no layout"), "expected a layout refusal: {}", err);
+    assert!(
+        err.contains("has no layout"),
+        "expected a layout refusal: {}",
+        err
+    );
     assert!(
         !err.contains("zero-length arrays are OUT OF SCOPE"),
         "this cycle is Node -> Node and uses no zero-length array: {}",

@@ -96,8 +96,11 @@ use trait_resolution::TraitResolver;
 ///     refusal fails closed onto a type no program has a value of.
 ///
 /// Both halves are pinned: `tests/reject/zero_length_array_self_reference.pd`
-/// holds the refusal and its fingerprint, and requirement `N4-22` states the
-/// exclusion so the decision outlives the current limitation. If the empty
+/// holds the refusal and its fingerprint, and requirement `N4-23` states the
+/// exclusion so the decision outlives the current limitation. `N4-23`, not
+/// `N4-22`: N4-22 is the POSITIVE row, about an enum payload naming its own
+/// enum, and says nothing about arrays. Pointing the exclusion at it sent a
+/// reader who hit this refusal to a row that does not mention their program. If the empty
 /// array literal is ever inferrable, this is the site to revisit — and the
 /// first thing to check is the C, not this graph.
 #[derive(Debug, Clone, Default)]
@@ -146,7 +149,9 @@ impl RecursiveLayout {
         let mut contains: HashMap<String, Vec<String>> = HashMap::new();
         for item in items.clone() {
             match item {
-                Item::Struct(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
+                Item::Struct(def)
+                    if def.type_params.is_empty() && def.lifetime_params.is_empty() =>
+                {
                     let mut occ = Vec::new();
                     for (_, ty) in &def.fields {
                         layout.labelled_occurrences(ty, false, &mut occ);
@@ -178,7 +183,9 @@ impl RecursiveLayout {
         let mut cut: HashMap<String, Vec<String>> = HashMap::new();
         for item in items.clone() {
             match item {
-                Item::Struct(def) if def.type_params.is_empty() && def.lifetime_params.is_empty() => {
+                Item::Struct(def)
+                    if def.type_params.is_empty() && def.lifetime_params.is_empty() =>
+                {
                     let mut occ = Vec::new();
                     for (_, ty) in &def.fields {
                         layout.labelled_occurrences(ty, false, &mut occ);
@@ -243,9 +250,10 @@ impl RecursiveLayout {
     /// bounded and a message that says otherwise is false — see the type-level
     /// documentation for why the declaration is refused anyway.
     pub fn cycle_crosses_a_zero_length_array(&self, cycle: &[String]) -> bool {
-        cycle
-            .windows(2)
-            .any(|hop| self.zero_length_edges.contains(&(hop[0].clone(), hop[1].clone())))
+        cycle.windows(2).any(|hop| {
+            self.zero_length_edges
+                .contains(&(hop[0].clone(), hop[1].clone()))
+        })
     }
 
     /// The order in which these type definitions must be EMITTED, dependencies
@@ -276,7 +284,10 @@ impl RecursiveLayout {
     /// It cannot arise from a program the type checker accepted, because that
     /// is precisely what `declarations_without_layout` refuses; a caller that
     /// gets one must refuse rather than emit C gcc will reject.
-    pub fn definition_order(&self, names: &[String]) -> std::result::Result<Vec<String>, Vec<String>> {
+    pub fn definition_order(
+        &self,
+        names: &[String],
+    ) -> std::result::Result<Vec<String>, Vec<String>> {
         let wanted: HashSet<&str> = names.iter().map(String::as_str).collect();
         let mut done: HashSet<String> = HashSet::new();
         let mut in_path: HashSet<String> = HashSet::new();
@@ -1040,8 +1051,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1237-1238`, `src/typeck/mod.rs:1272-1272`,
-    /// `src/typeck/mod.rs:1295-1295`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1394-1395`, `src/typeck/mod.rs:1397-1399`,
+    /// `src/typeck/mod.rs:1494-1495`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -1070,6 +1081,105 @@ impl TypeChecker {
     ///
     /// Every other leaf comes back unchanged, so a program that imports no enum
     /// is converted exactly as it was.
+    /// WHICH NAMES ARE `enum`S — the one answer, with precedence applied.
+    ///
+    /// `ast_type_to_checker_type` asks this of every named type, so getting it
+    /// wrong misclassifies an ordinary declaration. It used to be a bare UNION
+    /// of local and imported enum names, which has no way to express either of
+    /// the two rules the rest of the compiler already follows:
+    ///
+    ///   VISIBILITY. A module's `enum` reaches a downstream program only if it
+    ///   said `pub`. Until 2026-08-23 `EnumDef` carried no visibility at all and
+    ///   `src/parser/mod.rs` discarded the `pub` it had parsed, so every enum in
+    ///   every module was reachable from every program that imported it.
+    ///
+    ///   SHADOWING. A local declaration wins over an imported one. `self.structs`
+    ///   and `self.enums` already get this from insertion order — imports are
+    ///   registered in `set_imported_modules`, locals in `check`, last writer
+    ///   wins — and the union got it from nowhere, so
+    ///   `struct Color { v: i64 }` over an imported `pub enum Color` came back
+    ///   `Enum("Color")` and was refused with
+    ///   `Type mismatch: expected Color, found Color`.
+    ///
+    /// The shadowing test is `crate::ast::local_type_shadows_import`, which is
+    /// where the FUNCTION-namespace version of the same rule already lives. It
+    /// is not re-derived here: a second notion of "which `Color` is this" is the
+    /// one-fact-two-representations mistake this file keeps paying for.
+    ///
+    /// Order is imports first, locals second, matching the two maps above, so
+    /// this reads the same way they do even though a set cannot show it.
+    fn enum_names_in_scope(
+        program: &Program,
+        imported: &HashMap<String, crate::resolver::ModuleInfo>,
+    ) -> HashSet<String> {
+        let mut names = HashSet::new();
+        for module_info in imported.values() {
+            for item in &module_info.ast.items {
+                if let Item::Enum(enum_def) = item {
+                    if matches!(enum_def.visibility, crate::ast::Visibility::Public)
+                        && !crate::ast::local_type_shadows_import(program, &enum_def.name)
+                    {
+                        names.insert(enum_def.name.clone());
+                    }
+                }
+            }
+        }
+        for item in &program.items {
+            if let Item::Enum(enum_def) = item {
+                names.insert(enum_def.name.clone());
+            }
+        }
+        names
+    }
+
+    /// Un-register every imported type whose name a LOCAL declaration has taken.
+    ///
+    /// `enum_names_in_scope` decides the KIND, and it is not enough on its own:
+    /// `set_imported_modules` runs before `check` and has already written the
+    /// imported enum's variants into `self.enums` and its variant constructors
+    /// into `self.functions`, under the bare name. `ast_type_to_checker_type`
+    /// consults `self.enums` BESIDE `enum_names`, so leaving those entries in
+    /// place reproduces the whole defect through the other half of the `||`.
+    ///
+    /// This is where the precedence is applied, rather than in
+    /// `set_imported_modules`, because that method has the modules and not the
+    /// program: nothing there can know a local declaration is coming. `check`
+    /// is the first point that holds both.
+    ///
+    /// A local `enum` of the same name needs nothing here — it overwrites the
+    /// entry itself, a few lines further on, which is the same last-writer rule.
+    fn drop_imports_shadowed_by_local_types(&mut self, program: &Program) {
+        let taken: Vec<String> = self
+            .imported_modules
+            .values()
+            .flat_map(|m| &m.ast.items)
+            .filter_map(|item| match item {
+                Item::Enum(enum_def)
+                    if crate::ast::local_type_shadows_import(program, &enum_def.name)
+                        && !program.items.iter().any(
+                            |local| matches!(local, Item::Enum(e) if e.name == enum_def.name),
+                        ) =>
+                {
+                    Some(enum_def.name.clone())
+                }
+                _ => None,
+            })
+            .collect();
+
+        for name in taken {
+            self.enums.remove(&name);
+            // The variant constructors too. `Color::Red` resolving to an
+            // imported enum's constructor while `Color` is a local `struct` is
+            // the same misclassification wearing a call. Both spellings the
+            // registration writes are removed: the bare `Color::Red` and the
+            // qualified `lib::Color::Red`.
+            let bare = format!("{}::", name);
+            let qualified = format!("::{}::", name);
+            self.functions
+                .retain(|key, _| !key.starts_with(&bare) && !key.contains(&qualified));
+        }
+    }
+
     fn as_enums_where_known(enum_names: &HashSet<String>, ty: CheckerType) -> CheckerType {
         match ty {
             CheckerType::Struct(name) if enum_names.contains(&name) => CheckerType::Enum(name),
@@ -1109,7 +1219,6 @@ impl TypeChecker {
     pub fn set_imported_modules(&mut self, modules: HashMap<String, crate::resolver::ModuleInfo>) {
         self.imported_modules = modules;
 
-
         // Enum names first, for the same reason `check` collects them first:
         // the registration below converts imported field, parameter, return and
         // payload types, and an imported enum in any of those positions was
@@ -1143,10 +1252,25 @@ impl TypeChecker {
         // that one also resolves type aliases out of a map THIS LOOP IS STILL
         // FILLING, so it would make an imported signature depend on which module
         // was processed first — trading a wrong answer for an unstable one.
+        //
+        // HALF THE RULE, ON PURPOSE, AND THE OTHER HALF IS IN `check`. Visibility
+        // can be applied here because it is a property of the import alone.
+        // Shadowing cannot: this method has the modules and not the program, so
+        // nothing here can know a local declaration is coming. `check` recomputes
+        // the whole set through `enum_names_in_scope` with both rules applied and
+        // calls `drop_imports_shadowed_by_local_types` to undo what was registered
+        // under a name a local declaration took. What this loop is FOR is the
+        // conversions immediately below, which run before `check` exists.
+        //
+        // `.values()` unsorted is safe here and only here: the result is a SET, so
+        // module order cannot reach it. The two `RecursiveLayout::analyze` calls
+        // are sorted because their results are ordered.
         for module_info in self.imported_modules.values() {
             for item in &module_info.ast.items {
                 if let crate::ast::Item::Enum(enum_def) = item {
-                    self.enum_names.insert(enum_def.name.clone());
+                    if matches!(enum_def.visibility, crate::ast::Visibility::Public) {
+                        self.enum_names.insert(enum_def.name.clone());
+                    }
                 }
             }
         }
@@ -1211,9 +1335,7 @@ impl TypeChecker {
                                 }
                             } else if func.is_async && func.name == "main" {
                                 self.deferred_async_main = Some(func.span);
-                            } else if func.is_async
-                                && Self::has_value_return(&func.body)
-                            {
+                            } else if func.is_async && Self::has_value_return(&func.body) {
                                 self.deferred_async_value_returns
                                     .push((func.name.clone(), func.span));
                             }
@@ -1298,8 +1420,20 @@ impl TypeChecker {
                         }
                     }
                     crate::ast::Item::Enum(enum_def) => {
-                        // Assume all exported enums are public
-                        {
+                        // TESTED LIKE EVERY OTHER ARM. This said "Assume all
+                        // exported enums are public" and assumed it because it
+                        // had to: `EnumDef` carried no visibility field and the
+                        // parser dropped the `pub` it had parsed
+                        // (`src/parser/mod.rs`), so there was nothing here to
+                        // test. Both are fixed, so a module's `enum` reaches a
+                        // downstream program only if it said `pub`, the same as
+                        // its `struct` three arms up.
+                        //
+                        // Without this the refusal for a private import landed
+                        // in gcc rather than in a diagnostic: the type checker
+                        // had stopped calling the name an enum, and the variant
+                        // constructor registered here still resolved.
+                        if matches!(enum_def.visibility, crate::ast::Visibility::Public) {
                             // Store enum type information
                             let enum_type = CheckerType::Enum(enum_def.name.clone());
 
@@ -1339,7 +1473,9 @@ impl TypeChecker {
                                 .map(|variant| EnumVariant {
                                     name: variant.name.clone(),
                                     fields: match &variant.data {
-                                        crate::ast::EnumVariantData::Unit => EnumVariantFields::Unit,
+                                        crate::ast::EnumVariantData::Unit => {
+                                            EnumVariantFields::Unit
+                                        }
                                         crate::ast::EnumVariantData::Tuple(types) => {
                                             EnumVariantFields::Tuple(
                                                 types
@@ -1372,6 +1508,14 @@ impl TypeChecker {
                                     },
                                 })
                                 .collect();
+                            // Bare AND qualified, like the struct and function
+                            // arms above. Registering only the bare name left a
+                            // qualified `lib::Color` unresolvable where a
+                            // qualified `lib::Point` resolves.
+                            self.enums.insert(
+                                format!("{}::{}", module_name, enum_def.name),
+                                variants.clone(),
+                            );
                             self.enums.insert(enum_def.name.clone(), variants);
 
                             // Add variant constructors as functions
@@ -1548,18 +1692,17 @@ impl TypeChecker {
         // because an enum's own payload names the enum, and because an enum may
         // be declared after its user; both were `Struct` under the incremental
         // map.
-        for item in &program.items {
-            if let Item::Enum(enum_def) = item {
-                self.enum_names.insert(enum_def.name.clone());
-            }
-        }
-        for module_info in self.imported_modules.values() {
-            for item in &module_info.ast.items {
-                if let Item::Enum(enum_def) = item {
-                    self.enum_names.insert(enum_def.name.clone());
-                }
-            }
-        }
+        //
+        // ONE CALL, because the first version of this was TWO LOOPS FORMING A
+        // UNION — every local enum name, plus every imported enum name, with no
+        // visibility test and nothing removing a name a local declaration had
+        // taken. That reopened the very diagnostic above through the import
+        // path: with `pub enum Color` in a module, a downstream
+        // `struct Color { v: i64 }` was classified `Enum("Color")` and refused
+        // with `Type mismatch: expected Color, found Color`. A union is the
+        // wrong shape for a question whose answer has PRECEDENCE.
+        self.enum_names = Self::enum_names_in_scope(program, &self.imported_modules);
+        self.drop_imports_shadowed_by_local_types(program);
 
         // DECLARATIONS WITH NO LAYOUT ARE REFUSED HERE, BEFORE ANY C EXISTS.
         //
@@ -1569,11 +1712,18 @@ impl TypeChecker {
         // C-level error for a Palladium-level mistake it had already accepted.
         // Nothing is lost by refusing: a value on a by-value cycle with no enum
         // on it is infinite, so no program could ever have constructed one.
+        // Sorted for the same reason the identical call in code generation is:
+        // this is a `HashMap` and the analysis it feeds decides emission order.
+        // Here it decides WHICH declaration is named when several have no
+        // layout, so an unsorted walk makes the DIAGNOSTIC depend on the hash
+        // seed even where the C does not.
+        let mut sorted_imports: Vec<_> = self.imported_modules.iter().collect();
+        sorted_imports.sort_by_key(|(name, _)| *name);
         let layout = RecursiveLayout::analyze(
             program
                 .items
                 .iter()
-                .chain(self.imported_modules.values().flat_map(|m| &m.ast.items)),
+                .chain(sorted_imports.iter().flat_map(|(_, m)| &m.ast.items)),
         );
         if let Some((name, cycle)) = layout.declarations_without_layout().first() {
             // WHAT THIS MESSAGE MAY CLAIM. It used to say "only an `enum`
@@ -1585,30 +1735,48 @@ impl TypeChecker {
             // indirection, at an enum payload slot — and the zero-length case
             // is named where it applies instead of being contradicted
             // everywhere.
-            let mut message = format!(
-                "recursive type `{}` has no layout: it stores itself by value ({}), \
-                 so this compiler cannot give it a size. The one indirection it \
-                 introduces is an `enum` payload slot whose type reaches its own \
-                 enum again, and this cycle has no such slot. Break the cycle by \
-                 routing it through an `enum` variant that can stop, e.g. \
-                 `enum {}Link {{ End, More({}) }}`",
+            // ONE MESSAGE, BUILT AS ONE EXPLANATION. The first version appended
+            // the zero-length clause to a head that had already asserted the
+            // opposite: the reader was told "so this compiler cannot give it a
+            // size" and then, in the same run of sentences, "which stores no
+            // elements and therefore does bound the size". Removing the false
+            // theorem from the head was not enough, because the head still
+            // committed to a CAUSE before the branch that knows the cause had
+            // run. So the head now states only the FACT — this type stores
+            // itself by value, here is the cycle — and each branch supplies the
+            // whole of its own reason.
+            let head = format!(
+                "recursive type `{}` has no layout: it stores itself by value ({})",
                 name,
-                cycle.join(" -> "),
-                name,
-                name
+                cycle.join(" -> ")
             );
-            if layout.cycle_crosses_a_zero_length_array(cycle) {
-                message.push_str(
-                    ". This cycle runs through a zero-length array, which stores no \
-                     elements and therefore does bound the size — zero-length arrays \
-                     are OUT OF SCOPE here on purpose (requirement N4-22), not \
-                     overlooked: the field would have to be emitted as an array of an \
-                     incomplete element type, which C cannot spell, and `[T; 0]` has \
-                     no values to lay out in the first place because an empty array \
-                     literal is refused (\"Empty array literals are not supported \
-                     (cannot infer type)\")",
-                );
-            }
+            let repair = format!(
+                "Break the cycle by routing it through an `enum` variant that can \
+                 stop, e.g. `enum {}Link {{ End, More({}) }}`",
+                name, name
+            );
+            let message = if layout.cycle_crosses_a_zero_length_array(cycle) {
+                format!(
+                    "{}, through a zero-length array. That array stores no elements, \
+                     so the size IS bounded and this cycle does not need an `enum` to \
+                     stop it — the refusal is a deliberate exclusion (requirement \
+                     N4-23), not a claim that your type is infinite. Two reasons, both \
+                     measured: the field would have to be emitted as an array of an \
+                     incomplete element type, which C cannot spell; and `[T; 0]` has no \
+                     values to lay out, because an empty array literal is refused \
+                     (\"Empty array literals are not supported (cannot infer type)\"). \
+                     {}",
+                    head, repair
+                )
+            } else {
+                format!(
+                    "{}, and nothing on that cycle can stop. The one indirection this \
+                     compiler introduces is an `enum` payload slot whose type reaches \
+                     its own enum again, and this cycle has no such slot, so the size \
+                     is unbounded. {}",
+                    head, repair
+                )
+            };
             return Err(CompileError::Generic(message));
         }
 
@@ -1885,19 +2053,19 @@ impl TypeChecker {
                         Type::Generic { name, .. } => name.clone(),
                         _ => "Unknown".to_string(), // Shouldn't happen for impl blocks
                     });
-                    
+
                     // If this is a generic impl, skip type checking for now
                     // Generic impls will be checked when instantiated
                     if !impl_block.type_params.is_empty() {
                         self.current_impl_type = None;
                         continue;
                     }
-                    
+
                     // Type check impl block methods
                     for method in &impl_block.methods {
                         self.check_function(method)?;
                     }
-                    
+
                     // Clear current impl type
                     self.current_impl_type = None;
                 }
@@ -1923,7 +2091,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:1295-1295`), and walking an imported
+        // return (`src/typeck/mod.rs:2381-2383`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -2063,7 +2231,7 @@ impl TypeChecker {
                         return CheckerType::Struct("Self".to_string());
                     }
                 }
-                
+
                 // First check if it's a type alias
                 if let Some(aliased_type) = self.type_aliases.get(name) {
                     // Recursively resolve the aliased type
@@ -2178,13 +2346,9 @@ impl TypeChecker {
                             .as_ref()
                             .is_some_and(|b| Self::has_value_return(b))
                 }
-                Stmt::While { body, .. } | Stmt::For { body, .. } => {
-                    Self::has_value_return(body)
-                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => Self::has_value_return(body),
                 Stmt::Unsafe { body, .. } => Self::has_value_return(body),
-                Stmt::Match { arms, .. } => {
-                    arms.iter().any(|a| Self::has_value_return(&a.body))
-                }
+                Stmt::Match { arms, .. } => arms.iter().any(|a| Self::has_value_return(&a.body)),
                 _ => false,
             };
             if found {
@@ -4293,7 +4457,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:3787-3851`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:3869-3933`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -4317,7 +4481,7 @@ impl TypeChecker {
     /// This matters for the same reason the module ordering does: `make selfhost`
     /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
     /// because `bootstrap/pdc.pd` uses no generics — they are excluded from PBS-1
-    /// (`docs/specification/bootstrap-subset.md:85`).
+    /// (`docs/specification/bootstrap-subset.md:88`).
     pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
         let mut result = Vec::new();
 
@@ -4576,7 +4740,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:3381-3389`, `src/parser/mod.rs:3234-3242`). That is not
+    /// (`src/parser/mod.rs:3380-3388`, `src/parser/mod.rs:3233-3241`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

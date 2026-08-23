@@ -19,8 +19,8 @@
 //! `program.items` only — `Program.imports` (`src/ast/mod.rs:9`) is never read, and
 //! `Item` (`src/ast/mod.rs:24-32`) has no `Import` variant, so no walk over items could
 //! have reached one. `helper()` therefore fell out of the function table at
-//! `Expr::Ident` (`src/ownership/borrow_checker.rs:821`), was looked up as a *value*,
-//! was not found, and died at `src/ownership/borrow_checker.rs:874` as
+//! `Expr::Ident` (`src/ownership/borrow_checker.rs:828`), was looked up as a *value*,
+//! was not found, and died at `src/ownership/borrow_checker.rs:881` as
 //! `UseOfUninitializedValue`.
 //!
 //! The pass was not wrong; it was structurally single-file. These tests drive the real
@@ -473,7 +473,7 @@ fn test_a_same_named_shadow_of_a_fresh_value_leaves_the_outer_binding_alone() {
 //
 // The third pass below skipped every generic imported body, on the stated
 // ground that codegen emits only public NON-GENERIC imported functions
-// (`src/codegen/mod.rs:1328-1328`) and so a skipped body "produces no C". That
+// (`src/codegen/mod.rs:1359-1359`) and so a skipped body "produces no C". That
 // is true of the DIRECT imported-emission path and FALSE of monomorphization,
 // which is a separate path emitting `name__T` from the same template. The
 // guarantee was read off the stated reason instead of off the mechanism, and
@@ -901,7 +901,7 @@ fn test_local_twin_of_the_unchecked_import_is_rejected() {
 /// Walking imported bodies is only half of the job; the walk has to be handed the
 /// same ENVIRONMENT the local walk gets. It was not. `register_imported_functions`
 /// registered signatures and nothing else, so `struct_fields` — the map that
-/// `place_type` (`src/ownership/borrow_checker.rs:1300`) consults to decide
+/// `place_type` (`src/ownership/borrow_checker.rs:1298`) consults to decide
 /// whether `p.x` is Copy — held local struct layouts only. An imported struct's
 /// `i64` field therefore had no resolvable type, `is_expr_copy` fell into its
 /// conservative `false` default, and the FIRST read of the field MOVED it:
@@ -1006,7 +1006,7 @@ fn test_imported_function_bodies_are_type_checked() {
 }
 
 /// A module's own imports are resolved and then discarded:
-/// `src/resolver/mod.rs:190` is `let _sub_modules = self.resolve_program(&ast)?;`,
+/// `src/resolver/mod.rs:195` is `let _sub_modules = self.resolve_program(&ast)?;`,
 /// and `resolve_program` (`src/resolver/mod.rs:70-95`) builds its returned map
 /// from the TOP-LEVEL program's `program.imports` alone. The sub-module lands in
 /// the resolver's private cache and never reaches typeck, the borrow checker or
@@ -1016,7 +1016,7 @@ fn test_imported_function_bodies_are_type_checked() {
 /// It works if `main` also imports `liba` directly — which is the diamond case,
 /// and is why this is a missing hop rather than a missing feature.
 #[test]
-#[ignore = "XFAIL: transitive imports are resolved and thrown away — src/resolver/mod.rs:190 discards the recursive result into `_sub_modules` and src/resolver/mod.rs:70-95 returns only the top-level program's own imports, so `main -> libb -> liba` emits `outer`'s body calling `base` and gcc reports \"call to undeclared function 'base'\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: transitive imports are resolved and thrown away — src/resolver/mod.rs:195 discards the recursive result into `_sub_modules` and src/resolver/mod.rs:70-95 returns only the top-level program's own imports, so `main -> libb -> liba` emits `outer`'s body calling `base` and gcc reports \"call to undeclared function 'base'\" (owned by M4, cross-file module imports)"]
 fn test_a_module_can_use_what_it_imports() {
     let (compiled, output, stdout) = compile_and_run(
         &[
@@ -1218,9 +1218,9 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// `filter_module_info` (`src/resolver/mod.rs:105-118`) narrows the `exports`
 /// set and leaves `ast` complete — and `.exports` is read nowhere but its own
 /// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consumer
-/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1156-1156`,
-/// `src/codegen/mod.rs:1328-1328`, `src/codegen/mod.rs:1413-1413`,
-/// `src/codegen/mod.rs:1518-1518`, `src/codegen/mod.rs:2287-2287`, and the borrow checker's
+/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1280-1280`,
+/// `src/codegen/mod.rs:1359-1359`, `src/codegen/mod.rs:1464-1464`,
+/// `src/codegen/mod.rs:1592-1592`, `src/codegen/mod.rs:2369-2369`, and the borrow checker's
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
 /// module.
 #[test]
@@ -1243,13 +1243,13 @@ fn test_selective_import_does_not_import_the_rest() {
 /// A local definition that shadows an import is decided correctly by both
 /// checkers (the local one wins; see `register_imported_functions`) AND by code
 /// generation, which asks `local_definition_shadows_import` before emitting an
-/// imported function (`src/codegen/mod.rs:1653-1663`) and emits the local one
-/// unconditionally (`src/codegen/mod.rs:1670-1676`). This test is green.
+/// imported function (`src/codegen/mod.rs:1735-1745`) and emits the local one
+/// unconditionally (`src/codegen/mod.rs:1752-1758`). This test is green.
 ///
 /// THE SENTENCE ABOVE USED TO SAY THE OPPOSITE — "contradicted by codegen …
 /// with no shadowing check at all. The front end's answer is right and
 /// unenforceable" — and it was stale twice over. The check is right there at
-/// `src/codegen/mod.rs:1659-1659`, and BOTH of the citations it leaned on had
+/// `src/codegen/mod.rs:1741-1741`, and BOTH of the citations it leaned on had
 /// drifted onto unrelated code: at `d20b759` line 1378 was a bare `}` and
 /// 1557-1566 was `type_to_c`'s primitive-type match. Neither had anything to do
 /// with function emission.
@@ -1315,14 +1315,14 @@ fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
     );
 }
 
-/// A qualified call cannot be written. `src/parser/mod.rs:3272-3313` turns any
-/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:3534-3539`
+/// A qualified call cannot be written. `src/parser/mod.rs:3271-3312` turns any
+/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:3698-3703`
 /// then reports `Undefined enum type: lib2`. The same holds for an alias
 /// (`import lib2 as m;` → `Undefined enum type: m`), which makes `alias`
 /// unusable too. `register_imported_functions` registers `module::name` for
 /// parity with the type checker, but nothing can currently reach it.
 #[test]
-#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:3272-3313 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:3534-3539 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:3271-3312 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:3698-3703 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
 fn test_a_qualified_call_reaches_the_imported_function() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1337,13 +1337,13 @@ fn test_a_qualified_call_reaches_the_imported_function() {
 }
 
 /// A nested module path cannot be written either, one level below the
-/// resolver. `src/parser/mod.rs:798-809`: after `::`, if the token after the
+/// resolver. `src/parser/mod.rs:792-803`: after `::`, if the token after the
 /// next one is `;`, `,` or `{`, the segment is consumed as an ITEM name. So
 /// `import util::math;` parses as `path=["util"], items=["math"]` and the
 /// resolver looks for `util.pd`. The last segment of a path can never be a
 /// module, which means a module tree deeper than one level is unexpressible.
 #[test]
-#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:798-809 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:792-803 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M4, cross-file module imports)"]
 fn test_a_module_in_a_subdirectory_can_be_imported() {
     let (compiled, output, stdout) = compile_and_run(
         &[(
@@ -1363,8 +1363,8 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// An imported name can shadow a built-in in the checkers but never in codegen,
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
-/// (`src/codegen/mod.rs:3322-3325`), while the type checker
-/// (`src/typeck/mod.rs:1272-1272`) and `register_imported_functions` both insert
+/// (`src/codegen/mod.rs:3404-3407`), while the type checker
+/// (`src/typeck/mod.rs:1394-1394`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
 /// With a matching signature the imported definition is merely silent dead code.
@@ -1373,7 +1373,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1272-1272 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:3322-3325 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1394-1394 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:3404-3407 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],
@@ -1492,9 +1492,9 @@ fn emitted_c_over_runs(n: usize) -> Vec<String> {
 ///
 /// This is deliberately narrower than the whole file. It isolates the two
 /// emission sites that produce DEFINITIONS — imported struct definitions
-/// (`src/codegen/mod.rs:1413-1435`) and imported function bodies
-/// (`src/codegen/mod.rs:1653-1665`) — from the prototype block
-/// (`src/codegen/mod.rs:2284-2295`), which is a fourth site and emits
+/// (`src/codegen/mod.rs:1595-1623`) and imported function bodies
+/// (`src/codegen/mod.rs:1735-1747`) — from the prototype block
+/// (`src/codegen/mod.rs:2366-2377`), which is a fourth site and emits
 /// declarations, not definitions. All four are ordered now, so the narrowing no
 /// longer isolates a fixed site from a broken one; it survives because the two
 /// assertions answer different questions, and this one localises a regression to
@@ -1574,10 +1574,10 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// Auditing codegen for what else could put the hash seed into the output
 /// turned up a second, independent source: monomorphized generic
 /// instantiations. `TypeChecker::get_instantiations` builds its `Vec` by
-/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:4324-4324`), which is a
+/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:4488-4488`), which is a
 /// `HashMap`, and `get_struct_instantiations` does the same
-/// (`src/typeck/mod.rs:4386-4386`). Codegen then emits in that Vec's order
-/// (`src/codegen/mod.rs:1488-1488`, `src/codegen/mod.rs:2299-2299`).
+/// (`src/typeck/mod.rs:4550-4550`). Codegen then emits in that Vec's order
+/// (`src/codegen/mod.rs:1542-1542`, `src/codegen/mod.rs:2381-2381`).
 ///
 /// This program imports NOTHING, which is how the two sources were told apart:
 /// with all four `imported_modules` sites ordered, a six-module program with no
@@ -1589,7 +1589,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// It matters for the same reason the import one does: `make selfhost`'s fixed
 /// point is a byte-identity claim, and it survives today only because
 /// `bootstrap/pdc.pd` has neither modules (`grep -c '^import'` -> 0) nor generics
-/// (excluded from PBS-1, `docs/specification/bootstrap-subset.md:85`). Today's
+/// (excluded from PBS-1, `docs/specification/bootstrap-subset.md:88`). Today's
 /// fixed point is therefore not evidence that the compiler is deterministic; it
 /// is evidence that PBS-1 avoids both sources.
 ///
@@ -1597,7 +1597,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// `(name, type_args)`.
 ///
 /// NOT COVERED by any test: the sibling sort in `get_struct_instantiations`
-/// (`src/typeck/mod.rs:4386-4386`). Generic *structs* cannot be compiled at all right
+/// (`src/typeck/mod.rs:4550-4550`). Generic *structs* cannot be compiled at all right
 /// now — `struct Box<T> { v: T }` lowers to `void*` and gcc rejects
 /// "initializing 'void *' with an expression of incompatible type
 /// 'struct Box_alpha_i64'" — so there is no program whose output that ordering
@@ -2023,6 +2023,137 @@ fn test_an_imported_enums_variants_are_constructible_and_matchable() {
         stdout.as_deref(),
         Some("5\n12\ndot\n"),
         "an imported enum's variants did not round-trip; compiler said:\n{}",
+        output
+    );
+}
+
+/// A LOCAL declaration wins over an imported one, in the TYPE namespace.
+///
+/// The enum-kind decision was a bare-name UNION of local and imported enum
+/// names, so an imported enum reached into a downstream program's name space
+/// and misclassified an unrelated local type:
+///
+/// ```text
+/// lib.pd:   pub enum Color { Red, Green }
+/// main.pd:  import lib;
+///           struct Color { v: i64 }
+/// -> error: Type mismatch: expected Color, found Color
+/// ```
+///
+/// That is the same one-type-on-both-sides diagnostic the recursive-data-types
+/// work removed for local declarations, REOPENED through the import path by the
+/// fix that made imported enums usable at all. `let c: Color` was classified
+/// `Enum("Color")` because an imported enum somewhere had claimed the name.
+///
+/// TWO PASSES HAD TO LEARN IT, which is why `crate::ast::local_type_shadows_import`
+/// lives beside its function-namespace sibling rather than inside either pass.
+/// With only the type checker fixed the refusal moved to
+/// `main.c:280:16: error: redefinition of 'Color'`, because code generation was
+/// still emitting the imported enum AND the local struct under one C tag.
+#[test]
+fn test_a_local_struct_wins_over_an_imported_enum_of_the_same_name() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[("lib.pd", "pub enum Color { Red, Green }\n")],
+        "import lib;\n\nstruct Color { v: i64 }\n\nfn main() {\n    let c: Color = Color { v: 7 };\n    print_int(c.v);\n}\n",
+    );
+    assert!(
+        !output.contains("expected Color, found Color"),
+        "an imported enum still decides the kind of a local struct:\n{}",
+        output
+    );
+    assert!(
+        !output.contains("redefinition of 'Color'"),
+        "code generation still emits both definitions under one C tag:\n{}",
+        output
+    );
+    assert!(compiled, "compilation failed:\n{}", output);
+    assert_eq!(
+        stdout.as_deref(),
+        Some("7\n"),
+        "the local struct did not win; compiler said:\n{}",
+        output
+    );
+}
+
+/// The same, with a PRIVATE imported enum, which must not reach the program at
+/// all.
+///
+/// Two claims in one program, and the second is why this is not a duplicate of
+/// the test above. First: a module's `enum` that did not say `pub` cannot
+/// misclassify a downstream local type. Second: it could not have been written
+/// before 2026-08-23, because `EnumDef` carried no visibility field and
+/// `src/parser/mod.rs` dropped the `pub` it had just parsed for this one item
+/// kind — `enum Color` and `pub enum Color` were the same AST, so no filter
+/// anywhere could tell them apart.
+#[test]
+fn test_a_private_imported_enum_does_not_reach_a_local_type_of_the_same_name() {
+    let (compiled, output, stdout) = compile_and_run(
+        &[("lib.pd", "enum Color { Red, Green }\n")],
+        "import lib;\n\nstruct Color { v: i64 }\n\nfn main() {\n    let c: Color = Color { v: 7 };\n    print_int(c.v);\n}\n",
+    );
+    assert!(
+        !output.contains("expected Color, found Color"),
+        "a private imported enum still decides the kind of a local struct:\n{}",
+        output
+    );
+    assert!(compiled, "compilation failed:\n{}", output);
+    assert_eq!(stdout.as_deref(), Some("7\n"), "compiler said:\n{}", output);
+}
+
+/// `pub` on an enum is load-bearing, in the refusing direction, AND the refusal
+/// is a diagnostic rather than a gcc error.
+///
+/// The control for the two tests above: they prove a private enum does not
+/// misclassify anything, which a filter that dropped ALL imported enums would
+/// also satisfy. This proves the filter is a VISIBILITY filter — the same
+/// program is accepted with `pub` and refused without it.
+///
+/// The stage matters as much as the verdict. With only the emission side
+/// filtered, the type checker had stopped calling the name an enum while
+/// `set_imported_modules` still registered the variant constructor, so
+/// `Color::Red` resolved and the program died in gcc — "front end successful,
+/// gcc failed", the class this whole branch exists to remove. The registration
+/// tests visibility now too, so the refusal is `Undefined enum type: Color`
+/// before any C exists.
+#[test]
+fn test_pub_on_an_imported_enum_decides_whether_it_can_be_used() {
+    const MAIN: &str =
+        "import lib;\n\nfn main() {\n    let c: Color = Color::Red;\n    print_int(kind(c));\n}\n";
+
+    let (compiled, output, stdout) = compile_and_run(
+        &[(
+            "lib.pd",
+            "pub enum Color { Red, Green }\npub fn kind(c: Color) -> i64 { return 7; }\n",
+        )],
+        MAIN,
+    );
+    assert!(
+        compiled,
+        "a `pub enum` must be usable downstream:\n{}",
+        output
+    );
+    assert_eq!(stdout.as_deref(), Some("7\n"), "compiler said:\n{}", output);
+
+    let (compiled, output, _) = compile_and_run(
+        &[(
+            "lib.pd",
+            "enum Color { Red, Green }\npub fn kind(c: Color) -> i64 { return 7; }\n",
+        )],
+        MAIN,
+    );
+    assert!(
+        !compiled,
+        "an enum with no `pub` must not be usable downstream:\n{}",
+        output
+    );
+    assert!(
+        output.contains("Undefined enum type: Color"),
+        "the refusal must come from the front end by name, not from gcc:\n{}",
+        output
+    );
+    assert!(
+        !output.contains("gcc compilation failed"),
+        "the refusal reached gcc instead of a diagnostic:\n{}",
         output
     );
 }
