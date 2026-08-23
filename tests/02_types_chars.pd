@@ -1,0 +1,73 @@
+// Test 02: char literals (N2-04)
+//
+// WHAT THIS FIXTURE CLAIMS, AND WHAT IT DOES NOT.
+//
+// It claims that `'a'` LEXES as one token and denotes the RIGHT VALUE — the
+// Unicode scalar 97 — and that the value flows through the compiler to a byte
+// on stdout. Every assertion below is on the value, because a char literal
+// that lexed and produced the wrong code point would compile just as happily
+// as one that produced the right one. Before N2-04, `'a'` lexed as three
+// tokens (a lifetime tick, an identifier, a tick) and the diagnostic was
+// `Expected expression, but found '`.
+//
+// It does NOT claim that `char` is a distinct TYPE. That is N4-04, still
+// `owed`: a char literal's type here is `i64`, which is what every builtin
+// that consumes a character already speaks — `string_from_char(i64)`,
+// `char_is_digit(i64)`, `string_char_at(...) -> i64`. N14 gives those
+// signatures a `char`, and moving them is N14-04, also still owed. The two
+// rows move together or the literal would type as something no builtin
+// accepts.
+
+fn main() {
+    // The scalar itself.
+    let a = 'a';
+    print_int(a);
+
+    // …and the same value, rendered, so the assertion is on a byte and not
+    // only on a number the compiler chose.
+    print(string_from_char(a));
+
+    // Boundaries of the printable ASCII range.
+    print_int(' ');
+    print_int('~');
+    print_int('0');
+    print_int('9');
+    print_int('A');
+    print_int('Z');
+
+    // A char literal is an ordinary value: it compares, it binds, it is passed.
+    if a == 97 {
+        print("'a' is 97");
+    }
+    if 'z' > 'a' {
+        print("'z' sorts after 'a'");
+    }
+
+    // Round trip through the two builtins that consume a character.
+    let s = "hello";
+    let first = string_char_at(s, 0);
+    if first == 'h' {
+        print("string_char_at agrees with 'h'");
+    }
+    if char_is_digit('7') {
+        print("'7' is a digit");
+    }
+    if char_is_alpha('q') {
+        print("'q' is alphabetic");
+    }
+    if char_is_whitespace(' ') {
+        print("space is whitespace");
+    }
+
+    // A quote and a backslash, which need escapes to be written at all.
+    print_int('\'');
+    print_int('\\');
+    print(string_from_char('\''));
+
+    // A non-ASCII scalar. `'한'` is U+D55C = 54620; this is the case a C
+    // character constant could not carry, and the reason code generation
+    // emits the number.
+    print_int('한');
+
+    print("chars done");
+}

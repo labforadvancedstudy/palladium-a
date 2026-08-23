@@ -1,9 +1,21 @@
-// NEGATIVE TEST -- attributes do not exist, and the blocker is LEXICAL.
+// NEGATIVE TEST -- `#[total]` is refused, and the REASON MOVED with N2-10/11.
 //
 // `#[total]`, `#[decreases(expr)]` and `#![total(strict)]` are the totality
-// surface in advanced/totality-checking.md. There is no `#` token, so an
-// attribute fails one level below the parser: the lexer refuses the character.
-// That is why no amount of parser work reaches this feature first.
+// surface in advanced/totality-checking.md.
+//
+// It used to fail one level below the parser: there was no `#` token at all,
+// so the lexer refused the character and the diagnostic was
+// `Unexpected character '#'`. N2-10 made `#` lex. This file still fails, and
+// that is the point of shipping N2-11 in the same commit: `#[total]` now
+// reaches the parser, is read as an attribute NAMED `total`, and is refused
+// because the compiler implements no attributes (`KNOWN_ATTRIBUTES` in
+// src/parser/mod.rs is empty).
+//
+// A compiler that lexed this and ignored it would accept a program whose
+// source demands a totality proof and whose binary contains none. The
+// fingerprint in tests/conformance-manifest.txt moved from the lexical
+// message to `unknown attribute `total``, and it moves again -- to acceptance
+// -- only when M6 can discharge the obligation.
 #[total]
 fn f(n: i64) -> i64 {
     return n;

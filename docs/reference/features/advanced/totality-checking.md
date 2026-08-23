@@ -302,17 +302,32 @@ let result = search_with_fuel::<Fuel<1000>>(data, pattern);
 Measured at commit `abeb665`. None of this qualifies the definition above; it records distance.
 
 **1. Attributes do not lex.** There is no `#` token in the lexer. Compiling
-`#[total]` followed by `fn f(n: i64) -> i64 { return n; }` fails before parsing:
+`#[total]` followed by `fn f(n: i64) -> i64 { return n; }` is refused, and **the reason moved
+with N2-10/N2-11.** It used to fail before parsing, one level below the feature:
 
 ```
 error: Unexpected character '#' at line 1, column 1
   = note: Palladium only allows ASCII letters, numbers, and common symbols
 ```
 
-`docs/specification/grammar.ebnf` has no attribute production, and its punctuation set
-(`grammar.ebnf:66-67`) contains no `#`. So `#![total(strict)]`, `#[total]`, `#[decreases(...)]`
-and `#[partial]` are all unreachable today — the blocker is lexical, one level below the feature
-itself.
+`#` lexes now. `grammar.ebnf` has an attribute production and its punctuation set
+(`grammar.ebnf:88-89`) contains `#` and `#!`, so `#![total(strict)]`, `#[total]`,
+`#[decreases(...)]` and `#[partial]` all reach the parser and are read as attributes with those
+names. Every one of them is then **refused**, because the set of attributes this compiler
+implements is empty:
+
+```
+error: unknown attribute `total`
+  = note: this compiler implements no attributes yet: `#` lexes so that the surface
+    exists, and every attribute is refused so that none can be silently ignored
+```
+
+**The blocker is no longer lexical, and the refusal is not a stopgap.** An attribute that lexed
+and was then dropped would compile `#[total]` into a binary with no totality check in it, which
+is worse than refusing: the source would claim a property the program does not have. So N2-11
+refuses from the same commit in which `#` first lexes, and `total` enters
+`KNOWN_ATTRIBUTES` (`src/parser/mod.rs`) only when M6 has something to discharge the obligation
+with. `tests/reject/total_attribute.pd` pins the current answer.
 
 **2. No termination checker exists.** `grep -rn 'total\|decreases\|Fuel' src/ --include='*.rs'`
 returns one unrelated hit (`src/runtime/string_ops.rs:398`, a test named `test_null_termination`).
@@ -320,8 +335,8 @@ There is no recursion analysis, no measure checking, and no proof representation
 
 **3. The prerequisites are missing too.** Structural recursion is stated over inductive types with
 pattern matching on subterms. Today `match` has exactly three pattern forms
-(`src/ast/mod.rs:353`) — no literal, range, guard or tuple patterns — and generic types do not
-survive codegen (`src/codegen/mod.rs:1879-1879`). A totality checker has nothing to be total over yet.
+(`src/ast/mod.rs:357`) — no literal, range, guard or tuple patterns — and generic types do not
+survive codegen (`src/codegen/mod.rs:1908-1908`). A totality checker has nothing to be total over yet.
 
 ## Design intent, not measurements
 

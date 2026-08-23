@@ -741,12 +741,20 @@ def classify_blocker(path: str, text: str) -> str:
                 src = lines[n - 1]
         except OSError:
             src = ""
-    if "Unexpected character '#'" in first:
-        return "ATTRIBUTE"
-    if "Unexpected character '\\'" in first:
-        return "CHAR_ESCAPE"
-    if re.search(r"[0-9]+\.[0-9]+", src):
-        return "FLOAT_LITERAL"
+    # THREE CATEGORIES WERE DELETED HERE, NOT DISABLED: ATTRIBUTE
+    # ("Unexpected character '#'"), CHAR_ESCAPE ("Unexpected character '\\'")
+    # and FLOAT_LITERAL. N2-08..N2-11 made all three diagnostics unreachable, so
+    # the rules could never fire again and the manifest rows that named them
+    # moved to the blocker each was masking.
+    #
+    # FLOAT_LITERAL had to go rather than merely stop firing, and that is the
+    # part worth reading: it did not test the DIAGNOSTIC, it tested whether the
+    # offending SOURCE LINE contained `[0-9]+\.[0-9]+`. That was sound only
+    # while no float could lex. It is now a false positive waiting to happen --
+    # `pub const PI: f64 = 3.14159...;` fails for `pub const`, and the old rule
+    # would still have called it a float-literal blocker. A classifier that
+    # names the wrong cause is worse than one that says OTHER, because OTHER is
+    # visibly a question and a wrong category reads as an answer.
     if re.match(r"^\s*(pub\s+)?use\s", src):
         return "USE_DECL"
     if re.match(r"^\s*(pub\s+)?mod\s", src):
@@ -759,6 +767,11 @@ def classify_blocker(path: str, text: str) -> str:
         return "GENERIC_DEFAULT"
     if "Expected '=' after variable name" in first:
         return "UNINIT_LET"
+    # Both added when the lexical blockers above stopped masking them.
+    if re.search(r"\*\s*(mut|const)\s", src):
+        return "RAW_POINTER"
+    if "Unexpected character '^'" in first:
+        return "BITWISE_XOR"
     return "OTHER"
 
 

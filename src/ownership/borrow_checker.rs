@@ -213,14 +213,14 @@ impl BorrowChecker {
     ///
     /// Public-only, and imports-before-locals, for the same reasons as functions
     /// below; the type checker registers imported layouts under exactly the same
-    /// filter (`src/typeck/mod.rs:704-705`), so the two passes agree on which
+    /// filter (`src/typeck/mod.rs:717-718`), so the two passes agree on which
     /// `P` is meant.
     ///
     /// AND THE REMAINING WINDOW IS UNREACHABLE, which is a stronger statement than
     /// "the order is right". If an imported layout ever did leak where a local
     /// should win, the program it would mis-check cannot be built at all: codegen
-    /// emits every public imported struct (`src/codegen/mod.rs:1391-1399`) and then
-    /// every local struct (`src/codegen/mod.rs:1415-1419`) with no shadowing check
+    /// emits every public imported struct (`src/codegen/mod.rs:1416-1424`) and then
+    /// every local struct (`src/codegen/mod.rs:1440-1444`) with no shadowing check
     /// between them, so the C holds two definitions of `P`. Measured — a module
     /// exporting `pub struct P { a: i64 }` beside a local `struct P { a: i64 }`
     /// passes both checkers and dies as gcc's "redefinition of 'P'". So the
@@ -264,7 +264,7 @@ impl BorrowChecker {
                         // function bodies, one item kind across.
                         //
                         // Its reason was that codegen emits only NON-generic
-                        // imported structs (`src/codegen/mod.rs:1394-1395`), so a
+                        // imported structs (`src/codegen/mod.rs:1419-1420`), so a
                         // generic `P<T>` would be "a layout for a type this
                         // compilation never produces". Structs have a
                         // monomorphization path too
@@ -376,8 +376,8 @@ impl BorrowChecker {
         //
         // ONLY `Item::Function` IS WALKED, and an imported `impl` method is not a
         // gap in that. Codegen's imported walk matches `Item::Struct` and
-        // `Item::Enum` (`src/codegen/mod.rs:1390-1407`) and, separately,
-        // `Item::Function` (`src/codegen/mod.rs:1495-1495`) — there is no `Item::Impl`
+        // `Item::Enum` (`src/codegen/mod.rs:1415-1432`) and, separately,
+        // `Item::Function` (`src/codegen/mod.rs:1520-1520`) — there is no `Item::Impl`
         // arm anywhere in it. So an imported impl method is not merely uncallable:
         // IT DOES NOT EXIST IN THE OUTPUT. Measured — a module exporting
         // `pub struct P { a: i64 }` with `impl P { fn get(self) -> i64 { … } }`
@@ -419,7 +419,7 @@ impl BorrowChecker {
                     // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
                     // "produces no C, because the codegen guard is the same
                     // predicate". That is true of the DIRECT imported-emission path
-                    // (`src/codegen/mod.rs:1497-1499`, public and non-generic) and
+                    // (`src/codegen/mod.rs:1522-1524`, public and non-generic) and
                     // false of MONOMORPHIZATION, which is a different path and emits
                     // `name__T` from the same template. Measured on the guard:
                     //
@@ -1007,7 +1007,11 @@ impl BorrowChecker {
             }
 
             // Literals don't need ownership checking
-            Expr::String(_) | Expr::Integer(_) | Expr::Bool(_) => {}
+            Expr::String(_)
+            | Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::Bool(_) => {}
             Expr::MacroInvocation { .. } => {
                 // Macros should have been expanded before borrow checking
                 return Err(CompileError::Generic(
@@ -1099,6 +1103,8 @@ impl BorrowChecker {
     fn expr_kind(expr: &Expr) -> &'static str {
         match expr {
             Expr::Integer(_) => "integer literal",
+            Expr::Float(_) => "float literal",
+            Expr::Char(_) => "char literal",
             Expr::String(_) => "string literal",
             Expr::Bool(_) => "boolean literal",
             Expr::Call { .. } => "call result",
@@ -1275,7 +1281,9 @@ impl BorrowChecker {
     #[allow(clippy::only_used_in_recursion)]
     fn is_copy_type(&self, ty: &Type) -> bool {
         match ty {
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool => true,
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::F64 | Type::F32 | Type::Bool => {
+                true
+            }
             // `String` is Copy. It lowers to `const char*`, there is no drop
             // glue and no per-value free anywhere in the language (strings live
             // in a static arena released once by `__pd_cleanup_strings` via
@@ -1346,7 +1354,9 @@ impl BorrowChecker {
     /// Check if an expression type is Copy
     fn is_expr_copy(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::Integer(_) | Expr::Bool(_) | Expr::String(_) => true,
+            Expr::Integer(_) | Expr::Float(_) | Expr::Char(_) | Expr::Bool(_) | Expr::String(_) => {
+                true
+            }
             // Idents and projections are Copy exactly when their type is; an
             // unresolvable type stays conservatively non-Copy.
             Expr::Ident(_) | Expr::FieldAccess { .. } | Expr::Index { .. } | Expr::Deref { .. } => {
@@ -1362,6 +1372,10 @@ impl BorrowChecker {
     fn expr_type(&self, expr: &Expr) -> Type {
         match expr {
             Expr::Integer(_) => Type::I64,
+            Expr::Float(_) => Type::F64,
+            // The scalar, as an integer — the same decision the type checker
+            // records at `Expr::Char`. N4-04 moves both or neither.
+            Expr::Char(_) => Type::I64,
             Expr::String(_) => Type::String,
             Expr::Bool(_) => Type::Bool,
             Expr::Ident(_) => Type::I64, // TODO: Proper type lookup

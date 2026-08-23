@@ -2,7 +2,7 @@
 //
 // `fn add(a: i64, b: i64) -> i64 { a + b }` once compiled clean and returned
 // garbage, because the parser left the tail as a bare `Stmt::Expr` and codegen
-// emitted `(a + b);` with no `return`. See src/parser/mod.rs:536.
+// emitted `(a + b);` with no `return`. See src/parser/mod.rs:579.
 //
 // WHY THIS DRIVER PRINTS EVERY VALUE INSTEAD OF ONLY ASSERTING:
 // the missing `return` is undefined behaviour in the generated C, and at -O2

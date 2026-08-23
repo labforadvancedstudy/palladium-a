@@ -556,6 +556,8 @@ fn escape_type(ty: &mut Type) {
         | Type::I64
         | Type::U32
         | Type::U64
+        | Type::F64
+        | Type::F32
         | Type::Bool
         | Type::String
         | Type::Unit
@@ -729,7 +731,7 @@ fn escape_expr(expr: &mut Expr) {
         | Expr::Await { expr, .. } => escape_expr(expr),
         // Expanded before code generation; see the doc comment.
         Expr::MacroInvocation { .. } => {}
-        Expr::String(_) | Expr::Integer(_) | Expr::Bool(_) => {}
+        Expr::String(_) | Expr::Integer(_) | Expr::Float(_) | Expr::Char(_) | Expr::Bool(_) => {}
     }
 }
 

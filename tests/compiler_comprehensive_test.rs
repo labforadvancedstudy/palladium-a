@@ -6,7 +6,7 @@
 //
 //   1. `int`/`string` in the expected C. The integer type lowers to
 //      `long long` (`int` is only a source-level alias for `i64`,
-//      `src/parser/mod.rs:2083`) and `print` lowers to `__pd_print`, not
+//      `src/parser/mod.rs:2251`) and `print` lowers to `__pd_print`, not
 //      `printf`.
 //   2. Fragments with no `fn main`. The driver rejects a program without one
 //      ("No main function found"), so a declaration-only snippet cannot be
@@ -123,19 +123,19 @@ fn test_all_keywords() {
 }
 
 #[test]
-#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:241 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
+#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:269 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
 fn test_match_on_integer_literal() {
     compile_and_verify("fn main() { match 1 { 1 => {}, _ => {} } }", &["switch"]);
 }
 
 #[test]
-#[ignore = "XFAIL: `trait` emits no C at all — grammar.ebnf:106 'Traits also emit no code'; there is no vtable mechanism anywhere in the compiler (owned by M4, 'Traits with real dispatch')"]
+#[ignore = "XFAIL: `trait` emits no C at all — grammar.ebnf:134 'Traits also emit no code'; there is no vtable mechanism anywhere in the compiler (owned by M4, 'Traits with real dispatch')"]
 fn test_trait_declaration_emits_code() {
     compile_and_verify("trait Display { }\nfn main() { }", &["// Trait:"]);
 }
 
 #[test]
-#[ignore = "XFAIL: top-level `const` items — grammar.ebnf:69-70 lists no const item, so the parser reports \"Expected function, struct, enum, trait, type, impl, or macro declaration\" (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: top-level `const` items — grammar.ebnf:97-98 lists no const item, so the parser reports \"Expected function, struct, enum, trait, type, impl, or macro declaration\" (owned by M2, surface syntax)"]
 fn test_top_level_const() {
     compile_and_verify(
         "const X: int = 5;\nfn main() { }",
@@ -144,7 +144,7 @@ fn test_top_level_const() {
 }
 
 #[test]
-#[ignore = "XFAIL: top-level `static` items — grammar.ebnf:69-70 lists no static item, same parse error as `const` (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: top-level `static` items — grammar.ebnf:97-98 lists no static item, same parse error as `const` (owned by M2, surface syntax)"]
 fn test_top_level_static() {
     compile_and_verify(
         "static Y: int = 10;\nfn main() { }",
@@ -162,7 +162,7 @@ fn test_type_alias_emits_typedef() {
 }
 
 #[test]
-#[ignore = "XFAIL: `loop` — grammar.ebnf:178 'and no `loop`'; the token does not exist, so the body's '{' is a parse error (owned by M2, item 3)"]
+#[ignore = "XFAIL: `loop` — grammar.ebnf:206 'and no `loop`'; the token does not exist, so the body's '{' is a parse error (owned by M2, item 3)"]
 fn test_loop_keyword() {
     compile_and_verify("fn main() { loop { break; } }", &["while (1)", "break;"]);
     compile_and_verify(
@@ -172,7 +172,7 @@ fn test_loop_keyword() {
 }
 
 #[test]
-#[ignore = "XFAIL: `as` casts — grammar.ebnf:223 'no `as` casts'; the parser stops at 'as' (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: `as` casts — grammar.ebnf:251 'no `as` casts'; the parser stops at 'as' (owned by M2, surface syntax)"]
 fn test_as_cast() {
     compile_and_verify("fn main() { let x = 5 as int; }", &["(long long)5"]);
 }
@@ -234,7 +234,7 @@ fn test_logical_operators() {
 }
 
 #[test]
-#[ignore = "XFAIL: bitwise operators — the expression grammar (grammar.ebnf:187-195) has no `&`/`|`/`^`/`<<`/`>>` level and the lexer has no '^' token at all (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: bitwise operators — the expression grammar (grammar.ebnf:215-223) has no `&`/`|`/`^`/`<<`/`>>` level and the lexer has no '^' token at all (owned by M2, surface syntax)"]
 fn test_bitwise_operators() {
     for (op, expected) in [
         ("&", "(a & b)"),
@@ -336,7 +336,7 @@ fn test_control_flow() {
 }
 
 #[test]
-#[ignore = "XFAIL: `else if` — grammar.ebnf:170 'There is NO `else if`: after `else` the parser requires \\'{\\'' (owned by M2, item 2)"]
+#[ignore = "XFAIL: `else if` — grammar.ebnf:198 'There is NO `else if`: after `else` the parser requires \\'{\\'' (owned by M2, item 2)"]
 fn test_else_if_chain() {
     compile_and_verify(
         "fn main() {
@@ -673,7 +673,7 @@ fn test_complex_programs() {
 }
 
 #[test]
-#[ignore = "XFAIL: an `impl` block's `Self` is not a known type — this fixture is refused with 'Unknown struct type: Self' before it reaches the `&self` receiver and the method-call syntax (`x.f()`, grammar.ebnf:220, rejected as \"Indirect function calls not yet supported\") it was written for. All three are owed; this is the one that fires (owned by M4, 'Traits with real dispatch' / a real reference type)"]
+#[ignore = "XFAIL: an `impl` block's `Self` is not a known type — this fixture is refused with 'Unknown struct type: Self' before it reaches the `&self` receiver and the method-call syntax (`x.f()`, grammar.ebnf:248, rejected as \"Indirect function calls not yet supported\") it was written for. All three are owed; this is the one that fires (owned by M4, 'Traits with real dispatch' / a real reference type)"]
 fn test_struct_with_methods() {
     compile_and_verify(
         r#"

@@ -23,6 +23,72 @@ pub enum CompileError {
     #[error("Unterminated string literal at line {line}")]
     UnterminatedString { line: usize, span: Option<Span> },
 
+    /// A `/*` with no matching `*/`.
+    ///
+    /// Only reachable once comments nest (N2-08): a regex scanner cannot tell
+    /// "unterminated" from "the token set has nothing starting here", which is
+    /// why this used to surface as `Unexpected character '/'`.
+    #[error("unterminated block comment: `/*` is never closed")]
+    UnterminatedBlockComment { span: Option<Span> },
+
+    /// A `\` in a literal followed by something outside the escape set.
+    ///
+    /// Its own variant rather than a `SyntaxError` because the repair is
+    /// mechanical and enumerable — the message carries the whole legal set —
+    /// and because the old behaviour was to pass the two characters through,
+    /// which is not a syntax error at all but a silently wrong byte string.
+    #[error("unknown escape sequence `\\{ch}` in a literal")]
+    UnknownEscape {
+        ch: char,
+        /// Every escape the lexer accepts, as source text, so the diagnostic
+        /// can list them instead of asking the reader to find the table.
+        known: Vec<String>,
+        span: Option<Span>,
+    },
+
+    /// `\0` inside a STRING literal (N2-09).
+    ///
+    /// Its own variant, and its own refusal, because the alternative is the
+    /// defect one construct along from N2-11. A Palladium String is a non-NULL,
+    /// NUL-terminated `const char*` (N14), so `"a\0b"` denotes three characters
+    /// and every String operation sees one: `print` stops at `a`, `string_len`
+    /// answers 1. Accepting it and DOCUMENTING the consequence was the previous
+    /// disposition; it is wrong for the reason documentation cannot fix — a
+    /// representation leak that ships becomes the language's semantics, and the
+    /// pin only records that it did.
+    ///
+    /// `'\0'` stays legal: a char literal is a Unicode scalar held as i64, and
+    /// zero is an ordinary value there. The way to make the string form legal
+    /// is length-aware String semantics, which is an N4/N14 change.
+    #[error("`\\0` is not allowed in a string literal")]
+    NulInStringLiteral {
+        /// The escapes a STRING may carry, for the note.
+        known: Vec<String>,
+        span: Option<Span>,
+    },
+
+    /// An attribute the compiler does not know (N2-11).
+    ///
+    /// The attribute surface exists so that N8's totality obligations have
+    /// somewhere to be written. It would have been less work to lex `#[...]`
+    /// and drop it, and that is precisely the shape M1 spent itself deleting: a
+    /// program whose source says `#[total]` and whose binary contains no
+    /// totality check is a compiler lying about what it was asked to do. So an
+    /// attribute that lexes and is not implemented is REFUSED, from the same
+    /// commit in which `#` first lexes.
+    ///
+    /// The message names the attribute, because "unknown attribute" alone does
+    /// not say which of several on one item was rejected.
+    #[error("unknown attribute `{name}`")]
+    UnknownAttribute {
+        name: String,
+        /// The attributes this compiler implements, for the note. EMPTY today,
+        /// and that is the correct M2 state rather than an oversight — see
+        /// `crate::parser::KNOWN_ATTRIBUTES`.
+        known: Vec<String>,
+        span: Option<Span>,
+    },
+
     // Parser errors
     #[error("Unexpected token: expected {expected}, found {found}")]
     UnexpectedToken {
@@ -227,8 +293,8 @@ impl CompileError {
     /// Raised without inspecting the operand, so the wording may not assume one
     /// — `3?` and `unknown()?` reach here too. It also may not imply that the
     /// `match` alternative generalises further than it does: code generation
-    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1329-1330`,
-    /// `src/codegen/mod.rs:1330-1330`, `src/codegen/mod.rs:1366-1366`), so `Result<T, E>` is
+    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1354-1355`,
+    /// `src/codegen/mod.rs:1355-1355`, `src/codegen/mod.rs:1391-1391`), so `Result<T, E>` is
     /// not a compilable replacement and the help says so rather than leaving the
     /// reader to discover it.
     ///
@@ -576,6 +642,37 @@ impl CompileError {
         }
     }
 
+    /// A `/*` that nothing closes (N2-08).
+    pub fn unterminated_block_comment(span: Span) -> Self {
+        CompileError::UnterminatedBlockComment { span: Some(span) }
+    }
+
+    /// A `\` followed by something the escape table does not name (N2-09).
+    pub fn unknown_escape(ch: char, known: &[String], span: Span) -> Self {
+        CompileError::UnknownEscape {
+            ch,
+            known: known.to_vec(),
+            span: Some(span),
+        }
+    }
+
+    /// `\0` in a string literal (N2-09).
+    pub fn nul_in_string_literal(known: &[String], span: Span) -> Self {
+        CompileError::NulInStringLiteral {
+            known: known.to_vec(),
+            span: Some(span),
+        }
+    }
+
+    /// An attribute this compiler does not implement (N2-11).
+    pub fn unknown_attribute(name: &str, known: &[&str], span: Span) -> Self {
+        CompileError::UnknownAttribute {
+            name: name.to_string(),
+            known: known.iter().map(|s| s.to_string()).collect(),
+            span: Some(span),
+        }
+    }
+
     /// Convert this error into a diagnostic with helpful suggestions
     pub fn to_diagnostic(&self) -> Diagnostic {
         match self {
@@ -600,6 +697,67 @@ impl CompileError {
                         "Add a closing quote (\") to end the string",
                         Some("\"".to_string()),
                     )
+            }
+
+            CompileError::UnterminatedBlockComment { span } => {
+                Diagnostic::error("unterminated block comment: `/*` is never closed".to_string())
+                    .with_span(span.unwrap_or(Span::dummy()))
+                    .with_note(
+                        "block comments nest, so a `*/` inside this comment closed an inner \
+                         `/*` rather than this one",
+                    )
+                    .with_suggestion("Add a closing `*/`", Some("*/".to_string()))
+            }
+
+            CompileError::UnknownEscape { ch, known, span } => Diagnostic::error(format!(
+                "unknown escape sequence `\\{}` in a literal",
+                ch
+            ))
+            .with_span(span.unwrap_or(Span::dummy()))
+            .with_note(format!(
+                "the escapes this compiler accepts are: {}",
+                known.join(" ")
+            ))
+            .with_suggestion(
+                "write `\\\\` if a literal backslash was meant",
+                Some("\\\\".to_string()),
+            ),
+
+            CompileError::NulInStringLiteral { known, span } => Diagnostic::error(
+                "`\\0` is not allowed in a string literal".to_string(),
+            )
+            .with_span(span.unwrap_or(Span::dummy()))
+            .with_note(
+                "a String is a NUL-terminated `const char*`, so a NUL inside one ends it for \
+                 every operation that reads it: `print` would stop there and `string_len` \
+                 would count only the characters before it",
+            )
+            .with_note(format!(
+                "the escapes a string literal accepts are: {}",
+                known.join(" ")
+            ))
+            .with_suggestion(
+                "use a char literal `'\\0'` if the value 0 was meant, or split the string",
+                Some("'\\0'".to_string()),
+            ),
+
+            CompileError::UnknownAttribute { name, known, span } => {
+                let diag = Diagnostic::error(format!("unknown attribute `{}`", name))
+                    .with_span(span.unwrap_or(Span::dummy()));
+                if known.is_empty() {
+                    diag.with_note(
+                        "this compiler implements no attributes yet: `#` lexes so that the \
+                         surface exists, and every attribute is refused so that none can be \
+                         silently ignored",
+                    )
+                    .with_suggestion("Remove the attribute", None)
+                } else {
+                    diag.with_note(format!(
+                        "the attributes this compiler implements are: {}",
+                        known.join(" ")
+                    ))
+                    .with_suggestion("Remove the attribute, or use one of the above", None)
+                }
             }
 
             CompileError::UnexpectedToken {

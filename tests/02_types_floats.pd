@@ -1,0 +1,102 @@
+// Test 02: float literals and the f64/f32 types (N2-03, N4-02)
+//
+// WHY THIS FIXTURE ASSERTS THROUGH COMPARISONS AND NOT BY PRINTING A FLOAT.
+// N14 enumerates the builtin set and it contains no float printer: `print`
+// takes a String and `print_int` takes an i64, and there is no
+// `float_to_string`. So stdout cannot carry a float's digits, and a fixture
+// that only checked "it compiles" would pass with a compiler that truncated
+// every float to an integer — which is exactly the defect this file was
+// written after finding: `let d = x / y;` over two doubles used to DECLARE
+// `long long d` and silently truncate 2.333… to 2.
+//
+// Bracketing a value between two comparisons is a value assertion: only one
+// double satisfies both bounds to within the bracket, and the branch that
+// prints is unreachable for any other. The bounds are deliberately tight
+// enough that an integer-truncated result falls outside them.
+//
+// Before N2-03, `3.5` did not lex as one token at all — `3`, `.`, `5` — and
+// the diagnostic was `Expected field name, but found integer 5`.
+
+fn main() {
+    // A literal, and the two bounds that pin it.
+    let x: f64 = 3.5;
+    if x > 3.49 {
+        if x < 3.51 {
+            print("x is 3.5");
+        }
+    }
+
+    // Truncation to an integer would give 3, which fails the lower bound.
+    if x > 3.0 {
+        print("x is greater than 3.0");
+    }
+
+    // Arithmetic. Each result is bracketed; each bracket excludes the
+    // integer-truncated answer.
+    let y: f64 = 1.25;
+    let sum: f64 = x + y;
+    if sum > 4.749 {
+        if sum < 4.751 {
+            print("3.5 + 1.25 = 4.75");
+        }
+    }
+
+    let diff: f64 = x - y;
+    if diff > 2.249 {
+        if diff < 2.251 {
+            print("3.5 - 1.25 = 2.25");
+        }
+    }
+
+    let prod: f64 = x * y;
+    if prod > 4.374 {
+        if prod < 4.376 {
+            print("3.5 * 1.25 = 4.375");
+        }
+    }
+
+    // THE ONE THAT CATCHES TRUNCATION. 3.5 / 1.25 is 2.8; an integer division
+    // would give 2, and `long long d = (x / y)` would give 2 as well.
+    let quot: f64 = x / y;
+    if quot > 2.79 {
+        if quot < 2.81 {
+            print("3.5 / 1.25 = 2.8");
+        }
+    }
+
+    // The same, with no annotation, so that the INFERRED type is exercised:
+    // this is the spelling that used to declare `long long`.
+    let inferred = x / y;
+    if inferred > 2.79 {
+        if inferred < 2.81 {
+            print("inferred quotient is 2.8 too");
+        }
+    }
+
+    // f32 is a distinct C type (`float`) and the same checker type. It is
+    // exercised so that `type_to_c` is proved to emit `float` rather than
+    // falling through to `double`.
+    let small: f32 = 0.5;
+    if small > 0.49 {
+        if small < 0.51 {
+            print("f32 0.5 round-trips");
+        }
+    }
+
+    // Equality on a value with an exact binary representation.
+    let a: f64 = 0.25;
+    let b: f64 = 0.25;
+    if a == b {
+        print("0.25 == 0.25");
+    }
+
+    // The sign is part of the token, exactly as it is for integers.
+    let neg: f64 = -2.5;
+    if neg < -2.49 {
+        if neg > -2.51 {
+            print("negative literals lex");
+        }
+    }
+
+    print("floats done");
+}

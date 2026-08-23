@@ -57,8 +57,11 @@ examples/tutorial/04_structs.pd	run	-	expected	-	-
 examples/tutorial/05_control_flow.pd	run	-	expected	-	-
 examples/tutorial/06_arrays.pd	run	-	expected	-	-
 tests/01_lexical_comments.pd	run	-	expected	-	-
+tests/01_lexical_escapes.pd	run	-	expected	-	-
 tests/01_lexical_literals.pd	run	-	expected	-	-
 tests/02_types_arrays.pd	run	-	expected	-	-
+tests/02_types_chars.pd	run	-	expected	-	-
+tests/02_types_floats.pd	run	-	expected	-	-
 tests/02_types_enums.pd	vacuous	-	-	unscheduled	claims: enum types. Declares no enum, constructs no variant, matches on nothing; body is only print calls. Enum conformance is ZERO.
 tests/02_types_primitives.pd	run	-	expected	-	-
 tests/02_types_structs.pd	run	-	expected	-	-
@@ -128,10 +131,15 @@ tests/reject/generic_bound.pd	reject	compile	Expected '>' (Expected '>' after ge
 tests/reject/loop_keyword.pd	reject	compile	Expected ';' (Expected ';' after expression), but found '{'	-	`loop` lexes as an identifier, so `loop { }` parses as an expression statement and the `{` is where a `;` was expected; write `while true`
 tests/reject/mut_borrow_of_immutable.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	feature-index.toml recorded this exact program as accepted and mutating an immutable local with no diagnostic; the borrow checker refuses it and names the repair
 tests/reject/ref_parameter.pd	reject	compile	Unexpected token: expected ')' (Expected ')'), found identifier 'String'	-	the spec writes a shared borrow `ref T` (N9); the implemented spelling is Rust's &/&mut, so `ref` is not a keyword and the parser sees an identifier where a type belongs
-tests/reject/total_attribute.pd	reject	compile	Unexpected character '#'	-	the totality surface is attributes, and the blocker is LEXICAL: there is no `#` token, so #[total] fails one level below the parser
+tests/reject/attribute_inner.pd	reject	compile	unknown attribute `frobnicate`	-	N2-10 shape three: `#![name(args)]` at the top of a compilation unit. `#!` is ONE token, so `#![a]` and `# ![a]` are distinguishable; reaching the NAME is what proves the shape lexed
+tests/reject/attribute_with_args.pd	reject	compile	unknown attribute `frobnicate`	-	N2-10 shape two: `#[name(args)]`. The argument list is balanced on parens, so `(a, b(c))` is consumed as one attribute; a scanner that stopped at the first `)` would fail with a different message, which is what makes this distinct from unknown_attribute.pd
+tests/reject/total_attribute.pd	reject	compile	unknown attribute `total`	-	the totality surface is attributes. THE FINGERPRINT MOVED at N2-10/N2-11: it was `Unexpected character '#'` when there was no `#` token and the failure was one level below the parser. `#` lexes now, so #[total] is read as an attribute named `total` and refused because KNOWN_ATTRIBUTES is empty. It moves again -- to acceptance -- only when M6 can discharge the obligation
+tests/reject/unknown_attribute.pd	reject	compile	unknown attribute `frobnicate`	-	N2-11 itself: an attribute the compiler does not implement is a compile error and the diagnostic names it. Lexing `#[...]` and ignoring it would recreate the class M1 removed -- a source that requests a property and a binary without it
+tests/reject/unknown_escape.pd	reject	compile	unknown escape sequence `\q` in a literal	-	N2-09's negative half. `"\\q"` used to produce the two characters `\` and `q` with no diagnostic; the escape set is closed and the message lists it
+tests/reject/unterminated_block_comment.pd	reject	compile	unterminated block comment: `/*` is never closed	-	N2-08's negative half. Only distinguishable once comments NEST: under the old regex the same file lexed as a closed comment plus live source and failed at the trailing `*/` with `Expected expression, but found '/'`
 tests/reject/try_block.pd	reject	compile	Unknown struct type: try	-	`try` is not a keyword, so `try { }` is read as a struct literal for an undeclared struct; the diagnostic names the misreading, which is what a user actually sees
 tests/reject/uncalled_body_is_checked.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	PAIRED with tests/regression/lifetimes_uninferred.pd: proves the borrow checker reads the body of a function nothing calls, so its partner compiling is a statement about lifetimes and not about dead code being skipped
-tests/reject/const_generic_param.pd	reject	compile	Type mismatch: expected [Int; N], found [Int; 3]	-	const generic parameters parse (src/parser/mod.rs:58-60) and are never monomorphised, so N reaches typeck as a name; codegen is no better and emits the parameter name verbatim into C
+tests/reject/const_generic_param.pd	reject	compile	Type mismatch: expected [Int; N], found [Int; 3]	-	const generic parameters parse (src/parser/mod.rs:101-103) and are never monomorphised, so N reaches typeck as a name; codegen is no better and emits the parameter name verbatim into C
 tests/reject/question_mark_operator.pd	reject	compile	the `?` operator is not implemented	-	D5's fix: `?` used to typecheck and then emit C referring to a struct Result layout codegen never defines, so the failure surfaced in gcc; it is refused by name before any C exists
 tests/reject/macro_invocation_bracket.pd	reject	compile	Expected '(' (Expected '(' after macro name!), but found '['	-	the macro parser accepts one call shape: vec![...] does not parse, so the registered vec! builtin is reachable only as vec!(...)
 

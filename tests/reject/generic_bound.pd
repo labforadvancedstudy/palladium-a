@@ -2,7 +2,7 @@
 //
 // `fn f<T: Clone>(x: T)` is the ordinary spelling of a bounded generic. The
 // parameter list parser accepts only bare names (and an all-uppercase name is
-// reclassified as a const argument, src/parser/mod.rs:2100-2110), so the `:`
+// reclassified as a const argument, src/parser/mod.rs:2268-2278), so the `:`
 // that introduces the bound terminates parsing.
 fn f<T: Clone>(x: T) {}
 

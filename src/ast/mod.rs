@@ -217,6 +217,10 @@ pub enum Type {
     I64,
     U32,
     U64,
+    /// IEEE-754 binary64 — N4's `f64`, C's `double`.
+    F64,
+    /// IEEE-754 binary32 — N4's `f32`, C's `float`.
+    F32,
     Bool,
     String,
     /// Unit type (void)
@@ -379,6 +383,22 @@ pub enum Expr {
     String(String),
     /// Integer literal (for future use)
     Integer(i64),
+    /// Float literal — `3.5`. Always `f64` (N4 has no literal suffixes and no
+    /// context in which `f32` could be inferred from the spelling alone).
+    Float(f64),
+    /// Char literal — `'a'`, holding the Unicode scalar it denotes.
+    ///
+    /// KEPT AS A `char` RATHER THAN FOLDED TO ITS CODE POINT AT PARSE TIME.
+    /// The value is the same either way; the program text is not, and every
+    /// consumer that reads the AST rather than the source (the LSP, the
+    /// optimizer's constant folder, any future formatter) has no way back from
+    /// `Integer(97)` to `'a'`.
+    ///
+    /// Its TYPE, however, is `i64` today, not a distinct `char` — see
+    /// `src/typeck/mod.rs`. N4-04 (`char` as a primitive type) is a separate,
+    /// still-owed row, and it cannot land before N14-04 changes
+    /// `string_char_at` to return one.
+    Char(char),
     /// Boolean literal
     Bool(bool),
     /// Identifier
@@ -515,6 +535,8 @@ impl Expr {
         match self {
             Expr::String(_) => Span::dummy(), // TODO: track spans
             Expr::Integer(_) => Span::dummy(),
+            Expr::Float(_) => Span::dummy(),
+            Expr::Char(_) => Span::dummy(),
             Expr::Bool(_) => Span::dummy(),
             Expr::Ident(_) => Span::dummy(),
             Expr::ArrayLiteral { span, .. } => *span,
@@ -681,6 +703,8 @@ impl std::fmt::Display for Type {
             Type::I64 => write!(f, "i64"),
             Type::U32 => write!(f, "u32"),
             Type::U64 => write!(f, "u64"),
+            Type::F64 => write!(f, "f64"),
+            Type::F32 => write!(f, "f32"),
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "String"),
             Type::Unit => write!(f, "()"),
@@ -991,6 +1015,10 @@ impl std::fmt::Display for Expr {
         match self {
             Expr::String(s) => write!(f, "\"{}\"", s),
             Expr::Integer(n) => write!(f, "{}", n),
+            // `{}` on an f64 prints `3` for 3.0, which is an integer literal in
+            // every language this project's readers know. `{:?}` keeps the dot.
+            Expr::Float(x) => write!(f, "{:?}", x),
+            Expr::Char(c) => write!(f, "'{}'", c.escape_debug()),
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Ident(name) => write!(f, "{}", name),
             Expr::ArrayLiteral { elements, .. } => {
