@@ -8,13 +8,37 @@ pub struct SuggestionEngine;
 
 impl SuggestionEngine {
     /// Suggest similar identifier names (for typos)
+    ///
+    /// The result depends only on the *set* of candidates, never on the order
+    /// they arrive in. That contract is load-bearing: every caller builds
+    /// `available` by iterating a `HashMap` (`Checker::functions`,
+    /// `Checker::structs`/`enums`, the per-scope `HashMap<String, VarInfo>`),
+    /// and `RandomState` is seeded per process, so arrival order changes on
+    /// every run. Two candidates can tie — `file_read` is edit-distance 3 from
+    /// both `file_read_ex` and `file_seek`, and `Register`/`register` are both
+    /// exact case-insensitive matches for `REGISTER` (code generation
+    /// deliberately does not case-fold, so that pair is legal Palladium) — and
+    /// an order-dependent tie-break makes the diagnostic differ run to run on
+    /// byte-identical input.
+    ///
+    /// The contract is established once, here, by scanning in a fixed
+    /// lexicographic order, rather than by tie-breaking at each comparison
+    /// below. A comparison-based rule has to be restated correctly in every
+    /// selection path — the case-insensitive fast path *and* the edit-distance
+    /// loop, plus any path added later — and a reader of one path cannot tell
+    /// whether the others agree. Sorting costs one `Vec<&String>` on a path
+    /// that is already building an error, and it turns "first wins" into a rule
+    /// that decides every pair of candidates rather than only unequal ones.
     pub fn suggest_similar_name(name: &str, available: &[String]) -> Option<String> {
+        let mut candidates: Vec<&String> = available.iter().collect();
+        candidates.sort_unstable();
+
         let name_lower = name.to_lowercase();
 
         // Find exact case-insensitive match first
-        for candidate in available {
+        for candidate in &candidates {
             if candidate.to_lowercase() == name_lower {
-                return Some(candidate.clone());
+                return Some((*candidate).clone());
             }
         }
 
@@ -22,13 +46,15 @@ impl SuggestionEngine {
         let mut best_match = None;
         let mut best_distance = usize::MAX;
 
-        for candidate in available {
+        for candidate in &candidates {
             let distance = Self::edit_distance(name, candidate);
 
-            // Only suggest if the distance is reasonable (less than 1/3 of the length)
+            // Only suggest if the distance is reasonable (less than 1/3 of the
+            // length). The strict `<` keeps the first candidate at the minimum,
+            // which decides ties only because `candidates` is sorted above.
             if distance < best_distance && distance <= name.len() / 3 + 1 {
                 best_distance = distance;
-                best_match = Some(candidate.clone());
+                best_match = Some((*candidate).clone());
             }
         }
 
@@ -333,6 +359,112 @@ mod tests {
             SuggestionEngine::suggest_similar_name("sprintff", &available),
             Some("sprintf".to_string())
         );
+    }
+
+    /// Every ordering of `items`, so a test can assert that a result depends on
+    /// the candidate *set* and not on the order a `HashMap` happened to yield.
+    ///
+    /// A determinism fix receipted by sampling is receipted by luck: N runs
+    /// that agree are evidence about those N runs and nothing else, and the
+    /// defect this guards against produced agreeing runs roughly half the time.
+    /// Enumerating the orderings is a claim about all of them.
+    fn permutations(items: &[&str]) -> Vec<Vec<String>> {
+        if items.is_empty() {
+            return vec![Vec::new()];
+        }
+
+        let mut out = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            let mut rest: Vec<&str> = items.to_vec();
+            rest.remove(i);
+            for mut tail in permutations(&rest) {
+                let mut perm = vec![item.to_string()];
+                perm.append(&mut tail);
+                out.push(perm);
+            }
+        }
+        out
+    }
+
+    /// Asserts `name` resolves to `expected` under EVERY ordering of `pool`.
+    fn assert_order_independent(name: &str, pool: &[&str], expected: Option<&str>) {
+        let expected = expected.map(|s| s.to_string());
+        for perm in permutations(pool) {
+            assert_eq!(
+                SuggestionEngine::suggest_similar_name(name, &perm),
+                expected,
+                "suggestion for '{}' changed with candidate order {:?}",
+                name,
+                perm
+            );
+        }
+    }
+
+    /// The measured defect. `Checker::get_available_functions` collects
+    /// `self.functions.keys()` out of a `HashMap`, whose `RandomState` is seeded
+    /// per process, so the candidate order differs on every run. `file_read` is
+    /// edit-distance 3 from both `file_read_ex` and `file_seek`, and before the
+    /// fix the strict `<` handed the tie to whichever arrived first: 12 separate
+    /// `pdc compile bootstrap/v1_archive/archive/compiler_combined.pd` runs on
+    /// 2b43176 split 7 `file_read_ex` / 5 `file_seek` on byte-identical input.
+    #[test]
+    fn test_suggest_similar_name_distance_tie_is_order_independent() {
+        // The tie is the premise of this test, so state it rather than assume it.
+        assert_eq!(SuggestionEngine::edit_distance("file_read", "file_read_ex"), 3);
+        assert_eq!(SuggestionEngine::edit_distance("file_read", "file_seek"), 3);
+        assert!(3 <= "file_read".len() / 3 + 1);
+
+        // `file_read_all` is distance 4 — inside the threshold, outside the tie —
+        // so it also proves the winner is the minimum and not merely the first.
+        assert_eq!(
+            SuggestionEngine::edit_distance("file_read", "file_read_all"),
+            4
+        );
+
+        assert_order_independent(
+            "file_read",
+            &["file_read_ex", "file_seek", "file_read_all"],
+            Some("file_read_ex"),
+        );
+    }
+
+    /// The same defect on the case-insensitive fast path, which returned the
+    /// first candidate that lowercased to the queried name. `Register` and
+    /// `register` are distinct, legal Palladium identifiers — code generation
+    /// deliberately never case-folds (`src/codegen/c_ident.rs`) — so both are
+    /// exact case-insensitive matches for `REGISTER` and neither is "the" one.
+    /// Constructed repro on 2b43176, 12 separate runs: 8 `Register` / 4 `register`.
+    #[test]
+    fn test_suggest_similar_name_case_insensitive_tie_is_order_independent() {
+        assert_order_independent(
+            "REGISTER",
+            &["register", "Register", "registry"],
+            Some("Register"),
+        );
+    }
+
+    /// The fast path must keep winning over the edit-distance path, in every
+    /// order: an exact case-insensitive match is a better answer than a
+    /// distance-1 neighbour even when the neighbour sorts first.
+    #[test]
+    fn test_case_insensitive_match_beats_closer_neighbour_in_every_order() {
+        assert_order_independent("Counter", &["counter", "Counte"], Some("counter"));
+    }
+
+    /// A tie among struct field names, which reach the engine through
+    /// `TypeErrorHelper::invalid_field_access` rather than a builtin table.
+    #[test]
+    fn test_suggest_similar_name_field_tie_is_order_independent() {
+        assert_eq!(SuggestionEngine::edit_distance("name", "names"), 1);
+        assert_eq!(SuggestionEngine::edit_distance("name", "nome"), 1);
+        assert_order_independent("name", &["names", "nome", "id"], Some("names"));
+    }
+
+    /// Order-independence must not be bought by suggesting something: when no
+    /// candidate is inside the threshold the answer is `None` in every order.
+    #[test]
+    fn test_suggest_similar_name_none_is_order_independent() {
+        assert_order_independent("completely_different", &["foo", "bar", "baz"], None);
     }
 
     #[test]
