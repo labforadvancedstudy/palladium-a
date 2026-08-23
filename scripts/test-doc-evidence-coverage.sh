@@ -422,6 +422,37 @@ elif w == "blank-targets":     # the delimiter-only floor, reverted to the six-s
     # If they do not, the new cases are not testing the property they claim to.
     t = t.replace('    return re.search(r"\\w", norm(text)) is None',
                   '    return norm(text) in ("", "}", "{", "};", ")", "*/")', 1)
+elif w == "pin-relocate":      # the stored hash is a tripwire only, never an address
+    # Reverts the search itself: a pin whose content is intact elsewhere in the file goes
+    # back to being an undifferentiated MOVED, which is the state that made authors shape
+    # source code around line numbers.
+    t = t.replace("    hits: list = []", "    return []\n    hits: list = []", 1)
+elif w == "pin-relocate-unique":   # any match will do, take the first
+    # Repeated boilerplate is real, so a relocation that does not require UNIQUENESS
+    # repoints the citation at whichever copy happens to come first in the file.
+    t = t.replace("                if len(hits) == 1:", "                if hits:", 1)
+elif w == "pin-relocate-width":    # the range's HEIGHT is not held fixed
+    # `norm()` collapses newlines, so a two-line range and the single line holding the same
+    # two statements hash identically. Searching other widths lets a CHANGED citation
+    # relocate onto a differently-shaped coincidence. Bounded to nlines+1 so the mutant is
+    # merely wrong and not also quadratic.
+    t = t.replace("    for i in range(len(lines) - nlines + 1):\n"
+                  "        yield i + 1, i + nlines, lines[i:i + nlines]",
+                  "    for i in range(len(lines)):\n"
+                  "        for w in range(1, nlines + 2):\n"
+                  "            if i + w <= len(lines):\n"
+                  "                yield i + 1, i + w, lines[i:i + w]", 1)
+elif w == "pin-relocate-zero":     # found nowhere is treated as nothing to report
+    # The fail-closed half. With no match the content is GONE, and a search that let that
+    # fall through would turn every deleted citation green -- worse than the tax removed.
+    t = t.replace("                else:\n                    # ZERO IS A FAILURE",
+                  "                elif False:\n                    # ZERO IS A FAILURE", 1)
+elif w == "pin-relocate-update":   # --update may record over an unapplied move
+    # The door the green RELOCATED verdict opens: the citing document still names the old
+    # lines, so regenerating pins there fingerprints whatever moved INTO them, under a key
+    # that looks untouched. That is the docstring's laundering, reached through the new
+    # mechanism instead of around it.
+    t = t.replace("        if pending:", "        if False:", 1)
 elif w == "gate-kv-compare":   # key=value results are not compared at all
     t = t.replace("    for k, v in kv:", "    for k, v in []:", 1)
 elif w == "gate-substring":    # key=value by containment instead of by value
@@ -527,6 +558,11 @@ l1-sep-arg|scripts/check_doc_evidence.py
 l1-downstream|scripts/check_doc_evidence.py
 blank-targets|scripts/check_doc_evidence.py
 pin-semantic|scripts/check_doc_evidence.py
+pin-relocate|scripts/check_doc_evidence.py
+pin-relocate-unique|scripts/check_doc_evidence.py
+pin-relocate-width|scripts/check_doc_evidence.py
+pin-relocate-zero|scripts/check_doc_evidence.py
+pin-relocate-update|scripts/check_doc_evidence.py
 gate-substring|scripts/check_doc_evidence.py
 gate-kv-compare|scripts/check_doc_evidence.py
 gate-argv-grammar|scripts/gate-receipts.sh

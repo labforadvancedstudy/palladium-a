@@ -1137,6 +1137,177 @@ fi
 pin_case "--update refuses to record a content-free pin, and writes nothing" 1 \
   "REFUSED" "Nothing was written"
 
+echo
+echo "== a pin whose CONTENT is intact somewhere else has MOVED, and only then =="
+
+# CASES 37-41. RELOCATION BY CONTENT HASH.
+#
+# Until now the line numbers were the only way to find a cited range, so an edit that
+# shifted a cited file failed the gate and the repair was a hand search with
+# `git show <base>:<path>`. That cost bought four source-shaping edits in a single day --
+# a comment written to a line budget, a function defined after its callee to keep a `let`
+# on line 286, `LC_ALL=C` moved out of the function it belongs in, and a gate arm paid for
+# by deleting lines elsewhere. The pin already stores the range's hash; these cases are
+# about using it as an ADDRESS instead of only as a tripwire.
+#
+# WHAT MAKES THESE FAITHFUL. Under the previous scheme every one of them is simply MOVED,
+# so a control asserting "MOVED" would pass before and after and measure nothing. Each
+# asserts the VERDICT the hash search produces -- RELOCATED, AMBIGUOUS, or CHANGED -- and
+# case 37 asserts a GREEN run, which no earlier version of this gate could produce for a
+# citation whose line numbers no longer hold its content.
+#
+# The pin is taken from the file's OLD state and the file is then edited, which is exactly
+# the state a real shift leaves behind: a pin holding content that is no longer where the
+# citing document says it is.
+
+# pin_take <span> -- write the probe document citing target.rs:<span>, and record the pin
+# for that range AS TARGET.RS IS NOW. The caller edits target.rs afterwards, so the pin
+# holds the old content. `<span>` is `N` or `N-M`; the recorded key is always `N-M`,
+# because that is the key collect_citations() builds.
+pin_take() {
+  printf 'Calls take a per-call lifetime (`%s/target.rs:%s`).\n' \
+    "$PROBE_DIR" "$1" > "$PROBE_DIR/probe.md"
+  cp docs/citation-pins.tsv "$TMP/pins.tsv"
+  pin_row "$1" >> "$TMP/pins.tsv"
+}
+
+# pin_row <span> -- the single pin line `--update` would write for that citation.
+pin_row() {
+  python3 - "$PROBE_DIR" "$1" <<'PYEOF'
+import hashlib, sys
+d, span = sys.argv[1], sys.argv[2]
+a, _, b = span.partition("-")
+a, b = int(a), int(b or a)
+lines = open(f"{d}/target.rs", encoding="utf-8").read().split("\n")
+body = "\n".join(lines[a - 1:b])
+norm = " ".join(body.split())
+print("%s/target.rs\t%d-%d\t%s/probe.md\t%s\t%s"
+      % (d, a, b, d, hashlib.sha256(norm.encode()).hexdigest()[:12], norm))
+PYEOF
+}
+
+pin_check() {  # run the citation half against the recorded pins -> RC, OUT
+  OUT=$(python3 scripts/check_doc_evidence.py --pins-only --pins "$TMP/pins.tsv" 2>&1)
+  RC=$?
+}
+
+T="$PROBE_DIR/target.rs"
+
+# CASE 37. THE MOVE. The cited statement is unchanged; a comment inserted above it pushed it
+# down one line. Exactly one range in the file hashes to the pin, so the content did not
+# change -- it moved -- and the gate says where to instead of demanding the author keep the
+# line number still. GREEN, which is the half no previous version of this gate could do.
+cat > "$T" <<'EOF'
+fn build(&self) {
+    let build_dir = self.output_dir.join("build");
+}
+EOF
+pin_take 2
+cat > "$T" <<'EOF'
+// LC_ALL=C is set here so gcc's diagnostics are stable
+fn build(&self) {
+    let build_dir = self.output_dir.join("build");
+}
+EOF
+pin_check
+pin_case "a pin whose content MOVED VERBATIM is relocated by hash, naming the new lines" 0 \
+  "RELOCATED" "$PROBE_DIR/target.rs:2-2 -> $PROBE_DIR/target.rs:3-3"
+
+# CASE 38. THE CONTENT CHANGED, AND THERE IS BAIT. The cited two-line range was edited
+# (`build` -> `cache`), and the file separately contains a single line whose text is exactly
+# the pinned range's -- the shape a reformat leaves. `norm()` collapses newlines, so that one
+# line and the original two lines have the SAME digest, and any search that did not hold the
+# range's height fixed would relocate a CHANGED citation onto it. The height is fixed, so no
+# range of the pin's own shape matches and this fails, which is what the gate is for.
+cat > "$T" <<'EOF'
+let build_dir = self.output_dir.join("build");
+let out = build_dir.join("out");
+fn tail() {}
+EOF
+pin_take 1-2
+cat > "$T" <<'EOF'
+let build_dir = self.output_dir.join("cache");
+let out = build_dir.join("out");
+fn tail() {}
+let build_dir = self.output_dir.join("build"); let out = build_dir.join("out");
+fn end() {}
+EOF
+pin_check
+pin_case "a pin whose content CHANGED is NOT relocated onto a coincidental match" 1 \
+  "as a 2-line range" "CHANGED rather than moved"
+
+# CASE 39. TWO IDENTICAL COPIES. Repeated boilerplate is real, and a relocation that picked
+# the first would silently repoint the citation at whichever copy came earliest in the file.
+# The gate names every candidate and chooses none.
+cat > "$T" <<'EOF'
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+pin_take 1
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+let build_dir = self.output_dir.join("build");
+fn end() {}
+EOF
+pin_check
+pin_case "a pin whose content appears TWICE is refused as AMBIGUOUS, naming both" 1 \
+  "AMBIGUOUS" "(2-2, 4-4)"
+
+# CASE 40. THE CONTENT IS GONE. Nothing in the file hashes to the pin, so there is nothing
+# to relocate to and the gate fails exactly as it always did. This is the fail-closed half:
+# a search that treated "found nowhere" as "nothing to report" would turn every deleted
+# citation green, which is the one outcome worse than the tax this change removes.
+cat > "$T" <<'EOF'
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+pin_take 1
+cat > "$T" <<'EOF'
+fn head() {}
+fn tail() {}
+EOF
+pin_check
+pin_case "a pin whose content is GONE fails; there is nothing to relocate to" 1 \
+  "as a 1-line range" "no longer appears anywhere in"
+
+# CASE 41. `--update` MUST NOT RECORD OVER AN UNAPPLIED MOVE, and this is the door the green
+# verdict in case 37 opens. A relocated citation is green while its document still names the
+# old lines; running the generator in that state would fingerprint whatever moved INTO those
+# lines, under a key that looks untouched -- the laundering this file's docstring is about,
+# reached through the new mechanism rather than around it. So the generator refuses while a
+# move is outstanding, and the throwaway pin file must come back byte-identical.
+#
+# The pin file here holds ONLY the probe's row. With the tracked pins copied in, any
+# relocation anywhere in the repository would also refuse, and this case would pass without
+# the probe having caused anything.
+cat > "$T" <<'EOF'
+fn build(&self) {
+    let build_dir = self.output_dir.join("build");
+}
+EOF
+printf 'Calls take a per-call lifetime (`%s/target.rs:2`).\n' "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+printf '# solo pin file for scripts/test-doc-evidence.sh\n' > "$TMP/pins.tsv"
+pin_row 2 >> "$TMP/pins.tsv"
+cat > "$T" <<'EOF'
+// LC_ALL=C is set here so gcc's diagnostics are stable
+fn build(&self) {
+    let build_dir = self.output_dir.join("build");
+}
+EOF
+before=$(shasum -a 256 < "$TMP/pins.tsv")
+OUT=$(python3 scripts/check_doc_evidence.py --update --pins "$TMP/pins.tsv" \
+        --allow "$TMP/allow.txt" 2>&1)
+RC=$?
+after=$(shasum -a 256 < "$TMP/pins.tsv")
+if [ "$before" != "$after" ]; then
+  RC=0   # it recorded pins over an unapplied move: that IS the laundering
+  OUT="$OUT"$'\n(the pin file was rewritten)'
+fi
+pin_case "--update refuses to record over an unapplied RELOCATION, and writes nothing" 1 \
+  "REFUSED" "Nothing was written" "$PROBE_DIR/target.rs:2-2 -> $PROBE_DIR/target.rs:3-3"
+
 rm -rf "$PROBE_DIR"
 
 echo "== the blank-target floor tests a PROPERTY, not a list of examples =="

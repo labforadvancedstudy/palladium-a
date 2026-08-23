@@ -131,3 +131,8 @@ a citation on a line that carries code is accepted	guard	the fatal green control
 a pin relocated onto a bare '}' is refused	kill	pin-semantic
 a pin relocated onto an EMPTY line is refused	kill	pin-semantic
 --update refuses to record a content-free pin, and writes nothing	kill	pin-semantic
+a pin whose content MOVED VERBATIM is relocated by hash, naming the new lines	kill	pin-relocate
+a pin whose content CHANGED is NOT relocated onto a coincidental match	kill	pin-relocate-width
+a pin whose content appears TWICE is refused as AMBIGUOUS, naming both	kill	pin-relocate-unique
+a pin whose content is GONE fails; there is nothing to relocate to	kill	pin-relocate-zero
+--update refuses to record over an unapplied RELOCATION, and writes nothing	kill	pin-relocate-update

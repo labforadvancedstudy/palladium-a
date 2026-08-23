@@ -1534,6 +1534,157 @@ def check_index(receipts=None):
     return problems, len(rows), how, counts
 
 
+# --- RELOCATION BY CONTENT HASH -------------------------------------------------------
+#
+# THIS SECTION SUPERSEDES STEP 2 OF THE PROCEDURE IN THE MODULE DOCSTRING wherever it can:
+# the hand search with `git show <base>:<path>` is now performed by the check itself, from
+# the hash the pin already holds. Step 2 still governs the cases no unique match resolves.
+#
+# WHY THE DOCSTRING WAS NOT AMENDED IN PLACE, which is an exhibit rather than an oversight.
+# The docstring is at the top of this file, so adding a line to it shifts every line below --
+# including 327-329, which docs/contributing/claude-md-coverage.md cites and this repository
+# pins. Applying that move means regenerating docs/citation-pins.tsv, which this branch is
+# not permitted to write. So the amendment lives HERE, below the pinned range, because the
+# constraint chose where the prose could go. That is the same pressure as the four source
+# edits catalogued immediately below, arriving one layer up; it is recorded rather than
+# absorbed, and it closes with one `--update` on a branch that may regenerate the pins.
+#
+# THE COST THIS REMOVES, MEASURED. A pin is keyed on (path, lines, citing-doc), so the LINE
+# NUMBERS were the only way to find the cited range. Insert a line above a cited function and
+# the pin fails, and the remedy this module's docstring prescribes (step 2) is to fetch the
+# old text with `git show <base>:<path>` and search the working tree for it BY HAND. That is
+# not a hypothetical cost; four edits landed on 2026-08-22 whose SHAPE was chosen by it:
+#   * a comment written to an exact line budget so src/main.rs's pinned range would not shift;
+#   * `compile_and_run` in src/driver/mod.rs defined AFTER the function it delegates to, so
+#     that `let build_dir = ...` would stay on line 286, against ordinary reading order;
+#   * `LC_ALL=C` set in `link` rather than in `link_command`, because that function's body is
+#     content-pinned -- turning "the locale is fixed" from a property of the gcc invocation
+#     into a property of one wrapper;
+#   * a new verdict arm in scripts/conformance.sh paid for by DELETING an equal number of
+#     lines elsewhere. The author's own words: "the constraint chose the edit."
+# A gate that makes source code worse to keep itself green is charging more than it collects.
+#
+# WHAT IS DONE INSTEAD. The pin already stores sha256(norm(range))[:12]. That hash is an
+# ADDRESS, not merely a tripwire: if the content is no longer at the pinned lines, the cited
+# file is searched for a range that hashes to the same value.
+#
+#   exactly one match  -> RELOCATED. The text at the new lines IS the text the pin was taken
+#                         from, character for character after whitespace normalisation, so
+#                         the range moved rather than changed. Reported, not failed.
+#   several matches    -> AMBIGUOUS, and a FAILURE. Repeated boilerplate is real, and picking
+#                         the first is how a citation silently lands on the wrong copy. The
+#                         gate names every candidate and chooses none.
+#   no match           -> the content CHANGED or is gone. A FAILURE, exactly as before.
+#
+# WHY THIS IS NOT THE LAUNDERING MACHINE THE DOCSTRING WARNS ABOUT. `--update` launders
+# because it records a fingerprint for WHATEVER now sits at `path:line` -- any text at all,
+# related or not. A relocation records nothing and proves something strictly narrower: hash
+# equality over the normalised range. A range whose content changed hashes to something else
+# and is offered no relocation; a coincidentally similar range is not a match, because the
+# comparison is the whole range's digest and not a prefix, a proximity or a resemblance. And
+# `--update` now REFUSES to regenerate over a pending relocation (see main), so the stale
+# line numbers cannot be laundered into a pin by running the generator.
+#
+# THE HEIGHT OF THE RANGE IS HELD FIXED, and the reason is `norm()`. It collapses newlines
+# along with every other run of whitespace, so a two-line range and the single line holding
+# the same two statements hash IDENTICALLY. Searching every width would let `x.rs:10-11` come
+# to rest on one line -- a different citation wearing the old one's numbers. A move preserves
+# the shape; a reformat is a content change and fails. This is a floor and not a fence: a
+# window that ends on blank lines still normalises like the shorter window above it, so equal
+# height is necessary for a relocation, not sufficient to make one unique.
+#
+# WHAT A RELOCATION DOES NOT ESTABLISH -- read this before reading a green gate as approval.
+#   1. IT DOES NOT MAKE A WRONG CITATION RIGHT. A citation that pointed at the wrong code
+#      before points at the same wrong code afterwards, in a new place. This removes the TAX,
+#      not the CLASS: 25 of 220 citations were measured wrong, and two independent samples of
+#      relocated citations this week found 3 of 10 and 5 of 12 content-wrong -- the arithmetic
+#      was right every time and faithfully preserved citations that were already wrong. The
+#      sibling proposal `docs/contributing/proposed-gate-quoted-token-citations.md` is what
+#      addresses the class, by requiring the citing prose to quote a token the range contains.
+#      The two are complementary and must not be conflated.
+#   2. THE CITING DOCUMENT IS LEFT STALE. A relocation reports that the content moved; it does
+#      not rewrite the citation, because a gate that edits documentation is a gate nobody can
+#      review. Until an author applies the printed line numbers, the document names lines that
+#      hold something else. What bounds that: the NON-SEMANTIC and delimiter-only floors are
+#      checked BEFORE this, so the measured failure shape -- a citation coming to rest on a
+#      blank line or a bare `}` -- still fails rather than relocating.
+PIN_FINGERPRINT = re.compile(r"^[0-9a-f]{12}$")
+RELOCATION_HIT_CAP = 8      # enough to say "several" and name them; not a full census
+
+
+def pin_windows(lines, nlines):
+    """Every candidate range of the pin's own height. -> (start, end, [line, ...])"""
+    for i in range(len(lines) - nlines + 1):
+        yield i + 1, i + nlines, lines[i:i + nlines]
+
+
+def locate_fingerprint(lines, want_fp: str, nlines: int, cap: int = RELOCATION_HIT_CAP):
+    """Every range in `lines` whose fingerprint is `want_fp`. -> [(start, end, text)]"""
+    hits: list = []
+    if nlines < 1 or nlines > len(lines):
+        return hits
+    for start, end, window in pin_windows(lines, nlines):
+        body = "\n".join(window)
+        if fingerprint(body) == want_fp:
+            hits.append((start, end, body))
+            if len(hits) >= cap:
+                break
+    return hits
+
+
+def span_height(span: str) -> int | None:
+    """`'286-288'` -> 3. None when the span is not a range this gate wrote."""
+    try:
+        start, end = (int(v) for v in span.split("-", 1))
+    except ValueError:
+        return None
+    return end - start + 1 if end >= start >= 1 else None
+
+
+def relocation_hits(path_str: str, span: str, want_fp: str):
+    """Where a pin's stored content is NOW. -> [(start, end, text)], possibly empty.
+
+    Empty for a sentinel fingerprint (MISSING-FILE, OUT-OF-RANGE, NON-SEMANTIC): those are
+    not digests, so nothing can hash to them and no relocation can be offered.
+    """
+    if not PIN_FINGERPRINT.match(want_fp or ""):
+        return []
+    target = resolve(path_str)
+    if target is None or not target.exists():
+        return []
+    nlines = span_height(span)
+    if nlines is None:
+        return []
+    lines = target.read_text(encoding="utf-8", errors="replace").split("\n")
+    return locate_fingerprint(lines, want_fp, nlines)
+
+
+def report_relocations(relocated) -> None:
+    """Print the moves. Never fails the run; see RELOCATION BY CONTENT HASH.
+
+    The excerpt of what was FOUND is printed beside the excerpt that was PINNED, for the
+    same reason the pin file carries an excerpt column at all: hash equality is a machine's
+    statement about bytes, and only a reader can say whether the claim still holds. Here the
+    two excerpts must read identically — if they do not, the digest is not what it seems.
+    """
+    if not relocated:
+        return
+    print(f"\n{len(relocated)} citation(s) RELOCATED — the pinned content is intact and "
+          f"unique, at different lines:")
+    for (p, s, d), (_, pinned_x), (ns, ne, body) in relocated:
+        print(f"  {p}:{s} -> {p}:{ns}-{ne}   (cited by {d})")
+        print(f"      pinned: {pinned_x}")
+        print(f"      found:  {excerpt(body)}")
+    print("  Each move is justified by sha256(norm(range)) equality and by there being "
+          "exactly ONE such range,\n"
+          "  so the text did not change — it moved. THE CITING DOCUMENT STILL NAMES THE OLD "
+          "LINES: rewrite it to\n"
+          "  the new ones and re-run --update. A relocation says the cited code still "
+          "exists; it does not say the\n"
+          "  claim made about it was ever right (see the module docstring, and the sibling "
+          "quoted-token proposal).")
+
+
 def read_pins():
     want = {}
     for line in PINS.read_text(encoding="utf-8").split("\n"):
@@ -1642,6 +1793,32 @@ def main() -> int:
                    if k in old and old[k][0] != v[0]]
         added = [k for k in sorted(new) if k not in old]
         removed = [k for k in sorted(old) if k not in new]
+        # REFUSED BEFORE ANYTHING IS WRITTEN, and this is what keeps relocation from being a
+        # way IN to the laundering machine. The check reports a relocation and stays green,
+        # which leaves the citing document naming lines that now hold something else. Running
+        # `--update` in that state would record a fingerprint for whatever moved into those
+        # lines — converting "this citation's address is stale" into "the gate is satisfied",
+        # under a key that looks untouched. So a pin whose old content is still findable,
+        # uniquely, is a MOVE THAT HAS NOT BEEN APPLIED YET, and the generator will not run
+        # until the document names the lines the content is actually at.
+        #
+        # A pin whose content genuinely changed is NOT caught here (no hit, nothing unique),
+        # which is the case `--update` exists for: it records the change and prints MOVED for
+        # a human to read. That distinction is the whole point — the hash tells the two apart.
+        pending = [(k, o, hits[0]) for k, o, _ in changed
+                   if len(hits := relocation_hits(k[0], k[1], o[0])) == 1]
+        if pending:
+            print(f"REFUSED: {len(pending)} citation(s) have MOVED to lines the citing "
+                  f"document does not name yet. Nothing was written.")
+            for (p, s, d), (_, pinned_x), (ns, ne, body) in pending:
+                print(f"  {p}:{s} -> {p}:{ns}-{ne}  (cited by {d})")
+                print(f"      pinned: {pinned_x}")
+                print(f"      found:  {excerpt(body)}")
+            print("\nRecording the pins now would fingerprint whatever moved INTO the old "
+                  "lines and close the\nquestion under an unchanged key. Rewrite each "
+                  "citation to the lines above — the content is\nproved identical by hash, "
+                  "so this is a renumbering and not a judgement — then re-run --update.")
+            return 1
         PINS.write_text(
             "# GENERATED by scripts/check-doc-evidence.sh --update. Do not edit by hand.\n"
             "# A fingerprint proves a cited range has not moved. It CANNOT prove the range\n"
@@ -1672,6 +1849,10 @@ def main() -> int:
         return 0
 
     fail = []
+    # Reported, never failed: a pin whose content is provably intact somewhere else in the
+    # same file. Kept separate from `fail` so the exit code says what it has always said —
+    # "some cited range is not what it was" — and this says "and here is where it went".
+    relocated: list = []
 
     # The citation half on its own. The full run executes 42 `cmd:` items, which
     # is far too expensive for a control that has to run several configurations
@@ -1717,9 +1898,42 @@ def main() -> int:
                 fail.append(f"citation {key[0]}:{key[1]} in {key[2]} is unpinned "
                             f"(run --update)")
             elif want[key][0] != f:
-                fail.append(f"citation {key[0]}:{key[1]} cited by {key[2]} MOVED\n"
-                            f"      pinned: {want[key][1]}\n"
-                            f"      now:    {x}")
+                # THE PINNED LINES NO LONGER HOLD THE PINNED CONTENT. Before failing on the
+                # line numbers, ask the only question the stored hash can answer: is that
+                # content still in this file? See RELOCATION BY CONTENT HASH above for what
+                # each of the three answers proves and, more importantly, does not.
+                hits = relocation_hits(key[0], key[1], want[key][0])
+                if len(hits) == 1:
+                    relocated.append((key, want[key], hits[0]))
+                elif len(hits) > 1:
+                    where = ", ".join(f"{a}-{b}" for a, b, _ in hits)
+                    fail.append(
+                        f"citation {key[0]}:{key[1]} cited by {key[2]} MOVED, and its "
+                        f"pinned content now appears at {len(hits)} places in {key[0]} "
+                        f"({where}) — AMBIGUOUS\n"
+                        f"      pinned: {want[key][1]}\n"
+                        f"      now:    {x}\n"
+                        f"      The gate names every candidate and chooses none: repeated "
+                        f"boilerplate is real, and picking\n"
+                        f"      the first is how a citation silently comes to rest on the "
+                        f"wrong copy. Repoint the citation\n"
+                        f"      by hand at the one the prose is about, then re-run --update.")
+                else:
+                    # ZERO IS A FAILURE, and it is the fail-closed half of this mechanism.
+                    # No range in the file hashes to the pin, so the text CHANGED rather
+                    # than moved — and a changed range is exactly what this gate exists to
+                    # report. A relocation is offered only against hash equality, never
+                    # against a resemblance, so nothing here can drift onto a near-match.
+                    n = span_height(key[1])
+                    fail.append(
+                        f"citation {key[0]}:{key[1]} cited by {key[2]} MOVED\n"
+                        f"      pinned: {want[key][1]}\n"
+                        f"      now:    {x}\n"
+                        f"      Its pinned content no longer appears anywhere in {key[0]} "
+                        f"as a {n}-line range, so the text\n"
+                        f"      CHANGED rather than moved. Re-read the claim against the "
+                        f"code as it is now: if the code\n"
+                        f"      changed meaning, the citation is what changes, not the pin.")
         for key in sorted(want):
             if key not in have:
                 fail.append(f"pinned citation {key[0]}:{key[1]} in {key[2]} no longer cited "
@@ -1727,6 +1941,7 @@ def main() -> int:
 
     if pins_only:
         print(f"citations pinned:   {len(cites)} (whole cited range fingerprinted)")
+        report_relocations(relocated)
         if fail:
             print("\nFAIL:")
             for f in fail:
@@ -1791,6 +2006,7 @@ def main() -> int:
     print(f"evidence items: cmd={counts['cmd']} (all EXECUTED, none skipped) "
           f"src={counts['src']} conformance={counts['conformance']} gate={gate_note}")
     print("=" * 62)
+    report_relocations(relocated)
     if fail:
         print("\nFAIL:")
         for f in fail:
