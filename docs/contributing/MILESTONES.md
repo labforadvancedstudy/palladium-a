@@ -592,10 +592,20 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
    the same table.** Two matching declarations do not make an implementation true, and this is the
    fourth time that shape has appeared on this branch and the first time it was in the compiler's
    data rather than in an instrument. It now has a control that reads the emitted C
-   (`test_owned_wrappers_never_return_borrowed_storage`), a positive case so the scan cannot pass
+   (`test_no_owned_wrapper_returns_a_string_literal`), a positive case so the scan cannot pass
    by finding nothing (`arg_at` returns a literal ON PURPOSE and declares `BorrowedStatic`), and a
    behavioural gate that drives `BorrowChecker::check_program` on a program taking each formerly
    borrowed branch.
+   **That control is NARROWER THAN THE PROPERTY, and is named for what it does.** It pins the four
+   historical literal returns so they cannot come back; it does NOT enforce "every `Owned` return
+   is allocated". An `Owned` wrapper returning a parameter or a static buffer would be the same
+   defect and **nothing in this repository would detect it**. Widening it was measured and
+   declined: provenance is decidable inside the emitted C for six of the seven, and not for
+   `read_file_to_string`, whose `out_str` is filled across the FFI boundary from `Box::into_raw`
+   (`src/runtime/io.rs:470`). A checker would need a hand-maintained table of which runtime
+   functions allocate through out-parameters — a third registry beside this one and
+   `PRELUDE_TYPE_MISMATCHES`, and a table agreeing with a declaration is the shape that produced
+   the original defect.
    **What is still owed, and it is M3's**: N14-03, signatures — the filesystem family returns
    `i64`/`bool` rather than `Result`, because `Result` is not built in.
    *(This item cited `N14-04` as well. `N14-04` is `string_char_at returns char`, which needs the

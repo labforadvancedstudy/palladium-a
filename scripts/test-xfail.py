@@ -1522,9 +1522,12 @@ def main():
     # A RUN RECEIPT, WRITTEN BEFORE ANYTHING IS PRINTED.
     #
     # This exists so that "did this gate RUN" can be answered independently of
-    # what it SAID. `make m2-exit` reads this file as its second inventory, and
-    # scripts/test-requirements-runner.sh (GI-09) has to be able to tell a real
-    # invocation from an `echo` of the same summary. Inventories one and three
+    # what it SAID. THE CONSUMER IS scripts/test-requirements-runner.sh (GI-09),
+    # and nothing else reads it: `make m2-exit` runs this file as its second
+    # inventory and folds the exit status, it does not open the receipt. GI-09 is
+    # what has to tell a real invocation from an `echo` of the same summary, so
+    # GI-09 is what checks that this file exists from the run it just made and
+    # agrees with tests/rust-debt-manifest.txt. Inventories one and three
     # answer that structurally — the conformance runner compiles fixtures into
     # build_output/cf_*, the Rust suite compiles its own into target/build — and
     # this one had no footprint at all, so an echo of its output was

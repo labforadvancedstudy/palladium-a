@@ -771,10 +771,10 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 //
 // THE OWNER IS M4, AND IT WAS M3 UNTIL THIS BRANCH MERGED `d2d5bd4`. That merge
 // restructured the milestones and split modules out into their own
-// (`docs/contributing/MILESTONES.md:701-707`, "M4 — Modules", which claims the
+// (`docs/contributing/MILESTONES.md:711-717`, "M4 — Modules", which claims the
 // module rows explicitly: "plus the corpus's one `xfail` … cross-file imports
 // — and the vacuous `12_modules_imports`"). M3 is now traits and generics
-// (`docs/contributing/MILESTONES.md:667`), which is not what these rows are
+// (`docs/contributing/MILESTONES.md:677`), which is not what these rows are
 // about.
 //
 // BOTH CITATIONS ABOVE WERE WRONG BEFORE THEY WERE MOVED, and are corrected
@@ -786,6 +786,16 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 // re-pins whatever occupies the line. They now name the `## M4 — Modules`
 // section and the `## M3 — Traits and generics` heading, which is what the
 // sentences claim.
+//
+// AND `--update` WILL RE-PIN THEM TO THE WRONG CONTENT WITHOUT SAYING SO. Caught
+// on 2026-08-23: an edit above these lines moved the two headings, the pin file
+// was regenerated, and `make check-doc-evidence` went GREEN with both citations
+// resolving to unrelated prose — because `--update` re-pins whatever now occupies
+// the cited LINE, and a citation that has drifted onto a new target looks exactly
+// like a citation whose target was edited. The gate cannot tell them apart; only
+// re-reading the target can. That is why these two are re-derived by hand every
+// time this file's line numbers move, and why the audit after any `--update` is
+// "did a fingerprint change, and can I name why".
 //
 // AND IT HAPPENED AGAIN IN THE MERGE THAT FOLLOWED. `fix/m2-async-producer`
 // carried these two citations forward with line numbers shifted to track its own

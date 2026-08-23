@@ -15,8 +15,8 @@ bootstrap/pdc.pd	164-175	docs/contributing/MILESTONES.md	ab895892cab8	if n == 42
 bootstrap/pdc.pd	49-51	docs/contributing/MILESTONES.md	2176e84e9bc4	fn emit(mut c: C, s: String) { file_write(c.out, s); }
 bootstrap/pdc.pd	8-8	docs/contributing/MILESTONES.md	a673bb7b309d	// This file is written in exactly the subset it implements. That is the whole
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
-docs/contributing/MILESTONES.md	667-667	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
-docs/contributing/MILESTONES.md	701-707	tests/m3_imported_calls.rs	6ba8c2bda856	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... ce-manifest.txt:93`, cross-file imports) and the vacuous `12_modules_imports`.
+docs/contributing/MILESTONES.md	677-677	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
+docs/contributing/MILESTONES.md	711-717	tests/m3_imported_calls.rs	6ba8c2bda856	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... ce-manifest.txt:93`, cross-file imports) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	76-76	src/typeck/mod.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
@@ -356,6 +356,8 @@ src/resolver/mod.rs	37-37	tests/m3_imported_calls.rs	0814f00a09ee	PathBuf::from(
 src/resolver/mod.rs	51-51	docs/reference/features/feature-index.toml	891ba0920fa5	// Check for PALLADIUM_PATH environment variable
 src/resolver/mod.rs	51-52	docs/specification/language-spec.md	07ec7e442f32	// Check for PALLADIUM_PATH environment variable if let Ok(pd_path) = std::env::var("PALLADIUM_PATH") {
 src/resolver/mod.rs	70-95	tests/m3_imported_calls.rs	0d3c6a68fb4b	pub fn resolve_program(&mut self, program: &Program) -> Result<HashMap<String ... alias.clone() } else { module_name }; resolved.insert(key, filtered_info); } }
+src/runtime/io.rs	470-470	docs/contributing/MILESTONES.md	66e11b278a21	*out_str = Box::into_raw(bytes) as *mut u8;
+src/runtime/io.rs	470-470	src/builtins.rs	66e11b278a21	*out_str = Box::into_raw(bytes) as *mut u8;
 src/runtime/string_ops.rs	398-398	docs/reference/features/advanced/totality-checking.md	b8736fb052c9	fn test_null_termination() {
 src/typeck/mod.rs	1094-1096	docs/specification/language-spec.md	459dfb6fab18	// Second pass: type check function bodies for item in &program.items {
 src/typeck/mod.rs	1107-1109	docs/reference/features/feature-index.toml	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies

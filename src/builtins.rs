@@ -1227,11 +1227,17 @@ mod tests {
     //
     // A built-in whose C wrapper disagrees with this table type-checks, borrow-
     // checks, and then dies in gcc — which is the same D2 drift class, one layer
-    // below the compiler. TWO built-ins are in exactly that state today,
-    // `file_flush` and `file_seek`; see `PRELUDE_TYPE_MISMATCHES`. It was six,
-    // and the four `*_ex` names left this table rather than being repaired —
-    // their wrappers are still emitted and still contradictory, and nothing here
-    // looks at them any more, because everything here iterates `BUILTINS`.
+    // below the compiler. NO built-in is in that state today:
+    // `PRELUDE_TYPE_MISMATCHES` is empty, and the test below derives that set
+    // from `BUILTINS` × the emitted prelude on every run, so empty is an
+    // assertion rather than an absence.
+    //
+    // SIX WERE, and they closed two different ways — `file_flush` and `file_seek`
+    // by having their wrappers re-based onto `__pd_file_handles`, the four `*_ex`
+    // names by leaving both this table and the emitted prelude entirely. The
+    // account is in `PRELUDE_TYPE_MISMATCHES` below, which is where the eleven
+    // dimensions are itemised; this paragraph said they were still broken and
+    // still emitted for one round after they were neither.
 
     /// The C shape of a value, recorded finely enough to see a lossy conversion.
     ///
@@ -1698,7 +1704,8 @@ mod tests {
     /// reachable branches returning the literal `""`, which is static storage they
     /// did not allocate. Two matching declarations do not make an implementation
     /// true. The test that reads the implementation is
-    /// `test_owned_wrappers_never_return_borrowed_storage`, immediately below.
+    /// `test_no_owned_wrapper_returns_a_string_literal`, immediately below — and
+    /// it covers ONE way of violating the property, which its own note states.
     #[test]
     fn test_owned_returns_are_exactly_the_allocating_builtins() {
         for b in BUILTINS {
@@ -1835,18 +1842,44 @@ mod tests {
         }
     }
 
-    /// THE IMPLEMENTATION-SIDE GATE FOR `Owned`: a built-in that declares it
-    /// allocates must not, on ANY branch, hand back storage it did not allocate.
+    /// AN `Owned` WRAPPER MUST NOT RETURN A STRING LITERAL. That is the whole of
+    /// what this test checks, and the name says so.
     ///
-    /// This is the test the metadata comparison above could not be. It reads the C
-    /// the compiler actually emits and rejects a returned string LITERAL, which is
-    /// static storage with the lifetime of the program — the one thing an owned
-    /// return may not be. Measured on `acda322` and for every revision before it:
-    /// four of the seven `Owned` built-ins failed this, on branches the corpus
-    /// reaches (`file_read_all` with a bad handle, `file_read_line` at EOF and with
-    /// a bad handle, `read_file_to_string` on a missing file, `string_substring`
-    /// with `start >= end`). They return `__pd_empty_owned()` now, which takes one
-    /// byte from the same bump pool every other owned string comes from.
+    /// THE REGRESSION IT PINS, exactly. Measured on `acda322` and every revision
+    /// before it: four of the seven `Owned` built-ins returned the literal `""` on
+    /// branches the corpus reaches — `file_read_all` with a bad handle,
+    /// `file_read_line` at EOF and with a bad handle, `read_file_to_string` on a
+    /// missing file, `string_substring` with `start >= end`. A literal is static
+    /// storage the built-in did not allocate, so the declaration was false and
+    /// `src/ownership/borrow_checker.rs:112` derives the ownership model from it.
+    /// They return `__pd_empty_owned()` now. This test exists so those four cannot
+    /// come back.
+    ///
+    /// **WHAT IT DOES NOT CHECK, AND NOTHING ELSE DOES EITHER.** This is a
+    /// SYNTACTIC check for one shape. An `Owned` wrapper that returned a
+    /// parameter, a static or global buffer, or a borrowed pointer held in a local
+    /// would pass it, and no gate in this repository would notice. The property
+    /// "every `Owned` return is allocated" is NOT enforced anywhere; only this one
+    /// way of violating it is.
+    ///
+    /// *(An earlier version of this test was named
+    /// `test_owned_wrappers_never_return_borrowed_storage` and its comment claimed
+    /// a literal was "the one thing an owned return may not be" — a general name
+    /// and a false universal over a syntactic check. That is the defect class this
+    /// milestone exists to remove, inside the control written to remove it, and it
+    /// is fixed by narrowing the claim rather than by widening the code.)*
+    ///
+    /// WHY NOT WIDEN THE CODE — MEASURED, because "just do the analysis" was the
+    /// alternative. Provenance is decidable inside the emitted C for six of the
+    /// seven: `__pd_alloc_string` appears in the same function body. It is NOT
+    /// decidable for `read_file_to_string`, whose returned `out_str` is filled by
+    /// `pd_read_file_to_string`, an out-parameter across the FFI boundary whose
+    /// storage comes from `Box::into_raw` in `src/runtime/io.rs:470` — nothing in
+    /// the C says so. A provenance checker would therefore need a hand-maintained
+    /// table of which `pd_*` runtime functions allocate through out-parameters,
+    /// which is a third registry beside this one and `PRELUDE_TYPE_MISMATCHES`,
+    /// and a table agreeing with a declaration is the shape that produced the
+    /// original defect.
     ///
     /// `arg_at` is the control, and it is why this cannot simply ban the literal
     /// everywhere: it returns `""` out of range ON PURPOSE and declares
@@ -1854,7 +1887,7 @@ mod tests {
     /// DECLARATION, which is what makes this a check on the pair rather than on
     /// the text.
     #[test]
-    fn test_owned_wrappers_never_return_borrowed_storage() {
+    fn test_no_owned_wrapper_returns_a_string_literal() {
         let prelude = emitted_prelude();
         let mut offenders: Vec<String> = Vec::new();
 
@@ -1871,9 +1904,11 @@ mod tests {
             let body = &prelude[body_start..end];
 
             for value in returned_values(body) {
-                // A string literal is the only returnable expression that is
-                // storage the callee did not produce. `""` is the one that has
-                // actually occurred; any literal is rejected.
+                // A string literal is ONE way to return storage the callee did
+                // not produce — not the only one. `""` is the one that has
+                // actually occurred, four times; any literal is rejected. A
+                // returned parameter or static buffer is the same defect and is
+                // invisible here; see the note above the test.
                 if value.starts_with('"') {
                     offenders.push(format!("__pd_{} returns the literal {}", b.name, value));
                 }
@@ -1882,15 +1917,18 @@ mod tests {
 
         assert!(
             offenders.is_empty(),
-            "a built-in declared ReturnMode::Owned hands back storage it did not \
-             allocate. src/ownership/borrow_checker.rs derives its signatures from \
-             this table, so the ownership model is wrong on that branch:\n  {}",
+            "a built-in declared ReturnMode::Owned returns a string LITERAL, which \
+             is static storage it did not allocate. src/ownership/borrow_checker.rs \
+             derives its signatures from this table, so the ownership model is \
+             wrong on that branch. (This test sees only literal returns; a returned \
+             parameter or static buffer would be the same defect and is not \
+             checked by anything.):\n  {}",
             offenders.join("\n  ")
         );
     }
 
     /// The control for the test above: `arg_at` DOES return a literal, and must,
-    /// because it is `BorrowedStatic`. Without this, the scan above could be
+    /// because it is `BorrowedStatic`. Without this, the literal scan could be
     /// passing because it never finds a literal anywhere — the same "green by
     /// looking at nothing" this milestone exists to remove.
     #[test]

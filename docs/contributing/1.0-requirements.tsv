@@ -82,7 +82,15 @@
 #               written at all. A `blocked` row is not work; it is a question.
 #
 # status: satisfied | owed | blocked
-#   satisfied   the evidence exists and is green TODAY (2026-08-22, 7484bac).
+#   satisfied   the evidence exists and is green — as of whenever the cited
+#               evidence was last RUN, which is what `make m2-exit` inventory
+#               four reports and what step 3 of the specification in
+#               MILESTONES.md would make mechanical. This line used to read
+#               "green TODAY (2026-08-22, 7484bac)": a date-and-sha assertion
+#               in a manifest is a claim that expires, and that one had, three
+#               commits and one day later. Do not put another one here — the
+#               freshness of a row's evidence is a property of the last run,
+#               not of a string in this file.
 #   owed        the evidence does not exist or does not pass.
 #   blocked     cannot be specified until the named decision is made.
 #
