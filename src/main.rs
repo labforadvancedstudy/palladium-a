@@ -129,15 +129,15 @@ fn compile_file(
 
                 println!("🔗 Linking with gcc ({})...", opt.flag());
 
-                let gcc_output = palladium::linker::link_command(&c_path, &output_path, opt)
-                    .map_err(|e| e.to_string())?
-                    .output()
-                    .map_err(|e| format!("Failed to run gcc: {}", e))?;
-
-                if !gcc_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&gcc_output.stderr);
-                    return Err(format!("gcc compilation failed:\n{}", stderr));
-                }
+                // One `if` here answered three questions with one string: stderr
+                // was read only when the status was nonzero (so warnings were
+                // discarded — the segfaulting program in `src/linker.rs`'s module
+                // comment compiled clean right here), and every nonzero status
+                // became `gcc compilation failed` (so a killed gcc read as a
+                // rejection). `linker::link` separates them; `report_link` says
+                // WHICH through the exit code, which no fixture text can forge.
+                let n = palladium::linker::link(&c_path, &output_path, opt);
+                palladium::linker::report_notes(&n.unwrap_or_else(|e| report_link(e)));
 
                 println!("   Created executable: {}", output_path.display());
             }
@@ -155,7 +155,14 @@ fn run_file(path: &Path, llvm: bool, opt: OptLevel, _args: Vec<String>) -> Resul
         driver = driver.with_llvm();
     }
 
-    driver.compile_and_run(path).map_err(|e| e.to_string())
+    // `compile_and_run_reporting`, not `compile_and_run`: the latter collapses
+    // a link verdict and a dead child into one `CompileError`, and this is the
+    // command that actually EXECUTES what the link stage let through. See
+    // `report_run` at the end of this file.
+    driver
+        .compile_and_run_reporting(path)
+        .unwrap_or_else(|o| report_run(o));
+    Ok(())
 }
 
 fn new_package(name: &str, path: Option<&Path>, _lib: bool) -> Result<(), String> {
@@ -198,7 +205,11 @@ fn build_package(release: bool, _llvm: bool) -> Result<(), String> {
 
 fn run_package(release: bool, args: Vec<String>) -> Result<(), String> {
     let pm = PackageManager::new().map_err(|e| e.to_string())?;
-    pm.run(args, release).map_err(|e| e.to_string())
+    // `run_reporting`, for the reason `run_file` uses it: this command runs the
+    // program, and the outer handler exits 1 for every error it is given.
+    pm.run_reporting(args, release)
+        .unwrap_or_else(|o| report_run(o));
+    Ok(())
 }
 
 fn add_dependency(
@@ -304,4 +315,46 @@ fn handle_bootstrap_command(command: BootstrapCommands) -> Result<(), String> {
             compiler.compile(&file).map_err(|e| e.to_string())
         }
     }
+}
+
+/// Report a link-stage failure and leave, with the exit code that says WHICH.
+///
+/// WHY THIS DOES NOT GO THROUGH `main`'s ERROR PATH. That path takes a `String`
+/// and always exits 1, which is the flattening this change exists to undo: a
+/// gcc that rejected our C, a gcc that was killed, and a gcc that warned about
+/// C we should never have emitted would arrive as one status and three
+/// sentences, and a shell gate would have to guess by grepping the sentences.
+///
+/// It cannot grep them. gcc echoes the generated C, the generated C carries the
+/// fixture's identifiers, so any marker word this compiler prints is a word a
+/// fixture can arrange to have printed — measured in this repo, where a fixture
+/// containing `Linking` was classified as a link failure by exactly that grep.
+/// The exit code has no route from fixture text, so that is where the
+/// distinction goes. The numbers and their meanings are
+/// `palladium::linker::EXIT_BACKEND_REJECT` / `EXIT_BACKEND_ILL_TYPED` /
+/// `EXIT_TOOLCHAIN` / `EXIT_GCC_UNEXPLAINED`; the human sentence still goes to
+/// stderr, unchanged in wording from before for the rejection case.
+fn report_link(e: palladium::linker::LinkError) -> ! {
+    // Byte-identical to main's handler: only the status carries the new fact.
+    eprintln!("\x1b[1;31merror:\x1b[0m {}", e);
+    process::exit(e.exit_code());
+}
+
+/// Report why `pdc run` did not end in a successful program, and leave.
+///
+/// Same reasoning as `report_link`, one layer out. The addition is the CHILD:
+/// this used to print `Program exited with code: -1` and then return `Ok(())`,
+/// so `pdc run` exited 0 for a program that segfaulted — and for one release of
+/// this branch, for the exact program `pdc compile` had just refused to build.
+fn report_run(o: palladium::driver::RunOutcome) -> ! {
+    use palladium::driver::RunOutcome;
+    let code = o.exit_code();
+    match o {
+        // A child that ran and failed has already printed its own output and
+        // the driver's `⚠️` line. Repeating it as a compiler `error:` would say
+        // the COMPILATION failed, which it did not — the program did.
+        RunOutcome::Child { .. } => {}
+        other => eprintln!("\x1b[1;31merror:\x1b[0m {}", other.into_compile_error()),
+    }
+    process::exit(code);
 }

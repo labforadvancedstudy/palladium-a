@@ -79,8 +79,8 @@ stub_pdc() {
 # Writes C that gcc genuinely refuses, runs a REAL gcc on it, and exits with the
 # code derived from gcc's actual status — the producer half of the contract
 # scripts/conformance.sh consumes, which is what makes this a fault injection
-# rather than a canned string. Codes are fix/gcc-diagnostics-discarded's
-# (src/linker.rs:247-261 at aa63982): 3 refused, 4 ill-typed C, 5 no verdict.
+# rather than a canned string. Codes are src/linker.rs's EXIT_* constants:
+# 3 refused, 4 ill-typed C, 5 no verdict, 6 a verdict nobody could attribute.
 #
 # 126 and 127 map to 5, NOT to 3. A missing or unexecutable gcc is a TOOLCHAIN
 # outcome by this branch's own contract, and calling it a backend rejection
@@ -126,11 +126,11 @@ echo "gcc terminated by a signal" >&2
 if [ "$st" -ge 128 ] || [ "$st" -eq 126 ] || [ "$st" -eq 127 ]; then exit 5; fi
 exit 3'
 
-# TODAY'"'"'S REAL pdc: a translation unit, a failed build, and the flattened
-# exit 1 that cannot say which of the two happened (src/main.rs:137-139 emits
-# the same string, and the same status, for a rejected C and for a gcc that
-# died). The gate must under-claim here. This is the regression pin for the
-# accusation being withheld.
+# AN UNSTRUCTURED pdc: a translation unit, a failed build, and a flattened exit
+# 1 that cannot say which of the two happened — one string and one status for a
+# rejected C and for a gcc that died. No longer what this repo's pdc emits; kept
+# as the regression pin for the accusation being withheld when a producer (an
+# older pdc, a third-party one) gives the gate nothing structured.
 stub_no_provenance='#!/bin/sh
 f=$2; stem=`basename "$f" .pd`
 mkdir -p build_output
@@ -139,6 +139,19 @@ echo "Linking with gcc (-O2)..."
 echo "error: gcc compilation failed:" >&2
 echo "build_output/$stem.c:1:25: error: use of undeclared identifier" >&2
 exit 1'
+
+# gcc RAN, exited nonzero, and named no translation unit of ours. Structured —
+# so the filesystem witness is not needed — but NOT an accusation: an undefined
+# symbol from the link stage and a full disk are indistinguishable here, and the
+# producer says so by choosing 6 rather than 3.
+stub_gcc_unexplained='#!/bin/sh
+f=$2; stem=`basename "$f" .pd`
+mkdir -p build_output
+printf "int main(void) { return 0; }\n" > "build_output/$stem.c"
+echo "Linking with gcc (-O2)..."
+echo "error: gcc exited 1 without diagnosing build_output/$stem.c." >&2
+echo "gcc: fatal error: cannot write output: No space left on device" >&2
+exit 6'
 
 # An exit code outside the contract must not be read as a rejection either.
 stub_unknown_code='#!/bin/sh
@@ -961,13 +974,13 @@ run_case "$D"
 expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
 
 # --- the accusation is WITHHELD when the evidence cannot support it ---------
-# `gcc compilation failed` is emitted for every unsuccessful gcc status
-# (src/main.rs:137-139), so it cannot separate "gcc refused our C" from "gcc
-# died". These pin the under-claim: same never-expectable outcome, same red
-# gate, no defect asserted.
+# An UNSTRUCTURED producer emits `gcc compilation failed` for every unsuccessful
+# gcc status, so it cannot separate "gcc refused our C" from "gcc died". These
+# pin the under-claim: same never-expectable outcome, same red gate, no defect
+# asserted.
 start "backend/ambiguous: no structured signal is HARNESS_ERROR, never BACKEND_REJECT"
-# This is TODAY'S REAL pdc. Until fix/gcc-diagnostics-discarded lands, every
-# fixture that reaches this point takes this path.
+# Not this repo's pdc any more — it emits 3/4/5/6. Kept because the gate must
+# still under-claim for any producer that gives it nothing structured.
 D=$(new_repo backendambiguous)
 stub_pdc "$D" "$stub_no_provenance"
 fixture "$D" tests/any.pd "$good_program"
@@ -976,9 +989,39 @@ run_case "$D"
 expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && ok
 
 start "backend/ambiguous: ...and the message says WHY it will not name a defect"
-expect_out "does not say whether gcc REFUSED that C or died" && ok
+expect_out "does not say what happened" && ok
 
 start "backend/ambiguous: ...and no manifest column excuses it either"
+manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
+
+start "backend/unexplained: exit 6 is HARNESS_ERROR, never BACKEND_REJECT"
+# gcc reached a verdict, so this is NOT the toolchain case; pdc could not
+# attribute it, so it is NOT a rejection. The gate must refuse without accusing.
+D=$(new_repo backendunexplained)
+stub_pdc "$D" "$stub_gcc_unexplained"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/unexplained: ...and no manifest column excuses it"
+manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
+
+start "backend/unexplained: ...and the code alone suffices, with no .c on disk"
+# THE FAIL-OPEN THIS CLOSES. Without 6 in the backend_code case, a 6 whose
+# translation unit is missing or differently named falls through to the
+# front-end arm, where `compile` is a stage a manifest row may declare — and the
+# contradiction check that would have caught it greps for `gcc compilation
+# failed`, which the exit-6 message deliberately does not print, because a gate
+# reading that marker reads a claim nobody supported.
+stub_pdc "$D" '#!/bin/sh
+echo "Linking with gcc (-O2)..."
+echo "error: gcc exited 1 without diagnosing anything." >&2
+exit 6'
 manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
 run_case "$D"
 expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok

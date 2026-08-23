@@ -641,10 +641,10 @@ def classify(r: Run, reject_codes=(1,)):
     THE DEFAULT `(1,)` IS A FRONT-END CONTRACT AND NOT A UNIVERSAL ONE. Any code
     outside it becomes a Malfunction, i.e. "the producer did not conclude its
     experiment" — which is the wrong sentence for a producer that concluded at a
-    code this tuple has not been told about. `fix/gcc-diagnostics-discarded`
-    (aa63982, src/linker.rs:247-261) makes pdc exit 3 (gcc refused the
-    translation unit), 4 (pdc emitted ill-typed C) and 5 (gcc never reached a
-    verdict); all three are CONCLUSIONS. Callers that run `pdc` therefore pass
+    code this tuple has not been told about. pdc exits 3 (gcc refused the
+    translation unit), 4 (this compiler shipped ill-typed C), 5 (gcc never
+    reached a verdict) and 6 (a verdict nobody could attribute); all four are
+    CONCLUSIONS. Callers that run `pdc` therefore pass
     PDC_REJECT_CODES, and the two that do are cmd_pdc_verdict and cmd_pdc_reject.
     `cmd_calibrate` deliberately keeps the default: its whole job is to MEASURE
     that a front-end rejection is exit 1 on this platform, so widening what it
@@ -879,30 +879,43 @@ def clear_emitted_c(file: str, cwd=None) -> Path:
     return tu
 
 
-# pdc's exit code, on `fix/gcc-diagnostics-discarded` (aa63982). Read from that
-# branch's src/linker.rs:247-261 and its LinkError variants, not from a summary:
+# pdc's exit code. Read src/linker.rs's EXIT_* constants and LinkError variants,
+# not a summary of them:
 #
-#   3 EXIT_BACKEND_REJECT      LinkError::GccFailed  — gcc ran to completion and
-#                              exited nonzero: it REFUSED the translation unit.
-#   4 EXIT_BACKEND_ILL_TYPED   LinkError::IllTypedC  — gcc exited 0 and diagnosed
-#                              C that pdc generated. An ICE; no Palladium program
-#                              asks for ill-typed C. Also a compiler defect.
-#   5 EXIT_TOOLCHAIN           LinkError::Toolchain | GccDied — gcc could not be
-#                              spawned, or was killed by a signal. It never
-#                              reached a verdict, so nothing is established
-#                              about the C and nothing may be claimed about it.
+#   3 EXIT_BACKEND_REJECT      LinkError::GccRejected — gcc ran to completion,
+#                              exited nonzero, AND attributed an error to the
+#                              translation unit we handed it.
+#   4 EXIT_BACKEND_ILL_TYPED   LinkError::IllTypedC — gcc exited 0 and diagnosed
+#                              ill-typed C that this compiler shipped, whether
+#                              generated or in its own runtime. An ICE.
+#   5 EXIT_TOOLCHAIN           LinkError::Toolchain | GccAbnormal — gcc could not
+#                              be spawned, or terminated abnormally. It never
+#                              reached a verdict, so nothing is established.
+#   6 EXIT_GCC_UNEXPLAINED     LinkError::GccUnexplained — gcc reached a verdict
+#                              and pdc could not attribute it. An undefined
+#                              symbol from the link stage lands here, and so does
+#                              a full disk; refused, and blamed on nobody.
 #
 # AN EXIT CODE, NOT A STRING, and that is the whole point. `gcc compilation
 # failed` was emitted for every unsuccessful gcc status, so it could not separate
 # "gcc refused our C" from "gcc died" — and a fixture's own text can reach a log,
-# where an exit code has no route from fixture text at all. Today's pdc exits 1
-# for all of these, which is UNRESOLVED and under-claims by design.
+# where an exit code has no route from fixture text at all.
 BACKEND_REJECT_CODES = (3, 4)
 BACKEND_TOOLCHAIN_CODE = 5
+# gcc RAN TO COMPLETION AND SAID NO, AND pdc CANNOT SHOW IT WAS ABOUT OUR C.
+# Distinct from 5, which is "gcc never reached a verdict at all", and distinct
+# from 3, which requires an `error:` attributed to the translation unit we
+# handed gcc. A full disk, an unwritable output path, a missing assembler, an
+# ICE in gcc itself — and, importantly, an ordinary undefined-symbol LINK
+# failure, which is a real codegen defect carrying no `file:line` for our .c and
+# therefore not attributable by the producer. So 6 is NOT exotic: it is the
+# resting place of a whole ordinary defect class, and a consumer that has never
+# heard of it gives the operator less than it did before these codes existed.
+BACKEND_UNEXPLAINED_CODE = 6
 # Every code that is a STATEMENT BY THE PRODUCER about what happened after
 # codegen. Each is conclusive ON ITS OWN — see backend_reached(), and the
 # conjunction it deliberately is not.
-BACKEND_CODES = BACKEND_REJECT_CODES + (BACKEND_TOOLCHAIN_CODE,)
+BACKEND_CODES = BACKEND_REJECT_CODES + (BACKEND_TOOLCHAIN_CODE, BACKEND_UNEXPLAINED_CODE)
 # Structured rejections are CONCLUDED experiments, not malfunctions. Without
 # them in reject_codes the first fixture to exit 3 would be reported by
 # `make stdlib-gate` as "pdc MALFUNCTIONED", turning a real backend defect into
@@ -910,7 +923,12 @@ BACKEND_CODES = BACKEND_REJECT_CODES + (BACKEND_TOOLCHAIN_CODE,)
 # place. Nothing in the corpus reaches these codes today (measured on the
 # sibling branch: 191 .pd files, zero verdict changes), so this is forward
 # compatibility, not a live change.
-PDC_REJECT_CODES = (1, 3, 4, 5)
+# 6 is a CONCLUDED experiment for the same reason 3, 4 and 5 are: the producer
+# made a statement about what happened after codegen. Withholding its output as
+# a Malfunction would be the defect named two comments up, in the one arm whose
+# whole content is "pdc could not establish why" — the case where the operator
+# needs the text MOST.
+PDC_REJECT_CODES = (1, 3, 4, 5, 6)
 
 
 BACKEND_VERDICTS = ("BACKEND_REJECT", "BACKEND_UNRESOLVED")
