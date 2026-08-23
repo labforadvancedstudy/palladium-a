@@ -1,7 +1,7 @@
 // Lexical scanner for Palladium
 // "Reading the runes of modern sorcery"
 
-use super::token::Token;
+use super::token::{escape_spellings, LexError, Token};
 use crate::errors::{CompileError, Result, Span};
 use logos::{Lexer as LogosLexer, Logos};
 
@@ -34,21 +34,31 @@ impl<'a> Lexer<'a> {
                 let span = Span::new(start_pos, end_pos, line, col);
                 Ok(Some((token, span)))
             }
-            Some(Err(_)) => {
+            Some(Err(e)) => {
                 let span = self.inner.span();
                 let start_pos = span.start;
                 let (line, col) = self.position_at(start_pos);
-                let ch = self.source.chars().nth(start_pos).unwrap_or('?');
-                Err(CompileError::UnexpectedChar {
-                    ch,
-                    line,
-                    col,
-                    span: Some(crate::errors::Span::new(
-                        start_pos,
-                        start_pos + 1,
-                        line,
-                        col,
-                    )),
+                let here = Span::new(start_pos, span.end.max(start_pos + 1), line, col);
+                Err(match e {
+                    LexError::UnexpectedChar => {
+                        let ch = self.source[start_pos..].chars().next().unwrap_or('?');
+                        CompileError::UnexpectedChar {
+                            ch,
+                            line,
+                            col,
+                            span: Some(Span::new(start_pos, start_pos + 1, line, col)),
+                        }
+                    }
+                    LexError::UnterminatedBlockComment => {
+                        CompileError::unterminated_block_comment(here)
+                    }
+                    LexError::UnknownEscape(c) => {
+                        CompileError::unknown_escape(c, &escape_spellings(), here)
+                    }
+                    LexError::EmptyCharLiteral => CompileError::SyntaxError {
+                        message: "empty character literal: `''` has no character in it".to_string(),
+                        span: Some(here),
+                    },
                 })
             }
             None => Ok(None),

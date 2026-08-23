@@ -29,7 +29,17 @@ fn main() {
         print("false works");
     }
     
-    // Special string escape
+    // Special string escape. `\0` IS a NUL byte (N2-09); before that landed it
+    // was passed through as the two characters `\` and `0`, and this fixture's
+    // transcript recorded the wrong bytes.
+    //
+    // The transcript now ends at `null`, and that is CORRECT rather than a
+    // truncation bug: a Palladium String is a non-NULL, NUL-terminated
+    // `const char*` (N14, src/builtins.rs), so a NUL inside a literal ends the
+    // string for every operation that consumes one — `print` here, and
+    // `string_len` equally. Whether a `\0` in a STRING literal should instead be
+    // refused outright is an open question for N2; it is written down in
+    // docs/specification/language-spec.md A2 rather than decided here.
     let null_char = "null\0terminator";
     print(null_char);
 }

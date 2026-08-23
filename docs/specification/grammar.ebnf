@@ -19,8 +19,12 @@
 # where-clauses, trait bounds, closures, slices, tuple expressions, `loop`,
 # compound assignment, bitwise operators, `as` casts, labelled breaks,
 # range-inclusive, float and char literals, and `else if` inline, as though they
-# parsed. None of them do. Widening Part A to match the specification would
+# parsed. None of them did. Widening Part A to match the specification would
 # reintroduce that lie; the separation is the fix.
+#
+# Two of that list have since MOVED, by being implemented rather than by being
+# re-described: float and char literals are in Part A below (N2-03, N2-04). The
+# rest are still in Part B.
 #
 # Notation:  |  alternation   ()  grouping   []  optional   {}  zero or more
 
@@ -30,7 +34,11 @@
 
 whitespace     = ' ' | '\t' | '\n' | '\r' ;
 line_comment   = "//" { any_char - '\n' } ;
-block_comment  = "/*" { any_char } "*/" ;
+
+# Block comments NEST (N2-08): an inner "*/" closes the inner "/*", not the
+# outer one, and a "/*" that nothing closes is an error rather than a comment
+# to end of file.
+block_comment  = "/*" { any_char - "/*" - "*/" | block_comment } "*/" ;
 
 identifier     = ( letter | '_' ) { letter | digit | '_' } ;
 letter         = 'a'..'z' | 'A'..'Z' ;
@@ -42,12 +50,20 @@ integer        = [ '-' ] digit { digit } ;
 
 string         = '"' { string_char | escape } '"' ;
 string_char    = any_unicode - '"' - '\' ;
-escape         = '\' ( 'n' | 't' | 'r' | '"' | '\' ) ;
+char           = "'" ( any_unicode - "'" - '\' | escape ) "'" ;
+
+# CLOSED. A backslash followed by anything else is a compile error, not a
+# pass-through: "\q" used to lex as the two characters \ and q.
+escape         = '\' ( 'n' | 't' | 'r' | '"' | '\' | '0' | "'" ) ;
 
 boolean        = "true" | "false" ;
 
-# There are no float, char, hex, binary or octal literals, no numeric
-# separators, no raw strings, and no string interpolation.
+# The sign is part of the float token too, so `x-1.5` lexes as `x` then `-1.5`.
+# One convention with the integer rule above, not two.
+float          = [ '-' ] digit { digit } '.' digit { digit } ;
+
+# There are no hex, binary or octal literals, no numeric separators, no raw
+# strings, and no string interpolation. `\xNN` and `\u{}` are not escapes.
 
 keyword        = "fn" | "let" | "mut" | "if" | "else" | "while" | "return"
                | "true" | "false" | "for" | "in" | "break" | "continue"
@@ -64,7 +80,13 @@ operator       = '+' | '-' | '*' | '/' | '%' | '=' | "==" | "!=" | '!'
 # Absent from the lexer: += -= *= /= %=, | ^ ~ << >>, ..= .
 
 punctuation    = '(' | ')' | '{' | '}' | '[' | ']' | ';' | ',' | ':' | '.'
-               | ".." | "->" | "::" | '_' | "=>" | '\'' | '?' ;
+               | ".." | "->" | "::" | '_' | "=>" | '\'' | '?' | '#' | "#!" ;
+
+# Attributes LEX (N2-10) and every one of them is then REFUSED (N2-11): the set
+# of attributes the compiler implements is empty, so `#[total]` is a compile
+# error naming `total`. Both rules are in Part A because the parser accepts the
+# SHAPE; nothing accepts the name.
+attribute      = ( '#' | "#!" ) '[' identifier [ '(' { token } ')' ] ']' ;
 
 # =============================================================================
 # Program
@@ -325,11 +347,14 @@ effect_decl     = "effect" identifier "{" field { "," field } "}" ;
 
 # ---- Types (spec N4) ---------------------------------------------------------
 
-float_literal   = digit { digit } "." digit { digit } ;
-char_literal    = "'" ( char | escape ) "'" ;
+# float_literal and char_literal MOVED TO PART A (N2-03, N2-04): the parser
+# accepts both. `f32`/`f64` and `char` as TYPE NAMES are a separate matter --
+# `f32` and `f64` parse; `char` does not, because a char literal's type is i64
+# until N4-04 and N14-04 move together.
 slice_type      = "[" type "]" ;
 fn_type         = "fn" "(" [ type { "," type } ] ")" [ "->" type ] ;
-# Primitives absent from the implemented table: f32 f64 char str u8 usize
+# Primitives absent from the implemented table: char str u8 usize
+# (f32 and f64 are implemented; see N2-03/N4-02.)
 
 # ---- Generics and traits (spec N10) ------------------------------------------
 # Part A accepts only bare names inside <...>, and reclassifies an all-uppercase

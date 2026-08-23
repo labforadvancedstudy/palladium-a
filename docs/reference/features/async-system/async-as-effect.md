@@ -264,24 +264,24 @@ citations in `language-spec.md` before this change were taken from the pre-clean
 `f323cf1` and no longer pointed at the code they named; they are corrected in the annex.
 
 **1. The surface syntax took the Rust-shaped path this design rejects.**
-`async` and `await` are keywords in the lexer (`src/lexer/token.rs:111-115`), the grammar's
-`function` production carries an optional `async` (`docs/specification/grammar.ebnf:91`), `.await`
-is a postfix operator (`docs/specification/grammar.ebnf:216`), and the keyword list names both
-(`docs/specification/grammar.ebnf:56`). The parser sets `Function.is_async` from that keyword
-(`src/parser/mod.rs:791`, `src/parser/mod.rs:802`). The implementation therefore offers exactly the two things this
+`async` and `await` are keywords in the lexer (`src/lexer/token.rs:269-273`), the grammar's
+`function` production carries an optional `async` (`docs/specification/grammar.ebnf:113`), `.await`
+is a postfix operator (`docs/specification/grammar.ebnf:238`), and the keyword list names both
+(`docs/specification/grammar.ebnf:72`). The parser sets `Function.is_async` from that keyword
+(`src/parser/mod.rs:957`, `src/parser/mod.rs:968`). The implementation therefore offers exactly the two things this
 document says the language does not have: an `async` marker and an await operator.
 
 **2. Effects are inferred, but the result is print-only — it gates nothing.**
 The parser hardcodes `Function.effects` to `None`, commented "Effects will be inferred during
-analysis" (`src/parser/mod.rs:1099`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
+analysis" (`src/parser/mod.rs:1265`). An effect analyser exists (`src/effects/mod.rs`, 409 lines;
 `Effect` enum at `src/effects/mod.rs:16-29`, `analyze_function` at `src/effects/mod.rs:151`) and it does union effects across
-statements and calls (`src/effects/mod.rs:263`). But `crate::effects::` is referenced from exactly one place in
+statements and calls (`src/effects/mod.rs:266`). But `crate::effects::` is referenced from exactly one place in
 the compiler — `src/driver/mod.rs:172` — and all the driver does with the result is `println!` it
 (`src/driver/mod.rs:176`). No later phase reads it. It cannot reject a program, cannot change
 codegen, and cannot schedule anything.
 
 **3. Propagation to callers is order-dependent, and unknown callees are assumed pure.**
-`src/effects/mod.rs:280-284` looks a callee's effects up in a map populated only as functions are
+`src/effects/mod.rs:283-287` looks a callee's effects up in a map populated only as functions are
 analysed, in source order, with the fallback comment "If function is unknown, we conservatively
 assume it's pure". Assuming purity is the unsound direction: a function defined below its caller
 contributes no effects to that caller. The definition requires propagation to be a fixed point
@@ -297,13 +297,13 @@ scheduler.
 
 **6. Effect contexts do not exist.** There is no `with`, no `effect` item, no `effect::sync`, and
 no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
-(`docs/specification/grammar.ebnf:58-59`).
+(`docs/specification/grammar.ebnf:74-75`).
 
 **7. `.await` is refused, and the lowering that used to be here is deleted.**
 Codegen for an await expression returns `await_unimplemented` at the construct's own span
-(`src/codegen/mod.rs:3298-3303`), and the type checker refuses it before that
-(`src/typeck/mod.rs:2911-2911`). `?` is the same shape: refused in codegen
-(`src/codegen/mod.rs:3286-3290`) and in the type checker (`src/typeck/mod.rs:2904-2904`).
+(`src/codegen/mod.rs:3329-3334`), and the type checker refuses it before that
+(`src/typeck/mod.rs:2974-2974`). `?` is the same shape: refused in codegen
+(`src/codegen/mod.rs:3317-3321`) and in the type checker (`src/typeck/mod.rs:2967-2967`).
 
 *Historical, and the reason those refusals exist — this paragraph described it in the present
 tense until D5 was fixed.* Codegen used to emit `while (!<tmp>.poll(&<tmp>)) { }` and then read
@@ -313,7 +313,7 @@ that IS generated is the free function `<name>_poll`, which that call never name
 an error at any earlier stage — it was silent breakage discovered by the C compiler, which is the
 failure mode `language-spec.md` §6.5 recorded. Both lowerings are gone: searching
 `src/codegen/mod.rs` for `poll(&` and `struct Result` now matches only the two comments that
-explain why the arms refuse (`src/codegen/mod.rs:3288-3288`, `src/codegen/mod.rs:3300-3300`).
+explain why the arms refuse (`src/codegen/mod.rs:3319-3319`, `src/codegen/mod.rs:3331-3331`).
 
 Direction of travel: making `.await` a hard compile error is *consistent* with this document,
 because `.await` is not part of the language. The end state is that neither `async` nor `await` is

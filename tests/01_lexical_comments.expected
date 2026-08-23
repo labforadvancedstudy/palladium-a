@@ -2,7 +2,9 @@ Testing comments
 Inline comment test
 After block comment
 After multi-line block
-After single block comment
+After nested block comment
+After three-deep nesting
 42
+not a comment: /* */
 String without inline comment
 Comments test complete

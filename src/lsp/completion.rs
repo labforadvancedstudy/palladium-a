@@ -544,6 +544,8 @@ impl LanguageServer {
             Type::I64 => "i64".to_string(),
             Type::U32 => "u32".to_string(),
             Type::U64 => "u64".to_string(),
+            Type::F64 => "f64".to_string(),
+            Type::F32 => "f32".to_string(),
             Type::Bool => "bool".to_string(),
             Type::String => "String".to_string(),
             Type::Unit => "()".to_string(),

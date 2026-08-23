@@ -1322,11 +1322,18 @@ def strip_literals(text: str) -> str:
     `'` as a quote consumes from the tick to end of file and the lifetime probe can then
     never fire. A char literal is `'x'` or `'\\x'`; anything else starting `'` is a tick.
 
-    Block comments DO NOT NEST, because bootstrap/pdc.pd:164-175 shows the compiler
-    scanning for the first `*/` and breaking, with no depth counter. N2 requires nesting
-    and the compiler does not implement it (requirement N2-08). A gate that nested would
-    disagree with the compiler about whether a real `async` is commented out; a self-test
-    case pins this so the two flip in lockstep when N2-08 lands.
+    Block comments NEST, because the compiler that reads the sources this gate scores
+    nests them: N2-08 landed, and `slash_or_comment` in src/lexer/token.rs counts depth.
+    THE GATE MODELS THE COMPILER, so it flipped in the same commit — a gate that did not
+    nest would now disagree with the compiler about whether a real `async` is commented
+    out, which is the same disagreement in the other direction.
+
+    The compiler this models is the RUST `pdc`, which is what compiles bootstrap/pdc.pd
+    and the witness. `bootstrap/pdc.pd`'s own hand-written scanner still stops at the
+    first close with no depth counter; that divergence is recorded in
+    docs/specification/bootstrap-subset.md rather than papered over here, and it is not
+    observable: no PBS-1 source contains a nested comment, so the two scanners agree on
+    every input that exists.
     """
     out: list[str] = []
     i, n = 0, len(text)
@@ -1350,8 +1357,23 @@ def strip_literals(text: str) -> str:
             while i < n and text[i] != "\n":
                 i += 1
         elif text.startswith("/*", i):
-            j = text.find("*/", i + 2)
-            i = n if j < 0 else j + 2
+            # Depth-counted, matching the compiler. A regular expression cannot do
+            # this, which is why the compiler needed a callback and why this needed a
+            # loop. An unterminated comment consumes to end of file rather than
+            # raising: the compiler reports it as an error, and this scanner's only
+            # question is "is this token live source", for which "no" is the right
+            # answer either way.
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth += 1
+                    j += 2
+                elif text.startswith("*/", j):
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            i = j
             out.append(" ")
         else:
             out.append(c)
@@ -1385,13 +1407,13 @@ ASYNC_TOKEN = re.compile(r"(?:^|[^A-Za-z_0-9])(async|await)(?:[^A-Za-z_0-9]|$)")
 
 # `ref<'a> T` is the ONE place N9 permits a region name, so it is exempt — with an
 # identifier boundary, because without one `myref<'a>` was rewritten to `my` and the
-# forbidden list vanished. WHITESPACE IS INSIGNIFICANT between tokens: grammar.ebnf:129
+# forbidden list vanished. WHITESPACE IS INSIGNIFICANT between tokens: grammar.ebnf:151
 # is `generic_params = '<' generic_param …`, and `fn f< 'a>(x: i64)` compiles today, so
 # an adjacency-only `<'` misses a real lifetime parameter list.
 REF_REGION = re.compile(r"(?<![A-Za-z_0-9])ref\s*<\s*'[A-Za-z_0-9]*\s*>")
 LIFETIME_LIST = re.compile(r"<\s*'")
 
-# grammar.ebnf:91-92 is `"fn" identifier [ generic_params ] '('`, so the generic
+# grammar.ebnf:113-114 is `"fn" identifier [ generic_params ] '('`, so the generic
 # parameter list is OPTIONAL AND MUST BE MATCHED. Without it `fn generic<T>(x: T)`
 # matched nothing at all: the function was not in `bodies`, so it was neither a
 # reachable target nor a caller — invisible in both directions.
@@ -1572,7 +1594,7 @@ def p_has_ref_param(src: str) -> tuple[bool, str]:
 # ANY `|` TOKEN, and the claim is now true in both directions. The bounded-pair form was
 # wrong twice at once: `a || b` — the ordinary logical-or — matched it and produced a
 # false refusal, and a parameter list longer than the bound escaped it and produced a
-# false answer. grammar.ebnf:353 puts a closure behind `|`, and `|` has no other use in
+# false answer. grammar.ebnf:378 puts a closure behind `|`, and `|` has no other use in
 # the language today (bitwise-or is unimplemented, A2), so refusing on the token is exact
 # now and conservative later: when bitwise-or lands, this refuses programs it need not,
 # which is a wrong exit-2 rather than a wrong verdict, and it is GI-11's job to remove it.
@@ -2221,7 +2243,14 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
-EXPECTED_CASE_SHA = "1dd2b6838eafd12ff5af1ac4ed9d82fd56a40d2f618d88ff99619606d657146d"
+# RE-PINNED at N2-08 (fix/m2-lexical), deliberately and for a named reason: the
+# three `strip_literals` block-comment cases were rewritten to assert NESTING,
+# which is what the old ones existed to force. Two case LABELS changed and one
+# case was ADDED -- `...and a real `async` AFTER the outer close is still FOUND`
+# -- because nesting introduces a way for the probe to become one that can never
+# fire, which is F12's defect in the other direction and needed its own control.
+# Previous digest: 1dd2b6838eafd12ff5af1ac4ed9d82fd56a40d2f618d88ff99619606d657146d
+EXPECTED_CASE_SHA = "2bc2aabdaf20c2b8e4f47bdf684ddd9306bbe6c8035be00dc03d1248893c47ca"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -2868,7 +2897,7 @@ def self_test() -> int:
          _why(_drive(witness_b=GOOD_WITNESS + "async fn g() { }\n")), '1 RED=TH-01,TH-06')
     case("`fn q<'a>` goes RED",
          _why(_drive(witness_b=GOOD_WITNESS + "fn q<'a>(x: i64) -> i64 { return x; }\n")), '1 RED=TH-02,TH-06')
-    case("`fn q< 'a>` SPACED goes RED — grammar.ebnf:129, and it compiles today",
+    case("`fn q< 'a>` SPACED goes RED — grammar.ebnf:151, and it compiles today",
          _why(_drive(witness_b=GOOD_WITNESS + "fn q< 'a>(x: i64) -> i64 { return x; }\n")), '1 RED=TH-02,TH-06')
     case("`myref<'a>` goes RED — the ref<'…> exemption needs an identifier boundary",
          _why(_drive(witness_b=GOOD_WITNESS + "fn myref<'a>(x: i64) -> i64 { return x; }\n")), '1 RED=TH-02,TH-06')
@@ -4246,16 +4275,21 @@ def self_test() -> int:
          provably_dead({"caller": "callee();", "callee": "return 1;", "main": ""},
                        "callee"), False, drives_main=False)
 
-    # THE CLAIMED CONTROL THAT DID NOT EXIST. `strip_literals`' docstring said a self-test
-    # case pinned non-nesting so the gate and the compiler flip together at N2-08. Nothing
-    # pinned it. It does now, and the claim is true for the first time.
-    case("SOUND: block comments do NOT nest, matching bootstrap/pdc.pd — the inner `*/` "
-         "ends the comment and what follows is live source",
-         strip_literals("/* outer /* inner */ async fn g() { }").strip(),
-         "async fn g() { }", drives_main=False)
-    case("...so a real `async` after an inner close is FOUND, which is how the gate and "
-         "the compiler stay in lockstep until N2-08 lands",
-         p_no_async_token(strip_literals("/* a /* b */ async fn g() { }"))[0], False,
+    # THE CONTROL THAT FLIPPED WITH N2-08. It was written to pin NON-nesting so that the
+    # gate and the compiler would move together the day the compiler nested. They did:
+    # these are the other side of the same case, and every one of them is RED against a
+    # `strip_literals` that stops at the first close.
+    case("SOUND: block comments NEST, matching the compiler — the inner close ends the "
+         "INNER comment, so the whole construct is comment and nothing inside survives",
+         strip_literals("/* outer /* inner */ async fn g() { } */").strip(),
+         "", drives_main=False)
+    case("...so an `async` between an inner close and the outer one is NOT found, which "
+         "is how the gate and the compiler stay in lockstep now that N2-08 has landed",
+         p_no_async_token(strip_literals("/* a /* b */ async fn g() { } */"))[0], True,
+         drives_main=False)
+    case("...and a real `async` AFTER the outer close is still FOUND, so nesting did not "
+         "turn the probe into one that can never fire (F12)",
+         p_no_async_token(strip_literals("/* a /* b */ */ async fn g() { }"))[0], False,
          drives_main=False)
 
     print("\n  the machine contract Make cannot carry")
@@ -4550,8 +4584,10 @@ def self_test() -> int:
     case("a char literal '<' is not a lifetime",
          p_no_lifetime_param_list(strip_literals("fn f() { let x = '<'; }"))[0], True,
          drives_main=False)
-    case("block comments do NOT nest, matching bootstrap/pdc.pd:164-175 (flips with N2-08)",
-         "async" in strip_literals("/* a /* b */ async fn f() {} */"), True,
+    case("block comments NEST, matching src/lexer/token.rs `slash_or_comment` (flipped "
+         "with N2-08; bootstrap/pdc.pd's own scanner still does not, and no PBS-1 source "
+         "contains a nested comment for them to disagree about)",
+         "async" in strip_literals("/* a /* b */ async fn f() {} */"), False,
          drives_main=False)
     case("an unterminated comment does not crash the lexer",
          isinstance(strip_literals("/* unterminated"), str), True, drives_main=False)

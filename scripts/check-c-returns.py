@@ -67,7 +67,7 @@ build_output/, and read in src/codegen/mod.rs)
             2690 `#include`, 1614 `#define`, 684 `struct`/`enum`/`typedef`
             openers. No other shape occurs.
     cmd: grep -nE "goto|switch|#if|#ifdef|__attribute__" src/codegen/mod.rs
-         -> 1 line, src/codegen/mod.rs:765, and it is a PROTOTYPE
+         -> 1 line, src/codegen/mod.rs:788, and it is a PROTOTYPE
             (`static void __pd_init() __attribute__((constructor));`), not a
             definition
     cmd: grep -cE "goto |switch|case |#if" build_output/*.c -> 0 in all 538
@@ -176,8 +176,8 @@ is EMPIRICAL over N files, not proved from the generator:
                 i += 1
     print(dict(odd) or "none")     # measured 2026-08-22 over 400 files: none
 
-The source-side support is src/codegen/mod.rs:2162-2170 (`generate_block`) and
-src/codegen/mod.rs:2212- (`generate_statement`, leaf arms ending `";\n"` at
+The source-side support is src/codegen/mod.rs:2191-2199 (`generate_block`) and
+src/codegen/mod.rs:2241- (`generate_statement`, leaf arms ending `";\n"` at
 :2186-2190 and :2191-2198). That is a reading of one function rather than a
 proof over every arm, which is why the empirical sweep is the basis and this is
 the corroboration.
@@ -474,8 +474,8 @@ def unmodelled_construct(items):
             #
             # HOW THAT IS KNOWN, at both strengths, because one of them reads
             # stronger than it is. SOURCE SIDE: `generate_block`
-            # (src/codegen/mod.rs:2162-2170) writes an indent and delegates to
-            # `generate_statement` (src/codegen/mod.rs:2212-), whose leaf arms
+            # (src/codegen/mod.rs:2191-2199) writes an indent and delegates to
+            # `generate_statement` (src/codegen/mod.rs:2241-), whose leaf arms
             # terminate with `";\n"` — `Stmt::Expr` at :2186-2190, `Stmt::Return`
             # at :2191-2198 — while compound arms emit their own `{`-terminated
             # headers. That is a reading of one function, not a proof over every

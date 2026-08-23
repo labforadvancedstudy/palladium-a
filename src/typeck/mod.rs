@@ -20,6 +20,17 @@ pub enum CheckerType {
     Unit,
     String,
     Int,
+    /// `f64` and `f32` (N4-02).
+    ///
+    /// ONE checker type for both widths, deliberately. The checker's job here
+    /// is to keep floats and integers from mixing without a cast, and `as`
+    /// casts do not exist yet (N5, still owed) — so a program cannot construct
+    /// a case where `f32` and `f64` need to be told apart, and a distinction
+    /// the language has no syntax to observe would be a distinction that only
+    /// the compiler's internals could be wrong about. The AST keeps both
+    /// (`Type::F32` / `Type::F64`) because code generation must emit `float`
+    /// or `double`, and that IS observable.
+    Float,
     Bool,
     Array(Box<CheckerType>, ArraySizeValue),
     Function(Vec<CheckerType>, Box<CheckerType>),
@@ -80,6 +91,7 @@ impl From<&crate::ast::Type> for CheckerType {
             crate::ast::Type::Unit => CheckerType::Unit,
             crate::ast::Type::String => CheckerType::String,
             crate::ast::Type::I32 | crate::ast::Type::I64 => CheckerType::Int,
+            crate::ast::Type::F32 | crate::ast::Type::F64 => CheckerType::Float,
             crate::ast::Type::Bool => CheckerType::Bool,
             crate::ast::Type::U32 | crate::ast::Type::U64 => CheckerType::Int,
             crate::ast::Type::Array(elem_type, size) => {
@@ -143,6 +155,7 @@ impl std::fmt::Display for CheckerType {
             CheckerType::Unit => write!(f, "()"),
             CheckerType::String => write!(f, "String"),
             CheckerType::Int => write!(f, "Int"),
+            CheckerType::Float => write!(f, "Float"),
             CheckerType::Bool => write!(f, "Bool"),
             CheckerType::Array(elem_type, size) => match size {
                 ArraySizeValue::Literal(n) => write!(f, "[{}; {}]", elem_type, n),
@@ -567,8 +580,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:674-675`, `src/typeck/mod.rs:699-699`,
-    /// `src/typeck/mod.rs:714-714`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:687-688`, `src/typeck/mod.rs:712-712`,
+    /// `src/typeck/mod.rs:727-727`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -1157,7 +1170,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:714-714`), and walking an imported
+        // return (`src/typeck/mod.rs:727-727`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -2038,6 +2051,24 @@ impl TypeChecker {
         match expr {
             Expr::String(_) => Ok(CheckerType::String),
             Expr::Integer(_) => Ok(CheckerType::Int),
+            Expr::Float(_) => Ok(CheckerType::Float),
+            // A CHAR LITERAL IS AN `Int` HERE, AND THAT IS A RECORDED DECISION
+            // RATHER THAN AN OVERSIGHT.
+            //
+            // N4-04 makes `char` a primitive TYPE and is still `owed`. It
+            // cannot land here first: N14 gives `string_char_at` the signature
+            // `(String, i64) -> char` and `char_is_digit` the signature
+            // `(char) -> bool`, and `src/builtins.rs` implements both over
+            // `i64` today (N14-04, also owed, owned by M2 alongside this). A
+            // `char` type introduced on the literal alone would make `'a'`
+            // unusable with every builtin that consumes a character — the
+            // literal would lex, type, and then have nowhere to go.
+            //
+            // So the literal denotes its Unicode scalar as an integer, which is
+            // what every consumer in the language already speaks, and it does
+            // so with the RIGHT value (`'a'` is 97): `tests/02_types_chars.pd`
+            // asserts the bytes, not just that it compiles.
+            Expr::Char(_) => Ok(CheckerType::Int),
             Expr::Bool(_) => Ok(CheckerType::Bool),
             Expr::Ident(name) => {
                 // First check if it's a variable
@@ -2191,6 +2222,7 @@ impl TypeChecker {
                         // Addition can work for both Int and String (concatenation)
                         match (&left_type, &right_type) {
                             (CheckerType::Int, CheckerType::Int) => Ok(CheckerType::Int),
+                            (CheckerType::Float, CheckerType::Float) => Ok(CheckerType::Float),
                             (CheckerType::String, CheckerType::String) => Ok(CheckerType::String),
                             _ => {
                                 // For Add, we expect both operands to have the same type
@@ -2200,15 +2232,24 @@ impl TypeChecker {
                                         found: right_type.to_string(),
                                         span: None,
                                     })
-                                } else if left_type == CheckerType::Int {
+                                } else if left_type == CheckerType::Int
+                                    || left_type == CheckerType::Float
+                                {
+                                    // NO IMPLICIT WIDENING. `1 + 2.5` is a type
+                                    // error and not an f64: C would convert
+                                    // silently, and a language with no `as`
+                                    // cast yet (N5, owed) would then have a
+                                    // conversion nobody can see and nobody can
+                                    // write. Naming the two types is the whole
+                                    // diagnostic.
                                     Err(CompileError::TypeMismatch {
-                                        expected: "Int".to_string(),
+                                        expected: left_type.to_string(),
                                         found: right_type.to_string(),
                                         span: None,
                                     })
                                 } else {
                                     Err(CompileError::TypeMismatch {
-                                        expected: "Int or String".to_string(),
+                                        expected: "Int, Float or String".to_string(),
                                         found: left_type.to_string(),
                                         span: None,
                                     })
@@ -2216,8 +2257,30 @@ impl TypeChecker {
                             }
                         }
                     }
-                    BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                        // Other arithmetic operations require both operands to be Int
+                    BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                        // Arithmetic over one numeric type, with no mixing.
+                        match (&left_type, &right_type) {
+                            (CheckerType::Int, CheckerType::Int) => Ok(CheckerType::Int),
+                            (CheckerType::Float, CheckerType::Float) => Ok(CheckerType::Float),
+                            (CheckerType::Int, _) | (CheckerType::Float, _) => {
+                                Err(CompileError::TypeMismatch {
+                                    expected: left_type.to_string(),
+                                    found: right_type.to_string(),
+                                    span: None,
+                                })
+                            }
+                            _ => Err(CompileError::TypeMismatch {
+                                expected: "Int or Float".to_string(),
+                                found: left_type.to_string(),
+                                span: None,
+                            }),
+                        }
+                    }
+                    BinOp::Mod => {
+                        // `%` is integer-only. C's `%` does not accept a double
+                        // at all (it is `fmod`, a library call), so accepting
+                        // Float here would emit C that gcc rejects — the class
+                        // of defect D5 was closed for.
                         if left_type != CheckerType::Int {
                             return Err(CompileError::TypeMismatch {
                                 expected: "Int".to_string(),
@@ -2890,7 +2953,7 @@ impl TypeChecker {
             // program that satisfied the old type rules failed inside gcc —
             // against C the user never wrote. The LLVM backend is worse: its
             // catch-all returns the constant `0` for both nodes
-            // (`src/codegen/llvm_text_backend.rs:1378`), which compiles and is
+            // (`src/codegen/llvm_text_backend.rs:1385`), which compiles and is
             // wrong. Refuse here, at the construct's own span, so no backend
             // gets the chance.
             //
@@ -3294,6 +3357,7 @@ impl TypeChecker {
             CheckerType::Unit => "()".to_string(),
             CheckerType::String => "String".to_string(),
             CheckerType::Int => "i64".to_string(),
+            CheckerType::Float => "f64".to_string(),
             CheckerType::Bool => "bool".to_string(),
             CheckerType::Array(elem, size) => {
                 format!("[{}; {}]", self.checker_type_to_string(elem), size)
@@ -3467,7 +3531,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:3430-3494`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:3461-3525`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -3491,7 +3555,7 @@ impl TypeChecker {
     /// This matters for the same reason the module ordering does: `make selfhost`
     /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
     /// because `bootstrap/pdc.pd` uses no generics — they are excluded from PBS-1
-    /// (`docs/specification/bootstrap-subset.md:76`).
+    /// (`docs/specification/bootstrap-subset.md:85`).
     pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
         let mut result = Vec::new();
 
@@ -3750,7 +3814,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:3209-3217`, `src/parser/mod.rs:3062-3070`). That is not
+    /// (`src/parser/mod.rs:3381-3389`, `src/parser/mod.rs:3234-3242`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

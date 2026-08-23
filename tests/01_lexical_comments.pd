@@ -18,8 +18,17 @@ fn main() {
      */
     print("After multi-line block");
     
-    // Nested block comments not supported
-    print("After single block comment");
+    /* Block comments NEST (N2-08). The inner close below ends the INNER
+       comment, not this one, so the print on the next line stays commented
+       out. Before N2-08 the regex scanner stopped at the first close and this
+       file failed to compile with `Expected expression, but found '/'`.
+       /* inner */
+       print("wrong");
+    */
+    print("After nested block comment");
+
+    /* /* /* three deep */ */ */
+    print("After three-deep nesting");
     
     let x = 42; // Comment after variable
     print_int(x);
@@ -31,6 +40,10 @@ fn main() {
     print(commented_out);
     */
     
+    // A `/*` inside a STRING is not a comment opener, and a `*/` inside one
+    // does not close a comment: the string rule wins because it starts first.
+    print("not a comment: /* */");
+
     // Inline block comments not supported
     print("String without inline comment");
     
