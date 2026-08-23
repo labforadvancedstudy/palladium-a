@@ -334,14 +334,8 @@ impl Driver {
         // died — including, for one release of this branch, the very program
         // `pdc compile` had just refused to build.
         if !run_output.status.success() {
-            println!(
-                "⚠️  Program exited with code: {}",
-                child_status(&run_output.status)
-            );
-            return Err(RunOutcome::Child {
-                code: run_output.status.code(),
-                signal: death_signal(&run_output.status),
-            });
+            println!("⚠️  Program {}", describe_child_status(&run_output.status));
+            return Err(RunOutcome::from_child(&run_output.status));
         }
         println!("✅ Program completed successfully");
 
@@ -396,10 +390,10 @@ fn death_signal(status: &std::process::ExitStatus) -> Option<i32> {
 /// How the child ended, for the human line above the verdict.
 ///
 /// `-1` was printed here before, for every abnormal end, and said nothing.
-fn child_status(status: &std::process::ExitStatus) -> String {
+pub fn describe_child_status(status: &std::process::ExitStatus) -> String {
     match (status.code(), death_signal(status)) {
-        (Some(c), _) => c.to_string(),
-        (None, Some(s)) => format!("killed by signal {}", s),
+        (Some(c), _) => format!("exited with code {}", c),
+        (None, Some(s)) => format!("was killed by signal {}", s),
         (None, None) => "terminated abnormally".to_string(),
     }
 }
@@ -426,6 +420,18 @@ pub enum RunOutcome {
 }
 
 impl RunOutcome {
+    /// Build the child verdict from a real `ExitStatus`.
+    ///
+    /// One constructor so that `pdc run` and `pdm run` cannot disagree about
+    /// what a dead child is — they used to, because one kept the status and the
+    /// other turned it into a sentence.
+    pub fn from_child(status: &std::process::ExitStatus) -> Self {
+        RunOutcome::Child {
+            code: status.code(),
+            signal: death_signal(status),
+        }
+    }
+
     /// The process exit code `pdc run` reports.
     ///
     /// THE BOUNDARY, stated because it is the one thing here a gate could get

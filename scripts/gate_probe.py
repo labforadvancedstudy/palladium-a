@@ -899,10 +899,20 @@ def clear_emitted_c(file: str, cwd=None) -> Path:
 # for all of these, which is UNRESOLVED and under-claims by design.
 BACKEND_REJECT_CODES = (3, 4)
 BACKEND_TOOLCHAIN_CODE = 5
+# gcc RAN TO COMPLETION AND SAID NO, AND pdc CANNOT SHOW IT WAS ABOUT OUR C.
+# Distinct from 5, which is "gcc never reached a verdict at all", and distinct
+# from 3, which requires an `error:` attributed to the translation unit we
+# handed gcc. A full disk, an unwritable output path, a missing assembler, an
+# ICE in gcc itself — and, importantly, an ordinary undefined-symbol LINK
+# failure, which is a real codegen defect carrying no `file:line` for our .c and
+# therefore not attributable by the producer. So 6 is NOT exotic: it is the
+# resting place of a whole ordinary defect class, and a consumer that has never
+# heard of it gives the operator less than it did before these codes existed.
+BACKEND_UNEXPLAINED_CODE = 6
 # Every code that is a STATEMENT BY THE PRODUCER about what happened after
 # codegen. Each is conclusive ON ITS OWN — see backend_reached(), and the
 # conjunction it deliberately is not.
-BACKEND_CODES = BACKEND_REJECT_CODES + (BACKEND_TOOLCHAIN_CODE,)
+BACKEND_CODES = BACKEND_REJECT_CODES + (BACKEND_TOOLCHAIN_CODE, BACKEND_UNEXPLAINED_CODE)
 # Structured rejections are CONCLUDED experiments, not malfunctions. Without
 # them in reject_codes the first fixture to exit 3 would be reported by
 # `make stdlib-gate` as "pdc MALFUNCTIONED", turning a real backend defect into
@@ -910,7 +920,12 @@ BACKEND_CODES = BACKEND_REJECT_CODES + (BACKEND_TOOLCHAIN_CODE,)
 # place. Nothing in the corpus reaches these codes today (measured on the
 # sibling branch: 191 .pd files, zero verdict changes), so this is forward
 # compatibility, not a live change.
-PDC_REJECT_CODES = (1, 3, 4, 5)
+# 6 is a CONCLUDED experiment for the same reason 3, 4 and 5 are: the producer
+# made a statement about what happened after codegen. Withholding its output as
+# a Malfunction would be the defect named two comments up, in the one arm whose
+# whole content is "pdc could not establish why" — the case where the operator
+# needs the text MOST.
+PDC_REJECT_CODES = (1, 3, 4, 5, 6)
 
 
 BACKEND_VERDICTS = ("BACKEND_REJECT", "BACKEND_UNRESOLVED")

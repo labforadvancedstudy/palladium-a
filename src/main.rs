@@ -205,7 +205,11 @@ fn build_package(release: bool, _llvm: bool) -> Result<(), String> {
 
 fn run_package(release: bool, args: Vec<String>) -> Result<(), String> {
     let pm = PackageManager::new().map_err(|e| e.to_string())?;
-    pm.run(args, release).map_err(|e| e.to_string())
+    // `run_reporting`, for the reason `run_file` uses it: this command runs the
+    // program, and the outer handler exits 1 for every error it is given.
+    pm.run_reporting(args, release)
+        .unwrap_or_else(|o| report_run(o));
+    Ok(())
 }
 
 fn add_dependency(

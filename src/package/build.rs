@@ -2,7 +2,7 @@
 // "Forging packages into legendary artifacts"
 
 use super::{PackageManager, PackageManifest};
-use crate::driver::Driver;
+use crate::driver::{Driver, RunOutcome};
 use crate::errors::{CompileError, Result};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -337,11 +337,24 @@ impl BuildSystem {
 
     /// Run the built executable
     pub fn run(&mut self, args: Vec<String>) -> Result<()> {
+        self.run_reporting(args)
+            .map_err(crate::driver::RunOutcome::into_compile_error)
+    }
+
+    /// Build and run, reporting WHICH of the four ways it failed.
+    ///
+    /// `pdm run` reached `main() -> Result<()>`, which prints the error and
+    /// exits 1 for every one of them, so 3/4/5/6 were all exit 1 here while
+    /// `pdc run` reported them properly. The child was worse than flattened: it
+    /// went straight to `process::exit(code.unwrap_or(1))`, so a program killed
+    /// by a signal exited 1 — indistinguishable from a build failure.
+    pub fn run_reporting(&mut self, args: Vec<String>) -> std::result::Result<(), RunOutcome> {
         // First build
-        self.build()?;
+        self.build().map_err(RunOutcome::Compile)?;
 
         // Find the main executable
-        let manifest = PackageManager::load_manifest(Path::new("package.pd"))?;
+        let manifest =
+            PackageManager::load_manifest(Path::new("package.pd")).map_err(RunOutcome::Compile)?;
         let exe_name = &manifest.name;
 
         let exe_dir = self
@@ -363,9 +376,9 @@ impl BuildSystem {
             let opt = crate::linker::OptLevel::for_release(self.context.config.release);
             println!("🔗 Linking {} ({})", exe_name, opt.flag());
 
-            // Shared policy — see src/linker.rs.
-            let notes = crate::linker::link(&c_file, &exe_file, opt)
-                .map_err(|e| CompileError::Generic(e.to_string()))?;
+            // Shared policy — see src/linker.rs. `RunOutcome::Link` and not a
+            // flattened string, so the exit code survives to the process.
+            let notes = crate::linker::link(&c_file, &exe_file, opt).map_err(RunOutcome::Link)?;
             crate::linker::report_notes(&notes);
         }
 
@@ -376,12 +389,20 @@ impl BuildSystem {
         let mut cmd = std::process::Command::new(&exe_file);
         cmd.args(&args);
 
-        let status = cmd.status()?;
+        let status = cmd
+            .status()
+            .map_err(|e| RunOutcome::Compile(CompileError::IoError(e)))?;
 
         println!("─────────────────────────────────────");
 
+        // Was `process::exit(status.code().unwrap_or(1))`: a signalled child
+        // became exit 1, which is also what a build failure returns.
         if !status.success() {
-            std::process::exit(status.code().unwrap_or(1));
+            println!(
+                "⚠️  Program {}",
+                crate::driver::describe_child_status(&status)
+            );
+            return Err(RunOutcome::from_child(&status));
         }
 
         Ok(())

@@ -7,6 +7,7 @@ pub mod dependency;
 pub mod lockfile;
 pub mod registry;
 
+use crate::driver::RunOutcome;
 use crate::errors::{CompileError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -695,13 +696,36 @@ fn main() {
         Ok(())
     }
 
-    /// Run the current package
+    /// Run the current package.
+    ///
+    /// Delegates to [`PackageManager::run_reporting`] and flattens. Kept because
+    /// callers exist that only have a `CompileError` to return; `pdc run-package`
+    /// does NOT use it, for the reason spelled out there.
     pub fn run(&self, args: Vec<String>, release: bool) -> Result<()> {
+        self.run_reporting(args, release)
+            .map_err(crate::driver::RunOutcome::into_compile_error)
+    }
+
+    /// Run the current package, reporting WHICH of the four ways it failed.
+    ///
+    /// THE HALF THE FIRST ATTEMPT MISSED. The child's status was turned into a
+    /// `CompileError::Generic` string here, so by the time `main` saw it there
+    /// was nothing left but prose: a program exiting 7 made `pdc run-package`
+    /// exit 1, and a signalled program lost its signal number entirely. The
+    /// commit claimed the child's failure was propagated; what was propagated
+    /// was the FACT of failure, not the status — and a launcher's status IS its
+    /// report. Same taxonomy as the driver's, deliberately the same type: there
+    /// is one meaning of "the program ran and failed" in this compiler.
+    pub fn run_reporting(
+        &self,
+        args: Vec<String>,
+        release: bool,
+    ) -> std::result::Result<(), RunOutcome> {
         // First build
-        self.build(release)?;
+        self.build(release).map_err(RunOutcome::Compile)?;
 
         // Load manifest to get package name
-        let manifest = Self::load_manifest(Path::new("package.pd"))?;
+        let manifest = Self::load_manifest(Path::new("package.pd")).map_err(RunOutcome::Compile)?;
 
         // Find the built executable
         let build_dir = Path::new("target").join(if release { "release" } else { "debug" });
@@ -714,8 +738,10 @@ fn main() {
 
         // Shared policy — see src/linker.rs. This site's private copy is why
         // `pdm run` could disagree with `pdc compile` about the same C.
-        let notes = crate::linker::link(&c_file, &exe_file, opt)
-            .map_err(|e| CompileError::Generic(e.to_string()))?;
+        // `RunOutcome::Link`, NOT a flattened string: the whole point of the
+        // taxonomy is that 3/4/5/6 survive to the process exit status, and
+        // `CompileError::Generic(e.to_string())` is where they used to die.
+        let notes = crate::linker::link(&c_file, &exe_file, opt).map_err(RunOutcome::Link)?;
         crate::linker::report_notes(&notes);
 
         // Run the executable
@@ -725,21 +751,23 @@ fn main() {
         let mut cmd = std::process::Command::new(&exe_file);
         cmd.args(&args);
 
-        let status = cmd
-            .status()
-            .map_err(|e| CompileError::Generic(format!("Failed to run program: {}", e)))?;
+        let status = cmd.status().map_err(|e| {
+            RunOutcome::Compile(CompileError::Generic(format!(
+                "Failed to run program: {}",
+                e
+            )))
+        })?;
 
         println!("─────────────────────────────────────");
 
-        // Same lie as the driver's, same fix: a launcher may not report success
-        // for a program that died.
+        // Same lie as the driver's, same fix, and this time the STATUS survives
+        // rather than a sentence about it.
         if !status.success() {
-            let detail = match status.code() {
-                Some(c) => format!("exited with code {}", c),
-                None => "terminated abnormally".to_string(),
-            };
-            println!("⚠️  Program {}", detail);
-            return Err(CompileError::Generic(format!("program {}", detail)));
+            println!(
+                "⚠️  Program {}",
+                crate::driver::describe_child_status(&status)
+            );
+            return Err(RunOutcome::from_child(&status));
         }
         println!("✅ Program completed successfully");
 

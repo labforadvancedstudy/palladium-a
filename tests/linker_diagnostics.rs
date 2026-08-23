@@ -36,32 +36,53 @@
 //!
 //! WHAT THIS FILE HAS TO PROVE
 //!
-//! "The check exists" is not the claim. The claim is that it DISCRIMINATES, and
-//! a check that refuses everything, or that fires off the exit status, would
-//! satisfy a one-test suite. So:
+//! "The check exists" is not the claim. The claim is that it DISCRIMINATES. A
+//! check that refuses everything, or that fires off the exit status, or that
+//! lets the program under test choose the verdict, would satisfy a suite that
+//! only asserted existence. So each control below is paired with the mistake it
+//! would let through, and the ones that matter most have been fault-injected:
+//! reverting the defence turns that control RED and leaves the others green.
 //!
-//! 1. `the_type_confusion_is_now_refused`   — B3 no longer produces a binary.
-//! 2. `an_ordinary_program_still_runs`      — the accept side, run to a number.
-//! 3. `gcc_giving_up_is_unchanged`          — the nonzero-exit path, verbatim.
-//! 4. `the_refusal_reads_stderr_not_status` — gcc EXITED 0 on the C in (1).
-//! 5. `a_killed_gcc_is_not_a_rejection`     — case 2 is not reportable as case 1.
-//! 6. `a_missing_gcc_is_not_a_rejection`    — the other half of case 2.
-//! 7. `the_outcomes_are_distinct_codes`     — and a shell can tell them apart.
-//! 8. `a_localized_gcc_still_fires`        — the escalation is not an English
-//!    feature, and a `LANG` on a developer's box cannot silently turn it off.
-//! 9. `every_shape_of_ill_typed_c_is_fatal`— the fatal list is derived from the
-//!    PROPERTY by asking the real toolchain, not from what somebody recalled.
-//! 10. `every_gcc_invocation_goes_through_link` — all six discard sites, as a
-//!     source fact rather than a claim in a commit message.
-//! 11. `pdc_run_agrees_with_pdc_compile`   — and does not report success for a
-//!     program that died.
+//! REFUSAL AND ACCEPTANCE
+//!   `the_type_confusion_is_now_refused`     B3 produces no binary.
+//!   `an_ordinary_program_still_runs`        the accept side, run to a number.
+//!   `ill_typed_c_in_the_runtime_is_refused_and_says_whose_it_is`
+//!                                           ownership changes the sentence,
+//!                                           never the verdict.
 //!
-//! (4) and (5) are the whole change, one per direction of the old lie. Without
-//! (4) the suite cannot tell this fix from the bug: every other assertion here
-//! is also satisfied by an implementation that passes
-//! `-Werror=incompatible-pointer-types` and keeps reading only the status.
-//! Without (5) the structure is decoration: a gate would still be free to
-//! certify a killed gcc as a codegen defect.
+//! WHAT gcc DID, AS OPPOSED TO THAT IT FAILED
+//!   `gcc_giving_up_is_unchanged`            the nonzero path, verbatim.
+//!   `the_refusal_reads_stderr_not_status`   gcc EXITED 0 on the refused C.
+//!   `a_killed_gcc_is_not_a_rejection`       case 2 is not case 1.
+//!   `a_missing_gcc_is_not_a_rejection`      the other half of case 2.
+//!   `a_gcc_that_says_no_is_still_a_rejection`  the negative control for both.
+//!   `a_nonzero_gcc_that_never_named_our_file_is_not_a_rejection`
+//!                                           nonzero is not an accusation.
+//!
+//! ATTRIBUTION — WHOSE FILE, AND WHO GOT TO SAY SO
+//!   `a_runtime_diagnostic_is_not_charged_to_a_program_named_runtime`
+//!   `a_runtime_error_does_not_make_a_program_named_runtime_a_backend_reject`
+//!                                           `ends_with` is not `file_name()`.
+//!   `an_echoed_source_line_cannot_forge_a_backend_reject`
+//!                                           fixture text may not choose the
+//!                                           exit code — the module's own
+//!                                           central claim, turned on itself.
+//!   `a_real_header_at_column_zero_still_attributes`
+//!                                           and the anchor did not over-correct.
+//!
+//! POLICY
+//!   `every_shape_of_ill_typed_c_is_fatal`   the fatal list is derived from the
+//!                                           property by the real toolchain.
+//!   `a_known_tag_does_not_hide_an_unknown_one_beside_it`
+//!   `both_toolchains_spellings_of_a_promoted_tag_resolve`
+//!   `each_fatal_class_explains_itself`      no borrowed causal stories.
+//!   `a_localized_gcc_still_fires`           not an English-language feature.
+//!
+//! STRUCTURE AND ITS CONSUMERS
+//!   `the_outcomes_are_distinct_codes`
+//!   `every_gcc_invocation_goes_through_link`  all six sites, as a source fact.
+//!   `pdc_run_agrees_with_pdc_compile`
+//!   `pdc_run_propagates_a_failing_child`
 //!
 //! NOT IN SCOPE: the `&T` forwarding defect that makes codegen emit that C. B3
 //! failing to compile is the intended outcome of this change, not a regression.
@@ -781,10 +802,16 @@ fn every_gcc_invocation_goes_through_link() {
             if path.extension().and_then(|e| e.to_str()) != Some("rs") {
                 continue;
             }
-            // linker.rs defines it and its own unit tests assert on the command
-            // it builds; the llvm backend's uses are inside `#[cfg(test)]`.
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name == "linker.rs" || name == "llvm_text_backend.rs" {
+            // Exemptions are RELATIVE PATHS, not base names. Matching on the
+            // base name would silently exempt a future `src/backend/linker.rs`
+            // — a new file with its own copy of the policy, invisible to the
+            // one check that exists to find exactly that.
+            let rel = path.strip_prefix(repo_root()).unwrap_or(&path);
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            // src/linker.rs defines it and its own unit tests assert on the
+            // command it builds; the llvm backend's uses are inside
+            // `#[cfg(test)]`.
+            if rel == "src/linker.rs" || rel == "src/codegen/llvm_text_backend.rs" {
                 continue;
             }
             let text = fs::read_to_string(&path).expect("read rs");
@@ -895,41 +922,298 @@ fn gcc_stderr_for(c_file: &Path) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// The consumer this change has NOT been reconciled with
+// 12-16. what the third round found: attribution, forgery, and ownership
 // ---------------------------------------------------------------------------
 
-/// `scripts/gate_probe.py` treats any pdc exit outside `(0, 1)` as a MALFUNCTION.
+/// gcc's second translation unit, as it appears on the command line.
+const RUNTIME_TU: &str = "runtime/palladium_runtime.c";
+
+/// THE BASENAME COLLISION, WHICH THE OLD GUARD TEST COULD NOT REACH.
 ///
-/// WHY THIS IS A DEBT AND NOT A BUG IN THIS BRANCH. `classify(r, reject_codes=(1,))`
-/// is reached from `scripts/stdlib-gate.sh` at six call sites and from
-/// `scripts/check_doc_evidence.py`, so `make stdlib-gate` and `make check-docs`
-/// are both exposed. A `Malfunction` WITHHOLDS the producer's output, so the
-/// first fixture to exit 3 or 4 would give an operator strictly less than the
-/// same fixture gave before this change.
+/// `link_command` compiles TWO units: the generated C and
+/// `runtime/palladium_runtime.c`. Attribution used to be
+/// `path.ends_with(file_name)` on the raw string, and for a user program called
+/// `runtime.pd` the generated unit is `runtime.c` — at which point
 ///
-/// THE RIGHT SHAPE, and it is not mine to apply: `reject_codes=(1, 3, 4)` at the
-/// two pdc call sites. Exits 3 and 4 ARE conclusions — gcc reached a verdict, or
-/// pdc reached one about gcc's output — which is exactly the `Concluded` half of
-/// the distinction `gate_probe` already draws. Exit 5 (and 6) must STAY a
-/// malfunction: an absent, killed, or unexplained toolchain establishes nothing,
-/// which is the same argument, in the same words, as this module's own reason
-/// for not calling those a backend rejection.
+///     "runtime/palladium_runtime.c".ends_with("runtime.c")  ->  true
 ///
-/// WHY IT IS UNREACHED TODAY AND THAT IS NOT A DEFENCE: no .pd in the corpus
-/// reaches a gcc-stage failure (measured: 191 files, 0 hits for `gcc
-/// compilation failed`), so no gate exits 3-6 today. "Unreached today" is a
-/// measurement with a shelf life, and writing it in a commit message is how it
-/// stops being anybody's. `scripts/gate_probe.py` belongs to another agent
-/// right now, so this row holds the obligation instead.
+/// so a genuine defect in the C runtime was charged to the user's file. At gcc
+/// exit 0 that is an exit-4 internal compiler error naming `runtime.c` while
+/// quoting a diagnostic that names `palladium_runtime.c`, with the binary
+/// deleted; at nonzero it is an exit-3 "this compiler emitted C that will not
+/// compile". Both are the defect `Classified::foreign` was added to prevent,
+/// surviving because a suffix test is not a `file_name()` comparison.
+///
+/// The previous guard pinned `build_output/B3.c`, whose name shares no suffix
+/// with the runtime's, so it could not have failed.
 #[test]
-#[ignore = "XFAIL: scripts/gate_probe.py classify() pins reject_codes=(1,), so a pdc exit of 3 (backend reject) or 4 (backend emitted ill-typed C) is reported as MALFUNCTION — and a Malfunction withholds the output the operator needs. Fix is reject_codes=(1, 3, 4) at the two pdc call sites in stdlib-gate.sh and check_doc_evidence.py; exits 5 and 6 must remain malfunctions. Not applied here: scripts/gate_probe.py is reserved for another agent on a concurrent branch. (owned by unscheduled: it is a cross-branch reconciliation, and no milestone owns the gate harness)"]
-fn the_gate_probe_accepts_the_codes_a_backend_failure_now_reports() {
-    let probe = repo_root().join("scripts/gate_probe.py");
-    let text = fs::read_to_string(&probe)
-        .expect("scripts/gate_probe.py is the consumer this row is about");
+fn a_runtime_diagnostic_is_not_charged_to_a_program_named_runtime() {
+    let ours = Path::new("build_output/runtime.c");
+    let line = format!(
+        "{}:12:5: warning: incompatible pointer types assigning to 'char **' \
+         from 'char *' [-Wincompatible-pointer-types]",
+        RUNTIME_TU
+    );
+
+    let c = linker::classify_diagnostics(&line, ours);
     assert!(
-        text.contains("reject_codes=(1, 3, 4)"),
-        "gate_probe.classify still pins reject_codes=(1,), so pdc exit 3 and 4 \
-         are reported as MALFUNCTION with the output withheld"
+        c.fatal.is_empty(),
+        "a defect in {} was charged to a user program that merely ends with the \
+         same characters: {:?}",
+        RUNTIME_TU,
+        c.fatal
+    );
+    assert_eq!(c.foreign.len(), 1, "{:?}", c);
+
+    // The other direction, so the fix is not "attribute nothing": the user's
+    // own file is still attributed when it really is named.
+    let mine = "build_output/runtime.c:9:9: warning: incompatible pointer types \
+                [-Wincompatible-pointer-types]";
+    let c2 = linker::classify_diagnostics(mine, ours);
+    assert_eq!(c2.fatal.len(), 1, "{:?}", c2);
+    assert!(c2.foreign.is_empty(), "{:?}", c2);
+}
+
+/// The same collision on the NONZERO path, where it produces an accusation.
+///
+/// `attributes_an_error_to` had its own copy of the comparison — splitting on
+/// the first `:` and asking `ends_with` — so fixing `classify_diagnostics`
+/// alone would have left this half wrong. Both now go through one function.
+#[test]
+fn a_runtime_error_does_not_make_a_program_named_runtime_a_backend_reject() {
+    let dir = TempDir::new().expect("tempdir");
+    // gcc rejects the RUNTIME and says so, naming only the runtime.
+    let path = shim_path(
+        dir.path(),
+        &format!(
+            "#!/bin/sh\necho \"{}:12:5: error: something wrong in the runtime\" >&2\nexit 1\n",
+            RUNTIME_TU
+        ),
+    );
+    // The stem makes the generated unit `runtime.c` — the colliding name.
+    let run = pdc_compile_with_path(TRIVIAL_SOURCE, "runtime", Some(Path::new(&path)));
+
+    assert_eq!(
+        run.code,
+        Some(EXIT_GCC_UNEXPLAINED),
+        "an error naming only {} was attributed to the user's runtime.c, which \
+         is exit 3: 'this compiler emitted C that will not compile'\n{}",
+        RUNTIME_TU,
+        run.log
+    );
+    assert_ne!(run.code, Some(EXIT_BACKEND_REJECT), "{}", run.log);
+}
+
+/// FIXTURE TEXT MAY NOT CHOOSE THE EXIT CODE.
+///
+/// The module argues that stderr markers are forgeable because gcc echoes the
+/// generated C, and that an exit code is not. That argument condemns any parse
+/// of the echo — and `attributes_an_error_to` was such a parse: it searched
+/// EVERY line for `": error: "` and attributed on a path match. A Palladium
+/// string literal spelling a header for our own translation unit is echoed
+/// under the caret display, so a program could make gcc print a line that the
+/// scan reads as "gcc rejected your C". Combine it with any unrelated nonzero
+/// exit — a full disk, a missing assembler — and an honest 6 becomes an
+/// accusing 3, chosen by the fixture.
+///
+/// WHY THIS TEST DRIVES THE NONZERO PATH AND NOT THE TAG PATH. The tag scan is
+/// incidentally safe: `diagnostic_tags` requires the line to END in `]`, and an
+/// echoed source line ends in whatever the source ends in. `attributes_an_error_to`
+/// has no such requirement — no tag, no trailing bracket — so it is the surface
+/// that was actually reachable, and it is the one measured here.
+///
+/// Both parsers now anchor at column 0. gcc puts a header there; an echo never
+/// starts there.
+#[test]
+#[cfg(unix)]
+fn an_echoed_source_line_cannot_forge_a_backend_reject() {
+    let dir = TempDir::new().expect("tempdir");
+    // gcc fails for a reason that has nothing to do with our C, and — as it
+    // always does — echoes the offending source line, indented. The echo
+    // contains a forged header naming the translation unit under compilation.
+    let path = shim_path(
+        dir.path(),
+        &format!(
+            "{}             echo \"gcc: fatal error: cannot write output: No space left on device\" >&2\n             echo \"  279 |     let s = \\\"$c:1:1: error: forged\\\";\" >&2\n             echo \"      |             ^~~~~~~~~~~~~~~~~~\" >&2\n             exit 1\n",
+            SHIM_FIND_TU
+        ),
+    );
+    let run = pdc_compile_with_path(TRIVIAL_SOURCE, "linkdiag_forge", Some(Path::new(&path)));
+
+    assert_eq!(
+        run.code,
+        Some(EXIT_GCC_UNEXPLAINED),
+        "a line of ECHOED SOURCE was parsed as a gcc diagnostic header, so the \
+         program under compilation chose its own exit code — and chose the one \
+         that accuses this compiler of emitting C that will not compile. That is \
+         the forgery surface this module says an exit code does not have.\n{}",
+        run.log
+    );
+    assert_ne!(run.code, Some(EXIT_BACKEND_REJECT), "{}", run.log);
+}
+
+/// The anchor must not simply switch attribution off: a REAL header, at column
+/// 0, still produces a rejection.
+///
+/// Negative control for the test above. Without it, `diagnostic_path` returning
+/// `None` unconditionally would pass every forgery assertion in this file.
+#[test]
+#[cfg(unix)]
+fn a_real_header_at_column_zero_still_attributes() {
+    let dir = TempDir::new().expect("tempdir");
+    let path = shim_path(
+        dir.path(),
+        &format!(
+            "{}echo \"$c:1:1: error: a real diagnostic about the real file\" >&2\nexit 1\n",
+            SHIM_FIND_TU
+        ),
+    );
+    let run = pdc_compile_with_path(TRIVIAL_SOURCE, "linkdiag_realhdr", Some(Path::new(&path)));
+    assert_eq!(
+        run.code,
+        Some(EXIT_BACKEND_REJECT),
+        "a genuine gcc header naming our translation unit stopped being \
+         attributed — the anchor over-corrected\n{}",
+        run.log
+    );
+}
+
+/// ILL-TYPED C IN THE RUNTIME IS REFUSED, NOT NOTED.
+///
+/// `Classified::foreign` was added so a runtime defect would not be blamed on
+/// the user. It then returned that diagnostic as a NOTE and let the caller ship
+/// the executable — "do not blame the user's file" implemented as "do not tell
+/// anyone", which is the original bug (a real diagnostic reaching a branch that
+/// discards it) for the third time on this branch.
+///
+/// Ownership changes the SENTENCE, never the VERDICT: the runtime is linked
+/// into every executable this compiler produces.
+#[test]
+#[cfg(unix)]
+fn ill_typed_c_in_the_runtime_is_refused_and_says_whose_it_is() {
+    let dir = TempDir::new().expect("tempdir");
+    let path = shim_path(
+        dir.path(),
+        &format!(
+            "#!/bin/sh\necho \"{}:12:5: warning: incompatible pointer types \
+             [-Wincompatible-pointer-types]\" >&2\nexit 0\n",
+            RUNTIME_TU
+        ),
+    );
+    let run = pdc_compile_with_path(TRIVIAL_SOURCE, "linkdiag_rtice", Some(Path::new(&path)));
+
+    assert!(
+        !run.ok,
+        "ill-typed C in the compiler's own runtime was reported as a note and \
+         the executable was shipped\n{}",
+        run.log
+    );
+    assert_eq!(run.code, Some(EXIT_BACKEND_ILL_TYPED), "{}", run.log);
+    assert!(
+        run.log.contains("its own runtime"),
+        "the refusal does not say whose defect it is\n{}",
+        run.log
+    );
+    assert!(
+        run.log.contains("Your\n  source is not the defect")
+            || run.log.contains("source is not the defect"),
+        "the refusal does not clear the user's program\n{}",
+        run.log
+    );
+    assert!(
+        !run.binary.exists(),
+        "the executable built from ill-typed runtime C is still on disk"
+    );
+}
+
+/// Every fatal class gets its OWN causal sentence.
+///
+/// The first version told all four "the callee dereferences one level too far",
+/// which is the pointer-depth story and false for the other three. A diagnostic
+/// whose job is to report what was observed may not assert a mechanism that was
+/// not.
+#[test]
+fn each_fatal_class_explains_itself() {
+    let cases: &[(&str, &str)] = &[
+        ("-Wincompatible-pointer-types", "indirection level"),
+        ("-Wint-conversion", "an address it never was"),
+        ("-Wincompatible-function-pointer-types", "wrong ABI"),
+        ("-Wimplicit-function-declaration", "invents a signature"),
+    ];
+    for (tag, expected) in cases {
+        let line = format!("build_output/x.c:1:1: warning: something [{}]", tag);
+        let msg = linker::ill_typed_c_error(
+            Path::new("build_output/x.c"),
+            &[line.as_str()],
+            linker::IllTypedOwner::GeneratedC,
+            "",
+        );
+        assert!(
+            msg.contains(expected),
+            "`{}` is explained with somebody else's causal story:\n{}",
+            tag,
+            msg
+        );
+        assert!(msg.contains(tag), "{}", msg);
+    }
+
+    // The pointer story must NOT be attached to the others.
+    let line = "build_output/x.c:1:1: warning: x [-Wimplicit-function-declaration]";
+    let msg = linker::ill_typed_c_error(
+        Path::new("build_output/x.c"),
+        &[line],
+        linker::IllTypedOwner::GeneratedC,
+        "",
+    );
+    assert!(
+        !msg.contains("dereferences one level too far"),
+        "an undeclared call was explained as a pointer-depth error:\n{}",
+        msg
+    );
+}
+
+/// GNU spells a promoted tag `[-Werror=name]`; clang spells it `[-Werror,-Wname]`.
+///
+/// Both must resolve to the same tag. This is not hypothetical maintenance: the
+/// open `-Werror=return-type` obligation in tests/rust-debt-manifest.txt uses
+/// the GNU spelling, so paying it would otherwise turn every promoted line into
+/// a policy gap.
+#[test]
+fn both_toolchains_spellings_of_a_promoted_tag_resolve() {
+    let ours = Path::new("build_output/x.c");
+    let clang = "build_output/x.c:1:1: error: x [-Werror,-Wincompatible-pointer-types]";
+    let gnu = "build_output/x.c:1:1: error: x [-Werror=incompatible-pointer-types]";
+    assert_eq!(linker::classify_diagnostics(clang, ours).fatal.len(), 1);
+    assert_eq!(
+        linker::classify_diagnostics(gnu, ours).fatal.len(),
+        1,
+        "the GNU spelling of a promoted fatal tag was not recognised"
+    );
+
+    // And a promoted KNOWN-BENIGN tag is not a policy gap under either spelling.
+    let gnu_benign = "build_output/x.c:1:1: error: x [-Werror=return-type]";
+    assert!(
+        linker::classify_diagnostics(gnu_benign, ours)
+            .unclassified
+            .is_empty(),
+        "a promoted known tag was reported as undecided"
+    );
+}
+
+/// A line carrying one KNOWN tag and one nobody has decided about still reports
+/// the gap.
+///
+/// The check used to ask whether ANY tag on the line was known, so an unknown
+/// tag was hidden by the company it kept.
+#[test]
+fn a_known_tag_does_not_hide_an_unknown_one_beside_it() {
+    let ours = Path::new("build_output/x.c");
+    let line = "build_output/x.c:1:1: warning: x [-Wreturn-type,-Wnobody-decided]";
+    let c = linker::classify_diagnostics(line, ours);
+    assert_eq!(
+        c.unclassified.len(),
+        1,
+        "an undecided tag was masked by a decided one on the same line: {:?}",
+        c
     );
 }

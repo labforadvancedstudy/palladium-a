@@ -222,8 +222,19 @@ impl Cli {
                     ..Default::default()
                 };
 
+                // `run_reporting`, not `run`: `main() -> Result<()>` prints an
+                // error and exits 1 for everything, so the taxonomy this branch
+                // built (3 backend reject, 4 ill-typed C, 5 toolchain, 6
+                // unexplained) died one frame above here, and a signalled child
+                // was indistinguishable from a build failure.
                 let mut build_system = BuildSystem::new(config);
-                build_system.run(args)?;
+                if let Err(o) = build_system.run_reporting(args) {
+                    let code = o.exit_code();
+                    if !matches!(o, crate::driver::RunOutcome::Child { .. }) {
+                        eprintln!("\x1b[1;31merror:\x1b[0m {}", o.into_compile_error());
+                    }
+                    std::process::exit(code);
+                }
             }
 
             Commands::Test {

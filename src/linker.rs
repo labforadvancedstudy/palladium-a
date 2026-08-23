@@ -179,9 +179,19 @@ pub const FATAL_DIAGNOSTIC_TAGS: &[&str] = &[
 /// on the day it lands, and a gate that is born red is switched off within the
 /// week.
 ///
-/// THE ROWS ARE MEASURED, NOT IMAGINED. Every tag here was observed by compiling
-/// all 108 generated .c files this repo's corpus produces and collecting the
-/// tags gcc actually emitted:
+/// THE ROWS ARE MEASURED, AND THE MEASUREMENT HAS A TOOLCHAIN. Every tag here
+/// was observed by compiling all 108 generated .c files this repo's corpus
+/// produces — on macOS, where `gcc` is Apple clang 21. THESE ARE CLANG
+/// SPELLINGS. GNU gcc names several of the same diagnostics differently, most
+/// importantly the prelude's, which it calls `-Wdiscarded-qualifiers` rather
+/// than `-Wincompatible-pointer-types-discards-qualifiers`; that tag is in
+/// neither list, so on GNU it arrives as a policy-gap note on 108/108 compiles.
+/// Non-fatal by construction, and noisy, and NOT what "zero policy-gap notes"
+/// measured — that receipt is a macOS receipt and is reported as one. Anyone
+/// running the corpus under GNU should expect the notes and add the GNU
+/// spellings here with their reasons.
+///
+/// The observed table:
 ///
 /// ```text
 /// 324 [-Wparentheses-equality]
@@ -234,21 +244,33 @@ pub const NON_FATAL_DIAGNOSTIC_TAGS: &[(&str, &str)] = &[
     (
         "-Wreturn-stack-address",
         "1 occurrence, in lifetimes_uninferred.c: `address of stack memory \
-         associated with local variable 'x' returned`. THIS LOOKS LIKE A REAL \
-         MISCOMPILE and it is recorded here as non-fatal only because \
-         escalating it is a separate decision with its own blast radius, and \
-         this change is scoped to the pointer-type-confusion class. It is not \
-         benign and this row must not be read as saying it is. Whoever picks up \
-         the `&T` forwarding work should look at this fixture first.",
+         associated with local variable 'x' returned`. A REAL MISCOMPILE, and \
+         NOT AN UNOWNED ONE: the defect is unchecked lifetimes and it is already \
+         held by tests/regression/lifetimes_uninferred.pd, which declares a `run` \
+         row in the conformance manifest, carries a promotion protocol, and has a \
+         paired reject fixture. Escalating this tag would convert that \
+         deliberately declared fixture into COMPILE_FAIL and break the gate that \
+         owns the defect — which is a stronger reason to leave it than any \
+         blast-radius argument. (An earlier version of this row sent the reader \
+         to `&T` forwarding. That was wrong: the two share a symptom, not a \
+         cause.)",
     ),
     (
         "-Wstring-compare",
-        "2 occurrences, both in tiny_v3.c: `result of comparison against a \
-         string literal is unspecified`. Palladium `==` on String lowers to a \
-         POINTER comparison in the emitted C, which answers a question nobody \
-         asked. Same disposition as the row above: plausibly a real defect, \
-         explicitly not escalated by this change, written down so it is not \
-         lost. Note tiny_v3 is bootstrap/v3_incremental, an experimental tree.",
+        "2 occurrences, both in tiny_v3.c, which is under bootstrap/v3_incremental \
+         and outside conformance scope. It points at a real defect — Palladium \
+         `==` on String lowers to a POINTER comparison — but THIS TAG CANNOT \
+         CARRY THAT DEFECT, measured: a program comparing two runtime-built \
+         strings with identical contents prints `NOT equal` and produces ZERO \
+         string-compare diagnostics, because gcc only remarks when one operand is \
+         a literal. The shape that warns (literal vs literal) is the shape that \
+         happens to give the RIGHT answer, since C pools identical literals. \
+         Escalating would catch the harmless case, miss every wrong answer, and \
+         make the defect look handled — the appearance of coverage, which is \
+         worse than none. The repair is routing the operator to `string_eq` \
+         (src/builtins.rs, and the prelude already emits `strcmp(s1,s2) == 0`), \
+         which is a typeck/codegen change and belongs in a requirement row, not \
+         in a warning policy.",
     ),
     (
         "-Wunused-value",
@@ -275,8 +297,14 @@ pub const NON_FATAL_DIAGNOSTIC_TAGS: &[(&str, &str)] = &[
 ///   `-Wincompatible-pointer-types`. The tag that is fatal and the tag that is
 ///   in every single compile differ by a suffix, so membership is tested on the
 ///   whole tag and never on a substring of the line.
-/// * under `-Werror` the bracket holds a comma-separated list
-///   (`[-Werror,-Wname]`), so it is split before comparison.
+/// * under `-Werror` the bracket holds a list, and THE TWO COMPILERS SPELL IT
+///   DIFFERENTLY: clang writes `[-Werror,-Wname]`, GNU gcc writes
+///   `[-Werror=name]`. Splitting on `,` alone reads the GNU form as one tag
+///   called `-Werror=name`, which is in no list, so a promoted diagnostic would
+///   arrive as a policy gap rather than as the tag it is. This matters on a
+///   schedule: the open `-Werror=return-type` obligation in
+///   tests/rust-debt-manifest.txt uses exactly the GNU spelling. Both forms are
+///   split, and `-Werror=` is normalised back to `-W`.
 ///
 /// Lines without a `warning:`/`error:` header are not diagnostics — `note:`
 /// continuations and the echoed source line are skipped, so a caret pointing at
@@ -296,7 +324,13 @@ pub const NON_FATAL_DIAGNOSTIC_TAGS: &[(&str, &str)] = &[
 ///   NO colour on a pipe. If a caller ever forces `-fdiagnostics-color=always`,
 ///   this parser stops seeing tags; that is why the colour decision is not
 ///   left to the environment either.
-fn diagnostic_tags(line: &str) -> Vec<&str> {
+fn diagnostic_tags(line: &str) -> Vec<String> {
+    // Same anchor as `diagnostic_path`, and for the same reason: an echoed
+    // source line is indented, and reading one as a header is how fixture text
+    // reaches a decision it must never reach.
+    if line.starts_with(|c: char| c.is_whitespace()) {
+        return Vec::new();
+    }
     if !line.contains(": warning: ") && !line.contains(": error: ") {
         return Vec::new();
     }
@@ -306,7 +340,16 @@ fn diagnostic_tags(line: &str) -> Vec<&str> {
     let Some(open) = rest.rfind("[-W") else {
         return Vec::new();
     };
-    rest[open + 1..].split(',').map(str::trim).collect()
+    rest[open + 1..]
+        .split(',')
+        .map(str::trim)
+        // GNU's `-Werror=name` denotes the SAME diagnostic as clang's
+        // `-Wname`; the prefix records that it was promoted, not what it is.
+        .map(|t| match t.strip_prefix("-Werror=") {
+            Some(name) => format!("-W{}", name),
+            None => t.to_string(),
+        })
+        .collect()
 }
 
 /// The lines of gcc's stderr that name a tag in [`FATAL_DIAGNOSTIC_TAGS`] AND
@@ -365,6 +408,23 @@ pub struct Classified<'a> {
 /// that shape (a bare `ld: symbol not found`, a summary line) has no path and
 /// is not attributed to anybody.
 fn diagnostic_path(line: &str) -> Option<&str> {
+    // ANCHORED AT COLUMN 0, AND THIS IS THE FORGERY DEFENCE.
+    //
+    // This module argues that an exit code cannot be forged by fixture text
+    // because gcc echoes the generated C and the generated C carries the
+    // fixture's identifiers. That argument condemns any scan that reads the
+    // ECHO as if it were a header. A Palladium string literal spelling
+    // `x.c:1:1: error: ...` is echoed to stderr, and a search that merely FINDS
+    // `": error: "` anywhere on the line will parse the echo and attribute it —
+    // turning an honest exit 6 into an accusing exit 3, chosen by the fixture.
+    //
+    // Every diagnostic header gcc and clang emit begins at column 0. Every echo
+    // of source is indented (`  279 |     return ...`), as is every caret line
+    // and every `from` continuation. So a line that starts with whitespace is
+    // not a header, and the path must start at index 0.
+    if line.starts_with(|c: char| c.is_whitespace()) {
+        return None;
+    }
     let sev = line
         .find(": warning: ")
         .or_else(|| line.find(": error: "))
@@ -386,38 +446,86 @@ fn diagnostic_path(line: &str) -> Option<&str> {
     Some(path)
 }
 
+/// Is this diagnostic about the translation unit we asked gcc to compile?
+///
+/// EXACT COMPONENTS, NOT A SUFFIX. The first version asked
+/// `path.ends_with(name)` on the raw string, which is satisfied by any path
+/// whose text merely ENDS with our file's name: ask about `runtime.c` and a
+/// diagnostic in the bundled `runtime/palladium_runtime.c` matches, producing
+/// exit 3 — "this compiler emitted C that will not compile" — about C the user
+/// never caused. A module whose entire argument is that a claim must be
+/// attributable cannot attribute by substring.
+///
+/// Full-path equality first, because gcc echoes the path exactly as it appeared
+/// on the command line and `link_command` passes ours verbatim; exact
+/// `file_name()` equality second, for the case where a driver normalises it.
+/// Both are component-wise. Residual, stated rather than hidden: two DIFFERENT
+/// files with the same base name in different directories are still
+/// indistinguishable to the second test. That is a much narrower window than
+/// the suffix test, and it is not reachable from the two units this compiler
+/// actually hands gcc, whose base names differ.
+fn attributed_to(line: &str, c_file: &Path) -> bool {
+    let Some(raw) = diagnostic_path(line) else {
+        // No path on the line at all — `ld: symbol not found`, a summary line.
+        // Cannot be attributed to anybody, so it is not attributed. Fails
+        // towards not accusing, like everything else in this module.
+        return false;
+    };
+    let p = Path::new(raw);
+    if p == c_file {
+        return true;
+    }
+    match (p.file_name(), c_file.file_name()) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Tags that say something about the CODE, as opposed to how the compiler was
+/// configured.
+///
+/// `-Werror` is the only one of the second kind that gcc puts inside the
+/// bracket, and it appears alongside the real tag (`[-Werror,-Wname]`). Without
+/// this filter it would count as "a known tag on the line" and mask an unknown
+/// one sitting beside it.
+fn is_metadata_tag(tag: &str) -> bool {
+    // `-Werror=name` is normalised to `-Wname` by `diagnostic_tags`, so only the
+    // bare form reaches here.
+    tag == "-Werror"
+}
+
+/// Is this tag escalated?
+fn is_fatal_tag(tag: &str) -> bool {
+    FATAL_DIAGNOSTIC_TAGS.contains(&tag)
+}
+
 /// Sort gcc's stderr into [`Classified`], relative to the file we asked about.
 pub fn classify_diagnostics<'a>(stderr: &'a str, c_file: &Path) -> Classified<'a> {
-    let ours = c_file.file_name().and_then(|n| n.to_str());
     let mut out = Classified::default();
     for line in stderr.lines() {
         let tags = diagnostic_tags(line);
         if tags.is_empty() {
             continue;
         }
-        let is_ours = match (diagnostic_path(line), ours) {
-            (Some(p), Some(name)) => p.ends_with(name),
-            // No path on the line, or no name to compare: cannot attribute it
-            // to our file, so it is not our file's problem. Fails towards not
-            // accusing, like everything else in this module.
-            _ => false,
-        };
-        let fatal_tag = tags.iter().any(|t| FATAL_DIAGNOSTIC_TAGS.contains(t));
+        let is_ours = attributed_to(line, c_file);
+        let fatal_tag = tags.iter().any(|t| is_fatal_tag(t));
         if fatal_tag && is_ours {
             out.fatal.push(line);
         } else if fatal_tag {
             out.foreign.push(line);
         } else if is_ours
-            && !tags.iter().any(|t| {
-                NON_FATAL_DIAGNOSTIC_TAGS
-                    .iter()
-                    .any(|(known, _)| known == t)
+            // PER TAG, not per line. Asking whether ANY tag on the line is known
+            // meant a line carrying one known-benign tag and one nobody has
+            // decided about reported no gap — the unknown one hidden by the
+            // company it keeps. Metadata tags are skipped rather than counted as
+            // knowledge.
+            && tags.iter().any(|t| {
+                !is_metadata_tag(t)
+                    && !NON_FATAL_DIAGNOSTIC_TAGS
+                        .iter()
+                        .any(|(known, _)| *known == t.as_str())
             })
         {
-            // `-Werror` renders as `[-Werror,-Wname]`; `-Werror` itself is not a
-            // diagnostic anybody classifies, so a line is unclassified only when
-            // NO tag on it is known. Otherwise every -Werror line would be a
-            // policy gap.
             out.unclassified.push(line);
         }
     }
@@ -446,6 +554,15 @@ pub fn classify_diagnostics<'a>(stderr: &'a str, c_file: &Path) -> Classified<'a
 // identifiers, and this repo has already had a fixture containing the word
 // `Linking` classified as a link failure by a grep. An exit code has no such
 // path from fixture text.
+//
+// THAT ARGUMENT BINDS THIS MODULE TOO, and it was violated here before it was
+// noticed: `attributes_an_error_to` searched every line of stderr for
+// `": error: "`, and gcc's echo of the generated source is one of those lines.
+// A Palladium string literal reading `x.c:1:1: error: …` would have been parsed
+// as a header and attributed, letting a fixture upgrade an honest 6 into an
+// accusing 3. Eliminating a forgery surface at the output while opening one at
+// the input is not a fix. Both parsers now anchor at column 0, which is where
+// gcc puts a header and where an echo never starts.
 
 // A NOTE ON WHAT AN EXIT CODE MAY PROMISE.
 //
@@ -501,6 +618,29 @@ pub const EXIT_TOOLCHAIN: i32 = 5;
 ///
 /// It is still a FAILURE — nothing was built and no caller should proceed — but
 /// it is not an accusation, and a gate must not turn it into one.
+///
+/// NOT EXOTIC, and planning for it as a rarity would be wrong. An undefined
+/// symbol from the LINK stage is an ordinary codegen defect — codegen emitted a
+/// call to something it never defined — and it carries no `file:line` naming our
+/// translation unit, so it is unattributable and lands here rather than on 3.
+/// This code is the resting place of a whole defect class, not a corner.
+///
+/// THE TENSION IT CREATES, NAMED BECAUSE IT IS A TRADEOFF AND NOT AN OVERSIGHT.
+/// [`LinkError::GccUnexplained`] deliberately OMITS the `gcc compilation failed`
+/// marker, because a gate grepping for that marker reads it as "gcc refused our
+/// C" — a claim nobody supported here. That omission is right, and it is
+/// precisely what blinds `scripts/conformance.sh`'s contradiction check, which
+/// greps for the same marker to catch "the log says gcc ran but no translation
+/// unit exists". With the .c missing or mis-derived, a 6 would fall through that
+/// check into the front-end arm, where `compile` is a stage a manifest row may
+/// declare — the conjunction fail-open the sibling branch closed, reopened by a
+/// code its consumers had never heard of.
+///
+/// The resolution is the structured code, which is why 6 is enrolled in BOTH
+/// consumers rather than left to be inferred: `scripts/conformance.sh`'s
+/// `backend_code` case and its own verdict arm, and `scripts/gate_probe.py`'s
+/// `BACKEND_CODES` and `PDC_REJECT_CODES`. A code the consumer has never heard
+/// of is worse than no code at all.
 pub const EXIT_GCC_UNEXPLAINED: i32 = 6;
 
 // Why these numbers. `1` is pdc's existing "something went wrong" and every
@@ -579,9 +719,12 @@ impl std::error::Error for LinkError {}
 ///
 /// THIS IS A TEXT HEURISTIC AND IT IS LABELLED AS ONE. It looks for a
 /// diagnostic header of gcc's usual `<path>:<line>:<col>: error:` shape whose
-/// path is the translation unit under compilation, matched on the file name so
-/// that gcc echoing an absolute path where we passed a relative one (or the
-/// reverse) does not silently answer "no".
+/// path is the translation unit under compilation. Attribution is
+/// [`attributed_to`] — the SAME function the exit-0 path uses, parsing the
+/// header once and comparing whole path components. It used to have its own
+/// copy that split on the first `:` and asked `ends_with`, which is how a
+/// diagnostic about `runtime/palladium_runtime.c` could be attributed to a
+/// translation unit called `runtime.c`.
 ///
 /// FAILS TOWARDS SILENCE, ON PURPOSE. Every way this can be wrong — a localized
 /// gcc, a colourised gcc, a linker-stage error with no `file:line`, a
@@ -590,23 +733,9 @@ impl std::error::Error for LinkError {}
 /// costs a sharper message; a fabricated one costs a gate certifying a defect
 /// that was never shown.
 fn attributes_an_error_to(stderr: &str, c_file: &Path) -> bool {
-    let name = match c_file.file_name().and_then(|n| n.to_str()) {
-        Some(n) => n,
-        None => return false,
-    };
-    stderr.lines().any(|line| {
-        // The header is `<path>:<line>:<col>: error: ...`; take the path as
-        // everything up to the first `:` that is followed by a digit, which is
-        // also what keeps a Windows drive letter from ending the path early.
-        let Some(err_at) = line.find(": error: ") else {
-            return false;
-        };
-        let head = &line[..err_at];
-        head.split(':')
-            .next()
-            .map(|p| p.ends_with(name))
-            .unwrap_or(false)
-    })
+    stderr
+        .lines()
+        .any(|line| line.contains(": error: ") && attributed_to(line, c_file))
 }
 
 /// How a process ended, when it did not end by exiting.
@@ -647,26 +776,122 @@ fn abnormal_end(status: &std::process::ExitStatus) -> Option<String> {
 /// this message wrote Palladium, the text gcc is objecting to is C they never
 /// saw, and telling them "incompatible pointer types" without saying whose
 /// mistake it is invites them to go looking for it in their own source.
-pub fn ill_typed_c_error(c_file: &Path, diagnostics: &[&str], binary_note: &str) -> String {
+/// What each fatal tag actually means for the program, in one clause.
+///
+/// TAG-SPECIFIC BECAUSE THE STORY IS. The first version told every reader that
+/// "the callee dereferences one level too far and the program crashes at
+/// runtime" — true for the pointer-depth witness this branch started from, and
+/// FALSE for the other three: an undeclared call is compiled against an invented
+/// signature, an int/pointer conversion truncates or fabricates an address, a
+/// mismatched function pointer calls through the wrong ABI. Handing all four the
+/// same causal sentence is asserting a mechanism that was not observed, in the
+/// diagnostic whose job is to report what was.
+fn consequence_of(tag: &str) -> &'static str {
+    match tag {
+        "-Wincompatible-pointer-types" => {
+            "a pointer is passed or assigned at the wrong indirection level, so \
+             the receiving code dereferences one level too far"
+        }
+        "-Wint-conversion" => {
+            "an integer is used where a pointer is required (or the reverse), so \
+             the value is treated as an address it never was"
+        }
+        "-Wincompatible-function-pointer-types" => {
+            "a function is called through a pointer of a different signature, so \
+             the arguments and return value are read under the wrong ABI"
+        }
+        "-Wimplicit-function-declaration" => {
+            "a function is called that was never declared, so C invents a \
+             signature for it and the call is compiled against that guess"
+        }
+        _ => "the emitted C is ill-typed",
+    }
+}
+
+/// The fatal tags present on a set of diagnostic lines, in order, deduplicated.
+fn fatal_tags_in(diagnostics: &[&str]) -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for line in diagnostics {
+        for tag in diagnostic_tags(line) {
+            if let Some(known) = FATAL_DIAGNOSTIC_TAGS.iter().find(|k| **k == tag.as_str()) {
+                if !out.contains(known) {
+                    out.push(known);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Who owns the ill-typed C: the file compiled from the user's program, or a
+/// translation unit this compiler ships.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IllTypedOwner {
+    /// The `.c` codegen wrote for this program.
+    GeneratedC,
+    /// `runtime/palladium_runtime.c` or a header it pulls in — shipped with the
+    /// compiler, identical for every program, and nothing the user wrote.
+    Runtime,
+}
+
+/// The pdc-level diagnostic for ill-typed C that this compiler is responsible
+/// for, whichever of its own translation units it came from.
+///
+/// Phrased as an internal compiler error and not as a gcc dump: the reader of
+/// this message wrote Palladium, the text gcc is objecting to is C they never
+/// saw, and telling them "incompatible pointer types" without saying whose
+/// mistake it is invites them to go looking for it in their own source.
+pub fn ill_typed_c_error(
+    c_file: &Path,
+    diagnostics: &[&str],
+    owner: IllTypedOwner,
+    binary_note: &str,
+) -> String {
     let mut msg = String::new();
-    msg.push_str("internal compiler error: the C backend emitted ill-typed C\n");
-    msg.push_str(&format!(
-        "\n  gcc accepted {} (it exited 0) but diagnosed a pointer-type\n  \
-         confusion in it. That C is never what pdc meant to emit — no Palladium\n  \
-         program can ask for it — so this is a defect in the compiler, not in\n  \
-         your program. Left alone it miscompiles silently: the callee\n  \
-         dereferences one level too far and the program crashes at runtime.\n\n",
-        c_file.display()
-    ));
+    msg.push_str("internal compiler error: ");
+    match owner {
+        IllTypedOwner::GeneratedC => {
+            msg.push_str("the C backend emitted ill-typed C\n");
+            msg.push_str(&format!(
+                "\n  gcc accepted {} (it exited 0) but diagnosed ill-typed C in\n  \
+                 it. That C is never what pdc meant to emit — no Palladium program\n  \
+                 can ask for it — so this is a defect in the compiler, not in your\n  \
+                 program.\n\n",
+                c_file.display()
+            ));
+        }
+        IllTypedOwner::Runtime => {
+            msg.push_str("this compiler ships ill-typed C in its own runtime\n");
+            msg.push_str(
+                "\n  gcc exited 0 while compiling a translation unit that pdc SHIPS —\n  \
+                 the C runtime, not the file generated from your program. Your\n  \
+                 source is not the defect and nothing about it is being questioned.\n  \
+                 The build is refused anyway: the runtime is linked into every\n  \
+                 executable this compiler produces, so shipping it would put the\n  \
+                 same miscompile in every program built here, including this one.\n\n",
+            );
+        }
+    }
+
+    for tag in fatal_tags_in(diagnostics) {
+        msg.push_str(&format!("  {}: {}.\n", tag, consequence_of(tag)));
+    }
+    msg.push('\n');
     for d in diagnostics {
         msg.push_str(&format!("  {}\n", d.trim()));
     }
     msg.push_str(binary_note);
-    msg.push_str(&format!(
-        "\n  Please report this, with your Palladium source and the line of\n  \
-         generated C named above. Full context: gcc -c {} -I <pdc --print-runtime>\n",
-        c_file.display()
-    ));
+    match owner {
+        IllTypedOwner::GeneratedC => msg.push_str(&format!(
+            "\n  Please report this, with your Palladium source and the line of\n  \
+             generated C named above. Full context: gcc -c {} -I <pdc --print-runtime>\n",
+            c_file.display()
+        )),
+        IllTypedOwner::Runtime => msg.push_str(
+            "\n  Please report this against the compiler. Nothing in your program\n  \
+             needs to change. Full context: gcc -c <pdc --print-runtime>/palladium_runtime.c\n",
+        ),
+    }
     msg
 }
 
@@ -775,55 +1000,68 @@ pub fn link(
         unclassified,
         foreign,
     } = classify_diagnostics(stderr, c_file);
-    if fatal.is_empty() {
-        // Question four: anything nobody has decided about, or anything wrong
-        // with a translation unit that is not the user's? Handed back, not
-        // swallowed. See `NON_FATAL_DIAGNOSTIC_TAGS` and `Classified::foreign`.
-        let mut notes: Vec<String> = Vec::new();
-        for line in unclassified {
-            notes.push(format!(
+    // ILL-TYPED C IS REFUSED WHICHEVER OF OUR TRANSLATION UNITS IT IS IN.
+    //
+    // `foreign` was introduced to stop a defect in the C runtime being reported
+    // as a defect in the user's program. It then RETURNED THAT DIAGNOSTIC AS A
+    // NOTE and let the caller ship the executable — so a pointer-depth defect in
+    // `palladium_runtime.c` stayed runnable purely because it was not the user's
+    // fault. The review that found it named the shape exactly: the fix asked for
+    // was "do not blame the user's file", and what got built was "do not tell
+    // anyone", which is the original bug — a real diagnostic reaching a branch
+    // that discards it — for the third time on this branch.
+    //
+    // Ownership changes the SENTENCE, never the VERDICT. The runtime is linked
+    // into every executable this compiler produces; shipping it ill-typed puts
+    // the same miscompile in every program built here.
+    if !fatal.is_empty() || !foreign.is_empty() {
+        let (lines, owner) = if !fatal.is_empty() {
+            (fatal, IllTypedOwner::GeneratedC)
+        } else {
+            (foreign, IllTypedOwner::Runtime)
+        };
+
+        // gcc exited 0, so the executable EXISTS and it is the one that
+        // segfaults. Reporting an error while leaving it on disk would let the
+        // next `./prog` run the miscompile we just refused to ship.
+        let binary_note = match std::fs::remove_file(output) {
+            Ok(()) => format!(
+                "\n  The executable gcc produced ({}) has been removed: it was built\n  \
+                 from this C and does not run correctly.\n",
+                output.display()
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => format!(
+                "\n  WARNING: the executable gcc produced ({}) could NOT be removed\n  \
+                 ({}). Do not run it — it was built from this C.\n",
+                output.display(),
+                e
+            ),
+        };
+
+        return Err(LinkError::IllTypedC(ill_typed_c_error(
+            c_file,
+            &lines,
+            owner,
+            &binary_note,
+        )));
+    }
+
+    // Question four: anything nobody has decided about? Handed back, not
+    // swallowed. See `NON_FATAL_DIAGNOSTIC_TAGS`.
+    let notes: Vec<String> = unclassified
+        .into_iter()
+        .map(|line| {
+            format!(
                 "gcc emitted a diagnostic pdc has no policy for. It was NOT \
                  treated as fatal.\n    {}\n    Classify its tag in \
                  FATAL_DIAGNOSTIC_TAGS or NON_FATAL_DIAGNOSTIC_TAGS \
                  (src/linker.rs).",
                 line.trim()
-            ));
-        }
-        for line in foreign {
-            notes.push(format!(
-                "gcc diagnosed ill-typed C in a translation unit that is NOT \
-                 the one compiled from your program — the C runtime, or a \
-                 header. Your program is not the defect and is not being \
-                 refused for it.\n    {}",
-                line.trim()
-            ));
-        }
-        return Ok(notes);
-    }
-
-    // gcc exited 0, so the executable EXISTS and it is the one that segfaults.
-    // Reporting an error while leaving it on disk would let the next `./prog`
-    // run the miscompile we just refused to ship.
-    let binary_note = match std::fs::remove_file(output) {
-        Ok(()) => format!(
-            "\n  The executable gcc produced ({}) has been removed: it was built\n  \
-             from this C and does not run correctly.\n",
-            output.display()
-        ),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => format!(
-            "\n  WARNING: the executable gcc produced ({}) could NOT be removed\n  \
-             ({}). Do not run it — it was built from this C.\n",
-            output.display(),
-            e
-        ),
-    };
-
-    Err(LinkError::IllTypedC(ill_typed_c_error(
-        c_file,
-        &fatal,
-        &binary_note,
-    )))
+            )
+        })
+        .collect();
+    Ok(notes)
 }
 
 #[cfg(test)]
@@ -1064,9 +1302,17 @@ build_output/B3.c:263:12: warning: returning 'const char *' from a function with
     #[test]
     fn the_message_blames_the_compiler_and_cites_gcc() {
         let found = fatal_diagnostics(REAL_STDERR, ours());
-        let msg = ill_typed_c_error(Path::new("build_output/B3.c"), &found, "\n  removed\n");
+        let msg = ill_typed_c_error(
+            Path::new("build_output/B3.c"),
+            &found,
+            IllTypedOwner::GeneratedC,
+            "\n  removed\n",
+        );
         assert!(msg.contains("internal compiler error"), "{}", msg);
-        assert!(msg.contains("not in\n  your program"), "{}", msg);
+        assert!(msg.contains("not in your\n  program"), "{}", msg);
+        // The causal clause must be the one belonging to the tag that was
+        // actually found, not a story borrowed from another class.
+        assert!(msg.contains("indirection level"), "{}", msg);
         assert!(msg.contains("build_output/B3.c:279:18"), "{}", msg);
         assert!(msg.contains("removed"), "{}", msg);
         // `scripts/conformance.sh` greps the compiler log for `error` to build

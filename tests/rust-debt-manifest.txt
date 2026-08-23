@@ -126,4 +126,3 @@ tests/m3_imported_calls.rs	test_ambiguous_import_is_diagnosed_by_the_compiler_no
 tests/m3_imported_calls.rs	test_an_import_may_not_silently_disagree_with_a_builtin	owed	M4	the checkers and codegen disagreed about which `print_int` was meant
 tests/m3_imported_calls.rs	test_selective_import_does_not_import_the_rest	owed	M4	`other` was not imported but was callable
 tests/m3_imported_calls.rs	test_use_after_move_is_rejected_without_a_type_annotation	owed	M4	a use-after-move was accepted because neither binding was annotated
-tests/linker_diagnostics.rs	the_gate_probe_accepts_the_codes_a_backend_failure_now_reports	owed	unscheduled	gate_probe.classify still pins reject_codes=(1,)

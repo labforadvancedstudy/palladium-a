@@ -140,6 +140,19 @@ echo "error: gcc compilation failed:" >&2
 echo "build_output/$stem.c:1:25: error: use of undeclared identifier" >&2
 exit 1'
 
+# gcc RAN, exited nonzero, and named no translation unit of ours. Structured —
+# so the filesystem witness is not needed — but NOT an accusation: an undefined
+# symbol from the link stage and a full disk are indistinguishable here, and the
+# producer says so by choosing 6 rather than 3.
+stub_gcc_unexplained='#!/bin/sh
+f=$2; stem=`basename "$f" .pd`
+mkdir -p build_output
+printf "int main(void) { return 0; }\n" > "build_output/$stem.c"
+echo "Linking with gcc (-O2)..."
+echo "error: gcc exited 1 without diagnosing build_output/$stem.c." >&2
+echo "gcc: fatal error: cannot write output: No space left on device" >&2
+exit 6'
+
 # An exit code outside the contract must not be read as a rejection either.
 stub_unknown_code='#!/bin/sh
 f=$2; stem=`basename "$f" .pd`
@@ -976,9 +989,39 @@ run_case "$D"
 expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && ok
 
 start "backend/ambiguous: ...and the message says WHY it will not name a defect"
-expect_out "does not say whether gcc REFUSED that C or died" && ok
+expect_out "does not say what happened" && ok
 
 start "backend/ambiguous: ...and no manifest column excuses it either"
+manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
+
+start "backend/unexplained: exit 6 is HARNESS_ERROR, never BACKEND_REJECT"
+# gcc reached a verdict, so this is NOT the toolchain case; pdc could not
+# attribute it, so it is NOT a rejection. The gate must refuse without accusing.
+D=$(new_repo backendunexplained)
+stub_pdc "$D" "$stub_gcc_unexplained"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/unexplained: ...and no manifest column excuses it"
+manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
+
+start "backend/unexplained: ...and the code alone suffices, with no .c on disk"
+# THE FAIL-OPEN THIS CLOSES. Without 6 in the backend_code case, a 6 whose
+# translation unit is missing or differently named falls through to the
+# front-end arm, where `compile` is a stage a manifest row may declare — and the
+# contradiction check that would have caught it greps for `gcc compilation
+# failed`, which the exit-6 message deliberately does not print, because a gate
+# reading that marker reads a claim nobody supported.
+stub_pdc "$D" '#!/bin/sh
+echo "Linking with gcc (-O2)..."
+echo "error: gcc exited 1 without diagnosing anything." >&2
+exit 6'
 manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
 run_case "$D"
 expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok

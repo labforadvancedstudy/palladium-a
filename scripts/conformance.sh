@@ -698,7 +698,7 @@ while IFS= read -r f; do
   #     is every failure today's pdc can produce, and still detects the
   #     contradiction in the front-end arm below.
   backend_code=0
-  case "$pdc_rc" in 3|4|5) backend_code=1 ;; esac
+  case "$pdc_rc" in 3|4|5|6) backend_code=1 ;; esac
 
   stage_act=""; detail=""
   if [ "$pdc_rc" -ne 0 ] && { [ "$backend_code" -eq 1 ] || [ -f "$emitted_c" ]; }; then
@@ -739,20 +739,11 @@ while IFS= read -r f; do
     #                             or was killed by a signal. It never reached a
     #                             verdict, so nothing is established about the C.
     #
-    # TODAY'S pdc EXITS 1 FOR ALL OF THESE, so until that branch lands every
-    # fixture reaching this point takes the unresolved arm and BACKEND_REJECT is
-    # unreachable from the real compiler. That is the honest state, not an
-    # oversight: the outcome is refused either way, only the accusation waits.
-    # (That branch's GccFailed message is deliberately byte-identical to the old
-    # one "because scripts/conformance.sh matches on it" — this file no longer
-    # does, so that coupling can be dropped when the two are reconciled.)
-    #
-    # MERGE ORDER IS DECIDED, AND IT IS NOT A PREFERENCE: THIS FILE LANDS FIRST.
-    # Invariant-first is safe in both directions — against today's flattened
-    # exit 1 every post-codegen failure stays red as HARNESS_ERROR, so nothing is
-    # blessed while the codes are missing. The reverse is NOT protected: the new
-    # codes would exist while the old declarable `link` classifier was still
-    # live, and a caller could pin the outcome for the length of that window.
+    #   6 EXIT_GCC_UNEXPLAINED   GccUnexplained — gcc RAN and exited nonzero,
+    #                             and pdc could not show the verdict was about
+    #                             our C. Not exotic: an undefined symbol from
+    #                             the link stage lands here, and so does a full
+    #                             disk. Refused, and not attributed to anyone.
     #
     # AND WHEN THE SIBLING LANDS, REPLACE THE STUBS WITH AN INTEGRATION RECEIPT.
     # The controls in scripts/test-conformance-runner.sh manufacture these codes,
@@ -793,11 +784,20 @@ while IFS= read -r f; do
         printf '%-52s %s\n' "$f" "HARNESS_ERROR"
         fail "$f [HARNESS_ERROR] the front end accepted this program $where, but the C toolchain never reached a verdict (gcc could not be spawned, or was killed by a signal). Nothing is established about the emitted C, so nothing is claimed about it: $cdiag"
         ;;
+      6)
+        # gcc DID reach a verdict — unlike 5 — and pdc could not attribute it to
+        # the C it emitted. An undefined symbol from the link stage looks like
+        # this and IS a codegen defect; a full disk looks like this and is not.
+        # Refused either way, and not attributed, because the producer could not
+        # attribute it either.
+        printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+        fail "$f [HARNESS_ERROR] the front end accepted this program $where, and gcc then exited nonzero WITHOUT diagnosing that translation unit. gcc reached a verdict, but nothing attributes it to the emitted C: an undefined symbol from the link stage (a real backend defect) and a full disk (not one) are indistinguishable here, so no accusation is made. Not a fixture property either way, and no manifest column excuses it: $cdiag"
+        ;;
       *)
         # Only reachable with the translation unit on disk: an unstructured code
         # is not a witness, so the file is the only thing that got us here.
         printf '%-52s %s\n' "$f" "HARNESS_ERROR"
-        fail "$f [HARNESS_ERROR] the front end accepted this program and emitted $emitted_c, and the build then failed — but pdc exited $pdc_rc, which does not say whether gcc REFUSED that C or died before finishing. This gate will not call it a compiler defect on evidence that cannot distinguish the two; the exit codes that resolve it land with fix/gcc-diagnostics-discarded. Either way it is not a fixture property and no manifest column excuses it: $cdiag"
+        fail "$f [HARNESS_ERROR] the front end accepted this program and emitted $emitted_c, and the build then failed — but pdc exited $pdc_rc, which is not one of the structured codes (3 backend reject, 4 backend emitted ill-typed C, 5 toolchain never reached a verdict, 6 gcc gave a verdict pdc could not attribute) and so does not say what happened. This gate will not call it a compiler defect on evidence that cannot distinguish them. Either way it is not a fixture property and no manifest column excuses it: $cdiag"
         ;;
     esac
     continue
