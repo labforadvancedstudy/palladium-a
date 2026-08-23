@@ -162,10 +162,15 @@ impl ModuleResolver {
                     }
                 }
                 crate::ast::Item::Enum(enum_def) => {
-                    // Note: EnumDef doesn't have a visibility field in the current AST
-                    // This would need to be added to the AST to support private enums
-                    // For now, all enums are treated as public
-                    exports.insert(enum_def.name.clone());
+                    // The field exists now, and this arm tests it like every
+                    // other. It used to say "EnumDef doesn't have a visibility
+                    // field in the current AST ... for now, all enums are
+                    // treated as public", which made every enum in every module
+                    // reachable from every downstream program whether or not it
+                    // said `pub`.
+                    if matches!(enum_def.visibility, crate::ast::Visibility::Public) {
+                        exports.insert(enum_def.name.clone());
+                    }
                 }
                 crate::ast::Item::Trait(trait_def) => {
                     if matches!(trait_def.visibility, crate::ast::Visibility::Public) {

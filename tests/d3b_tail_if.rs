@@ -1641,14 +1641,14 @@ fn a_user_written_return_zero_in_a_unit_function_is_refused() {
 ///   src/ownership/borrow_checker.rs:134-138
 ///                               `functions` is seeded from `BUILTINS` and
 ///                               nothing else.
-///   src/ownership/borrow_checker.rs:327-347
+///   src/ownership/borrow_checker.rs:335-355
 ///                               `check_program` walks `program.items` only.
 ///                               `Program.imports` (src/ast/mod.rs:9) is never
 ///                               read, and `Item` (src/ast/mod.rs:24-32) has no
 ///                               `Import` variant, so nothing in the local AST
 ///                               could have carried the imported signatures
 ///                               either.
-///   src/ownership/borrow_checker.rs:882 -> :502 -> :527
+///   src/ownership/borrow_checker.rs:889 -> :502 -> :527
 ///                               `Expr::Call` checks its callee expression;
 ///                               `Expr::Ident` misses `functions`, falls
 ///                               through to the ownership table, finds no
@@ -1798,7 +1798,7 @@ fn selective_import_excludes_a_symbol_from_the_consumers() {
 /// THE SCOPE OF THIS ROW ALSO COVERS DECLARATION IDENTITY, and it is bounded
 /// here rather than fixed. Imported generics are stored by BARE NAME
 /// (`TypeChecker.generic_functions`), and the deferred-refusal lists that
-/// src/typeck/mod.rs:1272-1293 filters carry `(name, span)` and nothing else.
+/// src/typeck/mod.rs:2307-2328 filters carry `(name, span)` and nothing else.
 /// So with two same-named imported generic `async fn`s, the refusal is raised
 /// off whichever declaration was RECORDED and the body that would have been
 /// emitted is whichever won a `HashMap`: THE REFUSAL MAY NAME A DECLARATION
@@ -1880,8 +1880,8 @@ fn two_modules_exporting_one_name_are_deterministic() {
 ///
 /// THE SHAPE. Two imported modules both export a generic `async fn agen<T>`.
 /// Only `a.pd`'s returns a value, so only `a.pd`'s is recorded in
-/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:639-650), and the
-/// refusal is raised for it at src/typeck/mod.rs:1232-1238 once the call site
+/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:1434-1445), and the
+/// refusal is raised for it at src/typeck/mod.rs:2267-2273 once the call site
 /// has instantiated the name. But `generic_functions` is keyed by BARE NAME and
 /// `set_imported_modules` iterates a `HashMap`, so WHICH module's body that key
 /// holds — and therefore which body `get_instantiations` would have handed to

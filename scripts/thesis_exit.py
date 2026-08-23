@@ -3131,6 +3131,19 @@ def self_test() -> int:
     # `make v1-exit` would have to dispatch, and the +1 is the price of the kind change,
     # recorded here rather than absorbed.
     #
+    # 20 -> 22 on 2026-08-23, and this one is an ADDITION rather than a kind change:
+    # N3-15 ("item order does not decide whether a program compiles, over the by-value
+    # containment graph") and N4-22 ("an `enum` whose payload names its own enum is a
+    # type") both landed as `observable`, because each is witnessed by a Rust integration
+    # test asserting a runtime property stdout cannot show — a permutation over six
+    # declaration orders, and a recursive value built, taken apart and summed. Neither
+    # could be a `fixture`: a conformance row names ONE file in ONE order, which is
+    # exactly the evidence shape N3-15 exists to reject.
+    #
+    # It went unnoticed for one round because that round ran a curated eight gates and
+    # `make test-thesis-runner` was not among them. The count is the only thing that
+    # notices an added row here, which is the whole reason it is pinned.
+    #
     # 18 -> 19 on 2026-08-23: N14-01 ("the builtin set is exactly the 34 normative names")
     # changed evidence-kind from `gate make stdlib-gate` to
     # `observable src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`. Its
@@ -3141,7 +3154,7 @@ def self_test() -> int:
     case("the manifest carries `observable` rows nothing dispatches yet — DEMAND for the "
          "1.0 gate GI-10 owes, not evidence that this code is live; retention is debt "
          "against that row, and an empty set here makes it a deletion",
-         len([f for f in _kinds if f[4] == "observable"]), 20, drives_main=False)
+         len([f for f in _kinds if f[4] == "observable"]), 22, drives_main=False)
     case("...and the gate that would dispatch them does not exist yet, which is what makes "
          "this debt rather than liveness",
          (ROOT / "Makefile").read_text().count("\nv1-exit:"), 0, drives_main=False)
