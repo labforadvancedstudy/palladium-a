@@ -143,9 +143,9 @@ echo "== the backend refusing its own output is not a declarable verdict =="
 # branch fires on demand, forever.
 printf 'fn main() {\n    print("ok");\n}\n' >"$TMP/be_probe.pd"
 
-# Writes a translation unit, then exits 3 — fix/gcc-diagnostics-discarded's
-# EXIT_BACKEND_REJECT (src/linker.rs:247 at aa63982), i.e. gcc ran to completion
-# and refused the C. An exit code, not a string: no fixture text has a route to
+# Writes a translation unit, then exits 3 — src/linker.rs's
+# EXIT_BACKEND_REJECT, i.e. gcc ran to completion, refused the C, and said so
+# about the translation unit we handed it. An exit code, not a string: no fixture text has a route to
 # it. Also exercises the widened reject_codes — before that, exit 3 would have
 # been reported as "pdc MALFUNCTIONED" instead of as the defect it is.
 mk pdc_backend_reject '#!/bin/sh

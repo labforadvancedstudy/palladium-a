@@ -2,7 +2,7 @@
 // "Forging packages into legendary artifacts"
 
 use super::{PackageManager, PackageManifest};
-use crate::driver::Driver;
+use crate::driver::{Driver, RunOutcome};
 use crate::errors::{CompileError, Result};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -337,11 +337,24 @@ impl BuildSystem {
 
     /// Run the built executable
     pub fn run(&mut self, args: Vec<String>) -> Result<()> {
+        self.run_reporting(args)
+            .map_err(crate::driver::RunOutcome::into_compile_error)
+    }
+
+    /// Build and run, reporting WHICH of the four ways it failed.
+    ///
+    /// `pdm run` reached `main() -> Result<()>`, which prints the error and
+    /// exits 1 for every one of them, so 3/4/5/6 were all exit 1 here while
+    /// `pdc run` reported them properly. The child was worse than flattened: it
+    /// went straight to `process::exit(code.unwrap_or(1))`, so a program killed
+    /// by a signal exited 1 — indistinguishable from a build failure.
+    pub fn run_reporting(&mut self, args: Vec<String>) -> std::result::Result<(), RunOutcome> {
         // First build
-        self.build()?;
+        self.build().map_err(RunOutcome::Compile)?;
 
         // Find the main executable
-        let manifest = PackageManager::load_manifest(Path::new("package.pd"))?;
+        let manifest =
+            PackageManager::load_manifest(Path::new("package.pd")).map_err(RunOutcome::Compile)?;
         let exe_name = &manifest.name;
 
         let exe_dir = self
@@ -363,15 +376,10 @@ impl BuildSystem {
             let opt = crate::linker::OptLevel::for_release(self.context.config.release);
             println!("🔗 Linking {} ({})", exe_name, opt.flag());
 
-            let output = crate::linker::link_command(&c_file, &exe_file, opt)?.output()?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(CompileError::Generic(format!(
-                    "Linking failed:\n{}",
-                    stderr
-                )));
-            }
+            // Shared policy — see src/linker.rs. `RunOutcome::Link` and not a
+            // flattened string, so the exit code survives to the process.
+            let notes = crate::linker::link(&c_file, &exe_file, opt).map_err(RunOutcome::Link)?;
+            crate::linker::report_notes(&notes);
         }
 
         // Run the executable
@@ -381,12 +389,20 @@ impl BuildSystem {
         let mut cmd = std::process::Command::new(&exe_file);
         cmd.args(&args);
 
-        let status = cmd.status()?;
+        let status = cmd
+            .status()
+            .map_err(|e| RunOutcome::Compile(CompileError::IoError(e)))?;
 
         println!("─────────────────────────────────────");
 
+        // Was `process::exit(status.code().unwrap_or(1))`: a signalled child
+        // became exit 1, which is also what a build failure returns.
         if !status.success() {
-            std::process::exit(status.code().unwrap_or(1));
+            println!(
+                "⚠️  Program {}",
+                crate::driver::describe_child_status(&status)
+            );
+            return Err(RunOutcome::from_child(&status));
         }
 
         Ok(())
@@ -490,21 +506,16 @@ impl BuildSystem {
         // Link to executable
         let exe_path = output_dir.join(test_name);
 
-        // Tests link like any other binary: optimized unless told otherwise.
-        let gcc_output = crate::linker::link_command(
+        // Tests link like any other binary: optimized unless told otherwise,
+        // and under the same policy. A test binary built from ill-typed C is
+        // not a test result.
+        let notes = crate::linker::link(
             &output_path,
             &exe_path,
             crate::linker::OptLevel::for_release(self.context.config.release),
-        )?
-        .output()?;
-
-        if !gcc_output.status.success() {
-            let stderr = String::from_utf8_lossy(&gcc_output.stderr);
-            return Err(CompileError::Generic(format!(
-                "Test compilation failed:\n{}",
-                stderr
-            )));
-        }
+        )
+        .map_err(|e| CompileError::Generic(format!("test: {}", e)))?;
+        crate::linker::report_notes(&notes);
 
         // Run the test
         let output = std::process::Command::new(&exe_path).output()?;
