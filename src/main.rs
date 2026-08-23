@@ -129,15 +129,15 @@ fn compile_file(
 
                 println!("🔗 Linking with gcc ({})...", opt.flag());
 
-                let gcc_output = palladium::linker::link_command(&c_path, &output_path, opt)
-                    .map_err(|e| e.to_string())?
-                    .output()
-                    .map_err(|e| format!("Failed to run gcc: {}", e))?;
-
-                if !gcc_output.status.success() {
-                    let stderr = String::from_utf8_lossy(&gcc_output.stderr);
-                    return Err(format!("gcc compilation failed:\n{}", stderr));
-                }
+                // One `if` here answered three questions with one string: stderr
+                // was read only when the status was nonzero (so warnings were
+                // discarded — the segfaulting program in `src/linker.rs`'s module
+                // comment compiled clean right here), and every nonzero status
+                // became `gcc compilation failed` (so a killed gcc read as a
+                // rejection). `linker::link` separates them; `report_link` says
+                // WHICH through the exit code, which no fixture text can forge.
+                palladium::linker::link(&c_path, &output_path, opt)
+                    .unwrap_or_else(|e| report_link(e));
 
                 println!("   Created executable: {}", output_path.display());
             }
@@ -304,4 +304,27 @@ fn handle_bootstrap_command(command: BootstrapCommands) -> Result<(), String> {
             compiler.compile(&file).map_err(|e| e.to_string())
         }
     }
+}
+
+/// Report a link-stage failure and leave, with the exit code that says WHICH.
+///
+/// WHY THIS DOES NOT GO THROUGH `main`'s ERROR PATH. That path takes a `String`
+/// and always exits 1, which is the flattening this change exists to undo: a
+/// gcc that rejected our C, a gcc that was killed, and a gcc that warned about
+/// C we should never have emitted would arrive as one status and three
+/// sentences, and a shell gate would have to guess by grepping the sentences.
+///
+/// It cannot grep them. gcc echoes the generated C, the generated C carries the
+/// fixture's identifiers, so any marker word this compiler prints is a word a
+/// fixture can arrange to have printed — measured in this repo, where a fixture
+/// containing `Linking` was classified as a link failure by exactly that grep.
+/// The exit code has no route from fixture text, so that is where the
+/// distinction goes. The numbers and their meanings are
+/// `palladium::linker::EXIT_BACKEND_REJECT` / `EXIT_BACKEND_ILL_TYPED` /
+/// `EXIT_TOOLCHAIN`; the human sentence still goes to stderr, unchanged in
+/// wording from before for the rejection case.
+fn report_link(e: palladium::linker::LinkError) -> ! {
+    // Byte-identical to main's handler: only the status carries the new fact.
+    eprintln!("\x1b[1;31merror:\x1b[0m {}", e);
+    process::exit(e.exit_code());
 }
