@@ -62,12 +62,12 @@ grammar.ebnf	97-98	tests/advanced_features_test.rs	25c88d699a44	# ==============
 grammar.ebnf	97-98	tests/compiler_comprehensive_test.rs	25c88d699a44	# ============================================================================= # Program
 runtime/palladium_runtime.c	470-470	src/builtins.rs	28f6c8c7868d	buf = (char *)malloc(cap);
 scripts/check_doc_evidence.py	308-310	docs/contributing/claude-md-coverage.md	a4f02106e0cf	for doc in (sorted(ROOT.glob("*.md")) + sorted(ROOT.glob("docs/**/*.md")) + s ... l")) + sorted(ROOT.glob("src/**/*.rs")) + sorted(ROOT.glob("tests/**/*.rs"))):
-scripts/conformance.sh	145-152	docs/contributing/MILESTONES.md	e383a707f766	grep_status() { local mode=$1 pat=$2 file=$3 case "$mode" in E) grep -qE -- " ... " 2>/dev/null ;; F) grep -qF -- "$pat" "$file" 2>/dev/null ;; esac return $? }
-scripts/conformance.sh	211-211	docs/reference/features/feature-index.toml	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
-scripts/conformance.sh	211-211	docs/specification/language-spec.md	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
-scripts/conformance.sh	635-635	docs/contributing/MILESTONES.md	259d2060c249	if strip_ansi <"$log" >"$TMPROOT/diag" 2>/dev/null; then
-scripts/conformance.sh	636-636	docs/contributing/MILESTONES.md	480853608aa1	grep_status F "$fp" "$TMPROOT/diag"; fp_match=$?
-scripts/conformance.sh	684-689	docs/contributing/MILESTONES.md	d16adaff9f82	elif [ "$stage_act" != "run" ] && [ "$fp_match" -gt 1 ]; then printf '%-52s % ... not with the declared diagnostic; expected fingerprint '$fp', actual: $detail"
+scripts/conformance.sh	164-171	docs/contributing/MILESTONES.md	e383a707f766	grep_status() { local mode=$1 pat=$2 file=$3 case "$mode" in E) grep -qE -- " ... " 2>/dev/null ;; F) grep -qF -- "$pat" "$file" 2>/dev/null ;; esac return $? }
+scripts/conformance.sh	230-230	docs/reference/features/feature-index.toml	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
+scripts/conformance.sh	230-230	docs/specification/language-spec.md	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
+scripts/conformance.sh	718-718	docs/contributing/MILESTONES.md	259d2060c249	if strip_ansi <"$log" >"$TMPROOT/diag" 2>/dev/null; then
+scripts/conformance.sh	719-719	docs/contributing/MILESTONES.md	480853608aa1	grep_status F "$fp" "$TMPROOT/diag"; fp_match=$?
+scripts/conformance.sh	769-774	docs/contributing/MILESTONES.md	d16adaff9f82	elif [ "$stage_act" != "run" ] && [ "$fp_match" -gt 1 ]; then printf '%-52s % ... not with the declared diagnostic; expected fingerprint '$fp', actual: $detail"
 scripts/stdlib-gate.sh	360-360	tests/d3b_tail_if.rs	42b7c4cd2314	known_violation:*)
 scripts/stdlib-gate.sh	360-362	tests/d3b_tail_if.rs	b6524cd3b834	known_violation:*) known_n=$((known_n+1)) want_fns=${cverdict#known_violation:}
 scripts/stdlib-gate.sh	370-372	tests/d3b_tail_if.rs	eb48c8400ce4	if [ "$cc_rc" -eq 0 ]; then note "XPASS: $drv is recorded known_violation:$wa ...  compiler defect is fixed; promote it to 'clean' in $DRIVER_MANIFEST" continue
