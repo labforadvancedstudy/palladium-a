@@ -1,9 +1,9 @@
 // NEGATIVE TEST -- a const generic parameter is parsed and then not monomorphised.
 //
-// `fn sum<const N: i64>(a: [i64; N])` parses: src/parser/mod.rs:58-60 has the
+// `fn sum<const N: i64>(a: [i64; N])` parses: src/parser/mod.rs:101-103 has the
 // const-parameter branch. Nothing instantiates it, so `N` reaches the type
 // checker as a name rather than as 3, and the call does not match. Codegen is no
-// better -- src/codegen/mod.rs:1084 emits the parameter NAME verbatim into C.
+// better -- src/codegen/mod.rs:1109 emits the parameter NAME verbatim into C.
 //
 // The row this serves is `partial`, which is a claim about behaviour, and it
 // used to carry only src: citations. A source line proves a branch exists; it

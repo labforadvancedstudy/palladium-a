@@ -5,6 +5,49 @@ use crate::ast::{AssignTarget, Param, UnaryOp, *};
 use crate::errors::{CompileError, Result, Span};
 use crate::lexer::Token;
 
+/// The attributes this compiler implements. **EMPTY, and that is the answer.**
+///
+/// N2-10 makes `#` lex; N2-11 makes an unknown attribute a compile error. Read
+/// together with an empty table they say: **every attribute is a compile error
+/// today.** That is deliberate and it is why the two rows ship in one commit.
+/// The alternative — lex `#[total]`, accept it, generate no totality check — is
+/// the defect M1 was spent removing, one construct along: a source that claims
+/// a property and a binary that does not have it.
+///
+/// So the table is empty rather than absent, and empty rather than containing
+/// `total`. `#[total]` is N8, owned by M6; until M6 discharges the obligation
+/// there is nothing for the compiler to honour, and a compiler that accepts an
+/// obligation it cannot discharge is worse than one that says no.
+/// `tests/reject/total_attribute.pd` pins that: a reject before this change (at
+/// `Unexpected character '#'`, one level below the parser) and a reject after
+/// it, for a reason that now names the attribute.
+///
+/// `the_known_attribute_set_is_empty_on_purpose` fails when a name is added, so
+/// M6 cannot add one without reading this paragraph.
+pub const KNOWN_ATTRIBUTES: &[&str] = &[];
+
+/// One `#[name]`, `#[name(args)]` or `#![name(args)]` as written.
+///
+/// Nothing consumes this beyond the refusal, because there is nothing to
+/// consume: the known set is empty. It exists as a named value anyway so the
+/// refusal can report WHICH attribute in WHAT shape, which is what makes "the
+/// three shapes of N2-10 lex" a checkable claim rather than an assertion about
+/// code nobody can observe.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attribute {
+    /// The attribute's name — `total` in `#[total(2)]`.
+    pub name: String,
+    /// The argument tokens as source text, one entry per token; empty when the
+    /// attribute has no `( … )` at all. Not parsed into anything structured: an
+    /// argument grammar for a set of zero known attributes is a grammar for
+    /// nothing.
+    pub args: Vec<String>,
+    /// `#!` rather than `#` — an inner attribute, applying to the compilation
+    /// unit, and legal only at the top of it.
+    pub inner: bool,
+    pub span: Span,
+}
+
 pub struct Parser {
     tokens: Vec<(Token, Span)>,
     current: usize,
@@ -168,24 +211,24 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 /// 4,000-line file: it is five functions and one call site, and nothing else in
 /// this file participates.
 ///
-///   `src/parser/mod.rs:35-97`    `BlockTail` — the shape of the block's final
+///   `src/parser/mod.rs:78-140`    `BlockTail` — the shape of the block's final
 ///                                statement as the parser SAW it, plus
 ///                                `writes_a_value()`, which decides whether a
 ///                                refusal is owed at all
-///   `src/parser/mod.rs:116-163`  `returns_on_every_path` — the decision, with
+///   `src/parser/mod.rs:159-206`  `returns_on_every_path` — the decision, with
 ///                                the NOTE at :151-159 recording the one
 ///                                declared residual (a `match` lowers to an
 ///                                if/else-if chain with no final `else`)
-///   `src/parser/mod.rs:238-240`  `already_terminates` — `any`, not "the last
+///   `src/parser/mod.rs:281-283`  `already_terminates` — `any`, not "the last
 ///                                statement", because anything after an
 ///                                unconditional terminator is unreachable
-///   `src/parser/mod.rs:243-266`  `stmt_terminates` — the four cases, each
+///   `src/parser/mod.rs:286-309`  `stmt_terminates` — the four cases, each
 ///                                paired with its counterpart in
 ///                                scripts/check-c-returns.py by the table above
-///   `src/parser/mod.rs:294-326`  `contains_escaping_break` +
+///   `src/parser/mod.rs:337-369`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:982-1006`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1148-1172`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -582,6 +625,8 @@ impl Parser {
         match expr {
             // Expressions without span field return dummy span for now
             Expr::Integer(_) => Span::dummy(),
+            Expr::Float(_) => Span::dummy(),
+            Expr::Char(_) => Span::dummy(),
             Expr::String(_) => Span::dummy(),
             Expr::Bool(_) => Span::dummy(),
             Expr::Ident(_) => Span::dummy(),
@@ -609,6 +654,16 @@ impl Parser {
         let mut imports = Vec::new();
         let mut items = Vec::new();
 
+        // Inner attributes (`#![name(args)]`) apply to the compilation unit and
+        // N2 puts them "at the top of" it, so they are read before anything
+        // else. Each is refused as it is read (N2-11), so the loop cannot
+        // actually run twice today; it is a loop because the shape is a list
+        // and writing it as one `if` would make the second `#!` fail with a
+        // different, wrong message once an attribute is ever implemented.
+        while self.check(&Token::HashBang) {
+            self.parse_attribute()?;
+        }
+
         // Parse imports first
         while self.check(&Token::Import) {
             imports.push(self.parse_import()?);
@@ -620,6 +675,99 @@ impl Parser {
         }
 
         Ok(Program { imports, items })
+    }
+
+    /// Parse one attribute and refuse it (N2-10 lexes it, N2-11 refuses it).
+    ///
+    /// Returns the attribute for the benefit of a future caller that has a
+    /// non-empty `KNOWN_ATTRIBUTES` to check it against; today the `Ok` path is
+    /// unreachable from source, which is exactly what an empty known set means
+    /// and is asserted by `every_attribute_shape_is_refused_by_name`.
+    ///
+    /// The refusal happens HERE, after the whole attribute has been read,
+    /// rather than at the `#`. Reading it first is what lets the diagnostic
+    /// name the attribute — `unknown attribute \`frobnicate\`` — and naming it
+    /// is the difference between a message a reader can act on and one that
+    /// says the syntax exists.
+    fn parse_attribute(&mut self) -> Result<Attribute> {
+        let (open, open_span) = self.advance()?; // `#` or `#!`
+        let inner = matches!(open, Token::HashBang);
+
+        self.consume(
+            Token::LeftBracket,
+            if inner {
+                "Expected '[' after '#!'"
+            } else {
+                "Expected '[' after '#'"
+            },
+        )?;
+
+        let name = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "attribute name".to_string(),
+                    found: token.to_string(),
+                    span: self.current_span(),
+                });
+            }
+        };
+
+        // `( … )`, kept as raw token spellings. Balanced on parentheses rather
+        // than scanned to the first `)`, so `#[a(b(c))]` reads as one attribute
+        // and not as one that ends early with a stray `)` after it.
+        let mut args = Vec::new();
+        if self.check(&Token::LeftParen) {
+            self.advance()?;
+            let mut depth = 1usize;
+            loop {
+                if self.is_at_end() {
+                    return Err(CompileError::UnexpectedToken {
+                        expected: "')' to close the attribute's arguments".to_string(),
+                        found: "end of file".to_string(),
+                        span: self.current_span(),
+                    });
+                }
+                let (tok, _) = self.advance()?;
+                match tok {
+                    Token::LeftParen => {
+                        depth += 1;
+                        args.push("(".to_string());
+                    }
+                    Token::RightParen => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        args.push(")".to_string());
+                    }
+                    other => args.push(other.to_string()),
+                }
+            }
+        }
+
+        let close_span = self.consume(Token::RightBracket, "Expected ']' to close the attribute")?;
+        let span = Span::new(
+            open_span.start,
+            close_span.end,
+            open_span.line,
+            open_span.column,
+        );
+
+        if !KNOWN_ATTRIBUTES.contains(&name.as_str()) {
+            return Err(CompileError::unknown_attribute(
+                &name,
+                KNOWN_ATTRIBUTES,
+                span,
+            ));
+        }
+
+        Ok(Attribute {
+            name,
+            args,
+            inner,
+            span,
+        })
     }
 
     /// Parse an import statement
@@ -779,6 +927,24 @@ impl Parser {
 
     /// Parse a top-level item
     fn parse_item(&mut self) -> Result<Item> {
+        // Outer attributes precede everything else on an item, including `pub`.
+        // Each is refused as it is read (N2-11).
+        while self.check(&Token::Hash) {
+            self.parse_attribute()?;
+        }
+
+        // `#!` here rather than at the top of the file: say so, instead of
+        // letting it fall through to "Expected function, struct, …", which
+        // names the wrong problem.
+        if self.check(&Token::HashBang) {
+            return Err(CompileError::SyntaxError {
+                message: "an inner attribute `#![…]` may only appear at the top of the file, \
+                          before any import or item; write `#[…]` to annotate this item"
+                    .to_string(),
+                span: self.current_span(),
+            });
+        }
+
         // Check for visibility modifier
         let visibility = if self.check(&Token::Pub) {
             self.advance()?; // consume 'pub'
@@ -1788,6 +1954,8 @@ impl Parser {
             Token::Identifier(s) => AstToken::Ident(s),
             Token::String(s) => AstToken::Literal(format!("\"{}\"", s)),
             Token::Integer(n) => AstToken::Literal(n.to_string()),
+            Token::Float(x) => AstToken::Literal(format!("{:?}", x)),
+            Token::Char(c) => AstToken::Literal(format!("'{}'", c.escape_debug())),
             Token::True => AstToken::Literal("true".to_string()),
             Token::False => AstToken::Literal("false".to_string()),
             Token::LeftParen => AstToken::Punct('('),
@@ -2210,7 +2378,7 @@ impl Parser {
                 self.consume(Token::RightBrace, "Expected '}' after match arm body")?;
 
                 // `match_arm = pattern "=>" ( block | expression ) [ ',' ]`
-                // (docs/specification/grammar.ebnf:166). The comma is optional
+                // (docs/specification/grammar.ebnf:194). The comma is optional
                 // after a block body too; leaving it unconsumed made the next
                 // iteration read it as a pattern.
                 if self.check(&Token::Comma) {
@@ -2669,6 +2837,8 @@ impl Parser {
                     "i64" | "int" => Type::I64, // "int" is an alias for i64
                     "u32" => Type::U32,
                     "u64" => Type::U64,
+                    "f32" => Type::F32,
+                    "f64" => Type::F64,
                     "bool" => Type::Bool,
                     "String" => Type::String,
                     _ => Type::Custom(name.clone()),
@@ -2812,6 +2982,8 @@ impl Parser {
         match self.advance()? {
             (Token::String(s), _) => Ok(Expr::String(s)),
             (Token::Integer(n), _) => Ok(Expr::Integer(n)),
+            (Token::Float(x), _) => Ok(Expr::Float(x)),
+            (Token::Char(c), _) => Ok(Expr::Char(c)),
             (Token::True, _) => Ok(Expr::Bool(true)),
             (Token::False, _) => Ok(Expr::Bool(false)),
             (Token::SelfParam, _span) => {
@@ -4047,7 +4219,7 @@ mod tests {
     }
 
     /// `match_arm = pattern "=>" ( block | expression ) [ ',' ]`
-    /// (docs/specification/grammar.ebnf:166) — the comma is optional after
+    /// (docs/specification/grammar.ebnf:194) — the comma is optional after
     /// EITHER form. The parser used to consume it only after an expression
     /// body, so a comma after a block body was re-read as the next pattern
     /// and reported as "Expected pattern, but found ','".

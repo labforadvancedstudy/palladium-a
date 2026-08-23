@@ -233,7 +233,7 @@ def excerpt(text: str, width: int = 160) -> str:
     """A bounded excerpt that shows BOTH ends of a cited range.
 
     Showing only the first 100 characters made the load-bearing later lines of a range
-    citation invisible, which is how `src/typeck/mod.rs:352-527` looked plausible while
+    citation invisible, which is how `src/typeck/mod.rs:365-540` looked plausible while
     naming nothing relevant. A reviewer needs to see where a range starts and where it ends.
     """
     t = norm(text).replace("\t", " ")
@@ -279,7 +279,7 @@ def citing_sources():
     under src/ and tests/, none of them ever pinned.
 
     A pin proves a cited range has not MOVED. That is worth more in source than in prose,
-    not less: a comment citing `src/codegen/mod.rs:2782` is read by whoever is editing the
+    not less: a comment citing `src/codegen/mod.rs:2811` is read by whoever is editing the
     file next to it, and inserting twenty lines above the target silently repoints it at
     something unrelated. Editing source is how citations move; docs/ is where they were
     being checked.

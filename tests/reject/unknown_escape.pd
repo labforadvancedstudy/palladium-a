@@ -1,0 +1,10 @@
+// NEGATIVE TEST -- N2-09. An escape outside the set is a COMPILE ERROR,
+// not a pass-through.
+//
+// `"\\q"` used to produce the two characters `\` and `q` with no diagnostic.
+// That is the same defect as an attribute that lexes and is ignored, one layer
+// down: the source names an escape, the bytes are something else, and nothing
+// says so. The escape set is `\n \t \r \" \\ \0 \'` and the diagnostic lists it.
+fn main() {
+    print("bad \q escape");
+}

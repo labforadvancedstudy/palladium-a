@@ -1,0 +1,22 @@
+// NEGATIVE TEST -- N2-11. An unknown attribute is a COMPILE ERROR.
+//
+// This is the row the attribute surface exists to protect. `#` lexes (N2-10),
+// so `#[frobnicate]` is read all the way to a name; nothing implements it, so
+// it is refused, and the diagnostic NAMES it.
+//
+// The alternative -- lex it, shrug, generate code -- is the defect class M1
+// was spent deleting, one construct along: a source file that requests a
+// property and a binary that does not have it, with no diagnostic in between.
+// Every attribute is refused today because `KNOWN_ATTRIBUTES` is empty, and
+// that emptiness is the correct M2 state rather than an oversight: the only
+// attribute the specification names is `#[total]` (N8), which M6 owns, and a
+// compiler that accepts an obligation it cannot discharge is worse than one
+// that says no.
+#[frobnicate]
+fn f() -> i64 {
+    return 1;
+}
+
+fn main() {
+    print_int(f());
+}

@@ -23,7 +23,7 @@ fn tk_plus() -> i64 { return 2; }
 fn tk_eof() -> i64 { return 0; }
 
 // Scanner: turn a digit/plus string into a token count, writing into arrays.
-// The written arrays are declared `mut`, as docs/specification/bootstrap-subset.md:95
+// The written arrays are declared `mut`, as docs/specification/bootstrap-subset.md:104
 // requires of every array parameter and as benchmarks/palladium/bubble_sort.pd:11
 // already spells it. Writing through a bare `[T; N]` parameter is refused: it
 // reaches the caller's array (C decays the parameter to a pointer) and the

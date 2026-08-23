@@ -2,12 +2,14 @@
 // "Forging legends into machine code"
 
 pub mod c_ident;
+pub mod c_literal;
 pub mod llvm_backend;
 pub mod llvm_backend_improved;
 pub mod llvm_native;
 pub mod llvm_text_backend;
 
 use crate::ast::{AssignTarget, UnaryOp, *};
+use crate::codegen::c_literal::{c_char_constant, c_string_body};
 use crate::errors::{CompileError, Result, Span};
 use std::fs::{self, File};
 use std::io::Write;
@@ -39,7 +41,7 @@ enum ArrayParamForm {
     /// `xs: [T; N]` - no declared intent to mutate anything.
     ByValue,
     /// `mut xs: [T; N]` - the bootstrap subset's spelling for a mutable array
-    /// parameter (docs/specification/bootstrap-subset.md:96).
+    /// parameter (docs/specification/bootstrap-subset.md:105).
     MutByValue,
     /// `xs: &[T; N]`.
     Shared,
@@ -316,6 +318,12 @@ impl CodeGenerator {
     fn try_infer_expr_type(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Integer(_) => Some("long long".to_string()),
+            Expr::Float(_) => Some("double".to_string()),
+            // A char literal's TYPE is i64 today (N4-04 is still owed), so it
+            // must infer as `long long` and not as C's `char`: inferring `char`
+            // here would silently narrow `let c = 'a';` to one byte while the
+            // type checker still called it i64.
+            Expr::Char(_) => Some("long long".to_string()),
             Expr::String(_) => Some("const char*".to_string()),
             Expr::Bool(_) => Some("int".to_string()),
             Expr::StructLiteral { name, fields, .. } => {
@@ -325,7 +333,8 @@ impl CodeGenerator {
                     // For now, we'll infer from the first field's type
                     if let Some((_, field_expr)) = fields.first() {
                         let field_type = match field_expr {
-                            Expr::Integer(_) => "long long",
+                            Expr::Integer(_) | Expr::Char(_) => "long long",
+                            Expr::Float(_) => "double",
                             Expr::String(_) => "const char*",
                             Expr::Bool(_) => "int",
                             _ => "long long",
@@ -414,12 +423,26 @@ impl CodeGenerator {
                     | BinOp::Ge
                     | BinOp::And
                     | BinOp::Or => Some("int".to_string()),
-                    BinOp::Add => {
-                        // String concatenation returns a string
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                        // The operands decide, because the answer is not always
+                        // `long long`: `let d = x / y;` over two `double`s used
+                        // to declare `long long d = (x / y);` and TRUNCATE — no
+                        // diagnostic, a wrong number, and the type checker
+                        // knowing the right answer the whole time.
+                        //
+                        // The type checker has already refused every mixed pair
+                        // (`Int + Float` is a TypeMismatch), so agreement
+                        // between the operands is guaranteed by the time this
+                        // runs and "either operand is a float" is the same
+                        // question as "both are".
                         let left_type = self.infer_expr_type(left);
                         let right_type = self.infer_expr_type(right);
                         if left_type == "const char*" && right_type == "const char*" {
                             Some("const char*".to_string())
+                        } else if left_type == "double" || right_type == "double" {
+                            Some("double".to_string())
+                        } else if left_type == "float" || right_type == "float" {
+                            Some("float".to_string())
                         } else {
                             Some("long long".to_string())
                         }
@@ -693,7 +716,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:2794-2794`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:2857-2857`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:548`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -817,6 +840,8 @@ impl CodeGenerator {
         match expr {
             Expr::String(_) => "string literal",
             Expr::Integer(_) => "integer literal",
+            Expr::Float(_) => "float literal",
+            Expr::Char(_) => "char literal",
             Expr::Bool(_) => "boolean literal",
             Expr::Ident(_) => "variable reference",
             Expr::ArrayLiteral { .. } => "array literal",
@@ -1559,6 +1584,8 @@ impl CodeGenerator {
             Type::I64 => "long long".to_string(),
             Type::U32 => "unsigned int".to_string(),
             Type::U64 => "unsigned long long".to_string(),
+            Type::F64 => "double".to_string(),
+            Type::F32 => "float".to_string(),
             Type::Bool => "int".to_string(),
             Type::String => "const char*".to_string(),
             Type::Unit => "void".to_string(),
@@ -1852,6 +1879,8 @@ impl CodeGenerator {
                 Type::I64 => "long long",
                 Type::U32 => "unsigned int",
                 Type::U64 => "unsigned long long",
+                Type::F64 => "double",
+                Type::F32 => "float",
                 Type::Bool => "int",
                 Type::String => "const char*",
                 Type::Array(elem_type, size) => {
@@ -2931,17 +2960,19 @@ impl CodeGenerator {
     fn generate_expression(&mut self, expr: &Expr) -> Result<()> {
         match expr {
             Expr::String(s) => {
-                // Escape the string properly
-                let escaped = s
-                    .replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-                    .replace("\t", "\\t")
-                    .replace("\r", "\\r");
-                self.output.push_str(&format!("\"{}\"", escaped));
+                self.output.push_str(&format!("\"{}\"", c_string_body(s)));
             }
             Expr::Integer(n) => {
                 self.output.push_str(&format!("{}", n));
+            }
+            Expr::Float(x) => {
+                // `{:?}` on an f64 always writes a `.`, so `3.0` cannot come out
+                // as `3` — which C would read as an int and, in a `double`
+                // context, silently change the type of a division.
+                self.output.push_str(&format!("{:?}", x));
+            }
+            Expr::Char(c) => {
+                self.output.push_str(&c_char_constant(*c));
             }
             Expr::Bool(b) => {
                 // C represents bool as 1 or 0
@@ -4443,7 +4474,7 @@ mod tests {
     #[test]
     fn test_declared_mutable_array_parameters_may_be_written() {
         // `&mut [T; N]`, and `mut xs: [T; N]` - the spelling the bootstrap
-        // subset mandates (bootstrap-subset.md:95) - both stay legal.
+        // subset mandates (bootstrap-subset.md:104) - both stay legal.
         let c = generate(
             r#"
         fn a(xs: &mut [i64; 3]) { xs[0] = 1; }
