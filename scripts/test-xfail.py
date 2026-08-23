@@ -1519,7 +1519,39 @@ def main():
                                     outcomes=outcomes, details=details)
         problems += more
 
+    # A RUN RECEIPT, WRITTEN BEFORE ANYTHING IS PRINTED.
+    #
+    # This exists so that "did this gate RUN" can be answered independently of
+    # what it SAID. THE CONSUMER IS scripts/test-requirements-runner.sh (GI-09),
+    # and nothing else reads it: `make m2-exit` runs this file as its second
+    # inventory and folds the exit status, it does not open the receipt. GI-09 is
+    # what has to tell a real invocation from an `echo` of the same summary, so
+    # GI-09 is what checks that this file exists from the run it just made and
+    # agrees with tests/rust-debt-manifest.txt. Inventories one and three
+    # answer that structurally — the conformance runner compiles fixtures into
+    # build_output/cf_*, the Rust suite compiles its own into target/build — and
+    # this one had no footprint at all, so an echo of its output was
+    # indistinguishable from running it. Now it has one.
+    #
+    # The receipt carries the PID and the counts, so a stale file from an earlier
+    # run is detectable by mtime and a fabricated one has to agree with the
+    # inventory it claims to have read. It is written into build_output/ with
+    # every other build artefact, so `make clean` reclaims it, and a failure to
+    # write is REPORTED rather than swallowed: a gate that cannot leave evidence
+    # should say so, not quietly become unverifiable.
+    receipt = os.path.join("build_output", "test-xfail-run-receipt.txt")
+    try:
+        os.makedirs("build_output", exist_ok=True)
+        with open(receipt, "w") as fh:
+            fh.write("pid %d\nowed %d\npaid %d\nlisted %d\n"
+                     % (os.getpid(), debt["owed"], debt["paid"], counts["listed"]))
+    except OSError as exc:
+        problems.append(("RECEIPT", "could not write %s: %s — this run cannot be "
+                                    "distinguished from one that never happened"
+                                    % (receipt, exc)))
+
     print("==============================================")
+    print("run receipt: %s" % receipt)
     print("cargo lists %d ignored test(s); %d of them ran"
           % (counts["listed"], counts["observed"]))
     print("cargo lists %d test(s) in total (the set a deleted test leaves)"
@@ -1568,11 +1600,12 @@ def main():
         "NO_RESULT": "Targets that produced no result:",
         "BUILD": "Build errors:",
         "CARGO": "Unexplained cargo status:",
+        "RECEIPT": "The run receipt could not be written:",
     }
     for kind in ("OWED", "XPASS", "STALE", "UNDECLARED", "SLOWFAIL", "DUPLICATE",
                  "TAG", "DEBT_MANIFEST", "DEBT_MISSING", "DEBT_STATE",
                  "DEBT_OWNER", "DEBT_DIAGNOSTIC", "UNDECLARED_DEBT",
-                 "NO_RESULT", "BUILD", "CARGO"):
+                 "NO_RESULT", "BUILD", "CARGO", "RECEIPT"):
         items = [m for k, m in problems if k == kind]
         if items:
             print()

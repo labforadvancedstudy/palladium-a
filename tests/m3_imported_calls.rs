@@ -473,7 +473,7 @@ fn test_a_same_named_shadow_of_a_fresh_value_leaves_the_outer_binding_alone() {
 //
 // The third pass below skipped every generic imported body, on the stated
 // ground that codegen emits only public NON-GENERIC imported functions
-// (`src/codegen/mod.rs:1297-1297`) and so a skipped body "produces no C". That
+// (`src/codegen/mod.rs:1328-1328`) and so a skipped body "produces no C". That
 // is true of the DIRECT imported-emission path and FALSE of monomorphization,
 // which is a separate path emitting `name__T` from the same template. The
 // guarantee was read off the stated reason instead of off the mechanism, and
@@ -771,11 +771,38 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 //
 // THE OWNER IS M4, AND IT WAS M3 UNTIL THIS BRANCH MERGED `d2d5bd4`. That merge
 // restructured the milestones and split modules out into their own
-// (`docs/contributing/MILESTONES.md:543-552`, "M4 — Modules", which claims the
+// (`docs/contributing/MILESTONES.md:712-718`, "M4 — Modules", which claims the
 // module rows explicitly: "plus the corpus's one `xfail` … cross-file imports
 // — and the vacuous `12_modules_imports`"). M3 is now traits and generics
-// (`docs/contributing/MILESTONES.md:505-505`), which is not what these rows are
+// (`docs/contributing/MILESTONES.md:678`), which is not what these rows are
 // about.
+//
+// BOTH CITATIONS ABOVE WERE WRONG BEFORE THEY WERE MOVED, and are corrected
+// rather than re-pinned. At `acda322` the first resolved to M3's items 3-6 and
+// the second to M2's builtin item — each off by the height of the M2 section,
+// against sentences that say "M4 — Modules" and "traits and generics". The pin
+// file held the fingerprint of whatever was on those lines, which is exactly how
+// a citation that points at the wrong thing survives a review: `--update`
+// re-pins whatever occupies the line. They now name the `## M4 — Modules`
+// section and the `## M3 — Traits and generics` heading, which is what the
+// sentences claim.
+//
+// AND `--update` WILL RE-PIN THEM TO THE WRONG CONTENT WITHOUT SAYING SO. Caught
+// on 2026-08-23: an edit above these lines moved the two headings, the pin file
+// was regenerated, and `make check-doc-evidence` went GREEN with both citations
+// resolving to unrelated prose — because `--update` re-pins whatever now occupies
+// the cited LINE, and a citation that has drifted onto a new target looks exactly
+// like a citation whose target was edited. The gate cannot tell them apart; only
+// re-reading the target can. That is why these two are re-derived by hand every
+// time this file's line numbers move, and why the audit after any `--update` is
+// "did a fingerprint change, and can I name why".
+//
+// AND IT HAPPENED AGAIN IN THE MERGE THAT FOLLOWED. `fix/m2-async-producer`
+// carried these two citations forward with line numbers shifted to track its own
+// edits, and they still resolved to M3's items and to M2's builtin item. Both
+// sides of the conflict were therefore "correct" against their own tree and only
+// one was correct about the CONTENT — which is the whole argument for
+// re-deriving a moved citation instead of re-pinning it.
 //
 // The file is still named `m3_imported_calls.rs`. Renaming it would move every
 // citation that points into it, so the name is left as a historical artefact and
@@ -1192,8 +1219,8 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// set and leaves `ast` complete — and `.exports` is read nowhere but its own
 /// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consumer
 /// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:606-606`,
-/// `src/codegen/mod.rs:1297-1297`, `src/codegen/mod.rs:1382-1382`,
-/// `src/codegen/mod.rs:1487-1487`, `src/codegen/mod.rs:1982-1982`, and the borrow checker's
+/// `src/codegen/mod.rs:1328-1328`, `src/codegen/mod.rs:1413-1413`,
+/// `src/codegen/mod.rs:1518-1518`, `src/codegen/mod.rs:2013-2013`, and the borrow checker's
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
 /// module.
 #[test]
@@ -1214,11 +1241,26 @@ fn test_selective_import_does_not_import_the_rest() {
 }
 
 /// A local definition that shadows an import is decided correctly by both
-/// checkers (the local one wins; see `register_imported_functions`) and then
-/// contradicted by codegen, which emits every public imported function
-/// (`src/codegen/mod.rs:1297-1297`) and then every local one
-/// (`src/codegen/mod.rs:1501-1510`) with no shadowing check at all. The front
-/// end's answer is right and unenforceable.
+/// checkers (the local one wins; see `register_imported_functions`) AND by code
+/// generation, which asks `local_definition_shadows_import` before emitting an
+/// imported function (`src/codegen/mod.rs:1518-1528`) and emits the local one
+/// unconditionally (`src/codegen/mod.rs:1535-1541`). This test is green.
+///
+/// THE SENTENCE ABOVE USED TO SAY THE OPPOSITE — "contradicted by codegen …
+/// with no shadowing check at all. The front end's answer is right and
+/// unenforceable" — and it was stale twice over. The check is right there at
+/// `src/codegen/mod.rs:1524`, and BOTH of the citations it leaned on had
+/// drifted onto unrelated code: at `d20b759` line 1378 was a bare `}` and
+/// 1557-1566 was `type_to_c`'s primitive-type match. Neither had anything to do
+/// with function emission.
+///
+/// It survived because a citation only fails the evidence gate when its TARGET
+/// MOVES. These two were fingerprint-stable on the wrong lines, which is
+/// exactly the failure mode `scripts/check_doc_evidence.py`'s docstring names
+/// ("A PIN WHOSE TARGET CARRIES NO CONTENT IS NOT A CITATION") — except a bare
+/// `}` is caught by that rule and a plausible-looking `match ty {` is not.
+/// `fix/m2-lexical` shifted the lines, the machine could no longer relocate the
+/// range, and only then did anyone read it.
 #[test]
 fn test_a_local_definition_shadows_an_imported_one() {
     let (compiled, output, stdout) = compile_and_run(
@@ -1321,7 +1363,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// An imported name can shadow a built-in in the checkers but never in codegen,
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
-/// (`src/codegen/mod.rs:2996-2999`), while the type checker
+/// (`src/codegen/mod.rs:3027-3030`), while the type checker
 /// (`src/typeck/mod.rs:712-712`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
@@ -1331,7 +1373,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:712-712 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:2996-2999 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:712-712 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:3027-3030 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],
@@ -1450,9 +1492,9 @@ fn emitted_c_over_runs(n: usize) -> Vec<String> {
 ///
 /// This is deliberately narrower than the whole file. It isolates the two
 /// emission sites that produce DEFINITIONS — imported struct definitions
-/// (`src/codegen/mod.rs:1382-1404`) and imported function bodies
-/// (`src/codegen/mod.rs:1487-1499`) — from the prototype block
-/// (`src/codegen/mod.rs:1984-1995`), which is a fourth site and emits
+/// (`src/codegen/mod.rs:1413-1435`) and imported function bodies
+/// (`src/codegen/mod.rs:1518-1530`) — from the prototype block
+/// (`src/codegen/mod.rs:2015-2026`), which is a fourth site and emits
 /// declarations, not definitions. All four are ordered now, so the narrowing no
 /// longer isolates a fixed site from a broken one; it survives because the two
 /// assertions answer different questions, and this one localises a regression to
@@ -1535,7 +1577,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:3562-3562`), which is a
 /// `HashMap`, and `get_struct_instantiations` does the same
 /// (`src/typeck/mod.rs:3624-3624`). Codegen then emits in that Vec's order
-/// (`src/codegen/mod.rs:1457-1457`, `src/codegen/mod.rs:1999-1999`).
+/// (`src/codegen/mod.rs:1488-1488`, `src/codegen/mod.rs:2030-2030`).
 ///
 /// This program imports NOTHING, which is how the two sources were told apart:
 /// with all four `imported_modules` sites ordered, a six-module program with no

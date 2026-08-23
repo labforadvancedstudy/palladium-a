@@ -2,7 +2,7 @@
 
 **GENERATED — do not edit by hand.** Regenerate with `python3 scripts/gen-builtin-docs.py` after changing `src/builtins.rs`.
 
-Palladium has 38 builtin functions. They are ordinary free functions: there is no prelude to import and no module path to qualify. They are defined in a single table (`src/builtins.rs`) that the type checker and the borrow checker both derive from, so a builtin cannot exist in one pass and not the other.
+Palladium has 34 builtin functions. They are ordinary free functions: there is no prelude to import and no module path to qualify. They are defined in a single table (`src/builtins.rs`) that the type checker and the borrow checker both derive from, so a builtin cannot exist in one pass and not the other.
 
 Their C implementations are emitted inline into every generated file; the file and path functions are thin wrappers over symbols supplied at link time by `runtime/palladium_runtime.c`.
 
@@ -72,15 +72,6 @@ The handle-based API. `file_open` returns an integer handle, or a negative value
 | `write_string_to_file(String, String) -> i64` | borrows its string argument |
 | `file_flush(i64) -> i64` |  |
 | `file_seek(i64, i64, i64) -> i64` |  |
-
-## Enhanced file operations with mode support
-
-| Signature | Notes |
-|---|---|
-| `file_open_ex(String, i64) -> i64` |  |
-| `file_close_ex(i64) -> i64` |  |
-| `file_read_ex(i64, String, i64) -> i64` |  |
-| `file_write_ex(i64, String, i64) -> i64` |  |
 
 ## Notes that bite
 

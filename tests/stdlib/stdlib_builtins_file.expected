@@ -75,6 +75,40 @@ file_read_line_eof
 
 file_close_lines
 true
+file_open_seek
+true
+@builtin file_seek -> 6
+file_seek_set
+6
+file_seek_cur
+8
+file_seek_end
+12
+file_seek_rewind
+6
+file_seek_reads_from_there
+line2
+file_seek_bad_whence
+-1
+file_seek_bad_handle
+-1
+file_close_seek
+true
+file_open_flush
+true
+file_write_flush
+true
+@builtin file_flush -> 1
+file_flush_ok
+1
+file_flush_is_observable
+flushed
+file_close_flush_reader
+true
+file_close_flush
+true
+file_flush_bad_handle
+0
 file_write_bad_handle
 false
 file_close_bad_handle

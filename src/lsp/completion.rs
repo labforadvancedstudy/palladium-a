@@ -586,8 +586,11 @@ impl LanguageServer {
 ///
 /// Built-ins marked `Support::Unsupported` are omitted: completion proposes code
 /// for the user to write, and the type checker refuses those calls. Deriving from
-/// the registry without this filter would have advertised six uncallable names that
-/// the old hand-written list never mentioned.
+/// the registry without this filter would advertise uncallable names that the old
+/// hand-written list never mentioned — six of them when the filter was written,
+/// TWO now (`file_flush` and `file_seek`). The other four were the `*_ex` names,
+/// and they went from six to two by leaving `BUILTINS` altogether rather than by
+/// being fixed; see the note in src/builtins.rs.
 pub(crate) fn builtin_completions(prefix: &str) -> Vec<CompletionItem> {
     crate::builtins::BUILTINS
         .iter()

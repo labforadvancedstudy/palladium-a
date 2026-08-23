@@ -279,7 +279,7 @@ def citing_sources():
     under src/ and tests/, none of them ever pinned.
 
     A pin proves a cited range has not MOVED. That is worth more in source than in prose,
-    not less: a comment citing `src/codegen/mod.rs:2780` is read by whoever is editing the
+    not less: a comment citing `src/codegen/mod.rs:2811` is read by whoever is editing the
     file next to it, and inserting twenty lines above the target silently repoints it at
     something unrelated. Editing source is how citations move; docs/ is where they were
     being checked.
