@@ -70,6 +70,34 @@ library_module='pub fn helper(a: i64) -> i64 {
     return a + 1;
 }'
 
+# A program the FRONT END ACCEPTS and whose emitted C gcc then REFUSES. Measured
+# on this tree (fb12f6f), `pdc compile` exit 1:
+#   build_output/<name>.c:273:22: error: brackets are not allowed here; to
+#   declare an array, place the brackets after the identifier
+#       long long[2] g[2] = {{1, 2}, {3, 4}};
+# `type_to_c` composes `T[M][N]` as a type rather than a declarator — the open
+# defect CLAUDE.md records as "중첩 배열이 로컬·파라미터 양쪽에서 불가".
+#
+# HANDOFF, because this control stands on a live defect. When nested arrays start
+# working these cases go RED with the fixture PASSING rather than being refused.
+# That is not a runner regression: substitute another program that pdc accepts
+# and gcc rejects, measure it, and paste the measurement here. If no such program
+# can be found any more, say that and delete the positive control — but do not
+# weaken the assertion, because then nothing proves the verdict still fires.
+backend_reject_program='fn main() {
+    let g: [[i64; 2]; 2] = [[1, 2], [3, 4]];
+    print_int(g[1][0]);
+}'
+# A pure FRONT-END refusal whose diagnostic contains the literal `Linking`:
+#   error: Undefined variable or function: 'Linking'
+# The stage classifier used to decide "did the backend run?" by grepping the
+# compiler log for `Linking`, so a fixture's own identifier could answer that
+# question on the backend's behalf. Harmless while the answer only chose a label;
+# not harmless once one branch accuses the compiler of a defect.
+frontend_reject_linking_program='fn main() {
+    print_int(Linking);
+}'
+
 # manifest <repo> <lines...>   (each line uses | which is translated to TAB)
 manifest() {
   local d=$1; shift
@@ -107,6 +135,13 @@ expect_rc() {
 expect_out() {
   case "$OUT" in *"$1"*) return 0 ;; esac
   bad "expected output to contain '$1'"; return 1
+}
+# The discrimination controls below need the negative form. `expect_out` cannot
+# express "this verdict did not misfire": a suite that only ever asserts presence
+# is equally happy with a runner that shouts BACKEND_REJECT at everything.
+expect_not_out() {
+  case "$OUT" in *"$1"*) bad "expected output NOT to contain '$1'"; return 1 ;; esac
+  return 0
 }
 
 echo "conformance runner regression tests"
@@ -734,6 +769,140 @@ start "reject: an owner is rejected — a negative test is owed to nobody"
 manifest "$D" 'tests/accepted.pd|reject|compile|x|M1|has an owner'
 run_case "$D"
 expect_rc 2 && expect_out "must have owner" && ok
+
+# ===========================================================================
+# BACKEND_REJECT — the one outcome that is not a class.
+#
+# There is no valid Palladium program for which pdc accepts the source and gcc
+# then refuses the C codegen emitted. If the front end said yes, C that will not
+# build is a defect in pdc: never a property of the input, and never something a
+# fixture may declare. The runner used to CLASSIFY that outcome (stage `link`)
+# and then compare it against the manifest like any other verdict, so a backend
+# defect could be declared expected — as an xfail, or, worse, as a `reject`,
+# which is counted as COVERAGE and owed to nobody.
+#
+# Three things are proven below, because a verdict that is only declared is not a
+# verdict: that it FIRES on a real reproduction, that it does NOT fire on a
+# front-end refusal (the distinction is WHO refused), and that the manifest can
+# no longer buy an exemption.
+#
+# What is NOT proven, and must not be claimed: that this finds backend-reject
+# defects. The corpus contains only programs someone thought to write down.
+# Measured — neither of the two reproductions that motivated this check is in
+# tests/conformance-manifest.txt, so the gate would not have caught either. It
+# makes the OUTCOME inadmissible for every fixture the corpus runs; corpus
+# coverage is a separate, still-open debt.
+# ===========================================================================
+
+start "backend: pdc accepting a program whose C gcc refuses is BACKEND_REJECT"
+D=$(new_repo backendreject)
+fixture "$D" tests/nested.pd "$backend_reject_program"
+manifest "$D" 'tests/nested.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && ok
+
+start "backend: the message names it a compiler defect, not a fixture property"
+expect_out "defect in this compiler" && ok
+
+start "backend: declaring it xfail does NOT excuse it (was: XFAIL, gate green)"
+manifest "$D" 'tests/nested.pd|xfail|compile|brackets are not allowed here|M1|nested arrays'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "xfail=1" && ok
+
+start "backend: declaring it a NEGATIVE TEST does not launder it into coverage"
+# The worst spelling of the escape hatch: class=reject counts as coverage and is
+# owed to no milestone, so a backend defect declared this way would have made the
+# corpus look BETTER for containing it.
+manifest "$D" 'tests/nested.pd|reject|compile|brackets are not allowed here|-|claims the compiler refuses this'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
+
+start "backend/manifest: stage 'link' is a manifest error (the hatch cannot reopen)"
+# The red-proof for the validator. On the real corpus this check is green and
+# stays green (measured: 82 non-comment rows, stage column 58 `-` + 24 `compile`,
+# zero `link`), so a control that plants the row is the only way to see it work.
+manifest "$D" 'tests/nested.pd|xfail|link|gcc compilation failed|M1|declares the defect expected'
+run_case "$D"
+expect_rc 2 && expect_out "declares stage 'link'" && ok
+
+start "backend/manifest: ...on class=reject too"
+manifest "$D" 'tests/nested.pd|reject|link|gcc compilation failed|-|declares the defect expected'
+run_case "$D"
+expect_rc 2 && expect_out "declares stage 'link'" && ok
+
+start "backend/manifest: ...and on class=skip"
+manifest "$D" 'tests/nested.pd|skip|link|gcc compilation failed|-|declares the defect expected'
+run_case "$D"
+expect_rc 2 && expect_out "declares stage 'link'" && ok
+
+start "backend/manifest: 'compile' and 'run' are still accepted stages"
+D=$(new_repo backendstage)
+fixture "$D" tests/broken.pd "$bad_program"
+fixture "$D" tests/rt.pd "$runtime_fail_program"
+manifest "$D" 'tests/broken.pd|xfail|compile|Expected function, struct, enum|M1|parse failure' \
+              'tests/rt.pd|xfail|run|exit=3|M1|exits 3 by design'
+run_case "$D"
+expect_rc 0 && expect_out "xfail=2" && ok
+
+# --- negative control: nothing else moved ----------------------------------
+start "backend/negative: an ordinary passing fixture is untouched"
+D=$(new_repo backendnegative)
+fixture "$D" tests/a.pd "$good_program"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 0 && expect_out "verified=1" && expect_not_out "BACKEND_REJECT" && ok
+
+# --- discrimination: WHO refused -------------------------------------------
+# A check that cannot tell a front-end refusal from a backend one is the failure
+# mode this whole section exists to close: it would call every negative test in
+# the corpus a compiler defect.
+start "backend/discrimination: a front-end refusal is COMPILE_FAIL, not BACKEND_REJECT"
+D=$(new_repo backenddiscriminate)
+fixture "$D" tests/refused.pd "$bad_program"
+manifest "$D" 'tests/refused.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "COMPILE_FAIL" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/discrimination: ...and may still be declared xfail (green)"
+manifest "$D" 'tests/refused.pd|xfail|compile|Expected function, struct, enum|M1|known parse failure'
+run_case "$D"
+expect_rc 0 && expect_out "xfail=1" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/discrimination: ...and reject stays real coverage (green)"
+manifest "$D" 'tests/refused.pd|reject|compile|Expected function, struct, enum|-|the compiler must refuse this'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/discrimination: a fixture cannot put 'Linking' in the log to fake it"
+# `fn main() { print_int(Linking); }` — a front-end refusal reading "Undefined
+# variable or function: 'Linking'". The old classifier grepped the log for that
+# literal, so the fixture answered "did the backend run?" itself. Acceptance is
+# now read off the filesystem (was the translation unit emitted?), which no
+# fixture text can reach.
+D=$(new_repo backendforge)
+fixture "$D" tests/forge.pd "$frontend_reject_linking_program"
+manifest "$D" 'tests/forge.pd|reject|compile|Undefined variable or function|-|the compiler must refuse an undefined name'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/discrimination: and it is a compile-stage failure when undeclared"
+manifest "$D" 'tests/forge.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "COMPILE_FAIL" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/stale: a same-basename fixture's C cannot make a refusal look like a defect"
+# The emitted C is named from the fixture BASENAME, so tests/one/dup.pd and
+# tests/two/dup.pd share build_output/dup.c. Without removing it first, the
+# first fixture's translation unit would still be on disk when the second is
+# refused by the front end, and the second would be accused of a backend defect.
+# `find` output is sorted, so one/ runs before two/.
+D=$(new_repo backendstale)
+fixture "$D" tests/one/dup.pd "$backend_reject_program"
+fixture "$D" tests/two/dup.pd "$bad_program"
+manifest "$D" 'tests/one/dup.pd|run|-|expected|-|-' \
+              'tests/two/dup.pd|reject|compile|Expected function, struct, enum|-|front-end refusal'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_out "reject=1" && ok
 
 # ---------------------------------------------------------------------------
 # vacuous notes must name the feature they fail to cover.

@@ -1126,7 +1126,7 @@ listing is a list of what a program may call.)*
   formula installs it — `pdc.rb` installs `share/palladium/runtime`, `pdc-preview.rb` installs
   `lib/palladium/runtime`, and neither names `stdlib`. *(Formula paths are the stdlib unit's
   measurement of the tap; the `.github` grep is this unit's.)*
-- `scripts/conformance.sh:211` defaults its scope to `tests` and `examples`, so `stdlib/` has never had a
+- `scripts/conformance.sh:230` defaults its scope to `tests` and `examples`, so `stdlib/` has never had a
   green row and its breakage was invisible.
 
 A consequence worth stating plainly: because nothing under `stdlib/` has ever compiled, no defect
