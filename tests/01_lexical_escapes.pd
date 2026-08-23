@@ -1,0 +1,56 @@
+// Test 01: Lexical Structure - escape sequences (N2-09)
+//
+// THIS FIXTURE ASSERTS BYTES, NOT COMPILATION. The defect it pins was not a
+// program that failed to build; it was a program that built and produced the
+// wrong characters, silently, for as long as the lexer has existed:
+//
+//   "\\n"  denoted a backslash followed by `n`      and produced backslash + LINE FEED
+//   "\0"   denoted a NUL                            and produced backslash + `0`
+//
+// `\0` is now REFUSED in a string literal (it stays legal in a char literal,
+// where the value is just the integer 0): a String is a NUL-terminated
+// `const char*`, so a NUL inside one is a value no String operation can see.
+// See docs/specification/language-spec.md A2.
+//
+// The cause was a chain of `.replace()` calls: `"\\n"` was rewritten by the
+// `\n` rule before the `\\` rule could claim the backslash. So every assertion
+// below is on the RENDERED CHARACTERS, printed between markers, and the
+// transcript is the contract.
+//
+// The escape set is `\n \t \r \" \\ \'` in strings (`\0` in chars only). Anything else is a compile error
+// (tests/reject/unknown_escape.pd), not a pass-through.
+
+fn main() {
+    // The one that was wrong. `\\` is one backslash; the `n` after it is an
+    // ordinary letter and must stay one.
+    print("[\\n]");
+    print("[\\t]");
+    print("[\\\\]");
+
+    // The five from grammar.ebnf, each on its own, between markers so a
+    // swallowed or doubled character shows up in the diff.
+    print("[\n]");
+    print("[\t]");
+    print("[\"]");
+    print("[\\]");
+
+    // `\r` is a carriage return, so the `]` overwrites the `[` on a terminal;
+    // the transcript is compared as bytes, where both are present.
+    print("[\r]");
+
+    // A char literal takes the same escapes, and `'\''` is the only way to
+    // write a quote. Printed as its code point, because that is what a char
+    // literal denotes today (N4-04 is still owed).
+    print_int('\n');
+    print_int('\t');
+    print_int('\r');
+    print_int('\\');
+    print_int('\'');
+    print_int('\0');
+    print_int('"');
+
+    // An escape inside a longer string still resolves once, in place.
+    print("a\tb\\tc");
+
+    print("escapes done");
+}

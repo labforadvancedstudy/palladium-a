@@ -137,6 +137,15 @@ pub struct StructDef {
 /// Enum definition
 #[derive(Debug, Clone)]
 pub struct EnumDef {
+    /// Whether `pub` was written. Present since 2026-08-23; before that an
+    /// `EnumDef` had no visibility at all, `src/parser/mod.rs` dropped the `pub`
+    /// it had just parsed on the floor for this one item kind, and both readers
+    /// recorded the gap in prose instead of a field: the resolver exported every
+    /// enum with "EnumDef doesn't have a visibility field in the current AST",
+    /// and the type checker's imported registration said "Assume all exported
+    /// enums are public". A keyword the parser accepts and discards is worse
+    /// than one it rejects.
+    pub visibility: Visibility,
     pub name: String,
     pub lifetime_params: Vec<String>, // Lifetime parameters like ["'a", "'b"]
     pub type_params: Vec<String>,     // Generic type parameters like ["T", "U"]
@@ -217,6 +226,10 @@ pub enum Type {
     I64,
     U32,
     U64,
+    /// IEEE-754 binary64 — N4's `f64`, C's `double`.
+    F64,
+    /// IEEE-754 binary32 — N4's `f32`, C's `float`.
+    F32,
     Bool,
     String,
     /// Unit type (void)
@@ -281,8 +294,52 @@ pub enum Type {
 /// It lives here rather than in either pass so that "both passes ask one
 /// question" is a fact about the call graph and not a claim in a comment.
 pub fn local_definition_shadows_import(program: &Program, name: &str) -> bool {
-    program.items.iter().any(|item| {
-        matches!(item, Item::Function(f) if f.name == name && f.type_params.is_empty())
+    program
+        .items
+        .iter()
+        .any(|item| matches!(item, Item::Function(f) if f.name == name && f.type_params.is_empty()))
+}
+
+/// Does a LOCAL TYPE declaration of `name` replace an imported one?
+///
+/// The TYPE-namespace counterpart of `local_definition_shadows_import`, and it
+/// lives beside it deliberately: "a local declaration wins over an import" is
+/// one rule, and a reader who finds one half must find the other half in the
+/// same place rather than discovering that the other namespace re-invented it.
+///
+/// THE DEFECT THAT PRODUCED IT. The type checker decided whether a named type
+/// was an `enum` from a bare-name set that was a pure UNION of local and
+/// imported enum names — no visibility, no masking. So
+///
+/// ```text
+/// lib.pd:   pub enum Color { Red, Green }
+/// main.pd:  import lib;
+///           struct Color { v: i64 }
+///           fn main() { let c: Color = Color { v: 7 }; print_int(c.v); }
+/// ```
+///
+/// classified the LOCAL `struct Color` as `Enum("Color")` because an imported
+/// enum somewhere had claimed the bare name, and was refused with
+/// `Type mismatch: expected Color, found Color` — the same diagnostic naming
+/// one type on both sides that the recursive-data-types branch was written to
+/// remove, reopened through the import path.
+///
+/// EVERY TYPE-ITEM KIND COUNTS, not just `enum`. The question is "has a local
+/// declaration taken this name", and a local `struct`, `enum` or `type` alias
+/// all take it. Testing only for a local `enum` would have left the reported
+/// program broken, since the local declaration there is a `struct`.
+///
+/// GENERIC LOCALS COUNT TOO, and this is where it differs from its function
+/// sibling. A type-parameterised FUNCTION emits nothing under its own name, so
+/// it replaces nothing; a type-parameterised TYPE still occupies the name for
+/// every lookup that asks what kind `Color` is, because that question is asked
+/// of the name and not of an instantiation.
+pub fn local_type_shadows_import(program: &Program, name: &str) -> bool {
+    program.items.iter().any(|item| match item {
+        Item::Struct(s) => s.name == name,
+        Item::Enum(e) => e.name == name,
+        Item::TypeAlias(t) => t.name == name,
+        _ => false,
     })
 }
 
@@ -379,6 +436,22 @@ pub enum Expr {
     String(String),
     /// Integer literal (for future use)
     Integer(i64),
+    /// Float literal — `3.5`. Always `f64` (N4 has no literal suffixes and no
+    /// context in which `f32` could be inferred from the spelling alone).
+    Float(f64),
+    /// Char literal — `'a'`, holding the Unicode scalar it denotes.
+    ///
+    /// KEPT AS A `char` RATHER THAN FOLDED TO ITS CODE POINT AT PARSE TIME.
+    /// The value is the same either way; the program text is not, and every
+    /// consumer that reads the AST rather than the source (the LSP, the
+    /// optimizer's constant folder, any future formatter) has no way back from
+    /// `Integer(97)` to `'a'`.
+    ///
+    /// Its TYPE, however, is `i64` today, not a distinct `char` — see
+    /// `src/typeck/mod.rs`. N4-04 (`char` as a primitive type) is a separate,
+    /// still-owed row, and it cannot land before N14-04 changes
+    /// `string_char_at` to return one.
+    Char(char),
     /// Boolean literal
     Bool(bool),
     /// Identifier
@@ -515,6 +588,8 @@ impl Expr {
         match self {
             Expr::String(_) => Span::dummy(), // TODO: track spans
             Expr::Integer(_) => Span::dummy(),
+            Expr::Float(_) => Span::dummy(),
+            Expr::Char(_) => Span::dummy(),
             Expr::Bool(_) => Span::dummy(),
             Expr::Ident(_) => Span::dummy(),
             Expr::ArrayLiteral { span, .. } => *span,
@@ -681,6 +756,8 @@ impl std::fmt::Display for Type {
             Type::I64 => write!(f, "i64"),
             Type::U32 => write!(f, "u32"),
             Type::U64 => write!(f, "u64"),
+            Type::F64 => write!(f, "f64"),
+            Type::F32 => write!(f, "f32"),
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "String"),
             Type::Unit => write!(f, "()"),
@@ -991,6 +1068,10 @@ impl std::fmt::Display for Expr {
         match self {
             Expr::String(s) => write!(f, "\"{}\"", s),
             Expr::Integer(n) => write!(f, "{}", n),
+            // `{}` on an f64 prints `3` for 3.0, which is an integer literal in
+            // every language this project's readers know. `{:?}` keeps the dot.
+            Expr::Float(x) => write!(f, "{:?}", x),
+            Expr::Char(c) => write!(f, "'{}'", c.escape_debug()),
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Ident(name) => write!(f, "{}", name),
             Expr::ArrayLiteral { elements, .. } => {

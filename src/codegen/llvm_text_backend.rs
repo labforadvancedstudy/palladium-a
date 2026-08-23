@@ -1042,6 +1042,13 @@ impl LLVMTextBackend {
         match expr {
             Expr::Integer(n) => Ok((String::new(), n.to_string())),
 
+            // The LLVM backends are refused wholesale at the driver (`--llvm`),
+            // so these arms exist to keep the match exhaustive and are not a
+            // claim that float or char lowering works here.
+            Expr::Float(x) => Ok((String::new(), format!("{:?}", x))),
+
+            Expr::Char(c) => Ok((String::new(), (*c as u32).to_string())),
+
             Expr::Bool(b) => Ok((String::new(), if *b { "1" } else { "0" }.to_string())),
 
             Expr::String(s) => {
@@ -1623,7 +1630,7 @@ fn unimplemented_question(span: Span) -> CompileError {
 ///
 /// Reaching this is a phase-ordering fault rather than a missing feature:
 /// expansion runs in `src/macros/mod.rs` before code generation, and the type
-/// checker already refuses a stray invocation at `src/typeck/mod.rs:2640-2640`, so
+/// checker already refuses a stray invocation at `src/typeck/mod.rs:4010-4012`, so
 /// no source program measured here gets this far. It is spelled out anyway
 /// because the wildcard that used to cover it is gone, and because "currently
 /// unreachable" is not "safe to fabricate".

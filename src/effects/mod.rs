@@ -255,9 +255,12 @@ impl EffectAnalyzer {
     fn analyze_expression(&mut self, expr: &Expr) -> Result<EffectSet> {
         match expr {
             // Literals are pure
-            Expr::Integer(_) | Expr::String(_) | Expr::Bool(_) | Expr::Ident(_) => {
-                Ok(EffectSet::new())
-            }
+            Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::String(_)
+            | Expr::Bool(_)
+            | Expr::Ident(_) => Ok(EffectSet::new()),
 
             // Function calls may have effects
             Expr::Call { func, args, .. } => {

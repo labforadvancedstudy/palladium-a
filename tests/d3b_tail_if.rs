@@ -147,10 +147,10 @@ enum NetA {
     ///   1. `tests/stdlib/DRIVERS.tsv:31`, row `stdlib_tail_match`: column 3 is
     ///      `known_violation:area_code,sides`; promote it to `clean`.
     ///      `make stdlib-gate` announces that transition itself — the
-    ///      known_violation branch is scripts/stdlib-gate.sh:360-362, the XPASS
+    ///      known_violation branch is scripts/stdlib-gate.sh:379-381, the XPASS
     ///      note it prints when the C goes clean is
-    ///      scripts/stdlib-gate.sh:371, and a CHANGED violation set (a
-    ///      different function list) is scripts/stdlib-gate.sh:379. Both are
+    ///      scripts/stdlib-gate.sh:390, and a CHANGED violation set (a
+    ///      different function list) is scripts/stdlib-gate.sh:398. Both are
     ///      `note`, which is what makes that gate red.
     ///   2. This expectation: `StillFindsTheOpenMatchDefect` -> `Accepts`, at
     ///      its single use in `tail_match_arms_are_lowered_to_returns`.
@@ -1641,14 +1641,14 @@ fn a_user_written_return_zero_in_a_unit_function_is_refused() {
 ///   src/ownership/borrow_checker.rs:134-138
 ///                               `functions` is seeded from `BUILTINS` and
 ///                               nothing else.
-///   src/ownership/borrow_checker.rs:327-347
+///   src/ownership/borrow_checker.rs:335-355
 ///                               `check_program` walks `program.items` only.
 ///                               `Program.imports` (src/ast/mod.rs:9) is never
 ///                               read, and `Item` (src/ast/mod.rs:24-32) has no
 ///                               `Import` variant, so nothing in the local AST
 ///                               could have carried the imported signatures
 ///                               either.
-///   src/ownership/borrow_checker.rs:882 -> :502 -> :527
+///   src/ownership/borrow_checker.rs:889 -> :502 -> :527
 ///                               `Expr::Call` checks its callee expression;
 ///                               `Expr::Ident` misses `functions`, falls
 ///                               through to the ownership table, finds no
@@ -1688,10 +1688,10 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 ///
 /// What a program can do today that it should not: emit `f_Future v = f();`
 /// beside `long long f()`. `CodeGenerator.async_functions`
-/// (src/codegen/mod.rs:186-199) is INSERT-ONLY — unlike `functions`, which the
+/// (src/codegen/mod.rs:188-201) is INSERT-ONLY — unlike `functions`, which the
 /// main-program pass overwrites entry by entry — so an imported `pub async fn f`
 /// leaves `f` in the set even when a local ordinary `fn f` replaces it, and
-/// `try_infer_expr_type` (src/codegen/mod.rs:320-320) reads the set rather than
+/// `try_infer_expr_type` (src/codegen/mod.rs:328-328) reads the set rather than
 /// asking `crate::ast::local_definition_shadows_import`.
 ///
 /// Measured: gcc reports `use of undeclared identifier 'f_Future'` against C
@@ -1707,7 +1707,7 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 /// budget: preserving the number by omitting known debt is precisely what a
 /// closed inventory exists to prevent, so the row is here and the number moved.
 #[test]
-#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:186-199) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:320-320) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
+#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:188-201) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:328-328) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
 fn a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future() {
     let out = compile_and_run_with_import(
         "pub async fn f() { print_int(1); }\n",
@@ -1798,7 +1798,7 @@ fn selective_import_excludes_a_symbol_from_the_consumers() {
 /// THE SCOPE OF THIS ROW ALSO COVERS DECLARATION IDENTITY, and it is bounded
 /// here rather than fixed. Imported generics are stored by BARE NAME
 /// (`TypeChecker.generic_functions`), and the deferred-refusal lists that
-/// src/typeck/mod.rs:1259-1280 filters carry `(name, span)` and nothing else.
+/// src/typeck/mod.rs:2307-2328 filters carry `(name, span)` and nothing else.
 /// So with two same-named imported generic `async fn`s, the refusal is raised
 /// off whichever declaration was RECORDED and the body that would have been
 /// emitted is whichever won a `HashMap`: THE REFUSAL MAY NAME A DECLARATION
@@ -1880,8 +1880,8 @@ fn two_modules_exporting_one_name_are_deterministic() {
 ///
 /// THE SHAPE. Two imported modules both export a generic `async fn agen<T>`.
 /// Only `a.pd`'s returns a value, so only `a.pd`'s is recorded in
-/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:626-637), and the
-/// refusal is raised for it at src/typeck/mod.rs:1219-1225 once the call site
+/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:1434-1445), and the
+/// refusal is raised for it at src/typeck/mod.rs:2267-2273 once the call site
 /// has instantiated the name. But `generic_functions` is keyed by BARE NAME and
 /// `set_imported_modules` iterates a `HashMap`, so WHICH module's body that key
 /// holds — and therefore which body `get_instantiations` would have handed to
@@ -1998,8 +1998,8 @@ fn the_generic_async_refusal_carries_no_declaration_identity() {
 /// `make test-honest` and in `make m1-exit` inventory 3.
 ///
 /// THE CROSS-GATE HALF, cited rather than asserted: the promotion is not
-/// optional. `scripts/stdlib-gate.sh:360` enters the `known_violation:*` arm
-/// for that row; `scripts/stdlib-gate.sh:370-372` turns a CLEAN result into
+/// optional. `scripts/stdlib-gate.sh:379` enters the `known_violation:*` arm
+/// for that row; `scripts/stdlib-gate.sh:389-391` turns a CLEAN result into
 /// `note "XPASS: … is recorded known_violation:… but its C is now CLEAN …
 /// promote it to 'clean'"`, and `note` is what makes that gate red. So the
 /// moment codegen emits the final `else`, `make stdlib-gate` fails until the

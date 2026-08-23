@@ -60,10 +60,69 @@
 #            package manifest. Declared, so it cannot be used to smuggle a
 #            program out of the gate.
 #
+# ONE OUTCOME IS NOT A CLASS AT ALL — the backend rejecting its own output.
+# There is no valid Palladium program for which `pdc` accepts the source and gcc
+# then refuses the C that codegen emitted. If the front end said yes, C that does
+# not compile is a defect in this compiler, always: never a property of the
+# input, and never something a fixture may declare as its expected behaviour. So
+# the runner does not CLASSIFY that outcome, it REFUSES it — it fails
+# unconditionally whatever the manifest says (see the verdict section), and stage
+# `link` is a manifest error so the excuse cannot be reintroduced as a column
+# value. Same shape as NO_BINARY below, same reason.
+#
+# WHAT IT IS CALLED depends on how much the producer established, and since
+# fix/gcc-diagnostics-discarded landed it establishes a lot. `BACKEND_REJECT`
+# fires on exit 3 (gcc refused our C) and on exit 4 (gcc exited 0 and diagnosed
+# ill-typed C we emitted). `HARNESS_ERROR` fires on 5 (gcc never reached a
+# verdict) and on 6 (it reached one nobody could attribute to our C). All four
+# are never-expectable and all four fail the gate — the invariant is ENFORCED
+# either way; only the accusation is withheld. See the verdict section.
+#
+# Be exact about the size of that claim. This makes the outcome INADMISSIBLE FOR
+# EVERY FIXTURE THE CORPUS RUNS. It does not find backend-reject defects: a
+# corpus-driven gate can only ever confirm what someone already thought to write
+# down, so a program nobody added is still unprotected. Measured: the two
+# reproductions that motivated this check (a struct field of enum type; a nested
+# array local) are BOTH absent from this corpus, so this gate would not have
+# caught either one. Corpus coverage is a separate, still-open debt.
+#
+# AND THIS FILE IS NOT THE ONLY PLACE THE OUTCOME IS DECLARABLE. Four surfaces
+# carried it; this branch closes the first two and leaves the other two standing,
+# so the residue is named rather than described as one stray classifier:
+#
+#   1 scripts/gate_probe.py `pdc-reject`/`pdc-verdict`   CLOSED with this change
+#     — classified the same outcome by the same forgeable log grep.
+#   2 scripts/gate_probe.py `--expect-stage`             CLOSED with this change
+#     — `link` was an offered CLI choice, so a caller could declare it and be
+#     told `rejected-as-expected`.
+#   3 stdlib/MANIFEST.tsv:22 `LINK_FAIL`                 CLOSED with this change
+#     — "accepted by the compiler, rejected by gcc", a verdict in the vocabulary
+#     scripts/stdlib-gate.sh enforces. Zero rows used it (all 21 are
+#     COMPILE_FAIL). Nothing emits it now, AND a row naming it is refused by name
+#     rather than merely failing to match.
+#   4 tests/stdlib/BUILTINS.tsv:38 `UNUSABLE` + its stage column  PARTLY OPEN
+#     — the stage is passed straight from the manifest column into gate_probe
+#     (scripts/stdlib-gate.sh:472-473), and `--expect-stage link` is now refused
+#     at parse time, so such a row fails. But the PROSE in BUILTINS.tsv still
+#     documents the class as "rejected by the C compiler", and that file is
+#     outside this branch's file scope, so the spelling survives there. Zero rows
+#     use it today.
+#
+# 4 is listed rather than fixed so the branch does not claim a closure it did not
+# make; the residue is one comment line in a file this branch may not touch.
+#
+# THE HISTORY IS NOT HYPOTHETICAL, and it already agrees with this invariant.
+# tests/stdlib/BUILTINS.tsv:40 records "THE UNUSABLE CLASS IS NOW EMPTY, AND IT
+# HELD SIX", and :50-54 that on 2026-08-22 all six went red with "expected
+# rejection at link, got compile" (:53) — because the repair was to make the type
+# checker refuse, so the program never reached gcc at all. That is this rule,
+# applied by hand, six times, while the declarable spelling was left standing.
+#
 # Manifest format: 6 TAB-separated columns, every column non-empty, `-` = N/A.
 #   1 path         repo-root-relative. Tabs are the delimiter, so spaces are safe.
 #   2 class        run | untranscribed | vacuous | xfail | reject | skip
-#   3 stage        compile | link | run          (xfail/reject only, else `-`)
+#   3 stage        compile | run                 (xfail/reject/skip only, else `-`)
+#                  `link` is REFUSED — see the paragraph above.
 #   4 observable   what must be observed, per class:
 #                    run           `expected` (diff sibling <fixture>.expected)
 #                    xfail/reject  a substring of the diagnostic, or exit=<N>
@@ -277,6 +336,24 @@ manifest_errors=0
 
 merr() { echo "error: $MANIFEST:$1: $2" >&2; manifest_errors=$((manifest_errors+1)); }
 
+# The stage column, for the three classes that carry one. `link` — gcc refusing
+# the C that codegen emitted — is not validated here, it is REFUSED. Declaring it
+# would mean declaring a compiler defect as a fixture's expected behaviour, and
+# the runner fails that outcome unconditionally anyway (BACKEND_REJECT, or
+# HARNESS_ERROR while the accusation is unproven). Refusing
+# the spelling is what keeps the escape hatch shut: the verdict cannot later be
+# excused by writing a column value, because the column value does not parse.
+# This check is green today — measured on this tree, of 82 non-comment manifest
+# rows the stage column holds 58 `-` and 24 `compile`, and zero `link`. Its job
+# is to keep that zero, not to discover anything.
+check_stage() {   # check_stage <lineno> <class> <stage>
+  case "$3" in
+    compile|run) return 0 ;;
+    link) merr "$1" "class=$2 declares stage 'link': that gcc is expected to reject the C this compiler emits. That is never a property of the fixture. If pdc accepted the source, C that will not compile is a defect in pdc — fix the backend, do not declare the defect. The runner fails on this outcome whatever this manifest says, so the row would not buy a green run either." ;;
+    *) merr "$1" "class=$2 needs stage compile|run, got '$3'" ;;
+  esac
+}
+
 lineno=0
 while IFS= read -r raw || [ -n "$raw" ]; do
   lineno=$((lineno+1))
@@ -342,7 +419,7 @@ while IFS= read -r raw || [ -n "$raw" ]; do
       case "$mn" in claims:*) ;; *) merr "$lineno" "class=vacuous note must begin 'claims:<feature>' naming the feature it appears to cover but does not; got '$mn'" ;; esac
       ;;
     xfail)
-      case "$ms" in compile|link|run) ;; *) merr "$lineno" "class=xfail needs stage compile|link|run, got '$ms'" ;; esac
+      check_stage "$lineno" xfail "$ms"
       [ "$mf" != "-" ] || merr "$lineno" "class=xfail needs a diagnostic fingerprint"
       if [ "$ms" = "run" ]; then
         case "$mf" in exit=[0-9]*) ;; *) merr "$lineno" "stage=run needs fingerprint 'exit=<N>', got '$mf'" ;; esac
@@ -351,7 +428,7 @@ while IFS= read -r raw || [ -n "$raw" ]; do
       [ "$mn" != "-" ] || merr "$lineno" "class=xfail needs a note"
       ;;
     reject)
-      case "$ms" in compile|link|run) ;; *) merr "$lineno" "class=reject needs stage compile|link|run, got '$ms'" ;; esac
+      check_stage "$lineno" reject "$ms"
       [ "$mf" != "-" ] || merr "$lineno" "class=reject needs a diagnostic fingerprint"
       if [ "$ms" = "run" ]; then
         case "$mf" in exit=[0-9]*) ;; *) merr "$lineno" "stage=run needs fingerprint 'exit=<N>', got '$mf'" ;; esac
@@ -367,7 +444,7 @@ while IFS= read -r raw || [ -n "$raw" ]; do
       # evaded — `fn /* c */ main()`, `fn // c<LF> main()` and plain `fn<LF>
       # main()` all compile and run, and all three would have passed as `skip`:
       # never compiled, never gated.
-      case "$ms" in compile|link|run) ;; *) merr "$lineno" "class=skip needs stage compile|link|run, got '$ms'" ;; esac
+      check_stage "$lineno" skip "$ms"
       [ "$mf" != "-" ] || merr "$lineno" "class=skip needs the diagnostic proving it is not a program (e.g. 'No main function found')"
       [ "$mo" = "-" ] || merr "$lineno" "class=skip must have owner '-', got '$mo'"
       [ "$mn" != "-" ] || merr "$lineno" "class=skip needs a note"
@@ -578,21 +655,178 @@ while IFS= read -r f; do
     continue
   fi
 
+  # The emitted translation unit. Its EXISTENCE is how the verdict below decides
+  # WHO refused this program: codegen is the last phase (src/driver/mod.rs:210-245),
+  # so this file exists if and only if the front end accepted. That question is
+  # asked of the filesystem and not of the log on purpose — a fixture's own text
+  # can reach the log. Measured on this tree: `fn main() { print_int(Linking); }`
+  # is a pure front-end refusal whose diagnostic reads "Undefined variable or
+  # function: 'Linking'", and the previous stage classifier grepped the log for
+  # the literal `Linking`, so that front-end refusal was already being reported
+  # as a link-stage failure. Under a check that fails unconditionally, the same
+  # confusion would accuse the backend of a defect the front end had just caught.
+  # Unlike the binary, this name comes from the fixture's BASENAME
+  # (src/codegen/mod.rs:3650-3655), so two same-named fixtures share it — remove
+  # it first, or the previous fixture's C answers for this one.
+  emitted_c="$OUT_DIR/$(basename "${f%.pd}").c"
+  rm -f "$emitted_c"
+  if [ -e "$emitted_c" ]; then
+    printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+    fail "$f [HARNESS_ERROR] could not remove stale generated C $emitted_c"
+    continue
+  fi
+
   log=$TMPROOT/log
   "$PDC" compile "$f" -o "$out" >"$log" 2>&1
   pdc_rc=$?
   diag=$(strip_ansi <"$log" | grep -m1 -E 'error' | head -c 200)
 
+  # TWO INDEPENDENT WITNESSES THAT THE FRONT END ACCEPTED, and either is enough.
+  # Requiring BOTH would turn a sufficient condition into a conjunction, and a
+  # conjunction fails OPEN on the half that is missing: pdc exits 3 (gcc refused
+  # the translation unit) while codegen names or locates its output differently
+  # than this gate derives it, or the file is cleaned up mid-run — and the
+  # contradiction check below does not fire, because the sibling branch replaced
+  # the legacy `gcc compilation failed` prose it looks for. The fixture would
+  # fall through to stage `compile`, where `reject|compile` is a row a manifest
+  # is allowed to write, and the outcome this branch calls unblessable would be
+  # blessed. So:
+  #
+  #   * a STRUCTURED exit code (3/4/5) is conclusive on its own. It is a
+  #     statement by the producer about what happened and needs no corroboration.
+  #   * the TRANSLATION UNIT on disk still decides the UNSTRUCTURED case, which
+  #     is every failure today's pdc can produce, and still detects the
+  #     contradiction in the front-end arm below.
+  backend_code=0
+  case "$pdc_rc" in 3|4|5|6) backend_code=1 ;; esac
+
   stage_act=""; detail=""
-  if [ "$pdc_rc" -ne 0 ]; then
-    grep_status F 'gcc compilation failed' "$log"; link_a=$?
-    grep_status F 'Linking' "$log";                  link_b=$?
-    if [ "$link_a" -gt 1 ] || [ "$link_b" -gt 1 ]; then
+  if [ "$pdc_rc" -ne 0 ] && { [ "$backend_code" -eq 1 ] || [ -f "$emitted_c" ]; }; then
+    # The front end ACCEPTED this program (codegen ran and wrote the C, or pdc
+    # said so with its exit code), and the build still failed. Never expectable,
+    # exactly like NO_BINARY: if pdc said yes to the source, C it cannot build is
+    # a defect in pdc. There is no manifest column that excuses this — the
+    # verdict is reached before the declared class is consulted, and stage `link`
+    # is refused at parse time.
+    #
+    # What this does NOT do: find such defects. The corpus only contains programs
+    # someone wrote down, so a program nobody added stays unprotected — measured,
+    # neither of the two reproductions that motivated this check is in the corpus,
+    # so this gate would not have caught either. It makes the OUTCOME inadmissible
+    # for every fixture the corpus runs. Coverage is a separate, open debt.
+    #
+    # WHICH of them happened is a SEPARATE question, and this gate is not
+    # allowed to guess it. Before the producer was fixed, `gcc compilation
+    # failed` was emitted for EVERY unsuccessful gcc status, so a translation
+    # unit gcc refused and a gcc killed by SIGKILL produced the same string.
+    # Naming the first accuses codegen on evidence that cannot tell it from the
+    # machine running out of memory, and a heuristic over gcc's stderr would be
+    # exactly the forgeable classifier this change exists to remove, one level
+    # down.
+    #
+    # SO THE ANSWER COMES FROM THE EXIT CODE, WHICH FIXTURE TEXT HAS NO ROUTE TO.
+    # Read src/linker.rs's EXIT_* constants and its LinkError variants directly,
+    # not a summary of them — including this one, which is a summary. The codes
+    # this gate acts on:
+    #
+    #   3 EXIT_BACKEND_REJECT     GccFailed  — gcc ran to completion and exited
+    #                             nonzero: it REFUSED the translation unit.
+    #   4 EXIT_BACKEND_ILL_TYPED  IllTypedC  — gcc exited 0 and diagnosed C that
+    #                             pdc generated. An ICE: no Palladium program
+    #                             asks for ill-typed C. Also a compiler defect,
+    #                             and reported as one, with its own sentence.
+    #   5 EXIT_TOOLCHAIN          Toolchain | GccDied — gcc could not be spawned,
+    #                             or was killed by a signal. It never reached a
+    #                             verdict, so nothing is established about the C.
+    #
+    #   6 EXIT_GCC_UNEXPLAINED   GccUnexplained — gcc RAN and exited nonzero,
+    #                             and pdc could not show the verdict was about
+    #                             our C. Not exotic: an undefined symbol from
+    #                             the link stage lands here, and so does a full
+    #                             disk. Refused, and not attributed to anyone.
+    #
+    # THE STUBS STILL OWE AN INTEGRATION RECEIPT; IT DID NOT LAND WITH THEM.
+    # The controls in scripts/test-conformance-runner.sh manufacture these codes,
+    # which is what makes them permanent — but a stub reproduces the numbers
+    # WRITTEN DOWN HERE, so it agrees with this comment by construction and
+    # cannot detect the producer renumbering them. Only the real binary can:
+    # compile a program whose emitted C gcc refuses and assert pdc exits 3.
+    #
+    # `$diag` is the FIRST line matching `error`, which on this path is always
+    # pdc's own wrapper `error: gcc compilation failed:` — a line that tells the
+    # reader nothing the verdict has not already said. For a message whose whole
+    # content is "go fix the backend", the useful line is the first one AFTER the
+    # wrapper: the actual `x.c:NNN:CC: error: ...`. Falls back to $diag when there
+    # is no wrapper, so no path loses its diagnostic.
+    cdiag=$(strip_ansi <"$log" 2>/dev/null | sed -n '/gcc compilation failed/,$p' \
+              | tail -n +2 | grep -m1 -E 'error' | head -c 200)
+    [ -n "$cdiag" ] || cdiag=$diag
+
+    # Say where the C is, or say that it is missing. When the exit code is the
+    # witness the file need not exist, and naming a path that is not there would
+    # be the same over-claim this block exists to avoid, one sentence down.
+    if [ -f "$emitted_c" ]; then
+      where="($emitted_c)"
+    else
+      where="(no translation unit at $emitted_c — pdc's exit code is the witness that the front end accepted, and it is sufficient on its own)"
+    fi
+
+    case "$pdc_rc" in
+      3)
+        printf '%-52s %s\n' "$f" "BACKEND_REJECT"
+        fail "$f [BACKEND_REJECT] pdc accepted this source and then gcc refused the C it emitted $where. That is a defect in this compiler, not a property of the fixture, and no manifest column may declare it: there is no valid Palladium program whose emitted C is allowed not to compile. Fix the backend. Diagnostic: $cdiag"
+        ;;
+      4)
+        printf '%-52s %s\n' "$f" "BACKEND_REJECT"
+        fail "$f [BACKEND_REJECT] pdc accepted this source and then emitted C that the C compiler diagnosed as ill-typed $where. gcc did not refuse it — this compiler generated it, which makes it an internal defect rather than anything the fixture asked for. Fix the backend. Diagnostic: $cdiag"
+        ;;
+      5)
+        printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+        fail "$f [HARNESS_ERROR] the front end accepted this program $where, but the C toolchain never reached a verdict (gcc could not be spawned, or was killed by a signal). Nothing is established about the emitted C, so nothing is claimed about it: $cdiag"
+        ;;
+      6)
+        # gcc DID reach a verdict — unlike 5 — and pdc could not attribute it to
+        # the C it emitted. An undefined symbol from the link stage looks like
+        # this and IS a codegen defect; a full disk looks like this and is not.
+        # Refused either way, and not attributed, because the producer could not
+        # attribute it either.
+        printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+        fail "$f [HARNESS_ERROR] the front end accepted this program $where, and gcc then exited nonzero WITHOUT diagnosing that translation unit. gcc reached a verdict, but nothing attributes it to the emitted C: an undefined symbol from the link stage (a real backend defect) and a full disk (not one) are indistinguishable here, so no accusation is made. Not a fixture property either way, and no manifest column excuses it: $cdiag"
+        ;;
+      *)
+        # Only reachable with the translation unit on disk: an unstructured code
+        # is not a witness, so the file is the only thing that got us here.
+        printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+        fail "$f [HARNESS_ERROR] the front end accepted this program and emitted $emitted_c, and the build then failed — but pdc exited $pdc_rc, which is not one of the structured codes (3 backend reject, 4 backend emitted ill-typed C, 5 toolchain never reached a verdict, 6 gcc gave a verdict pdc could not attribute) and so does not say what happened. This gate will not call it a compiler defect on evidence that cannot distinguish them. Either way it is not a fixture property and no manifest column excuses it: $cdiag"
+        ;;
+    esac
+    continue
+  elif [ "$pdc_rc" -ne 0 ]; then
+    # No translation unit: the FRONT END refused it. This is the only failure a
+    # fixture may declare, and it is the `compile` stage.
+    #
+    # CONTRADICTION CHECK, and it guards the one way a gcc rejection could still
+    # be laundered into a declarable stage. Reaching here means "no .c on disk",
+    # and the two derivations of that name — this file's `basename` and codegen's
+    # `file_stem` (src/codegen/mod.rs:3650-3655) — are independent. If they ever
+    # diverge, a real backend failure lands in THIS arm, where `xfail compile` is
+    # a stage the validator permits, and the exemption is back through a door the
+    # rest of this change locked. So: the log claiming gcc ran while no
+    # translation unit exists is a contradiction, not a front-end refusal, and it
+    # is refused rather than classified. Unlike a control built on a live defect,
+    # this one does not evaporate when the thing it guards against is fixed.
+    grep_status F 'gcc compilation failed' "$log"; wrapper_rc=$?
+    if [ "$wrapper_rc" -gt 1 ]; then
       printf '%-52s %s\n' "$f" "HARNESS_ERROR"
-      fail "$f [HARNESS_ERROR] could not read the compiler log to classify the failure stage"
+      fail "$f [HARNESS_ERROR] could not read the compiler log to check it against the emitted translation unit"
       continue
     fi
-    if [ "$link_a" -eq 0 ] || [ "$link_b" -eq 0 ]; then stage_act="link"; else stage_act="compile"; fi
+    if [ "$wrapper_rc" -eq 0 ]; then
+      printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+      fail "$f [HARNESS_ERROR] the compiler log says gcc ran and the build failed, but no translation unit is at $emitted_c. Those cannot both be true: either codegen names its output differently than this gate derives it, or the file was removed mid-run. Refusing rather than filing this under the front-end 'compile' stage, which a manifest row is allowed to declare: $diag"
+      continue
+    fi
+    stage_act="compile"
     detail=$diag
   elif [ ! -x "$OUT_DIR/$out" ]; then
     # pdc claimed success and produced nothing. Never expectable.
@@ -668,9 +902,11 @@ while IFS= read -r f; do
                fail "$f [SKIP_IS_A_PROGRAM] declared a non-program, but the compiler accepted and built it. It is a program and must be gated — change its class from skip to run and add a transcript." ;;
     esac
   elif [ "$class" != "xfail" ] && [ "$class" != "reject" ] && [ "$class" != "skip" ]; then
+    # No LINK_FAIL arm: `link` is no longer a stage this runner can reach. A
+    # build that got past the front end and then failed was already answered
+    # above, as BACKEND_REJECT or HARNESS_ERROR, and neither returns here.
     case "$stage_act" in
       compile) v=COMPILE_FAIL ;;
-      link)    v=LINK_FAIL ;;
       *)       v=RUN_FAIL ;;
     esac
     printf '%-52s %s\n' "$f" "$v"

@@ -143,15 +143,15 @@ N1-03	M9	N1	Nothing in Part I depends on the target being C	gate	make selfhost-c
 # --- N2 Lexical structure ---------------------------------------------------
 N2-01	-	N2	Identifiers	fixture	tests/01_lexical_literals.pd	satisfied	1.0	-
 N2-02	-	N2	Integer literals	fixture	tests/01_lexical_literals.pd	satisfied	1.0	-
-N2-03	M2	N2	Float literals	fixture	tests/02_types_floats.pd	owed	1.0	-
-N2-04	M2	N2	Char literals	fixture	tests/02_types_chars.pd	owed	1.0	-
+N2-03	M2	N2	Float literals	fixture	tests/02_types_floats.pd	satisfied	1.0	-
+N2-04	M2	N2	Char literals	fixture	tests/02_types_chars.pd	satisfied	1.0	-
 N2-05	-	N2	String literals	fixture	tests/01_lexical_literals.pd	satisfied	1.0	-
 N2-06	-	N2	Boolean literals	fixture	tests/01_lexical_literals.pd	satisfied	1.0	-
 N2-07	-	N2	Line comments	fixture	tests/01_lexical_comments.pd	satisfied	1.0	-
-N2-08	M2	N2	Block comments NEST	fixture	tests/01_lexical_comments.pd	owed	1.0	-
-N2-09	M2	N2	Escape sequences in char and string literals	fixture	tests/01_lexical_escapes.pd	owed	1.0	-
-N2-10	M2	N2	Attributes lex: #[name], #[name(args)], #![name(args)]	fixture	tests/02_attributes_lex.pd	owed	1.0	-
-N2-11	M2	N2	An unknown attribute is a compile error, not a silently ignored annotation	reject	tests/reject/unknown_attribute.pd	owed	1.0	-
+N2-08	M2	N2	Block comments NEST	fixture	tests/01_lexical_comments.pd	satisfied	1.0	-
+N2-09	M2	N2	Escape sequences in char and string literals	fixture	tests/01_lexical_escapes.pd	satisfied	1.0	-
+N2-10	M2	N2	Attributes lex: #[name], #[name(args)], #![name(args)]. THREE SHAPES, ONE EXECUTABLE WITNESS. The kind was `fixture` and that was UNSATISFIABLE, not unmet: `fixture` demands a conformance row of class `run` with a transcript, and N2-11 makes every attribute a compile error, so no program containing one can run. It is now `observable`, over the one test that drives ALL THREE shapes plus the two argument forms and asserts each is refused BY NAME -- reaching a diagnostic that says `frobnicate` is what proves the parser consumed `#`/`#!`, `[`, the name, any argument list and `]` before looking it up. A per-shape conformance fixture cannot carry that claim: one reject row names one file, and the corpus rows tests/reject/unknown_attribute.pd (bare), attribute_with_args.pd (paren-balanced, so `(a, b(c))` is ONE attribute) and attribute_inner.pd (`#!` as ONE token) each witness a single shape. The kind returns to `fixture` the day an attribute is implemented and a program carrying one can run	observable	tests/m2_lexical.rs::every_attribute_shape_is_refused_by_name	satisfied	1.0	-
+N2-11	M2	N2	An unknown attribute is a compile error, not a silently ignored annotation	reject	tests/reject/unknown_attribute.pd	satisfied	1.0	unknown attribute `frobnicate`
 
 # --- N3 Program structure and items -----------------------------------------
 N3-01	-	N3	Functions with typed parameters and return types	fixture	tests/03_functions_basic.pd	satisfied	1.0	-
@@ -168,12 +168,13 @@ N3-11	M4	N3	Module items	fixture	tests/12_modules_imports.pd	owed	1.0	-
 N3-12	M2	N3	One macro system, pattern-based	fixture	tests/03_macros.pd	owed	1.0	-
 N3-13	M2	N3	Macros are hygienic by default	fixture	tests/03_macro_hygiene.pd	owed	1.0	-
 N3-14	M2	N3	There is no macro_rules!/proc-macro split — macro_rules! is refused	reject	tests/reject/macro_rules.pd	owed	1.0	-
+N3-15	M2	N3	Item order does not decide whether a program compiles, OVER THE BY-VALUE CONTAINMENT GRAPH. The scope is in the sentence on purpose: an unqualified "item order does not matter" is a claim about every axis on which one item can depend on another, and this row buys exactly one of them. A compilation unit is a SEQUENCE of items and the specification gives that sequence no meaning beyond containing them, so `struct S { e: E }` above `enum E { A, B }` is the same program as the reverse. It was not: code generation emitted type definitions in source order, C gives a field a size only from a complete type, and the first spelling died in gcc with `field has incomplete type 'struct E'` while the second ran. THE EVIDENCE IS A PERMUTATION, not an instance -- three declarations have six orders, exactly one of which source-order emission got right, so a fixture pinned to any single order would have stayed green for five wrong reasons. Order is now derived from the by-value containment graph the recursive-layout analysis already cut for N4-22, which is why a cut enum payload slot (a pointer, needing only the tag) constrains nothing. EXPLICITLY EXCLUDED, in the way N4-23 excludes its own case rather than leaving it to be discovered: TYPE ALIASES. Struct fields and enum payloads are converted by `ast_type_to_checker_type`, which resolves aliases out of `self.type_aliases`, and that map is filled INSIDE the same walk in source order -- so `type Small = i64;` above `struct S { x: Small }` checks and the reverse is refused with `Type mismatch: expected Small, found Int`. MEASURED on three revisions: `fb12f6f` (main) refuses BOTH orders, `5fbd1fe` and this revision accept the first and refuse the second, so this is a half-fix rather than a regression -- one order went from broken to working and none went the other way. It has no corpus witness either: a repo-wide scan finds no free top-level `type X = ...;` in any `.pd`. It is named here because a row that promises more than the code delivers is the defect this manifest exists to prevent, and closing the alias axis means pre-filling the alias map before the walk, which is not this row's work	observable	tests/m2_recursive_data_types.rs::every_declaration_order_of_one_program_gives_the_same_answer	satisfied	1.0	-
 
 # --- N4 Types ----------------------------------------------------------------
 N4-01	-	N4	i32 i64 u32 u64	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
-N4-02	M2	N4	f32 f64	fixture	tests/02_types_floats.pd	owed	1.0	-
+N4-02	M2	N4	f32 f64	fixture	tests/02_types_floats.pd	satisfied	1.0	-
 N4-03	-	N4	bool	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
-N4-04	M2	N4	char	fixture	tests/02_types_chars.pd	owed	1.0	-
+N4-04	M2	N4	char -- STAYS OWED AND MOVES WITH N14-04. A char literal LEXES and carries the right scalar (N2-04, witnessed by tests/02_types_chars.pd), but its TYPE is i64, not a distinct `char`: N14 gives string_char_at a `char` return and char_is_digit a `char` parameter, and src/builtins.rs implements both over i64. A `char` type on the literal alone would leave 'a' unusable with every builtin that consumes a character -- it would lex, type, and have nowhere to go	fixture	tests/02_types_chars.pd	owed	1.0	-
 N4-05	-	N4	String	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
 N4-06	-	N4	unit ()	fixture	tests/03_functions_basic.pd	satisfied	1.0	-
 N4-07	-	N4	int is an alias for i64	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
@@ -191,6 +192,8 @@ N4-18	M3	N4	? propagates a Result error to the caller	fixture	tests/09_question_
 N4-19	M3	N4	? converts error types where a conversion exists	fixture	tests/09_question_mark_convert.pd	owed	1.0	-
 N4-20	-	N4	Local type inference needs no annotation on let	fixture	examples/tutorial/01_variables.pd	satisfied	1.0	-
 N4-21	M3	N4	Const generics are evaluated at compile time and monomorphised	fixture	tests/08_const_generics.pd	owed	1.0	-
+N4-22	M2	N4	An `enum` whose payload names its own enum is a type -- it is laid out, built, taken apart by `match` and read back. N3 makes enums the sum type and N8's termination rule speaks of structural recursion on an inductive type, so an enum that cannot name itself leaves both without a subject. The recursive payload slot becomes a pointer; that is the compiler's ONE indirection and the row claims nothing wider. An INSTANCE claim, as every `satisfied` row here is: the witness is concrete and non-generic, because generic definitions are skipped by the analysis and `type_to_c` still erases their parameters	observable	tests/m2_recursive_data_types.rs::a_recursive_enum_compiles_links_and_runs	satisfied	1.0	-
+N4-23	M2	N4	A by-value containment cycle with no such slot on it is refused BEFORE any C exists, and the refusal does not overstate its own reach. EXCLUDED ON PURPOSE, stated here so the exclusion outlives the limitation that currently hides it: a cycle broken only by a ZERO-LENGTH array (`struct Z { xs: [Z; 0] }`) is refused too, even though it stores no `Z` and therefore HAS a finite size. Two measured reasons -- `struct Z xs[0];` is an array of an incomplete element type, which cc refuses outright, and `[T; 0]` is uninhabited here because the empty array literal is refused. The wording is deliberately not `only an enum can stop a cycle`: cardinality can, and a requirement phrased on that theorem would certify more than the compiler delivers	reject	tests/reject/zero_length_array_self_reference.pd	satisfied	1.0	the refusal is a deliberate exclusion (requirement N4-23)
 
 # --- N5 Statements and expressions -------------------------------------------
 N5-01	-	N5	let, assignment, return, break, continue, expression statements	fixture	examples/tutorial/05_control_flow.pd	satisfied	1.0	-

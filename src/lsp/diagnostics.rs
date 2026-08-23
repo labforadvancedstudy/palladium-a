@@ -440,6 +440,7 @@ mod tests {
             imports: vec![],
             items: vec![
                 Item::Enum(EnumDef {
+                    visibility: crate::ast::Visibility::Private,
                     name: "bad_enum".to_string(), // Should be PascalCase
                     lifetime_params: vec![],
                     type_params: vec![],
@@ -512,6 +513,7 @@ mod tests {
                     span: Span::new(0, 10, 0, 0),
                 }),
                 Item::Enum(EnumDef {
+                    visibility: crate::ast::Visibility::Private,
                     name: "GoodEnumName".to_string(),
                     lifetime_params: vec![],
                     type_params: vec![],

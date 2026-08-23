@@ -233,7 +233,7 @@ def excerpt(text: str, width: int = 160) -> str:
     """A bounded excerpt that shows BOTH ends of a cited range.
 
     Showing only the first 100 characters made the load-bearing later lines of a range
-    citation invisible, which is how `src/typeck/mod.rs:352-527` looked plausible while
+    citation invisible, which is how `src/typeck/mod.rs:365-540` looked plausible while
     naming nothing relevant. A reviewer needs to see where a range starts and where it ends.
     """
     t = norm(text).replace("\t", " ")
@@ -279,7 +279,7 @@ def citing_sources():
     under src/ and tests/, none of them ever pinned.
 
     A pin proves a cited range has not MOVED. That is worth more in source than in prose,
-    not less: a comment citing `src/codegen/mod.rs:2782` is read by whoever is editing the
+    not less: a comment citing `src/codegen/mod.rs:2811` is read by whoever is editing the
     file next to it, and inserting twenty lines above the target silently repoints it at
     something unrelated. Editing source is how citations move; docs/ is where they were
     being checked.
@@ -305,6 +305,25 @@ def citing_sources():
     `docs/contributing/claude-md-coverage.md`.
     """
     out = []
+    # KNOWN BLIND SPOT: `scripts/` IS NOT IN THIS TUPLE.
+    #
+    # Every `path:line` citation written inside a gate script is therefore
+    # unpinned and unchecked, and a green check-docs says nothing about any of
+    # them. Measured 2026-08-23: 40 distinct citations across scripts/*.py and
+    # scripts/*.sh, the largest groups being src/codegen/mod.rs (9),
+    # src/linker.rs (6), scripts/conformance.sh (6) and src/main.rs (4). Eight of
+    # them broke when fix/gcc-stage-invariant shifted scripts/conformance.sh and
+    # were repaired by hand; nothing would have caught them.
+    #
+    # SIZING, so whoever takes this does not underestimate it: adding
+    # `scripts/**/*.py` and `scripts/**/*.sh` here does not pin eight citations,
+    # it pins ALL FORTY at once, and every one must first be reconciled by
+    # CONTENT — the ones nobody has touched are exactly the ones most likely to
+    # have drifted onto an unrelated line, which is the defect this module
+    # already found 25 times across 220 citations (see the NON-SEMANTIC rule
+    # above). Budget for that reconciliation, not for the glob edit. The
+    # alternative, pinning these citations individually, is smaller but leaves
+    # the surface open for the next one written.
     for doc in (sorted(ROOT.glob("*.md")) + sorted(ROOT.glob("docs/**/*.md"))
                 + sorted(ROOT.glob("docs/**/*.toml"))
                 + sorted(ROOT.glob("src/**/*.rs")) + sorted(ROOT.glob("tests/**/*.rs"))):
@@ -598,7 +617,7 @@ def contained(rel: str):
 
     `Path.resolve()` follows symlinks, which a lexical check cannot: a link committed
     inside the repo can point anywhere, and the gate would then be measuring unversioned
-    content while reporting on this tree. scripts/conformance.sh:523-535 refuses the same
+    content while reporting on this tree. scripts/conformance.sh:600-612 refuses the same
     thing for the same reason.
     """
     if rel.startswith(("/", "~")):
@@ -943,7 +962,7 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
     began with two dashes, grep read it as an option, exited 2, and printed its usage to
     stderr. Nothing was ever searched. (That probe is also why no comment here may spell
     the flag out: it greps scripts/, so a mention would BE a hit.)
-    scripts/conformance.sh:140-152 draws the same distinction for the same reason.
+    scripts/conformance.sh:199-211 draws the same distinction for the same reason.
 
     stderr goes to a temporary FILE, never a pipe, so a chatty segment cannot deadlock the
     gate against a full pipe buffer while nobody is reading it. There is exactly one
@@ -1277,7 +1296,7 @@ def load_manifest():
 
     None means the manifest could not be read, which is a gate failure and never a reason
     to accept a `conformance:` item unchecked — the runner that owns this file exits 2
-    rather than report a green run without it (scripts/conformance.sh:112-116).
+    rather than report a green run without it (scripts/conformance.sh:171-175).
     """
     if not MANIFEST.exists():
         return None
@@ -1352,7 +1371,7 @@ def check_index(receipts=None):
     that is deliberate: a skipped item that reports nothing is the same unmeasured
     denominator one layer down, and the conformance runner this file borrows its
     discipline from treats a fixture it cannot read as a failure rather than a skip
-    (scripts/conformance.sh:512-517). An item the gate cannot run hermetically is a lint
+    (scripts/conformance.sh:589-594). An item the gate cannot run hermetically is a lint
     error naming the gate that owns the question, not a quiet exemption.
     """
     counts = {"cmd": 0, "conformance": 0, "src": 0, "gate": 0, "gate_validated": 0}

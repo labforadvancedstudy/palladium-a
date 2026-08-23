@@ -67,7 +67,7 @@ build_output/, and read in src/codegen/mod.rs)
             2690 `#include`, 1614 `#define`, 684 `struct`/`enum`/`typedef`
             openers. No other shape occurs.
     cmd: grep -nE "goto|switch|#if|#ifdef|__attribute__" src/codegen/mod.rs
-         -> 1 line, src/codegen/mod.rs:765, and it is a PROTOTYPE
+         -> 1 line, src/codegen/mod.rs:788, and it is a PROTOTYPE
             (`static void __pd_init() __attribute__((constructor));`), not a
             definition
     cmd: grep -cE "goto |switch|case |#if" build_output/*.c -> 0 in all 538
@@ -176,8 +176,8 @@ is EMPIRICAL over N files, not proved from the generator:
                 i += 1
     print(dict(odd) or "none")     # measured 2026-08-22 over 400 files: none
 
-The source-side support is src/codegen/mod.rs:2193-2201 (`generate_block`) and
-src/codegen/mod.rs:2243- (`generate_statement`, leaf arms ending `";\n"` at
+The source-side support is src/codegen/mod.rs:2222-2230 (`generate_block`) and
+src/codegen/mod.rs:2272- (`generate_statement`, leaf arms ending `";\n"` at
 :2186-2190 and :2191-2198). That is a reading of one function rather than a
 proof over every arm, which is why the empirical sweep is the basis and this is
 the corroboration.
@@ -193,8 +193,8 @@ So: the gap is real, and it is currently empty. It is NOT closed here on
 purpose. The natural home for a structural verdict on those fixtures is a
 column in tests/conformance-manifest.txt — that runner's design is that every
 row declares its own expectation and an undeclared one fails
-(scripts/conformance.sh:10-13 lists the four failure directions, :63-77 the six
-columns every row must supply, :495 UNDECLARED and :713 MISSING are the two
+(scripts/conformance.sh:10-13 lists the four failure directions, :121-132 the six
+columns every row must supply, :572 UNDECLARED and :949 MISSING are the two
 reconciliation directions; tests/conformance-manifest.txt:1-4 says the same in
 its own header). Bolting a second, undeclared verdict source onto it from
 elsewhere would recreate the two-
@@ -474,8 +474,8 @@ def unmodelled_construct(items):
             #
             # HOW THAT IS KNOWN, at both strengths, because one of them reads
             # stronger than it is. SOURCE SIDE: `generate_block`
-            # (src/codegen/mod.rs:2193-2201) writes an indent and delegates to
-            # `generate_statement` (src/codegen/mod.rs:2243-), whose leaf arms
+            # (src/codegen/mod.rs:2222-2230) writes an indent and delegates to
+            # `generate_statement` (src/codegen/mod.rs:2272-), whose leaf arms
             # terminate with `";\n"` — `Stmt::Expr` at :2186-2190, `Stmt::Return`
             # at :2191-2198 — while compound arms emit their own `{`-terminated
             # headers. That is a reading of one function, not a proof over every

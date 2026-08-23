@@ -233,7 +233,12 @@ impl UnsafeChecker {
             Expr::Await { expr, .. } => self.check_expression(expr),
 
             // Literals and identifiers are safe
-            Expr::Integer(_) | Expr::String(_) | Expr::Bool(_) | Expr::Ident(_) => Ok(()),
+            Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::String(_)
+            | Expr::Bool(_)
+            | Expr::Ident(_) => Ok(()),
 
             Expr::MacroInvocation { .. } => Ok(()), // Macros are expanded before this phase
         }

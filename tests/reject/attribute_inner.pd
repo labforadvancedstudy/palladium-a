@@ -1,0 +1,14 @@
+// NEGATIVE TEST -- N2-10 shape three: `#![name(args)]` at the top of a
+// compilation unit.
+//
+// `#!` is ONE token, not `#` followed by `!`: the two are an inner attribute
+// only when adjacent, and a parser reading them separately could not tell
+// `#![a]` from `# ![a]`.
+//
+// Refused for the same reason as the other two shapes -- the name is not
+// implemented -- which is what proves the shape reached the name at all.
+#![frobnicate(a)]
+
+fn main() {
+    print("unreachable");
+}

@@ -23,6 +23,72 @@ pub enum CompileError {
     #[error("Unterminated string literal at line {line}")]
     UnterminatedString { line: usize, span: Option<Span> },
 
+    /// A `/*` with no matching `*/`.
+    ///
+    /// Only reachable once comments nest (N2-08): a regex scanner cannot tell
+    /// "unterminated" from "the token set has nothing starting here", which is
+    /// why this used to surface as `Unexpected character '/'`.
+    #[error("unterminated block comment: `/*` is never closed")]
+    UnterminatedBlockComment { span: Option<Span> },
+
+    /// A `\` in a literal followed by something outside the escape set.
+    ///
+    /// Its own variant rather than a `SyntaxError` because the repair is
+    /// mechanical and enumerable — the message carries the whole legal set —
+    /// and because the old behaviour was to pass the two characters through,
+    /// which is not a syntax error at all but a silently wrong byte string.
+    #[error("unknown escape sequence `\\{ch}` in a literal")]
+    UnknownEscape {
+        ch: char,
+        /// Every escape the lexer accepts, as source text, so the diagnostic
+        /// can list them instead of asking the reader to find the table.
+        known: Vec<String>,
+        span: Option<Span>,
+    },
+
+    /// `\0` inside a STRING literal (N2-09).
+    ///
+    /// Its own variant, and its own refusal, because the alternative is the
+    /// defect one construct along from N2-11. A Palladium String is a non-NULL,
+    /// NUL-terminated `const char*` (N14), so `"a\0b"` denotes three characters
+    /// and every String operation sees one: `print` stops at `a`, `string_len`
+    /// answers 1. Accepting it and DOCUMENTING the consequence was the previous
+    /// disposition; it is wrong for the reason documentation cannot fix — a
+    /// representation leak that ships becomes the language's semantics, and the
+    /// pin only records that it did.
+    ///
+    /// `'\0'` stays legal: a char literal is a Unicode scalar held as i64, and
+    /// zero is an ordinary value there. The way to make the string form legal
+    /// is length-aware String semantics, which is an N4/N14 change.
+    #[error("`\\0` is not allowed in a string literal")]
+    NulInStringLiteral {
+        /// The escapes a STRING may carry, for the note.
+        known: Vec<String>,
+        span: Option<Span>,
+    },
+
+    /// An attribute the compiler does not know (N2-11).
+    ///
+    /// The attribute surface exists so that N8's totality obligations have
+    /// somewhere to be written. It would have been less work to lex `#[...]`
+    /// and drop it, and that is precisely the shape M1 spent itself deleting: a
+    /// program whose source says `#[total]` and whose binary contains no
+    /// totality check is a compiler lying about what it was asked to do. So an
+    /// attribute that lexes and is not implemented is REFUSED, from the same
+    /// commit in which `#` first lexes.
+    ///
+    /// The message names the attribute, because "unknown attribute" alone does
+    /// not say which of several on one item was rejected.
+    #[error("unknown attribute `{name}`")]
+    UnknownAttribute {
+        name: String,
+        /// The attributes this compiler implements, for the note. EMPTY today,
+        /// and that is the correct M2 state rather than an oversight — see
+        /// `crate::parser::KNOWN_ATTRIBUTES`.
+        known: Vec<String>,
+        span: Option<Span>,
+    },
+
     // Parser errors
     #[error("Unexpected token: expected {expected}, found {found}")]
     UnexpectedToken {
@@ -227,8 +293,10 @@ impl CompileError {
     /// Raised without inspecting the operand, so the wording may not assume one
     /// — `3?` and `unknown()?` reach here too. It also may not imply that the
     /// `match` alternative generalises further than it does: code generation
-    /// skips generic enum definitions entirely (`src/codegen/mod.rs:1329-1330`,
-    /// `src/codegen/mod.rs:1330-1330`, `src/codegen/mod.rs:1366-1366`), so `Result<T, E>` is
+    /// skips generic enum definitions entirely — at all four sites, the two that
+    /// COLLECT (`src/codegen/mod.rs:1507-1511`, `src/codegen/mod.rs:1543-1547`)
+    /// and the two that EMIT (`src/codegen/mod.rs:1607-1612`,
+    /// `src/codegen/mod.rs:1637-1641`) — so `Result<T, E>` is
     /// not a compilable replacement and the help says so rather than leaving the
     /// reader to discover it.
     ///
@@ -282,17 +350,15 @@ impl CompileError {
     pub fn async_value_return_unimplemented(span: Span) -> Self {
         CompileError::Unimplemented {
             construct: "a `return` with a value inside an `async fn`".to_string(),
-            consequence:
-                "the body is emitted into a poll function that returns only an `int` \
+            consequence: "the body is emitted into a poll function that returns only an `int` \
                  readiness flag, so there is nowhere to put the value: it would be \
                  evaluated and discarded, and for a non-unit output the emitted C does \
                  not compile at all"
-                    .to_string(),
-            workaround:
-                "make the function ordinary (`fn`) and return the value directly. There \
+                .to_string(),
+            workaround: "make the function ordinary (`fn`) and return the value directly. There \
                  is no async runtime, so a future's result has nowhere to live and \
                  nothing to deliver it"
-                    .to_string(),
+                .to_string(),
             span: Some(span),
         }
     }
@@ -348,11 +414,10 @@ impl CompileError {
                  language does not have (§N7) — and nothing would ever call the poll routine, \
                  so the body would not run"
                     .to_string(),
-            workaround:
-                "delete the `async` keyword and write an ordinary `fn`. There is no async \
+            workaround: "delete the `async` keyword and write an ordinary `fn`. There is no async \
                  runtime to drive a future, so `async` cannot change what the function does; \
                  if the body returns a `Future<T>`, that declaration has to become `T` as well"
-                    .to_string(),
+                .to_string(),
             span: Some(span),
         }
     }
@@ -449,16 +514,14 @@ impl CompileError {
     pub fn async_main_unimplemented(span: Span) -> Self {
         CompileError::Unimplemented {
             construct: "`async fn main`".to_string(),
-            consequence:
-                "the entry point would be emitted as `main_Future main()` rather than \
+            consequence: "the entry point would be emitted as `main_Future main()` rather than \
                  `int main(int, char**)`, with the body inside a `main_poll` function that \
                  nothing calls — so the program links, runs, exits 0 and does nothing"
-                    .to_string(),
-            workaround:
-                "make `main` an ordinary function: `fn main() { … }`. There is no async \
+                .to_string(),
+            workaround: "make `main` an ordinary function: `fn main() { … }`. There is no async \
                  runtime to drive a future returned from the entry point, so nothing else \
                  can give it its meaning"
-                    .to_string(),
+                .to_string(),
             span: Some(span),
         }
     }
@@ -576,6 +639,37 @@ impl CompileError {
         }
     }
 
+    /// A `/*` that nothing closes (N2-08).
+    pub fn unterminated_block_comment(span: Span) -> Self {
+        CompileError::UnterminatedBlockComment { span: Some(span) }
+    }
+
+    /// A `\` followed by something the escape table does not name (N2-09).
+    pub fn unknown_escape(ch: char, known: &[String], span: Span) -> Self {
+        CompileError::UnknownEscape {
+            ch,
+            known: known.to_vec(),
+            span: Some(span),
+        }
+    }
+
+    /// `\0` in a string literal (N2-09).
+    pub fn nul_in_string_literal(known: &[String], span: Span) -> Self {
+        CompileError::NulInStringLiteral {
+            known: known.to_vec(),
+            span: Some(span),
+        }
+    }
+
+    /// An attribute this compiler does not implement (N2-11).
+    pub fn unknown_attribute(name: &str, known: &[&str], span: Span) -> Self {
+        CompileError::UnknownAttribute {
+            name: name.to_string(),
+            known: known.iter().map(|s| s.to_string()).collect(),
+            span: Some(span),
+        }
+    }
+
     /// Convert this error into a diagnostic with helpful suggestions
     pub fn to_diagnostic(&self) -> Diagnostic {
         match self {
@@ -600,6 +694,66 @@ impl CompileError {
                         "Add a closing quote (\") to end the string",
                         Some("\"".to_string()),
                     )
+            }
+
+            CompileError::UnterminatedBlockComment { span } => {
+                Diagnostic::error("unterminated block comment: `/*` is never closed".to_string())
+                    .with_span(span.unwrap_or(Span::dummy()))
+                    .with_note(
+                        "block comments nest, so a `*/` inside this comment closed an inner \
+                         `/*` rather than this one",
+                    )
+                    .with_suggestion("Add a closing `*/`", Some("*/".to_string()))
+            }
+
+            CompileError::UnknownEscape { ch, known, span } => {
+                Diagnostic::error(format!("unknown escape sequence `\\{}` in a literal", ch))
+                    .with_span(span.unwrap_or(Span::dummy()))
+                    .with_note(format!(
+                        "the escapes this compiler accepts are: {}",
+                        known.join(" ")
+                    ))
+                    .with_suggestion(
+                        "write `\\\\` if a literal backslash was meant",
+                        Some("\\\\".to_string()),
+                    )
+            }
+
+            CompileError::NulInStringLiteral { known, span } => Diagnostic::error(
+                "`\\0` is not allowed in a string literal".to_string(),
+            )
+            .with_span(span.unwrap_or(Span::dummy()))
+            .with_note(
+                "a String is a NUL-terminated `const char*`, so a NUL inside one ends it for \
+                 every operation that reads it: `print` would stop there and `string_len` \
+                 would count only the characters before it",
+            )
+            .with_note(format!(
+                "the escapes a string literal accepts are: {}",
+                known.join(" ")
+            ))
+            .with_suggestion(
+                "use a char literal `'\\0'` if the value 0 was meant, or split the string",
+                Some("'\\0'".to_string()),
+            ),
+
+            CompileError::UnknownAttribute { name, known, span } => {
+                let diag = Diagnostic::error(format!("unknown attribute `{}`", name))
+                    .with_span(span.unwrap_or(Span::dummy()));
+                if known.is_empty() {
+                    diag.with_note(
+                        "this compiler implements no attributes yet: `#` lexes so that the \
+                         surface exists, and every attribute is refused so that none can be \
+                         silently ignored",
+                    )
+                    .with_suggestion("Remove the attribute", None)
+                } else {
+                    diag.with_note(format!(
+                        "the attributes this compiler implements are: {}",
+                        known.join(" ")
+                    ))
+                    .with_suggestion("Remove the attribute, or use one of the above", None)
+                }
             }
 
             CompileError::UnexpectedToken {
@@ -949,7 +1103,7 @@ mod tests {
         let span1 = Span::new(10, 20, 5, 3);
         let span2 = Span::new(15, 25, 6, 5);
         let extended = span1.extend_to(&span2);
-        
+
         assert_eq!(extended.start, 10);
         assert_eq!(extended.end, 25);
         assert_eq!(extended.line, 5);
@@ -961,7 +1115,7 @@ mod tests {
         let span1 = Span::new(10, 20, 5, 10);
         let span2 = Span::new(5, 15, 5, 5);
         let extended = span1.extend_to(&span2);
-        
+
         assert_eq!(extended.start, 5);
         assert_eq!(extended.end, 20);
         assert_eq!(extended.line, 5);
@@ -976,7 +1130,10 @@ mod tests {
             col: 5,
             span: None,
         };
-        assert_eq!(err.to_string(), "Unexpected character '$' at line 10, column 5");
+        assert_eq!(
+            err.to_string(),
+            "Unexpected character '$' at line 10, column 5"
+        );
 
         let err = CompileError::UnterminatedString {
             line: 42,
@@ -1026,9 +1183,12 @@ mod tests {
             col: 5,
             span: Some(Span::new(100, 101, 10, 5)),
         };
-        
+
         let diag = err.to_diagnostic();
-        assert_eq!(diag.message, "Unexpected character '€' at line 10, column 5");
+        assert_eq!(
+            diag.message,
+            "Unexpected character '€' at line 10, column 5"
+        );
         assert_eq!(diag.notes.len(), 1);
         assert_eq!(diag.suggestions.len(), 1);
         assert!(diag.span.is_some());
@@ -1043,7 +1203,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("to_string()")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("to_string()")));
 
         // string to int
         let err = CompileError::TypeMismatch {
@@ -1052,7 +1215,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("parse_int()")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("parse_int()")));
 
         // bool suggestion
         let err = CompileError::TypeMismatch {
@@ -1061,7 +1227,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("true") && s.message.contains("false")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("true") && s.message.contains("false")));
     }
 
     #[test]
@@ -1072,7 +1241,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.replacement == Some("println".to_string())));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.replacement == Some("println".to_string())));
 
         // printf -> println
         let err = CompileError::UndefinedFunction {
@@ -1080,7 +1252,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.replacement == Some("println".to_string())));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.replacement == Some("println".to_string())));
 
         // generic function
         let err = CompileError::UndefinedFunction {
@@ -1088,7 +1263,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("fn myFunc()")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("fn myFunc()")));
     }
 
     #[test]
@@ -1101,8 +1279,13 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.message.contains("expects 2 arguments, but 1 was provided"));
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("Add 1 more argument")));
+        assert!(diag
+            .message
+            .contains("expects 2 arguments, but 1 was provided"));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("Add 1 more argument")));
 
         // Too many arguments
         let err = CompileError::ArgumentCountMismatch {
@@ -1112,8 +1295,13 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.message.contains("expects 1 argument, but 3 were provided"));
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("Remove 2 arguments")));
+        assert!(diag
+            .message
+            .contains("expects 1 argument, but 3 were provided"));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("Remove 2 arguments")));
     }
 
     #[test]
@@ -1123,7 +1311,10 @@ mod tests {
         };
         let diag = err.to_diagnostic();
         assert_eq!(diag.message, "Missing semicolon after statement");
-        assert!(diag.suggestions.iter().any(|s| s.replacement == Some(";".to_string())));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.replacement == Some(";".to_string())));
     }
 
     #[test]
@@ -1134,7 +1325,10 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("Add a pattern for: None")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("Add a pattern for: None")));
 
         // Multiple missing patterns (<=3)
         let err = CompileError::NonExhaustiveMatch {
@@ -1142,15 +1336,27 @@ mod tests {
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("Red, Green, Blue")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("Red, Green, Blue")));
 
         // Many missing patterns (>3)
         let err = CompileError::NonExhaustiveMatch {
-            missing_patterns: vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string(), "E".to_string()],
+            missing_patterns: vec![
+                "A".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                "D".to_string(),
+                "E".to_string(),
+            ],
             span: None,
         };
         let diag = err.to_diagnostic();
-        assert!(diag.suggestions.iter().any(|s| s.message.contains("wildcard pattern (_)")));
+        assert!(diag
+            .suggestions
+            .iter()
+            .any(|s| s.message.contains("wildcard pattern (_)")));
     }
 
     #[test]
@@ -1167,9 +1373,7 @@ mod tests {
         };
         assert_eq!(err.to_string(), "Use of uninitialized value: y");
 
-        let err = CompileError::CannotMoveOutOfBorrowedContent {
-            span: None,
-        };
+        let err = CompileError::CannotMoveOutOfBorrowedContent { span: None };
         assert_eq!(err.to_string(), "Cannot move out of borrowed content");
     }
 
@@ -1179,14 +1383,17 @@ mod tests {
             operation: "raw pointer dereference".to_string(),
             span: Span::new(0, 10, 1, 1),
         };
-        assert_eq!(err.to_string(), "Unsafe operation 'raw pointer dereference' requires unsafe block");
+        assert_eq!(
+            err.to_string(),
+            "Unsafe operation 'raw pointer dereference' requires unsafe block"
+        );
     }
 
     #[test]
     fn test_generic_error() {
         let err = CompileError::Generic("Something went wrong".to_string());
         assert_eq!(err.to_string(), "Something went wrong");
-        
+
         let diag = err.to_diagnostic();
         assert_eq!(diag.message, "Something went wrong");
     }

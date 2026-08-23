@@ -1,0 +1,19 @@
+// NEGATIVE TEST -- N2-10 shape two: `#[name(args)]`.
+//
+// THE REFUSAL IS THE EVIDENCE THAT IT LEXED. Reaching
+// `unknown attribute `frobnicate`` means the parser consumed `(a, b(c))` and
+// the closing `]` as part of ONE attribute and then looked the name up. A
+// scanner that stopped at the first `)` would have left `]` behind and failed
+// with a different message entirely, which is what makes this a test of the
+// argument list and not a duplicate of unknown_attribute.pd.
+//
+// The nesting is deliberate: `b(c)` inside `(...)` is the case that
+// distinguishes balanced counting from "scan to the first `)`".
+#[frobnicate(a, b(c))]
+fn f() -> i64 {
+    return 1;
+}
+
+fn main() {
+    print_int(f());
+}

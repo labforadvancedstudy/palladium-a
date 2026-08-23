@@ -170,14 +170,11 @@ impl BorrowChecker {
     /// imported function can be checked at all.
     ///
     /// Takes exactly what `TypeChecker::set_imported_modules` takes
-    /// (`src/typeck/mod.rs:588-588`), because the driver has one resolver result and
+    /// (`src/typeck/mod.rs:1340-1340`), because the driver has one resolver result and
     /// two passes that need it; a second shape here would be a second thing to
     /// keep in sync. Registration itself is deferred to `check_program`, which is
     /// where the ordering against local definitions is decided.
-    pub fn set_imported_modules(
-        &mut self,
-        modules: HashMap<String, crate::resolver::ModuleInfo>,
-    ) {
+    pub fn set_imported_modules(&mut self, modules: HashMap<String, crate::resolver::ModuleInfo>) {
         self.imported_modules = modules;
     }
 
@@ -213,19 +210,30 @@ impl BorrowChecker {
     ///
     /// Public-only, and imports-before-locals, for the same reasons as functions
     /// below; the type checker registers imported layouts under exactly the same
-    /// filter (`src/typeck/mod.rs:704-705`), so the two passes agree on which
+    /// filter (`src/typeck/mod.rs:1520-1521`), so the two passes agree on which
     /// `P` is meant.
     ///
-    /// AND THE REMAINING WINDOW IS UNREACHABLE, which is a stronger statement than
-    /// "the order is right". If an imported layout ever did leak where a local
-    /// should win, the program it would mis-check cannot be built at all: codegen
-    /// emits every public imported struct (`src/codegen/mod.rs:1391-1399`) and then
-    /// every local struct (`src/codegen/mod.rs:1415-1419`) with no shadowing check
-    /// between them, so the C holds two definitions of `P`. Measured — a module
-    /// exporting `pub struct P { a: i64 }` beside a local `struct P { a: i64 }`
-    /// passes both checkers and dies as gcc's "redefinition of 'P'". So the
-    /// ordering above is what makes the pass reason about the right layout, and the
-    /// linker is what makes the question moot; neither rests on the other.
+    /// THE REMAINING WINDOW USED TO BE UNREACHABLE, AND IS NOW REACHABLE — the
+    /// second belt has been removed on purpose, so the ordering above is load
+    /// bearing on its own. This paragraph used to argue that if an imported
+    /// layout ever leaked where a local should win, the program could not be
+    /// built at all: code generation emitted every public imported struct and then
+    /// every local struct with no shadowing check between them, so the C held two
+    /// definitions of `P` and gcc said "redefinition of 'P'". That was measured
+    /// and it was true.
+    ///
+    /// It stopped being true on 2026-08-23. The emission walk now asks
+    /// `crate::ast::local_type_shadows_import` (`src/codegen/mod.rs:1591-1619`)
+    /// and skips the imported definition, because the same window in the TYPE
+    /// CHECKER was producing `Type mismatch: expected Color, found Color` for an
+    /// ordinary program — a local `struct Color` over an imported `pub enum
+    /// Color` — and closing it there without closing it here only moved the
+    /// failure into gcc. Measured now: that program compiles and prints the local
+    /// answer, where at `5fbd1fe` it was `gcc compilation failed`.
+    ///
+    /// So the ordering above no longer has a backstop, and the reason it is still
+    /// correct is the one stated in SHADOWING below rather than anything the
+    /// linker does.
     ///
     /// SHADOWING: a local definition wins, and it wins by *order* — this runs
     /// before the walk over `program.items`, so a local `fn helper` overwrites an
@@ -264,7 +272,7 @@ impl BorrowChecker {
                         // function bodies, one item kind across.
                         //
                         // Its reason was that codegen emits only NON-generic
-                        // imported structs (`src/codegen/mod.rs:1394-1395`), so a
+                        // imported structs (`src/codegen/mod.rs:1595-1600`), so a
                         // generic `P<T>` would be "a layout for a type this
                         // compilation never produces". Structs have a
                         // monomorphization path too
@@ -376,8 +384,8 @@ impl BorrowChecker {
         //
         // ONLY `Item::Function` IS WALKED, and an imported `impl` method is not a
         // gap in that. Codegen's imported walk matches `Item::Struct` and
-        // `Item::Enum` (`src/codegen/mod.rs:1390-1407`) and, separately,
-        // `Item::Function` (`src/codegen/mod.rs:1495-1495`) — there is no `Item::Impl`
+        // `Item::Enum` (`src/codegen/mod.rs:1591-1619`) and, separately,
+        // `Item::Function` (`src/codegen/mod.rs:1733-1734`) — there is no `Item::Impl`
         // arm anywhere in it. So an imported impl method is not merely uncallable:
         // IT DOES NOT EXIST IN THE OUTPUT. Measured — a module exporting
         // `pub struct P { a: i64 }` with `impl P { fn get(self) -> i64 { … } }`
@@ -419,7 +427,7 @@ impl BorrowChecker {
                     // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
                     // "produces no C, because the codegen guard is the same
                     // predicate". That is true of the DIRECT imported-emission path
-                    // (`src/codegen/mod.rs:1497-1499`, public and non-generic) and
+                    // (`src/codegen/mod.rs:1734-1737`, public and non-generic) and
                     // false of MONOMORPHIZATION, which is a different path and emits
                     // `name__T` from the same template. Measured on the guard:
                     //
@@ -576,10 +584,9 @@ impl BorrowChecker {
                 .insert(param.name.clone(), param.ty.clone());
             // `mut x: T` and `x: &mut T` are the two ways a parameter arrives
             // writable; anything else may not be mutably re-borrowed.
-            let writable = param.mutable
-                || matches!(&param.ty, Type::Reference { mutable: true, .. });
-            self.mutable_bindings
-                .insert(param.name.clone(), writable);
+            let writable =
+                param.mutable || matches!(&param.ty, Type::Reference { mutable: true, .. });
+            self.mutable_bindings.insert(param.name.clone(), writable);
         }
 
         // Check function body
@@ -1007,7 +1014,8 @@ impl BorrowChecker {
             }
 
             // Literals don't need ownership checking
-            Expr::String(_) | Expr::Integer(_) | Expr::Bool(_) => {}
+            Expr::String(_) | Expr::Integer(_) | Expr::Float(_) | Expr::Char(_) | Expr::Bool(_) => {
+            }
             Expr::MacroInvocation { .. } => {
                 // Macros should have been expanded before borrow checking
                 return Err(CompileError::Generic(
@@ -1066,9 +1074,7 @@ impl BorrowChecker {
             return Ok(());
         }
         match Self::place_root_ident(arg) {
-            Some(root) => {
-                self.check_mutable_borrow_allowed(&Place::Local(root.to_string()), span)
-            }
+            Some(root) => self.check_mutable_borrow_allowed(&Place::Local(root.to_string()), span),
             None => Err(CompileError::BorrowChecker {
                 message: format!(
                     "cannot pass this {} to a `mut` parameter: a `mut` parameter receives a \
@@ -1099,6 +1105,8 @@ impl BorrowChecker {
     fn expr_kind(expr: &Expr) -> &'static str {
         match expr {
             Expr::Integer(_) => "integer literal",
+            Expr::Float(_) => "float literal",
+            Expr::Char(_) => "char literal",
             Expr::String(_) => "string literal",
             Expr::Bool(_) => "boolean literal",
             Expr::Call { .. } => "call result",
@@ -1137,11 +1145,7 @@ impl BorrowChecker {
     /// variable, and pattern bindings. Anything else that reaches this point
     /// is a binder nobody taught the invariant about, and failing loudly is
     /// the whole point of the rule.
-    fn check_mutable_borrow_allowed(
-        &self,
-        place: &Place,
-        span: crate::errors::Span,
-    ) -> Result<()> {
+    fn check_mutable_borrow_allowed(&self, place: &Place, span: crate::errors::Span) -> Result<()> {
         let mut root = place;
         loop {
             match root {
@@ -1275,7 +1279,9 @@ impl BorrowChecker {
     #[allow(clippy::only_used_in_recursion)]
     fn is_copy_type(&self, ty: &Type) -> bool {
         match ty {
-            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::Bool => true,
+            Type::I32 | Type::I64 | Type::U32 | Type::U64 | Type::F64 | Type::F32 | Type::Bool => {
+                true
+            }
             // `String` is Copy. It lowers to `const char*`, there is no drop
             // glue and no per-value free anywhere in the language (strings live
             // in a static arena released once by `__pd_cleanup_strings` via
@@ -1346,7 +1352,9 @@ impl BorrowChecker {
     /// Check if an expression type is Copy
     fn is_expr_copy(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::Integer(_) | Expr::Bool(_) | Expr::String(_) => true,
+            Expr::Integer(_) | Expr::Float(_) | Expr::Char(_) | Expr::Bool(_) | Expr::String(_) => {
+                true
+            }
             // Idents and projections are Copy exactly when their type is; an
             // unresolvable type stays conservatively non-Copy.
             Expr::Ident(_) | Expr::FieldAccess { .. } | Expr::Index { .. } | Expr::Deref { .. } => {
@@ -1362,6 +1370,10 @@ impl BorrowChecker {
     fn expr_type(&self, expr: &Expr) -> Type {
         match expr {
             Expr::Integer(_) => Type::I64,
+            Expr::Float(_) => Type::F64,
+            // The scalar, as an integer — the same decision the type checker
+            // records at `Expr::Char`. N4-04 moves both or neither.
+            Expr::Char(_) => Type::I64,
             Expr::String(_) => Type::String,
             Expr::Bool(_) => Type::Bool,
             Expr::Ident(_) => Type::I64, // TODO: Proper type lookup

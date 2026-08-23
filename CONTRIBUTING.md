@@ -103,6 +103,51 @@ cargo test parser::
 - **Examples**: Include in doc comments when helpful
 - **README updates**: Keep in sync with features
 
+### `file:line` citations — when to fix one you did not break
+
+This repository puts its evidence in `path:line` citations, and
+`make check-doc-evidence` pins them. A pin proves a cited range has not MOVED. It
+cannot prove the range SUPPORTS the claim, so wrong-but-stable citations
+accumulate: a sweep in 2026-08 found 98 whose own prose quotes a token that is
+uniquely locatable elsewhere in the same file.
+
+You will therefore meet citations that are already wrong. The standing rule,
+adopted 2026-08-23 after a relocation pass "fixed" 124 of 238 citations WRONG and
+had to be reverted whole:
+
+> **Fix a citation when your change broke it, when a reviewer names it, or when
+> you are already editing the sentence that carries it. Leave every other
+> pre-existing wrong citation alone, and RECORD IT AS DEBT in
+> [`docs/contributing/citation-and-predicate-debt.md`](docs/contributing/citation-and-predicate-debt.md).**
+
+Both halves are load-bearing. Fixing beyond that line turns a bug fix into a
+tree-wide edit nobody can review, and each "fix" is a fresh chance to relocate a
+citation onto unrelated code. Staying silent about the ones you leave turns
+known debt into invisible debt, which is how they got there — and "silent"
+includes naming it only in a review thread, which is why the register is a file
+in the tree.
+
+**A mechanical remap is not a fix.** Relocating a citation with a line map
+preserves *what it pointed at*, faithfully — including when what it pointed at
+was already the wrong code. A remapped citation is DEBT until somebody re-derives
+it BY CONTENT, and in a diff it is indistinguishable from a re-verified one. That
+is not hypothetical: one sentence in `src/codegen/mod.rs` carries two citations,
+one hand-re-derived and one mechanically shifted, and they look identical.
+
+When you do relocate, the procedure is in `scripts/check_doc_evidence.py`'s
+docstring, and it is not optional: correct the citation BY CONTENT first, then run
+`--update`. Running `--update` first launders whatever now sits at that line into
+the pin file, and "0 MOVED" afterwards proves only that the pins agree with the
+docs. Prefer an exact old→new line map (`difflib` over the base revision) to a
+text search — a search silently picks the wrong one of two identical lines, and a
+map is an identity. Re-derive HAND-WRITTEN citations LAST, from content anchors:
+a hand fix goes stale the moment a later edit in the same session shifts the file
+it names.
+
+The durable fix for the class is proposed, with the measurement that kills the
+naive version, in
+[`docs/contributing/proposed-gate-quoted-token-citations.md`](docs/contributing/proposed-gate-quoted-token-citations.md).
+
 ## Commit Messages
 
 Follow conventional commits:

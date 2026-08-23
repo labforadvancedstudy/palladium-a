@@ -25,7 +25,7 @@ would not have been.
 
 ## Why it was out, and why that is the interesting part
 
-`citing_sources` (`scripts/check_doc_evidence.py:308-310`) walks a set of globs. Until this
+`citing_sources` (`scripts/check_doc_evidence.py:327-329`) walks a set of globs. Until this
 change every one of them was under `docs/`, `src/` or `tests/`, and `CLAUDE.md` is at the
 repository root — so it matched none. The file was not exempted, not special-cased, and not
 skipped by any rule. It was simply never looked at.
@@ -42,7 +42,7 @@ told to read first, sat entirely inside it.
 It was not a hypothetical gap. `CLAUDE.md`'s single citation was **wrong**: it named
 `check_stmt` while claiming to name the call path that mints a per-call lifetime and ends its
 borrows. Nobody can say when it broke, because nothing had ever looked. It now reads
-`src/ownership/borrow_checker.rs:891-898` and is pinned.
+`src/ownership/borrow_checker.rs:898-905` and is pinned.
 
 ## The one thing that had to be fixed first
 

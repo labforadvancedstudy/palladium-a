@@ -23,6 +23,20 @@ if [ ! -x "$REPO/target/release/pdc" ]; then
   exit 2
 fi
 
+# A WORKING C COMPILER IS A PRECONDITION, not an outcome to be classified.
+# Several stubs below run a real gcc and derive an exit code from its status, and
+# a missing or unexecutable compiler exits 126/127 — which this branch's contract
+# calls a TOOLCHAIN outcome (code 5), not a backend rejection. The stubs map it
+# correctly, so without this preflight an absent gcc would surface as controls
+# failing to observe BACKEND_REJECT: a true statement about the machine, read as
+# a false statement about the classifier. Name the precondition instead.
+if ! printf 'int main(void){return 0;}\n' | gcc -x c -o /dev/null - 2>/dev/null; then
+  echo "error: no working C compiler on PATH. The fault-injection stubs below run" >&2
+  echo "       a real gcc and derive a structured exit code from its status; without" >&2
+  echo "       one this suite cannot establish anything and must not report green." >&2
+  exit 2
+fi
+
 TMPROOT=$(mktemp -d) || exit 2
 trap 'rm -rf "$TMPROOT"' EXIT
 
@@ -40,6 +54,131 @@ new_repo() {
   ln -sf "$REPO/runtime" "$d/runtime"
   printf '%s' "$d"
 }
+
+# stub_pdc <repo> <body> — replace the repo's pdc with a shell stub.
+#
+# A CONTROL THAT DIES WITH THE BUG IS NOT A CONTROL. The never-expectable
+# post-codegen verdicts can only be observed on a program the front end accepts
+# and the backend then fails to build, and the only such programs on a healthy
+# tree are live compiler defects — so a control that borrows one evaporates the
+# day it is fixed, taking the proof with it. These stubs MANUFACTURE the
+# condition instead: they write a translation unit and report a gcc outcome, so
+# every branch of the verdict fires on demand, forever, on any tree, with no
+# defect required. They are also the only way to reach the branches a real gcc
+# will not produce to order (a gcc that dies by signal).
+#
+# Each stub implements exactly the CLI the runner drives — `pdc compile <file>
+# -o <name>` — and writes build_output/<stem>.c, because "did codegen emit a
+# translation unit" is what the runner reads to decide the front end accepted.
+stub_pdc() {
+  rm -f "$1/target/release/pdc"
+  printf '%s\n' "$2" > "$1/target/release/pdc"
+  chmod +x "$1/target/release/pdc"
+}
+
+# Writes C that gcc genuinely refuses, runs a REAL gcc on it, and exits with the
+# code derived from gcc's actual status — the producer half of the contract
+# scripts/conformance.sh consumes, which is what makes this a fault injection
+# rather than a canned string. Codes are src/linker.rs's EXIT_* constants:
+# 3 refused, 4 ill-typed C, 5 no verdict, 6 a verdict nobody could attribute.
+#
+# 126 and 127 map to 5, NOT to 3. A missing or unexecutable gcc is a TOOLCHAIN
+# outcome by this branch's own contract, and calling it a backend rejection
+# would be the exact conflation the branch exists to remove, reproduced inside
+# the harness that proves it was removed. The suite also refuses to start
+# without a working C compiler (see the preflight above), so an absent gcc is
+# reported as what it is rather than surfacing as a wrong-looking verdict.
+stub_backend_reject='#!/bin/sh
+f=$2; stem=`basename "$f" .pd`
+mkdir -p build_output
+printf "int main(void) { return not_a_declared_identifier; }\n" > "build_output/$stem.c"
+echo "Compiling $f..."
+echo "Linking with gcc (-O2)..."
+err=`gcc -o /dev/null "build_output/$stem.c" 2>&1`; st=$?
+if [ "$st" -eq 0 ]; then exit 0; fi
+echo "error: gcc compilation failed:" >&2
+echo "$err" >&2
+if [ "$st" -ge 128 ] || [ "$st" -eq 126 ] || [ "$st" -eq 127 ]; then exit 5; fi
+exit 3'
+
+# gcc exited 0 and diagnosed C that pdc generated: an ICE, and a compiler defect
+# for a different reason than a refusal. Distinct exit code, distinct sentence.
+stub_ill_typed_c='#!/bin/sh
+f=$2; stem=`basename "$f" .pd`
+mkdir -p build_output
+printf "int main(void) { return 0; }\n" > "build_output/$stem.c"
+echo "Linking with gcc (-O2)..."
+echo "error: gcc compilation failed:" >&2
+echo "build_output/$stem.c:1:1: warning: incompatible integer to pointer conversion" >&2
+exit 4'
+
+# Codegen succeeded and the C compiler then died by signal instead of judging the
+# translation unit. Nothing is established about the C, so this must NOT be
+# reported as a backend defect. The kill is real, not a printed claim.
+stub_gcc_abnormal='#!/bin/sh
+f=$2; stem=`basename "$f" .pd`
+mkdir -p build_output
+printf "int main(void) { return 0; }\n" > "build_output/$stem.c"
+echo "Linking with gcc (-O2)..."
+sh -c "kill -9 \$\$" >/dev/null 2>&1; st=$?
+echo "error: gcc compilation failed:" >&2
+echo "gcc terminated by a signal" >&2
+if [ "$st" -ge 128 ] || [ "$st" -eq 126 ] || [ "$st" -eq 127 ]; then exit 5; fi
+exit 3'
+
+# AN UNSTRUCTURED pdc: a translation unit, a failed build, and a flattened exit
+# 1 that cannot say which of the two happened — one string and one status for a
+# rejected C and for a gcc that died. No longer what this repo's pdc emits; kept
+# as the regression pin for the accusation being withheld when a producer (an
+# older pdc, a third-party one) gives the gate nothing structured.
+stub_no_provenance='#!/bin/sh
+f=$2; stem=`basename "$f" .pd`
+mkdir -p build_output
+printf "int main(void) { return not_a_declared_identifier; }\n" > "build_output/$stem.c"
+echo "Linking with gcc (-O2)..."
+echo "error: gcc compilation failed:" >&2
+echo "build_output/$stem.c:1:25: error: use of undeclared identifier" >&2
+exit 1'
+
+# gcc RAN, exited nonzero, and named no translation unit of ours. Structured —
+# so the filesystem witness is not needed — but NOT an accusation: an undefined
+# symbol from the link stage and a full disk are indistinguishable here, and the
+# producer says so by choosing 6 rather than 3.
+stub_gcc_unexplained='#!/bin/sh
+f=$2; stem=`basename "$f" .pd`
+mkdir -p build_output
+printf "int main(void) { return 0; }\n" > "build_output/$stem.c"
+echo "Linking with gcc (-O2)..."
+echo "error: gcc exited 1 without diagnosing build_output/$stem.c." >&2
+echo "gcc: fatal error: cannot write output: No space left on device" >&2
+exit 6'
+
+# An exit code outside the contract must not be read as a rejection either.
+stub_unknown_code='#!/bin/sh
+f=$2; stem=`basename "$f" .pd`
+mkdir -p build_output
+printf "int main(void) { return 0; }\n" > "build_output/$stem.c"
+echo "error: gcc compilation failed:" >&2
+exit 42'
+
+# One stub, two behaviours keyed on the fixture path: the fixture under one/
+# gets a translation unit and a backend failure, the one under two/ is refused
+# by the front end with no .c at all. They share build_output/dup.c, which is
+# the point.
+stub_selective_reject='#!/bin/sh
+f=$2; stem=`basename "$f" .pd`
+mkdir -p build_output
+case "$f" in
+  */one/*)
+    printf "int main(void) { return not_a_declared_identifier; }\n" > "build_output/$stem.c"
+    echo "error: gcc compilation failed:" >&2
+    echo "build_output/$stem.c:1:25: error: use of undeclared identifier" >&2
+    exit 3 ;;
+  *)
+    echo "error: refused by the front end" >&2
+    exit 1 ;;
+esac'
+
 
 # fixture <repo> <relpath> <body> [expected-stdout]
 # Also writes the sibling .expected transcript, because class=run now requires
@@ -68,6 +207,34 @@ fn main() {
 }'
 library_module='pub fn helper(a: i64) -> i64 {
     return a + 1;
+}'
+
+# A program the FRONT END ACCEPTS and whose emitted C gcc then REFUSES. Measured
+# on this tree (fb12f6f), `pdc compile` exit 1:
+#   build_output/<name>.c:273:22: error: brackets are not allowed here; to
+#   declare an array, place the brackets after the identifier
+#       long long[2] g[2] = {{1, 2}, {3, 4}};
+# `type_to_c` composes `T[M][N]` as a type rather than a declarator — the open
+# defect CLAUDE.md records as "중첩 배열이 로컬·파라미터 양쪽에서 불가".
+#
+# HANDOFF, because this control stands on a live defect. When nested arrays start
+# working these cases go RED with the fixture PASSING rather than being refused.
+# That is not a runner regression: substitute another program that pdc accepts
+# and gcc rejects, measure it, and paste the measurement here. If no such program
+# can be found any more, say that and delete the positive control — but do not
+# weaken the assertion, because then nothing proves the verdict still fires.
+backend_reject_program='fn main() {
+    let g: [[i64; 2]; 2] = [[1, 2], [3, 4]];
+    print_int(g[1][0]);
+}'
+# A pure FRONT-END refusal whose diagnostic contains the literal `Linking`:
+#   error: Undefined variable or function: 'Linking'
+# The stage classifier used to decide "did the backend run?" by grepping the
+# compiler log for `Linking`, so a fixture's own identifier could answer that
+# question on the backend's behalf. Harmless while the answer only chose a label;
+# not harmless once one branch accuses the compiler of a defect.
+frontend_reject_linking_program='fn main() {
+    print_int(Linking);
 }'
 
 # manifest <repo> <lines...>   (each line uses | which is translated to TAB)
@@ -107,6 +274,13 @@ expect_rc() {
 expect_out() {
   case "$OUT" in *"$1"*) return 0 ;; esac
   bad "expected output to contain '$1'"; return 1
+}
+# The discrimination controls below need the negative form. `expect_out` cannot
+# express "this verdict did not misfire": a suite that only ever asserts presence
+# is equally happy with a runner that shouts BACKEND_REJECT at everything.
+expect_not_out() {
+  case "$OUT" in *"$1"*) bad "expected output NOT to contain '$1'"; return 1 ;; esac
+  return 0
 }
 
 echo "conformance runner regression tests"
@@ -734,6 +908,366 @@ start "reject: an owner is rejected — a negative test is owed to nobody"
 manifest "$D" 'tests/accepted.pd|reject|compile|x|M1|has an owner'
 run_case "$D"
 expect_rc 2 && expect_out "must have owner" && ok
+
+# ===========================================================================
+# BACKEND_REJECT — the one outcome that is not a class.
+#
+# There is no valid Palladium program for which pdc accepts the source and gcc
+# then refuses the C codegen emitted. If the front end said yes, C that will not
+# build is a defect in pdc: never a property of the input, and never something a
+# fixture may declare. The runner used to CLASSIFY that outcome (stage `link`)
+# and then compare it against the manifest like any other verdict, so a backend
+# defect could be declared expected — as an xfail, or, worse, as a `reject`,
+# which is counted as COVERAGE and owed to nobody.
+#
+# Three things are proven below, because a verdict that is only declared is not a
+# verdict: that it FIRES on a real reproduction, that it does NOT fire on a
+# front-end refusal (the distinction is WHO refused), and that the manifest can
+# no longer buy an exemption.
+#
+# What is NOT proven, and must not be claimed: that this finds backend-reject
+# defects. The corpus contains only programs someone thought to write down.
+# Measured — neither of the two reproductions that motivated this check is in
+# tests/conformance-manifest.txt, so the gate would not have caught either. It
+# makes the OUTCOME inadmissible for every fixture the corpus runs; corpus
+# coverage is a separate, still-open debt.
+# ===========================================================================
+
+# --- the verdict FIRES, on manufactured evidence, forever -------------------
+start "backend/injected: a stub whose emitted C gcc refuses reports BACKEND_REJECT"
+D=$(new_repo backendinjected)
+stub_pdc "$D" "$stub_backend_reject"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && ok
+
+start "backend/injected: the message names it a compiler defect, not a fixture property"
+expect_out "defect in this compiler" && ok
+
+start "backend/injected: and it quotes gcc's line, not pdc's wrapper"
+# The whole message is "go fix the backend", so the useful diagnostic is the
+# first error line AFTER `error: gcc compilation failed:` — the wrapper is what
+# the first `error` match used to be, and it says nothing.
+#
+# Asserted on the PLANTED IDENTIFIER, not on the C compiler's sentence around
+# it. `undeclared identifier` is clang's wording; GNU gcc says
+# `'x' undeclared (first use in this function)` for the same error, so the
+# earlier assertion would have gone red on Linux while the classification was
+# perfectly correct. Both wordings quote the identifier, and nothing else in
+# this runner's output can contain that token by accident. It matters more than
+# usual here: the repo's Actions are billing-locked, so Linux never runs this
+# suite and a portability defect merged this way is never caught afterwards.
+expect_out "not_a_declared_identifier" && ok
+
+start "backend/injected: declaring it xfail does NOT excuse it"
+manifest "$D" 'tests/any.pd|xfail|compile|undeclared identifier|M1|claims the defect is expected'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "xfail=1" && ok
+
+start "backend/injected: declaring it a NEGATIVE TEST does not launder it into coverage"
+# The worst spelling of the escape hatch: class=reject counts as coverage and is
+# owed to no milestone, so a backend defect declared this way would have made the
+# corpus look BETTER for containing it.
+manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims the compiler refuses this'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
+
+# --- the accusation is WITHHELD when the evidence cannot support it ---------
+# An UNSTRUCTURED producer emits `gcc compilation failed` for every unsuccessful
+# gcc status, so it cannot separate "gcc refused our C" from "gcc died". These
+# pin the under-claim: same never-expectable outcome, same red gate, no defect
+# asserted.
+start "backend/ambiguous: no structured signal is HARNESS_ERROR, never BACKEND_REJECT"
+# Not this repo's pdc any more — it emits 3/4/5/6. Kept because the gate must
+# still under-claim for any producer that gives it nothing structured.
+D=$(new_repo backendambiguous)
+stub_pdc "$D" "$stub_no_provenance"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/ambiguous: ...and the message says WHY it will not name a defect"
+expect_out "does not say what happened" && ok
+
+start "backend/ambiguous: ...and no manifest column excuses it either"
+manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
+
+start "backend/unexplained: exit 6 is HARNESS_ERROR, never BACKEND_REJECT"
+# gcc reached a verdict, so this is NOT the toolchain case; pdc could not
+# attribute it, so it is NOT a rejection. The gate must refuse without accusing.
+D=$(new_repo backendunexplained)
+stub_pdc "$D" "$stub_gcc_unexplained"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/unexplained: ...and no manifest column excuses it"
+manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
+
+start "backend/unexplained: ...and the code alone suffices, with no .c on disk"
+# THE FAIL-OPEN THIS CLOSES. Without 6 in the backend_code case, a 6 whose
+# translation unit is missing or differently named falls through to the
+# front-end arm, where `compile` is a stage a manifest row may declare — and the
+# contradiction check that would have caught it greps for `gcc compilation
+# failed`, which the exit-6 message deliberately does not print, because a gate
+# reading that marker reads a claim nobody supported.
+stub_pdc "$D" '#!/bin/sh
+echo "Linking with gcc (-O2)..."
+echo "error: gcc exited 1 without diagnosing anything." >&2
+exit 6'
+manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
+
+start "backend/abnormal: a gcc that DIES is HARNESS_ERROR, not a backend defect"
+# A real SIGKILL of a real child process, with valid C on disk. Nothing is
+# established about the translation unit, so nothing may be claimed about it.
+D=$(new_repo backendabnormal)
+stub_pdc "$D" "$stub_gcc_abnormal"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/abnormal: ...and it is distinguished from a rejected translation unit"
+expect_out "never reached a verdict" && ok
+
+# --- the contract itself fails closed ---------------------------------------
+start "backend/ill-typed: exit 4 is a defect too, with its own sentence"
+# gcc exited 0 and diagnosed C that pdc GENERATED. Not a refusal, still a
+# compiler defect, and the message must not claim gcc refused anything.
+D=$(new_repo backendilltyped)
+stub_pdc "$D" "$stub_ill_typed_c"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_out "diagnosed as ill-typed" && ok
+
+start "backend/contract: an exit code outside the contract reads as unresolved"
+# Anything not in {3,4,5} says nothing about gcc and may not be upgraded into an
+# accusation. A contract that treats an unknown code as a rejection would be a
+# guessing classifier again — the exact defect this change removed from the log.
+D=$(new_repo backendunknowncode)
+stub_pdc "$D" "$stub_unknown_code"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/contract: ...and it names the code it could not interpret"
+expect_out "pdc exited 42" && ok
+
+# --- the structured code stands alone ---------------------------------------
+# The witness used to be a conjunction: a structured code was examined only if
+# the translation unit was also on disk. That fails OPEN on the half that is
+# missing — pdc exits 3 while codegen names its output differently than this gate
+# derives it, and the fixture falls through to stage `compile`, which
+# `reject|compile` is allowed to declare. These three drive each structured code
+# with NO .c on disk AND no legacy `gcc compilation failed` prose in the log,
+# which is exactly the combination the old guard could not see: the previous
+# no-TU coverage was exit 1 WITH the wrapper, the one case that already worked.
+stub_no_tu_3='#!/bin/sh
+echo "Linking with gcc (-O2)..."
+echo "error: the C compiler refused the generated translation unit" >&2
+echo "somewhere.c:1:25: error: not_a_declared_identifier" >&2
+exit 3'
+stub_no_tu_4='#!/bin/sh
+echo "error: the generated translation unit is ill-typed" >&2
+exit 4'
+stub_no_tu_5='#!/bin/sh
+echo "error: the C compiler could not be started" >&2
+exit 5'
+
+start "backend/no-tu: exit 3 alone is conclusive, with no .c and no wrapper text"
+D=$(new_repo backendnotu3)
+stub_pdc "$D" "$stub_no_tu_3"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && ok
+
+start "backend/no-tu: ...and it says the exit code is the witness"
+expect_out "no translation unit at" && expect_out "sufficient on its own" && ok
+
+start "backend/no-tu: ...and a reject|compile row still cannot bless it"
+# The regression this whole item is about: under the old AND-guard this landed
+# in the front-end arm and this row made the gate GREEN.
+manifest "$D" 'tests/any.pd|reject|compile|not_a_declared_identifier|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
+
+start "backend/no-tu: ...nor an xfail|compile row"
+manifest "$D" 'tests/any.pd|xfail|compile|not_a_declared_identifier|M1|claims a debt'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "xfail=1" && ok
+
+start "backend/no-tu: exit 4 alone is conclusive too"
+D=$(new_repo backendnotu4)
+stub_pdc "$D" "$stub_no_tu_4"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|reject|compile|ill-typed|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
+
+start "backend/no-tu: exit 5 alone is conclusive, and still claims nothing"
+D=$(new_repo backendnotu5)
+stub_pdc "$D" "$stub_no_tu_5"
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|reject|compile|could not be started|-|claims coverage'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" \
+  && expect_not_out "reject=1" && ok
+
+start "backend/no-tu: an UNSTRUCTURED code with no .c is still a front-end refusal"
+# The other half of the same boundary: exit 1 is not a witness, so with no .c on
+# disk this is an ordinary front-end rejection and MUST stay declarable. A guard
+# that answered "backend" here would break every negative test in the corpus.
+D=$(new_repo backendnotu1)
+stub_pdc "$D" '#!/bin/sh
+echo "error: Expected function, struct, enum" >&2
+exit 1'
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|reject|compile|Expected function, struct, enum|-|a real negative test'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && expect_not_out "BACKEND_REJECT" && ok
+
+# --- the contradiction check ------------------------------------------------
+start "backend/contradiction: gcc ran but no translation unit exists is refused"
+# Reaching the front-end arm means "no .c on disk". That name is derived twice,
+# independently (this gate's basename vs codegen's file_stem), and if the two
+# ever diverge a real backend failure would land in the arm where `xfail
+# compile` IS declarable. A stub that fails after gcc without writing the .c
+# manufactures exactly that divergence.
+D=$(new_repo backendcontradiction)
+stub_pdc "$D" '#!/bin/sh
+echo "Linking with gcc (-O2)..."
+echo "error: gcc compilation failed:" >&2
+echo "somewhere.c:1:1: error: broken" >&2
+exit 1'
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_out "cannot both be true" && ok
+
+start "backend/contradiction: ...and it cannot be declared xfail at the compile stage"
+manifest "$D" 'tests/any.pd|xfail|compile|broken|M1|claims a front-end refusal'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "xfail=1" && ok
+
+# --- the manifest can no longer buy an exemption ----------------------------
+start "backend/manifest: stage 'link' is a manifest error (the hatch cannot reopen)"
+# The red-proof for the validator. On the real corpus this check is green and
+# stays green (measured: 82 non-comment rows, stage column 58 `-` + 24 `compile`,
+# zero `link`), so a control that plants the row is the only way to see it work.
+D=$(new_repo backendlinkstage)
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|xfail|link|gcc compilation failed|M1|declares the defect expected'
+run_case "$D"
+expect_rc 2 && expect_out "declares stage 'link'" && ok
+
+start "backend/manifest: ...on class=reject too"
+manifest "$D" 'tests/any.pd|reject|link|gcc compilation failed|-|declares the defect expected'
+run_case "$D"
+expect_rc 2 && expect_out "declares stage 'link'" && ok
+
+start "backend/manifest: ...and on class=skip"
+manifest "$D" 'tests/any.pd|skip|link|gcc compilation failed|-|declares the defect expected'
+run_case "$D"
+expect_rc 2 && expect_out "declares stage 'link'" && ok
+
+start "backend/manifest: 'compile' and 'run' are still accepted stages"
+D=$(new_repo backendstage)
+fixture "$D" tests/broken.pd "$bad_program"
+fixture "$D" tests/rt.pd "$runtime_fail_program"
+manifest "$D" 'tests/broken.pd|xfail|compile|Expected function, struct, enum|M1|parse failure' \
+              'tests/rt.pd|xfail|run|exit=3|M1|exits 3 by design'
+run_case "$D"
+expect_rc 0 && expect_out "xfail=2" && ok
+
+# --- negative control: nothing else moved ----------------------------------
+start "backend/negative: an ordinary passing fixture is untouched"
+D=$(new_repo backendnegative)
+fixture "$D" tests/a.pd "$good_program"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 0 && expect_out "verified=1" && expect_not_out "BACKEND_REJECT" \
+  && expect_not_out "HARNESS_ERROR" && ok
+
+# --- discrimination: WHO refused -------------------------------------------
+# A check that cannot tell a front-end refusal from a backend one is the failure
+# mode this whole section exists to close: it would call every negative test in
+# the corpus a compiler defect.
+start "backend/discrimination: a front-end refusal is COMPILE_FAIL, not a backend verdict"
+D=$(new_repo backenddiscriminate)
+fixture "$D" tests/refused.pd "$bad_program"
+manifest "$D" 'tests/refused.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "COMPILE_FAIL" && expect_not_out "BACKEND_REJECT" \
+  && expect_not_out "HARNESS_ERROR" && ok
+
+start "backend/discrimination: ...and may still be declared xfail (green)"
+manifest "$D" 'tests/refused.pd|xfail|compile|Expected function, struct, enum|M1|known parse failure'
+run_case "$D"
+expect_rc 0 && expect_out "xfail=1" && ok
+
+start "backend/discrimination: ...and reject stays real coverage (green)"
+manifest "$D" 'tests/refused.pd|reject|compile|Expected function, struct, enum|-|the compiler must refuse this'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && ok
+
+start "backend/discrimination: a fixture cannot put 'Linking' in the log to fake it"
+# `fn main() { print_int(Linking); }` — a front-end refusal reading "Undefined
+# variable or function: 'Linking'". The old classifier grepped the log for that
+# literal, so the fixture answered "did the backend run?" itself. Acceptance is
+# now read off the filesystem (was the translation unit emitted?), which no
+# fixture text can reach.
+D=$(new_repo backendforge)
+fixture "$D" tests/forge.pd "$frontend_reject_linking_program"
+manifest "$D" 'tests/forge.pd|reject|compile|Undefined variable or function|-|the compiler must refuse an undefined name'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/discrimination: and it is a compile-stage failure when undeclared"
+manifest "$D" 'tests/forge.pd|run|-|expected|-|-'
+run_case "$D"
+expect_rc 1 && expect_out "COMPILE_FAIL" && expect_not_out "BACKEND_REJECT" && ok
+
+start "backend/stale: a same-basename fixture's C cannot make a refusal look like a defect"
+# The emitted C is named from the fixture BASENAME, so tests/one/dup.pd and
+# tests/two/dup.pd share build_output/dup.c. Without removing it first, the
+# first fixture's translation unit would still be on disk when the second is
+# refused by the front end, and the second would be accused of a backend defect.
+# `find` output is sorted, so one/ runs before two/.
+D=$(new_repo backendstale)
+stub_pdc "$D" "$stub_selective_reject"
+fixture "$D" tests/one/dup.pd "$good_program"
+fixture "$D" tests/two/dup.pd "$good_program"
+manifest "$D" 'tests/one/dup.pd|run|-|expected|-|-' \
+              'tests/two/dup.pd|reject|compile|refused by the front end|-|front-end refusal'
+run_case "$D"
+expect_rc 1 && expect_out "BACKEND_REJECT" && expect_out "reject=1" && ok
+
+# --- the live reproduction, kept as evidence but load-bearing on nothing ----
+start "backend/live: the nested-array defect still fails the gate today"
+# Real pdc, real defect: the front end accepts `[[i64; 2]; 2]` and gcc refuses
+# the `long long[2] g[2]` codegen emits. This is EVIDENCE, not the proof — the
+# fault-injected controls above own that, so this case may be deleted outright
+# the day nested arrays start working. It asserts only the invariant-level
+# facts, which is why it survives fix/gcc-diagnostics-discarded landing and
+# changing the verdict's NAME: the gate is red, and the fixture is counted as
+# neither coverage nor debt.
+D=$(new_repo backendlive)
+fixture "$D" tests/nested.pd "$backend_reject_program"
+manifest "$D" 'tests/nested.pd|reject|compile|brackets are not allowed here|-|claims the compiler refuses this'
+run_case "$D"
+expect_rc 1 && expect_not_out "reject=1" && expect_not_out "xfail=1" && ok
 
 # ---------------------------------------------------------------------------
 # vacuous notes must name the feature they fail to cover.

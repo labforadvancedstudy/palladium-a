@@ -19,43 +19,64 @@
 #                     check would be unreachable for every file here, and the
 #                     gate would be unable to report the one thing it promises.
 #   COMPILE_FAIL      rejected by the lexer, parser or type checker
-#   LINK_FAIL         accepted by the compiler, rejected by gcc
+#   LINK_FAIL         REFUSED, no longer declarable. It meant "accepted by the
+#                     compiler, rejected by gcc", which is never a property of a
+#                     FILE: if pdc accepted the source, C that will not build is a
+#                     defect in pdc. scripts/stdlib-gate.sh now rejects a row that
+#                     names it, and gate_probe no longer emits it — that outcome
+#                     comes back as BACKEND_REJECT / BACKEND_UNRESOLVED, which fail
+#                     the gate whatever this file declares. Zero rows used it.
 #
 # BLOCKER is the FIRST construct pdc rejects, which is a floor and not the full
 # bill: lexing is a whole-file pass, so a lexer-level blocker anywhere in a file
-# masks every parser-level blocker in it. stdlib/prelude.pd is recorded as
-# ATTRIBUTE because of `#[cfg]` on line 163, but it also contains 18 `use`
-# declarations and 2 `mod` declarations that the parser would reject next.
+# masks every parser-level blocker in it. stdlib/prelude.pd USED to be recorded
+# as ATTRIBUTE because of `#[cfg]` on line 163; that lexical blocker is gone
+# (N2-10), and the file is now recorded as USE_DECL — which is exactly the
+# "18 `use` declarations the parser would reject next" this paragraph predicted.
+# The prediction being borne out is the evidence that the floor was a floor.
 #
 # Blocker categories, each independently reproduced by a one-line probe (the
 # probes are listed in stdlib/STATUS.md):
 #   USE_DECL         `use path::to::Item;`      — no module system
 #   MOD_DECL         `mod name;`                — no module system
 #   PUB_FN_IN_IMPL   `pub fn` inside an `impl`  — visibility on methods
-#   ATTRIBUTE        `#[...]`                   — lexer rejects '#'
-#   CHAR_ESCAPE      `'\t'`                     — lexer rejects escapes in char literals
-#   FLOAT_LITERAL    `3.14`                     — lexer has no float literal
 #   ASSOC_TYPE       `type Output;` in a trait  — no associated types
 #   GENERIC_DEFAULT  `<Rhs = Self>`             — no generic parameter defaults
 #   UNINIT_LET       `let mut v: T;`            — declaration without initialiser
+#   RAW_POINTER      `*mut T`                   — no raw pointer type
+#   BITWISE_XOR      `a ^ b`                    — `^` is not an operator (N5, owed)
 #
-stdlib/prelude.pd	COMPILE_FAIL	ATTRIBUTE
+# RETIRED CATEGORIES, and the five rows they moved. All three were LEXICAL, and
+# lexing is a whole-file pass, so each was masking every parser-level blocker in
+# its file — which is what the header above says a blocker is a floor and not a
+# bill. N2-08…N2-11 removed all three, and the rows below now record the blocker
+# that was always behind them. Not one file moved closer to compiling: this is
+# the same debt, measured one layer deeper.
+#   ATTRIBUTE        `#[...]`                   — RETIRED at N2-10/N2-11. `#` lexes;
+#                    an attribute is now refused by the PARSER, by name, and
+#                    every one of these files hits a `use` or `*mut` first.
+#   CHAR_ESCAPE      `'\t'`                     — RETIRED at N2-09. Escapes lex in
+#                    char literals; stdlib/std/string.pd's next blocker is `use`.
+#   FLOAT_LITERAL    `3.14`                     — RETIRED at N2-03. `3.14` is one
+#                    token; stdlib/std/math.pd's next blocker is `^`.
+#
+stdlib/prelude.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/async.pd	COMPILE_FAIL	ASSOC_TYPE
-stdlib/std/collections/hashmap.pd	COMPILE_FAIL	ATTRIBUTE
+stdlib/std/collections/hashmap.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/collections/mod.pd	COMPILE_FAIL	MOD_DECL
-stdlib/std/collections/vec.pd	COMPILE_FAIL	ATTRIBUTE
+stdlib/std/collections/vec.pd	COMPILE_FAIL	RAW_POINTER
 stdlib/std/collections/vec_i64.pd	COMPILE_FAIL	UNINIT_LET
 stdlib/std/env.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/fs.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/io.pd	COMPILE_FAIL	USE_DECL
-stdlib/std/math.pd	COMPILE_FAIL	FLOAT_LITERAL
+stdlib/std/math.pd	COMPILE_FAIL	BITWISE_XOR
 stdlib/std/mem.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/mod.pd	COMPILE_FAIL	MOD_DECL
 stdlib/std/net.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/option.pd	COMPILE_FAIL	PUB_FN_IN_IMPL
 stdlib/std/process.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/result.pd	COMPILE_FAIL	PUB_FN_IN_IMPL
-stdlib/std/string.pd	COMPILE_FAIL	CHAR_ESCAPE
+stdlib/std/string.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/sync.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/thread.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/time.pd	COMPILE_FAIL	PUB_FN_IN_IMPL

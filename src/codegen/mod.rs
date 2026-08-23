@@ -2,12 +2,14 @@
 // "Forging legends into machine code"
 
 pub mod c_ident;
+pub mod c_literal;
 pub mod llvm_backend;
 pub mod llvm_backend_improved;
 pub mod llvm_native;
 pub mod llvm_text_backend;
 
 use crate::ast::{AssignTarget, UnaryOp, *};
+use crate::codegen::c_literal::{c_char_constant, c_string_body};
 use crate::errors::{CompileError, Result, Span};
 use std::fs::{self, File};
 use std::io::Write;
@@ -39,7 +41,7 @@ enum ArrayParamForm {
     /// `xs: [T; N]` - no declared intent to mutate anything.
     ByValue,
     /// `mut xs: [T; N]` - the bootstrap subset's spelling for a mutable array
-    /// parameter (docs/specification/bootstrap-subset.md:96).
+    /// parameter (docs/specification/bootstrap-subset.md:105).
     MutByValue,
     /// `xs: &[T; N]`.
     Shared,
@@ -203,6 +205,23 @@ pub struct CodeGenerator {
     /// from naming an incomplete tag, which would make the tag local to the
     /// prototype's parameter list and conflict with the definition.
     defined_structs: std::collections::HashSet<String>,
+    /// Which enum payload slots are stored behind a pointer.
+    ///
+    /// NOT DERIVED HERE. The type checker owns the definition
+    /// (`crate::typeck::RecursiveLayout`) because it also owns the refusal for
+    /// the declarations this scheme cannot lay out, and a second derivation in
+    /// this file is exactly how the two passes would come to disagree about
+    /// which slot is a pointer — the class of defect this repository has closed
+    /// twice, in `builtins.rs` and in `local_definition_shadows_import`.
+    ///
+    /// Filled in `compile_escaped` from the ESCAPED program, because the layout
+    /// is keyed by type name and `escape_reserved_names` can rename one.
+    recursive_layout: crate::typeck::RecursiveLayout,
+    /// Variant constructors, held back until every type definition has been
+    /// emitted. They are the only output that needs a payload type COMPLETE,
+    /// and for a terminating mutual recursion no ordering of the definitions
+    /// can give them that in place.
+    enum_constructors: String,
 }
 
 impl CodeGenerator {
@@ -227,6 +246,8 @@ impl CodeGenerator {
             generic_struct_instantiation_map: std::collections::HashMap::new(),
             async_functions: std::collections::HashSet::new(),
             defined_structs: std::collections::HashSet::new(),
+            recursive_layout: crate::typeck::RecursiveLayout::default(),
+            enum_constructors: String::new(),
         })
     }
 
@@ -316,6 +337,12 @@ impl CodeGenerator {
     fn try_infer_expr_type(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Integer(_) => Some("long long".to_string()),
+            Expr::Float(_) => Some("double".to_string()),
+            // A char literal's TYPE is i64 today (N4-04 is still owed), so it
+            // must infer as `long long` and not as C's `char`: inferring `char`
+            // here would silently narrow `let c = 'a';` to one byte while the
+            // type checker still called it i64.
+            Expr::Char(_) => Some("long long".to_string()),
             Expr::String(_) => Some("const char*".to_string()),
             Expr::Bool(_) => Some("int".to_string()),
             Expr::StructLiteral { name, fields, .. } => {
@@ -325,7 +352,8 @@ impl CodeGenerator {
                     // For now, we'll infer from the first field's type
                     if let Some((_, field_expr)) = fields.first() {
                         let field_type = match field_expr {
-                            Expr::Integer(_) => "long long",
+                            Expr::Integer(_) | Expr::Char(_) => "long long",
+                            Expr::Float(_) => "double",
                             Expr::String(_) => "const char*",
                             Expr::Bool(_) => "int",
                             _ => "long long",
@@ -414,12 +442,26 @@ impl CodeGenerator {
                     | BinOp::Ge
                     | BinOp::And
                     | BinOp::Or => Some("int".to_string()),
-                    BinOp::Add => {
-                        // String concatenation returns a string
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                        // The operands decide, because the answer is not always
+                        // `long long`: `let d = x / y;` over two `double`s used
+                        // to declare `long long d = (x / y);` and TRUNCATE — no
+                        // diagnostic, a wrong number, and the type checker
+                        // knowing the right answer the whole time.
+                        //
+                        // The type checker has already refused every mixed pair
+                        // (`Int + Float` is a TypeMismatch), so agreement
+                        // between the operands is guaranteed by the time this
+                        // runs and "either operand is a float" is the same
+                        // question as "both are".
                         let left_type = self.infer_expr_type(left);
                         let right_type = self.infer_expr_type(right);
                         if left_type == "const char*" && right_type == "const char*" {
                             Some("const char*".to_string())
+                        } else if left_type == "double" || right_type == "double" {
+                            Some("double".to_string())
+                        } else if left_type == "float" || right_type == "float" {
+                            Some("float".to_string())
                         } else {
                             Some("long long".to_string())
                         }
@@ -693,9 +735,9 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:2794-2794`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:3973`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
-    /// (`src/ownership/borrow_checker.rs:548`). So `fn f(xs: &[i64; 3])` could
+    /// (`src/ownership/borrow_checker.rs:579-581`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
     /// the callee's mutable binding, where it is legitimate. Measured, before
     /// this check: the caller's `v[0]` came back 99 through both a shared and a
@@ -817,6 +859,8 @@ impl CodeGenerator {
         match expr {
             Expr::String(_) => "string literal",
             Expr::Integer(_) => "integer literal",
+            Expr::Float(_) => "float literal",
+            Expr::Char(_) => "char literal",
             Expr::Bool(_) => "boolean literal",
             Expr::Ident(_) => "variable reference",
             Expr::ArrayLiteral { .. } => "array literal",
@@ -852,6 +896,27 @@ impl CodeGenerator {
     fn compile_escaped(&mut self, program: &Program) -> Result<()> {
         // For v0.1, we'll generate a simple C file that we can compile with gcc
         // This is a temporary solution until LLVM integration is complete
+
+        // Ask the type checker's analysis which payload slots are pointers,
+        // over the same item set it will be emitting: the escaped main program
+        // plus every imported module's items, which land in this translation
+        // unit too.
+        //
+        // The SAME set the type checker analysed, built by the same constructor.
+        // Two passes deriving one item set independently is how they came to
+        // disagree; `LayoutItems::of` owns the visibility filter, the shadowing
+        // filter and the module sort, so neither pass can supply a set the other
+        // would not have.
+        //
+        // The sort is inside it because `RandomState` reseeds per process and
+        // this analysis feeds `definition_order`, which decides the ORDER TYPE
+        // DEFINITIONS ARE EMITTED IN — an unsorted walk put the hash seed into
+        // the emitted C whenever two imported modules declare one type name.
+        // `make selfhost`'s fixed point cannot see it, because `bootstrap/pdc.pd`
+        // imports nothing.
+        self.recursive_layout = crate::typeck::RecursiveLayout::analyze(
+            &crate::typeck::LayoutItems::of(program, &self.imported_modules),
+        );
 
         self.output.push_str("#include <stdio.h>\n");
         self.output.push_str("#include <string.h>\n");
@@ -933,11 +998,92 @@ impl CodeGenerator {
         self.output.push_str("    __pd_string_pool_offset = 0;\n");
         self.output.push_str("}\n\n");
 
+        // STORAGE FOR THE PAYLOAD SLOTS THAT BECAME POINTERS.
+        //
+        // EMITTED ONLY WHEN A SLOT ACTUALLY BECAME ONE. A program with no
+        // recursive type must emit the C it emitted before this analysis
+        // existed, byte for byte, or the differential over the corpus stops
+        // being a measurement of this change.
+        //
+        // WHAT "FREED AT EXIT" COSTS, said once so it is not only an argument for
+        // safety. The arena grows with the number of constructions a run performs,
+        // not with the number of nodes alive at any moment, so a loop that builds
+        // and discards recursive values retains every one of them until the process
+        // ends; and where the string pool merely stops recording past its cap and
+        // leaks, this one calls `exit(1)` when `malloc` or `realloc` fails. That is
+        // the right failure for a compiler that cannot free, and it is a liveness
+        // ceiling rather than a leak that degrades.
+        //
+        // Freed once at exit rather than per value, which is not a shortcut but
+        // the memory model this language already has: there is no drop glue and
+        // no per-value free anywhere in it, which is the stated reason `String`
+        // is a Copy type (src/ownership/borrow_checker.rs, `is_copy_type`).
+        // Under that model a `match` binding may copy a node whose children are
+        // shared with the value it came from, because nothing can free a child
+        // while the program is running. Introducing per-value frees HERE, for
+        // one type constructor, would break that invariant everywhere else.
+        //
+        // The cap grows instead of being fixed. `MAX_STRINGS` above silently
+        // stops recording past 1024 and leaks the rest, which is survivable for
+        // strings and is not for a tree, where the count is the program's data
+        // size rather than its literal count.
+        if self.recursive_layout.cuts_anything() {
+            self.output
+                .push_str("// Heap cells for recursive enum payload slots\n");
+            self.output.push_str("static void** __pd_rec_nodes = 0;\n");
+            self.output.push_str("static size_t __pd_rec_count = 0;\n");
+            self.output.push_str("static size_t __pd_rec_cap = 0;\n");
+            self.output
+                .push_str("static void* __pd_rec_alloc(size_t size) {\n");
+            self.output.push_str("    void* cell = malloc(size);\n");
+            self.output.push_str("    if (!cell) {\n");
+            self.output.push_str(
+                "        fprintf(stderr, \"palladium: out of memory building a recursive value\\n\");\n",
+            );
+            self.output.push_str("        exit(1);\n");
+            self.output.push_str("    }\n");
+            self.output
+                .push_str("    if (__pd_rec_count == __pd_rec_cap) {\n");
+            self.output
+                .push_str("        size_t grown = __pd_rec_cap ? __pd_rec_cap * 2 : 64;\n");
+            self.output.push_str(
+                "        void** moved = (void**)realloc(__pd_rec_nodes, grown * sizeof(void*));\n",
+            );
+            self.output.push_str("        if (!moved) {\n");
+            self.output.push_str(
+                "            fprintf(stderr, \"palladium: out of memory building a recursive value\\n\");\n",
+            );
+            self.output.push_str("            exit(1);\n");
+            self.output.push_str("        }\n");
+            self.output.push_str("        __pd_rec_nodes = moved;\n");
+            self.output.push_str("        __pd_rec_cap = grown;\n");
+            self.output.push_str("    }\n");
+            self.output
+                .push_str("    __pd_rec_nodes[__pd_rec_count++] = cell;\n");
+            self.output.push_str("    return cell;\n");
+            self.output.push_str("}\n\n");
+            self.output
+                .push_str("static void __pd_cleanup_rec_nodes() {\n");
+            self.output
+                .push_str("    for (size_t i = 0; i < __pd_rec_count; i++) {\n");
+            self.output.push_str("        free(__pd_rec_nodes[i]);\n");
+            self.output.push_str("    }\n");
+            self.output.push_str("    free(__pd_rec_nodes);\n");
+            self.output.push_str("    __pd_rec_nodes = 0;\n");
+            self.output.push_str("    __pd_rec_count = 0;\n");
+            self.output.push_str("    __pd_rec_cap = 0;\n");
+            self.output.push_str("}\n\n");
+        }
+
         // Register cleanup with atexit
         self.output
             .push_str("static void __pd_init() __attribute__((constructor));\n");
         self.output.push_str("static void __pd_init() {\n");
         self.output.push_str("    atexit(__pd_cleanup_strings);\n");
+        if self.recursive_layout.cuts_anything() {
+            self.output
+                .push_str("    atexit(__pd_cleanup_rec_nodes);\n");
+        }
         self.output.push_str("}\n\n");
 
         // Command-line arguments, captured by main() on entry
@@ -970,7 +1116,8 @@ impl CodeGenerator {
 
         // Generate panic function wrapper
         self.output.push_str("void __pd_panic(const char* msg) {\n");
-        self.output.push_str("    fprintf(stderr, \"panic: %s\\n\", msg);\n");
+        self.output
+            .push_str("    fprintf(stderr, \"panic: %s\\n\", msg);\n");
         self.output.push_str("    abort();\n");
         self.output.push_str("}\n\n");
 
@@ -1015,7 +1162,8 @@ impl CodeGenerator {
         self.output.push_str("    if (start < 0) start = 0;\n");
         self.output
             .push_str("    if (end > (long long)len) end = len;\n");
-        self.output.push_str("    if (start >= end) return __pd_empty_owned();\n");
+        self.output
+            .push_str("    if (start >= end) return __pd_empty_owned();\n");
         self.output.push_str("    size_t sub_len = end - start;\n");
         self.output
             .push_str("    char* result = __pd_alloc_string(sub_len + 1);\n");
@@ -1180,17 +1328,25 @@ impl CodeGenerator {
         // below, beside `__pd_file_write` and `__pd_file_close`, which is the handle
         // representation the language actually has.
         self.output.push_str("// External runtime I/O functions\n");
-        self.output.push_str("extern int pd_path_exists(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_path_is_file(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_path_is_dir(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_create_dir(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_create_dir_all(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_remove_file(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_remove_dir(const char* path, size_t path_len);\n");
-        self.output.push_str("extern int pd_remove_dir_all(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_path_exists(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_path_is_file(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_path_is_dir(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_create_dir(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_create_dir_all(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_remove_file(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_remove_dir(const char* path, size_t path_len);\n");
+        self.output
+            .push_str("extern int pd_remove_dir_all(const char* path, size_t path_len);\n");
         self.output.push_str("extern int pd_read_file_to_string(const char* path, size_t path_len, char** out_str, size_t* out_len);\n");
         self.output.push_str("extern int pd_write_string_to_file(const char* path, size_t path_len, const char* data, size_t data_len);\n\n");
-        
+
         // Wrapper functions that call the external pd_* functions
 
         // file_seek, over the SAME `long long` handle table as file_write and
@@ -1198,8 +1354,9 @@ impl CodeGenerator {
         // src/runtime/io.rs::pd_file_seek also uses, mapped here to the C
         // constants rather than passed through: an unrecognised value is -1, not
         // an out-of-range seek. Returns the new absolute position, or -1.
-        self.output
-            .push_str("long long __pd_file_seek(long long handle, long long whence, long long offset) {\n");
+        self.output.push_str(
+            "long long __pd_file_seek(long long handle, long long whence, long long offset) {\n",
+        );
         self.output.push_str(
             "    if (handle < 1 || handle >= MAX_FILES || !__pd_file_handles[handle]) return -1;\n",
         );
@@ -1236,44 +1393,63 @@ impl CodeGenerator {
         self.output.push_str("}\n\n");
 
         // Path manipulation functions
-        self.output.push_str("int __pd_path_exists(const char* path) {\n");
-        self.output.push_str("    return pd_path_exists(path, strlen(path));\n");
+        self.output
+            .push_str("int __pd_path_exists(const char* path) {\n");
+        self.output
+            .push_str("    return pd_path_exists(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_path_is_file(const char* path) {\n");
-        self.output.push_str("    return pd_path_is_file(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_path_is_file(const char* path) {\n");
+        self.output
+            .push_str("    return pd_path_is_file(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_path_is_dir(const char* path) {\n");
-        self.output.push_str("    return pd_path_is_dir(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_path_is_dir(const char* path) {\n");
+        self.output
+            .push_str("    return pd_path_is_dir(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
+
         // Directory operations
-        self.output.push_str("int __pd_create_dir(const char* path) {\n");
-        self.output.push_str("    return pd_create_dir(path, strlen(path));\n");
+        self.output
+            .push_str("int __pd_create_dir(const char* path) {\n");
+        self.output
+            .push_str("    return pd_create_dir(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_create_dir_all(const char* path) {\n");
-        self.output.push_str("    return pd_create_dir_all(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_create_dir_all(const char* path) {\n");
+        self.output
+            .push_str("    return pd_create_dir_all(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_remove_file(const char* path) {\n");
-        self.output.push_str("    return pd_remove_file(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_remove_file(const char* path) {\n");
+        self.output
+            .push_str("    return pd_remove_file(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_remove_dir(const char* path) {\n");
-        self.output.push_str("    return pd_remove_dir(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_remove_dir(const char* path) {\n");
+        self.output
+            .push_str("    return pd_remove_dir(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_remove_dir_all(const char* path) {\n");
-        self.output.push_str("    return pd_remove_dir_all(path, strlen(path));\n");
+
+        self.output
+            .push_str("int __pd_remove_dir_all(const char* path) {\n");
+        self.output
+            .push_str("    return pd_remove_dir_all(path, strlen(path));\n");
         self.output.push_str("}\n\n");
-        
+
         // Enhanced file operations with string helpers
-        self.output.push_str("char* __pd_read_file_to_string(const char* path) {\n");
+        self.output
+            .push_str("char* __pd_read_file_to_string(const char* path) {\n");
         self.output.push_str("    char* out_str = NULL;\n");
         self.output.push_str("    size_t out_len = 0;\n");
-        self.output.push_str("    if (pd_read_file_to_string(path, strlen(path), &out_str, &out_len) == 0) {\n");
+        self.output.push_str(
+            "    if (pd_read_file_to_string(path, strlen(path), &out_str, &out_len) == 0) {\n",
+        );
         self.output.push_str("        return out_str;\n");
         self.output.push_str("    }\n");
         // Failure returns the empty string, never NULL: a Palladium String is a
@@ -1283,9 +1459,12 @@ impl CodeGenerator {
         // __pd_arg_at, which returns "" out of range for the same reason.
         self.output.push_str("    return __pd_empty_owned();\n");
         self.output.push_str("}\n\n");
-        
-        self.output.push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");
-        self.output.push_str("    return pd_write_string_to_file(path, strlen(path), data, strlen(data));\n");
+
+        self.output
+            .push_str("int __pd_write_string_to_file(const char* path, const char* data) {\n");
+        self.output.push_str(
+            "    return pd_write_string_to_file(path, strlen(path), data, strlen(data));\n",
+        );
         self.output.push_str("}\n\n");
 
         // First pass: collect function signatures, type aliases, and enum definitions from imported modules
@@ -1385,48 +1564,85 @@ impl CodeGenerator {
         // the hash seed into the emitted C.
         let mut imported_modules: Vec<_> = self.imported_modules.clone().into_iter().collect();
         imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
+        //
+        // TWO FILTERS, AND BOTH ARE THE TYPE-NAMESPACE HALF OF A RULE THE
+        // FUNCTION WALK FURTHER DOWN ALREADY APPLIES.
+        //
+        // `crate::ast::local_type_shadows_import` is the sibling of the
+        // `local_definition_shadows_import` that walk calls, and it is called
+        // here for the same reason: a local declaration replaces an imported
+        // one, so emitting both puts two definitions of one C tag in the
+        // translation unit. Measured, with `pub enum Color` in a module and
+        // `struct Color { v: i64 }` in the program:
+        // `main.c:280:16: error: redefinition of 'Color'`. The type checker's
+        // half of this fix removed the `Type mismatch: expected Color, found
+        // Color` in front of it and left this behind it, which is the whole
+        // reason both passes ask the shared predicate rather than each pass
+        // deciding.
+        //
+        // The `Public` test on the enum arm matches the struct arm above it. It
+        // could not exist before 2026-08-23 — `EnumDef` had no visibility field
+        // and the parser dropped the `pub` — so every enum in every imported
+        // module was emitted into every program that imported it.
+        let mut imported_defs: Vec<(String, Item)> = Vec::new();
         for (_, module_info) in &imported_modules {
             for item in &module_info.ast.items {
                 match item {
                     Item::Struct(struct_def) => {
-                        if matches!(struct_def.visibility, crate::ast::Visibility::Public) {
+                        if matches!(struct_def.visibility, crate::ast::Visibility::Public)
+                            && !crate::ast::local_type_shadows_import(program, &struct_def.name)
+                        {
                             // Skip generic structs - they should only be generated when instantiated
                             if struct_def.type_params.is_empty()
                                 && struct_def.lifetime_params.is_empty()
                             {
-                                self.generate_struct(struct_def)?;
+                                imported_defs.push((struct_def.name.clone(), item.clone()));
                             }
                         }
                     }
                     Item::Enum(enum_def) => {
-                        // Skip generic enums - they should only be generated when instantiated
-                        if enum_def.type_params.is_empty() && enum_def.lifetime_params.is_empty() {
-                            self.generate_enum(enum_def)?;
+                        if matches!(enum_def.visibility, crate::ast::Visibility::Public)
+                            && !crate::ast::local_type_shadows_import(program, &enum_def.name)
+                        {
+                            // Skip generic enums - they should only be generated when instantiated
+                            if enum_def.type_params.is_empty()
+                                && enum_def.lifetime_params.is_empty()
+                            {
+                                imported_defs.push((enum_def.name.clone(), item.clone()));
+                            }
                         }
                     }
                     _ => {}
                 }
             }
         }
+        self.generate_type_definitions(&imported_defs)?;
 
         // Generate struct and enum definitions from main program
+        //
+        // The two phases stay separate, and in this order, because the
+        // dependency direction between them is fixed: a module cannot name a
+        // type declared in the program that imports it, so every cross-phase
+        // edge points backwards into the imports, which are already emitted.
+        let mut local_defs: Vec<(String, Item)> = Vec::new();
         for item in &program.items {
             match item {
                 Item::Struct(struct_def) => {
                     // Skip generic structs - they should only be generated when instantiated
                     if struct_def.type_params.is_empty() && struct_def.lifetime_params.is_empty() {
-                        self.generate_struct(struct_def)?;
+                        local_defs.push((struct_def.name.clone(), item.clone()));
                     }
                 }
                 Item::Enum(enum_def) => {
                     // Skip generic enums - they should only be generated when instantiated
                     if enum_def.type_params.is_empty() && enum_def.lifetime_params.is_empty() {
-                        self.generate_enum(enum_def)?;
+                        local_defs.push((enum_def.name.clone(), item.clone()));
                     }
                 }
                 _ => {}
             }
         }
+        self.generate_type_definitions(&local_defs)?;
 
         // Generate monomorphized versions of generic structs FIRST
         if !self.generic_struct_instantiations.is_empty() {
@@ -1449,6 +1665,28 @@ impl CodeGenerator {
                 self.generate_struct(&concrete_struct)?;
             }
             self.output.push('\n');
+        }
+
+        // Variant constructors, after EVERY type definition rather than each one
+        // straight after its own enum.
+        //
+        // They are the only emitted code that needs a payload type COMPLETE
+        // rather than merely named: an indirect slot takes `sizeof(struct S)`,
+        // and every constructor takes its argument by value. Emitted in place,
+        // `enum E { Leaf(i64), Node(S) }` over `struct S { e: E }` — a mutual
+        // recursion that terminates, so a program CAN build one — put
+        // `E_Node__new(struct S arg0)` above the definition of `struct S`, and
+        // gcc reported `variable has incomplete type` and `invalid application
+        // of sizeof`. No ordering of the two definitions fixes it, because `S`
+        // stores an `E` by value and so must come second.
+        //
+        // This moves the constructors of EVERY enum, not only recursive ones.
+        // Deferring conditionally would make the shape of the output depend on
+        // a predicate rather than on the language, and the emitted C is the
+        // artefact this compiler is judged on: one shape is worth measuring.
+        if !self.enum_constructors.is_empty() {
+            let constructors = std::mem::take(&mut self.enum_constructors);
+            self.output.push_str(&constructors);
         }
 
         // Forward-declare every user function before any body is emitted, so that
@@ -1559,6 +1797,8 @@ impl CodeGenerator {
             Type::I64 => "long long".to_string(),
             Type::U32 => "unsigned int".to_string(),
             Type::U64 => "unsigned long long".to_string(),
+            Type::F64 => "double".to_string(),
+            Type::F32 => "float".to_string(),
             Type::Bool => "int".to_string(),
             Type::String => "const char*".to_string(),
             Type::Unit => "void".to_string(),
@@ -1600,6 +1840,72 @@ impl CodeGenerator {
         }
     }
 
+    /// The C type of one enum payload slot.
+    ///
+    /// THE ONE DERIVATION, called by both places that declare a slot, so the
+    /// tuple form and the named form cannot drift into declaring the same
+    /// recursive type two different ways. The three places that USE a slot —
+    /// the two constructor writers and the `match` reader — ask
+    /// `RecursiveLayout::payload_is_indirect` with the same AST node, so all
+    /// five are answering one question about one input.
+    fn payload_slot_c_type(&self, enum_name: &str, ty: &Type) -> String {
+        let base = self.type_to_c(ty);
+        if self.recursive_layout.payload_is_indirect(enum_name, ty) {
+            format!("{}*", base)
+        } else {
+            base
+        }
+    }
+
+    /// Store one constructor argument into its payload slot.
+    ///
+    /// THE ONE WRITER, shared by the tuple form and the named form. An indirect
+    /// slot takes a cell first and the value into the cell; a direct slot is the
+    /// assignment it always was, character for character, so the C emitted for a
+    /// program with no recursive type does not move.
+    ///
+    /// It takes the VARIANT, not an already-derived member name, and derives the
+    /// member here. Handing it a string would have put
+    /// `c_ident::c_enum_payload_member` at the call sites — which is what
+    /// `tests/m1_c_keyword_idents.rs::every_payload_member_emission_uses_the_one_derivation`
+    /// caught, and it was right to: a writer that accepts a member name accepts
+    /// an underived one.
+    fn emit_payload_store(
+        &mut self,
+        enum_name: &str,
+        variant: &str,
+        slot: &str,
+        source: &str,
+        ty: &Type,
+    ) {
+        if self.recursive_layout.payload_is_indirect(enum_name, ty) {
+            let cell = self.type_to_c(ty);
+            self.output.push_str(&format!(
+                "    result.data.{}.{} = ({}*)__pd_rec_alloc(sizeof({}));
+",
+                c_ident::c_enum_payload_member(variant),
+                slot,
+                cell,
+                cell
+            ));
+            self.output.push_str(&format!(
+                "    *result.data.{}.{} = {};
+",
+                c_ident::c_enum_payload_member(variant),
+                slot,
+                source
+            ));
+        } else {
+            self.output.push_str(&format!(
+                "    result.data.{}.{} = {};
+",
+                c_ident::c_enum_payload_member(variant),
+                slot,
+                source
+            ));
+        }
+    }
+
     /// Generate code for an enum definition
     fn generate_enum(&mut self, enum_def: &EnumDef) -> Result<()> {
         self.defined_structs.insert(enum_def.name.clone());
@@ -1635,7 +1941,7 @@ impl CodeGenerator {
                     if !types.is_empty() {
                         self.output.push_str("typedef struct {\n");
                         for (i, ty) in types.iter().enumerate() {
-                            let c_type = self.type_to_c(ty);
+                            let c_type = self.payload_slot_c_type(&enum_def.name, ty);
                             self.output.push_str(&format!(
                                 "    {} field{};
 ",
@@ -1652,7 +1958,7 @@ impl CodeGenerator {
                 EnumVariantData::Struct(fields) => {
                     self.output.push_str("typedef struct {\n");
                     for (field_name, field_type) in fields {
-                        let c_type = self.type_to_c(field_type);
+                        let c_type = self.payload_slot_c_type(&enum_def.name, field_type);
                         self.output.push_str(&format!(
                             "    {} {};
 ",
@@ -1729,7 +2035,14 @@ impl CodeGenerator {
             enum_def.name
         ));
 
-        // Generate constructor functions for each variant
+        // Generate constructor functions for each variant.
+        //
+        // Written through `self.output` and then cut off it, rather than into a
+        // second sink: `emit_payload_store` and every line below push to
+        // `output`, and giving them a destination argument would put the choice
+        // of sink at each call site — one more thing that can be got wrong per
+        // site. One cut, at the end, cannot be.
+        let constructors_start = self.output.len();
         for variant in &enum_def.variants {
             match &variant.data {
                 EnumVariantData::Unit => {
@@ -1772,16 +2085,14 @@ impl CodeGenerator {
                         enum_def.name, enum_def.name, variant.name
                     ));
 
-                    if !types.is_empty() {
-                        for i in 0..types.len() {
-                            self.output.push_str(&format!(
-                                "    result.data.{}.field{} = arg{};
-",
-                                c_ident::c_enum_payload_member(&variant.name),
-                                i,
-                                i
-                            ));
-                        }
+                    for (i, ty) in types.iter().enumerate() {
+                        self.emit_payload_store(
+                            &enum_def.name,
+                            &variant.name,
+                            &format!("field{}", i),
+                            &format!("arg{}", i),
+                            ty,
+                        );
                     }
 
                     self.output.push_str(
@@ -1812,14 +2123,14 @@ impl CodeGenerator {
                         enum_def.name, enum_def.name, variant.name
                     ));
 
-                    for (field_name, _) in fields {
-                        self.output.push_str(&format!(
-                            "    result.data.{}.{} = {};
-",
-                            c_ident::c_enum_payload_member(&variant.name),
+                    for (field_name, field_type) in fields {
+                        self.emit_payload_store(
+                            &enum_def.name,
+                            &variant.name,
                             field_name,
-                            field_name
-                        ));
+                            field_name,
+                            field_type,
+                        );
                     }
 
                     self.output.push_str(
@@ -1830,7 +2141,70 @@ impl CodeGenerator {
                 }
             }
         }
+        let constructors = self.output.split_off(constructors_start);
+        self.enum_constructors.push_str(&constructors);
 
+        Ok(())
+    }
+
+    /// Emit one phase's `struct` and `enum` definitions, DEPENDENCIES FIRST.
+    ///
+    /// Not source order. C gives a field a size from a complete type, so a
+    /// `struct S { e: E }` written above `enum E { A, B }` emitted in the order
+    /// it was written produces
+    ///
+    /// ```text
+    /// error: field has incomplete type 'struct E'
+    /// ```
+    ///
+    /// from gcc — and swapping the two declarations, which changes nothing about
+    /// the program, makes it compile. A language does not get to have
+    /// order-dependent type declarations, and the failure landing in gcc rather
+    /// than in a diagnostic is the same shape the recursive-layout refusal exists
+    /// to remove.
+    ///
+    /// The order comes from `RecursiveLayout::definition_order`, over the SAME
+    /// cut containment graph the layout analysis built for its refusal. That is
+    /// the point of asking it rather than walking the fields here: a payload slot
+    /// that became a `struct V*` needs only the tag and constrains nothing, and a
+    /// second opinion about which slots those are is a second thing to keep in
+    /// step with the four emission sites that already share the first one.
+    ///
+    /// A cycle among these names is refused rather than emitted. It cannot come
+    /// from a program the type checker accepted — `declarations_without_layout`
+    /// is exactly that refusal — so reaching here means code generation was
+    /// driven directly, and emitting C gcc will reject would be the one outcome
+    /// worth avoiding.
+    fn generate_type_definitions(&mut self, defs: &[(String, Item)]) -> Result<()> {
+        let names: Vec<String> = defs.iter().map(|(name, _)| name.clone()).collect();
+        let order = self
+            .recursive_layout
+            .definition_order(&names)
+            .map_err(|cycle| {
+                CompileError::Generic(format!(
+                    "type definitions cannot be ordered: they store each other by value \
+                     ({}), so no emission order gives every field a complete type. This \
+                     should have been refused as a recursive type with no layout before \
+                     code generation ran",
+                    cycle.join(" -> ")
+                ))
+            })?;
+
+        // By name, and every definition carrying that name, so two declarations
+        // sharing one are both emitted (and gcc reports the redefinition) rather
+        // than one being silently dropped by a lookup.
+        for name in &order {
+            for (def_name, item) in defs {
+                if def_name != name {
+                    continue;
+                }
+                match item {
+                    Item::Struct(struct_def) => self.generate_struct(struct_def)?,
+                    Item::Enum(enum_def) => self.generate_enum(enum_def)?,
+                    _ => {}
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1852,6 +2226,8 @@ impl CodeGenerator {
                 Type::I64 => "long long",
                 Type::U32 => "unsigned int",
                 Type::U64 => "unsigned long long",
+                Type::F64 => "double",
+                Type::F32 => "float",
                 Type::Bool => "int",
                 Type::String => "const char*",
                 Type::Array(elem_type, size) => {
@@ -2155,7 +2531,10 @@ impl CodeGenerator {
                     // In C, array parameters are passed as pointers.
                     // We'll generate: type name[size] for clarity, though it decays to pointer
                     sig.push_str(&Self::array_param_declarator(
-                        elem_type, size, &param.name, false,
+                        elem_type,
+                        size,
+                        &param.name,
+                        false,
                     )?);
                 }
                 Type::Custom(_) => {
@@ -2177,7 +2556,10 @@ impl CodeGenerator {
                     // is why examples/practical/simple_sort.pd did not compile.
                     if let Type::Array(elem_type, size) = inner.as_ref() {
                         sig.push_str(&Self::array_param_declarator(
-                            elem_type, size, &param.name, !*mutable,
+                            elem_type,
+                            size,
+                            &param.name,
+                            !*mutable,
                         )?);
                         continue;
                     }
@@ -2277,8 +2659,7 @@ impl CodeGenerator {
         // `Some(Type::Unit)` are one return type and must generate one shape.
         // And `main` is INSIDE the rule, not an exception to it — it just needs
         // a different replacement, because its C type is `int`.
-        self.current_fn_unit_return = if matches!(func.return_type, None | Some(Type::Unit))
-        {
+        self.current_fn_unit_return = if matches!(func.return_type, None | Some(Type::Unit)) {
             if name == "main" {
                 Some("    return 0;\n")
             } else {
@@ -2420,7 +2801,9 @@ impl CodeGenerator {
     /// the block is generated, so snapshotting inside `generate_block` captured
     /// the already-overwritten map and the binder outlived its own scope: after
     /// `for v in xs { }`, an outer `v` still had the loop variable's type.
-    fn open_binding_scope(&self) -> (
+    fn open_binding_scope(
+        &self,
+    ) -> (
         std::collections::HashMap<String, ArrayBinding>,
         std::collections::HashMap<String, String>,
     ) {
@@ -2682,9 +3065,7 @@ impl CodeGenerator {
                         let (elem_type, _) = Self::split_array_dims(&self.infer_expr_type(iter));
                         let len = self.array_len_of_expr(iter);
                         let storage = match iter {
-                            Expr::Ident(name) => {
-                                self.array_bindings.get(name).map(|b| b.storage)
-                            }
+                            Expr::Ident(name) => self.array_bindings.get(name).map(|b| b.storage),
                             _ => None,
                         };
 
@@ -2835,9 +3216,26 @@ impl CodeGenerator {
                                                 {
                                                     if let Pattern::Ident(name) = pattern {
                                                         let c_type = self.type_to_c(ty);
+                                                        // An indirect slot holds
+                                                        // a cell; the binding is
+                                                        // the value, so it reads
+                                                        // through. Asked of the
+                                                        // layout by FIELD rather
+                                                        // than through a `&self`
+                                                        // method for the same
+                                                        // borrow reason as the
+                                                        // writes below.
+                                                        let read = if self
+                                                            .recursive_layout
+                                                            .payload_is_indirect(enum_name, ty)
+                                                        {
+                                                            "*"
+                                                        } else {
+                                                            ""
+                                                        };
                                                         self.output.push_str(&format!(
-                                                            "            {} {} = _match_expr.data.{}.field{};\n",
-                                                            c_type, name, c_ident::c_enum_payload_member(variant), i
+                                                            "            {} {} = {}_match_expr.data.{}.field{};\n",
+                                                            c_type, name, read, c_ident::c_enum_payload_member(variant), i
                                                         ));
                                                         // The binding is a real
                                                         // variable; type it for
@@ -2849,10 +3247,8 @@ impl CodeGenerator {
                                                         // `&mut self` would
                                                         // conflict. Same two
                                                         // operations.
-                                                        self.variables
-                                                            .insert(name.clone(), c_type);
-                                                        self.array_bindings
-                                                            .remove(name.as_str());
+                                                        self.variables.insert(name.clone(), c_type);
+                                                        self.array_bindings.remove(name.as_str());
                                                     }
                                                 }
                                             }
@@ -2869,9 +3265,18 @@ impl CodeGenerator {
                                                             .find(|(fname, _)| fname == field_name)
                                                         {
                                                             let c_type = self.type_to_c(field_type);
+                                                            let read = if self
+                                                                .recursive_layout
+                                                                .payload_is_indirect(
+                                                                    enum_name, field_type,
+                                                                ) {
+                                                                "*"
+                                                            } else {
+                                                                ""
+                                                            };
                                                             self.output.push_str(&format!(
-                                                                "            {} {} = _match_expr.data.{}.{};\n",
-                                                                c_type, name, c_ident::c_enum_payload_member(variant), field_name
+                                                                "            {} {} = {}_match_expr.data.{}.{};\n",
+                                                                c_type, name, read, c_ident::c_enum_payload_member(variant), field_name
                                                             ));
                                                             self.variables
                                                                 .insert(name.clone(), c_type);
@@ -2931,17 +3336,19 @@ impl CodeGenerator {
     fn generate_expression(&mut self, expr: &Expr) -> Result<()> {
         match expr {
             Expr::String(s) => {
-                // Escape the string properly
-                let escaped = s
-                    .replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-                    .replace("\t", "\\t")
-                    .replace("\r", "\\r");
-                self.output.push_str(&format!("\"{}\"", escaped));
+                self.output.push_str(&format!("\"{}\"", c_string_body(s)));
             }
             Expr::Integer(n) => {
                 self.output.push_str(&format!("{}", n));
+            }
+            Expr::Float(x) => {
+                // `{:?}` on an f64 always writes a `.`, so `3.0` cannot come out
+                // as `3` — which C would read as an int and, in a `double`
+                // context, silently change the type of a division.
+                self.output.push_str(&format!("{:?}", x));
+            }
+            Expr::Char(c) => {
+                self.output.push_str(&c_char_constant(*c));
             }
             Expr::Bool(b) => {
                 // C represents bool as 1 or 0
@@ -2957,10 +3364,7 @@ impl CodeGenerator {
                         // parameter list by name (the previous approach) both
                         // missed `&[T; N]` parameters and could answer with an
                         // unrelated function's parameter of the same name.
-                        let is_array = self
-                            .variables
-                            .get(name)
-                            .is_some_and(|ty| ty.contains('['));
+                        let is_array = self.variables.get(name).is_some_and(|ty| ty.contains('['));
 
                         if is_array {
                             // Arrays are already pointers, don't dereference
@@ -4243,7 +4647,11 @@ mod tests {
         )
         .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("cannot pass an array to `print_int`"), "{}", msg);
+        assert!(
+            msg.contains("cannot pass an array to `print_int`"),
+            "{}",
+            msg
+        );
         assert!(msg.contains("does not know that callee"), "{}", msg);
     }
 
@@ -4262,7 +4670,11 @@ mod tests {
         )
         .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("cannot establish where the array came from"), "{}", msg);
+        assert!(
+            msg.contains("cannot establish where the array came from"),
+            "{}",
+            msg
+        );
         assert!(msg.contains("field access"), "{}", msg);
     }
 
@@ -4332,7 +4744,11 @@ mod tests {
         )
         .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("cannot establish where the array came from"), "{}", msg);
+        assert!(
+            msg.contains("cannot establish where the array came from"),
+            "{}",
+            msg
+        );
         assert!(msg.contains("array index"), "{}", msg);
     }
 
@@ -4416,7 +4832,12 @@ mod tests {
         .unwrap();
         assert!(c.contains("long long head(long long xs[]);"), "{}", c);
         assert!(c.contains("long long head(long long xs[]) {"), "{}", c);
-        assert_eq!(c.matches("long long head(long long xs[]").count(), 2, "{}", c);
+        assert_eq!(
+            c.matches("long long head(long long xs[]").count(),
+            2,
+            "{}",
+            c
+        );
     }
 
     // The supported element types are exactly what the declarator enumerates.
@@ -4443,7 +4864,7 @@ mod tests {
     #[test]
     fn test_declared_mutable_array_parameters_may_be_written() {
         // `&mut [T; N]`, and `mut xs: [T; N]` - the spelling the bootstrap
-        // subset mandates (bootstrap-subset.md:95) - both stay legal.
+        // subset mandates (bootstrap-subset.md:104) - both stay legal.
         let c = generate(
             r#"
         fn a(xs: &mut [i64; 3]) { xs[0] = 1; }

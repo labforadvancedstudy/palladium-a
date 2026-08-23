@@ -29,7 +29,20 @@ fn main() {
         print("false works");
     }
     
-    // Special string escape
-    let null_char = "null\0terminator";
-    print(null_char);
+    // `\0` IS REFUSED IN A STRING LITERAL, so this fixture no longer contains
+    // one. It used to read `let null_char = "null\0terminator";`.
+    //
+    // Three states, in order. (1) Before N2-09 the escape was passed through as
+    // the two characters `\` and `0`, and this transcript recorded those wrong
+    // bytes. (2) N2-09 made it a real NUL, and the transcript became `null` —
+    // correct for the representation and a lie about the literal, since a
+    // String is a NUL-terminated `const char*` and no String operation could
+    // ever see the rest. (3) It is now a compile error, because state (2) was a
+    // representation leak that documentation could record and not stop.
+    //
+    // The refusal is covered by `tests/m2_lexical.rs::a_nul_in_a_string_literal_is_refused`;
+    // the value 0 is still reachable as the char literal `'\0'`, which
+    // `tests/02_types_chars.pd` and `tests/01_lexical_escapes.pd` both exercise.
+    let escaped_quote = "quote \" and tab \t";
+    print(escaped_quote);
 }

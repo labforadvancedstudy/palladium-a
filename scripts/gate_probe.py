@@ -638,6 +638,18 @@ def run_and_classify(argv, cwd=None, env=None, reject_codes=(1,)):
 def classify(r: Run, reject_codes=(1,)):
     """Concluded | Malfunction — the intended route from a status to a verdict.
 
+    THE DEFAULT `(1,)` IS A FRONT-END CONTRACT AND NOT A UNIVERSAL ONE. Any code
+    outside it becomes a Malfunction, i.e. "the producer did not conclude its
+    experiment" — which is the wrong sentence for a producer that concluded at a
+    code this tuple has not been told about. pdc exits 3 (gcc refused the
+    translation unit), 4 (this compiler shipped ill-typed C), 5 (gcc never
+    reached a verdict) and 6 (a verdict nobody could attribute); all four are
+    CONCLUSIONS. Callers that run `pdc` therefore pass
+    PDC_REJECT_CODES, and the two that do are cmd_pdc_verdict and cmd_pdc_reject.
+    `cmd_calibrate` deliberately keeps the default: its whole job is to MEASURE
+    that a front-end rejection is exit 1 on this platform, so widening what it
+    accepts would make the measurement vacuous.
+
     A `Concluded` carries `.text`; a `Malfunction` has no such attribute, so
     reading the output of a producer that did not conclude cannot happen BY
     ACCIDENT. It can still happen on purpose, via `Run._out`; that is a naming
@@ -741,12 +753,20 @@ def classify_blocker(path: str, text: str) -> str:
                 src = lines[n - 1]
         except OSError:
             src = ""
-    if "Unexpected character '#'" in first:
-        return "ATTRIBUTE"
-    if "Unexpected character '\\'" in first:
-        return "CHAR_ESCAPE"
-    if re.search(r"[0-9]+\.[0-9]+", src):
-        return "FLOAT_LITERAL"
+    # THREE CATEGORIES WERE DELETED HERE, NOT DISABLED: ATTRIBUTE
+    # ("Unexpected character '#'"), CHAR_ESCAPE ("Unexpected character '\\'")
+    # and FLOAT_LITERAL. N2-08..N2-11 made all three diagnostics unreachable, so
+    # the rules could never fire again and the manifest rows that named them
+    # moved to the blocker each was masking.
+    #
+    # FLOAT_LITERAL had to go rather than merely stop firing, and that is the
+    # part worth reading: it did not test the DIAGNOSTIC, it tested whether the
+    # offending SOURCE LINE contained `[0-9]+\.[0-9]+`. That was sound only
+    # while no float could lex. It is now a false positive waiting to happen --
+    # `pub const PI: f64 = 3.14159...;` fails for `pub const`, and the old rule
+    # would still have called it a float-literal blocker. A classifier that
+    # names the wrong cause is worse than one that says OTHER, because OTHER is
+    # visibly a question and a wrong category reads as an answer.
     if re.match(r"^\s*(pub\s+)?use\s", src):
         return "USE_DECL"
     if re.match(r"^\s*(pub\s+)?mod\s", src):
@@ -759,6 +779,11 @@ def classify_blocker(path: str, text: str) -> str:
         return "GENERIC_DEFAULT"
     if "Expected '=' after variable name" in first:
         return "UNINIT_LET"
+    # Both added when the lexical blockers above stopped masking them.
+    if re.search(r"\*\s*(mut|const)\s", src):
+        return "RAW_POINTER"
+    if "Unexpected character '^'" in first:
+        return "BITWISE_XOR"
     return "OTHER"
 
 
@@ -807,8 +832,133 @@ def cmd_calibrate(args) -> int:
     return EXIT_OK
 
 
+# --------------------------------------------------------------------------
+# The backend rejecting its own output is not a verdict a caller may declare
+# --------------------------------------------------------------------------
+# There is no valid Palladium program for which pdc accepts the source and gcc
+# then refuses the C codegen emitted. If the front end said yes, C that will not
+# build is a defect in pdc — never a property of the input, and never something
+# a caller may pin as an expectation. scripts/conformance.sh reached that
+# conclusion for .pd fixtures; this module carried the SAME two defects for the
+# stdlib corpus and is brought onto the same footing here:
+#
+#   * it classified the outcome by grepping the producer's prose for
+#     `gcc compilation failed` — a string a fixture's own text can put in the
+#     log, which is the forgeable-classifier defect this whole file exists to
+#     refuse ("diagnostic text is never sufficient evidence of a verdict"), and
+#   * `--expect-stage` offered `link` as a CHOICE, so a caller could declare the
+#     defect and be told `rejected-as-expected`. Measured in use on 2026-08-22:
+#     six UNUSABLE builtins were pinned at stage `link` and all six went red
+#     with "expected rejection at link, got compile" when the repair made the
+#     TYPE CHECKER refuse them (tests/stdlib/BUILTINS.tsv:40-54). The rule was
+#     already being applied by hand; only the spelling survived.
+#
+# WHO refused is decided by the FILESYSTEM, not the log: codegen is the last
+# phase, so the translation unit exists if and only if the front end accepted.
+# No producer text can reach that.
+
+
+def emitted_c_path(file: str, cwd=None) -> Path:
+    """Where codegen writes the translation unit for `file`.
+
+    `build_output/<file_stem>.c`, relative to the process's working directory
+    (src/codegen/mod.rs:3650-3655). Derived from the BASENAME, so two inputs
+    with the same stem share it — every caller must clear it first, or a
+    previous run's C answers for this one.
+    """
+    base = Path(cwd) if cwd else Path.cwd()
+    return base / "build_output" / (Path(file).stem + ".c")
+
+
+def clear_emitted_c(file: str, cwd=None) -> Path:
+    tu = emitted_c_path(file, cwd)
+    try:
+        tu.unlink()
+    except FileNotFoundError:
+        pass
+    return tu
+
+
+# pdc's exit code. Read src/linker.rs's EXIT_* constants and LinkError variants,
+# not a summary of them:
+#
+#   3 EXIT_BACKEND_REJECT      LinkError::GccRejected — gcc ran to completion,
+#                              exited nonzero, AND attributed an error to the
+#                              translation unit we handed it.
+#   4 EXIT_BACKEND_ILL_TYPED   LinkError::IllTypedC — gcc exited 0 and diagnosed
+#                              ill-typed C that this compiler shipped, whether
+#                              generated or in its own runtime. An ICE.
+#   5 EXIT_TOOLCHAIN           LinkError::Toolchain | GccAbnormal — gcc could not
+#                              be spawned, or terminated abnormally. It never
+#                              reached a verdict, so nothing is established.
+#   6 EXIT_GCC_UNEXPLAINED     LinkError::GccUnexplained — gcc reached a verdict
+#                              and pdc could not attribute it. An undefined
+#                              symbol from the link stage lands here, and so does
+#                              a full disk; refused, and blamed on nobody.
+#
+# AN EXIT CODE, NOT A STRING, and that is the whole point. `gcc compilation
+# failed` was emitted for every unsuccessful gcc status, so it could not separate
+# "gcc refused our C" from "gcc died" — and a fixture's own text can reach a log,
+# where an exit code has no route from fixture text at all.
+BACKEND_REJECT_CODES = (3, 4)
+BACKEND_TOOLCHAIN_CODE = 5
+# gcc RAN TO COMPLETION AND SAID NO, AND pdc CANNOT SHOW IT WAS ABOUT OUR C.
+# Distinct from 5, which is "gcc never reached a verdict at all", and distinct
+# from 3, which requires an `error:` attributed to the translation unit we
+# handed gcc. A full disk, an unwritable output path, a missing assembler, an
+# ICE in gcc itself — and, importantly, an ordinary undefined-symbol LINK
+# failure, which is a real codegen defect carrying no `file:line` for our .c and
+# therefore not attributable by the producer. So 6 is NOT exotic: it is the
+# resting place of a whole ordinary defect class, and a consumer that has never
+# heard of it gives the operator less than it did before these codes existed.
+BACKEND_UNEXPLAINED_CODE = 6
+# Every code that is a STATEMENT BY THE PRODUCER about what happened after
+# codegen. Each is conclusive ON ITS OWN — see backend_reached(), and the
+# conjunction it deliberately is not.
+BACKEND_CODES = BACKEND_REJECT_CODES + (BACKEND_TOOLCHAIN_CODE, BACKEND_UNEXPLAINED_CODE)
+# Structured rejections are CONCLUDED experiments, not malfunctions. Without
+# them in reject_codes the first fixture to exit 3 would be reported by
+# `make stdlib-gate` as "pdc MALFUNCTIONED", turning a real backend defect into
+# an accusation that the harness broke — this repo's recurring defect in a new
+# place. Nothing in the corpus reaches these codes today (measured on the
+# sibling branch: 191 .pd files, zero verdict changes), so this is forward
+# compatibility, not a live change.
+# 6 is a CONCLUDED experiment for the same reason 3, 4 and 5 are: the producer
+# made a statement about what happened after codegen. Withholding its output as
+# a Malfunction would be the defect named two comments up, in the one arm whose
+# whole content is "pdc could not establish why" — the case where the operator
+# needs the text MOST.
+PDC_REJECT_CODES = (1, 3, 4, 5, 6)
+
+
+BACKEND_VERDICTS = ("BACKEND_REJECT", "BACKEND_UNRESOLVED")
+
+
+def backend_verdict(rc: int) -> str:
+    """BACKEND_REJECT only when the exit code says gcc reached a judgement."""
+    return "BACKEND_REJECT" if rc in BACKEND_REJECT_CODES else "BACKEND_UNRESOLVED"
+
+
+def backend_reached(rc: int, tu: Path) -> bool:
+    """Did the front end accept, so that the failure is after codegen?
+
+    TWO INDEPENDENT WITNESSES, EITHER SUFFICIENT — and this is an `or` on
+    purpose. The translation unit on disk was the right answer while exit 1 was
+    all there was: codegen is the last phase, so the file exists iff the front
+    end accepted. A structured code is a second, better witness, and requiring
+    BOTH would make the pair fail OPEN whenever one is missing. Concretely: pdc
+    exits 3 while codegen names its output differently than `emitted_c_path`
+    derives it, and an `and` would hand that to the `compile` stage, which
+    `--expect-stage compile` is allowed to bless. The whole point of this change
+    is that the outcome is unblessable.
+    """
+    return rc in BACKEND_CODES or tu.is_file()
+
+
 def cmd_pdc_verdict(args) -> int:
-    res = run_and_classify([args.pdc, "compile", args.file, "-o", args.out])
+    tu = clear_emitted_c(args.file)
+    res = run_and_classify([args.pdc, "compile", args.file, "-o", args.out],
+                           reject_codes=PDC_REJECT_CODES)
     if isinstance(res, Malfunction):
         return report_malfunction(f"pdc on {args.file}", res, args.spill)
     if res.succeeded:
@@ -819,10 +969,18 @@ def cmd_pdc_verdict(args) -> int:
     errs = error_lines(res.text)
     no_main = [e for e in errs if "No main function found" in e]
     others = [e for e in errs if "No main function found" not in e]
-    if no_main and not others:
+    if backend_reached(res.rc, tu):
+        # The front end ACCEPTED this file and the build failed anyway. Was
+        # LINK_FAIL, a verdict stdlib/MANIFEST.tsv could pin as a file's
+        # expected state. It is now one of BACKEND_VERDICTS, which no manifest
+        # row can equal, so the outcome fails whatever is declared.
+        verdict = backend_verdict(res.rc)
+    elif no_main and not others:
         verdict = "ACCEPTED_NO_MAIN"
     elif "gcc compilation failed" in strip_ansi(res.text):
-        verdict = "LINK_FAIL"
+        # No translation unit, yet the log says gcc ran. Those cannot both be
+        # true; refusing beats filing it under COMPILE_FAIL, which IS pinnable.
+        verdict = "BACKEND_UNRESOLVED"
     else:
         verdict = "COMPILE_FAIL"
     emit(outcome="rejected", verdict=verdict)
@@ -839,8 +997,9 @@ def cmd_pdc_reject(args) -> int:
     for pair in args.env or []:
         k, _, v = pair.partition("=")
         env[k] = v
+    tu = clear_emitted_c(args.file, args.cwd)
     res = run_and_classify([args.pdc, "compile", args.file, "-o", args.out],
-                           cwd=args.cwd, env=env)
+                           cwd=args.cwd, env=env, reject_codes=PDC_REJECT_CODES)
     if isinstance(res, Malfunction):
         return report_malfunction(f"pdc on {args.file}", res, args.spill)
     if res.succeeded:
@@ -848,8 +1007,33 @@ def cmd_pdc_reject(args) -> int:
         return EXIT_OK
 
     plain = strip_ansi(res.text)
-    stage = "link" if "gcc compilation failed" in plain else "compile"
     first = next(iter(error_lines(res.text)), "")
+    if backend_reached(res.rc, tu):
+        # Never `rejected-as-expected`, whatever --expect-stage says: the caller
+        # is not permitted to declare that the C this compiler emits does not
+        # compile. `link` is no longer an offered choice either, so there is no
+        # spelling that reaches this outcome deliberately.
+        emit(outcome="backend-reject", stage="backend",
+             verdict=backend_verdict(res.rc),
+             reason=("pdc accepted this file and the build then failed: the C at "
+                     f"{tu} is the compiler's own output. A caller may not pin this "
+                     "as an expectation — fix the backend."
+                     if tu.is_file() else
+                     f"pdc accepted this file (exit {res.rc}) and the build then failed. "
+                     f"No translation unit is at {tu}, but the exit code is a "
+                     "sufficient witness on its own. A caller may not pin this as "
+                     "an expectation — fix the backend."))
+        if first:
+            print(f"DIAG {first}")
+        return EXIT_OK
+    if "gcc compilation failed" in plain:
+        emit(outcome="backend-reject", stage="backend", verdict="BACKEND_UNRESOLVED",
+             reason=(f"the log says gcc ran, but no translation unit is at {tu}; "
+                     "those cannot both be true"))
+        if first:
+            print(f"DIAG {first}")
+        return EXIT_OK
+    stage = "compile"
     if args.expect_stage and stage != args.expect_stage:
         emit(outcome="rejected-other", stage=stage,
              reason=f"expected rejection at {args.expect_stage}, got {stage}")
@@ -1104,7 +1288,25 @@ def build_parser():
     b.add_argument("file")
     b.add_argument("--pdc", default="./target/release/pdc")
     b.add_argument("--out", required=True)
-    b.add_argument("--expect-stage", choices=["compile", "link"])
+    # `link` is gone as a CHOICE, not merely unused: it was the spelling that
+    # let a caller declare "gcc is expected to refuse the C we emit" and be
+    # answered `rejected-as-expected`. argparse now refuses it at parse time,
+    # which is the same shape as scripts/conformance.sh refusing stage=link in
+    # its manifest — the exemption cannot be reopened by writing a value.
+    # Enumerated before removal, so the compatibility cost is measured and not
+    # assumed. Every caller in the tree at fb12f6f:
+    #   scripts/stdlib-gate.sh:268        literal `compile`
+    #   scripts/stdlib-gate.sh:473        `$stage` from tests/stdlib/BUILTINS.tsv
+    #                                     column 3, for status=UNUSABLE rows —
+    #                                     of which there are ZERO today, so no
+    #                                     live value flows through it
+    #   scripts/test-gate-probe.sh:117    literal `compile`
+    #   scripts/test-gate-probe.sh:122    literal `link` — the one real user, a
+    #                                     control whose assertion is about the
+    #                                     SIGKILL malfunction path, which
+    #                                     short-circuits before any stage is
+    #                                     classified. Updated with this change.
+    b.add_argument("--expect-stage", choices=["compile"])
     b.add_argument("--require")
     b.add_argument("--cwd")
     b.add_argument("--env", action="append")

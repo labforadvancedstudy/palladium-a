@@ -1,0 +1,17 @@
+// NEGATIVE TEST -- N2-08. A `/*` that nothing closes is an error, and it says
+// so.
+//
+// Comments nest, so "unterminated" is a real state the scanner can be in and
+// distinguish: the `*/` below closes the INNER comment, leaving the outer one
+// open to end of file. Under the old non-nesting regex the same file lexed as
+// a closed comment followed by live source, and the trailing `*/` produced
+// `Expected expression, but found '/'` -- a message about the wrong character
+// on the wrong line.
+//
+// Treating the rest of the file as a comment instead would compile a SHORTER
+// program than the author wrote, which is the outcome a deleted `*/` should
+// never have.
+fn main() {
+    /* outer /* inner */
+    print("never reached");
+}
