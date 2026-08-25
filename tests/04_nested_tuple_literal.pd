@@ -53,6 +53,22 @@ fn main() {
     print_int((from_arm.0).0);
     print_int((from_arm.0).1 + from_arm.1);
 
+    // A TUPLE BUILT FROM A BODY LOCAL WHOSE INITIALISER READS THE PATTERN
+    // BINDING. `from_arm` above only proved the binding reaches the arm VALUE;
+    // this proves it reaches the arm BODY, which is a strictly earlier hop. The
+    // arm environment used to collect the body's `let`s first and add the
+    // pattern afterwards, so `x` was typed against a map that did not yet hold
+    // `n` — `let x = n;` produced no entry and the tuple `(x, 1)` had no shape.
+    // The refusal was fail-closed (a compile error, never wrong C), which is
+    // exactly why no runtime fixture could have caught it.
+    let from_arm_body = (match P::Num(5) {
+        P::Num(n) => { let x = n; (x, 1) }
+        P::Nil => (0, 2),
+    }, 9);
+    print_int((from_arm_body.0).0);
+    print_int((from_arm_body.0).1);
+    print_int(from_arm_body.1);
+
     let from_branch = (if 1 < 2 { let a = 3; (a, 4) } else { (5, 6) }, 7);
     print_int((from_branch.0).0);
     print_int((from_branch.0).1 + from_branch.1);

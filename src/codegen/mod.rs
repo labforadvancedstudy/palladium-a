@@ -841,13 +841,22 @@ impl CodeGenerator {
             // "cannot infer the type of `t`" for a program whose type is written
             // on the scrutinee. `locals_of` collects `let`s and nothing else, so
             // an arm value that IS its binding had no entry to find.
+            //
+            // THE PATTERN IS BOUND BEFORE THE BODY IS WALKED, and the order is
+            // the whole content of this fix. `locals_of` types each `let` from
+            // its initialiser, so a body local whose initialiser READS a pattern
+            // binding — `P::Num(n) => { let x = n; (x, 1) }` — can only be typed
+            // in an environment that already has `n`. Collecting the body first
+            // and adding the pattern afterwards left `x` untyped in an otherwise
+            // well-typed program.
             Expr::Match { expr, arms, .. } => {
                 let scrutinee = self.try_infer_expr_type_in(expr, locals);
                 arms.iter().find_map(|arm| {
-                    let mut arm_locals = self.locals_of(&arm.body, locals);
+                    let mut env = locals.clone();
                     if let Some(scrutinee) = scrutinee.as_deref() {
-                        self.bind_pattern_locals(&arm.pattern, scrutinee, &mut arm_locals);
+                        self.bind_pattern_locals(&arm.pattern, scrutinee, &mut env);
                     }
+                    let arm_locals = self.locals_of(&arm.body, &env);
                     arm.value
                         .as_ref()
                         .and_then(|v| self.try_infer_expr_type_in(v, &arm_locals))
@@ -4482,10 +4491,14 @@ impl CodeGenerator {
                 let scrutinee = self.try_infer_expr_type_in(expr, locals);
                 for arm in arms {
                     if let Some(value) = &arm.value {
-                        let mut arm_locals = self.locals_of(&arm.body, locals);
+                        // Pattern first, then the body over that environment —
+                        // see the note at `try_infer_expr_type_in`'s `Expr::Match`
+                        // arm, which had the same inversion and is fixed with it.
+                        let mut env = locals.clone();
                         if let Some(scrutinee) = scrutinee.as_deref() {
-                            self.bind_pattern_locals(&arm.pattern, scrutinee, &mut arm_locals);
+                            self.bind_pattern_locals(&arm.pattern, scrutinee, &mut env);
                         }
+                        let arm_locals = self.locals_of(&arm.body, &env);
                         self.register_tuple_shapes_in(value, &arm_locals)?;
                     }
                 }

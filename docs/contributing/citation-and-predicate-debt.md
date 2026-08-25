@@ -41,11 +41,11 @@ such thing. Verified 2026-08-23 by reading each line:
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C1 | `src/codegen/mod.rs:1758` | a comment about unrecognised constant values | yes |
-| C2 | `src/codegen/mod.rs:1681` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
-| C3 | `src/codegen/mod.rs:1991` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
+| C1 | `src/codegen/mod.rs:1767` | a comment about unrecognised constant values | yes |
+| C2 | `src/codegen/mod.rs:1690` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
+| C3 | `src/codegen/mod.rs:2000` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
 | — | `src/typeck/mod.rs:1553` | the private-import registration comment | no |
-| — | `src/codegen/mod.rs:2152` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
+| — | `src/codegen/mod.rs:2161` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
 
 All three were **pre-existing on `main`** before the recursive-data-types work,
 and all three have since been relocated MECHANICALLY three times — by a `difflib`
