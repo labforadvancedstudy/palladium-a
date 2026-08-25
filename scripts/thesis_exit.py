@@ -302,7 +302,14 @@ PINNED_PROSE_FIGURES = frozenset({
     "1 of 23", "0 of 21",   # gate counts: evaluated thesis rows, stdlib files
     # Added 2026-08-23 with the M2 exit criterion. Both are gate counts and neither is an
     # adversary score, which is the distinction this list exists to make a reviewer state:
-    "54 of 54",             # test-xfail: owed rows failing for their DECLARED diagnostic
+    "49 of 49",             # test-xfail: owed rows failing for their DECLARED diagnostic
+                            # Was five higher until feat/m2-expressions paid five rows
+                            # (test_else_if_chain, test_loop_keyword,
+                            # test_bitwise_operators, test_compound_assignment_operators,
+                            # test_as_cast). THE OLD FIGURE IS NOT WRITTEN OUT HERE: this
+                            # file is scanned for prose figures by its own self-test, and
+                            # a retired count quoted in a comment reads as an undeclared
+                            # one — measured, by that check, on this edit.
     "51 of 82",             # the m2-exit aggregation lattice, under its own inversion control
 })
 
@@ -3925,7 +3932,7 @@ def self_test() -> int:
     # re-declare is a place to hide a figure.
     case("the pinned prose figures are the two quoted retractions and the four gate counts",
          sorted(PINNED_PROSE_FIGURES),
-         ["0 of 21", "1 of 23", "100" + "%", "51 of 82", "54 of 54", "85" + "%"],
+         ["0 of 21", "1 of 23", "100" + "%", "49 of 49", "51 of 82", "85" + "%"],
          drives_main=False)
     case("the scan is NARROW and says so: an English spelling of a measurement passes",
          sorted(prose_figures("roughly half of the cases, most of them")), [],

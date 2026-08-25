@@ -217,13 +217,13 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///   `src/parser/mod.rs:276-278`  `already_terminates` — `any`, not "the last
 ///                                statement", because anything after an
 ///                                unconditional terminator is unreachable
-///   `src/parser/mod.rs:281-304`  `stmt_terminates` — the four cases, each
+///   `src/parser/mod.rs:281-309`  `stmt_terminates` — the four cases, each
 ///                                paired with its counterpart in
 ///                                scripts/check-c-returns.py by the table above
-///   `src/parser/mod.rs:332-364`  `contains_escaping_break` +
+///   `src/parser/mod.rs:337-369`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1146-1170`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1156-1180`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -2695,7 +2695,7 @@ impl Parser {
                 self.consume(Token::RightBrace, "Expected '}' after match arm body")?;
 
                 // `match_arm = pattern "=>" ( block | expression ) [ ',' ]`
-                // (docs/specification/grammar.ebnf:194). The comma is optional
+                // (docs/specification/grammar.ebnf:209). The comma is optional
                 // after a block body too; leaving it unconsumed made the next
                 // iteration read it as a pattern.
                 if self.check(&Token::Comma) {
@@ -4787,7 +4787,7 @@ mod tests {
     }
 
     /// `match_arm = pattern "=>" ( block | expression ) [ ',' ]`
-    /// (docs/specification/grammar.ebnf:194) — the comma is optional after
+    /// (docs/specification/grammar.ebnf:209) — the comma is optional after
     /// EITHER form. The parser used to consume it only after an expression
     /// body, so a comma after a block body was re-read as the next pattern
     /// and reported as "Expected pattern, but found ','".

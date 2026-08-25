@@ -311,7 +311,7 @@ error: Unexpected character '#' at line 1, column 1
 ```
 
 `#` lexes now. `grammar.ebnf` has an attribute production and its punctuation set
-(`grammar.ebnf:88-89`) contains `#` and `#!`, so `#![total(strict)]`, `#[total]`,
+(`grammar.ebnf:103-104`) contains `#` and `#!`, so `#![total(strict)]`, `#[total]`,
 `#[decreases(...)]` and `#[partial]` all reach the parser and are read as attributes with those
 names. Every one of them is then **refused**, because the set of attributes this compiler
 implements is empty:
@@ -335,8 +335,8 @@ There is no recursion analysis, no measure checking, and no proof representation
 
 **3. The prerequisites are missing too.** Structural recursion is stated over inductive types with
 pattern matching on subterms. Today `match` has exactly three pattern forms
-(`src/ast/mod.rs:410`) — no literal, range, guard or tuple patterns — and generic types do not
-survive codegen (`src/codegen/mod.rs:2255-2255`). A totality checker has nothing to be total over yet.
+(`src/ast/mod.rs:520`) — no literal, range, guard or tuple patterns — and generic types do not
+survive codegen (`src/codegen/mod.rs:2417-2417`). A totality checker has nothing to be total over yet.
 
 ## Design intent, not measurements
 

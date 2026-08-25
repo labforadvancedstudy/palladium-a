@@ -6,7 +6,7 @@
 //
 //   1. `int`/`string` in the expected C. The integer type lowers to
 //      `long long` (`int` is only a source-level alias for `i64`,
-//      `src/parser/mod.rs:2250`) and `print` lowers to `__pd_print`, not
+//      `src/parser/mod.rs:2508`) and `print` lowers to `__pd_print`, not
 //      `printf`.
 //   2. Fragments with no `fn main`. The driver rejects a program without one
 //      ("No main function found"), so a declaration-only snippet cannot be
@@ -123,19 +123,19 @@ fn test_all_keywords() {
 }
 
 #[test]
-#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:269 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
+#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:317-318 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
 fn test_match_on_integer_literal() {
     compile_and_verify("fn main() { match 1 { 1 => {}, _ => {} } }", &["switch"]);
 }
 
 #[test]
-#[ignore = "XFAIL: `trait` emits no C at all — grammar.ebnf:134 'Traits also emit no code'; there is no vtable mechanism anywhere in the compiler (owned by M4, 'Traits with real dispatch')"]
+#[ignore = "XFAIL: `trait` emits no C at all — grammar.ebnf:149 'Traits also emit no code'; there is no vtable mechanism anywhere in the compiler (owned by M4, 'Traits with real dispatch')"]
 fn test_trait_declaration_emits_code() {
     compile_and_verify("trait Display { }\nfn main() { }", &["// Trait:"]);
 }
 
 #[test]
-#[ignore = "XFAIL: top-level `const` items — grammar.ebnf:97-98 lists no const item, so the parser reports \"Expected function, struct, enum, trait, type, impl, or macro declaration\" (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: top-level `const` items — grammar.ebnf:112-113 lists no const item, so the parser reports \"Expected function, struct, enum, trait, type, impl, or macro declaration\" (owned by M2, surface syntax)"]
 fn test_top_level_const() {
     compile_and_verify(
         "const X: int = 5;\nfn main() { }",
@@ -144,7 +144,7 @@ fn test_top_level_const() {
 }
 
 #[test]
-#[ignore = "XFAIL: top-level `static` items — grammar.ebnf:97-98 lists no static item, same parse error as `const` (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: top-level `static` items — grammar.ebnf:112-113 lists no static item, same parse error as `const` (owned by M2, surface syntax)"]
 fn test_top_level_static() {
     compile_and_verify(
         "static Y: int = 10;\nfn main() { }",

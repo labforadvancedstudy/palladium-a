@@ -19,8 +19,8 @@
 //! `program.items` only — `Program.imports` (`src/ast/mod.rs:9`) is never read, and
 //! `Item` (`src/ast/mod.rs:24-32`) has no `Import` variant, so no walk over items could
 //! have reached one. `helper()` therefore fell out of the function table at
-//! `Expr::Ident` (`src/ownership/borrow_checker.rs:828`), was looked up as a *value*,
-//! was not found, and died at `src/ownership/borrow_checker.rs:881` as
+//! `Expr::Ident` (`src/ownership/borrow_checker.rs:842`), was looked up as a *value*,
+//! was not found, and died at `src/ownership/borrow_checker.rs:895` as
 //! `UseOfUninitializedValue`.
 //!
 //! The pass was not wrong; it was structurally single-file. These tests drive the real
@@ -473,7 +473,7 @@ fn test_a_same_named_shadow_of_a_fresh_value_leaves_the_outer_binding_alone() {
 //
 // The third pass below skipped every generic imported body, on the stated
 // ground that codegen emits only public NON-GENERIC imported functions
-// (`src/codegen/mod.rs:1355-1355`) and so a skipped body "produces no C". That
+// (`src/codegen/mod.rs:1515-1515`) and so a skipped body "produces no C". That
 // is true of the DIRECT imported-emission path and FALSE of monomorphization,
 // which is a separate path emitting `name__T` from the same template. The
 // guarantee was read off the stated reason instead of off the mechanism, and
@@ -771,10 +771,10 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 //
 // THE OWNER IS M4, AND IT WAS M3 UNTIL THIS BRANCH MERGED `d2d5bd4`. That merge
 // restructured the milestones and split modules out into their own
-// (`docs/contributing/MILESTONES.md:712-718`, "M4 — Modules", which claims the
+// (`docs/contributing/MILESTONES.md:766-772`, "M4 — Modules", which claims the
 // module rows explicitly: "plus the corpus's one `xfail` … cross-file imports
 // — and the vacuous `12_modules_imports`"). M3 is now traits and generics
-// (`docs/contributing/MILESTONES.md:678`), which is not what these rows are
+// (`docs/contributing/MILESTONES.md:732`), which is not what these rows are
 // about.
 //
 // BOTH CITATIONS ABOVE WERE WRONG BEFORE THEY WERE MOVED, and are corrected
@@ -901,7 +901,7 @@ fn test_local_twin_of_the_unchecked_import_is_rejected() {
 /// Walking imported bodies is only half of the job; the walk has to be handed the
 /// same ENVIRONMENT the local walk gets. It was not. `register_imported_functions`
 /// registered signatures and nothing else, so `struct_fields` — the map that
-/// `place_type` (`src/ownership/borrow_checker.rs:1298`) consults to decide
+/// `place_type` (`src/ownership/borrow_checker.rs:1378`) consults to decide
 /// whether `p.x` is Copy — held local struct layouts only. An imported struct's
 /// `i64` field therefore had no resolvable type, `is_expr_copy` fell into its
 /// conservative `false` default, and the FIRST read of the field MOVED it:
@@ -1218,9 +1218,9 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// `filter_module_info` (`src/resolver/mod.rs:105-118`) narrows the `exports`
 /// set and leaves `ast` complete — and `.exports` is read nowhere but its own
 /// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consumer
-/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1401-1401`,
-/// `src/codegen/mod.rs:1355-1355`, `src/codegen/mod.rs:1460-1460`,
-/// `src/codegen/mod.rs:1588-1588`, `src/codegen/mod.rs:2365-2365`, and the borrow checker's
+/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1439-1439`,
+/// `src/codegen/mod.rs:1515-1515`, `src/codegen/mod.rs:1620-1620`,
+/// `src/codegen/mod.rs:1748-1748`, `src/codegen/mod.rs:2527-2527`, and the borrow checker's
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
 /// module.
 #[test]
@@ -1243,13 +1243,13 @@ fn test_selective_import_does_not_import_the_rest() {
 /// A local definition that shadows an import is decided correctly by both
 /// checkers (the local one wins; see `register_imported_functions`) AND by code
 /// generation, which asks `local_definition_shadows_import` before emitting an
-/// imported function (`src/codegen/mod.rs:1731-1741`) and emits the local one
-/// unconditionally (`src/codegen/mod.rs:1748-1754`). This test is green.
+/// imported function (`src/codegen/mod.rs:1891-1901`) and emits the local one
+/// unconditionally (`src/codegen/mod.rs:1908-1914`). This test is green.
 ///
 /// THE SENTENCE ABOVE USED TO SAY THE OPPOSITE — "contradicted by codegen …
 /// with no shadowing check at all. The front end's answer is right and
 /// unenforceable" — and it was stale twice over. The check is right there at
-/// `src/codegen/mod.rs:1737-1737`, and BOTH of the citations it leaned on had
+/// `src/codegen/mod.rs:1897-1897`, and BOTH of the citations it leaned on had
 /// drifted onto unrelated code: at `d20b759` line 1378 was a bare `}` and
 /// 1557-1566 was `type_to_c`'s primitive-type match. Neither had anything to do
 /// with function emission.
@@ -1315,14 +1315,14 @@ fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
     );
 }
 
-/// A qualified call cannot be written. `src/parser/mod.rs:3271-3312` turns any
-/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:3812-3817`
+/// A qualified call cannot be written. `src/parser/mod.rs:3824-3865` turns any
+/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:3934-3938`
 /// then reports `Undefined enum type: lib2`. The same holds for an alias
 /// (`import lib2 as m;` → `Undefined enum type: m`), which makes `alias`
 /// unusable too. `register_imported_functions` registers `module::name` for
 /// parity with the type checker, but nothing can currently reach it.
 #[test]
-#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:3271-3312 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:3812-3817 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:3824-3865 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:3934-3938 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
 fn test_a_qualified_call_reaches_the_imported_function() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1337,13 +1337,13 @@ fn test_a_qualified_call_reaches_the_imported_function() {
 }
 
 /// A nested module path cannot be written either, one level below the
-/// resolver. `src/parser/mod.rs:792-803`: after `::`, if the token after the
+/// resolver. `src/parser/mod.rs:802-813`: after `::`, if the token after the
 /// next one is `;`, `,` or `{`, the segment is consumed as an ITEM name. So
 /// `import util::math;` parses as `path=["util"], items=["math"]` and the
 /// resolver looks for `util.pd`. The last segment of a path can never be a
 /// module, which means a module tree deeper than one level is unexpressible.
 #[test]
-#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:792-803 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:802-813 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M4, cross-file module imports)"]
 fn test_a_module_in_a_subdirectory_can_be_imported() {
     let (compiled, output, stdout) = compile_and_run(
         &[(
@@ -1363,8 +1363,8 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// An imported name can shadow a built-in in the checkers but never in codegen,
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
-/// (`src/codegen/mod.rs:3400-3403`), while the type checker
-/// (`src/typeck/mod.rs:1515-1515`) and `register_imported_functions` both insert
+/// (`src/codegen/mod.rs:4245-4248`), while the type checker
+/// (`src/typeck/mod.rs:1553-1553`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
 /// With a matching signature the imported definition is merely silent dead code.
@@ -1373,7 +1373,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1515-1515 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:3400-3403 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1553-1553 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:4245-4248 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],
@@ -1492,9 +1492,9 @@ fn emitted_c_over_runs(n: usize) -> Vec<String> {
 ///
 /// This is deliberately narrower than the whole file. It isolates the two
 /// emission sites that produce DEFINITIONS — imported struct definitions
-/// (`src/codegen/mod.rs:1591-1619`) and imported function bodies
-/// (`src/codegen/mod.rs:1731-1743`) — from the prototype block
-/// (`src/codegen/mod.rs:2362-2373`), which is a fourth site and emits
+/// (`src/codegen/mod.rs:1751-1779`) and imported function bodies
+/// (`src/codegen/mod.rs:1891-1903`) — from the prototype block
+/// (`src/codegen/mod.rs:2524-2535`), which is a fourth site and emits
 /// declarations, not definitions. All four are ordered now, so the narrowing no
 /// longer isolates a fixed site from a broken one; it survives because the two
 /// assertions answer different questions, and this one localises a regression to
@@ -1574,10 +1574,10 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// Auditing codegen for what else could put the hash seed into the output
 /// turned up a second, independent source: monomorphized generic
 /// instantiations. `TypeChecker::get_instantiations` builds its `Vec` by
-/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:4602-4602`), which is a
+/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:5132-5132`), which is a
 /// `HashMap`, and `get_struct_instantiations` does the same
-/// (`src/typeck/mod.rs:4664-4664`). Codegen then emits in that Vec's order
-/// (`src/codegen/mod.rs:1538-1538`, `src/codegen/mod.rs:2377-2377`).
+/// (`src/typeck/mod.rs:5194-5194`). Codegen then emits in that Vec's order
+/// (`src/codegen/mod.rs:1698-1698`, `src/codegen/mod.rs:2539-2539`).
 ///
 /// This program imports NOTHING, which is how the two sources were told apart:
 /// with all four `imported_modules` sites ordered, a six-module program with no
@@ -1597,7 +1597,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// `(name, type_args)`.
 ///
 /// NOT COVERED by any test: the sibling sort in `get_struct_instantiations`
-/// (`src/typeck/mod.rs:4664-4664`). Generic *structs* cannot be compiled at all right
+/// (`src/typeck/mod.rs:5194-5194`). Generic *structs* cannot be compiled at all right
 /// now — `struct Box<T> { v: T }` lowers to `void*` and gcc rejects
 /// "initializing 'void *' with an expression of incompatible type
 /// 'struct Box_alpha_i64'" — so there is no program whose output that ordering

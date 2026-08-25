@@ -782,8 +782,17 @@ def classify_blocker(path: str, text: str) -> str:
     # Both added when the lexical blockers above stopped masking them.
     if re.search(r"\*\s*(mut|const)\s", src):
         return "RAW_POINTER"
-    if "Unexpected character '^'" in first:
-        return "BITWISE_XOR"
+    # BITWISE_XOR is RETIRED at N5-12: `^` is an operator, so
+    # "Unexpected character '^'" can no longer be produced by any input and a
+    # rule for it would be dead code that reads as live coverage.
+    #
+    # CONST_ITEM is the blocker it was masking, and the comment above CALLED IT:
+    # "`pub const PI: f64 = 3.14159...;` fails for `pub const`". Keyed on the
+    # source line and not on the diagnostic, because the diagnostic for a
+    # top-level item this parser does not know is the same generic sentence for
+    # every such item and would name none of them.
+    if re.match(r"^\s*(pub\s+)?(const|static)\s", src):
+        return "CONST_ITEM"
     return "OTHER"
 
 

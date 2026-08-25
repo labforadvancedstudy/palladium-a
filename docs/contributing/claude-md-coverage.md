@@ -42,7 +42,7 @@ told to read first, sat entirely inside it.
 It was not a hypothetical gap. `CLAUDE.md`'s single citation was **wrong**: it named
 `check_stmt` while claiming to name the call path that mints a per-call lifetime and ends its
 borrows. Nobody can say when it broke, because nothing had ever looked. It now reads
-`src/ownership/borrow_checker.rs:898-905` and is pinned.
+`src/ownership/borrow_checker.rs:912-919` and is pinned.
 
 ## The one thing that had to be fixed first
 

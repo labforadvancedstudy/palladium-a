@@ -197,7 +197,7 @@ annotations become unnecessary, not that ambiguity becomes tolerable.
 Measured at commit `abeb665`.
 
 **1. `ref` is not a keyword, so the normative reference syntax does not parse.**
-`grep -n '"ref"' src/lexer/token.rs` returns nothing, and `grammar.ebnf:80-81` lists `ref` among
+`grep -n '"ref"' src/lexer/token.rs` returns nothing, and `grammar.ebnf:91-92` lists `ref` among
 the words that "lex as ordinary identifiers". Compiling
 `fn longest(x: ref String, y: ref String) -> ref String { return x; }` gives:
 
@@ -208,21 +208,21 @@ error: Unexpected token: expected ')' (Expected ')'), found identifier 'String'
 — `ref` was consumed as the parameter's type and `String` was then unexpected.
 
 **2. The implementation uses Rust's syntax, including the `'a` parameters this design removes.**
-`reference = '&' [ "'" identifier ] [ "mut" ] type` (`grammar.ebnf:173`), and generic parameter
-lists accept lifetimes (`generic_param` at `grammar.ebnf:158`, parsed at
-`src/parser/mod.rs:509`). Measured: `fn f<'a>(x: &'a String) -> &'a String { return x; }`
+`reference = '&' [ "'" identifier ] [ "mut" ] type` (`grammar.ebnf:188`), and generic parameter
+lists accept lifetimes (`generic_param` at `grammar.ebnf:173`, parsed at
+`src/parser/mod.rs:514`). Measured: `fn f<'a>(x: &'a String) -> &'a String { return x; }`
 compiles and links. So the annotation burden the design deletes is currently the only supported
 spelling.
 
 **3. Nothing consumes the lifetimes it parses.** `Function.lifetime_params` is populated
-(`src/parser/mod.rs:1251`) and, outside the parser, appears only as `vec![]` in test and LSP
+(`src/parser/mod.rs:1261`) and, outside the parser, appears only as `vec![]` in test and LSP
 fixtures — `grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser'` returns
 nothing else. There is no region inference of any kind: `grep -rn 'region\|Region' src/
 --include='*.rs'` returns nothing.
 
 **4. References are not a type.** The type checker maps `Type::Reference { inner, .. }` to the
 inner type — "For now, treat references as the inner type / TODO: Proper reference type handling"
-(`src/typeck/mod.rs:688-692`). `&i64` and `i64` are indistinguishable to it, so no lifetime
+(`src/typeck/mod.rs:714-718`). `&i64` and `i64` are indistinguishable to it, so no lifetime
 relation could be inferred even if the machinery existed.
 
 **5. What exists instead is a move/initialization discipline.**
@@ -243,8 +243,8 @@ document restated from the other side: the pass has scopes, and it has never had
 *A previous version of this paragraph asserted a live defect here — that a call argument is
 borrowed as `Lifetime::Named("fn")` and never released, so a value cannot be passed twice. That is
 false and is retracted: the defect was real, it is D6, and it was fixed in commit `191f8c1`, before
-this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:898`) and end
-its borrows when the call finishes (`src/ownership/borrow_checker.rs:904`). Five probes are in
+this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:912`) and end
+its borrows when the call finishes (`src/ownership/borrow_checker.rs:918`). Five probes are in
 [`language-spec.md` A9.4](../../../specification/language-spec.md#a94-defect-d6-retracted). This
 paragraph then named `&mut` of an immutable local as the defect that WAS live; that one is fixed
 too, and re-measured it is refused for struct, array and scalar referents alike

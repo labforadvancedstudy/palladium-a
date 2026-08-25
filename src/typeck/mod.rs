@@ -1184,8 +1184,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1515-1516`, `src/typeck/mod.rs:1518-1520`,
-    /// `src/typeck/mod.rs:1615-1616`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1553-1554`, `src/typeck/mod.rs:1556-1558`,
+    /// `src/typeck/mod.rs:1653-1654`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -2251,7 +2251,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:2495-2497`), and walking an imported
+        // return (`src/typeck/mod.rs:2541-2543`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -4124,7 +4124,7 @@ impl TypeChecker {
             // program that satisfied the old type rules failed inside gcc —
             // against C the user never wrote. The LLVM backend is worse: its
             // catch-all returns the constant `0` for both nodes
-            // (`src/codegen/llvm_text_backend.rs:1385`), which compiles and is
+            // (`src/codegen/llvm_text_backend.rs:1393`), which compiles and is
             // wrong. Refuse here, at the construct's own span, so no backend
             // gets the chance.
             //
@@ -5101,7 +5101,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:3865-3929`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:4784-4848`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -5384,7 +5384,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:3380-3388`, `src/parser/mod.rs:3233-3241`). That is not
+    /// (`src/parser/mod.rs:3949-3957`, `src/parser/mod.rs:3786-3794`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

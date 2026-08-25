@@ -198,21 +198,21 @@ N4-23	M2	N4	A by-value containment cycle with no such slot on it is refused BEFO
 # --- N5 Statements and expressions -------------------------------------------
 N5-01	-	N5	let, assignment, return, break, continue, expression statements	fixture	examples/tutorial/05_control_flow.pd	satisfied	1.0	-
 N5-02	M5	N5	unsafe { } as a statement	fixture	tests/11_unsafe_blocks.pd	owed	1.0	-
-N5-03	M2	N5	if is an expression: let x = if c { 1 } else { 2 };	fixture	tests/04_if_expression.pd	owed	1.0	-
-N5-04	M2	N5	match is an expression	fixture	tests/06_match_expression.pd	owed	1.0	-
-N5-05	M2	N5	Blocks are expressions	fixture	tests/04_block_expression.pd	owed	1.0	-
-N5-06	M2	N5	else if	fixture	tests/04_else_if.pd	owed	1.0	-
-N5-07	M2	N5	loop, exited by break, which may carry a value	fixture	tests/04_loop_break_value.pd	owed	1.0	-
+N5-03	M2	N5	if is an expression: let x = if c { 1 } else { 2 };	fixture	tests/04_if_expression.pd	satisfied	1.0	-
+N5-04	M2	N5	match is an expression	fixture	tests/06_match_expression.pd	satisfied	1.0	-
+N5-05	M2	N5	Blocks are expressions	fixture	tests/04_block_expression.pd	satisfied	1.0	-
+N5-06	M2	N5	else if	fixture	tests/04_else_if.pd	satisfied	1.0	-
+N5-07	M2	N5	loop, exited by break, which may carry a value	fixture	tests/04_loop_break_value.pd	satisfied	1.0	-
 N5-08	M3	N5	Closures with inferred capture, and a move form	fixture	tests/05_closures.pd	owed	1.0	-
 N5-09	M3	N5	try { } scopes error handling	fixture	tests/09_try_block.pd	owed	1.0	-
 N5-10	-	N5	Arithmetic and comparison operators	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
 N5-11	-	N5	Logical operators	fixture	tests/04_control_flow_if.pd	satisfied	1.0	-
-N5-12	M2	N5	Bitwise operators & | ^ ~ << >>	fixture	tests/02_bitwise.pd	owed	1.0	-
-N5-13	M2	N5	Compound assignment += -= *= /= %=	fixture	tests/02_compound_assign.pd	owed	1.0	-
-N5-14	M2	N5	Ranges .. and ..= outside a for header	fixture	tests/04_ranges.pd	owed	1.0	-
-N5-15	M2	N5	as casts	fixture	tests/02_as_casts.pd	owed	1.0	-
-N5-16	M2	N5	Unary minus binds tighter than multiplication: a * -b	fixture	tests/02_unary_precedence.pd	owed	1.0	-
-N5-17	M2	N5	Method call syntax x.f()	fixture	tests/04_method_calls.pd	owed	1.0	-
+N5-12	M2	N5	Bitwise operators & | ^ ~ << >>	fixture	tests/02_bitwise.pd	satisfied	1.0	-
+N5-13	M2	N5	Compound assignment += -= *= /= %=	fixture	tests/02_compound_assign.pd	satisfied	1.0	-
+N5-14	M2	N5	Ranges .. and ..= outside a for header	fixture	tests/04_ranges.pd	satisfied	1.0	-
+N5-15	M2	N5	as casts	fixture	tests/02_as_casts.pd	satisfied	1.0	-
+N5-16	M2	N5	Unary minus binds tighter than multiplication: a * -b	fixture	tests/02_unary_precedence.pd	satisfied	1.0	-
+N5-17	M2	N5	Method call syntax x.f()	fixture	tests/04_method_calls.pd	satisfied	1.0	-
 
 # --- N6 Patterns --------------------------------------------------------------
 N6-01	-	N6	Wildcard and identifier patterns	fixture	tests/06_pattern_matching.pd	satisfied	1.0	-

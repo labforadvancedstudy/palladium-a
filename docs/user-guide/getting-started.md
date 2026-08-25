@@ -121,23 +121,14 @@ fn main() {
 This message replaced a silent default to a 64-bit integer, which used to emit broken C for
 references, enum values and string copies instead of saying anything.
 
-**`Expected '{' after else`**
-There is no `else if` — nest the `if` inside the `else` block.
-
-```palladium no-compile
-fn main() {
-    let x: i64 = 5;
-    if x > 9 { print("big"); } else if x > 1 { print("mid"); }
-}
-```
-
-**`Indirect function calls not yet supported`**
-Method syntax is not implemented. Call `Type::method(receiver, ...)`.
+**``has no method `len` ``**
+Method syntax works — `x.f()` and `Type::f(x)` both do — but only on a type that can carry an
+`impl` block, which a primitive cannot. The string operations are free builtins, not methods.
 
 ```palladium no-compile
 fn main() {
     let s: String = "abc";
-    print_int(s.len());        // no method syntax
+    print_int(s.len());        // String has no impl block; use string_len(s)
 }
 ```
 

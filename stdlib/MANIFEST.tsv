@@ -44,7 +44,7 @@
 #   GENERIC_DEFAULT  `<Rhs = Self>`             — no generic parameter defaults
 #   UNINIT_LET       `let mut v: T;`            — declaration without initialiser
 #   RAW_POINTER      `*mut T`                   — no raw pointer type
-#   BITWISE_XOR      `a ^ b`                    — `^` is not an operator (N5, owed)
+#   CONST_ITEM       `pub const PI: f64 = …;`   — no top-level `const` item (N3-09, owed)
 #
 # RETIRED CATEGORIES, and the five rows they moved. All three were LEXICAL, and
 # lexing is a whole-file pass, so each was masking every parser-level blocker in
@@ -58,7 +58,13 @@
 #   CHAR_ESCAPE      `'\t'`                     — RETIRED at N2-09. Escapes lex in
 #                    char literals; stdlib/std/string.pd's next blocker is `use`.
 #   FLOAT_LITERAL    `3.14`                     — RETIRED at N2-03. `3.14` is one
-#                    token; stdlib/std/math.pd's next blocker is `^`.
+#                    token; stdlib/std/math.pd's next blocker was `^`.
+#   BITWISE_XOR      `a ^ b`                    — RETIRED at N5-12. `^` is an
+#                    operator now, and stdlib/std/math.pd's next blocker is the
+#                    `pub const` on its first line: CONST_ITEM. Third time this
+#                    file has moved a layer deeper without moving closer to
+#                    compiling, which is what the header means by a blocker
+#                    being a floor and not a bill.
 #
 stdlib/prelude.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/async.pd	COMPILE_FAIL	ASSOC_TYPE
@@ -69,7 +75,7 @@ stdlib/std/collections/vec_i64.pd	COMPILE_FAIL	UNINIT_LET
 stdlib/std/env.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/fs.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/io.pd	COMPILE_FAIL	USE_DECL
-stdlib/std/math.pd	COMPILE_FAIL	BITWISE_XOR
+stdlib/std/math.pd	COMPILE_FAIL	CONST_ITEM
 stdlib/std/mem.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/mod.pd	COMPILE_FAIL	MOD_DECL
 stdlib/std/net.pd	COMPILE_FAIL	USE_DECL

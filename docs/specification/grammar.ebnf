@@ -22,9 +22,20 @@
 # parsed. None of them did. Widening Part A to match the specification would
 # reintroduce that lie; the separation is the fix.
 #
-# Two of that list have since MOVED, by being implemented rather than by being
-# re-described: float and char literals are in Part A below (N2-03, N2-04). The
-# rest are still in Part B.
+# NINE of that list have since MOVED, by being implemented rather than by being
+# re-described, and they are in Part A below:
+#   float and char literals (N2-03, N2-04)
+#   `loop` and value-carrying `break` (N5-07)
+#   compound assignment (N5-13)
+#   bitwise operators (N5-12)
+#   `as` casts (N5-15)
+#   range-inclusive `..=` (N5-14)
+#   `else if` (N5-06)
+# and with them, though they were never on that list, `if`/`match`/block as
+# EXPRESSIONS (N5-03/04/05) and method-call syntax (N5-17).
+#
+# Still in Part B, still unparsed: where-clauses, trait bounds, closures,
+# slices, tuple expressions, labelled breaks.
 #
 # Notation:  |  alternation   ()  grouping   []  optional   {}  zero or more
 
@@ -83,7 +94,11 @@ keyword        = "fn" | "let" | "mut" | "if" | "else" | "while" | "return"
 operator       = '+' | '-' | '*' | '/' | '%' | '=' | "==" | "!=" | '!'
                | '<' | '>' | "<=" | ">=" | "&&" | "||" | '&' ;
 
-# Absent from the lexer: += -= *= /= %=, | ^ ~ << >>, ..= .
+# Absent from the lexer: `>>`, DELIBERATELY. `Option<Vec<Stmt>>` closes two
+# generic argument lists with two adjacent '>', so a longest-match `>>` token
+# would swallow both. The shift is recognised in the parser from two '>' whose
+# spans TOUCH, which is why `a > > b` is not a shift. Everything else on the old
+# version of this line — += -= *= /= %=, | ^ ~ <<, ..= — now lexes.
 
 punctuation    = '(' | ')' | '{' | '}' | '[' | ']' | ';' | ',' | ':' | '.'
                | ".." | "->" | "::" | '_' | "=>" | '\'' | '?' | '#' | "#!" ;
@@ -183,9 +198,9 @@ generic        = identifier '<' type { ',' type } '>' ;
 # Statements
 # =============================================================================
 
-statement      = let_stmt | assign_stmt | if_stmt | while_stmt | for_stmt
-               | match_stmt | return_stmt | break_stmt | continue_stmt
-               | unsafe_stmt | expr_stmt ;
+statement      = let_stmt | assign_stmt | compound_assign | if_stmt | while_stmt
+               | loop_stmt | for_stmt | match_stmt | return_stmt | break_stmt
+               | continue_stmt | unsafe_stmt | expr_stmt | block ;
 
 # The initializer is mandatory, and the binding is a bare identifier —
 # `let` patterns do not exist.
@@ -195,8 +210,12 @@ assign_stmt    = place '=' expression ';' ;
 place          = identifier | place '[' expression ']' | place '.' identifier
                | '*' identifier ;
 
-# There is NO `else if`: after `else` the parser requires '{'.
-if_stmt        = "if" expression block [ "else" block ] ;
+# `else if` (N5-06): after `else` the parser looks for `if` and recurses, so a
+# chain is nesting. There is no ElseIf node and does not need to be one.
+if_stmt        = "if" expression block [ "else" ( if_stmt | block ) ] ;
+loop_stmt      = "loop" block ;                    (* N5-07 *)
+break_stmt     = "break" [ expression ] ';' ;      (* the value is N5-07 *)
+compound_assign = place ( "+=" | "-=" | "*=" | "/=" | "%=" ) expression ';' ;
 
 while_stmt     = "while" expression block ;
 
@@ -215,25 +234,40 @@ expr_stmt      = expression ';' ;
 block          = '{' { statement } [ expression ] '}' ;
 
 # A trailing expression in a function body with a declared return type is
-# lowered to a return. A trailing expression in a nested block is not.
-# There is no bare nested block as a statement, and no `loop`.
+# lowered to a return. A block in VALUE position keeps its trailing expression
+# as its value (N5-05).
+# A bare nested block IS a statement now — not by being added to `statement` for
+# its own sake, but as a consequence of `block` becoming a primary expression.
 
 # =============================================================================
 # Expressions
 # =============================================================================
 #
-# `if`, `match` and blocks are STATEMENTS, not expressions:
-# `let x = if c { 1 } else { 2 };` does not parse.
+# `if`, `match`, blocks and `loop` ARE expressions (N5-03/04/05/07), read at the
+# primary level. C has no expression with a block in it, so they lower by
+# hoisting: a temporary, a statement-form computation that assigns it, and a use
+# of the name.
 
 expression     = range ;
-range          = logical_or [ ".." logical_or ] ;   (* only valid in a `for` header *)
+range          = logical_or [ ( ".." | "..=" ) logical_or ] ;  (* N5-14: a value anywhere *)
 logical_or     = logical_and { "||" logical_and } ;
 logical_and    = equality { "&&" equality } ;
 equality       = comparison { ( "==" | "!=" ) comparison } ;
-comparison     = addition { ( '<' | '>' | "<=" | ">=" ) addition } ;
+# The bitwise levels and the shifts sit between the comparisons and addition,
+# which is Rust's order and not C's — C binds '==' tighter than '&'. Emitted C is
+# fully parenthesised, so the difference cannot reach the object code.
+comparison     = bitor { ( '<' | '>' | "<=" | ">=" ) bitor } ;
+bitor          = bitxor { '|' bitxor } ;
+bitxor         = bitand { '^' bitand } ;
+bitand         = shift { '&' shift } ;
+shift          = addition { ( "<<" | ">>" ) addition } ;
 addition       = multiplication { ( '+' | '-' ) multiplication } ;
-multiplication = unary { ( '*' | '/' | '%' ) postfix } ;
-unary          = ( '-' | '!' | '*' | '&' [ "mut" ] ) unary | postfix ;
+# FIXED (N5-16): the right operand used to be parsed with `postfix`, so the left
+# side descended through the unary level and the right side could not, and
+# `a * -b` did not parse.
+multiplication = cast { ( '*' | '/' | '%' ) cast } ;
+cast           = unary { "as" type } ;             (* N5-15 *)
+unary          = ( '-' | '!' | '~' | '*' | '&' [ "mut" ] ) unary | postfix ;
 
 postfix        = primary { '[' expression ']'
                          | '(' [ arguments ] ')'
@@ -243,8 +277,9 @@ postfix        = primary { '[' expression ']'
                          | '?'
                          | ".await" } ;
 
-primary        = integer | string | boolean | "self" | identifier
+primary        = integer | float | char | string | boolean | "self" | identifier
                | struct_literal | array_literal | '(' expression ')'
+               | if_stmt | match_stmt | block | loop_stmt
                | macro_call ;
 
 struct_literal = path '{' [ field_init { ',' field_init } [ ',' ] ] '}' ;
@@ -258,16 +293,16 @@ macro_call     = identifier '!' '(' { any_token } ')' ;
 
 arguments      = expression { ',' expression } [ ',' ] ;
 
-# Method-call syntax `x.f()` parses but the type checker rejects it:
-# "Indirect function calls not yet supported". Call `Type::f(x)` instead.
+# Method-call syntax `x.f()` WORKS (N5-17). Both the type checker and code
+# generation rewrite it into `TypeOfX::f(x, …)`; `Type::f(x)` works too, which it
+# did not until the same change — the parser builds every `A::b(...)` as an enum
+# constructor, and a struct on the left used to produce "Undefined enum type".
+# The `&self` receiver is still unimplemented.
 #
-# There are no closures, no tuple expressions, no `.0` indexing, no `as` casts.
+# There are no closures, no tuple expressions, no `.0` indexing.
 # `?` and `.await` appear here because they parse. Nothing lowers them: both are
 # rejected after parsing with "is not implemented" (type checker, then codegen).
 # See language-spec.md §6.5.
-#
-# Known precedence bug: multiplication parses its RIGHT operand with `postfix`
-# rather than `unary`, so `a * -b` fails to parse. Write `a * (0 - b)`.
 
 # =============================================================================
 # Patterns  (exactly three forms exist)
@@ -375,27 +410,24 @@ trait_item_norm = "fn" identifier "(" [ self_param [ "," params ] ] ")"
                 | "const" identifier ":" type [ "=" expression ] ";" ;
 
 # ---- Expressions and statements (spec N5) ------------------------------------
-# In Part A, `if`, `match` and blocks are STATEMENTS. Spec N5 makes them
-# expressions, which changes `expression`, not merely adds to it.
+# Part A used to read "`if`, `match` and blocks are STATEMENTS", and spec N5's
+# making them expressions was the largest single gap between the two parts. It
+# closed on 2026-08-25.
 
-expression_norm = ... | if_expr | match_expr | block | closure | try_expr ;
-if_expr         = "if" expression block { "else" "if" expression block }
-                  [ "else" block ] ;
+# `if_expr`, `match_expr` and `block` MOVED TO PART A (N5-03/04/05/06): they are
+# expressions there, and `else if` chains parse.
+expression_norm = ... | closure | try_expr ;
 closure         = [ "move" ] "|" [ params_untyped ] "|" ( expression | block ) ;
 try_expr        = "try" block ;
-loop_stmt       = "loop" block ;
-break_value     = "break" [ expression ] ";" ;
-compound_assign = place ( "+=" | "-=" | "*=" | "/=" | "%=" ) expression ";" ;
-bitwise_op      = "|" | "^" | "~" | "<<" | ">>" ;
-cast_expr       = expression "as" type ;
-range_incl      = expression "..=" expression ;
 tuple_expr      = "(" expression { "," expression } [ "," ] ")" ;
 tuple_index     = expression "." integer ;
 
-# Precedence correction (spec N5): `a * -b` must parse. Part A's
-# `multiplication = unary { ( '*' | '/' | '%' ) postfix }` parses its RIGHT
-# operand with `postfix`, so it does not. The normative rule is:
-#   multiplication = unary { ( '*' | '/' | '%' ) unary } ;
+# MOVED TO PART A, by being implemented rather than re-described (2026-08-25):
+# `loop_stmt`, `break_value`, `compound_assign`, `bitwise_op`, `cast_expr` and
+# `range_incl`, together with the precedence correction this section used to
+# state as normative-but-unparsed —
+#   multiplication = unary { ( '*' | '/' | '%' ) unary }
+# — which Part A now satisfies through its `cast` level.
 
 # ---- Patterns (spec N6) ------------------------------------------------------
 # Part A has exactly three pattern forms. Spec N6 requires all of these, and
