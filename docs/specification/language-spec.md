@@ -700,7 +700,7 @@ enums.
 **partial** — field types that parse and then fail in codegen (all three corrected from v0.2,
 which was ~250 lines low):
 - generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:2477-2477`)
-- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:2052-2052`)
+- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:2482-2482`)
 - tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:2490-2494`)
 
 ### A4.3 Enums
@@ -817,8 +817,8 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
-rejected outright by the type checker (`src/typeck/mod.rs:4735-4735`) and again by code generation
-(`src/codegen/mod.rs:4843-4847`). It used to typecheck against a `Generic{name:"Result"}` shape
+rejected outright by the type checker (`src/typeck/mod.rs:4211-4211`) and again by code generation
+(`src/codegen/mod.rs:4883-4887`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -838,7 +838,7 @@ and then emit C for a `struct Result` layout nothing defines (see
   travels with it, which is what keeps a tail-position chain returning. *(This bullet read
   "unimplemented — after `else` the parser requires `{`" until `66dab38`.)*
 - **implemented: `loop`** (N5-07), a keyword since `src/lexer/token.rs:250`, parsed at
-  `src/parser/mod.rs:2598` and emitted as C `while (1)` (`src/codegen/mod.rs:3635`). Its `break`
+  `src/parser/mod.rs:2598` and emitted as C `while (1)` (`src/codegen/mod.rs:3675`). Its `break`
   may carry a value. *(It read "not a keyword. Use `while true`" until `f729cda`.)*
 - **implemented: compound assignment** `+= -= *= /= %=` (N5-13), DESUGARED at
   `src/parser/mod.rs:2106` into `t = t op v` rather than emitted as C's own compound operator —
@@ -908,7 +908,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:4954-4958`, corrected from line 1874 of the pre-cleanup revision).
+  (`src/typeck/mod.rs:4974-4978`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
@@ -920,7 +920,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3258`) and code generation (`src/codegen/mod.rs:4392`)
+both the type checker (`src/typeck/mod.rs:3258`) and code generation (`src/codegen/mod.rs:5581`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once;
 its position among the arguments is C's unspecified evaluation order, which is the same residual
@@ -993,9 +993,9 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4735-4735`, `.await` at
-`src/typeck/mod.rs:4198-4198`) and again by code generation (`?` at `src/codegen/mod.rs:4843-4847`,
-`.await` at `src/codegen/mod.rs:4855-4859`), which is callable on its own.
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4211-4211`, `.await` at
+`src/typeck/mod.rs:4218-4218`) and again by code generation (`?` at `src/codegen/mod.rs:4883-4887`,
+`.await` at `src/codegen/mod.rs:4895-4899`), which is callable on its own.
 
 What they used to do:
 
@@ -1004,7 +1004,7 @@ What they used to do:
   constants instead. gcc reported `variable has incomplete type 'struct Result'`.
 - `.await` emitted `while (!f.poll(&f)) {}`. C has no member function calls, and the poll
   routine that *is* generated is the free function `<name>_poll`
-  (`src/codegen/mod.rs:3791-3791`), which that call never names. There is no async runtime.
+  (`src/codegen/mod.rs:3831-3831`), which that call never names. There is no async runtime.
 
 Both lowerings are deleted rather than kept behind a flag: they encoded a representation a real
 implementation must not reuse, and version control holds them.
@@ -1108,9 +1108,9 @@ pattern = "_"
 (`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
 bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:4397-4403`,
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:4417-4423`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
-(`src/codegen/mod.rs:2972-2972`, `src/codegen/mod.rs:2828-2839`) with a wildcard arm becoming the final `else`; when no
+(`src/codegen/mod.rs:3732-3732`, `src/codegen/mod.rs:2828-2839`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
 
 Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else` chains.
@@ -1159,8 +1159,8 @@ One divergence remains, and two are closed:
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:1128-1128`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:3130-3130`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
-every output file (`src/codegen/mod.rs:841-841`, corrected from line 251–575 of the pre-cleanup revision).
+(`src/codegen/mod.rs:4453-4453`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+every output file (`src/codegen/mod.rs:1333-1333`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
 became the SSOT; it is no longer the mechanism.)*
@@ -1239,7 +1239,7 @@ LSP fixtures. There is no region inference: `grep -rn 'region\|Region' src/ --in
 returns nothing.
 
 No garbage collector. Strings are allocated from a 64 KiB static arena with a malloc fallback and
-are freed at exit (`src/codegen/mod.rs:771-771`, corrected from line 210–245 of the pre-cleanup revision).
+are freed at exit (`src/codegen/mod.rs:1298-1302`, corrected from line 210–245 of the pre-cleanup revision).
 
 ### A9.1 `String` is a copyable handle (decision, 2026-08-21)
 
@@ -1468,8 +1468,11 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-expressions`
 (2026-08-25):
 
-**verified 67 · untranscribed 0 · vacuous 7 · xfail 1 · reject 28 · skip 2 · failures 0**, over 105
-fixtures. (`reject` grew by SEVEN in one round, which is the shape a review round leaves: external
+**verified 68 · untranscribed 0 · vacuous 7 · xfail 1 · reject 30 · skip 2 · failures 0**, over 108
+fixtures. (Review round 2 added one `run` fixture — a macro expanded in a value position — and TWO
+more `reject`s: a generic method reached through its path form, and a generic enum's constructor.
+Both were accepted by the front end and unbuildable by the C backend, so both became refusals.
+Round 1 before it grew `reject` by SEVEN, which is the shape a review round leaves: external
 review of the N5 work found two miscompiles and three places where the front end approved C the
 backend could not build, and the repairs for the second kind are REFUSALS — each one a program
 that should never have been accepted, each pinned by a `reject` fixture. Before that round the

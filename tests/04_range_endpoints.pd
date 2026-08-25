@@ -25,6 +25,19 @@ fn start_at() -> i64 {
     1
 }
 
+// The order the two bounds are READ in. Anything the END hoists is spliced in
+// front of the whole statement, which is ABOVE the start's read: measured,
+// `for i in lo()..(if c { hi() } else { 9 })` printed the end's effect first.
+fn first() -> i64 {
+    print("FIRST");
+    0
+}
+
+fn second() -> i64 {
+    print("SECOND");
+    2
+}
+
 fn main() {
     print("The endpoint is read once, not once per iteration:");
     let mut s = 0;
@@ -76,6 +89,18 @@ fn main() {
         b = b + 1;
     }
     print_int(b);
+
+    print("Both bounds are read in SOURCE order, even when the END hoists:");
+    // The END is a value `if`, so it hoists statements. Those used to be
+    // spliced in front of the whole `for`, which is ABOVE the start's read, and
+    // SECOND printed before FIRST. A plain `first()..second()` would not have
+    // caught it — neither bound hoists — which is why this one is written with
+    // a value expression on the right.
+    let mut o = 0;
+    for i in first()..(if true { second() } else { 9 }) {
+        o = o + 1;
+    }
+    print_int(o);
 
     print("A range VALUE, both forms, and nested:");
     let ex = 2..5;

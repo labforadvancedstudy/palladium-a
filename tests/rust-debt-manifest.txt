@@ -77,9 +77,9 @@ tests/advanced_e2e_test.rs	test_generic_identity_function	owed	M4	Compilation fa
 tests/advanced_e2e_test.rs	test_generic_pair	owed	M4	Compilation failed: Undefined enum type: Pair
 tests/advanced_e2e_test.rs	test_higher_order_functions	owed	M4	Compilation failed: Unexpected token: expected type, found 'fn'
 tests/advanced_e2e_test.rs	test_iterator_trait	owed	M4	Compilation failed: Unexpected token: expected 'fn' (Expected 'fn' for trait method), found 'type'
-tests/advanced_e2e_test.rs	test_option_enum	owed	M2	Compilation failed: Type mismatch: expected Option<Int>, found Option
+tests/advanced_e2e_test.rs	test_option_enum	owed	M2	constructs a variant of a GENERIC enum, and generic enums are not implemented
 tests/advanced_e2e_test.rs	test_pattern_matching_guards	owed	M2	Compilation failed: Unexpected token: expected ':' (Expected ':' after field name in pattern), found ','
-tests/advanced_e2e_test.rs	test_result_error_handling	owed	M4	Compilation failed: Type mismatch: expected Result<Int, String>, found Result<Int>
+tests/advanced_e2e_test.rs	test_result_error_handling	owed	M4	constructs a variant of a GENERIC enum, and generic enums are not implemented
 tests/advanced_e2e_test.rs	test_trait_implementation	owed	M4	Compilation failed: Unexpected token: expected parameter name, found '&'
 tests/advanced_e2e_test.rs	test_type_aliases_complex	owed	M2	Compilation failed: Unexpected token: expected ')' (Expected ')' after expression), found ','
 tests/advanced_features_test.rs	test_async_await_basic	owed	unscheduled	Compilation failed: a `return` with a value inside an `async fn` is not implemented
@@ -87,13 +87,13 @@ tests/advanced_features_test.rs	test_async_await_multiple	owed	unscheduled	Compi
 tests/advanced_features_test.rs	test_closures	owed	M4	Compilation failed: Unexpected token: expected expression, found '|'
 tests/advanced_features_test.rs	test_const_generics	owed	M4	Compilation failed: Unexpected token: expected type parameter name, found 'const'
 tests/advanced_features_test.rs	test_effects_system	owed	unscheduled	Compilation failed: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
-tests/advanced_features_test.rs	test_error_handling_sugar	owed	M4	Compilation failed: Type mismatch: expected Result<Int, String>, found Result<(), String>
+tests/advanced_features_test.rs	test_error_handling_sugar	owed	M4	constructs a variant of a GENERIC enum, and generic enums are not implemented
 tests/advanced_features_test.rs	test_generic_collections	owed	M2	Compilation failed: Unexpected token: expected ';' (Expected ';' after expression), found '='
 tests/advanced_features_test.rs	test_iterator_protocol	owed	M4	Compilation failed: Unexpected token: expected 'fn' (Expected 'fn' for trait method), found 'type'
 tests/advanced_features_test.rs	test_lifetime_annotations	owed	M2	Compilation failed: `x` has no method `len`: only a struct or an enum can have an `impl` block
 tests/advanced_features_test.rs	test_macros	owed	M5	Compilation failed: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
 tests/advanced_features_test.rs	test_module_system	owed	M2	Compilation failed: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
-tests/advanced_features_test.rs	test_pattern_matching_advanced	owed	M4	Compilation failed: Type mismatch: expected Result<Int, String>, found Result<(), String>
+tests/advanced_features_test.rs	test_pattern_matching_advanced	owed	M4	constructs a variant of a GENERIC enum, and generic enums are not implemented
 tests/advanced_features_test.rs	test_trait_system	owed	M4	Compilation failed: Unexpected token: expected parameter name, found '&'
 tests/advanced_features_test.rs	test_unsafe_operations	owed	M4	Compilation failed: Unexpected token: expected type, found '*'
 tests/compiler_comprehensive_test.rs	test_as_cast	paid	-	-
@@ -114,6 +114,7 @@ tests/d3b_tail_if.rs	selective_import_excludes_a_symbol_from_the_consumers	owed	
 tests/d3b_tail_if.rs	the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end	owed	unscheduled	gcc is invoked without -Werror=return-type
 tests/d3b_tail_if.rs	two_modules_exporting_one_name_are_deterministic	owed	M4	error: conflicting types for 'dup'
 tests/e2e_test.rs	test_c_keyword_identifier_still_links	paid	-	-
+tests/m2_value_form_lowering.rs	an_enum_owned_method_is_reachable_by_its_path_form	owed	M4	Unknown variant Color::code
 tests/m3_imported_calls.rs	test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class	owed	M4	an inner `let s: i64` made the outer struct `s` look Copy
 tests/m3_imported_calls.rs	test_a_generic_call_resolves_to_its_own_monomorphization	owed	M4	the call was lowered to the wrong monomorphization and gcc is what noticed
 tests/m3_imported_calls.rs	test_a_generic_struct_referenced_by_its_bare_name_is_emitted	owed	M4	a generic struct named without type arguments emitted C for an undefined type
@@ -125,4 +126,4 @@ tests/m3_imported_calls.rs	test_a_qualified_call_reaches_the_imported_function	o
 tests/m3_imported_calls.rs	test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc	owed	M4	the ambiguity must be named by the compiler, not discovered by gcc
 tests/m3_imported_calls.rs	test_an_import_may_not_silently_disagree_with_a_builtin	owed	M4	the checkers and codegen disagreed about which `print_int` was meant
 tests/m3_imported_calls.rs	test_selective_import_does_not_import_the_rest	owed	M4	`other` was not imported but was callable
-tests/m3_imported_calls.rs	test_use_after_move_is_rejected_without_a_type_annotation	owed	M4	a use-after-move was accepted because neither binding was annotated
+tests/m3_imported_calls.rs	test_use_after_move_is_rejected_without_a_type_annotation	paid	-	-

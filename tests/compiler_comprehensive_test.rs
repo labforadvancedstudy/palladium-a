@@ -123,7 +123,7 @@ fn test_all_keywords() {
 }
 
 #[test]
-#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:317-318 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
+#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:323-324 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
 fn test_match_on_integer_literal() {
     compile_and_verify("fn main() { match 1 { 1 => {}, _ => {} } }", &["switch"]);
 }

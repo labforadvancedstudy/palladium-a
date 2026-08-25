@@ -117,3 +117,49 @@ fn nested_range_loops_do_not_share_a_temporary() {
         c
     );
 }
+
+// ---------------------------------------------------------------------------
+// The two properties a run test cannot reach: a span wider than the signed
+// maximum, and a span that is the whole 64-bit domain.
+
+#[test]
+fn the_inclusive_span_is_subtracted_in_unsigned_arithmetic() {
+    // `(unsigned long long)(hi - lo)` does the SUBTRACTION first, in signed
+    // arithmetic, and overflows for any span wider than `i64::MAX` — UBSan on
+    // `-1..=i64::MAX`: "9223372036854775807 - -1 cannot be represented in type
+    // 'long long'". Each end has to be converted before the subtraction.
+    let c = c_of("fn main() { let mut s = 0; for i in 0..=3 { s = s + i; } print_int(s); }");
+    assert!(
+        !c.contains("(unsigned long long)(__pd_hi"),
+        "the span is still computed by subtracting in signed arithmetic:\n{}",
+        c
+    );
+    assert!(
+        c.contains("(unsigned long long)__pd_hi") && c.contains("(unsigned long long)__pd_lo"),
+        "both ends should be converted before the subtraction:\n{}",
+        c
+    );
+}
+
+#[test]
+fn a_full_domain_inclusive_range_terminates() {
+    // With `k <= n; k++` and `n == ULLONG_MAX`, `k++` wraps to 0 and the test
+    // is true forever. The exit condition must be "was the one just visited the
+    // last one", which cannot wrap.
+    for source in [
+        "fn main() { let mut s = 0; for i in 0..=3 { s = s + i; } print_int(s); }",
+        "fn main() { let r = 0..=3; let mut s = 0; for i in r { s = s + i; } print_int(s); }",
+    ] {
+        let c = c_of(source);
+        assert!(
+            c.contains("__pd_done"),
+            "the loop should exit on having visited the last value, not on `k <= n`:\n{}",
+            c
+        );
+        assert!(
+            !c.contains("__pd_k0 <= __pd_n0"),
+            "the wrapping `k <= n` test is still emitted:\n{}",
+            c
+        );
+    }
+}

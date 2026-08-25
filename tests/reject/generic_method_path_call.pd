@@ -1,0 +1,15 @@
+// NEGATIVE TEST — the PATH spelling of a generic method call (N5-17).
+//
+// The dot form has its own row (`generic_method_call.pd`). Both spellings reach
+// the same rewrite and both must be refused, because code generation skips
+// generic impl methods entirely and the call would arrive at the linker as a
+// symbol nothing emits. Pinned separately so that fixing one spelling and not
+// the other cannot pass unnoticed.
+struct Rect { w: i64 }
+impl Rect {
+    fn id<T>(self, x: T) -> T { x }
+}
+fn main() {
+    let r = Rect { w: 1 };
+    print_int(Rect::id(r, 5));
+}

@@ -184,13 +184,19 @@ generic_param  = "'" identifier                 (* lifetime *)
 
 type           = primitive | reference | array | tuple | generic | path | "Self" ;
 
-primitive      = "i64" | "int" | "i32" | "u32" | "u64" | "bool" | "String" | "()" ;
+primitive      = "i64" | "int" | "i32" | "u32" | "u64" | "f32" | "f64"
+                 | "bool" | "String" | "()" ;
 reference      = '&' [ "'" identifier ] [ "mut" ] type ;
 array          = '[' type ';' ( integer | identifier ) ']' ;
 tuple          = '(' [ type { ',' type } [ ',' ] ] ')' ;
 generic        = identifier '<' type { ',' type } '>' ;
 
-# No f32/f64, char, str, u8, usize. No function types, slices, `dyn` or `impl`
+# `f32` and `f64` ARE primitives and are parsed as such
+# (`src/parser/mod.rs:3356-3357`); this line denied them while the parser
+# accepted them, [N4](language-spec.md#n4-types) listed them, and Part B below
+# listed them as normative-but-unparsed. Three places said one thing and the
+# parser said another.
+# Still absent: char, str, u8, usize. No function types, slices, `dyn` or `impl`
 # trait. Tuples parse but lower to void* and cannot be constructed.
 # Option and Result are NOT built in; they are ordinary user enums.
 

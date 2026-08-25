@@ -78,6 +78,7 @@ tests/04_control_flow_while.pd	run	-	expected	-	-
 tests/04_else_if.pd	run	-	expected	-	-
 tests/04_if_expression.pd	run	-	expected	-	-
 tests/04_loop_break_value.pd	run	-	expected	-	-
+tests/04_macro_in_value_position.pd	run	-	expected	-	-
 tests/04_method_calls.pd	run	-	expected	-	-
 tests/04_nested_block_tails.pd	run	-	expected	-	-
 tests/04_range_endpoints.pd	run	-	expected	-	-
@@ -107,7 +108,7 @@ tests/misc/test_vec_simple.pd	run	-	expected	-	-
 tests/projects/hello_pdm/package.pd	skip	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	package manifest; not Palladium source at all, so the parser rejects it outright
 tests/projects/hello_pdm/src/main.pd	run	-	expected	-	-
 tests/projects/hello_pdm/src/math.pd	skip	compile	No main function found	-	library module providing add()/factorial(); the compiler itself confirms it has no entry point
-tests/projects/hello_pdm/tests/test_math.pd	xfail	compile	Undefined function: add	M3	calls add()/factorial() from src/math.pd; needs cross-file module imports (no use/mod in the language)
+tests/projects/hello_pdm/tests/test_math.pd	xfail	compile	Undefined function: add	M4	calls add()/factorial() from src/math.pd; needs cross-file module imports (no use/mod in the language). OWNER CORRECTED M3 -> M4 on 2026-08-25: modules are M4's milestone (MILESTONES.md 'M4 - Modules (v0.6.0)') and the manifest row for the feature, N3-11 'Module items', is owned by M4. M3 is traits and generics. This is a correction against the ownership roster, not a reassignment
 tests/projects/hello_pdm/tests/test_simple.pd	run	-	expected	-	-
 tests/regression/array_binding_scope.pd	run	-	expected	-	-
 tests/regression/array_reference_params.pd	run	-	expected	-	-
@@ -142,7 +143,9 @@ tests/reject/async_producer.pd	reject	compile	`async fn` is not implemented	-	N7
 tests/reject/closure_literal.pd	reject	compile	Expected expression, but found '|'	-	no Closure/Lambda node exists in src/ast/ or src/parser/, so `|` starts nothing in expression position
 tests/reject/extern_block.pd	reject	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	no `extern` block, so no foreign symbol can be named; the generated code is C, so the ABI is C by construction but there is no syntax to reach it
 tests/reject/generic_bound.pd	reject	compile	Expected '>' (Expected '>' after generic parameters), but found ':'	-	generic parameter lists accept bare names only; the `:` that introduces a trait bound ends the list
+tests/reject/generic_enum_constructor.pd	reject	compile	constructs a variant of a GENERIC enum, and generic enums are not implemented	-	PRE-EXISTING and older than the branch that found it: codegen skips generic enums at every emission site, so the constructor reached gcc as a call to a function nothing emits and a match on it named a tag constant nothing defines
 tests/reject/generic_method_call.pd	reject	compile	`Rect::id` is a generic method, and generic methods are not implemented	-	N5-17 accepted this through `generic_functions` while codegen skips generic impl methods entirely, so the call reached the LINKER as a symbol nothing emits. Refused until method monomorphisation exists
+tests/reject/generic_method_path_call.pd	reject	compile	`Rect::id` is a generic method, and generic methods are not implemented	-	the PATH spelling of the dot-form row beside it; both reach the same rewrite and both must be refused, so fixing one and not the other cannot pass unnoticed
 tests/reject/loop_keyword.pd	run	-	expected	-	-
 tests/reject/method_mut_parameter.pd	reject	compile	`Rect::bump` takes `mut n`, and `mut` parameters on methods are not implemented	-	the definition lowers a `mut` parameter to a pointer and the method call path passes by value, so gcc refused C the front end had approved -- the one outcome no fixture may declare
 tests/reject/mut_borrow_of_immutable.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	feature-index.toml recorded this exact program as accepted and mutating an immutable local with no diagnostic; the borrow checker refuses it and names the repair

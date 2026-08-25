@@ -3906,6 +3906,26 @@ impl TypeChecker {
                     }
                 }
 
+                // A GENERIC ENUM'S CONSTRUCTOR HAS NO SYMBOL TO CALL.
+                // PRE-EXISTING, older than this branch: code generation skips
+                // generic enums at every emission site — no typedef, no tag
+                // constants, no `_new` constructor — while this arm typed the
+                // constructor happily. `Holder::Full(7)` reached the C compiler
+                // as a call to `Holder_Full__new`, a function nothing emits, and
+                // a `match` on it named `__Holder__Empty`, a constant nothing
+                // defines. Refused by name, exactly as a generic METHOD is, and
+                // for the same reason: the front end must not approve C the
+                // backend never writes.
+                if self.generic_enums.contains_key(enum_name) {
+                    return Err(CompileError::Generic(format!(
+                        "`{}::{}` constructs a variant of a GENERIC enum, and generic enums are \
+                         not implemented: code generation emits no type, no tag and no \
+                         constructor for one, so this would fail in the C compiler. Declare a \
+                         non-generic enum for each concrete type you need",
+                        enum_name, variant
+                    )));
+                }
+
                 // Type check enum constructors
                 // First check if the enum exists (could be generic or regular)
                 if let Some(generic_enum) = self.generic_enums.get(enum_name).cloned() {
@@ -5171,7 +5191,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:5014-5078`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:5054-5118`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that

@@ -923,7 +923,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4157`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4177`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:579-581`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -3433,15 +3433,23 @@ impl CodeGenerator {
                         let n = self.hoist_counter;
                         self.hoist_counter += 1;
                         let (lo, hi) = (format!("__pd_lo{}", n), format!("__pd_hi{}", n));
+                        // THE TWO BOUNDS ARE READ IN SOURCE ORDER, and that
+                        // needs saying because the obvious emission gets it
+                        // backwards. Anything the END hoists is spliced in front
+                        // of the WHOLE statement, which is above the start's
+                        // read: measured, `for i in lo()..(if c { hi() } else
+                        // { 9 })` printed HI before LO. The end's hoisted
+                        // statements are therefore emitted HERE, between the two
+                        // reads, where the source puts them.
+                        let (end_src, end_hoists) = self.generate_expr_with_hoists(end)?;
                         self.output.push_str("        // For loop with range\n");
                         self.output
                             .push_str(&format!("        long long {} = ", lo));
                         self.generate_expression(start)?;
                         self.output.push_str(";\n");
+                        self.output.push_str(&end_hoists);
                         self.output
-                            .push_str(&format!("        long long {} = ", hi));
-                        self.generate_expression(end)?;
-                        self.output.push_str(";\n");
+                            .push_str(&format!("        long long {} = {};\n", hi, end_src));
 
                         // Record the loop variable so expressions in the body
                         // can be typed (see try_infer_expr_type/Expr::Ident).
@@ -3452,13 +3460,35 @@ impl CodeGenerator {
                         if *inclusive {
                             self.output
                                 .push_str(&format!("        if ({} <= {}) {{\n", lo, hi));
+                            // THE SPAN IS COMPUTED IN UNSIGNED ARITHMETIC,
+                            // OPERAND BY OPERAND. `(unsigned long long)(hi - lo)`
+                            // does the SUBTRACTION first, in `long long`, and
+                            // that overflows for any span wider than the signed
+                            // maximum — UBSan on `-1..=<i64 max>`:
+                            // "9223372036854775807 - -1 cannot be represented in
+                            // type 'long long'". Converting each end first makes
+                            // the subtraction modular, which is exactly the
+                            // count wanted.
+                            //
+                            // AND THE LOOP CANNOT USE `k <= n`. When the span is
+                            // the whole domain (`<i64 min>..=<i64 max>`) `n` is
+                            // `ULLONG_MAX`, `k++` wraps to 0, and `k <= n` is
+                            // true forever. The exit test is therefore "was the
+                            // one just visited the last one", evaluated in the
+                            // increment clause — which is also where `continue`
+                            // lands, so it still advances.
                             self.output.push_str(&format!(
-                                "        for (unsigned long long __pd_k{n} = 0, \
-                                 __pd_n{n} = (unsigned long long)({hi} - {lo}); \
-                                 __pd_k{n} <= __pd_n{n}; __pd_k{n}++) {{\n",
+                                "        unsigned long long __pd_n{n} = \
+                                 (unsigned long long){hi} - (unsigned long long){lo};\n",
                                 n = n,
                                 hi = hi,
                                 lo = lo
+                            ));
+                            self.output.push_str(&format!(
+                                "        for (unsigned long long __pd_k{n} = 0, __pd_done{n} = 0; \
+                                 !__pd_done{n}; __pd_done{n} = (__pd_k{n} == __pd_n{n}), \
+                                 __pd_k{n}++) {{\n",
+                                n = n
                             ));
                             self.output.push_str(&format!(
                                 "        long long {} = {} + (long long)__pd_k{};\n",
@@ -3523,12 +3553,22 @@ impl CodeGenerator {
                         ));
                         let loop_scope = self.open_binding_scope();
                         self.bind_non_array(var, "long long".to_string());
+                        // Same two properties as the header form above: the
+                        // span is subtracted in unsigned arithmetic so it cannot
+                        // overflow, and the exit test asks whether the value
+                        // just visited was the last, so a full-domain range
+                        // terminates instead of wrapping `k` back to 0 forever.
                         self.output.push_str(&format!(
-                            "        for (unsigned long long __pd_k{n} = 0, \
-                             __pd_n{n} = (unsigned long long)(__pd_last{n} - {r}.start); \
-                             __pd_k{n} <= __pd_n{n}; __pd_k{n}++) {{\n",
+                            "        unsigned long long __pd_n{n} = \
+                             (unsigned long long)__pd_last{n} - (unsigned long long){r}.start;\n",
                             n = n,
                             r = r
+                        ));
+                        self.output.push_str(&format!(
+                            "        for (unsigned long long __pd_k{n} = 0, __pd_done{n} = 0; \
+                             !__pd_done{n}; __pd_done{n} = (__pd_k{n} == __pd_n{n}), \
+                             __pd_k{n}++) {{\n",
+                            n = n
                         ));
                         self.output.push_str(&format!(
                             "        long long {} = {}.start + (long long)__pd_k{};\n",

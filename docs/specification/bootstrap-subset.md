@@ -76,7 +76,7 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 
 **Excluded from PBS-1** (verified unsupported downstream):
 - Tuples — `type_to_c` yields `void*` (`src/codegen/mod.rs:2058-2061`), and a tuple in a struct
-  field is a hard error (`src/codegen/mod.rs:2657-2657`). No tuple *expressions* exist at all, so no
+  field is a hard error (`src/codegen/mod.rs:2492-2492`). No tuple *expressions* exist at all, so no
   tuple is constructible.
 - Generic types in struct fields — error at `src/codegen/mod.rs:2477-2477`.
 - Reference types in struct fields — error at `src/codegen/mod.rs:2482-2482`.
@@ -88,7 +88,7 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 - Trait bounds (`<T: Display>`) — a parse error; `parse_generic_params` accepts bare names only.
 - `Option<T>` / `Result<T,E>` as built-ins — they do not exist. Declaring your own does not
   enable `?`: nothing lowers the operator onto the representation enums are compiled to, so it
-  is rejected outright (`src/typeck/mod.rs:4735-4735`). It used to emit a C `struct Result` layout
+  is rejected outright (`src/typeck/mod.rs:4211-4211`). It used to emit a C `struct Result` layout
   that no other part of codegen ever defines.
 
 **Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
@@ -152,9 +152,12 @@ return_stmt   = "return" [ expr ] ";" ;
 Hard constraints, each verified by running `pdc`:
 
 - **`let` requires an initializer.** `let x: i64;` is a parse error (`src/parser/mod.rs:963`).
-- **No `else if`.** After `else` the BOOTSTRAP parser demands `{`: on seeing `else` it emits
-  `" else {"` and resumes at `after + 2`, stepping over the `else` and the brace it assumes
-  follows (`bootstrap/pdc.pd:849-853`). Write a nested `if` inside the `else` block. PBS-1 code
+- **No `else if`.** The BOOTSTRAP parser does not REFUSE it — it ASSUMES a `{` and steps over it.
+  On seeing `else` it emits `" else {"` and resumes at `after + 2`, skipping the `else` and
+  whatever token follows it, whether or not that token is a brace
+  (`bootstrap/pdc.pd:849-853`). There is no check to fail, so `else if` does not produce a
+  diagnostic; it produces WRONG C, with the `if` swallowed. "Demands" was the wrong word for
+  that and is the reason this bullet now says which it is. Write a nested `if` inside the `else` block. PBS-1 code
   must follow this; it is the single most common source of parse errors when porting Rust-shaped
   code. *(This restriction used to be grounded in the Rust parser, which ACCEPTS `else if` since
   N5-06 — the citation described a refusal that no longer exists. PBS-1 is what
@@ -183,8 +186,8 @@ precedence.
 | Construct | Why |
 |---|---|
 | closures | no closure token path, no closure AST node (`try { }` likewise) |
-| `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:4735-4735`). It used to emit C referencing an undefined `struct Result`. |
-| `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:4198-4198`). It used to emit a `poll` member call that is never generated. |
+| `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:4211-4211`). It used to emit C referencing an undefined `struct Result`. |
+| `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:4218-4218`). It used to emit a `poll` member call that is never generated. |
 | the `&self` receiver | emits a `const T*` parameter while the call site passes the value; the C compiler refuses it |
 | empty array literal `[]` | typeck error — element type uninferrable (`src/typeck/mod.rs:3702-3702`) |
 | tuple expressions, `.0` indexing | unparseable |
@@ -221,7 +224,7 @@ These are tracked because PBS-1 code cannot be written safely without them.
 | D6 | call-argument borrows were registered with `Lifetime::Named("fn")` while `exit_scope` released only `Lifetime::Scope(n)`, so every argument stayed borrowed forever; and `String`/array parameters were classified `Move` although codegen passes pointers and never frees | `src/ownership/borrow_checker.rs` `collect_function_sig_with_name` / `check_call_args`; `src/ownership/mod.rs:141-178` | **fixed** — borrows end with the call; `String` is Copy (language-spec §9.1); array params are borrows. The `Lifetime::Scope(n)` half of the description was worse than it read: that variant is constructed nowhere, so `exit_scope` released nothing of any lifetime and `borrows` grew for the whole compilation. It now releases by recorded scope depth |
 | D8 | codegen emitted no C prototypes, so calling a function defined later in the file produced C that gcc rejects — and mutual recursion was inexpressible | `src/codegen/mod.rs` | **fixed** — prototypes emitted for every user function |
 | D4 | `for` over an array *parameter* used `sizeof` on a decayed pointer, so the loop ran once for `i64` and twice for `i32` | `src/codegen/mod.rs` for-in arm | **fixed** — the bound comes from the declared length; a length codegen cannot resolve is a compile error on a parameter, not a wrong bound |
-| D5 | `?` emitted C for a `struct Result` layout codegen never defines, and `.await` emitted a call to a `poll` member no generated struct has. Neither was an error: both programs died inside gcc, against C the user never wrote. The LLVM backend was worse — its catch-all returns the constant `0` for both | `src/codegen/mod.rs:3036-3036`, `src/codegen/mod.rs:3604-3604` (pre-fix); `src/codegen/llvm_text_backend.rs:1393` | **fixed** — both rejected with "is not implemented" plus consequence and a workaround that is compiled and run by `tests/d5_unimplemented_constructs.rs` (`src/typeck/mod.rs:4735-4735`, `src/typeck/mod.rs:4198-4198`; backstop at `src/codegen/mod.rs:4847-4847`, `src/codegen/mod.rs:4859-4859`). Old lowerings deleted, not flagged off. PBS-1 still excludes both |
+| D5 | `?` emitted C for a `struct Result` layout codegen never defines, and `.await` emitted a call to a `poll` member no generated struct has. Neither was an error: both programs died inside gcc, against C the user never wrote. The LLVM backend was worse — its catch-all returns the constant `0` for both | `src/codegen/mod.rs:3036-3036`, `src/codegen/mod.rs:3644-3644` (pre-fix); `src/codegen/llvm_text_backend.rs:1393` | **fixed** — both rejected with "is not implemented" plus consequence and a workaround that is compiled and run by `tests/d5_unimplemented_constructs.rs` (`src/typeck/mod.rs:4211-4211`, `src/typeck/mod.rs:4218-4218`; backstop at `src/codegen/mod.rs:4887-4887`, `src/codegen/mod.rs:4899-4899`). Old lowerings deleted, not flagged off. PBS-1 still excludes both |
 | D7 | a `let` with no type annotation was emitted as `long long` whatever the initializer was, so references, enum values and string copies silently became integers | codegen let-inference | **fixed** — inference now covers literals, calls, struct/enum values, references, deref, field and index expressions; an initializer with no rule is a compile error naming the variable, never a guess |
 | D9 | reference-to-array parameter types (`&[T; N]`, `&mut [T; N]`) were rejected by codegen: "Unsupported type in reference parameter" | `src/codegen/mod.rs` reference-parameter arm | **fixed** — both lower to the decayed pointer C gives an array parameter, `&` const-qualifying the element slot. Writing through a shared or a bare array parameter, or passing one on to a parameter that may write, is a compile error (language-spec §9.2) |
 

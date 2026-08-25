@@ -35,7 +35,7 @@ the two that were read from the three that were only moved.
 
 ## Open: citations known to point at the wrong code
 
-One sentence in `tests/m3_imported_calls.rs:1222-1224` lists five "consumers that
+One sentence in `tests/m3_imported_calls.rs:1221-1223` lists five "consumers that
 re-derive visibility from `ast.items`". Three of the five name code that does no
 such thing. Verified 2026-08-23 by reading each line:
 

@@ -14,6 +14,10 @@ An inclusive range whose start exceeds its end visits none:
 5
 `break` still leaves one:
 3
+Both bounds are read in SOURCE order, even when the END hoists:
+FIRST
+SECOND
+2
 A range VALUE, both forms, and nested:
 9
 14

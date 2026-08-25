@@ -1,0 +1,21 @@
+// NEGATIVE TEST — a variant of a GENERIC enum cannot be constructed (N5-04,
+// N5-17's neighbour).
+//
+// PRE-EXISTING, and older than the branch that found it: code generation skips
+// generic enums at every emission site — no typedef, no tag constants, no
+// `_new` constructor — while the type checker typed the constructor happily.
+// Measured before this refusal: `Holder::Full(7)` reached the C compiler as a
+// call to `Holder_Full__new` and a `match` on it named `__Holder__Empty`,
+// neither of which anything emits. gcc said "use of undeclared identifier
+// '__Holder__Empty'" about C this compiler's own front end had approved.
+enum Holder<T> {
+    Empty,
+    Full(T),
+}
+fn main() {
+    let h: Holder<i64> = Holder::Full(7);
+    match h {
+        Holder::Full(v) => { print_int(v); }
+        Holder::Empty => { print_int(0); }
+    }
+}

@@ -394,13 +394,17 @@ fn main() {
 /// the two that COLLECT (`src/codegen/mod.rs:1727-1731`,
 /// `src/codegen/mod.rs:1763-1767`) and the two that EMIT
 /// (`src/codegen/mod.rs:1827-1832`, `src/codegen/mod.rs:1857-1861`) — and
-/// generic enum construction
-/// infers only the type parameters a variant actually mentions — so
-/// `Result::Err(e)` yields `Result<(), Int>` and never matches a declared
-/// `Result<i64, i64>`. A `match`-based replacement written against a generic
-/// `Result<T, E>` therefore does not compile, which is exactly why the help
-/// tells the reader to declare a concrete enum instead of leaving them to find
-/// this out.
+/// so a program that constructs one would reach the C compiler with no type,
+/// no tag and no constructor to link against.
+///
+/// The type checker now REFUSES the construction outright rather than letting
+/// it through to a link error, so the failure this test pins is that refusal —
+/// not the `Type mismatch` the inference used to produce (it inferred only the
+/// type parameters a variant mentions, so `Result::Err(e)` yielded
+/// `Result<(), Int>` and never matched the declared `Result<i64, i64>`). Either
+/// way the conclusion the help text depends on is unchanged: a `match`-based
+/// replacement written against a generic `Result<T, E>` does not compile, which
+/// is why the help tells the reader to declare a concrete enum.
 ///
 /// If this test ever starts failing because the program now *compiles*, that is
 /// good news and the help text should be widened to match.
@@ -428,8 +432,12 @@ fn main() {
 "#;
     let err = compile(source, "q_generic", false)
         .expect_err("if generic enums now work, widen the `?` help text");
-    assert!(err.contains("Type mismatch"), "{}", err);
-    assert!(err.contains("Result<"), "{}", err);
+    assert!(
+        err.contains("constructs a variant of a GENERIC enum, and generic enums are not implemented"),
+        "{}",
+        err
+    );
+    assert!(err.contains("Result::Err"), "{}", err);
 }
 
 /// `= help: … If a function is declared `-> Future<T>`, change it to `-> T``

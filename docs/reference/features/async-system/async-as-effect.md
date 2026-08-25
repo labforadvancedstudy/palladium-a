@@ -266,7 +266,7 @@ citations in `language-spec.md` before this change were taken from the pre-clean
 **1. The surface syntax took the Rust-shaped path this design rejects.**
 `async` and `await` are keywords in the lexer (`src/lexer/token.rs:313-317`), the grammar's
 `function` production carries an optional `async` (`docs/specification/grammar.ebnf:134`), `.await`
-is a postfix operator (`docs/specification/grammar.ebnf:278`), and the keyword list names both
+is a postfix operator (`docs/specification/grammar.ebnf:284`), and the keyword list names both
 (`docs/specification/grammar.ebnf:89`). The parser sets `Function.is_async` from that keyword
 (`src/parser/mod.rs:961`, `src/parser/mod.rs:972`). The implementation therefore offers exactly the two things this
 document says the language does not have: an `async` marker and an await operator.
@@ -301,9 +301,9 @@ no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 
 **7. `.await` is refused, and the lowering that used to be here is deleted.**
 Codegen for an await expression returns `await_unimplemented` at the construct's own span
-(`src/codegen/mod.rs:4855-4860`), and the type checker refuses it before that
-(`src/typeck/mod.rs:4198-4198`). `?` is the same shape: refused in codegen
-(`src/codegen/mod.rs:4843-4847`) and in the type checker (`src/typeck/mod.rs:4735-4735`).
+(`src/codegen/mod.rs:4895-4900`), and the type checker refuses it before that
+(`src/typeck/mod.rs:4218-4218`). `?` is the same shape: refused in codegen
+(`src/codegen/mod.rs:4883-4887`) and in the type checker (`src/typeck/mod.rs:4211-4211`).
 
 *Historical, and the reason those refusals exist — this paragraph described it in the present
 tense until D5 was fixed.* Codegen used to emit `while (!<tmp>.poll(&<tmp>)) { }` and then read
@@ -313,7 +313,7 @@ that IS generated is the free function `<name>_poll`, which that call never name
 an error at any earlier stage — it was silent breakage discovered by the C compiler, which is the
 failure mode `language-spec.md` §6.5 recorded. Both lowerings are gone: searching
 `src/codegen/mod.rs` for `poll(&` and `struct Result` now matches only the two comments that
-explain why the arms refuse (`src/codegen/mod.rs:4845-4845`, `src/codegen/mod.rs:4857-4857`).
+explain why the arms refuse (`src/codegen/mod.rs:6038-6038`, `src/codegen/mod.rs:6050-6050`).
 
 Direction of travel: making `.await` a hard compile error is *consistent* with this document,
 because `.await` is not part of the language. The end state is that neither `async` nor `await` is

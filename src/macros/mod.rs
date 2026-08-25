@@ -411,6 +411,17 @@ impl MacroExpander {
             Stmt::Unsafe { body, .. } => {
                 *body = self.expand_stmts(body)?;
             }
+            // N5-07's two statements. Without these they fell to the catch-all
+            // below, so a macro in `loop { … }` or in `break <expr>;` survived
+            // expansion and reached the type checker, which refuses a macro by
+            // name. Measured: `let e = loop { break forty_two!(); };` was
+            // "Unexpected macro invocation in type checking".
+            Stmt::Loop { body, .. } => {
+                *body = self.expand_stmts(body)?;
+            }
+            Stmt::Break {
+                value: Some(expr), ..
+            } => self.expand_expr(expr)?,
             _ => {}
         }
 

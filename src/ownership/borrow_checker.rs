@@ -954,19 +954,49 @@ impl BorrowChecker {
                 self.check_expr(object)?;
             }
 
-            Expr::EnumConstructor { data, .. } => match data {
-                Some(crate::ast::EnumConstructorData::Tuple(exprs)) => {
-                    for expr in exprs {
-                        self.check_expr(expr)?;
+            Expr::EnumConstructor {
+                enum_name,
+                variant,
+                data,
+                span,
+            } => {
+                // `Type::method(receiver, …)` WEARS THIS NODE, because the
+                // parser builds every `A::b(...)` as an enum constructor and has
+                // no types to tell the two apart. It therefore never reached
+                // `check_call_args`, and the ownership rules of a method called
+                // this way were not applied AT ALL — measured: `S::take(s);
+                // S::take(s);` was accepted with `s` annotated or not, while
+                // `s.take()` twice and the free-function spelling were both
+                // refused.
+                //
+                // Keyed on a POSITIVE hit in the signature table, which is the
+                // same rule code generation uses to decide the same question.
+                let qualified = format!("{}::{}", enum_name, variant);
+                if self.functions.contains_key(&qualified) {
+                    if let Some(crate::ast::EnumConstructorData::Tuple(exprs)) = data {
+                        let call_lifetime = self.context.new_lifetime();
+                        return self.check_call_args(
+                            &Expr::Ident(qualified),
+                            exprs,
+                            &call_lifetime,
+                            *span,
+                        );
                     }
                 }
-                Some(crate::ast::EnumConstructorData::Struct(fields)) => {
-                    for (_, expr) in fields {
-                        self.check_expr(expr)?;
+                match data {
+                    Some(crate::ast::EnumConstructorData::Tuple(exprs)) => {
+                        for expr in exprs {
+                            self.check_expr(expr)?;
+                        }
                     }
+                    Some(crate::ast::EnumConstructorData::Struct(fields)) => {
+                        for (_, expr) in fields {
+                            self.check_expr(expr)?;
+                        }
+                    }
+                    None => {}
                 }
-                None => {}
-            },
+            }
 
             Expr::Range { start, end, .. } => {
                 self.check_expr(start)?;
@@ -1262,21 +1292,49 @@ impl BorrowChecker {
         call_lifetime: &Lifetime,
         span: crate::errors::Span,
     ) -> Result<()> {
-        // Only a direct call by name has a signature to consult.
+        // A METHOD CALL HAS A SIGNATURE TOO, and this used to consult one only
+        // for a bare identifier. `impl` methods are registered under
+        // `Type::method` in `check_program`'s first pass, so the signature was
+        // there the whole time and nothing looked it up: `s.take(); s.take();`
+        // was ACCEPTED where the identical free-function spelling was refused
+        // as a use after move.
+        //
+        // The receiver becomes ARGUMENT 0, which is what makes `self` an
+        // ordinary by-value parameter here — the same rewrite the type checker
+        // and code generation both perform.
+        let mut receiver_first: Vec<&Expr> = Vec::with_capacity(args.len() + 1);
         let sig_opt = match func {
-            Expr::Ident(func_name) => self.functions.get(func_name).cloned(),
-            _ => None,
+            Expr::Ident(func_name) => {
+                receiver_first.extend(args.iter());
+                self.functions.get(func_name).cloned()
+            }
+            Expr::FieldAccess { object, field, .. } => {
+                let owner = self.method_owner_name(object);
+                receiver_first.push(object);
+                receiver_first.extend(args.iter());
+                owner.and_then(|owner| {
+                    self.functions
+                        .get(&format!("{}::{}", owner, field))
+                        .cloned()
+                })
+            }
+            _ => {
+                receiver_first.extend(args.iter());
+                None
+            }
         };
 
         let Some(sig) = sig_opt else {
             // Unknown callee: still check the arguments themselves.
-            for arg in args {
+            for arg in receiver_first {
                 self.check_expr(arg)?;
             }
             return Ok(());
         };
 
+        let args = &receiver_first;
         for (i, arg) in args.iter().enumerate() {
+            let arg: &Expr = arg;
             self.check_expr(arg)?;
 
             // Handle ownership based on parameter type
@@ -1447,6 +1505,19 @@ impl BorrowChecker {
     }
 
     /// Get the type of an expression (simplified version)
+    /// The type name a method call on `object` dispatches on.
+    ///
+    /// Only NAMED types carry an `impl`, so anything else has no method to look
+    /// up and this says so rather than producing a qualified name that cannot
+    /// resolve.
+    fn method_owner_name(&self, object: &Expr) -> Option<String> {
+        match self.expr_type(object) {
+            Type::Custom(name) => Some(name),
+            Type::Generic { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
     fn expr_type(&self, expr: &Expr) -> Type {
         match expr {
             Expr::Integer(_) => Type::I64,
@@ -1456,8 +1527,18 @@ impl BorrowChecker {
             Expr::Char(_) => Type::I64,
             Expr::String(_) => Type::String,
             Expr::Bool(_) => Type::Bool,
-            Expr::Ident(_) => Type::I64, // TODO: Proper type lookup
-            _ => Type::I64,              // Default for now
+            // A BINDING'S TYPE COMES FROM `local_types`, which is the map this
+            // very function fills. It used to answer `I64` for every name,
+            // which made the map it populates a map of lies for anything that
+            // was not an integer.
+            Expr::Ident(name) => self.local_types.get(name).cloned().unwrap_or(Type::I64),
+            // The two constructions that NAME their own type. Not a type
+            // inferencer — there is one of those in `src/typeck`, and a second
+            // would be the drift this repository has closed twice. These are the
+            // cases where the type is written in the expression itself.
+            Expr::StructLiteral { name, .. } => Type::Custom(name.clone()),
+            Expr::EnumConstructor { enum_name, .. } => Type::Custom(enum_name.clone()),
+            _ => Type::I64, // Default for now
         }
     }
 }

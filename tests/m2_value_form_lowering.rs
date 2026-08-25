@@ -38,21 +38,24 @@ fn err_of(source: &str) -> String {
 // argument is not a test. This is the test.
 
 #[test]
-fn a_generic_enum_constructor_is_not_emitted_as_a_call() {
-    let c = c_of(
+fn a_generic_enum_constructor_is_refused_rather_than_emitted() {
+    // THIS TEST USED TO ASSERT THE WRONG THING, and the way it was wrong is
+    // worth keeping: it checked that a generic-enum constructor was emitted as
+    // a CONSTRUCTOR rather than as a path call, and treated that as the right
+    // answer. It was not — code generation skips generic enums at every
+    // emission site, so the "right" constructor was a call to
+    // `Holder_Full__new`, which nothing emits, and a `match` on the result
+    // named `__Holder__Empty`, which nothing defines. The C compiler refused
+    // C this compiler had approved. Neither emission was correct; the
+    // construction is.
+    let e = err_of(
         "enum Holder<T> { Empty, Full(T) }\n\
          fn main() { let h: Holder<i64> = Holder::Full(7); }",
     );
     assert!(
-        !c.contains("__pd_Holder_Full"),
-        "a generic-enum constructor was mangled as a path CALL — the two enum \
-         predicates have come apart:\n{}",
-        c
-    );
-    assert!(
-        c.contains("Holder") && c.contains("Full"),
-        "the constructor should still be emitted as a constructor:\n{}",
-        c
+        e.contains("generic enums are not implemented"),
+        "constructing a generic-enum variant should be refused by name: {}",
+        e
     );
 }
 
@@ -109,43 +112,86 @@ fn a_nested_generic_still_closes_with_two_angles() {
 // Two gaps, recorded as gaps. Neither is fixed here; both are named so that
 // closing one has a place to turn green.
 
+/// A `self`-by-value method MOVES its receiver, in every spelling.
+///
+/// This was a documenting test asserting the opposite — that the double move
+/// was ACCEPTED — because the borrow checker consulted a signature only for a
+/// bare-identifier callee. `impl` methods were registered under `Type::method`
+/// the whole time and nothing looked them up, and the path spelling never
+/// reached the call check at all, arriving as an `EnumConstructor`. Both are
+/// resolved now, so the test asserts the refusal instead of the gap.
+///
+/// The free-function spelling is the control: it was always refused, and a
+/// method call must not be a way around it.
 #[test]
-fn documents_that_the_borrow_checker_does_not_see_method_call_signatures() {
-    // OWED. `check_expr`'s call arm consults the signature table only when the
-    // callee is a bare identifier, so a method call moves nothing: calling a
-    // `self`-by-value method twice on the same binding is accepted, where the
-    // free-function spelling of the same call would be refused as a use after
-    // move.
-    let source = "struct S { v: i64 }\n\
-                  impl S { fn take(self) -> i64 { self.v } }\n\
-                  fn main() { let s = S { v: 1 }; print_int(s.take()); print_int(s.take()); }";
-    let accepted = compile_source(source).is_ok();
+fn a_by_value_receiver_is_moved_by_the_dot_form() {
+    let e = err_of(
+        "struct S { v: i64 }\n\
+         impl S { fn take(self) -> i64 { self.v } }\n\
+         fn main() { let s = S { v: 1 }; print_int(s.take()); print_int(s.take()); }",
+    );
     assert!(
-        accepted,
-        "the double-move through method syntax is now refused — the gap this test \
-         documents has closed, so delete the test and pay the row"
+        e.contains("moved") && e.contains('s'),
+        "the second `s.take()` should be a use after move: {}",
+        e
     );
 }
 
 #[test]
-fn documents_that_an_enum_owned_method_is_unreachable_by_its_path_form() {
-    // OWED. `path_names_an_enum` short-circuits before the function lookup, so
-    // `Color::darker(c)` is read as a constructor for a variant named `darker`
-    // even when an `impl Color` declares that method. The DOT form works.
-    let source = "enum Color { Red, Blue }\n\
-                  impl Color { fn code(self) -> i64 { 1 } }\n\
-                  fn main() { let c = Color::Red; print_int(Color::code(c)); }";
-    let msg = match compile_source(source) {
-        Ok(_) => panic!(
-            "`Color::code(c)` now compiles — the gap this test documents has closed, \
-             so delete the test and pay the row"
-        ),
-        Err(e) => e.to_string(),
-    };
+fn a_by_value_receiver_is_moved_by_the_path_form_too() {
+    let e = err_of(
+        "struct S { v: i64 }\n\
+         impl S { fn take(self) -> i64 { self.v } }\n\
+         fn main() { let s = S { v: 1 }; print_int(S::take(s)); print_int(S::take(s)); }",
+    );
     assert!(
-        msg.contains("code") || msg.contains("variant") || msg.contains("Unknown"),
-        "the refusal should still be about the variant lookup: {}",
-        msg
+        e.contains("moved"),
+        "the path spelling must move the receiver too: {}",
+        e
+    );
+}
+
+#[test]
+fn one_call_on_a_by_value_receiver_is_still_fine() {
+    // The other direction, so the refusal above is not simply "methods are
+    // refused".
+    let c = c_of(
+        "struct S { v: i64 }\n\
+         impl S { fn take(self) -> i64 { self.v } }\n\
+         fn main() { let s = S { v: 1 }; print_int(s.take()); }",
+    );
+    assert!(
+        c.contains("__pd_S_take"),
+        "a single call should compile:\n{}",
+        c
+    );
+}
+
+/// AN ENUM-OWNED METHOD IS UNREACHABLE BY ITS PATH FORM.
+///
+/// `path_names_an_enum` short-circuits before the function lookup, so
+/// `Color::code(c)` is read as a constructor for a variant named `code` even
+/// when an `impl Color` declares that method. The DOT form works.
+///
+/// DECLARED AS A FAILURE, not pinned as a success. It was a green test that
+/// REQUIRED the defect — `panic!` if the program ever compiled — which inverts
+/// the moment the compiler improves: the day this is fixed, the suite goes red
+/// for the fix. An `#[ignore]`d XFAIL with a row in
+/// `tests/rust-debt-manifest.txt` says the same thing in the direction the
+/// repository can act on, and `scripts/test-xfail.py` checks it is still
+/// failing for the reason named.
+#[test]
+#[ignore = "XFAIL: an enum-owned method is unreachable through `Type::method(x)` — `path_names_an_enum` short-circuits before the function lookup, so the path is read as a constructor for a variant that does not exist. The DOT form works (owned by M4, 'Traits with real dispatch')"]
+fn an_enum_owned_method_is_reachable_by_its_path_form() {
+    let c = c_of(
+        "enum Color { Red, Blue }\n\
+         impl Color { fn code(self) -> i64 { 1 } }\n\
+         fn main() { let c = Color::Red; print_int(Color::code(c)); }",
+    );
+    assert!(
+        c.contains("__pd_Color_code"),
+        "the path form should reach the method:\n{}",
+        c
     );
 }
 

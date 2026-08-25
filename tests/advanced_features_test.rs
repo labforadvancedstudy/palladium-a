@@ -166,7 +166,7 @@ fn test_trait_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: `self` as an assignment target — docs/specification/grammar.ebnf:210 `place = identifier | place '[' … | place '.' … | '*' identifier` and `self` is a keyword (docs/specification/grammar.ebnf:85-89), not an identifier, so `self.data[0] = item` does not parse (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: `self` as an assignment target — docs/specification/grammar.ebnf:235 `place = identifier | place '[' … | place '.' … | '*' identifier` and `self` is a keyword (docs/specification/grammar.ebnf:85-89), not an identifier, so `self.data[0] = item` does not parse (owned by M2, surface syntax)"]
 fn test_generic_collections() {
     let source = r#"
     struct Vec<T> {
@@ -252,7 +252,7 @@ fn test_pattern_matching_advanced() {
 }
 
 #[test]
-#[ignore = "XFAIL: closures — grammar.ebnf:302 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: closures — grammar.ebnf:308 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closures() {
     let source = r#"
     fn main() {
@@ -306,7 +306,7 @@ fn test_lifetime_annotations() {
 }
 
 #[test]
-#[ignore = "XFAIL: RAW POINTER TYPES. `as` casts are implemented (N5-15, grammar.ebnf:269 `cast = unary { \"as\" type }`), so the old half of this reason is retired; what stops this fixture is `*mut int`, for which there is no type (owned by M4, 'A real reference type')"]
+#[ignore = "XFAIL: RAW POINTER TYPES. `as` casts are implemented (N5-15, grammar.ebnf:275 `cast = unary { \"as\" type }`), so the old half of this reason is retired; what stops this fixture is `*mut int`, for which there is no type (owned by M4, 'A real reference type')"]
 fn test_unsafe_operations() {
     let source = r#"
     fn main() {
@@ -495,7 +495,7 @@ fn test_iterator_protocol() {
 }
 
 #[test]
-#[ignore = "XFAIL: constructing a variant of a multi-parameter generic enum does not infer the other type argument — `Result::Err(\"…\")` in a function returning `Result<int, String>` is checked as `Result<(), String>`, so this fixture dies at that type mismatch before it reaches the `?` operator it was written for (grammar.ebnf:287-287; `?` is separately refused outright with 'the `?` operator is not implemented' since 439b241). Both are owed; this is the one that fires (owned by M4, exit criterion: `?` works against the real Result)"]
+#[ignore = "XFAIL: constructing a variant of a multi-parameter generic enum does not infer the other type argument — `Result::Err(\"…\")` in a function returning `Result<int, String>` is checked as `Result<(), String>`, so this fixture dies at that type mismatch before it reaches the `?` operator it was written for (grammar.ebnf:293-293; `?` is separately refused outright with 'the `?` operator is not implemented' since 439b241). Both are owed; this is the one that fires (owned by M4, exit criterion: `?` works against the real Result)"]
 fn test_error_handling_sugar() {
     let source = r#"
     enum Result<T, E> {

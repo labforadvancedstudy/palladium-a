@@ -1,0 +1,44 @@
+// A macro invocation inside a VALUE position expands, compiles and runs
+// (N5-03/N5-05, and the macro expander's walk over them).
+//
+// The expander's expression walker had no arm for `Expr::If`/`Block`/`Loop`/
+// `Match`, so an invocation inside one fell through its catch-all and was left
+// in the tree, reaching a code generator documented never to see a macro. The
+// negative half of that is pinned by unit tests; this is the positive half —
+// the value the program actually prints.
+//
+// THE MACROS TAKE NO PARAMETERS ON PURPOSE. A macro parameter is not
+// substituted into the body today (`macro double!(x) { x + x }` used with
+// `double!(21)` is refused with "Undefined variable or function: 'x'"), which
+// is the lossy token-stream conversion A4.6 records. A fixture that used one
+// would be testing that gap rather than this one.
+
+macro forty_two!() {
+    42
+}
+
+macro one_hundred!() {
+    100
+}
+
+fn main() {
+    print("A macro in each branch of a value if:");
+    let a = if 1 < 2 { forty_two!() } else { one_hundred!() };
+    print_int(a);
+
+    print("...and the other branch, so both are really expanded:");
+    let b = if 1 > 2 { forty_two!() } else { one_hundred!() };
+    print_int(b);
+
+    print("A macro as the tail of a value block:");
+    let c = { forty_two!() };
+    print_int(c);
+
+    print("A macro inside a value block inside a value if:");
+    let d = if 2 > 1 { { one_hundred!() } } else { { 0 } };
+    print_int(d);
+
+    print("A macro in a value loop's break, and in a value match arm:");
+    let e = loop { break forty_two!(); };
+    print_int(e);
+}

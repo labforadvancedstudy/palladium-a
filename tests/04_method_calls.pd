@@ -62,34 +62,60 @@ impl Counter {
     }
 }
 
-fn main() {
-    let r = Rect { w: 3, h: 4 };
+// EVERY RECEIVER HERE IS TAKEN BY VALUE, so every call MOVES it. That is not
+// incidental to the fixture: `&self` is unimplemented, so `self` is the only
+// receiver there is, and since the borrow checker learned to read method-call
+// signatures a binding cannot be handed to two of them. Each call therefore
+// gets its own binding — which is what a reader porting Rust-shaped code has to
+// do too, and what this fixture would have hidden if it had been written before
+// the ownership rules reached method calls.
 
+fn main() {
     print("Dot syntax:");
-    print_int(r.area());
-    print_int(r.scaled_area(10));
-    print_int(r.combine(2, 5));
+    let r1 = Rect { w: 3, h: 4 };
+    print_int(r1.area());
+    let r2 = Rect { w: 3, h: 4 };
+    print_int(r2.scaled_area(10));
+    let r3 = Rect { w: 3, h: 4 };
+    print_int(r3.combine(2, 5));
 
     print("The static path form, which the spec recommends and which also did not work:");
-    print_int(Rect::area(r));
-    print_int(Rect::scaled_area(r, 10));
+    let r4 = Rect { w: 3, h: 4 };
+    print_int(Rect::area(r4));
+    let r5 = Rect { w: 3, h: 4 };
+    print_int(Rect::scaled_area(r5, 10));
 
     print("An associated function with no receiver:");
     let made = Rect::new(6, 7);
     print_int(made.area());
 
+    // A CHAIN NEEDS A BINDING PER LINK for the same reason. `r.taller().area()`
+    // moves `r` into `taller` and then wants to call `area` on the RESULT —
+    // which is a temporary the ownership model has no place for, so the second
+    // call is read as a second use of `r`. Naming each intermediate is the
+    // honest spelling until receivers can be borrowed.
     print("A method that calls another method on its own receiver:");
-    print_int(r.doubled_area());
+    let r6 = Rect { w: 3, h: 4 };
+    print_int(r6.doubled_area());
 
     print("Chained — the receiver of the second call is the first call's value:");
-    print_int(r.taller().area());
-    print_int(r.taller().taller().area());
+    let r7 = Rect { w: 3, h: 4 };
+    let t1 = r7.taller();
+    print_int(t1.area());
+    let r8 = Rect { w: 3, h: 4 };
+    let t2 = r8.taller();
+    let t3 = t2.taller();
+    print_int(t3.area());
 
     print("A method call as an argument to another call:");
-    print_int(add(r.area(), made.area()));
+    let r9 = Rect { w: 3, h: 4 };
+    let m2 = Rect::new(6, 7);
+    print_int(add(r9.area(), m2.area()));
 
     print("A method call inside an expression:");
-    print_int(r.area() + made.area() * 2);
+    let r10 = Rect { w: 3, h: 4 };
+    let m3 = Rect::new(6, 7);
+    print_int(r10.area() + m3.area() * 2);
 
     print("Two different types, each with a method of its own:");
     let c = Counter { n: 99 };
@@ -99,8 +125,14 @@ fn main() {
     // grammar.ebnf's `postfix = primary { ... '.' identifier ... }` and
     // `primary = ... | '(' expression ')'`, so a parenthesised expression is a
     // legal receiver — including the ones N5-03 and N5-05 made expressions.
-    print_int((if r.area() > 10 { r } else { made }).area());
-    print_int(({ print("inside the receiver block"); made }).area());
+    let r11 = Rect { w: 3, h: 4 };
+    let m4 = Rect::new(6, 7);
+    let r12 = Rect { w: 3, h: 4 };
+    let big = r12.area() > 10;
+    let picked = if big { r11 } else { m4 };
+    print_int(picked.area());
+    let m5 = Rect::new(6, 7);
+    print_int(({ print("inside the receiver block"); m5 }).area());
     // NOT proved here, and the reason is worth writing down: a block whose
     // trailing expression names a binding the block itself makes —
     // `({ let t = Rect::new(2, 8); t }).area()` — is refused, because code
@@ -109,7 +141,9 @@ fn main() {
     // carries for N5-05.
 
     print("A method call in the receiver position of another:");
-    print_int(r.taller().scaled_area(3));
+    let r13 = Rect { w: 3, h: 4 };
+    let t4 = r13.taller();
+    print_int(t4.scaled_area(3));
 }
 
 fn add(a: i64, b: i64) -> i64 {

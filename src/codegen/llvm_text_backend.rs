@@ -1667,7 +1667,7 @@ fn unimplemented_question(span: Span) -> CompileError {
 ///
 /// Reaching this is a phase-ordering fault rather than a missing feature:
 /// expansion runs in `src/macros/mod.rs` before code generation, and the type
-/// checker already refuses a stray invocation at `src/typeck/mod.rs:4194-4196`, so
+/// checker already refuses a stray invocation at `src/typeck/mod.rs:4214-4216`, so
 /// no source program measured here gets this far. It is spelled out anyway
 /// because the wildcard that used to cover it is gone, and because "currently
 /// unreachable" is not "safe to fabricate".
@@ -2267,20 +2267,23 @@ fn main() {
         )
         .unwrap();
 
-        // The C backend accepts this and then emits C that gcc rejects with
-        // `variable has incomplete type 'struct Opt'`. Front-end success is
-        // exactly why the caveat has to be in the help text.
-        let c_file = Driver::new()
+        // THE CAVEAT IS STILL REAL, AND THE REASON MOVED — which is the whole
+        // point of a test over a help text. This used to assert that the FRONT
+        // END accepted the program and gcc then refused the C ("variable has
+        // incomplete type 'struct Opt'"): front-end success was why the help had
+        // to carry a caveat. That was a defect, not a feature — the front end
+        // must never hand the backend C it cannot build — and it is refused by
+        // name now. The help text is still right to carry the caveat, because a
+        // generic enum still does not work on the C backend; it simply fails
+        // EARLIER and with a sentence a reader can act on.
+        let err = Driver::new()
             .compile_file(&src)
-            .expect("the front end accepts generic enums");
-        let exe = dir.path().join("wa_enum_generic");
-        let out = link_command(&c_file, &exe, OptLevel::Default)
-            .expect("link_command")
-            .output()
-            .expect("gcc");
+            .expect_err("a generic enum must be refused, not handed to gcc");
+        let msg = err.to_string();
         assert!(
-            !out.status.success(),
-            "generic enums now build on the C backend — widen the help text"
+            msg.contains("generic enums are not implemented"),
+            "the refusal should name generic enums: {}",
+            msg
         );
     }
 
