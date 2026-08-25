@@ -85,6 +85,8 @@ tests/04_range_endpoints.pd	run	-	expected	-	-
 tests/04_ranges.pd	run	-	expected	-	-
 tests/05_borrowing_references.pd	run	-	expected	-	-
 tests/05_ownership_basic.pd	run	-	expected	-	-
+tests/06_guards.pd	run	-	expected	-	-
+tests/06_literal_patterns.pd	run	-	expected	-	-
 tests/06_match_expression.pd	run	-	expected	-	-
 tests/06_pattern_matching.pd	run	-	expected	-	-
 tests/07_traits_basic.pd	vacuous	-	-	M4	claims: traits. Declares no trait and no impl; body is only print calls. Trait conformance is ZERO.
@@ -162,6 +164,8 @@ tests/reject/const_generic_param.pd	reject	compile	Type mismatch: expected [Int;
 tests/reject/question_mark_operator.pd	reject	compile	the `?` operator is not implemented	-	D5's fix: `?` used to typecheck and then emit C referring to a struct Result layout codegen never defines, so the failure surfaced in gcc; it is refused by name before any C exists
 tests/reject/macro_invocation_bracket.pd	reject	compile	Expected '(' (Expected '(' after macro name!), but found '['	-	the macro parser accepts one call shape: vec![...] does not parse, so the registered vec! builtin is reachable only as vec!(...)
 tests/reject/value_block_without_tail.pd	reject	compile	expected this block to end in an expression, so it has a value	-	N5-05. `()` is not an answer: nothing in this language holds one, and accepting it would ask codegen for the C type of a variable that stores nothing
+tests/reject/bool_match_missing_false.pd	reject	compile	Non-exhaustive match: missing patterns false	-	N6-02. `true` and `false` are the whole domain of a `bool`, so this is the ONE scrutinee type literal arms can exhaust -- and the one whose gap the checker can therefore see. The value form is why it matters: no arm taken means the temporary is never written
+tests/reject/literal_pattern_type_mismatch.pd	reject	compile	expected a pattern of type Int, which is what this `match` is on	-	N6-02. A pattern is an equality test, and C would compare a `long long` against a string pointer without complaint, so the disagreement is refused where the types are still known
 tests/reject/value_if_branch_types.pd	reject	compile	expected both branches of this `if` to have type Int	-	N5-03. The value lives in ONE hoisted C temporary, so two types have no declaration to share
 tests/reject/value_if_without_else.pd	reject	compile	expected an `if` used as a value to have an `else` branch	-	N5-03. Not a parse error -- the same tokens are a statement one line up -- so the refusal is the type checker's, where value position is a fact rather than a guess
 tests/reject/value_loop_bare_break.pd	reject	compile	expected every `break` out of a `loop` used as a value to carry one	-	N5-07. Measured before this refusal existed: the mixed shape emitted an uninitialised temporary, a plain `break` on one path, and then read it

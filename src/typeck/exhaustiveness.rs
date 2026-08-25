@@ -18,6 +18,13 @@ pub enum PatternKind {
         variant: String,
         arity: usize,
     },
+    /// Literal pattern (N6-02) — matches one value of its type.
+    ///
+    /// CONTRIBUTES TO COMPLETENESS OVER `bool` AND NOTHING ELSE. `true` and
+    /// `false` are the whole domain of a `bool`; no finite set of integer or
+    /// string literals is the whole domain of an `i64` or a `String`, so over
+    /// those a literal arm covers a point and leaves the rest to a catch-all.
+    Literal(crate::ast::PatternLiteral),
 }
 
 /// Information about enum variants for exhaustiveness checking
@@ -66,6 +73,43 @@ impl ExhaustivenessChecker {
         }
     }
 
+    /// Check that a `bool` scrutinee is covered.
+    ///
+    /// THE ONLY TYPE A LITERAL ARM CAN EXHAUST. `true` and `false` are two
+    /// values and there is no third, so a match carrying both is complete with
+    /// no catch-all — which is what makes `match flag { true => …, false => … }`
+    /// a legal program rather than one that needs a `_` arm nobody can reach.
+    ///
+    /// Every other scrutinee type keeps the pre-existing position (unchecked
+    /// unless it is an enum): N6-10, "a non-exhaustive match is a compile error
+    /// for EVERY scrutinee type", is a separate owed row, and enforcing it here
+    /// for integers would refuse programs this compiler accepts today without
+    /// the trap N6-11 requires to make that refusal honest.
+    pub fn check_bool_match(&self, patterns: &[Pattern], span: Span) -> Result<()> {
+        let mut has_true = false;
+        let mut has_false = false;
+        for pattern in patterns {
+            match pattern {
+                Pattern::Wildcard | Pattern::Ident(_) => return Ok(()),
+                Pattern::Literal(crate::ast::PatternLiteral::Bool(true)) => has_true = true,
+                Pattern::Literal(crate::ast::PatternLiteral::Bool(false)) => has_false = true,
+                _ => {}
+            }
+        }
+        if has_true && has_false {
+            return Ok(());
+        }
+        let missing = match (has_true, has_false) {
+            (true, false) => vec!["false".to_string()],
+            (false, true) => vec!["true".to_string()],
+            _ => vec!["true".to_string(), "false".to_string()],
+        };
+        Err(CompileError::NonExhaustiveMatch {
+            missing_patterns: missing,
+            span: Some(span),
+        })
+    }
+
     /// Check if patterns are exhaustive for an enum
     fn check_enum_exhaustiveness(
         &self,
@@ -87,6 +131,10 @@ impl ExhaustivenessChecker {
                     }
                     has_wildcard = true;
                 }
+                // A literal is not a variant, and `check_pattern` in the type
+                // checker has already refused it against an enum scrutinee.
+                // Counted as covering nothing rather than assumed unreachable.
+                Pattern::Literal(_) => {}
                 Pattern::EnumPattern {
                     enum_name, variant, ..
                 } => {
@@ -157,6 +205,7 @@ impl ExhaustivenessChecker {
                     }
                     seen_wildcard = true;
                 }
+                Pattern::Literal(_) => {}
                 Pattern::EnumPattern {
                     enum_name, variant, ..
                 } => {
@@ -183,6 +232,7 @@ impl Pattern {
         match self {
             Pattern::Wildcard => PatternKind::Wildcard,
             Pattern::Ident(name) => PatternKind::Binding(name.clone()),
+            Pattern::Literal(literal) => PatternKind::Literal(literal.clone()),
             Pattern::EnumPattern {
                 enum_name,
                 variant,

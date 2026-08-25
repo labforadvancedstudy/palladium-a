@@ -1,0 +1,18 @@
+Integer literal patterns:
+100
+200
+300
+900
+As a statement, not a value:
+two
+String literal patterns:
+2
+A string pattern compares CONTENT, not the pointer:
+2
+Bool literal patterns, exhaustive with no wildcard:
+1
+0
+A binding arm still catches what the literals miss:
+77
+Literal arms inside a value block inside a value match:
+400

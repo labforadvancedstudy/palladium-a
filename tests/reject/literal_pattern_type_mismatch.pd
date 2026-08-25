@@ -1,0 +1,16 @@
+// NEGATIVE TEST — a literal pattern must have the scrutinee's type (N6-02).
+//
+// A pattern is an equality test, and `_match_expr == "two"` on a `long long` is
+// a comparison C would perform without complaint on a pointer-sized integer. So
+// the disagreement has to be refused where the types are still known, which is
+// the type checker: the pattern is the shape of a value of the matched type, not
+// an arbitrary expression that happens to sit before `=>`.
+fn main() {
+    let n = 3;
+    let v = match n {
+        1 => 1,
+        "two" => 2,
+        _ => 0,
+    };
+    print_int(v);
+}

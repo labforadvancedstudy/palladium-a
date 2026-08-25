@@ -1,0 +1,93 @@
+// Test 06: GUARDS (requirement N6-09) — `pattern if cond =>`.
+//
+// A guard is the second half of an arm's test: the pattern decides the SHAPE,
+// the guard decides whether this arm still wants it. Two properties are pinned
+// here that a passing print cannot show on its own:
+//
+//  1. THE GUARD SEES THE PATTERN'S BINDINGS. `Payload::Num(n) if n > 5` reads
+//     `n`, so the binding has to be established before the guard runs, not with
+//     the arm body.
+//  2. THE GUARD DOES NOT RUN WHEN THE PATTERN FAILS. `noisy()` prints, so an arm
+//     whose pattern does not match must leave no trace in this transcript. In
+//     the emitted C the guard sits INSIDE the pattern test — `if (tag == Num) {
+//     long long v = …; if (noisy(v)) { … } }` — so the property is structural
+//     rather than a promise: there is no path on which the guard is reached
+//     without the pattern having held.
+//
+// A guarded arm NEVER counts toward exhaustiveness: `Num(n) if n > 5` covers
+// `Num` only sometimes, so the checker treats it as covering nothing at all.
+// Every match below is exhausted by an UNGUARDED arm, which is what makes them
+// compile.
+
+enum Payload {
+    Empty,
+    Num(i64),
+}
+
+fn noisy(v: i64) -> bool {
+    print("guard ran");
+    return v > 0;
+}
+
+fn describe(p: Payload) -> i64 {
+    match p {
+        Payload::Num(n) if n > 5 => n * 10,
+        Payload::Num(n) => n,
+        Payload::Empty => 0,
+    }
+}
+
+fn main() {
+    print("A guard reads the pattern's binding:");
+    print_int(describe(Payload::Num(7)));
+    print_int(describe(Payload::Num(3)));
+    print_int(describe(Payload::Empty));
+
+    print("A guard on a literal pattern:");
+    let n = 4;
+    let parity = match n {
+        0 => 0,
+        m if m % 2 == 0 => 2,
+        _ => 1,
+    };
+    print_int(parity);
+
+    print("Guards are tried in order; the first arm whose BOTH halves hold wins:");
+    let ordered = match 8 {
+        m if m > 100 => 1,
+        m if m > 5 => 2,
+        _ => 3,
+    };
+    print_int(ordered);
+
+    print("A guard that does not run leaves no trace:");
+    let quiet = match Payload::Empty {
+        Payload::Num(v) if noisy(v) => 1,
+        Payload::Empty => 2,
+        Payload::Num(_) => 3,
+    };
+    print_int(quiet);
+
+    print("...and when the pattern DOES match, the same guard is heard:");
+    let loud = match Payload::Num(9) {
+        Payload::Num(v) if noisy(v) => 1,
+        Payload::Empty => 2,
+        Payload::Num(_) => 3,
+    };
+    print_int(loud);
+
+    print("A guard holding a value expression:");
+    let hoisted = match 6 {
+        m if (if m > 5 { m } else { 0 }) == 6 => 60,
+        _ => 0,
+    };
+    print_int(hoisted);
+
+    print("Statement form:");
+    let s = 12;
+    match s {
+        v if v > 10 => { print("big"); }
+        v if v > 5 => { print("medium"); }
+        _ => { print("small"); }
+    }
+}

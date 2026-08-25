@@ -3042,17 +3042,25 @@ impl TypeChecker {
                     self.symbols.enter_scope();
 
                     // Bind pattern variables if any
-                    self.bind_pattern_variables(&arm.pattern, &expr_type)?;
-
-                    for stmt in &arm.body {
-                        self.check_statement(stmt)?;
-                    }
+                    let checked = (|| -> Result<()> {
+                        self.bind_pattern_variables(&arm.pattern, &expr_type)?;
+                        // THE GUARD IS CHECKED INSIDE THE ARM'S SCOPE, after the
+                        // bindings: `Num(n) if n > 5` reads `n`, so a guard
+                        // checked outside would report an undefined variable for
+                        // a name the arm defines (N6-09).
+                        self.check_guard(arm.guard.as_ref())?;
+                        for stmt in &arm.body {
+                            self.check_statement(stmt)?;
+                        }
+                        Ok(())
+                    })();
 
                     self.symbols.exit_scope();
+                    checked?;
                 }
 
                 // Pattern exhaustiveness checking
-                let patterns: Vec<Pattern> = arms.iter().map(|arm| arm.pattern.clone()).collect();
+                let patterns = Self::unguarded_patterns(arms.iter().map(|a| (&a.pattern, &a.guard)));
                 self.check_match_exhaustiveness(&expr_type, &patterns, *span)?;
 
                 Ok(())
@@ -4351,6 +4359,7 @@ impl TypeChecker {
                     self.symbols.enter_scope();
                     let arm_type = (|| {
                         self.bind_pattern_variables(&arm.pattern, &scrutinee)?;
+                        self.check_guard(arm.guard.as_ref())?;
                         for stmt in &arm.body {
                             self.check_statement(stmt)?;
                         }
@@ -4390,7 +4399,7 @@ impl TypeChecker {
                 // matches nothing simply does nothing, while a value one leaves
                 // its temporary unwritten. Same checker, so the two cannot
                 // drift apart.
-                let patterns: Vec<Pattern> = arms.iter().map(|a| a.pattern.clone()).collect();
+                let patterns = Self::unguarded_patterns(arms.iter().map(|a| (&a.pattern, &a.guard)));
                 self.check_match_exhaustiveness(&scrutinee, &patterns, *span)?;
 
                 // `unified` is `Some` because `arms` is non-empty and every
@@ -4414,12 +4423,55 @@ impl TypeChecker {
     /// A non-enum scrutinee is not checked, which is the pre-existing position:
     /// there are no literal or range patterns yet (N6), so the only patterns an
     /// `i64` can carry are a wildcard and a binding, and both match everything.
+    /// A guard is a condition, so it must be a `bool`.
+    ///
+    /// Called from inside the arm's scope by both `match` forms, which is what
+    /// lets a guard read the pattern's bindings.
+    fn check_guard(&mut self, guard: Option<&Expr>) -> Result<()> {
+        let Some(guard) = guard else {
+            return Ok(());
+        };
+        let guard_type = self.check_expression(guard)?;
+        if guard_type == CheckerType::Bool {
+            Ok(())
+        } else {
+            Err(CompileError::TypeMismatch {
+                expected: "a match guard to be a `bool`".to_string(),
+                found: guard_type.to_string(),
+                span: Some(guard.span()),
+            })
+        }
+    }
+
+    /// The patterns that COUNT toward exhaustiveness: the unguarded ones.
+    ///
+    /// A GUARDED ARM COVERS NOTHING. `Num(n) if n > 5` is taken only sometimes,
+    /// and which times is not decidable from the pattern, so an exhaustiveness
+    /// checker that counted it would call a match complete that falls through
+    /// at run time — the value form's temporary would then never be written.
+    /// Dropping the arm entirely (rather than passing it and ignoring it) also
+    /// keeps it from making a later arm look unreachable, which it does not.
+    fn unguarded_patterns<'a>(
+        arms: impl Iterator<Item = (&'a Pattern, &'a Option<Expr>)>,
+    ) -> Vec<Pattern> {
+        arms.filter(|(_, guard)| guard.is_none())
+            .map(|(pattern, _)| pattern.clone())
+            .collect()
+    }
+
     fn check_match_exhaustiveness(
         &self,
         scrutinee: &CheckerType,
         patterns: &[Pattern],
         span: Span,
     ) -> Result<()> {
+        // N6-02's one completeness case. `bool` has two values and literal
+        // patterns can now name both, so a `match` on one is checkable without
+        // a catch-all — the only scrutinee type of which that is true.
+        if matches!(scrutinee, CheckerType::Bool) {
+            return ExhaustivenessChecker::new(HashMap::new()).check_bool_match(patterns, span);
+        }
+
         let CheckerType::Enum(enum_name) = scrutinee else {
             return Ok(());
         };
@@ -4635,6 +4687,28 @@ impl TypeChecker {
     /// Check that a pattern is compatible with the given type
     fn check_pattern(&self, pattern: &Pattern, expected_type: &CheckerType) -> Result<()> {
         match pattern {
+            // N6-02. A literal pattern is an EQUALITY TEST, so its type has to
+            // be the scrutinee's: `match n { "x" => … }` on an `i64` compares
+            // two things C would happily compare and Palladium must not.
+            Pattern::Literal(literal) => {
+                let (literal_type, spelling) = match literal {
+                    PatternLiteral::Int(v) => (CheckerType::Int, v.to_string()),
+                    PatternLiteral::Str(v) => (CheckerType::String, format!("{:?}", v)),
+                    PatternLiteral::Bool(v) => (CheckerType::Bool, v.to_string()),
+                };
+                if literal_type == *expected_type {
+                    Ok(())
+                } else {
+                    Err(CompileError::TypeMismatch {
+                        expected: format!(
+                            "a pattern of type {}, which is what this `match` is on",
+                            expected_type
+                        ),
+                        found: format!("the {} literal `{}`", literal_type, spelling),
+                        span: None,
+                    })
+                }
+            }
             Pattern::Wildcard => {
                 // Wildcard matches any type
                 Ok(())
@@ -4673,6 +4747,9 @@ impl TypeChecker {
                 // No bindings
                 Ok(())
             }
+            // A literal binds nothing either — it constrains the value instead
+            // of naming it.
+            Pattern::Literal(_) => Ok(()),
             Pattern::Ident(name) => {
                 // Bind the identifier to the value type
                 self.symbols.define(

@@ -672,6 +672,7 @@ mod tests {
                         Stmt::Return(Some(Expr::Integer(1))),
                         Stmt::Expr(Expr::Integer(2)), // Dead code
                     ],
+                    guard: None,
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
@@ -682,6 +683,7 @@ mod tests {
                         },
                         Stmt::Expr(Expr::Integer(3)), // Dead code
                     ],
+                    guard: None,
                 },
             ],
             span: Span::dummy(),

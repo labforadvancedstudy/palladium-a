@@ -1451,6 +1451,8 @@ impl BorrowChecker {
                 }
             }
             Pattern::Wildcard => {}
+            // A literal pattern binds nothing — it is a test, not a binder.
+            Pattern::Literal(_) => {}
         }
         Ok(())
     }

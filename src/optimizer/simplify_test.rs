@@ -635,6 +635,7 @@ mod tests {
                             Expr::Bool(true),
                         )),
                     ],
+                    guard: None,
                 },
             ],
             span: Span::dummy(),

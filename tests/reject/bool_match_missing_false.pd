@@ -1,0 +1,18 @@
+// NEGATIVE TEST — a `bool` scrutinee must be covered (N6-02).
+//
+// `true` and `false` are the whole domain of a `bool`, which is what makes a
+// match on one checkable at all: with literal patterns the compiler can now see
+// that this arm set leaves `false` with nowhere to go. Every other scrutinee
+// type still goes unchecked without a catch-all — no finite set of integer or
+// string literals exhausts an `i64` or a `String`, and refusing those is N6-10.
+//
+// The value form makes the cost concrete: with no arm taken, the temporary this
+// `match` lowers to is never written and `v` reads whatever the zero-initialiser
+// left there.
+fn main() {
+    let flag = 1 < 2;
+    let v = match flag {
+        true => 1,
+    };
+    print_int(v);
+}

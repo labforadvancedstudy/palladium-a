@@ -641,6 +641,9 @@ fn escape_stmt(stmt: &mut Stmt) {
 fn escape_pattern(pattern: &mut Pattern) {
     match pattern {
         Pattern::Wildcard => {}
+        // A literal pattern holds no identifier, so there is nothing here that
+        // could collide with a C keyword.
+        Pattern::Literal(_) => {}
         Pattern::Ident(name) => escape_in_place(name),
         Pattern::EnumPattern {
             enum_name,

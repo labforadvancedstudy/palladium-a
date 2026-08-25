@@ -3724,22 +3724,88 @@ impl CodeGenerator {
                 self.output.push_str("    // Match statement\n");
                 self.output.push_str("    {\n");
 
-                // Determine the type of the match expression
+                // THE TEMPORARY TAKES THE SCRUTINEE'S OWN C TYPE. It used to be
+                // `long long` for everything that was not an enum, which was
+                // survivable only because no pattern could look at a non-enum
+                // value: with N6-02 a `String` scrutinee is matchable, and
+                // `long long _match_expr = <const char*>` is not a program.
                 let expr_type = self.infer_expr_type(expr);
-                let is_enum =
-                    expr_type != "long long" && expr_type != "const char*" && expr_type != "int";
+                let temp_type = if expr_type.is_empty() {
+                    "long long".to_string()
+                } else {
+                    expr_type
+                };
 
                 // Store the match expression in a temporary variable
                 self.output
                     .push_str("        // Temporary for match expression\n");
-                if is_enum {
-                    self.output
-                        .push_str(&format!("        {} _match_expr = ", expr_type));
-                } else {
-                    self.output.push_str("        long long _match_expr = ");
-                }
+                self.output
+                    .push_str(&format!("        {} _match_expr = ", temp_type));
                 self.generate_expression(expr)?;
                 self.output.push_str(";\n");
+
+                // TWO SHAPES, AND THE GUARD IS WHY. Without guards a match is an
+                // if/else-if chain, which is what every reader and several tests
+                // expect of it. A guard cannot live in that chain: it must see
+                // the pattern's bindings (so it needs a statement position after
+                // them), it may hoist statements of its own (a value expression
+                // in a guard), and a guard that FAILS has to fall through to the
+                // next arm — which an `else if` cannot express once the bindings
+                // are inside the braces. So a match containing any guard becomes
+                // a sequence of `if (!done)` blocks instead, evaluated in arm
+                // order, and an unguarded match is emitted exactly as before.
+                if arms.iter().any(|arm| arm.guard.is_some()) {
+                    let done = format!("_match_done{}", self.hoist_counter);
+                    self.hoist_counter += 1;
+                    self.output
+                        .push_str(&format!("        int {} = 0;\n", done));
+
+                    for arm in arms {
+                        self.output
+                            .push_str(&format!("        if (!{}) {{\n", done));
+                        let condition = self.pattern_condition(&arm.pattern)?;
+                        self.output
+                            .push_str(&format!("        if ({}) {{\n", condition));
+
+                        let arm_scope = self.open_binding_scope();
+                        let emitted = (|| -> Result<()> {
+                            self.emit_pattern_bindings(&arm.pattern, &temp_type)?;
+
+                            match &arm.guard {
+                                None => {
+                                    self.output
+                                        .push_str(&format!("            {} = 1;\n", done));
+                                    self.generate_block(&arm.body, "        ")?;
+                                }
+                                Some(guard) => {
+                                    // The guard's own hoisted statements land
+                                    // HERE — after the bindings it may read, and
+                                    // inside the pattern test, so a guard that
+                                    // computes something does not compute it for
+                                    // an arm whose pattern did not match.
+                                    let (guard_src, guard_hoists) =
+                                        self.generate_expr_with_hoists(guard)?;
+                                    self.output.push_str(&guard_hoists);
+                                    self.output
+                                        .push_str(&format!("        if ({}) {{\n", guard_src));
+                                    self.output
+                                        .push_str(&format!("            {} = 1;\n", done));
+                                    self.generate_block(&arm.body, "        ")?;
+                                    self.output.push_str("        }\n");
+                                }
+                            }
+                            Ok(())
+                        })();
+                        self.close_binding_scope(arm_scope);
+                        emitted?;
+
+                        self.output.push_str("        }\n");
+                        self.output.push_str("        }\n");
+                    }
+
+                    self.output.push_str("    }\n");
+                    return Ok(());
+                }
 
                 // Generate if-else chain for each arm
                 for (i, arm) in arms.iter().enumerate() {
@@ -3749,153 +3815,18 @@ impl CodeGenerator {
                         self.output.push_str(" else if (");
                     }
 
-                    // Generate pattern matching condition
-                    match &arm.pattern {
-                        Pattern::Wildcard => {
-                            // Wildcard always matches
-                            self.output.push('1');
-                        }
-                        Pattern::Ident(name) => {
-                            // Identifier pattern always matches and binds
-                            self.output.push_str("1) {\n");
-                            self.output.push_str(&format!(
-                                "            long long {} = _match_expr;\n",
-                                name
-                            ));
-                            let arm_scope = self.open_binding_scope();
-                            self.bind_non_array(name, "long long".to_string());
-                            // Continue with body generation below
-                            self.generate_block(&arm.body, "        ")?;
-                            self.close_binding_scope(arm_scope);
-                            self.output.push_str("        }");
-                            continue;
-                        }
-                        Pattern::EnumPattern {
-                            enum_name,
-                            variant,
-                            data,
-                        } => {
-                            // Opened before the variant's data bindings are
-                            // written, so they die with the arm.
-                            let arm_scope = self.open_binding_scope();
-                            // Generate enum tag check
-                            self.output.push_str(&format!(
-                                "_match_expr.tag == __{}__{})",
-                                enum_name, variant
-                            ));
-                            self.output.push_str(" {\n");
-
-                            // Extract data if present
-                            if let Some(pattern_data) = data {
-                                // Look up the enum definition to get field types
-                                if let Some(enum_def) = self.enums.get(enum_name) {
-                                    // Find the variant
-                                    if let Some(variant_def) =
-                                        enum_def.variants.iter().find(|v| &v.name == variant)
-                                    {
-                                        match (&variant_def.data, pattern_data) {
-                                            (
-                                                EnumVariantData::Tuple(types),
-                                                PatternData::Tuple(patterns),
-                                            ) => {
-                                                // Extract tuple fields with proper types
-                                                for (i, (pattern, ty)) in
-                                                    patterns.iter().zip(types.iter()).enumerate()
-                                                {
-                                                    if let Pattern::Ident(name) = pattern {
-                                                        let c_type = self.type_to_c(ty);
-                                                        // An indirect slot holds
-                                                        // a cell; the binding is
-                                                        // the value, so it reads
-                                                        // through. Asked of the
-                                                        // layout by FIELD rather
-                                                        // than through a `&self`
-                                                        // method for the same
-                                                        // borrow reason as the
-                                                        // writes below.
-                                                        let read = if self
-                                                            .recursive_layout
-                                                            .payload_is_indirect(enum_name, ty)
-                                                        {
-                                                            "*"
-                                                        } else {
-                                                            ""
-                                                        };
-                                                        self.output.push_str(&format!(
-                                                            "            {} {} = {}_match_expr.data.{}.field{};\n",
-                                                            c_type, name, read, c_ident::c_enum_payload_member(variant), i
-                                                        ));
-                                                        // The binding is a real
-                                                        // variable; type it for
-                                                        // the arm body.
-                                                        // Field-level writes:
-                                                        // `self.enums` is
-                                                        // borrowed here, so
-                                                        // bind_non_array's
-                                                        // `&mut self` would
-                                                        // conflict. Same two
-                                                        // operations.
-                                                        self.variables.insert(name.clone(), c_type);
-                                                        self.array_bindings.remove(name.as_str());
-                                                    }
-                                                }
-                                            }
-                                            (
-                                                EnumVariantData::Struct(fields),
-                                                PatternData::Struct(field_patterns),
-                                            ) => {
-                                                // Extract struct fields with proper types
-                                                for (field_name, pattern) in field_patterns {
-                                                    if let Pattern::Ident(name) = pattern {
-                                                        // Find the field type
-                                                        if let Some((_, field_type)) = fields
-                                                            .iter()
-                                                            .find(|(fname, _)| fname == field_name)
-                                                        {
-                                                            let c_type = self.type_to_c(field_type);
-                                                            let read = if self
-                                                                .recursive_layout
-                                                                .payload_is_indirect(
-                                                                    enum_name, field_type,
-                                                                ) {
-                                                                "*"
-                                                            } else {
-                                                                ""
-                                                            };
-                                                            self.output.push_str(&format!(
-                                                                "            {} {} = {}_match_expr.data.{}.{};\n",
-                                                                c_type, name, read, c_ident::c_enum_payload_member(variant), field_name
-                                                            ));
-                                                            self.variables
-                                                                .insert(name.clone(), c_type);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            _ => {
-                                                // Fallback for mismatched patterns (shouldn't happen with proper type checking)
-                                                return Err(CompileError::Generic(
-                                                    "Pattern type mismatch in enum variant"
-                                                        .to_string(),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Continue with body generation below
-                            self.generate_block(&arm.body, "        ")?;
-                            self.close_binding_scope(arm_scope);
-                            self.output.push_str("        }");
-                            continue;
-                        }
-                    }
-
+                    let condition = self.pattern_condition(&arm.pattern)?;
+                    self.output.push_str(&condition);
                     self.output.push_str(") {\n");
 
-                    // Generate arm body
-                    self.generate_block(&arm.body, "        ")?;
+                    let arm_scope = self.open_binding_scope();
+                    let emitted = (|| -> Result<()> {
+                        self.emit_pattern_bindings(&arm.pattern, &temp_type)?;
+                        self.generate_block(&arm.body, "        ")?;
+                        Ok(())
+                    })();
+                    self.close_binding_scope(arm_scope);
+                    emitted?;
 
                     self.output.push_str("        }");
                 }
@@ -4158,6 +4089,151 @@ impl CodeGenerator {
     /// ordinary emitter. Everything the arms need — the tag test, the payload
     /// extraction, the binding scopes — is already there and is not written
     /// twice.
+    /// The C expression that decides whether an arm's PATTERN matches.
+    ///
+    /// One place, because the two match shapes above (else-if chain and
+    /// `if (!done)` sequence) must ask the same question; two spellings of
+    /// "does this arm match" is how a guarded and an unguarded match would come
+    /// to disagree about the same pattern.
+    fn pattern_condition(&self, pattern: &Pattern) -> Result<String> {
+        Ok(match pattern {
+            // Both match everything. `1` rather than an omitted test, so the
+            // emitted chain keeps one shape.
+            Pattern::Wildcard | Pattern::Ident(_) => "1".to_string(),
+            Pattern::EnumPattern {
+                enum_name, variant, ..
+            } => format!("_match_expr.tag == __{}__{}", enum_name, variant),
+            // N6-02. An integer or a bool is C's own `==`; a STRING is not —
+            // `const char* == const char*` compares addresses, so `"be" + "ta"`
+            // would fail to match `"beta"` despite being the same text. The
+            // runtime already carries `__pd_string_eq` (a `strcmp`), emitted
+            // into every output file, and this is the comparison a reader means
+            // by a string pattern.
+            Pattern::Literal(PatternLiteral::Int(value)) => {
+                format!("_match_expr == {}", value)
+            }
+            Pattern::Literal(PatternLiteral::Bool(value)) => {
+                format!("_match_expr == {}", if *value { 1 } else { 0 })
+            }
+            Pattern::Literal(PatternLiteral::Str(value)) => {
+                format!("__pd_string_eq(_match_expr, \"{}\")", c_string_body(value))
+            }
+        })
+    }
+
+    /// Declare the variables an arm's pattern binds, at the top of its block.
+    ///
+    /// The bindings are written before anything else in the arm — before the
+    /// guard, which may read them, and before the body.
+    fn emit_pattern_bindings(&mut self, pattern: &Pattern, temp_type: &str) -> Result<()> {
+        match pattern {
+            // Neither binds anything.
+            Pattern::Wildcard | Pattern::Literal(_) => Ok(()),
+            Pattern::Ident(name) => {
+                // TYPED AS THE SCRUTINEE, not as `long long`. The old hardcoded
+                // width was invisible while only enums could be matched; a
+                // `String` scrutinee bound to a `long long` is a program gcc
+                // refuses.
+                self.output.push_str(&format!(
+                    "            {} {} = _match_expr;\n",
+                    temp_type, name
+                ));
+                self.bind_non_array(name, temp_type.to_string());
+                Ok(())
+            }
+            Pattern::EnumPattern {
+                enum_name,
+                variant,
+                data,
+            } => {
+                let Some(pattern_data) = data else {
+                    return Ok(());
+                };
+                // Cloned out of `self.enums` before anything is emitted: the
+                // writes below need `&mut self`, and holding a borrow of the
+                // map across them is what forced the previous version to reach
+                // into `self.variables` by hand.
+                let Some(enum_def) = self.enums.get(enum_name).cloned() else {
+                    return Ok(());
+                };
+                let Some(variant_def) = enum_def
+                    .variants
+                    .iter()
+                    .find(|v| &v.name == variant)
+                    .cloned()
+                else {
+                    return Ok(());
+                };
+
+                match (&variant_def.data, pattern_data) {
+                    (EnumVariantData::Tuple(types), PatternData::Tuple(patterns)) => {
+                        for (i, (pattern, ty)) in patterns.iter().zip(types.iter()).enumerate() {
+                            if let Pattern::Ident(name) = pattern {
+                                let c_type = self.type_to_c(ty);
+                                // An indirect slot holds a cell; the binding is
+                                // the value, so it reads through.
+                                let read = if self
+                                    .recursive_layout
+                                    .payload_is_indirect(enum_name, ty)
+                                {
+                                    "*"
+                                } else {
+                                    ""
+                                };
+                                self.output.push_str(&format!(
+                                    "            {} {} = {}_match_expr.data.{}.field{};\n",
+                                    c_type,
+                                    name,
+                                    read,
+                                    c_ident::c_enum_payload_member(variant),
+                                    i
+                                ));
+                                self.bind_non_array(name, c_type);
+                            }
+                        }
+                    }
+                    (EnumVariantData::Struct(fields), PatternData::Struct(field_patterns)) => {
+                        for (field_name, pattern) in field_patterns {
+                            if let Pattern::Ident(name) = pattern {
+                                let Some((_, field_type)) =
+                                    fields.iter().find(|(fname, _)| fname == field_name)
+                                else {
+                                    continue;
+                                };
+                                let field_type = field_type.clone();
+                                let c_type = self.type_to_c(&field_type);
+                                let read = if self
+                                    .recursive_layout
+                                    .payload_is_indirect(enum_name, &field_type)
+                                {
+                                    "*"
+                                } else {
+                                    ""
+                                };
+                                self.output.push_str(&format!(
+                                    "            {} {} = {}_match_expr.data.{}.{};\n",
+                                    c_type,
+                                    name,
+                                    read,
+                                    c_ident::c_enum_payload_member(variant),
+                                    field_name
+                                ));
+                                self.bind_non_array(name, c_type);
+                            }
+                        }
+                    }
+                    _ => {
+                        // Fallback for mismatched patterns (shouldn't happen with proper type checking)
+                        return Err(CompileError::Generic(
+                            "Pattern type mismatch in enum variant".to_string(),
+                        ));
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
     fn generate_match_expression(&mut self, expr: &Expr) -> Result<()> {
         let Expr::Match {
             expr: scrutinee,
@@ -4187,6 +4263,7 @@ impl CodeGenerator {
             });
             stmt_arms.push(MatchArm {
                 pattern: arm.pattern.clone(),
+                guard: arm.guard.clone(),
                 body,
             });
         }

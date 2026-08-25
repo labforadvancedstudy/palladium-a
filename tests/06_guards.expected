@@ -1,0 +1,17 @@
+A guard reads the pattern's binding:
+70
+3
+0
+A guard on a literal pattern:
+2
+Guards are tried in order; the first arm whose BOTH halves hold wins:
+2
+A guard that does not run leaves no trace:
+2
+...and when the pattern DOES match, the same guard is heard:
+guard ran
+1
+A guard holding a value expression:
+60
+Statement form:
+big

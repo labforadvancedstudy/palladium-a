@@ -2368,6 +2368,7 @@ impl Parser {
                 let (body, value) = Self::split_value_block(arm.body, arm_tail);
                 MatchArmValue {
                     pattern: arm.pattern,
+                    guard: arm.guard,
                     body,
                     value: value.map(|v| *v),
                 }
@@ -2671,6 +2672,17 @@ impl Parser {
             // Parse pattern
             let pattern = self.parse_pattern()?;
 
+            // N6-09. `pattern if cond =>`. Parsed with the full expression
+            // parser, so a guard is any expression the language has — including
+            // the value forms, which is why codegen has to give the guard a
+            // statement position to hoist into.
+            let guard = if self.check(&Token::If) {
+                self.advance()?; // consume 'if'
+                Some(self.parse_expression()?)
+            } else {
+                None
+            };
+
             self.consume(Token::FatArrow, "Expected '=>' after pattern")?;
 
             // Parse arm body. Both shapes below set `arm_tail`, so it is
@@ -2721,7 +2733,11 @@ impl Parser {
                 vec![Stmt::Expr(expr)]
             };
 
-            arms.push(MatchArm { pattern, body });
+            arms.push(MatchArm {
+                pattern,
+                guard,
+                body,
+            });
             arm_tails.push(arm_tail);
         }
 
@@ -2772,6 +2788,41 @@ impl Parser {
             Token::Underscore => {
                 self.advance()?;
                 Ok(Pattern::Wildcard)
+            }
+            // N6-02. THE MINUS IS READ HERE AND NOT BY AN EXPRESSION PARSER:
+            // `-1` in pattern position is one literal, not a unary operator
+            // applied to one, and there is no other expression a pattern may
+            // hold. Only an integer may follow it — `-"x"` and `-true` are
+            // refused by name rather than parsed into a shape typeck would have
+            // to refuse later.
+            Token::Minus => {
+                self.advance()?; // consume '-'
+                match self.advance()? {
+                    (Token::Integer(value), _) => {
+                        Ok(Pattern::Literal(PatternLiteral::Int(-value)))
+                    }
+                    (found, _) => Err(CompileError::UnexpectedToken {
+                        expected: "an integer literal after `-` in a pattern".to_string(),
+                        found: found.to_string(),
+                        span: self.current_span(),
+                    }),
+                }
+            }
+            Token::Integer(value) => {
+                self.advance()?;
+                Ok(Pattern::Literal(PatternLiteral::Int(value)))
+            }
+            Token::String(value) => {
+                self.advance()?;
+                Ok(Pattern::Literal(PatternLiteral::Str(value)))
+            }
+            Token::True => {
+                self.advance()?;
+                Ok(Pattern::Literal(PatternLiteral::Bool(true)))
+            }
+            Token::False => {
+                self.advance()?;
+                Ok(Pattern::Literal(PatternLiteral::Bool(false)))
             }
             Token::Identifier(name) => {
                 self.advance()?;

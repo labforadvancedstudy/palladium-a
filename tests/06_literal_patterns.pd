@@ -1,0 +1,93 @@
+// Test 06: LITERAL PATTERNS (requirement N6-02).
+//
+// `match` could only ever ask which VARIANT it had. `parse_pattern` accepted a
+// wildcard, an identifier and `Enum::Variant`, and nothing else — an integer in
+// pattern position was the parse error "expected pattern, found <int>", which is
+// why the 1f while-condition fixture had to introduce an enum to match on and why
+// `test_match_on_integer_literal` is owed in tests/rust-debt-manifest.txt.
+//
+// Three literal kinds, per N6-02: integer, string, bool. A negative integer is
+// written here on purpose — it is a unary minus in expression position, so the
+// pattern parser has to read it as one token of meaning rather than stopping at
+// `-`.
+//
+// A bool scrutinee covered by `true` and `false` is EXHAUSTIVE without a
+// wildcard, and this fixture relies on that: those two arms are the whole domain.
+// No other scrutinee type can be exhausted by literals, so every other match
+// below carries a catch-all.
+
+fn classify(n: i64) -> i64 {
+    match n {
+        0 => 100,
+        1 => 200,
+        -1 => 300,
+        _ => 900,
+    }
+}
+
+fn main() {
+    print("Integer literal patterns:");
+    print_int(classify(0));
+    print_int(classify(1));
+    print_int(classify(-1));
+    print_int(classify(42));
+
+    print("As a statement, not a value:");
+    let k = 2;
+    match k {
+        1 => { print("one"); }
+        2 => { print("two"); }
+        _ => { print("many"); }
+    }
+
+    print("String literal patterns:");
+    let name = "beta";
+    let code = match name {
+        "alpha" => 1,
+        "beta" => 2,
+        "gamma" => 3,
+        _ => 0,
+    };
+    print_int(code);
+
+    print("A string pattern compares CONTENT, not the pointer:");
+    let built = "be" + "ta";
+    let built_code = match built {
+        "alpha" => 1,
+        "beta" => 2,
+        _ => 0,
+    };
+    print_int(built_code);
+
+    print("Bool literal patterns, exhaustive with no wildcard:");
+    let flag = 3 > 2;
+    let answer = match flag {
+        true => 1,
+        false => 0,
+    };
+    print_int(answer);
+
+    let other = match 2 > 3 {
+        true => 1,
+        false => 0,
+    };
+    print_int(other);
+
+    print("A binding arm still catches what the literals miss:");
+    let leftover = match 77 {
+        1 => 1,
+        2 => 2,
+        rest => rest,
+    };
+    print_int(leftover);
+
+    print("Literal arms inside a value block inside a value match:");
+    let nested = match 1 {
+        1 => {
+            let doubled = classify(1) * 2;
+            doubled
+        }
+        _ => 0,
+    };
+    print_int(nested);
+}

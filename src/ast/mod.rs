@@ -495,6 +495,13 @@ pub enum Stmt {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    /// `pattern if cond =>` — the arm's second test (N6-09).
+    ///
+    /// `None` is an UNGUARDED arm, which is not the same as a guard that is
+    /// always true: an unguarded arm counts toward exhaustiveness and a guarded
+    /// one never can, because whether it is taken is not decidable from the
+    /// pattern.
+    pub guard: Option<Expr>,
     pub body: Vec<Stmt>,
 }
 
@@ -508,6 +515,10 @@ pub struct MatchArm {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArmValue {
     pub pattern: Pattern,
+    /// The same slot as `MatchArm::guard`, carried across the statement→value
+    /// reinterpretation with the pattern and the body. The two structs are kept
+    /// field-for-field parallel on purpose (see the type's own note).
+    pub guard: Option<Expr>,
     pub body: Vec<Stmt>,
     /// `None` when the arm ends in a statement. Refused in value position by
     /// the type checker, which is where "this arm had to produce something" is
@@ -528,6 +539,24 @@ pub enum Pattern {
         variant: String,
         data: Option<PatternData>,
     },
+    /// Literal pattern — `0`, `-1`, `"beta"`, `true` (N6-02).
+    Literal(PatternLiteral),
+}
+
+/// The literals a pattern may be, and no others.
+///
+/// A CLOSED THREE-VARIANT ENUM RATHER THAN AN `Expr`. Reusing `Expr` here would
+/// put every expression form into pattern position and leave each consumer to
+/// re-refuse `match x { f() => … }` on its own; it would also cost `Pattern` its
+/// `Eq`/`Hash`, which the exhaustiveness checker's `PatternKind` derives, because
+/// `Expr` carries an `f64`. N6-02 names exactly three literal kinds and this is
+/// exactly those three. A float pattern is deliberately absent: equality on
+/// `f64` is not the relation a reader assumes a pattern means.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PatternLiteral {
+    Int(i64),
+    Str(String),
+    Bool(bool),
 }
 
 /// Pattern data for enum variants
@@ -1463,6 +1492,9 @@ impl std::fmt::Display for Expr {
 impl std::fmt::Display for Pattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Pattern::Literal(PatternLiteral::Int(v)) => write!(f, "{}", v),
+            Pattern::Literal(PatternLiteral::Str(v)) => write!(f, "{:?}", v),
+            Pattern::Literal(PatternLiteral::Bool(v)) => write!(f, "{}", v),
             Pattern::Wildcard => write!(f, "_"),
             Pattern::Ident(name) => write!(f, "{}", name),
             Pattern::EnumPattern {

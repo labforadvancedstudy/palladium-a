@@ -996,6 +996,15 @@ impl LLVMTextBackend {
                                 *match_span,
                             ));
                         }
+                        // N6-02. REFUSED RATHER THAN BRANCHED ALWAYS-TAKEN: the
+                        // two arms above match everything, so treating a literal
+                        // like them would run the FIRST arm whatever the
+                        // scrutinee is — a wrong program that links and runs,
+                        // which is the failure mode this backend's other
+                        // refusals exist to stop.
+                        Pattern::Literal(literal) => {
+                            return Err(unimplemented_literal_pattern(literal, *match_span));
+                        }
                     }
                     
                     ir.push_str(&format!("{}:\n", arm_label));
@@ -1624,6 +1633,20 @@ fn unimplemented_backend() -> CompileError {
 /// backend without that qualifier would send a `Result<T, E>` user to a second
 /// broken backend, which is the disease, not the cure. Pinned by
 /// `the_generic_enum_caveat_in_the_help_is_real`.
+/// A literal pattern, which this backend has no equality test for.
+fn unimplemented_literal_pattern(literal: &crate::ast::PatternLiteral, span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: format!("a literal pattern (`{}`)", crate::ast::Pattern::Literal(literal.clone())),
+        consequence: "this backend lowers a match arm to an unconditional branch, so a literal \
+                      pattern would take the first arm whatever the scrutinee is"
+            .to_string(),
+        workaround: "compile without `--llvm`, which is the supported backend and lowers literal \
+                     patterns to equality tests"
+            .to_string(),
+        span: Some(span),
+    }
+}
+
 fn unimplemented_enum_constructor(enum_name: &str, variant: &str, span: Span) -> CompileError {
     CompileError::Unimplemented {
         construct: format!("enum construction (`{}::{}`)", enum_name, variant),
@@ -1980,6 +2003,7 @@ mod tests {
                     data: None,
                 },
                 body: vec![],
+                guard: None,
             }],
             span: Span::dummy(),
         }]);
@@ -2476,6 +2500,7 @@ fn main() {
                     data: None,
                 },
                 body: vec![],
+                guard: None,
             }],
             span: Span::dummy(),
         }]);

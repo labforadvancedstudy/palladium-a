@@ -456,7 +456,7 @@ fn test_effects_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: struct-variant patterns with field shorthand and `if` guards — grammar.ebnf:323-324 'No literal patterns, ranges, or-patterns, guards, tuple/slice patterns, ref/mut bindings, @ bindings, field shorthand' (owned by M2, item 4)"]
+#[ignore = "XFAIL: FIELD SHORTHAND IN A STRUCT-VARIANT PATTERN. The guards half of this row is paid (N6-09): `Message::Move { x: x, y: y } if x > 0 && y > 0` compiles and runs, measured. What is left is the shorthand — `{ x, y }` — for which the pattern parser reports \"expected ':' after field name in pattern\", so every arm in this fixture stops there (owned by M2, item 4)"]
 fn test_pattern_matching_guards() {
     let source = r#"
     enum Message {

@@ -122,10 +122,21 @@ fn test_all_keywords() {
     }
 }
 
+/// PAID by N6-02.
+///
+/// THE EXPECTED C CHANGED WITH THE ROW, and that is the honest half of paying
+/// it: this asserted `switch`, which no revision of this compiler has ever
+/// emitted for a `match`. The lowering is an if/else-if chain (a `switch` needs
+/// integer case labels, and a `match` arm may be a string or an enum tag), so
+/// what a literal pattern produces is an equality test on the scrutinee's
+/// temporary. Asserting `switch` would have kept the row owed forever against a
+/// backend that was never going to satisfy it.
 #[test]
-#[ignore = "XFAIL: literal patterns in `match` — grammar.ebnf:323-324 'No literal patterns'; the parser reports \"Expected pattern, but found integer 1\" (owned by M2, item 4)"]
 fn test_match_on_integer_literal() {
-    compile_and_verify("fn main() { match 1 { 1 => {}, _ => {} } }", &["switch"]);
+    compile_and_verify(
+        "fn main() { match 1 { 1 => {}, _ => {} } }",
+        &["_match_expr == 1"],
+    );
 }
 
 #[test]
