@@ -126,21 +126,21 @@ description = "Lifetimes inferred; no 'a parameter lists. Explicit ref<'a> T onl
 spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/parser/mod.rs:1253 lifetime_params, populated by the parser",
-  "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> exit 0, 85 lines -- and some are REAL readers, not only test fixtures: src/typeck/mod.rs clones the list into its own records and src/codegen/mod.rs branches on `lifetime_params.is_empty()` before emitting a type. Two of the 85 are prose in the shared shadowing predicate in src/ast/mod.rs, recording that its test is the type-parameter list and NOT this field",
+  "src: src/parser/mod.rs:1251 lifetime_params, populated by the parser",
+  "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> exit 0, 90 lines -- and some are REAL readers, not only test fixtures: src/typeck/mod.rs clones the list into its own records and src/codegen/mod.rs branches on `lifetime_params.is_empty()` before emitting a type. Five of the 90 are the recursive-layout analysis in src/typeck/mod.rs, which skips a generic definition on the SAME predicate code generation uses, so that it never refuses a declaration nothing emits. Two of the 90 are prose in the shared shadowing predicate in src/ast/mod.rs, recording that its test is the type-parameter list and NOT this field",
   "conformance: tests/regression/lifetimes_uninferred.pd run",
   "src: tests/regression/lifetimes_uninferred.pd:26-29 \"fn dangling() -> &i64\" returning \"return &x;\", a reference to a local that dies at the closing brace",
   "conformance: tests/reject/uncalled_body_is_checked.pd reject",
   "src: tests/reject/uncalled_body_is_checked.pd:21-24 \"fn bad()\" is called by nothing and still refused, which is what makes the fixture above a statement about lifetimes",
-  "gate: make conformance -> reject=21 verified=51 -- the pair above is in the corpus those numbers count",
-  "src: src/ownership/borrow_checker.rs:724-727 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
+  "gate: make conformance -> reject=22 verified=52 -- the pair above is in the corpus those numbers count",
+  "src: src/ownership/borrow_checker.rs:731-734 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
   "src: src/ownership/mod.rs:25-33 \"pub enum Lifetime\" -- the four variants a lifetime can be, none of which carries a relation to another",
   "src: src/ownership/mod.rs:101-126 \"constraints: Vec<LifetimeConstraint>\" at :101 and \"pub struct LifetimeConstraint\" at :124 with its longer/shorter pair -- the only type in the module that RELATES two lifetimes",
   "src: src/ownership/mod.rs:450-454 add_constraint, the only writer of that vector",
   "cmd: grep -rn LifetimeConstraint src/ --include='*.rs' -> exit 0, 3 lines -- the field, the struct, and the push inside add_constraint. Nothing constructs one elsewhere and nothing reads the vector",
   "cmd: grep -rn add_constraint src/ --include='*.rs' -> exit 0, 1 line -- its own definition; no other occurrence of that spelling in src/",
   "cmd: grep -rn '\\.constraints' src/ --include='*.rs' -> exit 0, 1 line -- the push inside add_constraint; no other member access to it under that spelling",
-  "cmd: grep -rniE 'constraint|outliv|longer|shorter|subtyp' src/ownership/borrow_checker.rs -> exit 0, 10 lines -- every one a comment or a test name; the other half of the module declares no outlives type, field or construction of its own",
+  "cmd: grep -rniE 'constraint|outliv|longer|shorter|subtyp' src/ownership/borrow_checker.rs -> exit 0, 11 lines -- every one a comment or a test name; the other half of the module declares no outlives type, field or construction of its own. The count moved 10 -> 11 on 2026-08-23 and the eleventh is PROSE, not code: a rewritten doc comment says the import/local ordering \"no longer has a backstop\", and `longer` is in the pattern. That is exactly what an absence probe is supposed to do -- it counts the surface, and a claim about the surface has to be re-derived when the surface moves, even by a comment",
   "src: src/ownership/mod.rs:205-207 end_borrows compares two lifetimes with \"borrow.lifetime == lifetime\" -- equality, and it is now the ONLY such comparison in the file",
   "src: src/ownership/mod.rs:147-148 exit_scope no longer compares lifetimes at all -- it selects borrows by the recorded scope DEPTH, \"borrow.scope >= closing\", an integer comparison. It used to test the borrow lifetime for inequality against a Lifetime::Scope value, which is a variant nothing in the tree constructs, so that comparison released nothing; the row is stronger for the correction, since one fewer place relates two lifetimes",
 ]
@@ -162,10 +162,10 @@ description = "Whether a [T; N] parameter copies or aliases the caller's array. 
 spec = "../../specification/language-spec.md#n121-array-parameters-open-decision"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:2184-2184 the Type::Array parameter arm, \"In C, array parameters are passed as pointers\"",
+  "src: src/codegen/mod.rs:2531-2531 the Type::Array parameter arm, \"In C, array parameters are passed as pointers\"",
   "conformance: tests/regression/array_param_mut_write.pd run",
   "conformance: tests/reject/array_param_write_byvalue.pd reject",
-  "src: src/codegen/mod.rs:2203-2213 the reference arm lowers `&[T; N]` and `&mut [T; N]` through the same declarator: \"C decays both to a pointer to the first element\"",
+  "src: src/codegen/mod.rs:2551-2557 the reference arm lowers `&[T; N]` and `&mut [T; N]` through the same declarator: \"C decays both to a pointer to the first element\"",
   "conformance: tests/regression/array_reference_params.pd run",
 ]
 note = "Marked unimplemented because no spelling copies: every array parameter decays to a pointer in C, so a callee that writes always reaches the caller's storage. The previous note described two behaviours this compiler no longer has -- it said mutation through a bare non-mut array was permitted, and that &mut [T; N] was rejected outright. Both were re-measured on 2026-08-22 and both are false: the bare by-value write is refused by codegen with a diagnostic naming the open decision, and &mut [T; N] compiles and is covered by a passing fixture. What remains open is the specification question, not a hole in the implementation: nothing here COPIES, so Option A (value semantics) is unimplemented, and Option B (reference semantics) would still need a rule that does not exist. See language-spec.md N12.1 and A9.2."
@@ -177,9 +177,9 @@ implementation = "partial"
 evidence = [
   "conformance: tests/05_ownership_basic.pd run",
   "conformance: tests/05_borrowing_references.pd run",
-  "src: src/typeck/mod.rs:133-137 Type::Reference maps to its inner type — 'TODO: Proper reference type handling'",
-  "src: src/ownership/borrow_checker.rs:891 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",
-  "src: src/ownership/borrow_checker.rs:897 self.context.end_borrows(&call_lifetime) — argument borrows end with the call",
+  "src: src/typeck/mod.rs:688-692 Type::Reference maps to its inner type — 'TODO: Proper reference type handling'",
+  "src: src/ownership/borrow_checker.rs:898 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",
+  "src: src/ownership/borrow_checker.rs:904 self.context.end_borrows(&call_lifetime) — argument borrows end with the call",
   "conformance: tests/regression/param_reused_after_call.pd run",
   "conformance: tests/reject/mut_borrow_of_immutable.pd reject",
 ]
@@ -190,7 +190,7 @@ description = "Restricted unsafe with side-channel protection; forbidden in #![t
 spec = "../../specification/language-spec.md#n12-memory-model"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:2059 Token::Unsafe => self.parse_unsafe()",
+  "src: src/parser/mod.rs:2058 Token::Unsafe => self.parse_unsafe()",
   "src: src/driver/mod.rs:189 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/11_unsafe_blocks.pd vacuous",
@@ -203,7 +203,7 @@ implementation = "partial"
 evidence = [
   "conformance: examples/tutorial/01_variables.pd run",
   "cmd: grep -rn 'HindleyMilner\\|unify\\|Substitution' src/typeck/ --include='*.rs' -> exit 1, 0 lines",
-  "src: src/typeck/mod.rs:3319-3319 'Cannot infer type from empty array'",
+  "src: src/typeck/mod.rs:4359-4359 'Cannot infer type from empty array'",
 ]
 note = "Local `let` inference works (the i64 default was replaced by real inference in 04104c5). There is no unification engine and no polymorphic generalisation, so it is not Hindley-Milner."
 
@@ -212,8 +212,8 @@ description = "Monomorphization-based generics, generic structs and enums, where
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:1908-1908 'Generic types in structs not yet supported'",
-  "src: src/parser/mod.rs:2866-2876 all-uppercase name inside <...> reclassified as a const argument",
+  "src: src/codegen/mod.rs:2255-2255 'Generic types in structs not yet supported'",
+  "src: src/parser/mod.rs:2865-2875 all-uppercase name inside <...> reclassified as a const argument",
   "conformance: tests/reject/generic_bound.pd reject",
   "conformance: tests/08_generics_basic.pd vacuous",
 ]
@@ -224,10 +224,10 @@ description = "Trait definitions, impls, bounds on generics, associated types."
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/parser/mod.rs:1452 fn parse_trait — traits do parse",
-  "src: src/codegen/mod.rs:1548-1551 Item::Trait(_) => emits nothing",
-  "src: src/typeck/mod.rs:1120-1122 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
-  "src: src/parser/mod.rs:1576 trait-method parameter loop, which has no self_param branch",
+  "src: src/parser/mod.rs:1451 fn parse_trait — traits do parse",
+  "src: src/codegen/mod.rs:1761-1764 Item::Trait(_) => emits nothing",
+  "src: src/typeck/mod.rs:2155-2157 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
+  "src: src/parser/mod.rs:1575 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd vacuous",
 ]
 note = "Design detail: ../../design/trait_system_design.md"
@@ -237,9 +237,9 @@ description = "Compile-time generic parameters; arrays with generic sizes."
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:538-540 the const-parameter branch of parse_generic_params",
-  "src: src/codegen/mod.rs:1595-1595 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
-  "src: src/codegen/mod.rs:1596-1596 ArraySize::Expr(_) => \"0\".to_string()",
+  "src: src/parser/mod.rs:531-533 the const-parameter branch of parse_generic_params",
+  "src: src/codegen/mod.rs:1808-1808 ArraySize::ConstParam(name) => name.clone() — the parameter name is emitted verbatim into C",
+  "src: src/codegen/mod.rs:1809-1809 ArraySize::Expr(_) => \"0\".to_string()",
   "conformance: tests/reject/const_generic_param.pd reject",
 ]
 note = "Neither case is monomorphised, and the reject fixture is what shows it: the parameter reaches the type checker as the NAME N, so a call with a [i64; 3] does not match it. The three src: lines above prove the branches exist; only the fixture proves what happens when you use one."
@@ -250,9 +250,9 @@ spec = "../../specification/language-spec.md#n6-patterns"
 implementation = "partial"
 evidence = [
   "conformance: tests/06_pattern_matching.pd run",
-  "src: src/ast/mod.rs:357 pub enum Pattern — three variants only",
-  "src: src/typeck/mod.rs:1897-1898 exhaustiveness runs only when the scrutinee is an enum",
-  "src: src/codegen/mod.rs:2229-2229 match lowers to an if/else-if chain",
+  "src: src/ast/mod.rs:410 pub enum Pattern — three variants only",
+  "src: src/typeck/mod.rs:2937-2938 exhaustiveness runs only when the scrutinee is an enum",
+  "src: src/codegen/mod.rs:2582-2582 match lowers to an if/else-if chain",
 ]
 note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
 
@@ -264,7 +264,7 @@ evidence = [
   "conformance: tests/04_control_flow_for.pd run",
   "conformance: tests/04_control_flow_while.pd run",
   "conformance: tests/reject/loop_keyword.pd reject",
-  "src: src/codegen/mod.rs:2195-2195 for-over-array emits sizeof(...) on a decayed pointer",
+  "src: src/codegen/mod.rs:3100-3102 for-over-array emits sizeof(...)/sizeof(...[0]), which counts elements only for an array OBJECT -- see src/codegen/mod.rs:3060-3062 for the branch that refuses to use it on a decayed parameter",
 ]
 
 [core_language.control_flow.conditionals]
@@ -273,8 +273,8 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
   "conformance: tests/04_control_flow_if.pd run",
-  "src: src/parser/mod.rs:2207 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
-  "src: src/parser/mod.rs:2053 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
+  "src: src/parser/mod.rs:2206 consume(LeftBrace, \"Expected '{' after else\") — no else-if",
+  "src: src/parser/mod.rs:2052 Token::If => self.parse_if(), reached from parse_statement rather than from an expression parser",
 ]
 
 [core_language.functions.function_definitions]
@@ -297,7 +297,7 @@ evidence = [
   "conformance: tests/stdlib/stdlib_tail_match.pd run",
   "conformance: tests/misc/unit_return_spellings.pd run",
   "gate: make stdlib-gate -> \"✓ stdlib gate green\" -- tests/stdlib/DRIVERS.tsv still declares stdlib_tail_match as known_violation:area_code,sides, which is the SEPARATE missing-final-else defect, not this one",
-  "src: src/parser/mod.rs:159 fn returns_on_every_path, the decision this defect turned on",
+  "src: src/parser/mod.rs:155 fn returns_on_every_path, the decision this defect turned on",
   "cmd: grep -c 'else' tests/stdlib/stdlib_tail_if.pd -> exit 0, 1 lines -- the fixture is a tail `if`/`else`; its transcript (tests/stdlib/stdlib_tail_if.expected) is what pins the values it now returns",
 ]
 note = "D3b is CLOSED (branch fix/d3b-tail-if): the parser lowers the tail of a function body through the branches of a tail `if` and the arms of a tail `match`, and refuses the shapes it cannot lower rather than emitting a fall-through. `fib(10)` prints 55, measured. The fixture that recorded the defect was renamed from stdlib_tail_if_defect.pd to stdlib_tail_if.pd when it was promoted from `known_violation` to `clean`, which is why the old name above no longer resolves. What remains open is a DIFFERENT defect: a `match` lowers to an if/else-if chain with no final `else`, so its C cannot prove it returns on every path -- pinned as known_violation:area_code,sides on stdlib_tail_match in tests/stdlib/DRIVERS.tsv, and handed off in tests/d3b_tail_if.rs (NetA::StillFindsTheOpenMatchDefect). The transcription note that used to sit here still holds and is why the fixture spaces `fib(n - 1)`: written `fib(n-1)` the program does not parse at all."
@@ -316,7 +316,7 @@ description = "File-based modules, nested paths, visibility, `import`."
 spec = "../../specification/language-spec.md#n11-modules"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:668 while self.check(&Token::Import) — imports are drained before items",
+  "src: src/parser/mod.rs:661 while self.check(&Token::Import) — imports are drained before items",
   "cmd: grep -rn 'Item::Module\\|Token::Mod' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/12_modules_imports.pd vacuous",
   "conformance: tests/projects/hello_pdm/src/main.pd run",
@@ -328,7 +328,7 @@ description = "Built-in Result<T, E> with Ok/Err."
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "unimplemented"
 evidence = [
-  "src: src/typeck/mod.rs:2967-2967 the type checker refuses `?` outright with CompileError::question_unimplemented",
+  "src: src/typeck/mod.rs:4007-4007 the type checker refuses `?` outright with CompileError::question_unimplemented",
   "cmd: grep -rn 'prelude' src/driver/ --include='*.rs' -> exit 1, 0 lines (stdlib/prelude.pd is never loaded)",
 ]
 note = "Result and Option are ordinary user enums if you declare them."
@@ -338,8 +338,8 @@ description = "`?` for error propagation with early return."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
-  "src: src/codegen/mod.rs:2205-2206 emits a struct Result temporary — a layout codegen never defines",
-  "src: src/codegen/mod.rs:2872-2872 the comment describing that layout",
+  "src: src/codegen/mod.rs:2555-2556 emits a struct Result temporary — a layout codegen never defines",
+  "src: src/codegen/mod.rs:3241-3241 the comment describing that layout",
   "conformance: tests/reject/question_mark_operator.pd reject",
 ]
 note = "No longer silent. This row used to read \"it typechecks, and the failure surfaces in gcc\" -- true of the codegen path the two citations above describe, and no longer true of the compiler: the type checker refuses `?` by name before any C exists (defect D5's fix). The lowering is still there and still refers to a layout nothing defines, which is why the citations stay and why this is `partial` rather than `unimplemented`."
@@ -359,7 +359,7 @@ spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
   "src: src/lexer/token.rs:310 #[token(\"async\")] — one of the two things the definition removes",
-  "src: src/parser/mod.rs:1265 effects: None, // Effects will be inferred during analysis",
+  "src: src/parser/mod.rs:1263 effects: None, // Effects will be inferred during analysis",
   "src: src/driver/mod.rs:59 the analyser's result is println!ed by the driver and feeds no later phase",
   "src: src/effects/mod.rs:286 'If function is unknown, we conservatively assume it's pure' — the unsound direction",
   "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> exit 0, 8 lines -- 1 in src/driver/mod.rs (the analyser is run) and 7 in src/builtins.rs (each builtin declares an effect set, and the analyser's own unit tests live there); no phase after the driver reads the result",
@@ -372,7 +372,7 @@ description = "No await operator; the compiler places async boundaries."
 spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:2820-2825 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
+  "src: src/codegen/mod.rs:3172-3177 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
   "conformance: tests/reject/async_fn.pd reject",
   "conformance: tests/10_async_await.pd vacuous",
 ]
@@ -453,7 +453,7 @@ implementation = "partial"
 evidence = [
   "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
   "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
-  "src: src/parser/mod.rs:1976 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
+  "src: src/parser/mod.rs:1975 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
   "conformance: tests/reject/macro_invocation_bracket.pd reject",
 ]
 note = "The registered builtins are reachable through exactly one call shape. `vec![...]`, the spelling every Rust program uses and the one the vec! builtin was written for, does not parse -- the macro parser requires a parenthesis after the name. So `partial` here means four macros exist and one common way of calling them does not."
@@ -489,7 +489,7 @@ description = "C code generation; the backend the compiler actually ships."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "implemented"
 evidence = [
-  "gate: make conformance -> fixtures=82 evaluated=82 verified=51 vacuous=7 xfail=1 reject=21 skip=2 failures=0",
+  "gate: make conformance -> fixtures=84 evaluated=84 verified=52 vacuous=7 xfail=1 reject=22 skip=2 failures=0",
   "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\" -- the C backend is the one a Palladium compiler is built with",
 ]
 
@@ -521,7 +521,7 @@ spec = "../../specification/language-spec.md"
 implementation = "implemented"
 evidence = [
   "gate: cargo build --release -> \"[optimized] target(s)\" -- the compiler builds, and target/release/pdc is what every other gate here runs",
-  "gate: make conformance -> fixtures=82 evaluated=82 verified=51 vacuous=7 xfail=1 reject=21 skip=2 failures=0",
+  "gate: make conformance -> fixtures=84 evaluated=84 verified=52 vacuous=7 xfail=1 reject=22 skip=2 failures=0",
 ]
 
 [tooling.compiler.bootstrapping]
@@ -604,7 +604,7 @@ spec = "PALLADIUM_V1_FEATURES.md#5-standard-library"
 implementation = "unimplemented"
 evidence = [
   "src: src/macros/mod.rs:41 vec![e] is registered here and expands to a 1-element array, not a growable vector",
-  "src: src/codegen/mod.rs:1908-1908 'Generic types in structs not yet supported' — no generic container can exist",
+  "src: src/codegen/mod.rs:2255-2255 'Generic types in structs not yet supported' — no generic container can exist",
 ]
 
 [ecosystem.std_library.io]

@@ -195,7 +195,7 @@ pub fn format_diagnostic(diagnostic: &Diagnostic, style: &ErrorStyle) -> String 
 
     // Format the main error message
     let (level_text, level_start, level_end) = style.level_style(diagnostic.level);
-    
+
     if style.use_color {
         write!(
             &mut output,
@@ -209,13 +209,7 @@ pub fn format_diagnostic(diagnostic: &Diagnostic, style: &ErrorStyle) -> String 
         )
         .unwrap();
     } else {
-        write!(
-            &mut output,
-            "{}: {}",
-            level_text,
-            diagnostic.message
-        )
-        .unwrap();
+        write!(&mut output, "{}: {}", level_text, diagnostic.message).unwrap();
     }
 
     output
@@ -562,7 +556,7 @@ mod tests {
         };
 
         let boxed = boxed_message("Title", "Content line 1\nContent line 2", &style);
-        
+
         // Check structure
         assert!(boxed.contains("+--"));
         assert!(boxed.contains(" Title"));
@@ -579,7 +573,7 @@ mod tests {
         };
 
         let boxed = boxed_message("Unicode Box", "Test content", &style);
-        
+
         // Check unicode characters
         assert!(boxed.contains("┌"));
         assert!(boxed.contains("─"));
@@ -595,7 +589,7 @@ mod tests {
         };
 
         let boxed = boxed_message("", "Just content", &style);
-        
+
         // Should not have title separator when title is empty
         // Count the horizontal lines - should only have top and bottom borders
         let horizontal_count = boxed.matches("+--").count();
@@ -613,19 +607,20 @@ mod tests {
 
         let content = "First line\nSecond line\nThird line with more text";
         let boxed = boxed_message("Multi", content, &style);
-        
+
         // Check all lines are present
         assert!(boxed.contains("| First line"));
         assert!(boxed.contains("| Second line"));
         assert!(boxed.contains("| Third line with more text"));
-        
+
         // Check padding is correct
         let lines: Vec<&str> = boxed.lines().collect();
-        let content_lines: Vec<&str> = lines.iter()
+        let content_lines: Vec<&str> = lines
+            .iter()
             .filter(|l| l.contains("| ") && !l.contains("Multi"))
             .copied()
             .collect();
-        
+
         // All content lines should have the same length
         if !content_lines.is_empty() {
             let first_len = content_lines[0].len();
@@ -640,7 +635,7 @@ mod tests {
         assert_eq!(colors::BOLD, "\x1b[1m");
         assert_eq!(colors::DIM, "\x1b[2m");
         assert_eq!(colors::UNDERLINE, "\x1b[4m");
-        
+
         assert_eq!(colors::RED, "\x1b[31m");
         assert_eq!(colors::GREEN, "\x1b[32m");
         assert_eq!(colors::YELLOW, "\x1b[33m");
@@ -648,7 +643,7 @@ mod tests {
         assert_eq!(colors::MAGENTA, "\x1b[35m");
         assert_eq!(colors::CYAN, "\x1b[36m");
         assert_eq!(colors::WHITE, "\x1b[37m");
-        
+
         assert_eq!(colors::BRIGHT_RED, "\x1b[91m");
         assert_eq!(colors::BRIGHT_GREEN, "\x1b[92m");
         assert_eq!(colors::BRIGHT_YELLOW, "\x1b[93m");

@@ -326,7 +326,7 @@ mod tests {
             "print_line".to_string(),
             "Printf".to_string(),
         ];
-        
+
         // Exact case-insensitive match
         assert_eq!(
             SuggestionEngine::suggest_similar_name("PRINTLN", &available),
@@ -345,7 +345,7 @@ mod tests {
             "sprintf".to_string(),
             "random_func".to_string(),
         ];
-        
+
         // Small typos
         assert_eq!(
             SuggestionEngine::suggest_similar_name("printl", &available),
@@ -410,7 +410,10 @@ mod tests {
     #[test]
     fn test_suggest_similar_name_distance_tie_is_order_independent() {
         // The tie is the premise of this test, so state it rather than assume it.
-        assert_eq!(SuggestionEngine::edit_distance("file_read", "file_read_ex"), 3);
+        assert_eq!(
+            SuggestionEngine::edit_distance("file_read", "file_read_ex"),
+            3
+        );
         assert_eq!(SuggestionEngine::edit_distance("file_read", "file_seek"), 3);
         assert!(3 <= "file_read".len() / 3 + 1);
 
@@ -470,13 +473,13 @@ mod tests {
     #[test]
     fn test_suggest_similar_name_no_match() {
         let available = vec!["foo".to_string(), "bar".to_string()];
-        
+
         // Too different
         assert_eq!(
             SuggestionEngine::suggest_similar_name("completely_different", &available),
             None
         );
-        
+
         // Empty available list
         assert_eq!(
             SuggestionEngine::suggest_similar_name("anything", &[]),
@@ -488,15 +491,15 @@ mod tests {
     fn test_edit_distance() {
         // Same strings
         assert_eq!(SuggestionEngine::edit_distance("hello", "hello"), 0);
-        
+
         // One character difference
         assert_eq!(SuggestionEngine::edit_distance("hello", "hallo"), 1);
         assert_eq!(SuggestionEngine::edit_distance("hello", "hell"), 1);
         assert_eq!(SuggestionEngine::edit_distance("hello", "ello"), 1);
-        
+
         // Multiple differences
         assert_eq!(SuggestionEngine::edit_distance("kitten", "sitting"), 3);
-        
+
         // Empty strings
         assert_eq!(SuggestionEngine::edit_distance("", "hello"), 5);
         assert_eq!(SuggestionEngine::edit_distance("hello", ""), 5);
@@ -512,7 +515,7 @@ mod tests {
         assert!(SuggestionEngine::is_fancy_quote('\u{2019}')); // Right single quote
         assert!(SuggestionEngine::is_fancy_quote('`')); // Backtick
         assert!(SuggestionEngine::is_fancy_quote('\u{00B4}')); // Acute accent
-        
+
         // Regular quotes
         assert!(!SuggestionEngine::is_fancy_quote('"'));
         assert!(!SuggestionEngine::is_fancy_quote('\''));
@@ -524,13 +527,22 @@ mod tests {
         // Double quotes
         assert_eq!(SuggestionEngine::suggest_ascii_quote('\u{201C}'), Some('"'));
         assert_eq!(SuggestionEngine::suggest_ascii_quote('\u{201D}'), Some('"'));
-        
+
         // Single quotes
-        assert_eq!(SuggestionEngine::suggest_ascii_quote('\u{2018}'), Some('\''));
-        assert_eq!(SuggestionEngine::suggest_ascii_quote('\u{2019}'), Some('\''));
+        assert_eq!(
+            SuggestionEngine::suggest_ascii_quote('\u{2018}'),
+            Some('\'')
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_ascii_quote('\u{2019}'),
+            Some('\'')
+        );
         assert_eq!(SuggestionEngine::suggest_ascii_quote('`'), Some('\''));
-        assert_eq!(SuggestionEngine::suggest_ascii_quote('\u{00B4}'), Some('\''));
-        
+        assert_eq!(
+            SuggestionEngine::suggest_ascii_quote('\u{00B4}'),
+            Some('\'')
+        );
+
         // Non-quotes
         assert_eq!(SuggestionEngine::suggest_ascii_quote('a'), None);
         assert_eq!(SuggestionEngine::suggest_ascii_quote('"'), None);
@@ -539,120 +551,208 @@ mod tests {
     #[test]
     fn test_suggest_for_c_style_mistake() {
         // Increment/decrement
-        assert!(SuggestionEngine::suggest_for_c_style_mistake("x++").unwrap().contains("x = x + 1"));
-        assert!(SuggestionEngine::suggest_for_c_style_mistake("i--").unwrap().contains("x = x - 1"));
-        
+        assert!(SuggestionEngine::suggest_for_c_style_mistake("x++")
+            .unwrap()
+            .contains("x = x + 1"));
+        assert!(SuggestionEngine::suggest_for_c_style_mistake("i--")
+            .unwrap()
+            .contains("x = x - 1"));
+
         // Assignment vs comparison
-        assert!(SuggestionEngine::suggest_for_c_style_mistake("if (x = 5 && y == 3)")
-            .unwrap().contains("'=' for assignment and '==' for comparison"));
-        
+        assert!(
+            SuggestionEngine::suggest_for_c_style_mistake("if (x = 5 && y == 3)")
+                .unwrap()
+                .contains("'=' for assignment and '==' for comparison")
+        );
+
         // Include statements
-        assert!(SuggestionEngine::suggest_for_c_style_mistake("#include <stdio.h>")
-            .unwrap().contains("import"));
-        
+        assert!(
+            SuggestionEngine::suggest_for_c_style_mistake("#include <stdio.h>")
+                .unwrap()
+                .contains("import")
+        );
+
         // Memory management
-        assert!(SuggestionEngine::suggest_for_c_style_mistake("ptr = malloc(100)")
-            .unwrap().contains("automatic memory management"));
+        assert!(
+            SuggestionEngine::suggest_for_c_style_mistake("ptr = malloc(100)")
+                .unwrap()
+                .contains("automatic memory management")
+        );
         assert!(SuggestionEngine::suggest_for_c_style_mistake("free(ptr)")
-            .unwrap().contains("automatic memory management"));
-        
+            .unwrap()
+            .contains("automatic memory management"));
+
         // No mistakes
-        assert_eq!(SuggestionEngine::suggest_for_c_style_mistake("let x = 5;"), None);
+        assert_eq!(
+            SuggestionEngine::suggest_for_c_style_mistake("let x = 5;"),
+            None
+        );
     }
 
     #[test]
     fn test_suggest_type_conversion() {
         // int to string
         assert!(SuggestionEngine::suggest_type_conversion("int", "string")
-            .unwrap().contains("int_to_string"));
+            .unwrap()
+            .contains("int_to_string"));
         assert!(SuggestionEngine::suggest_type_conversion("i64", "string")
-            .unwrap().contains("int_to_string"));
-        
+            .unwrap()
+            .contains("int_to_string"));
+
         // string to int
         assert!(SuggestionEngine::suggest_type_conversion("string", "int")
-            .unwrap().contains("parse_int"));
+            .unwrap()
+            .contains("parse_int"));
         assert!(SuggestionEngine::suggest_type_conversion("string", "i64")
-            .unwrap().contains("parse_int"));
-        
+            .unwrap()
+            .contains("parse_int"));
+
         // float conversions
         assert!(SuggestionEngine::suggest_type_conversion("float", "int")
-            .unwrap().contains("to_int"));
+            .unwrap()
+            .contains("to_int"));
         assert!(SuggestionEngine::suggest_type_conversion("int", "float")
-            .unwrap().contains("to_float"));
-        
+            .unwrap()
+            .contains("to_float"));
+
         // bool conversions
         assert!(SuggestionEngine::suggest_type_conversion("bool", "string")
-            .unwrap().contains("to_string"));
+            .unwrap()
+            .contains("to_string"));
         assert!(SuggestionEngine::suggest_type_conversion("string", "bool")
-            .unwrap().contains("parse_bool"));
-        
+            .unwrap()
+            .contains("parse_bool"));
+
         // Case insensitive
         assert!(SuggestionEngine::suggest_type_conversion("INT", "STRING").is_some());
-        
+
         // No conversion available
-        assert_eq!(SuggestionEngine::suggest_type_conversion("custom", "other"), None);
+        assert_eq!(
+            SuggestionEngine::suggest_type_conversion("custom", "other"),
+            None
+        );
     }
 
     #[test]
     fn test_suggest_import_for_function() {
         // I/O functions
-        assert_eq!(SuggestionEngine::suggest_import_for_function("println"), Some("import std.io;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("print"), Some("import std.io;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("readln"), Some("import std.io;".to_string()));
-        
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("println"),
+            Some("import std.io;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("print"),
+            Some("import std.io;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("readln"),
+            Some("import std.io;".to_string())
+        );
+
         // Math functions
-        assert_eq!(SuggestionEngine::suggest_import_for_function("sqrt"), Some("import std.math;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("pow"), Some("import std.math;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("abs"), Some("import std.math;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("sin"), Some("import std.math;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("cos"), Some("import std.math;".to_string()));
-        
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("sqrt"),
+            Some("import std.math;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("pow"),
+            Some("import std.math;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("abs"),
+            Some("import std.math;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("sin"),
+            Some("import std.math;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("cos"),
+            Some("import std.math;".to_string())
+        );
+
         // String functions
-        assert_eq!(SuggestionEngine::suggest_import_for_function("len"), Some("import std.string;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("substr"), Some("import std.string;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("concat"), Some("import std.string;".to_string()));
-        
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("len"),
+            Some("import std.string;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("substr"),
+            Some("import std.string;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("concat"),
+            Some("import std.string;".to_string())
+        );
+
         // Collections
-        assert_eq!(SuggestionEngine::suggest_import_for_function("Vec"), Some("import std.collections;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("HashMap"), Some("import std.collections;".to_string()));
-        assert_eq!(SuggestionEngine::suggest_import_for_function("Set"), Some("import std.collections;".to_string()));
-        
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("Vec"),
+            Some("import std.collections;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("HashMap"),
+            Some("import std.collections;".to_string())
+        );
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("Set"),
+            Some("import std.collections;".to_string())
+        );
+
         // Unknown function
-        assert_eq!(SuggestionEngine::suggest_import_for_function("unknown_func"), None);
+        assert_eq!(
+            SuggestionEngine::suggest_import_for_function("unknown_func"),
+            None
+        );
     }
 
     #[test]
     fn test_check_balanced_delimiters() {
         // Balanced
         assert_eq!(SuggestionEngine::check_balanced_delimiters("(a + b)"), None);
-        assert_eq!(SuggestionEngine::check_balanced_delimiters("[1, 2, 3]"), None);
+        assert_eq!(
+            SuggestionEngine::check_balanced_delimiters("[1, 2, 3]"),
+            None
+        );
         assert_eq!(SuggestionEngine::check_balanced_delimiters("{x: 1}"), None);
-        assert_eq!(SuggestionEngine::check_balanced_delimiters("((a + b) * [c])"), None);
+        assert_eq!(
+            SuggestionEngine::check_balanced_delimiters("((a + b) * [c])"),
+            None
+        );
         assert_eq!(SuggestionEngine::check_balanced_delimiters(""), None);
-        
+
         // Unmatched closing
         assert!(SuggestionEngine::check_balanced_delimiters("a + b)")
-            .unwrap().contains("Unmatched closing parenthesis"));
+            .unwrap()
+            .contains("Unmatched closing parenthesis"));
         assert!(SuggestionEngine::check_balanced_delimiters("arr]")
-            .unwrap().contains("Unmatched closing bracket"));
+            .unwrap()
+            .contains("Unmatched closing bracket"));
         assert!(SuggestionEngine::check_balanced_delimiters("obj}")
-            .unwrap().contains("Unmatched closing brace"));
-        
+            .unwrap()
+            .contains("Unmatched closing brace"));
+
         // Unclosed opening
         assert!(SuggestionEngine::check_balanced_delimiters("(a + b")
-            .unwrap().contains("Unclosed delimiter '('"));
+            .unwrap()
+            .contains("Unclosed delimiter '('"));
         assert!(SuggestionEngine::check_balanced_delimiters("[1, 2")
-            .unwrap().contains("Unclosed delimiter '['"));
+            .unwrap()
+            .contains("Unclosed delimiter '['"));
         assert!(SuggestionEngine::check_balanced_delimiters("{x: 1")
-            .unwrap().contains("Unclosed delimiter '{'"));
-        
+            .unwrap()
+            .contains("Unclosed delimiter '{'"));
+
         // Mismatched
         assert!(SuggestionEngine::check_balanced_delimiters("(a + b]")
-            .unwrap().contains("Mismatched"));
+            .unwrap()
+            .contains("Mismatched"));
         assert!(SuggestionEngine::check_balanced_delimiters("[a + b)")
-            .unwrap().contains("Mismatched"));
+            .unwrap()
+            .contains("Mismatched"));
         assert!(SuggestionEngine::check_balanced_delimiters("{a + b]")
-            .unwrap().contains("Mismatched"));
+            .unwrap()
+            .contains("Mismatched"));
     }
 
     #[test]
@@ -676,53 +776,73 @@ mod tests {
     fn test_beginner_patterns_null() {
         let suggestions = BeginnerPatterns::check_pattern("if (ptr == null) {");
         assert!(suggestions.iter().any(|s| s.contains("Option types")));
-        
+
         let suggestions = BeginnerPatterns::check_pattern("value = nil;");
         assert!(suggestions.iter().any(|s| s.contains("Option<T>")));
-        
+
         let suggestions = BeginnerPatterns::check_pattern("return NULL;");
-        assert!(suggestions.iter().any(|s| s.contains("Some(value)") && s.contains("None")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("Some(value)") && s.contains("None")));
     }
 
     #[test]
     fn test_beginner_patterns_var() {
         let suggestions = BeginnerPatterns::check_pattern("var x = 5;");
-        assert!(suggestions.iter().any(|s| s.contains("'let' for variables")));
-        assert!(suggestions.iter().any(|s| s.contains("'let mut' for mutable")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("'let' for variables")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("'let mut' for mutable")));
     }
 
     #[test]
     fn test_beginner_patterns_const() {
         // Wrong position
         let suggestions = BeginnerPatterns::check_pattern("fn main() { const X = 5; }");
-        assert!(suggestions.iter().any(|s| s.contains("top level for constants")));
-        
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("top level for constants")));
+
         // Correct position (should not trigger)
         let suggestions = BeginnerPatterns::check_pattern("const PI = 3.14;");
-        assert!(!suggestions.iter().any(|s| s.contains("top level for constants")));
+        assert!(!suggestions
+            .iter()
+            .any(|s| s.contains("top level for constants")));
     }
 
     #[test]
     fn test_beginner_patterns_class() {
         let suggestions = BeginnerPatterns::check_pattern("class MyClass {");
-        assert!(suggestions.iter().any(|s| s.contains("'struct' for data types")));
-        assert!(suggestions.iter().any(|s| s.contains("Classes are not supported")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("'struct' for data types")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("Classes are not supported")));
     }
 
     #[test]
     fn test_beginner_patterns_switch() {
         let suggestions = BeginnerPatterns::check_pattern("switch (value) {");
-        assert!(suggestions.iter().any(|s| s.contains("'match' expressions")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("'match' expressions")));
     }
 
     #[test]
     fn test_beginner_patterns_do_while() {
         let suggestions = BeginnerPatterns::check_pattern("do { x++; } while (x < 10);");
-        assert!(suggestions.iter().any(|s| s.contains("loop { ... if condition { break; } }")));
-        
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("loop { ... if condition { break; } }")));
+
         // Test without space
         let suggestions = BeginnerPatterns::check_pattern("do{ x++; } while (x < 10);");
-        assert!(suggestions.iter().any(|s| s.contains("doesn't have do-while loops")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("doesn't have do-while loops")));
     }
 
     #[test]
@@ -735,15 +855,23 @@ mod tests {
                 }
             }
         "#;
-        
+
         let suggestions = BeginnerPatterns::check_pattern(code);
-        
+
         // Should have suggestions for all patterns
-        assert!(suggestions.iter().any(|s| s.contains("'let' for variables")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("'let' for variables")));
         assert!(suggestions.iter().any(|s| s.contains("Option types")));
-        assert!(suggestions.iter().any(|s| s.contains("'struct' for data types")));
-        assert!(suggestions.iter().any(|s| s.contains("'match' expressions")));
-        assert!(suggestions.iter().any(|s| s.contains("string interpolation")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("'struct' for data types")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("'match' expressions")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.contains("string interpolation")));
     }
 
     #[test]
@@ -757,7 +885,7 @@ mod tests {
                 None => println("No value"),
             }
         "#;
-        
+
         let suggestions = BeginnerPatterns::check_pattern(code);
         assert_eq!(suggestions.len(), 0);
     }
