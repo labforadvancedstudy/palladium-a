@@ -2270,7 +2270,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:2541-2543`), and walking an imported
+        // return (`src/typeck/mod.rs:2560-2562`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -5171,7 +5171,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:4784-4848`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:5014-5078`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -5195,7 +5195,7 @@ impl TypeChecker {
     /// This matters for the same reason the module ordering does: `make selfhost`
     /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
     /// because `bootstrap/pdc.pd` uses no generics — they are excluded from PBS-1
-    /// (`docs/specification/bootstrap-subset.md:88`).
+    /// (`docs/specification/bootstrap-subset.md:94`).
     pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
         let mut result = Vec::new();
 

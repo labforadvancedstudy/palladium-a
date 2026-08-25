@@ -41,7 +41,7 @@ enum ArrayParamForm {
     /// `xs: [T; N]` - no declared intent to mutate anything.
     ByValue,
     /// `mut xs: [T; N]` - the bootstrap subset's spelling for a mutable array
-    /// parameter (docs/specification/bootstrap-subset.md:105).
+    /// parameter (docs/specification/bootstrap-subset.md:111).
     MutByValue,
     /// `xs: &[T; N]`.
     Shared,
@@ -923,7 +923,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4104`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4157`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:579-581`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under

@@ -280,7 +280,7 @@ fn test_result_error_handling() {
 }
 
 #[test]
-#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:145-146 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
+#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:158-159 admits only `fn` items in a trait body (`trait_item`) (owned by M4, 'Traits with real dispatch')"]
 fn test_iterator_trait() {
     let source = r#"
     trait Iterator {
@@ -325,7 +325,7 @@ fn test_iterator_trait() {
 }
 
 #[test]
-#[ignore = "XFAIL: closures — grammar.ebnf:286 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: closures — grammar.ebnf:302 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closure_capture() {
     let source = r#"
     fn main() {
@@ -568,7 +568,7 @@ fn test_const_generics_arrays() {
 }
 
 #[test]
-#[ignore = "XFAIL: tuple expressions — grammar.ebnf:286 'no tuple expressions'; tuple *types* parse but lower to void* and cannot be constructed (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: tuple expressions — grammar.ebnf:302 'no tuple expressions'; tuple *types* parse but lower to void* and cannot be constructed (owned by M2, surface syntax)"]
 fn test_type_aliases_complex() {
     let source = r#"
     type NodeId = int;

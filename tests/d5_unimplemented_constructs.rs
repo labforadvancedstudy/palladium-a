@@ -391,9 +391,9 @@ fn main() {
 /// The limit the help now states out loud, pinned so it cannot silently drift.
 ///
 /// Code generation skips generic enum definitions entirely, at all four sites —
-/// the two that COLLECT (`src/codegen/mod.rs:1667-1671`,
-/// `src/codegen/mod.rs:1703-1707`) and the two that EMIT
-/// (`src/codegen/mod.rs:1767-1772`, `src/codegen/mod.rs:1797-1801`) — and
+/// the two that COLLECT (`src/codegen/mod.rs:1727-1731`,
+/// `src/codegen/mod.rs:1763-1767`) and the two that EMIT
+/// (`src/codegen/mod.rs:1827-1832`, `src/codegen/mod.rs:1857-1861`) — and
 /// generic enum construction
 /// infers only the type parameters a variant actually mentions — so
 /// `Result::Err(e)` yields `Result<(), Int>` and never matches a declared

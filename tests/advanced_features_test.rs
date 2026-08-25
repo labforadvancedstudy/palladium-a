@@ -252,7 +252,7 @@ fn test_pattern_matching_advanced() {
 }
 
 #[test]
-#[ignore = "XFAIL: closures — grammar.ebnf:286 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: closures — grammar.ebnf:302 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closures() {
     let source = r#"
     fn main() {
@@ -306,7 +306,7 @@ fn test_lifetime_annotations() {
 }
 
 #[test]
-#[ignore = "XFAIL: raw pointer types and `as` casts — grammar.ebnf:286 'no `as` casts'; there is no `*mut T` type either (owned by M4, 'A real reference type')"]
+#[ignore = "XFAIL: RAW POINTER TYPES. `as` casts are implemented (N5-15, grammar.ebnf:269 `cast = unary { \"as\" type }`), so the old half of this reason is retired; what stops this fixture is `*mut int`, for which there is no type (owned by M4, 'A real reference type')"]
 fn test_unsafe_operations() {
     let source = r#"
     fn main() {
@@ -450,7 +450,7 @@ fn test_module_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:145-146 admits only `fn` items in a trait body (owned by M4, 'Traits with real dispatch')"]
+#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:158-159 admits only `fn` items in a trait body (`trait_item`) (owned by M4, 'Traits with real dispatch')"]
 fn test_iterator_protocol() {
     let source = r#"
     trait Iterator {

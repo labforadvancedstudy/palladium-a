@@ -3,8 +3,18 @@
 //! # Why every test needs its own module name
 //!
 //! The code generator always writes to `build_output/<module-stem>.c`
-//! (`src/codegen/mod.rs:4326-4337`), where the stem comes from the *virtual*
+//! (`src/codegen/mod.rs:5164-5176`), where the stem comes from the *virtual*
 //! filename handed to the driver — not from the source file's real location.
+//!
+//! *(That citation named a range in the BINARY OPERATOR emitter until
+//! 2026-08-25 — written here without its line numbers on purpose, because a
+//! `path:line` in this comment is itself a citation and would pin the very
+//! range the sentence is calling wrong. It says nothing about output paths. It
+//! was a
+//! citation that had drifted onto unrelated code and stayed green there,
+//! because a fingerprint proves a range has not moved and never proves it
+//! supports the claim. Found by the evidence gate only once the range's content
+//! changed underneath it.)*
 //! Two tests that pass the same name therefore write and re-read the same file.
 //!
 //! Cargo runs the tests inside one binary on parallel threads, and the test

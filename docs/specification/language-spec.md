@@ -142,7 +142,7 @@ compile time.
 
 ## N5. Statements and expressions
 
-<sub>Non-normative pointer, not part of the definition: **implementation status → [A6 — partial: if and match are statements; no closures, loop, else-if or compound assignment](#a6-statements-and-expressions)**</sub>
+<sub>Non-normative pointer, not part of the definition: **implementation status → [A6 — partial: `if`/`match`/blocks/`loop` are expressions, with `else if`, compound assignment, bitwise, ranges, `as` and `x.f()`; no closures and no `try { }`](#a6-statements-and-expressions)**</sub>
 
 Statements: `let`, assignment, `return`, `break`, `continue`, `unsafe { }`, and expression
 statements.
@@ -500,7 +500,7 @@ lex → parse → macro expand → resolve imports → typecheck → borrow chec
 ```
 
 The C backend is the real backend. An LLVM text backend exists
-(`src/codegen/llvm_text_backend.rs`, 1442 lines) but is skeletal: `break` and `continue` are refused
+(`src/codegen/llvm_text_backend.rs`, 2543 lines) but is skeletal: `break` and `continue` are refused
 outright, naming the `%loop_end_placeholder` / `%loop_inc_placeholder` the TODO would have emitted
 (`src/codegen/llvm_text_backend.rs:944-946`, `src/codegen/llvm_text_backend.rs:948-950`), `match` is a TODO if/else chain
 (`src/codegen/llvm_text_backend.rs:952-964`), and enum construction, `?`, macro invocation and `await` are one unimplemented TODO
@@ -699,9 +699,9 @@ enums.
 
 **partial** — field types that parse and then fail in codegen (all three corrected from v0.2,
 which was ~250 lines low):
-- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:2417-2417`)
-- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:1992-1992`)
-- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:2430-2434`)
+- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:2477-2477`)
+- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:2052-2052`)
+- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:2490-2494`)
 
 ### A4.3 Enums
 
@@ -721,8 +721,8 @@ and `local_type_shadows_import` decides the rest.*
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1461`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1921-1924`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2186-2187`, corrected
-from `src/typeck/mod.rs:2521-2521`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:1981-1984`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2186-2187`, corrected
+from `src/typeck/mod.rs:2586-2586`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1585`, corrected from line 863–897 of the pre-cleanup revision).
 
@@ -738,7 +738,7 @@ impl_block = "impl" [ generic_params ] [ type "for" ] type "{" { function } "}" 
 ```
 
 **implemented**: methods become mangled free functions `__pd_Type_method`
-(`src/codegen/mod.rs:1938-1943`, corrected THREE TIMES: from line 1861 of the pre-cleanup
+(`src/codegen/mod.rs:1998-2003`, corrected THREE TIMES: from line 1861 of the pre-cleanup
 revision; on 2026-08-23 from `1174-1180`, which was the file-I/O prelude and had nothing to do with
 method mangling — the line numbers had been tracked through an edit while the target was never
 re-read; and on 2026-08-25, when `4690ef0` inserted above it).
@@ -782,8 +782,11 @@ Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
 | `&T`, `&mut T` | partial | parses, but the typechecker is a **no-op**: `Type::Reference` maps to its inner type — "For now, treat references as the inner type / TODO: Proper reference type handling" (`src/typeck/mod.rs:714-718`, corrected from line 2470–2486 of the pre-cleanup revision). `&i64` and `i64` are indistinguishable to it. |
 | `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
 | `Name<A, B>` | partial | see below |
-| `(A, B)` | partial | becomes `void*` in C (`src/codegen/mod.rs:1998-2001`, corrected from line 828 of the pre-cleanup revision); no tuple expression exists, so no tuple is constructible |
-| `f32`, `f64`, `char`, `str`, `u8`, `usize` | unimplemented | not in the primitive table |
+| `(A, B)` | partial | becomes `void*` in C (`src/codegen/mod.rs:2058-2061`, corrected from line 828 of the pre-cleanup revision); no tuple expression exists, so no tuple is constructible |
+| `f64` | **implemented** | the type of a float literal since N2-03; C `double` |
+| `f32` | partial | parses and maps to C `float`, but shares one checker type with `f64`, so nothing can observe the difference |
+| `char` | partial | `'a'` LEXES and carries the right scalar (N2-04), and its TYPE is `i64` — N4-04, still owed, moves with N14-04's `string_char_at` |
+| `str`, `u8`, `usize` | unimplemented | not in the primitive table |
 | `fn(A) -> B` | unimplemented | function types are unparseable |
 | `[T]` slices, `dyn T`, `impl T` | unimplemented | |
 | `<T: Bound>`, `where` | unimplemented | `parse_generic_params` accepts bare names only; the `:` is a parse error |
@@ -795,10 +798,10 @@ mixed-case names like `Vec<Item>` reach the type branch.
 
 **partial — const generics**: they parse, and in codegen an `ArraySize::ConstParam` is emitted
 into C verbatim as the parameter's *name* while an `ArraySize::Expr` becomes the literal `"0"`
-(`src/codegen/mod.rs:1968-1972`, corrected on 2026-08-23 from `1204-1206`, which was
+(`src/codegen/mod.rs:2028-2032`, corrected on 2026-08-23 from `1204-1206`, which was
 `return pd_file_flush(handle);` — a citation about const generics pointing at the file-I/O
 prelude). Neither is monomorphised. *(v0.2 said "array sizes from a const
-parameter resolve to `0`" citing `src/codegen/mod.rs:407-407`; that is the expression case, not the const-parameter
+parameter resolve to `0`" citing `src/codegen/mod.rs:511-511`; that is the expression case, not the const-parameter
 case.)*
 
 `tests/08_generics_basic.pd` PASSES conformance while only printing that generics are
@@ -814,8 +817,8 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
-rejected outright by the type checker (`src/typeck/mod.rs:4138-4138`) and again by code generation
-(`src/codegen/mod.rs:4613-4617`). It used to typecheck against a `Generic{name:"Result"}` shape
+rejected outright by the type checker (`src/typeck/mod.rs:4735-4735`) and again by code generation
+(`src/codegen/mod.rs:4843-4847`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -835,17 +838,32 @@ and then emit C for a `struct Result` layout nothing defines (see
   travels with it, which is what keeps a tail-position chain returning. *(This bullet read
   "unimplemented — after `else` the parser requires `{`" until `66dab38`.)*
 - **implemented: `loop`** (N5-07), a keyword since `src/lexer/token.rs:250`, parsed at
-  `src/parser/mod.rs:2598` and emitted as C `while (1)` (`src/codegen/mod.rs:3483`). Its `break`
+  `src/parser/mod.rs:2598` and emitted as C `while (1)` (`src/codegen/mod.rs:3635`). Its `break`
   may carry a value. *(It read "not a keyword. Use `while true`" until `f729cda`.)*
 - **implemented: compound assignment** `+= -= *= /= %=` (N5-13), DESUGARED at
   `src/parser/mod.rs:2106` into `t = t op v` rather than emitted as C's own compound operator —
   Palladium's `+` on `String` is a runtime concatenation call, which C's `+=` cannot express. The
   residual that buys: the target is written twice, so it is evaluated twice, and `a[next()] += 1`
-  calls `next()` twice. *(It read "unimplemented — verified: `Expected expression, but found
+  calls `next()` twice.
+
+  **AND THAT IS NOT A NORMATIVE VIOLATION, WHICH IS WORTH STATING RATHER THAN ASSUMING.**
+  [N5](#n5-statements-and-expressions) names the compound operators and says nothing about how
+  often the place is evaluated; [N13](#n13-execution-model)'s only evaluation-order sentence is
+  "Arguments are evaluated left to right", and the left-hand side of an assignment is not an
+  argument. So N5-13 is `satisfied` on the requirement as written. It is a deviation from the
+  language this one is modelled on, where the place is evaluated once, and it is recorded here
+  because the next person to write that rule down should know it costs a place-expression
+  lowering — binding the subscript to a temporary before the read — and not a one-line change. *(It read "unimplemented — verified: `Expected expression, but found
   '='`" until `ef74eba`.)*
 - implemented: bare nested blocks as statements — a `{ … }` in statement position parses, as a
   side effect of blocks becoming expressions (N5-05). unimplemented: `try { }` blocks (N5-09).
-- implemented: `break` / `continue`, unlabeled, valueless.
+- implemented: `break` / `continue`, unlabeled. **`break` MAY CARRY A VALUE, and only out of a
+  `loop` used as one** (N5-07): `let x = loop { … break v; };`. The two directions are both
+  refused — a valued `break` out of a loop written for its effect has nowhere to put the value,
+  and a VALUELESS `break` out of a value `loop` leaves the binding on the other side unwritten,
+  which emitted an uninitialised C temporary and then read it until `1f64c32` refused it.
+  `continue` is valueless in every position. *(This bullet read "unlabeled, valueless" until
+  N5-07.)*
 
 `unsafe { }` parses and `src/unsafe_ops` runs (`src/driver/mod.rs:189-197`), but raw pointer types
 and `unsafe fn` do not exist, so [N12](#n12-memory-model)'s restricted-unsafe is unimplemented.
@@ -890,7 +908,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:4884-4888`, corrected from line 1874 of the pre-cleanup revision).
+  (`src/typeck/mod.rs:4954-4958`, corrected from line 1874 of the pre-cleanup revision).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
@@ -902,7 +920,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3219`) and code generation (`src/codegen/mod.rs:4225`)
+both the type checker (`src/typeck/mod.rs:3258`) and code generation (`src/codegen/mod.rs:4392`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once;
 its position among the arguments is C's unspecified evaluation order, which is the same residual
@@ -970,14 +988,14 @@ that what precedes `?` is a Result, because in those programs it is not.
 The `match` alternative is bounded, and the help says where it stops rather than leaving it to be
 discovered. Measured: dispatch works, propagation out of a helper works, payload types other than
 `i64` work — but a generic `Result<T, E>` does **not** compile, because code generation skips
-generic enum definitions (`src/codegen/mod.rs:1796-1800`, `src/codegen/mod.rs:1766-1770`, `src/codegen/mod.rs:1216-1216`) and generic enum construction
+generic enum definitions (`src/codegen/mod.rs:1856-1860`, `src/codegen/mod.rs:1826-1830`, `src/codegen/mod.rs:1276-1276`) and generic enum construction
 infers only the parameters a variant mentions, so `Result::Err(e)` yields `Result<(), E>`. One
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4138-4138`, `.await` at
-`src/typeck/mod.rs:4145-4145`) and again by code generation (`?` at `src/codegen/mod.rs:4613-4617`,
-`.await` at `src/codegen/mod.rs:4625-4629`), which is callable on its own.
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4735-4735`, `.await` at
+`src/typeck/mod.rs:4198-4198`) and again by code generation (`?` at `src/codegen/mod.rs:4843-4847`,
+`.await` at `src/codegen/mod.rs:4855-4859`), which is callable on its own.
 
 What they used to do:
 
@@ -986,7 +1004,7 @@ What they used to do:
   constants instead. gcc reported `variable has incomplete type 'struct Result'`.
 - `.await` emitted `while (!f.poll(&f)) {}`. C has no member function calls, and the poll
   routine that *is* generated is the free function `<name>_poll`
-  (`src/codegen/mod.rs:3639-3639`), which that call never names. There is no async runtime.
+  (`src/codegen/mod.rs:3791-3791`), which that call never names. There is no async runtime.
 
 Both lowerings are deleted rather than kept behind a flag: they encoded a representation a real
 implementation must not reuse, and version control holds them.
@@ -1090,9 +1108,9 @@ pattern = "_"
 (`A | B`), guards (`if cond`), tuple/slice patterns, non-enum struct patterns, `ref`/`mut`
 bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires all of them.
 
-Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:4344-4350`,
+Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:4397-4403`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
-(`src/codegen/mod.rs:2747-2747`, `src/codegen/mod.rs:2768-2779`) with a wildcard arm becoming the final `else`; when no
+(`src/codegen/mod.rs:2972-2972`, `src/codegen/mod.rs:2828-2839`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
 
 Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else` chains.
@@ -1141,8 +1159,8 @@ One divergence remains, and two are closed:
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:1128-1128`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:3070-3070`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
-every output file (`src/codegen/mod.rs:781-781`, corrected from line 251–575 of the pre-cleanup revision).
+(`src/codegen/mod.rs:3130-3130`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+every output file (`src/codegen/mod.rs:841-841`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
 became the SSOT; it is no longer the mechanism.)*
@@ -1198,7 +1216,7 @@ in the compiler can have "silently miscompiled the standard library". See
 
 ## A9. Memory model
 
-**partial.** Ownership and borrowing are *checked* (`src/ownership/borrow_checker.rs`, 1165 lines)
+**partial.** Ownership and borrowing are *checked* (`src/ownership/borrow_checker.rs`, 2268 lines)
 but not *represented* in the type system: the typechecker treats `&T` as `T`
 (`src/typeck/mod.rs:714-718`).
 
@@ -1221,7 +1239,7 @@ LSP fixtures. There is no region inference: `grep -rn 'region\|Region' src/ --in
 returns nothing.
 
 No garbage collector. Strings are allocated from a 64 KiB static arena with a malloc fallback and
-are freed at exit (`src/codegen/mod.rs:711-711`, corrected from line 210–245 of the pre-cleanup revision).
+are freed at exit (`src/codegen/mod.rs:771-771`, corrected from line 210–245 of the pre-cleanup revision).
 
 ### A9.1 `String` is a copyable handle (decision, 2026-08-21)
 
@@ -1450,13 +1468,16 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-expressions`
 (2026-08-25):
 
-**verified 64 · untranscribed 0 · vacuous 7 · xfail 1 · reject 21 · skip 2 · failures 0**, over 95
-fixtures. (`reject` FELL while the corpus grew, which no earlier revision of this figure did:
-`feat/m2-expressions` added eleven `run` fixtures, one per N5 row it closed, and transitioned
-`tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted there was no `loop`
-keyword, N5-07 gave the language one, and a `reject` row whose refusal stops happening is
-REJECT_ACCEPTED rather than a row to delete. The previous figure — 52 verified, reject 22, over 84
-— was taken before that branch. The one before it — 51 verified, reject 22, over 83 — was taken
+**verified 67 · untranscribed 0 · vacuous 7 · xfail 1 · reject 28 · skip 2 · failures 0**, over 105
+fixtures. (`reject` grew by SEVEN in one round, which is the shape a review round leaves: external
+review of the N5 work found two miscompiles and three places where the front end approved C the
+backend could not build, and the repairs for the second kind are REFUSALS — each one a program
+that should never have been accepted, each pinned by a `reject` fixture. Before that round the
+figure was 64 verified, reject 21, over 95, and `reject` had FALLEN while the corpus grew — the
+only revision of this figure that ever did: `feat/m2-expressions` added eleven `run` fixtures, one
+per N5 row it closed, and transitioned `tests/reject/loop_keyword.pd` from `reject` to `run`, that
+fixture having asserted there was no `loop` keyword until N5-07 gave the language one. The figure
+before those — 52 verified, reject 22, over 84 — was taken before that branch. The one before it — 51 verified, reject 22, over 83 — was taken
 before
 `feat/m2-witness-json` added `tests/witness/json_parser.pd`, the second witness program thesis
 condition 4 names; it is one `run` row, so only `verified` and the corpus size move. The one
