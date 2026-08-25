@@ -1,0 +1,17 @@
+Statement loop:
+3
+Continue:
+50
+Value loop:
+8
+Two breaks, one type:
+20
+Nested statement loops:
+3
+6
+Statement loop nested in a value loop:
+600
+A value that is not an integer:
+two
+As an argument:
+7

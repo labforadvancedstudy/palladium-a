@@ -100,7 +100,7 @@ tests/compiler_comprehensive_test.rs	test_as_cast	owed	M2	Error: Unexpected toke
 tests/compiler_comprehensive_test.rs	test_bitwise_operators	owed	M2	Error: Unexpected token: expected ';' (Expected ';' after let statement), found '&'
 tests/compiler_comprehensive_test.rs	test_compound_assignment_operators	owed	M2	Error: Unexpected token: expected expression, found '='
 tests/compiler_comprehensive_test.rs	test_else_if_chain	paid	-	-
-tests/compiler_comprehensive_test.rs	test_loop_keyword	owed	M2	Error: Unexpected token: expected ';' (Expected ';' after expression), found '{'
+tests/compiler_comprehensive_test.rs	test_loop_keyword	paid	-	-
 tests/compiler_comprehensive_test.rs	test_match_on_integer_literal	owed	M2	Error: Unexpected token: expected pattern, found integer 1
 tests/compiler_comprehensive_test.rs	test_missing_return_is_an_error	paid	-	-
 tests/compiler_comprehensive_test.rs	test_struct_with_methods	owed	M4	Error: Unknown struct type: Self

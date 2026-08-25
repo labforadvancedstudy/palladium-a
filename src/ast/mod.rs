@@ -377,6 +377,14 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    /// Unconditional loop: `loop { … }` (N5-07).
+    ///
+    /// NOT sugar for `while true`, even though it lowers to one. `while true`
+    /// is an expression the checker has to evaluate and the reader has to
+    /// verify; `loop` says "no exit but a `break`" in the grammar, which is
+    /// what makes `break <value>` well defined — there is exactly one way out,
+    /// so there is exactly one place the value can come from.
+    Loop { body: Vec<Stmt>, span: Span },
     /// For loop
     For {
         var: String,
@@ -384,8 +392,14 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
-    /// Break statement
-    Break { span: Span },
+    /// Break statement, optionally carrying the value of the `loop` it exits.
+    ///
+    /// `value` is `Some` only for `break <expr>;`. Which loop it belongs to is
+    /// NOT recorded here: there are no loop labels, so a `break` binds to the
+    /// innermost enclosing loop and every pass that needs the target keeps its
+    /// own stack while it walks (`src/typeck/mod.rs`, `src/codegen/mod.rs`).
+    /// Recording it in the node would be a second answer to the same question.
+    Break { value: Option<Expr>, span: Span },
     /// Continue statement
     Continue { span: Span },
     /// Match statement
@@ -403,6 +417,23 @@ pub enum Stmt {
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Vec<Stmt>,
+}
+
+/// One arm of a `match` in VALUE position: what it matches, what it runs, and
+/// what it produces.
+///
+/// A struct rather than a `Vec<Option<Expr>>` running alongside `Vec<MatchArm>`.
+/// The parser already keeps arm tails in a parallel vector (`BlockTail::Match`)
+/// and has to check the two lengths agree every time it reads them; carrying
+/// that shape into the AST would spread the same check over every consumer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArmValue {
+    pub pattern: Pattern,
+    pub body: Vec<Stmt>,
+    /// `None` when the arm ends in a statement. Refused in value position by
+    /// the type checker, which is where "this arm had to produce something" is
+    /// known.
+    pub value: Option<Expr>,
 }
 
 /// Pattern for matching
@@ -557,6 +588,23 @@ pub enum Expr {
         else_value: Option<Box<Expr>>,
         span: Span,
     },
+    /// `loop` in VALUE position — `let x = loop { …; break v; };` (N5-07).
+    ///
+    /// Its value comes from the `break`s inside `body`, not from a tail
+    /// expression, which is why there is no `value` field here and why the type
+    /// checker has to walk the body to find one.
+    Loop { body: Vec<Stmt>, span: Span },
+    /// `match` in VALUE position — `let x = match e { … };` (N5-04).
+    ///
+    /// Separate from [`Stmt::Match`] for the reason `Expr::If` is separate from
+    /// `Stmt::If`: an arm of a statement `match` produces nothing and is under
+    /// no obligation to, while every arm of this one must produce a value and
+    /// all of them must agree on its type.
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<MatchArmValue>,
+        span: Span,
+    },
     /// A block in VALUE position — `let x = { let a = 1; a + 1 };` (N5-05).
     ///
     /// `value` is the trailing `;`-less expression; `None` is a block that ends
@@ -643,6 +691,8 @@ impl Expr {
             Expr::Await { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Block { span, .. } => *span,
+            Expr::Loop { span, .. } => *span,
+            Expr::Match { span, .. } => *span,
         }
     }
 }
@@ -1053,6 +1103,13 @@ impl std::fmt::Display for Stmt {
                 }
                 write!(f, "}}")
             }
+            Stmt::Loop { body, .. } => {
+                write!(f, "loop {{")?;
+                for stmt in body {
+                    write!(f, " {} ", stmt)?;
+                }
+                write!(f, "}}")
+            }
             Stmt::For {
                 var, iter, body, ..
             } => {
@@ -1062,7 +1119,8 @@ impl std::fmt::Display for Stmt {
                 }
                 write!(f, "}}")
             }
-            Stmt::Break { .. } => write!(f, "break;"),
+            Stmt::Break { value: Some(v), .. } => write!(f, "break {};", v),
+            Stmt::Break { value: None, .. } => write!(f, "break;"),
             Stmt::Continue { .. } => write!(f, "continue;"),
             Stmt::Match { expr, arms, .. } => {
                 writeln!(f, "match {} {{", expr)?;
@@ -1249,6 +1307,24 @@ impl std::fmt::Display for Expr {
                     }
                     None => Ok(()),
                 }
+            }
+            Expr::Loop { body, .. } => {
+                write!(f, "loop {{")?;
+                if !body.is_empty() {
+                    write!(f, " ... ")?;
+                }
+                write!(f, "}}")
+            }
+            Expr::Match { expr, arms, .. } => {
+                write!(f, "match {} {{ ", expr)?;
+                for arm in arms {
+                    write!(f, "{} => ", arm.pattern)?;
+                    match &arm.value {
+                        Some(v) => write!(f, "{}, ", v)?,
+                        None => write!(f, "..., ")?,
+                    }
+                }
+                write!(f, "}}")
             }
             Expr::Block { stmts, value, .. } => {
                 write!(f, "{{ ")?;

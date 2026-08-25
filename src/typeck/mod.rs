@@ -569,6 +569,23 @@ impl RecursiveLayout {
     }
 }
 
+/// What a `break` may carry out of the loop it binds to.
+///
+/// Kept as a stack frame rather than as a flag on the loop node, because the
+/// question a `break` asks is about the loop it is INSIDE, and only the walk
+/// knows that.
+#[derive(Debug, Clone)]
+enum BreakTarget {
+    /// A `loop`/`while`/`for` written for its effect. A `break` may leave it;
+    /// a `break` may not hand it a value, because there is nothing on the other
+    /// side to receive one.
+    Statement,
+    /// A `loop` in value position. `Some(t)` once a `break` has fixed the type;
+    /// the loop's own type is that `t`, and a loop that never gets one has no
+    /// value and is refused.
+    Value(Option<CheckerType>),
+}
+
 /// Type representation for type checker (wraps AST Type)
 #[derive(Debug, Clone, PartialEq)]
 pub enum CheckerType {
@@ -1071,6 +1088,16 @@ pub struct TypeChecker {
     imported_modules: HashMap<String, crate::resolver::ModuleInfo>,
     /// Loop depth counter (for break/continue validation)
     loop_depth: usize,
+    /// One frame per enclosing loop, innermost last — the type a `break` may
+    /// carry out of it.
+    ///
+    /// A `break` has no label, so its target is "the innermost loop", and this
+    /// stack is that rule made walkable. A frame is `BreakTarget::Value` only
+    /// for a `loop` in VALUE position; every other loop pushes
+    /// `BreakTarget::Statement`, which is what lets `break <expr>;` inside a
+    /// nested `while` be refused instead of silently assigning the outer
+    /// loop's temporary.
+    break_targets: Vec<BreakTarget>,
     /// Error helper for better suggestions
     error_helper: TypeErrorHelper,
     /// Unsafe block depth counter (for tracking unsafe context)
@@ -1123,6 +1150,7 @@ impl TypeChecker {
             symbols: SymbolTable::new(),
             imported_modules: HashMap::new(),
             loop_depth: 0,
+            break_targets: Vec::new(),
             error_helper: TypeErrorHelper::new(),
             unsafe_depth: 0,
             current_impl_type: None,
@@ -2853,14 +2881,35 @@ impl TypeChecker {
 
                 // Type check body in new scope with incremented loop depth
                 self.symbols.enter_scope();
-                self.loop_depth += 1;
-                for stmt in body {
-                    self.check_statement(stmt)?;
-                }
-                self.loop_depth -= 1;
+                self.enter_loop(BreakTarget::Statement);
+                let result = (|| -> Result<()> {
+                    for stmt in body {
+                        self.check_statement(stmt)?;
+                    }
+                    Ok(())
+                })();
+                self.exit_loop();
                 self.symbols.exit_scope();
 
-                Ok(())
+                result
+            }
+            Stmt::Loop { body, .. } => {
+                // A `loop` written for its effect. Its `break`s may not carry a
+                // value: there is no binding on the other side to receive one,
+                // and evaluating an expression only to drop it is the silent
+                // half of a defect rather than a feature.
+                self.symbols.enter_scope();
+                self.enter_loop(BreakTarget::Statement);
+                let result = (|| -> Result<()> {
+                    for stmt in body {
+                        self.check_statement(stmt)?;
+                    }
+                    Ok(())
+                })();
+                self.exit_loop();
+                self.symbols.exit_scope();
+
+                result
             }
             Stmt::For {
                 var, iter, body, ..
@@ -2881,30 +2930,39 @@ impl TypeChecker {
 
                 // Enter new scope for loop body
                 self.symbols.enter_scope();
-                self.loop_depth += 1;
+                self.enter_loop(BreakTarget::Statement);
 
                 // Define loop variable with element type
                 self.symbols.define(var.clone(), elem_type, false)?;
 
                 // Type check body
-                for stmt in body {
-                    self.check_statement(stmt)?;
-                }
+                let result = (|| -> Result<()> {
+                    for stmt in body {
+                        self.check_statement(stmt)?;
+                    }
+                    Ok(())
+                })();
 
-                self.loop_depth -= 1;
+                self.exit_loop();
                 self.symbols.exit_scope();
 
-                Ok(())
+                result
             }
-            Stmt::Break { .. } | Stmt::Continue { .. } => {
-                // Check that we're inside a loop
+            Stmt::Break { value, span } => {
                 if self.loop_depth == 0 {
-                    let keyword = if matches!(stmt, Stmt::Break { .. }) {
-                        "break"
-                    } else {
-                        "continue"
-                    };
-                    return Err(self.error_helper.control_flow_outside_loop(keyword));
+                    return Err(self.error_helper.control_flow_outside_loop("break"));
+                }
+                match value {
+                    None => Ok(()),
+                    Some(expr) => {
+                        let value_type = self.check_expression(expr)?;
+                        self.record_break_value(value_type, *span)
+                    }
+                }
+            }
+            Stmt::Continue { .. } => {
+                if self.loop_depth == 0 {
+                    return Err(self.error_helper.control_flow_outside_loop("continue"));
                 }
                 Ok(())
             }
@@ -2934,39 +2992,8 @@ impl TypeChecker {
                 }
 
                 // Pattern exhaustiveness checking
-                if let CheckerType::Enum(enum_name) = &expr_type {
-                    // Build enum info for exhaustiveness checker
-                    let mut enum_infos = HashMap::new();
-                    for (name, variants) in &self.enums {
-                        let variant_infos: Vec<VariantInfo> = variants
-                            .iter()
-                            .map(|v| {
-                                let arity = match &v.fields {
-                                    EnumVariantFields::Unit => 0,
-                                    EnumVariantFields::Tuple(types) => types.len(),
-                                    EnumVariantFields::Named(fields) => fields.len(),
-                                };
-                                VariantInfo {
-                                    name: v.name.clone(),
-                                    arity,
-                                }
-                            })
-                            .collect();
-
-                        enum_infos.insert(
-                            name.clone(),
-                            EnumInfo {
-                                name: name.clone(),
-                                variants: variant_infos,
-                            },
-                        );
-                    }
-
-                    let exhaustiveness_checker = ExhaustivenessChecker::new(enum_infos);
-                    let patterns: Vec<Pattern> =
-                        arms.iter().map(|arm| arm.pattern.clone()).collect();
-                    exhaustiveness_checker.check_match(enum_name, &patterns, *span)?;
-                }
+                let patterns: Vec<Pattern> = arms.iter().map(|arm| arm.pattern.clone()).collect();
+                self.check_match_exhaustiveness(&expr_type, &patterns, *span)?;
 
                 Ok(())
             }
@@ -4069,6 +4096,200 @@ impl TypeChecker {
             Expr::Block { stmts, value, span } => {
                 self.check_value_block(stmts, value.as_deref(), *span)
             }
+            Expr::Loop { body, span } => {
+                // The loop's type is decided by its `break`s, so the frame is
+                // pushed EMPTY and read back after the body has been walked.
+                self.symbols.enter_scope();
+                self.enter_loop(BreakTarget::Value(None));
+                let walked = (|| -> Result<()> {
+                    for stmt in body {
+                        self.check_statement(stmt)?;
+                    }
+                    Ok(())
+                })();
+                let target = self.break_targets.pop();
+                self.loop_depth -= 1;
+                self.symbols.exit_scope();
+                walked?;
+
+                match target {
+                    Some(BreakTarget::Value(Some(ty))) => Ok(ty),
+                    // Either no `break` at all, or only valueless ones. Both
+                    // mean the `let` on the other side has nothing to bind —
+                    // an infinite loop in value position is not a value, it is
+                    // a program that never gets there.
+                    _ => Err(CompileError::TypeMismatch {
+                        expected: "a `loop` used as a value to be left by a `break` carrying one"
+                            .to_string(),
+                        found: "a `loop` no `break` gives a value to".to_string(),
+                        span: Some(*span),
+                    }),
+                }
+            }
+            Expr::Match { expr, arms, span } => {
+                if arms.is_empty() {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "a `match` used as a value to have at least one arm".to_string(),
+                        found: "a `match` with no arms".to_string(),
+                        span: Some(*span),
+                    });
+                }
+
+                let scrutinee = self.check_expression(expr)?;
+
+                let mut unified: Option<CheckerType> = None;
+                for arm in arms {
+                    self.check_pattern(&arm.pattern, &scrutinee)?;
+
+                    self.symbols.enter_scope();
+                    let arm_type = (|| {
+                        self.bind_pattern_variables(&arm.pattern, &scrutinee)?;
+                        for stmt in &arm.body {
+                            self.check_statement(stmt)?;
+                        }
+                        match &arm.value {
+                            Some(value) => self.check_expression(value),
+                            None => Err(CompileError::TypeMismatch {
+                                expected: "every arm of a `match` used as a value to end in an \
+                                           expression"
+                                    .to_string(),
+                                found: "an arm whose last statement ends in `;`".to_string(),
+                                span: Some(*span),
+                            }),
+                        }
+                    })();
+                    self.symbols.exit_scope();
+                    let arm_type = arm_type?;
+
+                    match &unified {
+                        None => unified = Some(arm_type),
+                        Some(first) if *first == arm_type => {}
+                        Some(first) => {
+                            return Err(CompileError::TypeMismatch {
+                                expected: format!(
+                                    "every arm of this `match` to have type {}, as the first one \
+                                     does",
+                                    first
+                                ),
+                                found: format!("an arm of type {}", arm_type),
+                                span: Some(*span),
+                            });
+                        }
+                    }
+                }
+
+                // EXHAUSTIVENESS IS THE SAME OBLIGATION AS FOR THE STATEMENT
+                // FORM, and strictly sharper here: a statement `match` that
+                // matches nothing simply does nothing, while a value one leaves
+                // its temporary unwritten. Same checker, so the two cannot
+                // drift apart.
+                let patterns: Vec<Pattern> = arms.iter().map(|a| a.pattern.clone()).collect();
+                self.check_match_exhaustiveness(&scrutinee, &patterns, *span)?;
+
+                // `unified` is `Some` because `arms` is non-empty and every
+                // iteration either sets it or returns.
+                unified.ok_or_else(|| CompileError::TypeMismatch {
+                    expected: "a `match` used as a value to have at least one arm".to_string(),
+                    found: "a `match` with no arms".to_string(),
+                    span: Some(*span),
+                })
+            }
+        }
+    }
+
+    /// Enum exhaustiveness for a set of match patterns.
+    ///
+    /// Extracted so the STATEMENT and the VALUE `match` ask the same question
+    /// of the same checker. Two copies of this would be two definitions of
+    /// "exhaustive", and the value form is the one that cannot survive a wrong
+    /// answer — its temporary is simply never written.
+    ///
+    /// A non-enum scrutinee is not checked, which is the pre-existing position:
+    /// there are no literal or range patterns yet (N6), so the only patterns an
+    /// `i64` can carry are a wildcard and a binding, and both match everything.
+    fn check_match_exhaustiveness(
+        &self,
+        scrutinee: &CheckerType,
+        patterns: &[Pattern],
+        span: Span,
+    ) -> Result<()> {
+        let CheckerType::Enum(enum_name) = scrutinee else {
+            return Ok(());
+        };
+
+        let mut enum_infos = HashMap::new();
+        for (name, variants) in &self.enums {
+            let variant_infos: Vec<VariantInfo> = variants
+                .iter()
+                .map(|v| {
+                    let arity = match &v.fields {
+                        EnumVariantFields::Unit => 0,
+                        EnumVariantFields::Tuple(types) => types.len(),
+                        EnumVariantFields::Named(fields) => fields.len(),
+                    };
+                    VariantInfo {
+                        name: v.name.clone(),
+                        arity,
+                    }
+                })
+                .collect();
+
+            enum_infos.insert(
+                name.clone(),
+                EnumInfo {
+                    name: name.clone(),
+                    variants: variant_infos,
+                },
+            );
+        }
+
+        ExhaustivenessChecker::new(enum_infos).check_match(enum_name, patterns, span)
+    }
+
+    /// Push a loop frame. `loop_depth` and `break_targets` move together —
+    /// they are two views of the same stack and a pass that updated one alone
+    /// would answer "am I in a loop" and "which loop" differently.
+    fn enter_loop(&mut self, target: BreakTarget) {
+        self.loop_depth += 1;
+        self.break_targets.push(target);
+    }
+
+    fn exit_loop(&mut self) {
+        self.loop_depth -= 1;
+        self.break_targets.pop();
+    }
+
+    /// Attribute `break <expr>`'s type to the innermost loop.
+    ///
+    /// Refuses two things by name: a value handed to a loop that is not in
+    /// value position, and a second `break` that disagrees with the first about
+    /// the type. The second is not a courtesy — the value is stored in ONE C
+    /// temporary, so two types have no declaration to share.
+    fn record_break_value(&mut self, value_type: CheckerType, span: Span) -> Result<()> {
+        match self.break_targets.last_mut() {
+            None => Err(self.error_helper.control_flow_outside_loop("break")),
+            Some(BreakTarget::Statement) => Err(CompileError::TypeMismatch {
+                expected: "a `break` without a value, because the loop it exits is not used as \
+                           a value"
+                    .to_string(),
+                found: format!("`break` carrying a {}", value_type),
+                span: Some(span),
+            }),
+            Some(BreakTarget::Value(slot)) => match slot {
+                None => {
+                    *slot = Some(value_type);
+                    Ok(())
+                }
+                Some(existing) if *existing == value_type => Ok(()),
+                Some(existing) => Err(CompileError::TypeMismatch {
+                    expected: format!(
+                        "every `break` out of this `loop` to carry a {}, as the first one does",
+                        existing
+                    ),
+                    found: format!("a `break` carrying a {}", value_type),
+                    span: Some(span),
+                }),
+            },
         }
     }
 

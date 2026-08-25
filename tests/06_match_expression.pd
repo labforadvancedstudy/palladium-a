@@ -1,0 +1,126 @@
+// Test 06: `match` in VALUE position (requirement N5-04).
+//
+// `match` only ever existed as a statement. In tail position the parser could
+// already lower its arms into returns (D3b), but there was no way to write
+// `let x = match e { ... };` — `Expr` had no `Match` form, so the keyword was
+// simply not something an expression could start with.
+//
+// PATTERN FORMS ARE DELIBERATELY LIMITED HERE. Literal, range, tuple, or-,
+// binding-`@` and guarded patterns are N6 and do not exist yet; this fixture
+// uses only what `Pattern` has today — a wildcard, an identifier binding, and
+// enum variant patterns with and without payloads. Adding a pattern form here
+// would be testing a feature nobody has written.
+
+enum Shape {
+    Circle,
+    Square,
+    Triangle,
+}
+
+enum Payload {
+    Empty,
+    Num(i64),
+    Pair(i64, i64),
+}
+
+fn area_code(s: Shape) -> i64 {
+    // Still the STATEMENT path: a `match` in tail position is lowered into
+    // returns by the parser and must keep working exactly as it did.
+    match s {
+        Shape::Circle => 1,
+        Shape::Square => 2,
+        Shape::Triangle => 3,
+    }
+}
+
+fn main() {
+    print("Bound by let:");
+    let code = match Shape::Square {
+        Shape::Circle => 10,
+        Shape::Square => 20,
+        Shape::Triangle => 30,
+    };
+    print_int(code);
+
+    print("With a wildcard arm:");
+    let label = match Shape::Triangle {
+        Shape::Circle => "circle",
+        _ => "not a circle",
+    };
+    print(label);
+
+    print("Payload bindings:");
+    let empty = match Payload::Empty {
+        Payload::Empty => 0,
+        Payload::Num(n) => n * 10,
+        Payload::Pair(a, b) => a + b,
+    };
+    print_int(empty);
+
+    let numbered = match Payload::Num(7) {
+        Payload::Empty => 0,
+        Payload::Num(n) => n * 10,
+        Payload::Pair(a, b) => a + b,
+    };
+    print_int(numbered);
+
+    let paired = match Payload::Pair(3, 4) {
+        Payload::Empty => 0,
+        Payload::Num(n) => n * 10,
+        Payload::Pair(a, b) => a + b,
+    };
+    print_int(paired);
+
+    print("An arm with statements before its value:");
+    let scaled = match Payload::Num(5) {
+        Payload::Num(n) => {
+            let tripled = n * 3;
+            tripled + 1
+        }
+        Payload::Empty => 0,
+        Payload::Pair(a, b) => a * b,
+    };
+    print_int(scaled);
+
+    print("An identifier pattern binds the scrutinee:");
+    let bumped = match 41 {
+        anything => anything + 1,
+    };
+    print_int(bumped);
+
+    print("Nested:");
+    let nested = match Shape::Circle {
+        Shape::Circle => match Payload::Num(9) {
+            Payload::Empty => 100,
+            Payload::Num(n) => n,
+            Payload::Pair(a, b) => a + b,
+        },
+        Shape::Square => 200,
+        Shape::Triangle => 300,
+    };
+    print_int(nested);
+
+    print("As an argument:");
+    print_int(match Shape::Square {
+        Shape::Circle => 111,
+        Shape::Square => 222,
+        Shape::Triangle => 333,
+    });
+
+    print("Composed with the 1a value forms:");
+    let composed = if area_code(Shape::Triangle) == 3 {
+        match Payload::Pair(6, 6) {
+            Payload::Empty => 0,
+            Payload::Num(n) => n,
+            Payload::Pair(a, b) => a * b,
+        }
+    } else {
+        -1
+    };
+    print_int(composed);
+
+    print("Statement match still works:");
+    print_int(area_code(Shape::Circle));
+    print_int(area_code(Shape::Square));
+    print_int(area_code(Shape::Triangle));
+}

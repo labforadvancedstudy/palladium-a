@@ -1,0 +1,122 @@
+// Test 04: `loop`, and the `break` that exits it — with or without a value
+// (requirement N5-07).
+//
+// `loop` did not lex at all: the word was an identifier, so `loop { }` parsed
+// as an expression statement and died on the `{`. `break` carried no value,
+// because there was no construct a value could have come out of.
+//
+// The shapes below:
+//
+//   * a statement `loop` exited by a plain `break`, and one using `continue`
+//   * a `loop` in VALUE position, whose `break` carries the value
+//   * two value-carrying breaks in one loop, agreeing on a type
+//   * NESTING — a `break` binds to the innermost loop, so an inner statement
+//     loop's `break` must not exit (or assign) the outer value loop
+//   * a value loop whose value is not an integer
+//   * a value loop as a function argument
+
+fn main() {
+    print("Statement loop:");
+    let mut i = 0;
+    loop {
+        i = i + 1;
+        if i >= 3 {
+            break;
+        }
+    }
+    print_int(i);
+
+    print("Continue:");
+    let mut c = 0;
+    let mut sum = 0;
+    loop {
+        c = c + 1;
+        if c > 10 {
+            break;
+        }
+        if c == 5 {
+            continue;
+        }
+        sum = sum + c;
+    }
+    print_int(sum);
+
+    print("Value loop:");
+    let mut j = 0;
+    let doubled = loop {
+        j = j + 1;
+        if j == 4 {
+            break j * 2;
+        }
+    };
+    print_int(doubled);
+
+    print("Two breaks, one type:");
+    let mut k = 0;
+    let picked = loop {
+        k = k + 1;
+        if k == 2 {
+            break 20;
+        }
+        if k == 5 {
+            break 50;
+        }
+    };
+    print_int(picked);
+
+    print("Nested statement loops:");
+    let mut outer = 0;
+    let mut total = 0;
+    loop {
+        outer = outer + 1;
+        let mut inner = 0;
+        loop {
+            inner = inner + 1;
+            total = total + 1;
+            if inner >= 2 {
+                break;
+            }
+        }
+        if outer >= 3 {
+            break;
+        }
+    }
+    print_int(outer);
+    print_int(total);
+
+    print("Statement loop nested in a value loop:");
+    let mut a = 0;
+    let scaled = loop {
+        let mut b = 0;
+        loop {
+            b = b + 1;
+            if b >= 2 {
+                break;
+            }
+        }
+        a = a + b;
+        if a >= 6 {
+            break a * 100;
+        }
+    };
+    print_int(scaled);
+
+    print("A value that is not an integer:");
+    let mut t = 0;
+    let word = loop {
+        t = t + 1;
+        if t == 2 {
+            break "two";
+        }
+    };
+    print(word);
+
+    print("As an argument:");
+    let mut u = 0;
+    print_int(loop {
+        u = u + 1;
+        if u == 7 {
+            break u;
+        }
+    });
+}

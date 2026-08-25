@@ -1,9 +1,42 @@
-// NEGATIVE TEST -- there is no `loop` keyword.
+// WAS A NEGATIVE TEST. IT IS A POSITIVE ONE NOW, AND THE PATH IS THE RECEIPT.
 //
-// `loop` lexes as an identifier, so `loop { ... }` parses as an expression
-// statement whose expression is a variable named `loop`, and the `{` that
-// follows is where a `;` was expected. The unconditional loop must be written
-// `while true { ... }`.
+// This file asserted a language EXCLUSION: there was no `loop` keyword, `loop`
+// lexed as an identifier, and `loop { ... }` was the parse error
+// "Expected ';' after expression, but found '{'". Requirement N5-07 removes the
+// exclusion, so the assertion is gone — and the way an assertion goes is by
+// being TRANSITIONED, not deleted. Deleting the row would make the file
+// UNDECLARED and the gate red; deleting the file would make the row MISSING and
+// the gate red. Both are what the closed inventory exists to prevent, so the
+// row changed class (`reject` -> `run`) and the fixture changed meaning.
+//
+// IT STAYS AT THIS PATH ON PURPOSE. A rename is two edits to a reviewed
+// inventory (one path disappearing, one appearing) and it would erase the one
+// thing a reader of this directory should be able to see: that `loop` was
+// refused here, by name, until it wasn't. `tests/04_loop_break_value.pd` is
+// where the feature is actually exercised; this file's job is the history.
+//
+// It prints, rather than merely exiting 0: a `run` row is checked against a
+// byte-exact transcript, and a program with no output would make the transcript
+// empty and prove only that the compiler did not crash.
+
 fn main() {
-    loop { break; }
+    let mut n = 0;
+    loop {
+        n = n + 1;
+        if n >= 3 {
+            break;
+        }
+    }
+    print("loop ran");
+    print_int(n);
+
+    // The other half of N5-07: the `break` may carry the loop's value out.
+    let mut m = 0;
+    let doubled = loop {
+        m = m + 1;
+        if m == 4 {
+            break m * 2;
+        }
+    };
+    print_int(doubled);
 }

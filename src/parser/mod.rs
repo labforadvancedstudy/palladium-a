@@ -290,6 +290,11 @@ fn stmt_terminates(stmt: &Stmt) -> bool {
             body,
             ..
         } => !contains_escaping_break(body),
+        // `loop` is the same statement with the condition removed, so it is the
+        // same rule. Written as its own arm rather than folded into the one
+        // above because the `while` arm is keyed on the literal `true`, and a
+        // `loop` has no condition to be literal.
+        Stmt::Loop { body, .. } => !contains_escaping_break(body),
         // Needs BOTH arms. An `if` with no `else` does not match this pattern
         // and so falls through to `false` below, which is the right answer: its
         // false path reaches the next statement.
@@ -640,6 +645,8 @@ impl Parser {
             Expr::MacroInvocation { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Block { span, .. } => *span,
+            Expr::Loop { span, .. } => *span,
+            Expr::Match { span, .. } => *span,
             Expr::Await { span, .. } => *span,
         }
     }
@@ -2012,6 +2019,19 @@ impl Parser {
                 tail = match_tail;
                 continue;
             }
+            // `loop` in STATEMENT position stays a statement. Without this it
+            // would reach the expression attempt below and parse as
+            // `Expr::Loop`, which is a construct that must produce a value —
+            // so `loop { … }` written for its effect would be asked for one.
+            // A `loop` in tail position is not a value either: `BlockTail` has
+            // no `Loop` shape, and inventing one would mean a function body
+            // could return through a `break`, which is a larger claim than
+            // N5-07 makes.
+            if self.check(&Token::Loop) {
+                stmts.push(self.parse_loop()?);
+                tail = BlockTail::NoValue;
+                continue;
+            }
 
             // Check if this could be the last expression (implicit return)
             let checkpoint = self.current;
@@ -2053,6 +2073,7 @@ impl Parser {
             Token::Return => self.parse_return(),
             Token::If => self.parse_if(),
             Token::While => self.parse_while(),
+            Token::Loop => self.parse_loop(),
             Token::For => self.parse_for(),
             Token::Break => self.parse_break(),
             Token::Continue => self.parse_continue(),
@@ -2271,6 +2292,51 @@ impl Parser {
         Ok(Self::if_stmt_into_expr(stmt, &tail))
     }
 
+    /// Parse a `match` in VALUE position — `let x = match e { … };` (N5-04).
+    ///
+    /// Same reuse as `parse_if_expression`: `parse_match_with_tail` already
+    /// reads the arms and already reports which statement of each arm was in
+    /// tail position, and those are exactly the two facts a value `match`
+    /// needs. One grammar, one place for arm syntax to change.
+    fn parse_match_expression(&mut self) -> Result<Expr> {
+        let (stmt, tail) = self.parse_match_with_tail()?;
+        Ok(Self::match_stmt_into_expr(stmt, &tail))
+    }
+
+    /// Reinterpret a parsed `Stmt::Match` + its `BlockTail` as an `Expr::Match`.
+    fn match_stmt_into_expr(stmt: Stmt, tail: &BlockTail) -> Expr {
+        let Stmt::Match { expr, arms, span } = stmt else {
+            unreachable!("parse_match_with_tail returned a statement that is not a `match`");
+        };
+        let arm_tails = match tail {
+            BlockTail::Match { arm_tails, .. } => arm_tails.as_slice(),
+            _ => unreachable!("parse_match_with_tail returned a tail that is not a `match` tail"),
+        };
+
+        let arms = arms
+            .into_iter()
+            .enumerate()
+            .map(|(i, arm)| {
+                // The two vectors are built together by `parse_match_with_tail`
+                // and cannot disagree; a missing tail is read as "this arm has
+                // no value", which the type checker refuses by name.
+                let arm_tail = arm_tails.get(i).unwrap_or(&BlockTail::NoValue);
+                let (body, value) = Self::split_value_block(arm.body, arm_tail);
+                MatchArmValue {
+                    pattern: arm.pattern,
+                    body,
+                    value: value.map(|v| *v),
+                }
+            })
+            .collect();
+
+        Expr::Match {
+            expr: Box::new(expr),
+            arms,
+            span,
+        }
+    }
+
     /// Parse a block in VALUE position — `let x = { let a = 1; a + 1 };`.
     ///
     /// The opening `{` has already been consumed by `parse_primary`.
@@ -2370,9 +2436,18 @@ impl Parser {
                 }
                 None => (stmts, None),
             },
-            // `match` in value position is N5-04 and is not implemented; the
-            // block is reported as valueless rather than mis-lowered.
-            BlockTail::Match { .. } | BlockTail::NoValue => (stmts, None),
+            BlockTail::Match { .. } => match stmts.pop() {
+                Some(stmt @ Stmt::Match { .. }) => {
+                    let expr = Self::match_stmt_into_expr(stmt, tail);
+                    (stmts, Some(Box::new(expr)))
+                }
+                Some(other) => {
+                    stmts.push(other);
+                    (stmts, None)
+                }
+                None => (stmts, None),
+            },
+            BlockTail::NoValue => (stmts, None),
         }
     }
 
@@ -2446,12 +2521,26 @@ impl Parser {
         })
     }
 
-    /// Parse a break statement
+    /// Parse a break statement, with or without a value.
+    ///
+    /// `break;` and `break <expr>;`. The two are told apart by looking for the
+    /// `;` rather than by trying to parse an expression and backtracking: every
+    /// token that can start an expression is a token that cannot follow `break`
+    /// otherwise, so the lookahead is exact and a failed expression parse here
+    /// is a real error worth reporting at the operand.
     fn parse_break(&mut self) -> Result<Stmt> {
         let start_span = self.consume(Token::Break, "Expected 'break'")?;
+
+        let value = if self.check(&Token::Semicolon) {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+
         let end_span = self.consume(Token::Semicolon, "Expected ';' after break")?;
 
         Ok(Stmt::Break {
+            value,
             span: Span::new(
                 start_span.start,
                 end_span.end,
@@ -2459,6 +2548,42 @@ impl Parser {
                 start_span.column,
             ),
         })
+    }
+
+    /// Parse a `loop` statement (N5-07).
+    fn parse_loop(&mut self) -> Result<Stmt> {
+        let start_span = self.consume(Token::Loop, "Expected 'loop'")?;
+        self.consume(Token::LeftBrace, "Expected '{' after loop")?;
+
+        let mut body = Vec::new();
+        while !self.check(&Token::RightBrace) && !self.is_at_end() {
+            body.push(self.parse_statement()?);
+        }
+
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after loop body")?;
+
+        Ok(Stmt::Loop {
+            body,
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
+        })
+    }
+
+    /// Parse a `loop` in VALUE position — `let x = loop { …; break v; };`.
+    ///
+    /// Same parse as the statement form, reinterpreted. There is nothing to
+    /// split out the way a block's tail is split out: a `loop` has no tail
+    /// expression, and its value arrives through the `break`s in its body,
+    /// which the type checker and code generator find by walking it.
+    fn parse_loop_expression(&mut self) -> Result<Expr> {
+        let Stmt::Loop { body, span } = self.parse_loop()? else {
+            unreachable!("parse_loop returned a statement that is not a `loop`");
+        };
+        Ok(Expr::Loop { body, span })
     }
 
     /// Parse a continue statement
@@ -2504,15 +2629,25 @@ impl Parser {
 
             self.consume(Token::FatArrow, "Expected '=>' after pattern")?;
 
-            // Parse arm body
-            let mut arm_tail = BlockTail::NoValue;
+            // Parse arm body. Both shapes below set `arm_tail`, so it is
+            // declared without one: a default here would be a fourth answer to
+            // "did this arm end in a value", and the two that exist already
+            // disagree often enough.
+            let arm_tail;
             let body = if self.check(&Token::LeftBrace) {
-                // Block body
+                // Block body.
+                //
+                // Parsed with the implicit-return block parser, not with a bare
+                // `parse_statement` loop. The bare loop demanded a `;` on every
+                // statement, which made `Circle => { 1 }` the parse error
+                // "Expected ';' after expression" — a block-bodied arm could
+                // hold statements but could never hold a VALUE, so the only
+                // arm form that could produce one was `pattern => expr,`. The
+                // tail travels out with the arm for the same reason it does
+                // everywhere else (see `BlockTail`).
                 self.advance()?; // consume '{'
-                let mut stmts = Vec::new();
-                while !self.check(&Token::RightBrace) && !self.is_at_end() {
-                    stmts.push(self.parse_statement()?);
-                }
+                let (stmts, block_tail) = self.parse_block_with_implicit_return()?;
+                arm_tail = block_tail;
                 self.consume(Token::RightBrace, "Expected '}' after match arm body")?;
 
                 // `match_arm = pattern "=>" ( block | expression ) [ ',' ]`
@@ -3131,6 +3266,12 @@ impl Parser {
             let start_span = self.advance()?.1; // consume '{'
             return self.parse_block_expression(start_span);
         }
+        if self.check(&Token::Match) {
+            return self.parse_match_expression();
+        }
+        if self.check(&Token::Loop) {
+            return self.parse_loop_expression();
+        }
 
         match self.advance()? {
             (Token::String(s), _) => Ok(Expr::String(s)),
@@ -3473,8 +3614,24 @@ impl Parser {
                             continue;
                         }
 
-                        // Check for struct-style constructor
-                        let data = if self.check(&Token::LeftBrace) {
+                        // Check for struct-style constructor.
+                        //
+                        // GUARDED, the same way the plain struct literal in
+                        // `parse_primary` is guarded, and for the same reason:
+                        // a `{` after a path is only a constructor when what
+                        // follows looks like `field:`. Unguarded, N5-04's
+                        // `match Shape::Square { Shape::Circle => … }` read the
+                        // MATCH BODY as a field list and died on
+                        // "Expected ':' after field name, found '::'" — the
+                        // arms of the match, mistaken for the fields of a
+                        // variant that has none.
+                        //
+                        // This cannot reject a program that parsed before: the
+                        // guard only fails where the field list would have
+                        // failed anyway.
+                        let data = if self.check(&Token::LeftBrace)
+                            && self.check_struct_literal_pattern()
+                        {
                             // Struct constructor
                             self.advance()?; // consume '{'
                             let mut fields = Vec::new();

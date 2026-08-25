@@ -764,6 +764,12 @@ impl BorrowChecker {
                 self.context.exit_scope();
             }
 
+            Stmt::Loop { body, .. } => {
+                self.context.enter_scope();
+                self.check_block_stmts(body)?;
+                self.context.exit_scope();
+            }
+
             Stmt::For {
                 var, iter, body, ..
             } => {
@@ -806,7 +812,15 @@ impl BorrowChecker {
                 }
             }
 
-            Stmt::Break { .. } | Stmt::Continue { .. } => {}
+            // The value a `break` carries is an ordinary expression and can
+            // move out of a binding like any other.
+            Stmt::Break { value, .. } => {
+                if let Some(expr) = value {
+                    self.check_expr(expr)?;
+                }
+            }
+
+            Stmt::Continue { .. } => {}
 
             Stmt::Unsafe { body, .. } => {
                 // In unsafe blocks, we still perform ownership checks
@@ -1046,6 +1060,33 @@ impl BorrowChecker {
             }
             Expr::Block { stmts, value, .. } => {
                 self.check_value_block(stmts, value.as_deref())?;
+            }
+            Expr::Loop { body, .. } => {
+                self.check_value_block(body, None)?;
+            }
+            Expr::Match { expr, arms, .. } => {
+                self.check_expr(expr)?;
+                for arm in arms {
+                    // Same shape as `Stmt::Match` above, including
+                    // `bind_pattern`: without it a payload binding is a name
+                    // this pass has never seen, and `Payload::Num(n) => n * 10`
+                    // is refused as "Use of uninitialized value: n" — measured.
+                    let arm_scope = self.open_mutability_scope();
+                    self.context.enter_scope();
+
+                    let checked = (|| -> Result<()> {
+                        self.bind_pattern(&arm.pattern)?;
+                        self.check_block_stmts(&arm.body)?;
+                        if let Some(value) = &arm.value {
+                            self.check_expr(value)?;
+                        }
+                        Ok(())
+                    })();
+
+                    self.context.exit_scope();
+                    self.close_mutability_scope(arm_scope);
+                    checked?;
+                }
             }
         }
 

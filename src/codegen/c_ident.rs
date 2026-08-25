@@ -611,6 +611,7 @@ fn escape_stmt(stmt: &mut Stmt) {
             escape_expr(condition);
             escape_block(body);
         }
+        Stmt::Loop { body, .. } => escape_block(body),
         Stmt::For {
             var, iter, body, ..
         } => {
@@ -626,7 +627,14 @@ fn escape_stmt(stmt: &mut Stmt) {
             }
         }
         Stmt::Unsafe { body, .. } => escape_block(body),
-        Stmt::Break { .. } | Stmt::Continue { .. } => {}
+        // A `break` may carry a value, and that value can name a binding
+        // whose spelling collides with a C keyword like any other.
+        Stmt::Break { value, .. } => {
+            if let Some(v) = value {
+                escape_expr(v);
+            }
+        }
+        Stmt::Continue { .. } => {}
     }
 }
 
@@ -757,6 +765,17 @@ fn escape_expr(expr: &mut Expr) {
             escape_block(stmts);
             if let Some(v) = value {
                 escape_expr(v);
+            }
+        }
+        Expr::Loop { body, .. } => escape_block(body),
+        Expr::Match { expr, arms, .. } => {
+            escape_expr(expr);
+            for arm in arms {
+                escape_pattern(&mut arm.pattern);
+                escape_block(&mut arm.body);
+                if let Some(v) = &mut arm.value {
+                    escape_expr(v);
+                }
             }
         }
         // Expanded before code generation; see the doc comment.

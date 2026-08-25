@@ -61,7 +61,10 @@ mod tests {
         let pass = DeadCodeEliminationPass::new();
         
         let body = vec![
-            Stmt::Break { span: Span::dummy() },
+            Stmt::Break {
+                value: None,
+                span: Span::dummy(),
+            },
             Stmt::Expr(Expr::Integer(1)),
             Stmt::Expr(Expr::Integer(2)),
         ];
@@ -153,7 +156,10 @@ mod tests {
             condition: Expr::Bool(false), // Constant false condition
             body: vec![
                 Stmt::Expr(Expr::Integer(1)),
-                Stmt::Break { span: Span::dummy() },
+                Stmt::Break {
+                    value: None,
+                    span: Span::dummy(),
+                },
                 Stmt::Expr(Expr::Integer(2)), // Dead code after break
             ],
             span: Span::dummy(),
@@ -322,7 +328,10 @@ mod tests {
                     Stmt::If {
                         condition: Expr::Ident("x".to_string()),
                         then_branch: vec![
-                            Stmt::Break { span: Span::dummy() },
+                            Stmt::Break {
+                                value: None,
+                                span: Span::dummy(),
+                            },
                             Stmt::Expr(Expr::Integer(1)), // Dead
                         ],
                         else_branch: Some(vec![
@@ -617,7 +626,10 @@ mod tests {
                 Stmt::If {
                     condition: Expr::Ident("x".to_string()),
                     then_branch: vec![
-                        Stmt::Break { span: Span::dummy() },
+                        Stmt::Break {
+                            value: None,
+                            span: Span::dummy(),
+                        },
                         Stmt::Expr(Expr::Integer(1)), // Dead
                     ],
                     else_branch: None,
@@ -664,7 +676,10 @@ mod tests {
                 MatchArm {
                     pattern: Pattern::Wildcard,
                     body: vec![
-                        Stmt::Break { span: Span::dummy() },
+                        Stmt::Break {
+                            value: None,
+                            span: Span::dummy(),
+                        },
                         Stmt::Expr(Expr::Integer(3)), // Dead code
                     ],
                 },
@@ -722,7 +737,10 @@ mod tests {
                                     Stmt::Expr(Expr::Integer(1)), // Dead
                                 ],
                                 else_branch: Some(vec![
-                                    Stmt::Break { span: Span::dummy() },
+                                    Stmt::Break {
+                                        value: None,
+                                        span: Span::dummy(),
+                                    },
                                     Stmt::Expr(Expr::Integer(2)), // Dead
                                 ]),
                                 span: Span::dummy(),
@@ -824,7 +842,10 @@ mod tests {
         
         // Control flow statements have side effects
         assert!(helpers::has_side_effects(&Stmt::Return(None)));
-        assert!(helpers::has_side_effects(&Stmt::Break { span: Span::dummy() }));
+        assert!(helpers::has_side_effects(&Stmt::Break {
+                value: None,
+                span: Span::dummy(),
+            }));
         assert!(helpers::has_side_effects(&Stmt::Continue { span: Span::dummy() }));
         assert!(helpers::has_side_effects(&Stmt::If {
             condition: Expr::Bool(true),

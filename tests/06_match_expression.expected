@@ -1,0 +1,22 @@
+Bound by let:
+20
+With a wildcard arm:
+not a circle
+Payload bindings:
+0
+70
+7
+An arm with statements before its value:
+16
+An identifier pattern binds the scrutinee:
+42
+Nested:
+9
+As an argument:
+222
+Composed with the 1a value forms:
+36
+Statement match still works:
+1
+2
+3

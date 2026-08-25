@@ -162,7 +162,6 @@ fn test_type_alias_emits_typedef() {
 }
 
 #[test]
-#[ignore = "XFAIL: `loop` — grammar.ebnf:206 'and no `loop`'; the token does not exist, so the body's '{' is a parse error (owned by M2, item 3)"]
 fn test_loop_keyword() {
     compile_and_verify("fn main() { loop { break; } }", &["while (1)", "break;"]);
     compile_and_verify(

@@ -72,8 +72,10 @@ tests/04_control_flow_if.pd	run	-	expected	-	-
 tests/04_control_flow_while.pd	run	-	expected	-	-
 tests/04_else_if.pd	run	-	expected	-	-
 tests/04_if_expression.pd	run	-	expected	-	-
+tests/04_loop_break_value.pd	run	-	expected	-	-
 tests/05_borrowing_references.pd	run	-	expected	-	-
 tests/05_ownership_basic.pd	run	-	expected	-	-
+tests/06_match_expression.pd	run	-	expected	-	-
 tests/06_pattern_matching.pd	run	-	expected	-	-
 tests/07_traits_basic.pd	vacuous	-	-	M4	claims: traits. Declares no trait and no impl; body is only print calls. Trait conformance is ZERO.
 tests/08_generics_basic.pd	vacuous	-	-	M4	claims: generics. Instantiates no generic type or function; body is only print calls. Generic conformance is ZERO.
@@ -131,7 +133,7 @@ tests/reject/async_producer.pd	reject	compile	`async fn` is not implemented	-	N7
 tests/reject/closure_literal.pd	reject	compile	Expected expression, but found '|'	-	no Closure/Lambda node exists in src/ast/ or src/parser/, so `|` starts nothing in expression position
 tests/reject/extern_block.pd	reject	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	no `extern` block, so no foreign symbol can be named; the generated code is C, so the ABI is C by construction but there is no syntax to reach it
 tests/reject/generic_bound.pd	reject	compile	Expected '>' (Expected '>' after generic parameters), but found ':'	-	generic parameter lists accept bare names only; the `:` that introduces a trait bound ends the list
-tests/reject/loop_keyword.pd	reject	compile	Expected ';' (Expected ';' after expression), but found '{'	-	`loop` lexes as an identifier, so `loop { }` parses as an expression statement and the `{` is where a `;` was expected; write `while true`
+tests/reject/loop_keyword.pd	run	-	expected	-	-
 tests/reject/mut_borrow_of_immutable.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	feature-index.toml recorded this exact program as accepted and mutating an immutable local with no diagnostic; the borrow checker refuses it and names the repair
 tests/reject/ref_parameter.pd	reject	compile	Unexpected token: expected ')' (Expected ')'), found identifier 'String'	-	the spec writes a shared borrow `ref T` (N9); the implemented spelling is Rust's &/&mut, so `ref` is not a keyword and the parser sees an identifier where a type belongs
 tests/reject/attribute_inner.pd	reject	compile	unknown attribute `frobnicate`	-	N2-10 shape three: `#![name(args)]` at the top of a compilation unit. `#!` is ONE token, so `#![a]` and `# ![a]` are distinguishable; reaching the NAME is what proves the shape lexed

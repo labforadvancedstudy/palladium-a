@@ -238,6 +238,30 @@ pub struct CodeGenerator {
     /// hoist lands inside the branch it belongs to and not in front of the
     /// outer statement.
     pending_hoists: String,
+    /// The C type discovered for a hoisted temporary, keyed by its name.
+    ///
+    /// A value `match` and a value `loop` are lowered by SYNTHESISING the
+    /// statement form with `<temp> = <value>;` written into each arm / each
+    /// value-carrying `break`, and generating that with the ordinary emitter.
+    /// That reuse is the point: it is what makes an arm's pattern bindings
+    /// (`Payload::Num(n) => n * 10`) visible to the arm's value, without a
+    /// second copy of the pattern lowering.
+    ///
+    /// The cost is that the declaration of the temporary has to be written in
+    /// FRONT of the construct, by which time those bindings are gone. So the
+    /// type is recorded as each assignment is emitted — the one moment the
+    /// bindings still exist — and read back afterwards.
+    hoist_types: std::collections::HashMap<String, String>,
+    /// Temporaries currently being lowered into, so `Stmt::Assign` knows which
+    /// assignments to record a type for. Membership, not a name prefix: the
+    /// prefix is reserved, but a set says what is true rather than what is
+    /// merely conventional.
+    open_hoists: std::collections::HashSet<String>,
+    /// One frame per enclosing loop, innermost last: the temporary a
+    /// value-carrying `break` assigns, or `None` for a loop written for its
+    /// effect. Mirrors `BreakTarget` in the type checker — same rule ("a
+    /// `break` binds to the innermost loop"), same shape.
+    break_temps: Vec<Option<String>>,
     /// Serial number for hoisted temporaries. Function-scoped names would be
     /// enough for C, but a single counter over the whole translation unit costs
     /// nothing and makes every emitted name unique in the file, which is what a
@@ -271,6 +295,9 @@ impl CodeGenerator {
             enum_constructors: String::new(),
             pending_hoists: String::new(),
             hoist_counter: 0,
+            hoist_types: std::collections::HashMap::new(),
+            open_hoists: std::collections::HashSet::new(),
+            break_temps: Vec::new(),
         })
     }
 
@@ -585,6 +612,17 @@ impl CodeGenerator {
                         .and_then(|v| self.try_infer_expr_type(v))
                 }),
             Expr::Block { value, .. } => value.as_ref().and_then(|v| self.try_infer_expr_type(v)),
+            // Both of these carry their value in places whose bindings are not
+            // in scope out here — a `match` arm's payload binding, a `break`
+            // inside a loop body. The answer that counts is recorded while the
+            // construct is generated (`hoist_types`); this arm only answers the
+            // easy cases, and `None` is not a refusal, it is "ask again later".
+            Expr::Match { arms, .. } => arms
+                .iter()
+                .find_map(|arm| arm.value.as_ref().and_then(|v| self.try_infer_expr_type(v))),
+            Expr::Loop { body, .. } => {
+                Self::first_break_value(body).and_then(|expr| self.try_infer_expr_type(expr))
+            }
             // No rule yet: ranges are only meaningful inside `for`, `?` and
             // macros are lowered elsewhere, and await/async is unimplemented.
             Expr::Range { .. }
@@ -927,6 +965,8 @@ impl CodeGenerator {
             Expr::Await { .. } => "await",
             Expr::If { .. } => "`if` expression",
             Expr::Block { .. } => "block expression",
+            Expr::Loop { .. } => "`loop` expression",
+            Expr::Match { .. } => "`match` expression",
         }
     }
 
@@ -3056,6 +3096,16 @@ impl CodeGenerator {
                 self.output.push_str("    ");
                 match target {
                     AssignTarget::Ident(name) => {
+                        // A write to a hoisted temporary is where its C type is
+                        // learned: this is a synthesised assignment standing in
+                        // for a `match` arm's value, and the arm's pattern
+                        // bindings are in scope HERE and nowhere the
+                        // declaration can be written. See `hoist_types`.
+                        if self.open_hoists.contains(name) && !self.hoist_types.contains_key(name) {
+                            if let Some(c_type) = self.try_infer_expr_type(value) {
+                                self.hoist_types.insert(name.clone(), c_type);
+                            }
+                        }
                         // Check if this is a mutable parameter
                         if let Some(&is_mutable) = self.mutable_params.get(name) {
                             if is_mutable {
@@ -3178,8 +3228,13 @@ impl CodeGenerator {
                 self.generate_expression(condition)?;
                 self.output.push_str(") {\n");
 
-                // Generate body
-                self.generate_block(body, "")?;
+                // Generate body. The frame is `None`: a `break` written in here
+                // belongs to THIS loop, which produces no value, so it must not
+                // reach an enclosing value loop's temporary.
+                self.break_temps.push(None);
+                let result = self.generate_block(body, "");
+                self.break_temps.pop();
+                result?;
 
                 self.output.push_str("    }\n");
             }
@@ -3206,8 +3261,13 @@ impl CodeGenerator {
                         self.generate_expression(end)?;
                         self.output.push_str(&format!("; {}++) {{\n", var));
 
-                        // Generate body
-                        self.generate_block(body, "        ")?;
+                        // Generate body. The `None` frame says a `break` in
+                        // here belongs to THIS loop, which produces no value —
+                        // same rule as `while`/`loop` above.
+                        self.break_temps.push(None);
+                        let generated = self.generate_block(body, "        ");
+                        self.break_temps.pop();
+                        generated?;
                         self.close_binding_scope(loop_scope);
 
                         self.output.push_str("        }\n");
@@ -3283,8 +3343,13 @@ impl CodeGenerator {
                         self.generate_expression(iter)?;
                         self.output.push_str("[_i];\n");
 
-                        // Generate body
-                        self.generate_block(body, "        ")?;
+                        // Generate body. The `None` frame says a `break` in
+                        // here belongs to THIS loop, which produces no value —
+                        // same rule as `while`/`loop` above.
+                        self.break_temps.push(None);
+                        let generated = self.generate_block(body, "        ");
+                        self.break_temps.pop();
+                        generated?;
                         self.close_binding_scope(loop_scope);
 
                         self.output.push_str("        }\n");
@@ -3292,7 +3357,36 @@ impl CodeGenerator {
                 }
                 self.output.push_str("    }\n");
             }
-            Stmt::Break { .. } => {
+            Stmt::Loop { body, .. } => {
+                // `while (1)`, not `for (;;)`. Both are the same loop in C; this
+                // is the spelling `test_loop_keyword` in
+                // tests/compiler_comprehensive_test.rs asserts, and the emitted
+                // C is read by that test rather than only run.
+                self.output.push_str("    while (1) {\n");
+                self.break_temps.push(None);
+                let result = self.generate_block(body, "    ");
+                self.break_temps.pop();
+                result?;
+                self.output.push_str("    }\n");
+            }
+            Stmt::Break { value: None, .. } => {
+                self.output.push_str("    break;\n");
+            }
+            Stmt::Break {
+                value: Some(expr), ..
+            } => {
+                // The value goes into the temporary of the innermost loop, and
+                // the type checker has already proved there is one. Two
+                // statements, in this order: assign, then leave.
+                let Some(Some(temp)) = self.break_temps.last().cloned() else {
+                    return Err(CompileError::CodegenError {
+                        message: "a `break` carries a value out of a loop that is not used as a \
+                                  value; this should have been refused by the type checker"
+                            .to_string(),
+                    });
+                };
+                self.output.push_str("    ");
+                self.emit_hoist_assignment(&temp, expr)?;
                 self.output.push_str("    break;\n");
             }
             Stmt::Continue { .. } => {
@@ -3574,6 +3668,220 @@ impl CodeGenerator {
         self.pending_hoists = saved_hoists;
         self.close_binding_scope(outer);
         generated
+    }
+
+    /// The operand of the first value-carrying `break` that binds to this loop.
+    ///
+    /// Used only as a CHEAP GUESS for the temporary's C type before the body is
+    /// generated; the authoritative answer is recorded by
+    /// [`CodeGenerator::emit_hoist_assignment`] while the body's bindings are
+    /// live. Skips nested loops, because a `break` in one of those binds there.
+    fn first_break_value(stmts: &[Stmt]) -> Option<&Expr> {
+        for stmt in stmts {
+            let found = match stmt {
+                Stmt::Break { value, .. } => value.as_ref(),
+                Stmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => Self::first_break_value(then_branch)
+                    .or_else(|| else_branch.as_deref().and_then(Self::first_break_value)),
+                Stmt::Match { arms, .. } => arms
+                    .iter()
+                    .find_map(|arm| Self::first_break_value(&arm.body)),
+                Stmt::Unsafe { body, .. } => Self::first_break_value(body),
+                // A `break` in here belongs to THAT loop.
+                Stmt::Loop { .. } | Stmt::While { .. } | Stmt::For { .. } => None,
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+
+    /// Emit `<temp> = <expr>;` and record the temporary's C type the first time.
+    ///
+    /// The recording is the whole reason this is not an inline `push_str`: this
+    /// is called from inside a `match` arm or a loop body, where the pattern
+    /// bindings and locals the value refers to are in scope, and the
+    /// declaration that needs the type is written outside them.
+    fn emit_hoist_assignment(&mut self, temp: &str, expr: &Expr) -> Result<()> {
+        if self.open_hoists.contains(temp) && !self.hoist_types.contains_key(temp) {
+            if let Some(c_type) = self.try_infer_expr_type(expr) {
+                self.hoist_types.insert(temp.to_string(), c_type);
+            }
+        }
+        self.output.push_str(&format!("{} = ", temp));
+        self.generate_expression(expr)?;
+        self.output.push_str(";\n");
+        Ok(())
+    }
+
+    /// Generate a synthesised statement into a fresh buffer, with `temp`
+    /// registered so every `<temp> = …;` it writes reports the type it assigned.
+    ///
+    /// Returns the C text and the type, or a diagnostic naming the temporary
+    /// that no assignment could type.
+    fn generate_into_hoist_temp<F>(&mut self, temp: &str, f: F) -> Result<(String, Option<String>)>
+    where
+        F: FnOnce(&mut Self) -> Result<()>,
+    {
+        self.open_hoists.insert(temp.to_string());
+        let saved_hoists = std::mem::take(&mut self.pending_hoists);
+        let generated = self.capture_output(f);
+        self.pending_hoists = saved_hoists;
+        self.open_hoists.remove(temp);
+
+        let text = generated?;
+        Ok((text, self.hoist_types.remove(temp)))
+    }
+
+    /// The C initialiser that writes a zero of `c_type`.
+    ///
+    /// `{0}` for anything aggregate, `0` for scalars and pointers. Used only
+    /// where a temporary must be defined before a chain that a C compiler
+    /// cannot prove writes it.
+    fn zero_of(c_type: &str) -> &'static str {
+        let scalar = c_type.ends_with('*')
+            || matches!(
+                c_type,
+                "long long"
+                    | "long"
+                    | "int"
+                    | "short"
+                    | "char"
+                    | "unsigned"
+                    | "double"
+                    | "float"
+                    | "size_t"
+            );
+        if scalar {
+            "0"
+        } else {
+            "{0}"
+        }
+    }
+
+    /// Lower a `match` in value position (N5-04) to portable C.
+    ///
+    /// Rewrites each arm's value into `<temp> = <value>;` appended to that
+    /// arm's statements, then hands the resulting STATEMENT `match` to the
+    /// ordinary emitter. Everything the arms need — the tag test, the payload
+    /// extraction, the binding scopes — is already there and is not written
+    /// twice.
+    fn generate_match_expression(&mut self, expr: &Expr) -> Result<()> {
+        let Expr::Match {
+            expr: scrutinee,
+            arms,
+            span,
+        } = expr
+        else {
+            unreachable!("generate_match_expression called on {:?}", expr);
+        };
+
+        let temp = self.fresh_hoist_name();
+
+        let mut stmt_arms = Vec::with_capacity(arms.len());
+        for arm in arms {
+            let Some(value) = arm.value.as_ref() else {
+                return Err(CompileError::CodegenError {
+                    message: "an arm of a `match` used as a value produces nothing; this should \
+                              have been refused by the type checker"
+                        .to_string(),
+                });
+            };
+            let mut body = arm.body.clone();
+            body.push(Stmt::Assign {
+                target: AssignTarget::Ident(temp.clone()),
+                value: value.clone(),
+                span: *span,
+            });
+            stmt_arms.push(MatchArm {
+                pattern: arm.pattern.clone(),
+                body,
+            });
+        }
+
+        let synthesised = Stmt::Match {
+            expr: (**scrutinee).clone(),
+            arms: stmt_arms,
+            span: *span,
+        };
+
+        let (text, c_type) =
+            self.generate_into_hoist_temp(&temp, |g| g.generate_statement(&synthesised))?;
+        let c_type = self.hoist_temp_type([c_type, None], "`match`")?;
+
+        // DECLARED WITH AN INITIALISER, and the reason is in the emitted C:
+        // `match` lowers to an if/else-if chain with NO final `else`
+        // (a separate, already-owned defect — see the `-Wreturn-type` row in
+        // src/linker.rs), so a C compiler cannot prove the temporary is
+        // written even though the type checker proved the arms are exhaustive.
+        // Zero-initialising costs one store and keeps gcc from diagnosing
+        // generated code the user never wrote.
+        self.pending_hoists.push_str(&format!(
+            "    {} {} = {};\n",
+            c_type,
+            temp,
+            Self::zero_of(&c_type)
+        ));
+        self.pending_hoists.push_str(&text);
+
+        self.output.push_str(&temp);
+        Ok(())
+    }
+
+    /// Lower a `loop` in value position (N5-07) to portable C.
+    ///
+    /// The body is emitted as the ordinary statement `loop`, with the
+    /// temporary pushed as this loop's break target so that
+    /// `break <value>;` becomes `<temp> = <value>; break;` — and so that a
+    /// `break` inside a NESTED loop, which pushes its own `None` frame, cannot
+    /// reach it.
+    fn generate_loop_expression(&mut self, expr: &Expr) -> Result<()> {
+        let Expr::Loop { body, .. } = expr else {
+            unreachable!("generate_loop_expression called on {:?}", expr);
+        };
+
+        let temp = self.fresh_hoist_name();
+        let temp_for_body = temp.clone();
+
+        // The `while (1)` wrapper is written HERE rather than by synthesising a
+        // `Stmt::Loop` and reusing its arm. That arm pushes a `None` break
+        // frame — correct for a loop written for its effect, and exactly wrong
+        // for this one, which must be the target its `break`s assign. Measured:
+        // synthesising it made every `break <value>;` in a value loop report
+        // "carries a value out of a loop that is not used as a value".
+        let generated = self.generate_into_hoist_temp(&temp, |g| {
+            g.output.push_str("    while (1) {\n");
+            g.break_temps.push(Some(temp_for_body.clone()));
+            let result = g.generate_block(body, "    ");
+            g.break_temps.pop();
+            result?;
+            g.output.push_str("    }\n");
+            Ok(())
+        });
+        let (text, c_type) = generated?;
+
+        let c_type = self.hoist_temp_type(
+            [
+                c_type,
+                Self::first_break_value(body).and_then(|e| self.try_infer_expr_type(e)),
+            ],
+            "`loop`",
+        )?;
+
+        // No initialiser here: the only way out of a `loop` is a `break`, and
+        // the type checker has proved every one of them carries a value, so
+        // control cannot reach the use without having written it.
+        self.pending_hoists
+            .push_str(&format!("    {} {};\n", c_type, temp));
+        self.pending_hoists.push_str(&text);
+
+        self.output.push_str(&temp);
+        Ok(())
     }
 
     /// The C declaration type for a hoisted temporary, or a diagnostic.
@@ -4099,6 +4407,8 @@ impl CodeGenerator {
             // where those get spliced back in.
             Expr::If { .. } => self.generate_if_expression(expr)?,
             Expr::Block { .. } => self.generate_block_expression(expr)?,
+            Expr::Match { .. } => self.generate_match_expression(expr)?,
+            Expr::Loop { .. } => self.generate_loop_expression(expr)?,
         }
         Ok(())
     }

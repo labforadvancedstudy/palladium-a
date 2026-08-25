@@ -247,6 +247,9 @@ pub enum Token {
     #[token("while")]
     While,
 
+    #[token("loop")]
+    Loop,
+
     #[token("return")]
     Return,
 
@@ -465,6 +468,7 @@ impl Token {
                 | Token::Return
                 | Token::If
                 | Token::While
+                | Token::Loop
                 | Token::For
                 | Token::Break
                 | Token::Continue
@@ -490,6 +494,7 @@ impl std::fmt::Display for Token {
             Token::If => write!(f, "'if'"),
             Token::Else => write!(f, "'else'"),
             Token::While => write!(f, "'while'"),
+            Token::Loop => write!(f, "'loop'"),
             Token::Return => write!(f, "'return'"),
             Token::True => write!(f, "'true'"),
             Token::False => write!(f, "'false'"),

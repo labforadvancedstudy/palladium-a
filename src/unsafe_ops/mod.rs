@@ -106,6 +106,21 @@ impl UnsafeChecker {
                 Ok(())
             }
 
+            // Written out rather than left to the `_` arm below: a raw-pointer
+            // dereference inside `loop { }`, or in the value a `break` carries,
+            // is exactly what this pass exists to find, and the catch-all would
+            // have skipped both silently.
+            Stmt::Loop { body, .. } => {
+                for stmt in body {
+                    self.check_statement(stmt)?;
+                }
+                Ok(())
+            }
+
+            Stmt::Break {
+                value: Some(expr), ..
+            } => self.check_expression(expr),
+
             Stmt::Match { expr, arms, .. } => {
                 self.check_expression(expr)?;
                 for arm in arms {
@@ -258,6 +273,24 @@ impl UnsafeChecker {
                 }
                 if let Some(v) = else_value {
                     self.check_expression(v)?;
+                }
+                Ok(())
+            }
+            Expr::Loop { body, .. } => {
+                for stmt in body {
+                    self.check_statement(stmt)?;
+                }
+                Ok(())
+            }
+            Expr::Match { expr, arms, .. } => {
+                self.check_expression(expr)?;
+                for arm in arms {
+                    for stmt in &arm.body {
+                        self.check_statement(stmt)?;
+                    }
+                    if let Some(v) = &arm.value {
+                        self.check_expression(v)?;
+                    }
                 }
                 Ok(())
             }

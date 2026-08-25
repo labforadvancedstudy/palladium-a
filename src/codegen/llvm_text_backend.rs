@@ -185,6 +185,7 @@ impl LLVMTextBackend {
                     self.collect_strings_from_expr(condition);
                     self.collect_strings_from_stmts(body);
                 }
+                Stmt::Loop { body, .. } => self.collect_strings_from_stmts(body),
                 Stmt::For { iter, body, .. } => {
                     self.collect_strings_from_expr(iter);
                     self.collect_strings_from_stmts(body);
@@ -933,7 +934,14 @@ impl LLVMTextBackend {
                 }
             }
 
-            Stmt::Break { span } => {
+            // `loop` is refused rather than lowered as `while true`: the only
+            // way out of it is a `break`, and `break` is refused one arm down,
+            // so the lowering would be an endless loop with no exit edge.
+            Stmt::Loop { span, .. } => {
+                return Err(unimplemented_loop_jump("loop", "loop_end", *span));
+            }
+
+            Stmt::Break { span, .. } => {
                 return Err(unimplemented_loop_jump("break", "loop_end", *span));
             }
 
@@ -1441,9 +1449,10 @@ impl LLVMTextBackend {
             // lowering: an honest one needs basic blocks and a phi, and
             // claiming one here would be a second backend making promises the
             // first has to keep.
-            Expr::If { span, .. } | Expr::Block { span, .. } => {
-                Err(unimplemented_value_block(*span))
-            }
+            Expr::If { span, .. }
+            | Expr::Block { span, .. }
+            | Expr::Loop { span, .. }
+            | Expr::Match { span, .. } => Err(unimplemented_value_block(*span)),
         }
     }
 
@@ -1925,6 +1934,7 @@ mod tests {
     #[test]
     fn break_is_refused() {
         let diag = refusal_for(vec![Stmt::Break {
+            value: None,
             span: Span::dummy(),
         }]);
         assert_refusal(&diag, "`break`", "%loop_end_placeholder");
@@ -1985,6 +1995,7 @@ mod tests {
                 span: Span::dummy(),
             })],
             vec![Stmt::Break {
+                value: None,
                 span: Span::dummy(),
             }],
             vec![Stmt::Continue {
@@ -2384,6 +2395,7 @@ fn main() {
     #[test]
     fn loop_jump_help_recommends_the_c_backend_and_it_lowers_them() {
         let brk = refusal_for(vec![Stmt::Break {
+            value: None,
             span: Span::dummy(),
         }]);
         assert!(help_of(&brk).contains("dropping `--llvm`") && help_of(&brk).contains("`break`"));

@@ -210,6 +210,7 @@ impl EffectAnalyzer {
 
                 Ok(effects)
             }
+            Stmt::Loop { body, .. } => self.analyze_value_block(body, None),
             Stmt::For {
                 var: _, iter, body, ..
             } => {
@@ -236,7 +237,13 @@ impl EffectAnalyzer {
 
                 Ok(effects)
             }
-            Stmt::Break { .. } | Stmt::Continue { .. } => Ok(EffectSet::new()),
+            // A `break` carrying a value evaluates that value, so its effects
+            // are the loop's effects too.
+            Stmt::Break { value, .. } => match value {
+                Some(expr) => self.analyze_expression(expr),
+                None => Ok(EffectSet::new()),
+            },
+            Stmt::Continue { .. } => Ok(EffectSet::new()),
             Stmt::Unsafe { body, .. } => {
                 let mut effects = EffectSet::singleton(Effect::Unsafe);
 
@@ -411,6 +418,14 @@ impl EffectAnalyzer {
                 Ok(effects)
             }
             Expr::Block { stmts, value, .. } => self.analyze_value_block(stmts, value.as_deref()),
+            Expr::Loop { body, .. } => self.analyze_value_block(body, None),
+            Expr::Match { expr, arms, .. } => {
+                let mut effects = self.analyze_expression(expr)?;
+                for arm in arms {
+                    effects.union(&self.analyze_value_block(&arm.body, arm.value.as_ref())?);
+                }
+                Ok(effects)
+            }
 
             // Await has async effect
             Expr::Await { expr, .. } => {
