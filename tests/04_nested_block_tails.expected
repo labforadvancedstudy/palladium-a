@@ -1,0 +1,13 @@
+A nested block as each branch of a value if:
+1
+Three deep:
+17
+The tail is an expression OVER the block's bindings, not just a name:
+43
+A non-integer tail, so the temporary cannot be assumed i64:
+from a nested block
+An annotated let inside the block:
+18
+A block-local shadowing an outer name:
+42
+1

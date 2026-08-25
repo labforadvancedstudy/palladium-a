@@ -1,0 +1,97 @@
+// Regression: a `for` header's endpoints are read ONCE, and `..=` never
+// increments past its last value (external review of N5-14).
+//
+// TWO DEFECTS, one of them older than ranges-as-values:
+//
+//   * the endpoint sat in the `for` test, so `for i in 0..f()` called `f()`
+//     once per iteration — measured, four times over a four-element range.
+//     PRE-EXISTING: it predates this branch and is fixed here because this
+//     branch took ownership of range lowering.
+//   * `v <= end; v++` overflows a signed 64-bit `v` when `end` is the maximum,
+//     which is undefined behaviour and in practice a loop with no exit. The
+//     inclusive form counts with an unsigned index and never computes
+//     `last + 1`. A real maximum-valued iteration cannot be run, so the shape
+//     of the emitted C is asserted by a unit test instead
+//     (`tests/m2_range_lowering.rs`); what this fixture proves is that the
+//     ordinary behaviour of `..=` is unchanged by that rewrite.
+
+fn endpoint() -> i64 {
+    print("EVALUATED");
+    4
+}
+
+fn start_at() -> i64 {
+    print("START");
+    1
+}
+
+fn main() {
+    print("The endpoint is read once, not once per iteration:");
+    let mut s = 0;
+    for i in 0..endpoint() {
+        s = s + i;
+    }
+    print_int(s);
+
+    print("So is the start:");
+    let mut t = 0;
+    for i in start_at()..4 {
+        t = t + i;
+    }
+    print_int(t);
+
+    print("Inclusive ranges still visit their last element:");
+    let mut u = 0;
+    for i in 1..=4 {
+        u = u + i;
+    }
+    print_int(u);
+
+    print("An inclusive range with equal ends visits exactly one:");
+    let mut v = 0;
+    for i in 7..=7 {
+        v = v + i;
+    }
+    print_int(v);
+
+    print("An inclusive range whose start exceeds its end visits none:");
+    let mut w = 0;
+    for i in 5..=4 {
+        w = w + 1;
+    }
+    print_int(w);
+
+    print("`continue` still advances an inclusive range:");
+    let mut c = 0;
+    for i in 0..=5 {
+        if i == 2 { continue; }
+        c = c + 1;
+    }
+    print_int(c);
+
+    print("`break` still leaves one:");
+    let mut b = 0;
+    for i in 0..=100 {
+        if i == 3 { break; }
+        b = b + 1;
+    }
+    print_int(b);
+
+    print("A range VALUE, both forms, and nested:");
+    let ex = 2..5;
+    let inc = 2..=5;
+    let mut x = 0;
+    for i in ex { x = x + i; }
+    print_int(x);
+    let mut y = 0;
+    for i in inc { y = y + i; }
+    print_int(y);
+
+    let mut z = 0;
+    for i in 0..2 {
+        for j in 0..=2 {
+            z = z + 1;
+        }
+    }
+    print_int(z);
+}

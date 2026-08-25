@@ -1,0 +1,35 @@
+// Regression: a nested block's TAIL is typed inside the block's own bindings
+// (external review of N5-05).
+//
+// `let x = if 1 < 2 { { let a = 1; a } } else { { let b = 2; b } };` was
+// refused with "cannot infer the type of `x`" — a program the type checker had
+// already accepted. Code generation asked what the tail was from OUTSIDE the
+// block that binds it, so any tail naming a block-local failed, at every depth.
+
+fn main() {
+    print("A nested block as each branch of a value if:");
+    let x = if 1 < 2 { { let a = 1; a } } else { { let b = 2; b } };
+    print_int(x);
+
+    print("Three deep:");
+    let deep = { let p = { let q = { let r = 7; r + 1 }; q * 2 }; p + 1 };
+    print_int(deep);
+
+    print("The tail is an expression OVER the block's bindings, not just a name:");
+    let over = { let m = 6; let n = 7; m * n + 1 };
+    print_int(over);
+
+    print("A non-integer tail, so the temporary cannot be assumed i64:");
+    let s = { let t = "from a nested block"; t };
+    print(s);
+
+    print("An annotated let inside the block:");
+    let annotated = { let v: i64 = 9; v * 2 };
+    print_int(annotated);
+
+    print("A block-local shadowing an outer name:");
+    let shadowed = 1;
+    let inner = { let shadowed = 40; shadowed + 2 };
+    print_int(inner);
+    print_int(shadowed);
+}

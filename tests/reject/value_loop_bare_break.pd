@@ -1,0 +1,16 @@
+// NEGATIVE TEST — every `break` out of a value `loop` must carry a value
+// (N5-07).
+//
+// MEASURED BEFORE THIS REFUSAL EXISTED: the mixed shape below emitted
+// `long long __pd_val0;` with no initialiser, a plain `break` on one path, and
+// then read it. Undefined behaviour in C, from a program the front end had
+// accepted — which is why this is refused rather than documented.
+fn main() {
+    let mut i = 0;
+    let x = loop {
+        i = i + 1;
+        if i == 2 { break; }
+        if i == 5 { break 50; }
+    };
+    print_int(x);
+}

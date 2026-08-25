@@ -1,0 +1,24 @@
+A value block as a while condition:
+3
+A value if as a while condition:
+4
+A value match as a while condition:
+2
+A value loop as a while condition, recomputed each time:
+3
+Short circuit: the right operand must NOT run when the left decides.
+a false
+b true
+...and it MUST run when the left does not decide:
+ran-and
+c true
+ran-or
+d false
+The same, with a value match and a value if on the right:
+e false
+f false
+`continue` still reaches the recomputed condition:
+5
+4
+An else-if arm's condition stays unevaluated when an earlier arm wins:
+two

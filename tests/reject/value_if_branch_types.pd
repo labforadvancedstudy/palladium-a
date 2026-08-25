@@ -1,0 +1,8 @@
+// NEGATIVE TEST — the branches of a value `if` must agree on one type (N5-03).
+//
+// The value is stored in ONE hoisted C temporary, so two types have no
+// declaration to share.
+fn main() {
+    let x = if 1 < 2 { 5 } else { "five" };
+    print_int(x);
+}

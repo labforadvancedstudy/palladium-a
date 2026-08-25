@@ -1,0 +1,119 @@
+//! The SHAPE of the C emitted for a range `for` header (N5-14).
+//!
+//! WHY A SHAPE TEST AND NOT A BEHAVIOURAL ONE. The defect these pin is
+//! `..=` reaching the maximum `i64`: `for (v = lo; v <= hi; v++)` increments
+//! past `hi` on the last iteration, which is signed overflow — undefined
+//! behaviour, and in practice a loop with no exit. That case cannot be RUN:
+//! iterating to `i64::MAX` does not terminate on any machine. So what is
+//! checked is the emitted C, which is where the property lives.
+//!
+//! The companion behavioural evidence is `tests/04_range_endpoints.pd`, a
+//! conformance fixture proving the ordinary behaviour of `..=` is unchanged.
+
+mod common;
+use common::unique_source_name;
+use palladium::{CompileError, Driver};
+
+fn compile_source(source: &str) -> Result<String, CompileError> {
+    let driver = Driver::new();
+    driver
+        .compile_string(source, &unique_source_name("m2rl"))
+        .map(|path| std::fs::read_to_string(path).unwrap_or_else(|_| String::new()))
+}
+
+fn c_of(source: &str) -> String {
+    compile_source(source)
+        .unwrap_or_else(|e| panic!("failed to compile:\n{}\nerror: {}", source, e))
+}
+
+/// The line that used to be emitted, and must never be again.
+///
+/// Written as a search for `<=` beside `++` on ONE line rather than for the
+/// whole old string: the defect is the combination, and a reformatting of the
+/// emitter should not be able to hide it.
+fn has_post_visit_increment(c: &str) -> bool {
+    c.lines()
+        .filter(|l| l.contains("for ("))
+        .any(|l| l.contains("<=") && l.contains("++") && !l.contains("unsigned long long"))
+}
+
+#[test]
+fn an_inclusive_range_never_increments_past_its_last_value() {
+    let c = c_of("fn main() { let mut s = 0; for i in 0..=3 { s = s + i; } print_int(s); }");
+    assert!(
+        !has_post_visit_increment(&c),
+        "an inclusive `for` still tests with `<=` and increments a signed counter, \
+         which overflows when the endpoint is i64::MAX:\n{}",
+        c
+    );
+    assert!(
+        c.contains("unsigned long long"),
+        "the inclusive form should count with an unsigned index:\n{}",
+        c
+    );
+}
+
+#[test]
+fn an_exclusive_range_keeps_the_plain_counted_loop() {
+    // Not merely allowed — WANTED. `v < hi` cannot overflow, so the exclusive
+    // form pays nothing for the fix, and this pins that it was not changed
+    // along with its neighbour.
+    let c = c_of("fn main() { let mut s = 0; for i in 0..3 { s = s + i; } print_int(s); }");
+    assert!(
+        c.contains("< __pd_hi") || c.contains("< __pd_hi0"),
+        "the exclusive form should still be a plain `v < hi` counted loop:\n{}",
+        c
+    );
+}
+
+#[test]
+fn both_endpoints_are_read_into_temporaries_before_the_loop() {
+    // The PRE-EXISTING half: the endpoint used to sit in the `for` test, so a
+    // call there ran once per iteration.
+    let c = c_of("fn f() -> i64 { 4 } fn main() { for i in 0..f() { print_int(i); } }");
+    let header = c
+        .lines()
+        .find(|l| l.contains("for ("))
+        .unwrap_or_else(|| panic!("no `for` header in:\n{}", c));
+    assert!(
+        !header.contains("f()"),
+        "the endpoint call is still inside the loop test, so it runs every iteration: {}",
+        header
+    );
+    assert!(
+        c.contains("__pd_hi"),
+        "the endpoint should be read into a temporary before the loop:\n{}",
+        c
+    );
+}
+
+#[test]
+fn a_range_value_loop_reads_its_bounds_once_and_counts_unsigned() {
+    let c =
+        c_of("fn main() { let r = 1..=4; let mut s = 0; for i in r { s = s + i; } print_int(s); }");
+    assert!(
+        c.contains("__pd_last"),
+        "the range-value loop should compute its last value once:\n{}",
+        c
+    );
+    assert!(
+        !has_post_visit_increment(&c),
+        "the range-value loop still increments a signed counter past its last value:\n{}",
+        c
+    );
+}
+
+#[test]
+fn nested_range_loops_do_not_share_a_temporary() {
+    // `__pd_r` was a fixed name. Two range-VALUE loops one inside the other
+    // would have shadowed it; the names are numbered so they cannot.
+    let c = c_of(
+        "fn main() { let a = 0..2; let b = 0..2; let mut n = 0; \
+         for i in a { for j in b { n = n + 1; } } print_int(n); }",
+    );
+    assert!(
+        c.contains("__pd_r0") && c.contains("__pd_r1"),
+        "nested range-value loops should get distinct range temporaries:\n{}",
+        c
+    );
+}

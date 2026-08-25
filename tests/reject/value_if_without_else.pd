@@ -1,0 +1,9 @@
+// NEGATIVE TEST — an `if` used as a VALUE must have an `else` (N5-03).
+//
+// Not a parse error: the same tokens are a perfectly good statement one line
+// up, so the parser cannot tell them apart. The refusal is the type checker's,
+// where "this `if` is in value position" is a fact rather than a guess.
+fn main() {
+    let x = if 1 < 2 { 5 };
+    print_int(x);
+}

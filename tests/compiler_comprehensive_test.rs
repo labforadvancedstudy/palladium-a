@@ -94,7 +94,7 @@ fn test_all_keywords() {
         ("fn main() { while true { } }", vec!["while (1)"]),
         (
             "fn main() { for i in 0..10 { } }",
-            vec!["for (long long i = 0; i < 10; i++)"],
+            vec!["for (long long i = __pd_lo", "; i < __pd_hi"],
         ),
         (
             "fn foo() -> int { return 42; }\nfn main() { }",
@@ -307,6 +307,13 @@ fn test_literals() {
     }
 }
 
+/// THE `for` HEADER NAMES TEMPORARIES NOW, and the four assertions below moved
+/// with it. `for i in 0..10` used to emit `for (long long i = 0; i < 10; i++)`,
+/// with the endpoint IN THE TEST — so an endpoint that was a call ran once per
+/// iteration (measured: four times over a four-element range). Both ends are
+/// read into `__pd_lo`/`__pd_hi` before the loop now. The claim these tests make
+/// is unchanged — a range `for` is a counted C loop over `i` — so they follow
+/// the spelling instead of pinning the one the defect produced.
 #[test]
 fn test_control_flow() {
     let test_cases = vec![
@@ -336,7 +343,7 @@ fn test_control_flow() {
                     print_int(i);
                 }
             }",
-            vec!["for (long long i = 0; i < 10; i++)", "__pd_print_int"],
+            vec!["for (long long i = __pd_lo", "; i < __pd_hi", "__pd_print_int"],
         ),
     ];
 
@@ -466,7 +473,7 @@ fn test_arrays() {
                     print_int(arr[i]);
                 }
             }",
-            vec!["for (long long i = 0; i < 5; i++)", "arr[i]"],
+            vec!["for (long long i = __pd_lo", "; i < __pd_hi", "arr[i]"],
         ),
     ];
 
@@ -675,7 +682,7 @@ fn test_complex_programs() {
         "#,
         &[
             "void bubble_sort",
-            "for (long long i = 0;",
+            "for (long long i = __pd_lo",
             "long long temp = arr[j];",
         ],
     );

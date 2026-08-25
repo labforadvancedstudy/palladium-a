@@ -1,0 +1,9 @@
+// NEGATIVE TEST — a block used as a VALUE must end in an expression (N5-05).
+//
+// `()` is not an answer here: nothing in this language can hold one, and
+// accepting it would send code generation looking for a C type for a variable
+// that stores nothing.
+fn main() {
+    let x = { print("no tail"); };
+    print_int(x);
+}

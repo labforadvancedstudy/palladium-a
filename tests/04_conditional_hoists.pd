@@ -1,0 +1,109 @@
+// Regression: a value expression in a position that runs CONDITIONALLY or
+// REPEATEDLY (external review of N5-03…N5-07, two reproduced miscompiles).
+//
+// Code generation hoists the statements of a value `if`/block/`match`/`loop`
+// in front of the statement that contains it. That is right for a position
+// which always runs exactly once and WRONG for two that do not:
+//
+//   * a `while` CONDITION runs once per iteration. `while { i < 3 }` emitted
+//     `__pd_val0 = (i < 3); while (__pd_val0)` — the test computed once,
+//     before the loop, and the program never terminated.
+//   * the RIGHT operand of `&&`/`||` runs only when the left does not decide.
+//     `flag && { print("leaked"); true }` PRINTED "leaked" with `flag` false.
+//
+// Both are lowered rather than refused. Every case below is written so the
+// broken lowering gives a DIFFERENT observable answer, not merely different C.
+
+enum Flag {
+    Go,
+    Stop,
+}
+
+fn flag_for(k: i64) -> Flag {
+    if k < 2 {
+        Flag::Go
+    } else {
+        Flag::Stop
+    }
+}
+
+fn side(tag: String, v: bool) -> bool {
+    print(tag);
+    v
+}
+
+fn main() {
+    print("A value block as a while condition:");
+    let mut i = 0;
+    while { i < 3 } {
+        i = i + 1;
+    }
+    print_int(i);
+
+    print("A value if as a while condition:");
+    let mut j = 0;
+    while if j < 4 { true } else { false } {
+        j = j + 1;
+    }
+    print_int(j);
+
+    print("A value match as a while condition:");
+    // Matched on an ENUM, not on a literal: literal patterns are N6-02 and are
+    // still owed, so a fixture that used one would be testing two features.
+    let mut k = 0;
+    while match flag_for(k) { Flag::Go => true, Flag::Stop => false } {
+        k = k + 1;
+    }
+    print_int(k);
+
+    print("A value loop as a while condition, recomputed each time:");
+    let mut n = 0;
+    while loop { break n < 3; } {
+        n = n + 1;
+    }
+    print_int(n);
+
+    print("Short circuit: the right operand must NOT run when the left decides.");
+    let no = false;
+    let a = no && { print("LEAKED-AND"); true };
+    if a { print("a true"); } else { print("a false"); }
+
+    let yes = true;
+    let b = yes || { print("LEAKED-OR"); true };
+    if b { print("b true"); } else { print("b false"); }
+
+    print("...and it MUST run when the left does not decide:");
+    let c = yes && { print("ran-and"); true };
+    if c { print("c true"); } else { print("c false"); }
+
+    let d = no || { print("ran-or"); false };
+    if d { print("d true"); } else { print("d false"); }
+
+    print("The same, with a value match and a value if on the right:");
+    let e = no && match Flag::Go { Flag::Go => side("LEAKED-MATCH", true), Flag::Stop => false };
+    if e { print("e true"); } else { print("e false"); }
+
+    let f = no && if side("LEAKED-IF", true) { true } else { false };
+    if f { print("f true"); } else { print("f false"); }
+
+    print("`continue` still reaches the recomputed condition:");
+    let mut g = 0;
+    let mut seen = 0;
+    while { g < 5 } {
+        g = g + 1;
+        if g == 2 { continue; }
+        seen = seen + 1;
+    }
+    print_int(g);
+    print_int(seen);
+
+    print("An else-if arm's condition stays unevaluated when an earlier arm wins:");
+    let x = 2;
+    if x == 2 {
+        print("two");
+    } else if side("LEAKED-ELSEIF", true) {
+        print("one");
+    } else {
+        print("other");
+    }
+}

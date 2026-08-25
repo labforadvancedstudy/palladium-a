@@ -1,0 +1,20 @@
+The endpoint is read once, not once per iteration:
+EVALUATED
+6
+So is the start:
+START
+6
+Inclusive ranges still visit their last element:
+10
+An inclusive range with equal ends visits exactly one:
+7
+An inclusive range whose start exceeds its end visits none:
+0
+`continue` still advances an inclusive range:
+5
+`break` still leaves one:
+3
+A range VALUE, both forms, and nested:
+9
+14
+6

@@ -1,0 +1,18 @@
+// NEGATIVE TEST — `mut` parameters on methods are not implemented (N5-17).
+//
+// A `mut` parameter is lowered to a POINTER at the definition, and the method
+// call path passes by VALUE — it resolves through `impl_methods` while the
+// address-taking decision reads `functions`, which never holds a `Type::method`.
+// gcc then refuses C this compiler's own front end approved, which is the one
+// outcome no fixture may declare as its expected behaviour.
+struct Rect { w: i64 }
+impl Rect {
+    fn bump(self, mut n: i64) -> i64 {
+        n = n + 1;
+        self.w + n
+    }
+}
+fn main() {
+    let r = Rect { w: 1 };
+    print_int(r.bump(5));
+}

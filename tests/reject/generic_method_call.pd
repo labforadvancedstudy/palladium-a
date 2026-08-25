@@ -1,0 +1,14 @@
+// NEGATIVE TEST — generic methods are not implemented (N5-17).
+//
+// The type checker used to ACCEPT this through `generic_functions` while code
+// generation skips generic impl methods entirely — no definition, no prototype
+// — and mangles the `::` name before the generic-mangling path is consulted.
+// The call reached the LINKER as `__pd_Rect_id`, a symbol nothing emits.
+struct Rect { w: i64 }
+impl Rect {
+    fn id<T>(self, x: T) -> T { x }
+}
+fn main() {
+    let r = Rect { w: 1 };
+    print_int(r.id(5));
+}

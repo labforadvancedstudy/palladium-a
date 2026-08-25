@@ -2223,6 +2223,25 @@ impl TypeChecker {
                     // the same function, so the signature that is checked is
                     // the signature that was registered.
                     for method in &impl_block.methods_with_self_resolved() {
+                        // A `mut` PARAMETER ON A METHOD EMITS C THAT THIS
+                        // COMPILER'S OWN CALL PATH CANNOT CALL. A `mut`
+                        // parameter is lowered to a POINTER at the definition,
+                        // and the method call path passes by value, because it
+                        // resolves through `impl_methods` and the address-taking
+                        // decision reads `functions` — which never holds a
+                        // `Type::method`. gcc then refuses C the front end had
+                        // approved, which is the one outcome no fixture may
+                        // declare. Refused here, by name, until the call path
+                        // carries parameter modes for methods too.
+                        if let Some(param) = method.params.iter().find(|p| p.mutable) {
+                            return Err(CompileError::Generic(format!(
+                                "`{}::{}` takes `mut {}`, and `mut` parameters on methods are \
+                                 not implemented: the definition would take a pointer while \
+                                 every call site passes a value. Take the value and return the \
+                                 new one, or write a free `fn`",
+                                impl_block.for_type, method.name, param.name
+                            )));
+                        }
                         self.check_function(method)?;
                     }
 
@@ -2974,7 +2993,27 @@ impl TypeChecker {
                     return Err(self.error_helper.control_flow_outside_loop("break"));
                 }
                 match value {
-                    None => Ok(()),
+                    // A VALUELESS `break` OUT OF A VALUE `loop` LEAVES THE
+                    // TEMPORARY UNWRITTEN. Measured before this arm existed:
+                    // `let x = loop { if c { break; } break 1; };` emitted
+                    // `long long __pd_val0;` with no initialiser, a plain
+                    // `break` on one path, and then read it — undefined
+                    // behaviour in C, from a program the front end accepted.
+                    //
+                    // The mirror of `record_break_value`'s refusal, which
+                    // already rejected a VALUED break out of a statement loop.
+                    // Both directions of the same rule: the loop and its breaks
+                    // must agree about whether there is a value.
+                    None => match self.break_targets.last() {
+                        Some(BreakTarget::Value(_)) => Err(CompileError::TypeMismatch {
+                            expected: "every `break` out of a `loop` used as a value to carry \
+                                       one, so the binding on the other side is always written"
+                                .to_string(),
+                            found: "a `break` with no value".to_string(),
+                            span: Some(*span),
+                        }),
+                        _ => Ok(()),
+                    },
                     Some(expr) => {
                         let value_type = self.check_expression(expr)?;
                         self.record_break_value(value_type, *span)
@@ -3841,6 +3880,20 @@ impl TypeChecker {
                     };
                     if matches!(data, Some(crate::ast::EnumConstructorData::Tuple(_))) {
                         let qualified = format!("{}::{}", enum_name, variant);
+                        if self.generic_functions.contains_key(&qualified)
+                            && !self.functions.contains_key(&qualified)
+                        {
+                            // Same refusal as the `x.f()` rewrite, at the other
+                            // spelling of the same call — see
+                            // `method_call_as_path_call`.
+                            return Err(CompileError::Generic(format!(
+                                "`{}::{}` is a generic method, and generic methods are not \
+                                 implemented: code generation emits no symbol for one, so the \
+                                 call would fail at link time. Write a non-generic method, or \
+                                 a free `fn` with the type parameter",
+                                enum_name, variant
+                            )));
+                        }
                         if self.functions.contains_key(&qualified)
                             || self.generic_functions.contains_key(&qualified)
                         {
@@ -4462,6 +4515,23 @@ impl TypeChecker {
         };
 
         let qualified = format!("{}::{}", owner, field);
+
+        // A GENERIC METHOD TYPE-CHECKS AND THEN HAS NO SYMBOL TO CALL.
+        // `generic_functions` accepts it here, and code generation SKIPS
+        // generic impl methods entirely — no definition, no prototype — while
+        // the `::` name is mangled before the generic-mangling path is
+        // consulted. The result was a call to `__pd_Rect_id`, which nothing
+        // emits, discovered by the linker rather than by this compiler.
+        // Refused by name until method monomorphisation exists.
+        if self.generic_functions.contains_key(&qualified) {
+            return Err(CompileError::Generic(format!(
+                "`{}::{}` is a generic method, and generic methods are not implemented: \
+                 code generation emits no symbol for one, so the call would fail at link \
+                 time. Write a non-generic method, or a free `fn` with the type parameter",
+                owner, field
+            )));
+        }
+
         if !self.functions.contains_key(&qualified)
             && !self.generic_functions.contains_key(&qualified)
         {

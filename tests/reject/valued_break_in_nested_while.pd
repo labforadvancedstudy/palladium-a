@@ -1,0 +1,20 @@
+// NEGATIVE TEST — a `break` binds to the INNERMOST loop, and a value may only
+// leave a loop that is used as one (N5-07).
+//
+// The `break j;` below is inside a `while`, which produces nothing, even though
+// a value `loop` encloses it. Pinning the frame boundary: without it the value
+// would be assigned to the outer loop's temporary from a path that never exits
+// the outer loop.
+fn main() {
+    let mut i = 0;
+    let x = loop {
+        i = i + 1;
+        let mut j = 0;
+        while j < 3 {
+            j = j + 1;
+            if j == 2 { break j; }
+        }
+        if i > 2 { break i; }
+    };
+    print_int(x);
+}

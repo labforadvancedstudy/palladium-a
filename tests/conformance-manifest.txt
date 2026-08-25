@@ -71,6 +71,7 @@ tests/02_types_structs.pd	run	-	expected	-	-
 tests/02_unary_precedence.pd	run	-	expected	-	-
 tests/03_functions_basic.pd	run	-	expected	-	-
 tests/04_block_expression.pd	run	-	expected	-	-
+tests/04_conditional_hoists.pd	run	-	expected	-	-
 tests/04_control_flow_for.pd	run	-	expected	-	-
 tests/04_control_flow_if.pd	run	-	expected	-	-
 tests/04_control_flow_while.pd	run	-	expected	-	-
@@ -78,6 +79,8 @@ tests/04_else_if.pd	run	-	expected	-	-
 tests/04_if_expression.pd	run	-	expected	-	-
 tests/04_loop_break_value.pd	run	-	expected	-	-
 tests/04_method_calls.pd	run	-	expected	-	-
+tests/04_nested_block_tails.pd	run	-	expected	-	-
+tests/04_range_endpoints.pd	run	-	expected	-	-
 tests/04_ranges.pd	run	-	expected	-	-
 tests/05_borrowing_references.pd	run	-	expected	-	-
 tests/05_ownership_basic.pd	run	-	expected	-	-
@@ -139,7 +142,9 @@ tests/reject/async_producer.pd	reject	compile	`async fn` is not implemented	-	N7
 tests/reject/closure_literal.pd	reject	compile	Expected expression, but found '|'	-	no Closure/Lambda node exists in src/ast/ or src/parser/, so `|` starts nothing in expression position
 tests/reject/extern_block.pd	reject	compile	Expected function, struct, enum, trait, type, impl, or macro declaration	-	no `extern` block, so no foreign symbol can be named; the generated code is C, so the ABI is C by construction but there is no syntax to reach it
 tests/reject/generic_bound.pd	reject	compile	Expected '>' (Expected '>' after generic parameters), but found ':'	-	generic parameter lists accept bare names only; the `:` that introduces a trait bound ends the list
+tests/reject/generic_method_call.pd	reject	compile	`Rect::id` is a generic method, and generic methods are not implemented	-	N5-17 accepted this through `generic_functions` while codegen skips generic impl methods entirely, so the call reached the LINKER as a symbol nothing emits. Refused until method monomorphisation exists
 tests/reject/loop_keyword.pd	run	-	expected	-	-
+tests/reject/method_mut_parameter.pd	reject	compile	`Rect::bump` takes `mut n`, and `mut` parameters on methods are not implemented	-	the definition lowers a `mut` parameter to a pointer and the method call path passes by value, so gcc refused C the front end had approved -- the one outcome no fixture may declare
 tests/reject/mut_borrow_of_immutable.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	feature-index.toml recorded this exact program as accepted and mutating an immutable local with no diagnostic; the borrow checker refuses it and names the repair
 tests/reject/ref_parameter.pd	reject	compile	Unexpected token: expected ')' (Expected ')'), found identifier 'String'	-	the spec writes a shared borrow `ref T` (N9); the implemented spelling is Rust's &/&mut, so `ref` is not a keyword and the parser sees an identifier where a type belongs
 tests/reject/attribute_inner.pd	reject	compile	unknown attribute `frobnicate`	-	N2-10 shape three: `#![name(args)]` at the top of a compilation unit. `#!` is ONE token, so `#![a]` and `# ![a]` are distinguishable; reaching the NAME is what proves the shape lexed
@@ -153,6 +158,11 @@ tests/reject/uncalled_body_is_checked.pd	reject	compile	cannot borrow `v` as mut
 tests/reject/const_generic_param.pd	reject	compile	Type mismatch: expected [Int; N], found [Int; 3]	-	const generic parameters parse (src/parser/mod.rs:101-103) and are never monomorphised, so N reaches typeck as a name; codegen is no better and emits the parameter name verbatim into C
 tests/reject/question_mark_operator.pd	reject	compile	the `?` operator is not implemented	-	D5's fix: `?` used to typecheck and then emit C referring to a struct Result layout codegen never defines, so the failure surfaced in gcc; it is refused by name before any C exists
 tests/reject/macro_invocation_bracket.pd	reject	compile	Expected '(' (Expected '(' after macro name!), but found '['	-	the macro parser accepts one call shape: vec![...] does not parse, so the registered vec! builtin is reachable only as vec!(...)
+tests/reject/value_block_without_tail.pd	reject	compile	expected this block to end in an expression, so it has a value	-	N5-05. `()` is not an answer: nothing in this language holds one, and accepting it would ask codegen for the C type of a variable that stores nothing
+tests/reject/value_if_branch_types.pd	reject	compile	expected both branches of this `if` to have type Int	-	N5-03. The value lives in ONE hoisted C temporary, so two types have no declaration to share
+tests/reject/value_if_without_else.pd	reject	compile	expected an `if` used as a value to have an `else` branch	-	N5-03. Not a parse error -- the same tokens are a statement one line up -- so the refusal is the type checker's, where value position is a fact rather than a guess
+tests/reject/value_loop_bare_break.pd	reject	compile	expected every `break` out of a `loop` used as a value to carry one	-	N5-07. Measured before this refusal existed: the mixed shape emitted an uninitialised temporary, a plain `break` on one path, and then read it
+tests/reject/valued_break_in_nested_while.pd	reject	compile	expected a `break` without a value, because the loop it exits is not used as a value	-	N5-07 frame boundary: a `break` binds to the INNERMOST loop, so a `while` nested in a value `loop` may not hand the outer loop a value
 tests/reject/zero_length_array_self_reference.pd	reject	compile	the refusal is a deliberate exclusion (requirement N4-23)	-	N4-23's own fixture (N4-22 is the POSITIVE row and says nothing about arrays; this fixture used to name it, which sent a reader who hit the refusal to a row that does not mention their program -- N4-23's own claim failing on N4-23's own reference). The one place the recursive-layout analysis knowingly over-approximates: `[Z; 0]` stores no `Z`, so `Z` HAS a finite size and this cycle is broken with no enum on it. It is refused anyway, on two measured reasons the diagnostic names -- `struct Z xs[0];` is an array of an incomplete element type that cc refuses (`array has incomplete element type 'struct Z'`), and `[T; 0]` is uninhabited because the empty array literal is refused. The fingerprint is the DECISION sentence, not the headline: the headline fires for every layout refusal, so a fixture pinned to it would stay green if the zero-length carve-out silently disappeared
 
 # tests/stdlib/ — drivers for the language surface and the builtins a standard

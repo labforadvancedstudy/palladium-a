@@ -18,6 +18,9 @@ Addition binds tighter than the shifts:
 8
 Complement binds tighter than everything binary:
 12
+Bitwise binds TIGHTER than the comparisons, which is Rust's order:
+1
+0
 Parentheses still override:
 6
 14

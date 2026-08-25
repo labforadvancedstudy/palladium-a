@@ -52,6 +52,17 @@ fn main() {
     // ~0 is -1; -1 & 12 is 12. If `&` bound tighter it would be ~(0 & 12) = -1.
     print_int(~0 & a);
 
+    print("Bitwise binds TIGHTER than the comparisons, which is Rust's order:");
+    // C is the other way round -- there `a & b == c` means `a & (b == c)`, and
+    // C compilers warn about it. Under C's grouping `12 & 10 == 8` is
+    // `12 & (10 == 8)` = `12 & 0` = 0; under this language's it is
+    // `(12 & 10) == 8` = 1. The number tells the two apart.
+    let cmp = a & b == 8;
+    if cmp { print_int(1); } else { print_int(0); }
+    // Same shape through `|` and `^`.
+    let cmp2 = a ^ b != 6;
+    if cmp2 { print_int(1); } else { print_int(0); }
+
     print("Parentheses still override:");
     print_int((a | b) & 6);
     print_int(a | (b & 6));

@@ -521,7 +521,9 @@ impl MacroExpander {
             Expr::FieldAccess { object, .. } => {
                 self.expand_expr(object)?;
             }
-            Expr::EnumConstructor { data: Some(data), .. } => {
+            Expr::EnumConstructor {
+                data: Some(data), ..
+            } => {
                 self.expand_enum_constructor_data(data)?;
             }
             Expr::EnumConstructor { data: None, .. } => {}
@@ -538,6 +540,51 @@ impl MacroExpander {
             Expr::Question { expr, .. } => {
                 self.expand_expr(expr)?;
             }
+            // THE VALUE FORMS CARRY STATEMENTS, AND A MACRO CAN BE IN ONE.
+            // These fell to the catch-all below, so `let x = if c { vec!(1) }
+            // else { … };` left the invocation unexpanded and code generation
+            // met a macro it is documented never to see.
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                self.expand_expr(condition)?;
+                *then_branch = self.expand_stmts(then_branch)?;
+                if let Some(v) = then_value {
+                    self.expand_expr(v)?;
+                }
+                if let Some(stmts) = else_branch {
+                    *stmts = self.expand_stmts(stmts)?;
+                }
+                if let Some(v) = else_value {
+                    self.expand_expr(v)?;
+                }
+            }
+            Expr::Block { stmts, value, .. } => {
+                *stmts = self.expand_stmts(stmts)?;
+                if let Some(v) = value {
+                    self.expand_expr(v)?;
+                }
+            }
+            Expr::Loop { body, .. } => {
+                *body = self.expand_stmts(body)?;
+            }
+            Expr::Match { expr, arms, .. } => {
+                self.expand_expr(expr)?;
+                for arm in arms {
+                    arm.body = self.expand_stmts(&arm.body)?;
+                    if let Some(v) = &mut arm.value {
+                        self.expand_expr(v)?;
+                    }
+                }
+            }
+            Expr::Cast { expr, .. } => {
+                self.expand_expr(expr)?;
+            }
             // Literals don't need expansion
             _ => {}
         }
@@ -545,7 +592,10 @@ impl MacroExpander {
     }
 
     /// Helper method to expand enum constructor data
-    fn expand_enum_constructor_data(&mut self, data: &mut crate::ast::EnumConstructorData) -> Result<()> {
+    fn expand_enum_constructor_data(
+        &mut self,
+        data: &mut crate::ast::EnumConstructorData,
+    ) -> Result<()> {
         match data {
             crate::ast::EnumConstructorData::Tuple(exprs) => {
                 for e in exprs {

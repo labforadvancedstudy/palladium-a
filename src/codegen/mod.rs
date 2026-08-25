@@ -384,7 +384,44 @@ impl CodeGenerator {
     /// The returned string may carry array dimensions (`"long long[3]"`), which
     /// is the same encoding `self.variables` uses; split it with
     /// [`CodeGenerator::split_array_dims`] before emitting a declaration.
+    /// Infer the C type of an expression, or `None` when codegen has no rule
+    /// for that expression kind.
     fn try_infer_expr_type(&self, expr: &Expr) -> Option<String> {
+        self.try_infer_expr_type_in(expr, &std::collections::HashMap::new())
+    }
+
+    /// The bindings a block's statements add, over the ones already visible.
+    ///
+    /// Only `let` is collected: it is the only statement that introduces a name
+    /// a trailing expression can read.
+    fn locals_of(
+        &self,
+        stmts: &[Stmt],
+        outer: &std::collections::HashMap<String, String>,
+    ) -> std::collections::HashMap<String, String> {
+        let mut locals = outer.clone();
+        for stmt in stmts {
+            if let Stmt::Let {
+                name, ty, value, ..
+            } = stmt
+            {
+                let inferred = match ty {
+                    Some(t) => Some(self.type_to_c(t)),
+                    None => self.try_infer_expr_type_in(value, &locals),
+                };
+                if let Some(c_type) = inferred {
+                    locals.insert(name.clone(), c_type);
+                }
+            }
+        }
+        locals
+    }
+
+    fn try_infer_expr_type_in(
+        &self,
+        expr: &Expr,
+        locals: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
         match expr {
             Expr::Integer(_) => Some("long long".to_string()),
             Expr::Float(_) => Some("double".to_string()),
@@ -430,13 +467,16 @@ impl CodeGenerator {
             // Every binder (let, parameter, for-loop variable, match binding)
             // records its C type in `self.variables`, so a name we cannot find
             // means codegen genuinely does not know the type.
-            Expr::Ident(name) => self.variables.get(name).cloned(),
+            Expr::Ident(name) => locals
+                .get(name)
+                .or_else(|| self.variables.get(name))
+                .cloned(),
             Expr::Call { func, args, .. } => {
                 // A METHOD CALL IS A CALL (N5-17), and it has to be typed here
                 // as well as emitted, because a method call can itself be a
                 // receiver: `r.taller().area()` asks this what `r.taller()` is.
                 if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
-                    let receiver_type = self.try_infer_expr_type(object)?;
+                    let receiver_type = self.try_infer_expr_type_in(object, locals)?;
                     let owner = Self::struct_name_of(&receiver_type)?;
                     let qualified = format!("{}::{}", owner, field);
                     if let Some(ret) = self.impl_methods.get(&qualified) {
@@ -466,7 +506,7 @@ impl CodeGenerator {
                             .iter()
                             .position(|p| matches!(&p.ty, Type::TypeParam(n) if n == param_name));
                         let arg = position.and_then(|i| args.get(i))?;
-                        return self.try_infer_expr_type(arg);
+                        return self.try_infer_expr_type_in(arg, locals);
                     }
                     return self.return_type_to_c(ret_type.as_ref());
                 }
@@ -510,7 +550,7 @@ impl CodeGenerator {
                     // (integers, by the type checker's rule), not a fixed
                     // `long long`: `let m: i32 = a & b;` must not widen.
                     BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                        self.try_infer_expr_type(left)
+                        self.try_infer_expr_type_in(left, locals)
                     }
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
                         // The operands decide, because the answer is not always
@@ -543,8 +583,8 @@ impl CodeGenerator {
                 UnaryOp::Not => Some("int".to_string()),
                 // `~` is an INTEGER operator: its result is the operand's
                 // type, not the `int` a truth value would be.
-                UnaryOp::BitNot => self.try_infer_expr_type(operand),
-                UnaryOp::Neg => self.try_infer_expr_type(operand),
+                UnaryOp::BitNot => self.try_infer_expr_type_in(operand, locals),
+                UnaryOp::Neg => self.try_infer_expr_type_in(operand, locals),
             },
             Expr::EnumConstructor {
                 enum_name, variant, ..
@@ -568,7 +608,7 @@ impl CodeGenerator {
                 Some(format!("struct {}", enum_name))
             }
             Expr::Reference { expr, .. } => {
-                let inner = self.try_infer_expr_type(expr)?;
+                let inner = self.try_infer_expr_type_in(expr, locals)?;
                 // A reference to an array needs C's pointer-to-array declarator
                 // (`T (*p)[n]`), which the `let` printer cannot spell; refuse
                 // instead of emitting a wrong one.
@@ -578,7 +618,7 @@ impl CodeGenerator {
                 Some(format!("{}*", inner))
             }
             Expr::Deref { expr, .. } => {
-                let inner = self.try_infer_expr_type(expr)?;
+                let inner = self.try_infer_expr_type_in(expr, locals)?;
                 // Strip one pointer level. A non-pointer operand means the
                 // operand is a reference *parameter*, which Expr::Ident already
                 // auto-dereferences, so the value type is the operand type.
@@ -588,14 +628,14 @@ impl CodeGenerator {
                 })
             }
             Expr::FieldAccess { object, field, .. } => {
-                let object_type = self.try_infer_expr_type(object)?;
+                let object_type = self.try_infer_expr_type_in(object, locals)?;
                 let struct_name = Self::struct_name_of(&object_type)?;
                 let fields = self.structs.get(struct_name)?;
                 let (_, field_type) = fields.iter().find(|(name, _)| name == field)?;
                 Some(self.type_to_c(field_type))
             }
             Expr::Index { array, .. } => {
-                let array_type = self.try_infer_expr_type(array)?;
+                let array_type = self.try_infer_expr_type_in(array, locals)?;
                 // `T[n]` -> `T`, `T*` -> `T`, `const char*` -> `char`.
                 if let Some(open) = array_type.find('[') {
                     let base = array_type[..open].trim_end();
@@ -612,13 +652,13 @@ impl CodeGenerator {
             }
             Expr::ArrayLiteral { elements, .. } => {
                 let elem_type = match elements.first() {
-                    Some(first) => self.try_infer_expr_type(first)?,
+                    Some(first) => self.try_infer_expr_type_in(first, locals)?,
                     None => "long long".to_string(),
                 };
                 Some(Self::array_of(&elem_type, elements.len()))
             }
             Expr::ArrayRepeat { value, count, .. } => {
-                let elem_type = self.try_infer_expr_type(value)?;
+                let elem_type = self.try_infer_expr_type_in(value, locals)?;
                 let size = match count.as_ref() {
                     Expr::Integer(n) => *n as usize,
                     // Non-literal counts are rejected by the type checker.
@@ -638,18 +678,36 @@ impl CodeGenerator {
             // scope open; this arm is the answer for the cases that do not need
             // it (a literal, a call, an outer variable).
             Expr::If {
+                then_branch,
                 then_value,
+                else_branch,
                 else_value,
                 ..
-            } => then_value
-                .as_ref()
-                .and_then(|v| self.try_infer_expr_type(v))
-                .or_else(|| {
-                    else_value
-                        .as_ref()
-                        .and_then(|v| self.try_infer_expr_type(v))
-                }),
-            Expr::Block { value, .. } => value.as_ref().and_then(|v| self.try_infer_expr_type(v)),
+            } => {
+                let then_locals = self.locals_of(then_branch, locals);
+                then_value
+                    .as_ref()
+                    .and_then(|v| self.try_infer_expr_type_in(v, &then_locals))
+                    .or_else(|| {
+                        let else_locals =
+                            self.locals_of(else_branch.as_deref().unwrap_or(&[]), locals);
+                        else_value
+                            .as_ref()
+                            .and_then(|v| self.try_infer_expr_type_in(v, &else_locals))
+                    })
+            }
+            // THE TAIL IS TYPED INSIDE THE BLOCK'S OWN BINDINGS.
+            // `let x = { let a = 1; a };` was refused as "cannot infer the type
+            // of `x`" — a well-typed program the type checker had already
+            // accepted — because this asked what `a` was from outside the block
+            // that binds it. Nesting made it worse, not better: a block inside
+            // an `if` branch inside a block failed the same way at every level.
+            Expr::Block { stmts, value, .. } => {
+                let inner = self.locals_of(stmts, locals);
+                value
+                    .as_ref()
+                    .and_then(|v| self.try_infer_expr_type_in(v, &inner))
+            }
             // A cast's type is the type it names — that is the whole content of
             // the expression.
             Expr::Cast { ty, .. } => Some(self.type_to_c(ty)),
@@ -658,12 +716,14 @@ impl CodeGenerator {
             // inside a loop body. The answer that counts is recorded while the
             // construct is generated (`hoist_types`); this arm only answers the
             // easy cases, and `None` is not a refusal, it is "ask again later".
-            Expr::Match { arms, .. } => arms
-                .iter()
-                .find_map(|arm| arm.value.as_ref().and_then(|v| self.try_infer_expr_type(v))),
-            Expr::Loop { body, .. } => {
-                Self::first_break_value(body).and_then(|expr| self.try_infer_expr_type(expr))
-            }
+            Expr::Match { arms, .. } => arms.iter().find_map(|arm| {
+                let arm_locals = self.locals_of(&arm.body, locals);
+                arm.value
+                    .as_ref()
+                    .and_then(|v| self.try_infer_expr_type_in(v, &arm_locals))
+            }),
+            Expr::Loop { body, .. } => Self::first_break_value(body)
+                .and_then(|expr| self.try_infer_expr_type_in(expr, locals)),
             // No rule yet: ranges are only meaningful inside `for`, `?` and
             // macros are lowered elsewhere, and await/async is unimplemented.
             Expr::Range { .. } => Some("__pd_range".to_string()),
@@ -3300,9 +3360,31 @@ impl CodeGenerator {
             Stmt::While {
                 condition, body, ..
             } => {
-                self.output.push_str("    while (");
-                self.generate_expression(condition)?;
-                self.output.push_str(") {\n");
+                // A CONDITION IS RE-EVALUATED EVERY ITERATION, so anything it
+                // hoists must be too.
+                //
+                // MEASURED WRONG CODE, not a hypothetical: `while { i < 3 }`
+                // emitted `__pd_val0 = (i < 3); while (__pd_val0)` — the test
+                // computed ONCE, before the loop, and the program never
+                // terminated. `generate_statement` splices `pending_hoists` in
+                // front of the whole statement, which is right for a position
+                // that always runs and wrong for one that runs each time round.
+                //
+                // The repair is a lowering and not a refusal: `while (1) { …the
+                // hoisted statements…; if (!(test)) break; …body… }` runs them
+                // once per iteration, and `continue` in the body still lands
+                // above them.
+                let (cond_src, cond_hoists) = self.generate_expr_with_hoists(condition)?;
+
+                if cond_hoists.is_empty() {
+                    self.output
+                        .push_str(&format!("    while ({}) {{\n", cond_src));
+                } else {
+                    self.output.push_str("    while (1) {\n");
+                    self.output.push_str(&cond_hoists);
+                    self.output
+                        .push_str(&format!("        if (!({})) break;\n", cond_src));
+                }
 
                 // Generate body. The frame is `None`: a `break` written in here
                 // belongs to THIS loop, which produces no value, so it must not
@@ -3331,23 +3413,65 @@ impl CodeGenerator {
                         // the bounds go straight into the `for`, with no
                         // `__pd_range` value built and thrown away. `..=` is
                         // the same loop with `<=`.
+                        // TWO DEFECTS ARE FIXED HERE, and the old two-line
+                        // emission had both.
+                        //
+                        // THE ENDPOINT WAS RE-EVALUATED EVERY ITERATION
+                        // (PRE-EXISTING, older than ranges-as-values):
+                        // `for i in 0..f()` put the call in the `for` test, so
+                        // `f()` ran once per iteration — measured, four times
+                        // for a four-element range. Both ends are now read into
+                        // temporaries once, before the loop.
+                        //
+                        // `..=` INCREMENTED PAST ITS LAST VALUE: `v <= end;
+                        // v++` overflows a signed `long long` when `end` is the
+                        // maximum, which is undefined behaviour and, in
+                        // practice, a loop that never ends. The inclusive form
+                        // counts with an UNSIGNED index instead and never
+                        // computes `last + 1`. `continue` still works, because
+                        // the increment is in the `for` header where C runs it.
+                        let n = self.hoist_counter;
+                        self.hoist_counter += 1;
+                        let (lo, hi) = (format!("__pd_lo{}", n), format!("__pd_hi{}", n));
                         self.output.push_str("        // For loop with range\n");
                         self.output
-                            .push_str(&format!("        for (long long {} = ", var));
+                            .push_str(&format!("        long long {} = ", lo));
+                        self.generate_expression(start)?;
+                        self.output.push_str(";\n");
+                        self.output
+                            .push_str(&format!("        long long {} = ", hi));
+                        self.generate_expression(end)?;
+                        self.output.push_str(";\n");
+
                         // Record the loop variable so expressions in the body
                         // can be typed (see try_infer_expr_type/Expr::Ident).
                         // The scope opens *here*, before the binder is written,
                         // so the binder cannot outlive the loop.
                         let loop_scope = self.open_binding_scope();
                         self.bind_non_array(var, "long long".to_string());
-                        self.generate_expression(start)?;
-                        self.output.push_str(&format!(
-                            "; {} {} ",
-                            var,
-                            if *inclusive { "<=" } else { "<" }
-                        ));
-                        self.generate_expression(end)?;
-                        self.output.push_str(&format!("; {}++) {{\n", var));
+                        if *inclusive {
+                            self.output
+                                .push_str(&format!("        if ({} <= {}) {{\n", lo, hi));
+                            self.output.push_str(&format!(
+                                "        for (unsigned long long __pd_k{n} = 0, \
+                                 __pd_n{n} = (unsigned long long)({hi} - {lo}); \
+                                 __pd_k{n} <= __pd_n{n}; __pd_k{n}++) {{\n",
+                                n = n,
+                                hi = hi,
+                                lo = lo
+                            ));
+                            self.output.push_str(&format!(
+                                "        long long {} = {} + (long long)__pd_k{};\n",
+                                var, lo, n
+                            ));
+                        } else {
+                            self.output.push_str(&format!(
+                                "        for (long long {v} = {lo}; {v} < {hi}; {v}++) {{\n",
+                                v = var,
+                                lo = lo,
+                                hi = hi
+                            ));
+                        }
 
                         // Generate body. The `None` frame says a `break` in
                         // here belongs to THIS loop, which produces no value —
@@ -3359,6 +3483,9 @@ impl CodeGenerator {
                         self.close_binding_scope(loop_scope);
 
                         self.output.push_str("        }\n");
+                        if *inclusive {
+                            self.output.push_str("        }\n");
+                        }
                     }
                     // A range that is not written in the header — a `let`
                     // binding, a call's result — is a `__pd_range` value, and
@@ -3372,22 +3499,47 @@ impl CodeGenerator {
                     {
                         self.output
                             .push_str("        // For loop over a range value\n");
-                        self.output.push_str("        __pd_range __pd_r = ");
+                        // Same two repairs as the header form above: the ends
+                        // are read once, and the inclusive case never computes
+                        // `last + 1`. `__pd_r` is numbered because a range-value
+                        // loop can contain another one.
+                        let n = self.hoist_counter;
+                        self.hoist_counter += 1;
+                        let r = format!("__pd_r{}", n);
+                        self.output
+                            .push_str(&format!("        __pd_range {} = ", r));
                         self.generate_expression(iter)?;
                         self.output.push_str(";\n");
+                        self.output.push_str(&format!(
+                            "        if ({r}.inclusive ? ({r}.start <= {r}.end) \
+                             : ({r}.start < {r}.end)) {{\n",
+                            r = r
+                        ));
+                        self.output.push_str(&format!(
+                            "        long long __pd_last{n} = {r}.inclusive ? {r}.end \
+                             : {r}.end - 1;\n",
+                            n = n,
+                            r = r
+                        ));
                         let loop_scope = self.open_binding_scope();
                         self.bind_non_array(var, "long long".to_string());
                         self.output.push_str(&format!(
-                            "        for (long long {v} = __pd_r.start; \
-                             __pd_r.inclusive ? ({v} <= __pd_r.end) : ({v} < __pd_r.end); \
-                             {v}++) {{\n",
-                            v = var
+                            "        for (unsigned long long __pd_k{n} = 0, \
+                             __pd_n{n} = (unsigned long long)(__pd_last{n} - {r}.start); \
+                             __pd_k{n} <= __pd_n{n}; __pd_k{n}++) {{\n",
+                            n = n,
+                            r = r
+                        ));
+                        self.output.push_str(&format!(
+                            "        long long {} = {}.start + (long long)__pd_k{};\n",
+                            var, r, n
                         ));
                         self.break_temps.push(None);
                         let generated = self.generate_block(body, "        ");
                         self.break_temps.pop();
                         generated?;
                         self.close_binding_scope(loop_scope);
+                        self.output.push_str("        }\n");
                         self.output.push_str("        }\n");
                     }
                     _ => {
@@ -3782,6 +3934,21 @@ impl CodeGenerator {
         let captured = std::mem::replace(&mut self.output, saved);
         result?;
         Ok(captured)
+    }
+
+    /// Generate `expr` and report BOTH its text and the statements it hoisted,
+    /// without splicing those statements anywhere.
+    ///
+    /// The question every conditional position has to ask. `pending_hoists` is
+    /// spliced in front of the whole statement by `generate_statement`, which is
+    /// right for a position that always runs and WRONG for one that runs
+    /// sometimes — a `while` condition, the right operand of `&&`. Those callers
+    /// generate first, look, and lower differently when something came out.
+    fn generate_expr_with_hoists(&mut self, expr: &Expr) -> Result<(String, String)> {
+        let saved = std::mem::take(&mut self.pending_hoists);
+        let text = self.capture_output(|g| g.generate_expression(expr));
+        let hoists = std::mem::replace(&mut self.pending_hoists, saved);
+        Ok((text?, hoists))
     }
 
     /// Emit `{ stmts...; <temp> = value; }` for one branch of a value
@@ -4328,6 +4495,55 @@ impl CodeGenerator {
             Expr::Binary {
                 left, op, right, ..
             } => {
+                // `&&` AND `||` DO NOT EVALUATE THEIR RIGHT OPERAND WHEN THE
+                // LEFT DECIDES, and a hoisted right operand did.
+                //
+                // MEASURED: `let x = flag && { print("leaked"); true };` with
+                // `flag` false PRINTED "leaked". The block's statements were
+                // spliced in front of the whole `let`, so they ran before the
+                // `&&` was even reached — short-circuiting silently gone.
+                //
+                // Lowered rather than refused, and only when the right operand
+                // actually hoists, so an ordinary `a && b` keeps emitting `a &&
+                // b`. The left operand never needs this: it always runs.
+                if matches!(op, BinOp::And | BinOp::Or) {
+                    let (rhs_src, rhs_hoists) = self.generate_expr_with_hoists(right)?;
+                    let c_op = if matches!(op, BinOp::And) {
+                        " && "
+                    } else {
+                        " || "
+                    };
+
+                    if rhs_hoists.is_empty() {
+                        self.output.push('(');
+                        self.generate_expression(left)?;
+                        self.output.push_str(c_op);
+                        self.output.push_str(&rhs_src);
+                        self.output.push(')');
+                        return Ok(());
+                    }
+
+                    let temp = self.fresh_hoist_name();
+                    // The left operand is generated into the enclosing prelude,
+                    // where anything IT hoists belongs — it is unconditional.
+                    let lhs_src = self.capture_output(|g| g.generate_expression(left))?;
+                    self.pending_hoists
+                        .push_str(&format!("    int {};\n", temp));
+                    self.pending_hoists
+                        .push_str(&format!("    {} = ({});\n", temp, lhs_src));
+                    self.pending_hoists.push_str(&format!(
+                        "    if ({}{}) {{\n",
+                        if matches!(op, BinOp::And) { "" } else { "!" },
+                        temp
+                    ));
+                    self.pending_hoists.push_str(&rhs_hoists);
+                    self.pending_hoists
+                        .push_str(&format!("        {} = ({});\n", temp, rhs_src));
+                    self.pending_hoists.push_str("    }\n");
+                    self.output.push_str(&temp);
+                    return Ok(());
+                }
+
                 // Check if this is string concatenation
                 let left_type = self.infer_expr_type(left);
                 let right_type = self.infer_expr_type(right);
@@ -4495,9 +4711,23 @@ impl CodeGenerator {
                 // because the parser had no types to tell the two apart
                 // (N5-17). THE RULE IS THE TYPE CHECKER'S, restated where it is
                 // applied: it is a constructor if and only if the name is an
-                // enum's. See `TypeChecker::path_names_an_enum` — if these two
-                // ever disagree, a call is emitted as a constructor or the
-                // reverse, and gcc is what notices.
+                // enum's. See `TypeChecker::path_names_an_enum`.
+                //
+                // THE TWO PREDICATES ARE NOT IDENTICAL, AND THE ASYMMETRY IS
+                // SAFE. `path_names_an_enum` consults `enums` AND
+                // `generic_enums`; this consults `enums` alone. A generic enum
+                // is therefore "not an enum" here — and it still cannot be
+                // mis-emitted, because the diversion below requires a POSITIVE
+                // hit in `functions` or `impl_methods`, and a generic-enum
+                // constructor is in neither. Falling through the `if` is the
+                // constructor path, which is the right answer.
+                //
+                // That is an argument about a code path, so it is pinned by a
+                // test rather than left as one: `a_generic_enum_constructor_is
+                // _not_emitted_as_a_call` in tests/m2_value_form_lowering.rs,
+                // with `the_path_call_diversion_needs_a_positive_function_hit`
+                // as its other half. Unifying the predicates would be a change
+                // with no measured defect behind it.
                 if !self.enums.contains_key(enum_name) {
                     if let Some(EnumConstructorData::Tuple(exprs)) = data {
                         let qualified = format!("{}::{}", enum_name, variant);
