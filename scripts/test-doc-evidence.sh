@@ -1354,8 +1354,8 @@ pin_case "--update refuses to record over an unapplied RELOCATION, and writes no
 # CASE 41 only because these numbers are append-only. Where 39 has TWO REAL COPIES and must
 # refuse to choose, this has ONE copy that the search used to see twice.
 #
-# `norm()` deletes a blank line, so a window that ENDS on one and the window one line below
-# it that STARTS on one hold the SAME text and hash to the SAME value. The pin here is a
+# `norm()` deletes a blank line, so a window that STARTS on one and the window one line below
+# it that ENDS on one hold the SAME text and hash to the SAME value. The pin here is a
 # two-line range whose FIRST line is blank; after the file is shifted down by one comment,
 # two windows of the pin's height hash to it -- 3-4 and 4-5 -- and both name one line of
 # content, line 4. Untrimmed they are two hits and the gate says AMBIGUOUS between two spans
