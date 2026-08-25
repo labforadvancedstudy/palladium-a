@@ -6,8 +6,17 @@ items 3 and 4 land, the claim *"the workarounds are gone"* can be **checked agai
 target** rather than re-derived by whoever happens to be reading.
 
 Everything below was produced by writing the parser and recording where the compiler stopped, not
-by reading the roadmap. Every diagnostic is quoted verbatim from `./target/release/pdc` at
-`d20b759`.
+by reading the roadmap. Every diagnostic is quoted verbatim from `./target/release/pdc`. The gap
+list was measured before `cfa7e7f`; that commit is the recursive-type layout rule, and the only row
+it moves is row 1, marked **closed** below. Row 4 was re-probed at `52e629a` and reproduces its
+diagnostic verbatim (`Type mismatch: expected [K; 4], found [K; 4]`, followed by `note: Types must
+match exactly in Palladium`). Rows 8, 10, 11, 16 and 18 were re-probed at `52e629a` too and carry that measurement, not the
+original. Rows 8 and 18 are **closed** there, and the commit that closed them is not `cfa7e7f`
+but `bec9635` — the lexical completion naming N2-03/04/08/09/10/11, merged to `main` as
+`fb12f6f`, with `c3307ed` later refining the escape fixture whose bytes row 18 quotes. Rows 10
+and 11 moved because closing row 8 changed what blocks them, and row 16 moved because its gap
+turned out to be printing rather than parsing. Every row not named in this paragraph carries
+its pre-`cfa7e7f` measurement.
 
 ## The shape it would have
 
@@ -54,74 +63,93 @@ impl Parser {
 }
 ```
 
-Nine constructs appear in those twenty lines. **None of the nine exists.** That is the measurement
-this witness was written to take: `enum` payloads, `impl` and `match` on enums all work today, so
-the parser's *skeleton* is expressible — and then every single line that makes a parser a parser is
-not.
+Nine of the constructs in that `impl` block have a row in the gap list below: `ref mut self` (5),
+the method call `j.peek()` (6), `match` as an expression (7), char literals (8), literal patterns
+(9), or-patterns (10), the range pattern `'0'..='9'` (11), `loop { … }` (13) and `self.pos += 1`
+(14). **One of the nine exists — char literals (8) lex today; the other eight do not.** That is the measurement this witness was written to take: `enum`
+payloads, `impl` and `match` on enums all work today, so the parser's *skeleton* is expressible —
+and then eight of the nine constructs that make a parser a parser still are not.
 
 ## The gap list
 
 `site` is where the workaround is marked in `json_parser.pd`. `owner` is the requirement row that
 owns the missing construct — or **UNOWNED**, meaning nothing in
-`docs/contributing/1.0-requirements.tsv` declares it.
+`docs/contributing/1.0-requirements.tsv` declares it, or **closed**, meaning the construct now
+exists and the row is history.
 
 | # | Wanted | Diagnostic today | Workaround in the witness | Owner |
 |---|---|---|---|---|
-| 1 | `enum Json { Array(Vec<Json>) }` — a recursive type | *accepted* by parser, typeck AND borrowck, prints "✅ Compilation successful", then gcc: `field has incomplete type 'struct V'`. Constructing one: `Type mismatch: expected V, found V` | flat arena of parallel arrays indexed by `i64`, `-1` = none, capacity failure is a parse error | **UNOWNED** |
+| 1 | `enum Json { Array(Vec<Json>) }` — a recursive type | **none — closed at `cfa7e7f`.** `enum V { Leaf(i64), Pair(V, V) }` compiles, links and runs (a self-recursive `depth` returns 3 for `Pair(Leaf, Pair(Leaf, Leaf))`), and a cycle with no `enum` payload slot to stop at is now refused by name: ``recursive type `J` has no layout: it stores itself by value (J -> J), and nothing on that cycle can stop. …`` | none needed for the recursion; the arena stays for rows 2 and 3 | **closed** (was UNOWNED) |
 | 2 | `Vec<Json>` | — | fixed capacity 192 | N14-09 (M8) |
 | 3 | `Vec<(String, Json)>` for object members | `Expected ')' after expression, but found ','` | a `key: [String; 192]` array parallel to the nodes | N4-12 (M2) |
 | 4 | `[Kind; N]` — an array of a user `enum` | `Type mismatch: expected [K; 4], found [K; 4]` for **both** `[K::A; 4]` and `[K::A, K::A, K::A, K::A]` | kinds are `i64`, named by zero-arg functions | **UNOWNED** (N4-09 is `satisfied` and states it is witnessed for `[i64; N]`/`[String; N]` only) |
 | 5 | `fn peek(ref self)` / `fn walk(p: ref Json)` — a shared borrow that can be **forwarded** | `fn a(p: &P) -> i64 { return b(p); }` emits `b((*p))` and dies in gcc: `passing 'const struct P' to parameter of incompatible type 'const struct P *'`. The non-borrow spelling `fn get(p: Json)` is a move: `Use of moved value: p` | every function takes `mut j: Json`, including the ones that only read | **UNOWNED** for the implemented `&` spelling; N9-01/N9-02/N4-13 (M7) own `ref T` |
 | 6 | `j.peek()` | `Indirect function calls not yet supported` | free functions `js_*(j, …)` | N5-17 (M2) |
 | 7 | `match self.peek() { Some('n') => … }` as an **expression** | `Expected expression, but found 'match'` | a `let mut node: i64 = -1;` and one assignment per branch | N5-04 (M2) |
-| 8 | `'n'`, `'"'`, `'\t'` — char literals | `Expected expression, but found '` | 31 zero-arg functions returning decimal byte codes | N2-04 (M2) |
+| 8 | `'n'`, `'"'`, `'\t'` — char literals | **closed.** `let c: i64 = 'a';` compiles (rc=0), and so do `c == 'a'` and `c >= '0' && c <= '9'`. Char literals are expressions now; what still fails is a char literal in *pattern* position, which is row 9 | none. Twenty-nine of the 31 zero-arg byte-code functions are deleted; `ch_backspace` and `ch_formfeed` stay because `'\b'` and `'\f'` are outside the closed escape set and are correctly refused — the set behaving as specified, not a workaround | N2-04 (M2), `satisfied` |
 | 9 | literal patterns in the arms | `Expected pattern, but found integer 0` | an `if` staircase over `string_char_at`'s `i64` | N6-02 (M2) |
-| 10 | `Some(' ') \| Some('\t') \| …` — or-patterns | (unreachable: needs 8 and 9 first) | `js_is_ws`, a boolean helper | N6-07 (M2) |
-| 11 | `'0'..='9'` — a range pattern | (unreachable: needs 8 and 9 first) | `js_is_digit`, a boolean helper | N6-03 (M2) |
+| 10 | `Some(' ') \| Some('\t') \| …` — or-patterns | `Expected pattern, but found char 'a'` — blocked by row 9 alone, now that 8 is closed | `js_is_ws`, a boolean helper | N6-07 (M2) |
+| 11 | `'0'..='9'` — a range pattern | `Expected pattern, but found char '0'` — blocked by row 9 alone, now that 8 is closed | `js_is_digit`, a boolean helper | N6-03 (M2) |
 | 12 | `else if` | `Expected '{' after else, but found 'if'` | nested `else { if … }` staircases, nine deep in `js_value` | N5-06 (M2) |
 | 13 | `loop { … }` | `loop` lexes as an identifier: `Expected ';' after expression, but found '{'` | `while true` | N5-07 (M2) |
 | 14 | `self.pos += 1` | `Expected expression, but found '='` | `j.pos = j.pos + 1` | N5-13 (M2) |
 | 15 | `(v << 4) \| d`, `cp >> 6`, `cp & 63` | `<<` → `Expected expression, but found '<'`; `\|` and `&` end the enclosing expression; `^` → `Unexpected character '^'` | `v * 16 + d`, `cp / 64`, `cp % 64` | N5-12 (M2) |
-| 16 | `Number(f64)` | `1.5` → `Expected field name, but found integer 5` | integer numbers carry a value; non-integers carry only their source lexeme, and an `exact` flag says which | N4-02 (M2) |
+| 16 | `Number(f64)` | **not the parsing of floats — the printing.** `let x: f64 = 1.5;`, `x + 2.25` and `y > 3.0` all compile (rc=0). `print_float(x)` is `Undefined function: 'print_float'. Did you mean 'print_int'?`, and `src/builtins.rs` declares no `float_to_string`, `string_to_float` or `parse_float` either | integer numbers carry a value; non-integers carry only their source lexeme, and an `exact` flag says which | **UNOWNED** (N4-02 is `f32 f64` and is `satisfied`; no row owns a float-to-text builtin) |
 | 17 | `const CAP: usize = 192;` | `Expected function, struct, enum, trait, type, impl, or macro declaration` | zero-arg functions | N3-09 / N3-10 (M2) |
-| 18 | `"\\t"` — a backslash followed by `t` | **no diagnostic — a wrong answer.** `src/lexer/token.rs:16-21` decodes escapes as five independent `String::replace` passes in the order `\n \t \r \" \\`, so `\\t` is matched by the `\t` pass at offset 1. Measured: `"\\t"` → bytes `92 9` (want `92 116`), `"\\n"` → `92 10`, `"\\r"` → `92 13`; `"\\\\"` → `92 92` and `"\\/"` → `92 47` are correct | `bs()` = `string_from_char(92)`, concatenated at run time | N2-09 (M2) |
+| 18 | `"\\t"` — a backslash followed by `t` | **closed.** Measured now: `"\\t"` → bytes `92 116`, `"\\n"` → `92 110`, `"\\"` → the single byte `92`, and `"[\"tab\\there\"]"` → exactly the 13 bytes of `["tab\there"]`. The `String::replace` chain this row described is gone — `grep -rn 'replace(' src/lexer/` is empty; escapes are lexed against the closed set `\n \t \r \" \\ \'` and anything outside it is a compile error carrying the offending character (`LexError::UnknownEscape`) | none. `bs()` is deleted and the three renderer sites emit the literal | N2-09 (M2), `satisfied` |
 | 19 | a JSON document containing `\u0000` | — | refused with a named reason; `String` is a NUL-terminated `char*` (`__pd_string_from_char` writes `result[1] = '\0'`) so the byte cannot be carried | **UNOWNED** (N4-05 is the single word `String`, and is `satisfied`) |
 
-Rows 1–19 above are 19 wants; the file carries **seventeen** `// WORKAROUND` comments — sixteen
-distinct, N5-12 twice — because rows 1–3 share one arena and rows 10–11 sit inside the staircase
-that row 12 already pays for.
+Rows 1–19 above are 19 wants, **of which rows 1, 8 and 18 are closed**; the file carries **fifteen**
+`// WORKAROUND` comments — fourteen distinct, N5-12 twice — because rows 1, 8 and 18 are closed and
+carry no marker at all, rows 2 and 3 share the arena marker at `json_parser.pd:82`, and rows 7 and 9
+share the `match`-to-`if`-staircase marker at `json_parser.pd:561`. 19 − 3 − 1 − 1 = 14 distinct;
+N5-12 is marked at two separate sites, giving 15 comments. That arithmetic has to land on the
+anchored grep below, and does; it is not asserted against it.
 
 ## The four UNOWNED findings, which are the point of the exercise
 
-Inventory four cannot see work nobody declared. These four are what a witness finds that a
-requirement filter cannot.
+An inventory cannot see work nobody declared. These four are what a witness finds that a requirement
+filter cannot, and the list has turned over once. Recursive data compiling to C that gcc rejects was
+on it when the file was written and is **closed**; see *What is better than the roadmap assumes*.
+Item 4 took its place when the number workaround was re-measured: it had been tagged N4-02, which is
+`satisfied`, so the tag was wrong, and the thing actually missing there is owned by nobody.
 
-1. **Recursive data has no owner and no diagnostic.** `enum V { Leaf(i64), Pair(V, V) }` passes the
-   parser, the type checker *and* the borrow checker, prints `✅ Compilation successful!`, and dies
-   in gcc against C the user never wrote. That is D5's exact shape, still live, in the one
-   construct every tree-shaped program needs. The manifest has no `Box` row, no indirection row and
-   no recursive-type row; N8-06 and N8-07 (M6) *presuppose* "inductive types" that no row makes
-   representable. **A JSON parser cannot have a JSON value type until this is owned.**
-2. **`[EnumType; N]` is not constructible, and says so wrongly.** `Type mismatch: expected [K; 4],
+1. **`[EnumType; N]` is not constructible, and says so wrongly.** `Type mismatch: expected [K; 4],
    found [K; 4]` — the same type on both sides, in both the repeat and the literal spelling. N4-09
    is `satisfied` and is careful to say it is an instance claim over `[i64; N]` and `[String; N]`;
    the general case is therefore owned by nobody, and it is the reason this parser stores kinds as
    integers instead of as the enum it declares in a comment.
-3. **A `&T` parameter cannot be forwarded.** `fn a(p: &P) -> i64 { return b(p); }` emits
+2. **A `&T` parameter cannot be forwarded.** `fn a(p: &P) -> i64 { return b(p); }` emits
    `b((*p))` — a dereference into a pointer parameter — silently, and gcc catches it. Recursive
    descent is nothing *but* forwarding, so the entire shared-borrow spelling is unusable in the one
    program shape WT-01 asks for. N9-01/N9-02/N4-13 name `ref T`/`ref mut T` and are owned by M7;
    **no row owns the `&` spelling that the compiler actually implements**, so this defect is
    invisible to every inventory.
-4. **`String` has no declared byte-level meaning.** N4-05 is one word and is `satisfied`. In the
+3. **`String` has no declared byte-level meaning.** N4-05 is one word and is `satisfied`. In the
    implementation it is a NUL-terminated C `char*`, so `\u0000` is not representable — a
    conformance question for any parser of a format that permits it, decided today by an
    implementation detail rather than by a row.
+4. **Nothing converts a float to text.** `f64` exists and arithmetic on it compiles, so N4-02
+   (`f32 f64`, `satisfied`) is not the missing piece. `print_float` is `Undefined function:
+   'print_float'. Did you mean 'print_int'?`, and `src/builtins.rs` declares no `float_to_string`,
+   `string_to_float` or `parse_float` either — grepping that file for `float` returns nothing. A
+   value the language can compute cannot be printed, and no row says it should be able to.
 
 ## What is *better* than the roadmap assumes
 
 Recorded because a pessimistic manifest costs as much as an optimistic one.
 
+- **Recursive data has a layout rule and a named diagnostic**, as of `cfa7e7f` — which lands *after*
+  the gap list above was measured, and closes its row 1. `enum V { Leaf(i64), Pair(V, V) }` compiles,
+  links and runs. The one indirection the compiler introduces is an `enum` payload slot whose type
+  reaches its own enum; a cycle carrying no such slot is refused with a named, actionable message
+  instead of being handed to gcc. What still blocks the natural `enum Json` is `Vec` (row 2, N14-09,
+  M8) and tuples (row 3, N4-12, M2) — both **owned**. What the closure does *not* establish is that
+  the natural `enum Json` will lay out once those land: `labelled_occurrences` in `src/typeck/mod.rs`
+  drops `Type::Generic` into its `_ => {}` arm, so a generic's type arguments contribute no
+  containment edge, and `src/codegen/mod.rs:1824-1826` lowers `Type::Generic` to `"void*"` under a
+  `TODO`. `enum J { Num(i64), Arr(Vec<J>) }` therefore reaches exit 0 without the layout rule ever
+  seeing the cycle. The rule is measured for `Custom`, `Array` and `Tuple` payloads only.
 - **Struct-of-arrays state threads through recursive descent correctly.** `mut j: Json` lowers to
   `struct Json*`; mutations propagate to the caller, a `mut` parameter forwards to another `mut`
   parameter, and mutual recursion links (D8's prototypes). The arena workaround is *ugly*, not
@@ -145,15 +173,19 @@ here**, because that file belongs to another lane this round:
 
 ```
 -WT-01	M2	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus	fixture	tests/witness/json_parser.pd
-+WT-01	M2	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus. THE FIXTURE EXISTS AND RUNS (tests/witness/json_parser.pd, class=run, transcript pinned); the row is owed on the words NO WORKAROUNDS, and the count is derivable: 17 `// WORKAROUND` comments, 16 distinct, 4 of them UNOWNED. See tests/witness/json_parser.no-workarounds.md	fixture	tests/witness/json_parser.pd
++WT-01	M2	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus. THE FIXTURE EXISTS AND RUNS (tests/witness/json_parser.pd, class=run, transcript pinned); the row is owed on the words NO WORKAROUNDS, and the count is derivable: 15 `// WORKAROUND` comments, 14 distinct, 4 of them UNOWNED. See tests/witness/json_parser.no-workarounds.md	fixture	tests/witness/json_parser.pd
 ```
 
 Evidence for leaving it `owed`, as two commands rather than as this paragraph:
-`grep -cE '^[[:space:]]*// WORKAROUND ' tests/witness/json_parser.pd` is **17** (the anchor excludes
-the one self-reference in the file's own header) and `grep -c 'WORKAROUND UNOWNED'` on the same
-file is **4**. Both figures in the row text and in the conformance-manifest note are therefore
-checkable by command rather than by reading this file.
+`grep -cE '^[[:space:]]*// WORKAROUND ' tests/witness/json_parser.pd` is **15** (the anchor excludes
+the self-references in the file's own header) and
+`grep -cE '^[[:space:]]*// WORKAROUND UNOWNED' tests/witness/json_parser.pd` is **4**. The second is
+anchored too, and deliberately: the unanchored `grep -c 'WORKAROUND UNOWNED'` also counts prose that
+merely quotes the pattern, so it can be inflated by editing a comment. Both figures in the row text
+and in the conformance-manifest note are therefore checkable by command rather than by reading this
+file.
 
-A second recommendation, offered rather than made: the four UNOWNED findings want **four new rows**,
-because the M2 filter can today reach zero-owed with a recursive type still miscompiling — the same
-hole item 6 of M2 closed for the builtins by adding N14-17.
+A second recommendation, offered rather than made: the four UNOWNED findings want **four new
+rows**, because the M2 filter can today reach zero-owed while `fn a(p: &P) -> i64 { return b(p); }`
+still emits a dereference into a pointer parameter — the same hole item 6 of M2 closed for the
+builtins by adding N14-17.

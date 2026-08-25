@@ -2,14 +2,28 @@
 // WT-01 — witness 2: a JSON parser (RFC 8259).
 //
 // THIS FILE DOES NOT SATISFY WT-01. WT-01 asks for a JSON parser written with
-// NO WORKAROUNDS. This one runs, and it is built out of sixteen of them. Every
-// one is marked `// WORKAROUND <row>:` at the point of use — seventeen such
-// comments below this header, sixteen distinct workarounds, because N5-12 is
+// NO WORKAROUNDS. This one runs, and it is built out of fourteen of them. Every
+// one is marked `// WORKAROUND <row>:` at the point of use — fifteen such
+// comments below this header, fourteen distinct workarounds, because N5-12 is
 // worked around at two separate sites. `<row>` is the requirement id that owns
 // the missing construct, or the word UNOWNED, which means the construct that
 // would remove the workaround is declared by NOTHING in
-// docs/contributing/1.0-requirements.tsv. Four of the sixteen are UNOWNED, and
+// docs/contributing/1.0-requirements.tsv. Four of the fourteen are UNOWNED, and
 // those are the ones a roadmap reading of N5/N6 cannot see.
+//
+// The count has moved four times, and every move is a fact about the compiler
+// rather than a rewording here. `cfa7e7f` gave recursive types a layout and a
+// diagnostic, closing one UNOWNED workaround. Two more closed when the claims
+// under them were re-measured against the compiler that is actually here:
+// char literals lex (N2-04, `satisfied`), so twenty-nine of the thirty-one
+// zero-arg byte-code functions are gone — `ch_backspace` and `ch_formfeed`
+// stay because `'\b'` and `'\f'` are a compile error, and that is the closed
+// escape set behaving correctly, not a workaround; and `"\\t"` lexes to
+// backslash + `t` (N2-09, `satisfied`), so the hand-assembled backslash is
+// gone. One move went the other way. The number workaround was tagged N4-02,
+// which is `satisfied` — `f64` exists — so the tag was wrong; what is actually
+// missing there is a float-to-text builtin, and no row owns one, so re-tagging
+// it UNOWNED raised that count from three to four.
 //
 // The shape this file would have if nothing were missing is written out in
 // tests/witness/json_parser.no-workarounds.md, beside a per-workaround diff, so
@@ -17,7 +31,7 @@
 // CHECKED rather than re-derived.
 //
 // What it does: parses one JSON document into a flat arena, re-serialises it
-// canonically, answers structural queries against it, and refuses eleven
+// canonically, answers structural queries against it, and refuses fifteen
 // malformed documents at a named byte offset. The transcript is
 // tests/witness/json_parser.expected; every line of it is checkable by reading
 // the input strings in `main` below.
@@ -34,18 +48,6 @@
 
 fn cap_nodes() -> i64 { return 192; }
 fn max_depth() -> i64 { return 24; }
-
-// WORKAROUND N2-09, AND IT IS A LIVE MISCOMPILE RATHER THAN AN ABSENCE.
-// A backslash followed by `n`, `t` or `r` CANNOT BE WRITTEN as a literal.
-// `src/lexer/token.rs:16-21` decodes escapes as five INDEPENDENT
-// `String::replace` passes, in the order \n \t \r \" \\ — so the source spelling
-// `"\\t"` (backslash, then the letter t) is matched by the `\t` pass at offset 1
-// and silently becomes backslash + TAB. Measured: `"\\t"` -> bytes 92 9 (want
-// 92 116), `"\\n"` -> 92 10, `"\\r"` -> 92 13. `"\\\\"` -> 92 92 and `"\\/"` ->
-// 92 47 are correct, which is why only these three spellings are affected.
-// Nothing rejects it: it is a WRONG ANSWER, not a diagnostic. So every JSON
-// escape this renderer emits is assembled at run time from this byte.
-fn bs() -> String { return string_from_char(92); }
 
 // Node kinds.
 //
@@ -64,62 +66,37 @@ fn k_string() -> i64 { return 4; }
 fn k_array() -> i64 { return 5; }
 fn k_object() -> i64 { return 6; }
 
-// Character codes.
+// The two character codes with no literal form.
 //
-// WORKAROUND N2-04: there are no char literals — `'x'` is "Expected
-// expression, but found '". `string_char_at` returns a byte code (i64), so
-// every character this parser dispatches on is a decimal number. These
-// functions are the only thing standing between the reader and `if c == 123`.
-fn ch_tab() -> i64 { return 9; }
-fn ch_lf() -> i64 { return 10; }
-fn ch_cr() -> i64 { return 13; }
-fn ch_space() -> i64 { return 32; }
-fn ch_quote() -> i64 { return 34; }
-fn ch_plus() -> i64 { return 43; }
-fn ch_comma() -> i64 { return 44; }
-fn ch_minus() -> i64 { return 45; }
-fn ch_dot() -> i64 { return 46; }
-fn ch_slash() -> i64 { return 47; }
-fn ch_zero() -> i64 { return 48; }
-fn ch_nine() -> i64 { return 57; }
-fn ch_colon() -> i64 { return 58; }
-fn ch_upper_a() -> i64 { return 65; }
-fn ch_upper_e() -> i64 { return 69; }
-fn ch_upper_f() -> i64 { return 70; }
-fn ch_lbracket() -> i64 { return 91; }
-fn ch_backslash() -> i64 { return 92; }
-fn ch_rbracket() -> i64 { return 93; }
-fn ch_lower_a() -> i64 { return 97; }
-fn ch_lower_b() -> i64 { return 98; }
-fn ch_lower_e() -> i64 { return 101; }
-fn ch_lower_f() -> i64 { return 102; }
-fn ch_lower_n() -> i64 { return 110; }
-fn ch_lower_r() -> i64 { return 114; }
-fn ch_lower_t() -> i64 { return 116; }
-fn ch_lower_u() -> i64 { return 117; }
-fn ch_lbrace() -> i64 { return 123; }
-fn ch_rbrace() -> i64 { return 125; }
+// The escape set is closed: `\n \t \r \" \\ \'` in a string literal, those
+// plus `\0` in a char literal (N2-09, satisfied). `'\b'` and `'\f'` are an
+// "unknown escape sequence" compile error. JSON names both escapes, so these
+// two bytes -- and only these two -- are written here as decimals. Every other
+// character this parser dispatches on is written as the char literal it is.
 fn ch_backspace() -> i64 { return 8; }
 fn ch_formfeed() -> i64 { return 12; }
 
 // ---------------------------------------------------------------------------
 // The document.
 //
-// WORKAROUND UNOWNED + N14-09 + N4-15: the natural representation is
+// WORKAROUND N14-09 + N4-12 + N4-15: the natural representation is
 //
 //     enum Json { Null, Bool(bool), Number(f64), Str(String),
 //                 Array(Vec<Json>), Object(Vec<(String, Json)>) }
 //
-// and NOT ONE of those five lines is expressible.
-//   * The recursive variants need indirection. `enum V { Leaf(i64), Pair(V, V) }`
-//     is accepted by the parser, the type checker AND the borrow checker, prints
-//     "Compilation successful", and then dies in gcc: "field has incomplete type
-//     'struct V'". Constructing one first fails typecheck with "Type mismatch:
-//     expected V, found V". NOTHING in the requirement manifest declares
-//     recursive/indirect data — the manifest has no Box, no indirection row, and
-//     N8-06/N8-07 (M6) presuppose "inductive types" that no row makes
-//     representable. This is the largest hole this witness found.
-//   * `Vec<T>` is N14-09, owned by M8.
+// and it is still not reachable — but as of cfa7e7f the recursion is no longer
+// what stops it.
+//   * The recursive variants WORK. `enum V { Leaf(i64), Pair(V, V) }` compiles,
+//     links and runs: a self-recursive `depth` over the bound payloads returns 3
+//     for `Pair(Leaf, Pair(Leaf, Leaf))`. The one indirection this compiler
+//     introduces is an `enum` payload slot whose type reaches its own enum, and
+//     a cycle with no such slot is refused BY NAME rather than handed to gcc:
+//     `enum J { Num(i64), Arr([J; 4]) }` gives "recursive type `J` has no layout:
+//     it stores itself by value (J -> J), and nothing on that cycle can stop ...
+//     Break the cycle by routing it through an `enum` variant that can stop".
+//   * `Vec<T>` is N14-09, owned by M8. `enum J { Num(i64), Arr(Vec<J>) }` is
+//     accepted as a declaration; `Vec::new()` is "Undefined enum type: Vec".
+//     THIS, not the recursion, is what keeps the arena alive.
 //   * `(String, Json)` is N4-12, owned by M2 — tuples do not parse.
 //
 // So the tree lives in a fixed-capacity arena of parallel arrays inside one
@@ -206,12 +183,12 @@ fn js_is_ws(c: i64) -> bool {
     // the literal patterns (N6-02) they would be made of, so a `match` on a
     // byte cannot dispatch at all — it is boolean helpers and `if` all the way
     // down in this file.
-    return c == ch_space() || c == ch_tab() || c == ch_lf() || c == ch_cr();
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
 fn js_is_digit(c: i64) -> bool {
     // WORKAROUND N6-03: the arm this replaces is `'0'..='9' => …`.
-    return c >= ch_zero() && c <= ch_nine();
+    return c >= '0' && c <= '9';
 }
 
 fn js_skip_ws(mut j: Json) {
@@ -261,16 +238,16 @@ fn js_append(mut j: Json, parent: i64, child: i64) {
 // ---------------------------------------------------------------------------
 
 fn js_hex_digit(c: i64) -> i64 {
-    if js_is_digit(c) { return c - ch_zero(); }
+    if js_is_digit(c) { return c - '0'; }
     // WORKAROUND N5-06: `else if` does not exist — after `else` the parser
     // demands `{`. Every multi-way test in this file is a nested `else { if … }`
     // staircase, and this is the cheapest example of it.
     else {
-        if c >= ch_lower_a() && c <= ch_lower_f() {
-            return c - ch_lower_a() + 10;
+        if c >= 'a' && c <= 'f' {
+            return c - 'a' + 10;
         } else {
-            if c >= ch_upper_a() && c <= ch_upper_f() {
-                return c - ch_upper_a() + 10;
+            if c >= 'A' && c <= 'F' {
+                return c - 'A' + 10;
             } else {
                 return -1;
             }
@@ -323,14 +300,14 @@ fn js_utf8(cp: i64) -> String {
 }
 
 fn js_simple_escape(e: i64) -> i64 {
-    if e == ch_quote() { return ch_quote(); }
-    if e == ch_backslash() { return ch_backslash(); }
-    if e == ch_slash() { return ch_slash(); }
-    if e == ch_lower_b() { return ch_backspace(); }
-    if e == ch_lower_f() { return ch_formfeed(); }
-    if e == ch_lower_n() { return ch_lf(); }
-    if e == ch_lower_r() { return ch_cr(); }
-    if e == ch_lower_t() { return ch_tab(); }
+    if e == '"' { return '"'; }
+    if e == '\\' { return '\\'; }
+    if e == '/' { return '/'; }
+    if e == 'b' { return ch_backspace(); }
+    if e == 'f' { return ch_formfeed(); }
+    if e == 'n' { return '\n'; }
+    if e == 'r' { return '\r'; }
+    if e == 't' { return '\t'; }
     return -1;
 }
 
@@ -341,12 +318,12 @@ fn js_unicode_escape(mut j: Json) -> String {
     if !j.ok { return ""; }
     if hi >= 55296 && hi <= 56319 {
         // High surrogate: RFC 8259 requires the low half to follow.
-        if js_peek(j) != ch_backslash() {
+        if js_peek(j) != '\\' {
             js_fail(j, "high surrogate is not followed by a low surrogate");
             return "";
         }
         js_bump(j);
-        if js_peek(j) != ch_lower_u() {
+        if js_peek(j) != 'u' {
             js_fail(j, "high surrogate is not followed by a low surrogate");
             return "";
         }
@@ -367,7 +344,7 @@ fn js_unicode_escape(mut j: Json) -> String {
     }
     if hi == 0 {
         // WORKAROUND UNOWNED: `String` is a NUL-terminated C `char*`
-        // (`__pd_string_from_char` writes `result[0] = (char)c; result[1] = 0;`),
+        // (`__pd_string_from_char` writes `result[0] = (char)c; result[1] = '\0';`),
         // so a document containing \u0000 cannot be represented, only refused.
         // No requirement row says what `String` is at the byte level; N4-05 is
         // one word, `String`, and is marked satisfied.
@@ -387,15 +364,15 @@ fn js_string_body(mut j: Json) -> String {
             js_fail(j, "unterminated string");
             return "";
         }
-        if c == ch_quote() {
+        if c == '"' {
             js_bump(j);
             return out;
         }
-        if c < ch_space() {
+        if c < ' ' {
             js_fail(j, "unescaped control character in string");
             return "";
         }
-        if c == ch_backslash() {
+        if c == '\\' {
             js_bump(j);
             let e: i64 = js_peek(j);
             if e < 0 {
@@ -407,7 +384,7 @@ fn js_string_body(mut j: Json) -> String {
                 js_bump(j);
                 out = string_concat(out, string_from_char(simple));
             } else {
-                if e == ch_lower_u() {
+                if e == 'u' {
                     let decoded: String = js_unicode_escape(j);
                     if !j.ok { return ""; }
                     out = string_concat(out, decoded);
@@ -445,9 +422,9 @@ fn js_number(mut j: Json) -> i64 {
     let start: i64 = j.pos;
     let mut integral: bool = true;
 
-    if js_peek(j) == ch_minus() { js_bump(j); }
+    if js_peek(j) == '-' { js_bump(j); }
 
-    if js_peek(j) == ch_zero() {
+    if js_peek(j) == '0' {
         js_bump(j);
     } else {
         if js_is_digit(js_peek(j)) {
@@ -457,7 +434,7 @@ fn js_number(mut j: Json) -> i64 {
         }
     }
 
-    if js_peek(j) == ch_dot() {
+    if js_peek(j) == '.' {
         integral = false;
         js_bump(j);
         if !js_is_digit(js_peek(j)) {
@@ -467,11 +444,11 @@ fn js_number(mut j: Json) -> i64 {
     }
 
     let e: i64 = js_peek(j);
-    if e == ch_lower_e() || e == ch_upper_e() {
+    if e == 'e' || e == 'E' {
         integral = false;
         js_bump(j);
         let s: i64 = js_peek(j);
-        if s == ch_plus() || s == ch_minus() { js_bump(j); }
+        if s == '+' || s == '-' { js_bump(j); }
         if !js_is_digit(js_peek(j)) {
             return js_fail(j, "expected a digit in the exponent");
         }
@@ -482,10 +459,16 @@ fn js_number(mut j: Json) -> i64 {
     if node < 0 { return -1; }
     let lexeme: String = string_substring(j.src, start, j.pos);
     j.text[node] = lexeme;
-    // WORKAROUND N4-02: there is no f64, so a non-integral number has NO value
-    // in this program — only its source lexeme, which is what js_render prints.
-    // `exact` records which is which, so a query for a numeric value can refuse
-    // rather than return the truncated integer part.
+    // WORKAROUND UNOWNED: `f64` EXISTS. N4-02 is `satisfied` in
+    // docs/contributing/1.0-requirements.tsv, and `let x: f64 = 1.5;` with
+    // arithmetic and comparisons on it compiles. What is missing is any way to
+    // move a float ACROSS the text boundary: `src/builtins.rs` declares no
+    // `string_to_float` and no `float_to_string` — grep for `float` in that
+    // file matches nothing at all — and N14's builtin set is closed, so NO
+    // requirement row owns them. So a non-integral number has no value in this
+    // program, only its source lexeme, which is what js_render prints. `exact`
+    // records which is which, so a query for a numeric value can refuse rather
+    // than return the truncated integer part.
     if integral {
         j.exact[node] = 1;
         j.num[node] = string_to_int(lexeme);
@@ -498,7 +481,7 @@ fn js_array(mut j: Json) -> i64 {
     let node: i64 = js_alloc(j, k_array());
     if node < 0 { return -1; }
     js_skip_ws(j);
-    if js_peek(j) == ch_rbracket() {
+    if js_peek(j) == ']' {
         js_bump(j);
         return node;
     }
@@ -508,11 +491,11 @@ fn js_array(mut j: Json) -> i64 {
         js_append(j, node, child);
         js_skip_ws(j);
         let c: i64 = js_peek(j);
-        if c == ch_comma() {
+        if c == ',' {
             js_bump(j);
             js_skip_ws(j);
         } else {
-            if c == ch_rbracket() {
+            if c == ']' {
                 js_bump(j);
                 return node;
             } else {
@@ -528,19 +511,19 @@ fn js_object(mut j: Json) -> i64 {
     let node: i64 = js_alloc(j, k_object());
     if node < 0 { return -1; }
     js_skip_ws(j);
-    if js_peek(j) == ch_rbrace() {
+    if js_peek(j) == '}' {
         js_bump(j);
         return node;
     }
     while true {
         js_skip_ws(j);
-        if js_peek(j) != ch_quote() {
+        if js_peek(j) != '"' {
             return js_fail(j, "expected a member name");
         }
         let name: String = js_string_body(j);
         if !j.ok { return -1; }
         js_skip_ws(j);
-        if js_peek(j) != ch_colon() {
+        if js_peek(j) != ':' {
             return js_fail(j, "expected ':'");
         }
         js_bump(j);
@@ -550,10 +533,10 @@ fn js_object(mut j: Json) -> i64 {
         js_append(j, node, child);
         js_skip_ws(j);
         let c: i64 = js_peek(j);
-        if c == ch_comma() {
+        if c == ',' {
             js_bump(j);
         } else {
-            if c == ch_rbrace() {
+            if c == '}' {
                 js_bump(j);
                 return node;
             } else {
@@ -584,29 +567,29 @@ fn js_value(mut j: Json) -> i64 {
     if c < 0 {
         node = js_fail(j, "unexpected end of input");
     } else {
-        if c == ch_lower_n() {
+        if c == 'n' {
             node = js_literal(j, "null", k_null());
         } else {
-            if c == ch_lower_t() {
+            if c == 't' {
                 node = js_literal(j, "true", k_true());
             } else {
-                if c == ch_lower_f() {
+                if c == 'f' {
                     node = js_literal(j, "false", k_false());
                 } else {
-                    if c == ch_quote() {
+                    if c == '"' {
                         let decoded: String = js_string_body(j);
                         if j.ok {
                             node = js_alloc(j, k_string());
                             if node >= 0 { j.text[node] = decoded; }
                         }
                     } else {
-                        if c == ch_lbracket() {
+                        if c == '[' {
                             node = js_array(j);
                         } else {
-                            if c == ch_lbrace() {
+                            if c == '{' {
                                 node = js_object(j);
                             } else {
-                                if c == ch_minus() || js_is_digit(c) {
+                                if c == '-' || js_is_digit(c) {
                                     node = js_number(j);
                                 } else {
                                     node = js_fail(j, "unexpected character");
@@ -653,21 +636,20 @@ fn js_escape_into(s: String) -> String {
     let mut i: i64 = 0;
     while i < n {
         let c: i64 = string_char_at(s, i);
-        if c == ch_quote() {
+        if c == '"' {
             out = string_concat(out, "\\\"");
         } else {
-            if c == ch_backslash() {
+            if c == '\\' {
                 out = string_concat(out, "\\\\");
             } else {
-                if c == ch_lf() {
-                    // See bs() — `"\\n"` does not lex to backslash + 'n'.
-                    out = string_concat(out, string_concat(bs(), "n"));
+                if c == '\n' {
+                    out = string_concat(out, "\\n");
                 } else {
-                    if c == ch_cr() {
-                        out = string_concat(out, string_concat(bs(), "r"));
+                    if c == '\r' {
+                        out = string_concat(out, "\\r");
                     } else {
-                        if c == ch_tab() {
-                            out = string_concat(out, string_concat(bs(), "t"));
+                        if c == '\t' {
+                            out = string_concat(out, "\\t");
                         } else {
                             if c == ch_backspace() {
                                 out = string_concat(out, "\\b");
@@ -820,10 +802,7 @@ fn main() {
     show_ok(j, "strings   ", "[\"\", \"a\\\"b\", \"sl\\/ash\", \"\\u0041\\u00e9\\u20ac\"]");
     show_ok(j, "surrogate ", "[\"\\ud83d\\ude00\"]");
 
-    // See bs(): the JSON text `["tab\there"]` needs the two bytes `\` `t`, and
-    // the Palladium spelling of those two bytes lexes to backslash + TAB.
-    let tabbed: String = string_concat(string_concat("[\"tab", bs()), "there\"]");
-    show_ok(j, "tab escape", tabbed);
+    show_ok(j, "tab escape", "[\"tab\\there\"]");
     show_ok(j, "nesting   ", "{\"a\":{\"b\":[1,[2,[3,{}]]]},\"c\":[]}");
     show_ok(j, "whitespace", "  {  \"k\"  :  [ 1 , 2 ]  }  ");
     show_ok(j, "dup keys  ", "{\"k\":1,\"k\":2}");
@@ -840,7 +819,7 @@ fn main() {
     print(string_concat("n              ", int_to_string(j.num[n])));
     let ratio: i64 = js_member(j, doc, "ratio");
     print(string_concat("ratio lexeme   ", j.text[ratio]));
-    // N4-02 again, as an observable: the parser knows it has no value for this.
+    // The UNOWNED float-to-text gap again, as an observable: only text, no value.
     print(string_concat("ratio exact    ", int_to_string(j.exact[ratio])));
     // Downstream cost of the `mut j` workaround above: `js_kind_name` only
     // reads, but it takes `mut`, so nesting the two calls is two mutable
