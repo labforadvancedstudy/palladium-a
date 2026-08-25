@@ -1568,9 +1568,19 @@ def check_index(receipts=None):
 # ADDRESS, not merely a tripwire: if the content is no longer at the pinned lines, the cited
 # file is searched for a range that hashes to the same value.
 #
-#   exactly one match  -> RELOCATED. The text at the new lines IS the text the pin was taken
-#                         from, character for character after whitespace normalisation, so
-#                         the range moved rather than changed. Reported, not failed.
+#   exactly one match  -> RELOCATED, and a FAILURE. The text at the new lines IS the text
+#                         the pin was taken from, character for character after whitespace
+#                         normalisation, so the range MOVED rather than changed -- and the
+#                         gate says WHERE TO. It still fails, because what a relocation
+#                         establishes is that the CITING DOCUMENT IS WRONG: it names lines
+#                         that now hold something else, and the pin's line numbers are
+#                         stale. What the hash buys is the SIZE OF THE REPAIR, not its
+#                         absence -- the author is handed the destination instead of
+#                         searching for it with `git show <base>:<path>` by hand (step 2 of
+#                         the procedure in this file's docstring). Printing that and exiting
+#                         0 would have left a gate green over a document wrong on its face,
+#                         which is the state this file exists to end; and a report nothing
+#                         enforces is read once and then not at all.
 #   several matches    -> AMBIGUOUS, and a FAILURE. Repeated boilerplate is real, and picking
 #                         the first is how a citation silently lands on the wrong copy. The
 #                         gate names every candidate and chooses none.
@@ -1589,11 +1599,36 @@ def check_index(receipts=None):
 # along with every other run of whitespace, so a two-line range and the single line holding
 # the same two statements hash IDENTICALLY. Searching every width would let `x.rs:10-11` come
 # to rest on one line -- a different citation wearing the old one's numbers. A move preserves
-# the shape; a reformat is a content change and fails. This is a floor and not a fence: a
-# window that ends on blank lines still normalises like the shorter window above it, so equal
-# height is necessary for a relocation, not sufficient to make one unique.
+# the shape; a reformat is a content change and fails.
 #
-# WHAT A RELOCATION DOES NOT ESTABLISH -- read this before reading a green gate as approval.
+# BLANK EDGES ARE TRIMMED BEFORE A WINDOW IS COUNTED, and that discharges the concession this
+# paragraph used to close on ("a floor and not a fence: a window that ends on blank lines
+# still normalises like the shorter window above it, so equal height is necessary for a
+# relocation, not sufficient to make one unique"). `norm()` deletes a blank line outright, so
+# a window that STARTS on one and the window one line below it that ENDS on one hold the SAME
+# text and hash to the SAME value: both landed in `hits`, and the pin was called AMBIGUOUS
+# between two ranges naming ONE piece of content. That ambiguity was manufactured by the
+# search rather than found in the file, and AMBIGUOUS is a verdict the author cannot act on --
+# there is no second copy to choose between. So each window is now named by its span with the
+# blank edges removed, and windows sharing a trimmed span are ONE hit.
+#
+# THIS NARROWS THE REPORT AND NEVER THE TEST. The digest compared is unchanged and the search
+# still visits exactly the windows of the pin's own height, so no pin gains a match it did not
+# already have. Measured over the 380 checkable pins in docs/citation-pins.tsv (410 rows, 30
+# naming files that do not exist here), 8 have a blank edge, and exactly one of those searches
+# was ambiguous for this reason: src/codegen/mod.rs:4-10, matched both at 4-10 and at 3-9
+# across the blank line at 3, is now the single hit 4-9. The other blank-edged pin with two
+# matches is NOT of this kind and still fails: src/codegen/mod.rs:2770-2773 also matches
+# 2952-2955, because the two blocks differ only in the indentation inside a string literal and
+# `norm()` collapses that. Two distinct trimmed spans, two real copies, AMBIGUOUS as before.
+#
+# The trimmed span is also what a relocation REPORTS, and that is not a detail. Among windows
+# holding one piece of content, picking whichever the loop reached first is the same arbitrary
+# choice the AMBIGUOUS branch refuses to make; the trimmed span is the one name every member
+# of that group agrees on, and it is the range an author should cite -- pinning it again puts
+# the content at the pinned lines with no blank edge to shift.
+#
+# WHAT A RELOCATION DOES NOT ESTABLISH -- read this before reading it as a mere renumbering.
 #   1. IT DOES NOT MAKE A WRONG CITATION RIGHT. A citation that pointed at the wrong code
 #      before points at the same wrong code afterwards, in a new place. This removes the TAX,
 #      not the CLASS: 25 of 220 citations were measured wrong, and two independent samples of
@@ -1602,12 +1637,14 @@ def check_index(receipts=None):
 #      sibling proposal `docs/contributing/proposed-gate-quoted-token-citations.md` is what
 #      addresses the class, by requiring the citing prose to quote a token the range contains.
 #      The two are complementary and must not be conflated.
-#   2. THE CITING DOCUMENT IS LEFT STALE. A relocation reports that the content moved; it does
-#      not rewrite the citation, because a gate that edits documentation is a gate nobody can
-#      review. Until an author applies the printed line numbers, the document names lines that
-#      hold something else. What bounds that: the NON-SEMANTIC and delimiter-only floors are
-#      checked BEFORE this, so the measured failure shape -- a citation coming to rest on a
-#      blank line or a bare `}` -- still fails rather than relocating.
+#   2. THE CITING DOCUMENT IS LEFT STALE, AND THAT IS WHY THE RUN IS RED. A relocation reports
+#      that the content moved; it does not rewrite the citation, because a gate that edits
+#      documentation is a gate nobody can review. Until an author applies the printed line
+#      numbers, the document names lines that hold something else -- so the verdict is an
+#      unfinished repair held red until it is finished, not a notice printed beside a pass.
+#      What bounds the class it can report at all: the NON-SEMANTIC and delimiter-only floors
+#      are checked BEFORE this, so the measured failure shape -- a citation coming to rest on
+#      a blank line or a bare `}` -- still fails rather than relocating.
 PIN_FINGERPRINT = re.compile(r"^[0-9a-f]{12}$")
 RELOCATION_HIT_CAP = 8      # enough to say "several" and name them; not a full census
 
@@ -1618,15 +1655,46 @@ def pin_windows(lines, nlines):
         yield i + 1, i + nlines, lines[i:i + nlines]
 
 
+def trim_blank_edges(start: int, end: int, window):
+    """A window's blank edges are no part of what it says. -> (start, end, [line, ...])
+
+    `norm()` deletes blank lines, so ["", "x"], ["x", ""] and ["x"] all hash alike: a blank
+    edge contributes nothing to the digest and nothing to a citation. The trimmed span is
+    therefore the one name every window over the same content agrees on, and it is what a
+    relocation dedupes on and reports. A window that is blank THROUGHOUT names no content, so
+    there is nothing to trim to and it is returned as it came.
+    """
+    lo, hi = 0, len(window)
+    while lo < hi and not window[lo].strip():
+        lo += 1
+    while hi > lo and not window[hi - 1].strip():
+        hi -= 1
+    if lo == hi:
+        return start, end, window
+    return start + lo, end - (len(window) - hi), window[lo:hi]
+
+
 def locate_fingerprint(lines, want_fp: str, nlines: int, cap: int = RELOCATION_HIT_CAP):
-    """Every range in `lines` whose fingerprint is `want_fp`. -> [(start, end, text)]"""
+    """Every DISTINCT range in `lines` whose fingerprint is `want_fp`. -> [(start, end, text)]
+
+    Distinct after blank edges are trimmed: overlapping windows that differ only in where
+    their blank line sits hold one piece of content, and counting them as two matches is how
+    a unique relocation was reported AMBIGUOUS. See THE HEIGHT OF THE RANGE IS HELD FIXED.
+    The height searched is still exactly the pin's; trimming names a hit, it does not admit
+    one.
+    """
     hits: list = []
+    seen: set = set()
     if nlines < 1 or nlines > len(lines):
         return hits
     for start, end, window in pin_windows(lines, nlines):
         body = "\n".join(window)
         if fingerprint(body) == want_fp:
-            hits.append((start, end, body))
+            tstart, tend, twindow = trim_blank_edges(start, end, window)
+            if (tstart, tend) in seen:
+                continue
+            seen.add((tstart, tend))
+            hits.append((tstart, tend, "\n".join(twindow)))
             if len(hits) >= cap:
                 break
     return hits
@@ -1660,7 +1728,7 @@ def relocation_hits(path_str: str, span: str, want_fp: str):
 
 
 def report_relocations(relocated) -> None:
-    """Print the moves. Never fails the run; see RELOCATION BY CONTENT HASH.
+    """Print the moves. Every one of them ALSO fails the run; see RELOCATION BY CONTENT HASH.
 
     The excerpt of what was FOUND is printed beside the excerpt that was PINNED, for the
     same reason the pin file carries an excerpt column at all: hash equality is a machine's
@@ -1794,13 +1862,15 @@ def main() -> int:
         added = [k for k in sorted(new) if k not in old]
         removed = [k for k in sorted(old) if k not in new]
         # REFUSED BEFORE ANYTHING IS WRITTEN, and this is what keeps relocation from being a
-        # way IN to the laundering machine. The check reports a relocation and stays green,
-        # which leaves the citing document naming lines that now hold something else. Running
-        # `--update` in that state would record a fingerprint for whatever moved into those
-        # lines — converting "this citation's address is stale" into "the gate is satisfied",
-        # under a key that looks untouched. So a pin whose old content is still findable,
-        # uniquely, is a MOVE THAT HAS NOT BEEN APPLIED YET, and the generator will not run
-        # until the document names the lines the content is actually at.
+        # way IN to the laundering machine. The check FAILS on a relocation, naming the lines
+        # to rewrite the citation to and telling the author to re-run `--update` — so running
+        # `--update` is exactly what someone does next, and doing it BEFORE the citation is
+        # rewritten is the wrong half of that instruction. In that state the generator would
+        # record a fingerprint for whatever moved into the old lines, while the document still
+        # names them — converting "this citation's address is stale" into "the gate is
+        # satisfied", under a key that looks untouched. So a pin whose old content is still
+        # findable, uniquely, is a MOVE THAT HAS NOT BEEN APPLIED YET, and the generator will
+        # not run until the document names the lines the content is actually at.
         #
         # A pin whose content genuinely changed is NOT caught here (no hit, nothing unique),
         # which is the case `--update` exists for: it records the change and prints MOVED for
@@ -1849,9 +1919,11 @@ def main() -> int:
         return 0
 
     fail = []
-    # Reported, never failed: a pin whose content is provably intact somewhere else in the
-    # same file. Kept separate from `fail` so the exit code says what it has always said —
-    # "some cited range is not what it was" — and this says "and here is where it went".
+    # A pin whose content is provably intact somewhere else in the same file. Every entry
+    # here ALSO has one in `fail`: the two lists are separate so the moves print together as
+    # their own section, ahead of the failure list, and not so that one of them escapes the
+    # exit code. A relocation that appeared here and nowhere in `fail` is a stale pin the gate
+    # forgave — which is what this list did until it was changed.
     relocated: list = []
 
     # The citation half on its own. The full run executes 42 `cmd:` items, which
@@ -1905,6 +1977,19 @@ def main() -> int:
                 hits = relocation_hits(key[0], key[1], want[key][0])
                 if len(hits) == 1:
                     relocated.append((key, want[key], hits[0]))
+                    ns, ne, _ = hits[0]
+                    fail.append(
+                        f"citation {key[0]}:{key[1]} cited by {key[2]} MOVED, and its "
+                        f"pinned content is intact and unique at {key[0]}:{ns}-{ne} — "
+                        f"RELOCATED\n"
+                        f"      pinned: {want[key][1]}\n"
+                        f"      now:    {x}\n"
+                        f"      Hash equality says the text did not change, so this is a "
+                        f"renumbering and not a judgement —\n"
+                        f"      but the citing document still names {key[1]}, which holds "
+                        f"something else, and the pin's line\n"
+                        f"      numbers are stale. Rewrite the citation to {ns}-{ne}, then "
+                        f"re-run --update to re-stamp the pin.")
                 elif len(hits) > 1:
                     where = ", ".join(f"{a}-{b}" for a, b, _ in hits)
                     fail.append(

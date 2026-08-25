@@ -1195,8 +1195,15 @@ T="$PROBE_DIR/target.rs"
 
 # CASE 37. THE MOVE. The cited statement is unchanged; a comment inserted above it pushed it
 # down one line. Exactly one range in the file hashes to the pin, so the content did not
-# change -- it moved -- and the gate says where to instead of demanding the author keep the
-# line number still. GREEN, which is the half no previous version of this gate could do.
+# change -- it moved -- and the gate NAMES WHERE TO instead of demanding the author keep the
+# line number still. Two assertions, and they are separate: the verdict is RELOCATED with the
+# destination spelled out, which no previous version of this gate could produce; and the run
+# still exits 1, because the probe document names line 2 and line 2 now holds a comment. A
+# stale citation is not a passing one. What the hash buys is the SIZE of the repair -- rewrite
+# the citation to the printed lines and re-run --update -- not its absence.
+#
+# The earlier version of this case asserted exit 0, and that was the defect: a gate that
+# prints "RELOCATED" beside a green exit is a gate whose report nobody has to read.
 cat > "$T" <<'EOF'
 fn build(&self) {
     let build_dir = self.output_dir.join("build");
@@ -1210,8 +1217,9 @@ fn build(&self) {
 }
 EOF
 pin_check
-pin_case "a pin whose content MOVED VERBATIM is relocated by hash, naming the new lines" 0 \
-  "RELOCATED" "$PROBE_DIR/target.rs:2-2 -> $PROBE_DIR/target.rs:3-3"
+pin_case "a pin whose content MOVED VERBATIM names its new lines, and the stale pin still FAILS" 1 \
+  "RELOCATED" "$PROBE_DIR/target.rs:2-2 -> $PROBE_DIR/target.rs:3-3" \
+  "re-stamp the pin"
 
 # CASE 38. THE CONTENT CHANGED, AND THERE IS BAIT. The cited two-line range was edited
 # (`build` -> `cache`), and the file separately contains a single line whose text is exactly
@@ -1219,6 +1227,13 @@ pin_case "a pin whose content MOVED VERBATIM is relocated by hash, naming the ne
 # line and the original two lines have the SAME digest, and any search that did not hold the
 # range's height fixed would relocate a CHANGED citation onto it. The height is fixed, so no
 # range of the pin's own shape matches and this fails, which is what the gate is for.
+#
+# WHAT THIS DOES NOT SAY, and the label was narrowed to stop saying it. Since blank edges are
+# trimmed, a matching window of the pin's height that is padded with a blank line REPORTS a
+# shorter span, so a relocation can land on a range narrower than the pin. That is the same
+# content under its own name, not a coincidence of another shape -- but it means the property
+# measured here is exactly this: THE SEARCH CONSIDERS ONE WIDTH, the pin's. The bait below is
+# a different width, and is refused.
 cat > "$T" <<'EOF'
 let build_dir = self.output_dir.join("build");
 let out = build_dir.join("out");
@@ -1233,7 +1248,7 @@ let build_dir = self.output_dir.join("build"); let out = build_dir.join("out");
 fn end() {}
 EOF
 pin_check
-pin_case "a pin whose content CHANGED is NOT relocated onto a coincidental match" 1 \
+pin_case "a pin whose content CHANGED is NOT relocated onto a coincidence of ANOTHER WIDTH" 1 \
   "as a 2-line range" "CHANGED rather than moved"
 
 # CASE 39. TWO IDENTICAL COPIES. Repeated boilerplate is real, and a relocation that picked
@@ -1272,12 +1287,14 @@ pin_check
 pin_case "a pin whose content is GONE fails; there is nothing to relocate to" 1 \
   "as a 1-line range" "no longer appears anywhere in"
 
-# CASE 41. `--update` MUST NOT RECORD OVER AN UNAPPLIED MOVE, and this is the door the green
-# verdict in case 37 opens. A relocated citation is green while its document still names the
-# old lines; running the generator in that state would fingerprint whatever moved INTO those
-# lines, under a key that looks untouched -- the laundering this file's docstring is about,
-# reached through the new mechanism rather than around it. So the generator refuses while a
-# move is outstanding, and the throwaway pin file must come back byte-identical.
+# CASE 41. `--update` MUST NOT RECORD OVER AN UNAPPLIED MOVE, and this is the door case 37
+# opens. That case fails and tells the author to rewrite the citation and re-run `--update`,
+# so `--update` is the very next command someone runs -- and running it BEFORE the citation is
+# rewritten fingerprints whatever moved INTO the old lines, under a key that looks untouched.
+# That is the laundering this file's docstring is about, reached through the new mechanism
+# rather than around it, and a red check does not close the door: it points at it. So the
+# generator refuses while a move is outstanding, and the throwaway pin file must come back
+# byte-identical.
 #
 # The pin file here holds ONLY the probe's row. With the tracked pins copied in, any
 # relocation anywhere in the repository would also refuse, and this case would pass without
