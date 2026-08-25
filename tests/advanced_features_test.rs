@@ -252,7 +252,7 @@ fn test_pattern_matching_advanced() {
 }
 
 #[test]
-#[ignore = "XFAIL: closures — grammar.ebnf:308 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: closures — grammar.ebnf:320 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closures() {
     let source = r#"
     fn main() {
@@ -374,7 +374,7 @@ fn test_macros() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:162 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1713-1722) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:162 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1715-1724) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics() {
     let source = r#"
     struct Array<T, const N: int> {

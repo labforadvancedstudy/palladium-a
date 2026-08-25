@@ -179,7 +179,7 @@ fn test_trait_implementation() {
 }
 
 #[test]
-#[ignore = "XFAIL: a generic enum variant does not infer the enum's type argument — `Option::None` in a function returning `Option<int>` is checked as bare `Option`, so this fixture dies at 'Type mismatch: expected Option<Int>, found Option' before it reaches the method-call syntax (`x.f()`, grammar.ebnf:324) it was written for. Both are owed; this is the one that fires (owned by M2, item 1)"]
+#[ignore = "XFAIL: a generic enum variant does not infer the enum's type argument — `Option::None` in a function returning `Option<int>` is checked as bare `Option`, so this fixture dies at 'Type mismatch: expected Option<Int>, found Option' before it reaches the method-call syntax (`x.f()`, grammar.ebnf:278-281) it was written for. Both are owed; this is the one that fires (owned by M2, item 1)"]
 fn test_option_enum() {
     let source = r#"
     enum Option<T> {
@@ -325,7 +325,7 @@ fn test_iterator_trait() {
 }
 
 #[test]
-#[ignore = "XFAIL: closures — grammar.ebnf:308 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: closures — grammar.ebnf:320 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closure_capture() {
     let source = r#"
     fn main() {
@@ -518,7 +518,7 @@ fn test_pattern_matching_guards() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:162 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1713-1722) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:162 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1715-1724) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics_arrays() {
     let source = r#"
     struct Matrix<T, const ROWS: int, const COLS: int> {

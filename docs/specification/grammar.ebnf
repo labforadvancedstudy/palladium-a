@@ -299,30 +299,67 @@ macro_call     = identifier '!' '(' { any_token } ')' ;
 
 arguments      = expression { ',' expression } [ ',' ] ;
 
+# Tuples as VALUES (N4-12). Two or more elements: `(e)` is grouping and stays
+# grouping, so a one-element tuple would have to be `(e,)` — a meaning decided by
+# a trailing comma. The normative production in Part B permits that form; this
+# part refuses it by name, which is a documented SUBSET and not a contradiction
+# (tests/reject/tuple_one_element.pd).
+tuple_expr     = '(' expression ',' expression { ',' expression } [ ',' ] ')' ;
+
+# `p.0`. A CHAIN must be parenthesised — `(p.0).1` — because `.0.1` lexes as one
+# float literal (`float` above needs digits on both sides of the dot, and `0.1`
+# has them) and an f64 cannot be split back into the digits that made it.
+tuple_index    = postfix '.' integer ;
+
 # Method-call syntax `x.f()` WORKS (N5-17). Both the type checker and code
 # generation rewrite it into `TypeOfX::f(x, …)`; `Type::f(x)` works too, which it
 # did not until the same change — the parser builds every `A::b(...)` as an enum
 # constructor, and a struct on the left used to produce "Undefined enum type".
 # The `&self` receiver is still unimplemented.
 #
-# There are no closures, no tuple expressions, no `.0` indexing.
+# There are no closures. TUPLE EXPRESSIONS AND `.0` INDEXING EXIST (N4-12) —
+# see `tuple_expr` and `tuple_index` just above, which moved into this part when
+# they were implemented.
 # `?` and `.await` appear here because they parse. Nothing lowers them: both are
 # rejected after parsing with "is not implemented" (type checker, then codegen).
 # See language-spec.md §6.5.
 
 # =============================================================================
-# Patterns  (exactly three forms exist)
+# Patterns  (every N6 form except slices)
 # =============================================================================
 
-pattern        = '_'
-               | identifier
+pattern        = pattern_primary { '|' pattern_primary } ;   (* N6-07 *)
+
+pattern_primary = '_'
+               | identifier [ '@' pattern_primary ]          (* N6-08 *)
+               | literal
+               | literal ( '..' | '..=' ) literal            (* N6-03 *)
+               | '(' pattern ',' pattern { ',' pattern } ')' (* N6-05 *)
                | path "::" identifier [ '(' pattern { ',' pattern } ')'
                                       | '{' identifier ':' pattern
                                             { ',' identifier ':' pattern } '}' ] ;
 
-# No literal patterns, ranges, or-patterns, guards, tuple/slice patterns,
-# `ref`/`mut` bindings, `@` bindings, field shorthand, or `..` rest.
-# Consequence: `match` cannot dispatch on an integer or a string.
+match_arm      = pattern [ "if" expression ] "=>" ( block | expression ) [ ',' ] ;  (* N6-09 *)
+
+# `|` binds LOOSER than `@`, so `n @ 1 | 2` is `(n @ 1) | 2` — which is then
+# refused, because an ALTERNATIVE MAY NOT BIND (N6-07): every alternative would
+# have to bind the same names at the same types, which is not checked yet, and
+# the arm is emitted as one `||` condition with no per-alternative site to assign
+# a binder from. There is no grouping form for patterns, so `n @ (1 | 2)` is
+# unwritable rather than silently reinterpreted.
+#
+# A range's endpoints are INTEGER literals and both are required: `1..` and `..5`
+# are named nowhere in Part B and are refused by name, and an empty range
+# (`5..=1`, `3..3`) is refused as the transposition it almost always is. `char`
+# endpoints wait on N4-04, which owes `char` as a type at all.
+#
+# A tuple pattern takes two or more elements, mirroring the value side.
+#
+# Still absent: slice patterns (N6-06, owned by M3 — there is no slice type),
+# `ref`/`mut` bindings, field shorthand (`Move { x, y }`), and `..` rest.
+# `match` DOES dispatch on an integer, a string and a bool now, and a
+# non-exhaustive one is a compile error for every scrutinee type (N6-10), with a
+# trap where no arm is taken (N6-11).
 
 # =============================================================================
 # Operator precedence (tightest first)
@@ -425,8 +462,12 @@ trait_item_norm = "fn" identifier "(" [ self_param [ "," params ] ] ")"
 expression_norm = ... | closure | try_expr ;
 closure         = [ "move" ] "|" [ params_untyped ] "|" ( expression | block ) ;
 try_expr        = "try" block ;
-tuple_expr      = "(" expression { "," expression } [ "," ] ")" ;
-tuple_index     = expression "." integer ;
+
+# `tuple_expr` and `tuple_index` MOVED TO PART A (N4-12, 2026-08-26). Part A's
+# `tuple_expr` requires TWO OR MORE elements where this production permitted one,
+# and its `tuple_index` requires a chain to be parenthesised; both differences are
+# stated at the productions there and pinned by reject fixtures. A subset of the
+# normative form, named as one.
 
 # MOVED TO PART A, by being implemented rather than re-described (2026-08-25):
 # `loop_stmt`, `break_value`, `compound_assign`, `bitwise_op`, `cast_expr` and
@@ -436,18 +477,20 @@ tuple_index     = expression "." integer ;
 # — which Part A now satisfies through its `cast` level.
 
 # ---- Patterns (spec N6) ------------------------------------------------------
-# Part A has exactly three pattern forms. Spec N6 requires all of these, and
-# requires exhaustiveness for every scrutinee type, not only enums.
+# MOSTLY MOVED TO PART A (N6-02/03/05/07/08/09/10/11, 2026-08-26): literal, range,
+# tuple, or- and `@` patterns, arm guards, exhaustiveness for every scrutinee
+# type, and a trap where no arm is taken. What Part A implements is a SUBSET of
+# the productions below in three named places — a range's endpoints are integer
+# literals rather than expressions (nothing in pattern position can be
+# evaluated), a tuple pattern needs two or more elements, and a match arm's
+# guard is checked in the arm's own scope so it can read the pattern's bindings.
+#
+# WHAT IS STILL ONLY NORMATIVE: slice patterns (N6-06, owned by M3 — there is no
+# slice type to pattern), field shorthand and `..` rest in a struct pattern.
 
-pattern_norm    = literal
-                | expression ".." expression
-                | expression "..=" expression
-                | pattern_norm "|" pattern_norm
-                | identifier "@" pattern_norm
-                | "(" pattern_norm { "," pattern_norm } ")"
+pattern_norm    = ... (* the Part A forms *)
                 | "[" pattern_norm { "," pattern_norm } [ ".." ] "]"
                 | path "{" identifier [ ":" pattern_norm ] { "," ... } [ ".." ] "}" ;
-match_arm_norm  = pattern_norm [ "if" expression ] "=>" ( block | expression ) [ "," ] ;
 
 # ---- Items and modules (spec N3, N11) ----------------------------------------
 

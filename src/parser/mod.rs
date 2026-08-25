@@ -186,10 +186,12 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
                 return false;
             };
             // `all` over an empty iterator is `true`, so emptiness is explicit.
-            // NOTE the residual: even when every arm returns, the C emitted for
-            // a `match` is an `if`/`else if` chain with no final `else`, so a
-            // value matching no arm still falls off. That is exhaustiveness, a
-            // separate open defect; the generated-C invariant flags it.
+            // THE RESIDUAL THIS NOTE USED TO RECORD IS GONE (N6-11): the C
+            // emitted for a `match` ends in an `else` that traps, so a value
+            // matching no arm stops the program instead of falling off the end
+            // of its function. That is what let `-Werror=return-type` be armed
+            // in src/linker.rs, and the generated-C invariant
+            // (scripts/check-c-returns.py) now finds nothing here either.
             !arms.is_empty()
                 && arms.len() == arm_tails.len()
                 && arms
@@ -210,20 +212,20 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///                                statement as the parser SAW it, plus
 ///                                `writes_a_value()`, which decides whether a
 ///                                refusal is owed at all
-///   `src/parser/mod.rs:155-201`  `returns_on_every_path` — the decision, with
-///                                the NOTE at :150-154 recording the one
-///                                declared residual (a `match` lowers to an
-///                                if/else-if chain with no final `else`)
-///   `src/parser/mod.rs:276-278`  `already_terminates` — `any`, not "the last
+///   `src/parser/mod.rs:155-203`  `returns_on_every_path` — the decision. The
+///                                NOTE inside it used to record one declared
+///                                residual (a `match` with no final `else`);
+///                                N6-11's trap discharged it
+///   `src/parser/mod.rs:278-280`  `already_terminates` — `any`, not "the last
 ///                                statement", because anything after an
 ///                                unconditional terminator is unreachable
-///   `src/parser/mod.rs:281-309`  `stmt_terminates` — the four cases, each
+///   `src/parser/mod.rs:283-311`  `stmt_terminates` — the four cases, each
 ///                                paired with its counterpart in
 ///                                scripts/check-c-returns.py by the table above
-///   `src/parser/mod.rs:337-369`  `contains_escaping_break` +
+///   `src/parser/mod.rs:339-371`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1156-1180`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1158-1182`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,

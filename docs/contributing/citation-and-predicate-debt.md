@@ -35,17 +35,17 @@ the two that were read from the three that were only moved.
 
 ## Open: citations known to point at the wrong code
 
-One sentence in `tests/m3_imported_calls.rs:1221-1223` lists five "consumers that
+One sentence in `tests/m3_imported_calls.rs:1219-1223` lists five "consumers that
 re-derive visibility from `ast.items`". Three of the five name code that does no
 such thing. Verified 2026-08-23 by reading each line:
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C1 | `src/codegen/mod.rs:1575` | a comment about unrecognised constant values | yes |
-| C2 | `src/codegen/mod.rs:1680` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
-| C3 | `src/codegen/mod.rs:1808` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
+| C1 | `src/codegen/mod.rs:1756` | a comment about unrecognised constant values | yes |
+| C2 | `src/codegen/mod.rs:1679` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
+| C3 | `src/codegen/mod.rs:1989` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
 | — | `src/typeck/mod.rs:1553` | the private-import registration comment | no |
-| — | `src/codegen/mod.rs:2587` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
+| — | `src/codegen/mod.rs:2150` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
 
 All three were **pre-existing on `main`** before the recursive-data-types work,
 and all three have since been relocated MECHANICALLY three times — by a `difflib`

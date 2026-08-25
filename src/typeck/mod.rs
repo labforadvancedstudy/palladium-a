@@ -4246,7 +4246,7 @@ impl TypeChecker {
             // program that satisfied the old type rules failed inside gcc —
             // against C the user never wrote. The LLVM backend is worse: its
             // catch-all returns the constant `0` for both nodes
-            // (`src/codegen/llvm_text_backend.rs:1393`), which compiles and is
+            // (`src/codegen/llvm_text_backend.rs:1425`), which compiles and is
             // wrong. Refuse here, at the construct's own span, so no backend
             // gets the chance.
             //
@@ -5496,7 +5496,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:5071-5135`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:5762-5826`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -5520,7 +5520,7 @@ impl TypeChecker {
     /// This matters for the same reason the module ordering does: `make selfhost`
     /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
     /// because `bootstrap/pdc.pd` uses no generics — they are excluded from PBS-1
-    /// (`docs/specification/bootstrap-subset.md:94`).
+    /// (`docs/specification/bootstrap-subset.md:97`).
     pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
         let mut result = Vec::new();
 
@@ -5779,7 +5779,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:3949-3957`, `src/parser/mod.rs:3786-3794`). That is not
+    /// (`src/parser/mod.rs:4208-4216`, `src/parser/mod.rs:4002-4010`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

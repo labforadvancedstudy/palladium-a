@@ -1742,7 +1742,7 @@ fn unimplemented_question(span: Span) -> CompileError {
 ///
 /// Reaching this is a phase-ordering fault rather than a missing feature:
 /// expansion runs in `src/macros/mod.rs` before code generation, and the type
-/// checker already refuses a stray invocation at `src/typeck/mod.rs:4214-4216`, so
+/// checker already refuses a stray invocation at `src/typeck/mod.rs:4263-4265`, so
 /// no source program measured here gets this far. It is spelled out anyway
 /// because the wildcard that used to cover it is gone, and because "currently
 /// unreachable" is not "safe to fabricate".

@@ -182,7 +182,7 @@ N4-08	M7	N4	str and usize are named normatively — add them or rewrite the site
 N4-09	-	N4	Arrays [T; N] - WITNESSED FOR CONCRETE ELEMENT TYPES ONLY ([i64; 5], an inferred [i64; 3], [String; 3]). PBS-1 excludes generics, so no witness can exercise a parameterised T; the row is an instance claim, not a claim about every T	fixture	tests/02_types_arrays.pd	satisfied	1.0	-
 N4-10	M2	N4	Nested arrays [[T; M]; N], as locals and as parameters	fixture	tests/02_types_nested_arrays.pd	owed	1.0	-
 N4-11	M3	N4	Slices [T]	fixture	tests/02_types_slices.pd	owed	1.0	-
-N4-12	M2	N4	Tuples (A, B) with construction and .0 access	fixture	tests/02_types_tuples.pd	owed	1.0	-
+N4-12	M2	N4	Tuples (A, B) with construction and .0 access	fixture	tests/02_types_tuples.pd	satisfied	1.0	-
 N4-13	M7	N4	References ref T / ref mut T are a distinct type to the checker	fixture	tests/05_references.pd	owed	1.0	-
 N4-14	M3	N4	Function types fn(A) -> B	fixture	tests/02_types_fn.pd	owed	1.0	-
 N4-15	M3	N4	Named generic types Name<A, B>, monomorphised	fixture	tests/08_generics_basic.pd	owed	1.0	-
@@ -216,16 +216,16 @@ N5-17	M2	N5	Method call syntax x.f()	fixture	tests/04_method_calls.pd	satisfied	
 
 # --- N6 Patterns --------------------------------------------------------------
 N6-01	-	N6	Wildcard and identifier patterns	fixture	tests/06_pattern_matching.pd	satisfied	1.0	-
-N6-02	M2	N6	Literal patterns (integer, string, bool)	fixture	tests/06_literal_patterns.pd	owed	1.0	-
-N6-03	M2	N6	Range patterns	fixture	tests/06_range_patterns.pd	owed	1.0	-
+N6-02	M2	N6	Literal patterns (integer, string, bool)	fixture	tests/06_literal_patterns.pd	satisfied	1.0	-
+N6-03	M2	N6	Range patterns	fixture	tests/06_range_patterns.pd	satisfied	1.0	-
 N6-04	-	N6	Enum path patterns with tuple and struct sub-patterns	fixture	tests/06_pattern_matching.pd	satisfied	1.0	-
-N6-05	M2	N6	Tuple patterns	fixture	tests/06_tuple_patterns.pd	owed	1.0	-
+N6-05	M2	N6	Tuple patterns	fixture	tests/06_tuple_patterns.pd	satisfied	1.0	-
 N6-06	M3	N6	Slice patterns	fixture	tests/06_slice_patterns.pd	owed	1.0	-
-N6-07	M2	N6	Or-patterns A | B	fixture	tests/06_or_patterns.pd	owed	1.0	-
-N6-08	M2	N6	Binding patterns name @ pattern	fixture	tests/06_at_patterns.pd	owed	1.0	-
-N6-09	M2	N6	Guards: arm if cond	fixture	tests/06_guards.pd	owed	1.0	-
-N6-10	M2	N6	A non-exhaustive match is a compile error for EVERY scrutinee type	reject	tests/reject/nonexhaustive_int_match.pd	owed	1.0	-
-N6-11	M2	N6	A match that falls through no arm traps rather than continuing	observable	tests/n6_match.rs::unmatched_scrutinee_traps	owed	1.0	-
+N6-07	M2	N6	Or-patterns A | B	fixture	tests/06_or_patterns.pd	satisfied	1.0	-
+N6-08	M2	N6	Binding patterns name @ pattern	fixture	tests/06_at_patterns.pd	satisfied	1.0	-
+N6-09	M2	N6	Guards: arm if cond	fixture	tests/06_guards.pd	satisfied	1.0	-
+N6-10	M2	N6	A non-exhaustive match is a compile error for EVERY scrutinee type	reject	tests/reject/nonexhaustive_int_match.pd	satisfied	1.0	-
+N6-11	M2	N6	A match that falls through no arm traps rather than continuing	observable	tests/n6_match.rs::unmatched_scrutinee_traps	satisfied	1.0	-
 
 # --- N7 Effects and asynchrony (differentiator 1) ------------------------------
 N7-01	M5	N7	There is no async keyword	reject	tests/reject/async_fn.pd	owed	thesis	there is no `async` keyword

@@ -166,14 +166,14 @@ self-hosting unit **imports nothing** (`grep -c '^import' bootstrap/pdc.pd` = 0)
 generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec excludes them, and
 `bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
 subset it implements"*). Both exclusions mattered because there were **two independent unordered
-emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:169-169`) emitted by iterating
+emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:174-174`) emitted by iterating
 `.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:1066-1066`,
 `src/typeck/mod.rs:1074-1074`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: modules at `src/codegen/mod.rs:1574-1574` and `src/typeck/mod.rs:1439-1439`,
-the two later codegen walks off one sorted local (`src/codegen/mod.rs:1679-1679`), and the
-instantiation keys at `src/typeck/mod.rs:5223-5223` and `src/typeck/mod.rs:5284-5284`. Pinned by
+sites sorts before it emits: modules at `src/codegen/mod.rs:1755-1755` and `src/typeck/mod.rs:1439-1439`,
+the two later codegen walks off one sorted local (`src/codegen/mod.rs:1860-1860`), and the
+instantiation keys at `src/typeck/mod.rs:5528-5528` and `src/typeck/mod.rs:5589-5589`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -243,7 +243,7 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 56 satisfied · 133 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 65 satisfied · 124 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
@@ -290,7 +290,7 @@ are marked, because both changed the plan.
 |---|---|---|---|---|
 | **C0** | Abstraction | Traits, generics, bounds, `where` clauses. Trait/generic/module conformance is **zero** today | the effect system's *signatures* · a bootstrap compiler that can grow · the standard library | the surface |
 | **C1** | Reference typing | `Type::Reference` is a distinct type carrying mutability. Today it is mapped to its inner type, so `&i64` and `i64` are the same type (`src/typeck/mod.rs:714-718`) | N9 in full · N12's move semantics and drop glue · moving the array rule out of codegen ([A9.2](../specification/language-spec.md#a92-array-parameters)) · C4 · **soundness** of C0's borrows | nothing |
-| **C2** | Call-graph fixed point | Per-function summaries propagated to a fixed point, unknown callees not assumed pure, `impl` methods included. Today a single source-order pass whose fallback is "conservatively assume it's pure" (`src/effects/mod.rs:304-308`) | N7's inference and gating · N8's propagation of totality to callees, the same shape | C0, for signatures to carry effects |
+| **C2** | Call-graph fixed point | Per-function summaries propagated to a fixed point, unknown callees not assumed pure, `impl` methods included. Today a single source-order pass whose fallback is "conservatively assume it's pure" (`src/effects/mod.rs:315-319`) | N7's inference and gating · N8's propagation of totality to callees, the same shape | C0, for signatures to carry effects |
 | **C3** | Inductive pattern support | Patterns rich enough for structural recursion to have subterms. Enums, construction and `match` already work ([A4.3](../specification/language-spec.md#a43-enums)); literal, range, or-, tuple and guard forms are missing | N6 in full · N8's automatic structural termination | the parser |
 | **C4** | Alias-sensitive scheduling | Deciding two effectful operations are independent, which is an aliasing question | N7's parallel-by-default and structured concurrency only | C1, and decision **D2** |
 
@@ -351,22 +351,27 @@ Measured at this revision; every row names the command that produced it.
 |---|---|---|
 | **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
-| Conformance | `verified=68 untranscribed=0 vacuous=7 xfail=1 reject=30 skip=2 failures=0` over 108 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `1f64c32` added three
+| Conformance | `verified=75 untranscribed=0 vacuous=7 xfail=1 reject=41 skip=2 failures=0` over 126 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `1f64c32` added three
 `run` fixtures for the review-round repairs and SEVEN `reject`s for the refusals those repairs
 introduced, which is the shape a fix round leaves — the negative rows outnumber the positive ones
 because most of what a review finds is a program that should never have been accepted; then review
 round 2 added one `run` fixture — `tests/04_macro_in_value_position.pd`, a macro expanded inside an
 `if`/`loop` used for its value — and two `reject`s, a generic method called through its path form
 and a generic enum's constructor, both of which the front end used to accept and hand to a C
-compiler that had no such function and no such type to link) | `make conformance` |
+compiler that had no such function and no such type to link; then issue #41's five commits added
+EIGHTEEN rows — seven `run` fixtures, one per pattern form and one for tuples as values, and eleven
+`reject`s, which is again the shape a feature round leaves once the refusals are written down:
+one-element tuples on both sides, a chained `p.0.1`, a tuple in an enum payload, an or-pattern that
+binds, three range-pattern defects, a bool match missing `false`, a literal pattern of the wrong
+type, and the non-exhaustive integer match N6-10 now refuses) | `make conformance` |
 | Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 413 citations fingerprinted, 27 no-compile fences pinned | `make check-docs` |
-| Rust tests | 918 pass, **0 fail**, 50 ignored (565 lib + 353 integration, 27 binaries) | `make test-honest` |
-| Declared failures | 49 `xfail` + 1 `slow`, none passing; 49 of 49 failing for their DECLARED diagnostic | `make test-xfail` |
+| Documentation | every snippet compiles; 414 citations fingerprinted, 27 no-compile fences pinned | `make check-docs` |
+| Rust tests | 925 pass, **0 fail**, 48 ignored (566 lib + 359 integration, 28 binaries) | `make test-honest` |
+| Declared failures | 47 `xfail` + 1 `slow`, none passing; 47 of 47 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 56 satisfied · 133 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 65 satisfied · 124 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -405,7 +410,7 @@ by the requirement manifest; this is the reading list.
 | D3b — a tail `if` is not lowered to a `return`; `fib(10)` prints `8261746944` and exits 0 | [A6.6](../specification/language-spec.md#a66-tail-expressions) | N3-02, N3-03 |
 | The async producer — `async fn g() { … }` compiled and emitted a `Future` struct with a `state` field and a `_poll` function, which N7 forbids outright. **CLOSED**: `async fn` is refused at the construct in typeck and again in codegen, and the emitter is deleted; receipts in `tests/m2_async_producer.rs` | [F11](#f11-the-async-producer-was-alive-and-violated-n7--closed) | N7-18 |
 | C-keyword identifiers — `fn double` emitted `long long double(…)`. **CLOSED**: escaped on the way into code generation, `src/codegen/c_ident.rs:440`; the `#[ignore]` is gone and the debt row is `paid` | `tests/e2e_test.rs:277` | N3-01 |
-| No missing-return diagnostic — `fn f() -> int { }` compiled silently. **CLOSED**: the parser already decided "returns on every path" and now refuses when it does not, `src/parser/mod.rs:1213-1242`; the `#[ignore]` is gone and the debt row is `paid` | `tests/compiler_comprehensive_test.rs:599` | N3-03 |
+| No missing-return diagnostic — `fn f() -> int { }` compiled silently. **CLOSED**: the parser already decided "returns on every path" and now refuses when it does not, `src/parser/mod.rs:1215-1244`; the `#[ignore]` is gone and the debt row is `paid` | `tests/compiler_comprehensive_test.rs:610` | N3-03 |
 | Block comments do not nest, which N2 requires | [F10](#f10-block-comments-do-not-nest-and-nothing-said-so) | N2-08 |
 | Nested arrays work in neither locals nor parameters | [A5](../specification/language-spec.md#a5-types) | N4-10 |
 | Filesystem builtins return `i64`/`bool` rather than `Result`, because `Result` is not built in *(the handle-representation split that made six of them uncallable is closed — M2)* | [A8](../specification/language-spec.md#a8-builtins) | N14-03 |
@@ -529,7 +534,7 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
 
-**Owns 50 requirement rows, 25 of them still owed**, 9 declared `#[ignore]` failures (all tagged
+**Owns 50 requirement rows, 16 of them still owed**, 9 declared `#[ignore]` failures (all tagged
 M2), and the vacuous `tests/02_types_enums.pd`. *(It read "seventeen … (fourteen tagged M2, three
 tagged M1)" in DIGITS-FREE WORDS, which is exactly why it went stale unnoticed: the prose-figure
 gates scan for `N` and `N of M`, and a number spelled out is invisible to them. Measured with
@@ -541,7 +546,7 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
 
 1. **The M1 debt is PAID, and it was the live miscompile.** A tail `if` was not lowered to a return
    — `fib(10)` printed `8261746944` (N3-02); the missing-return diagnostic landed with it (N3-03),
-   as `tests/compiler_comprehensive_test.rs:599` says it must; and C-keyword identifier escaping
+   as `tests/compiler_comprehensive_test.rs:610` says it must; and C-keyword identifier escaping
    (N3-01) landed with those. All three `#[ignore]`s are gone, their rows in
    `tests/rust-debt-manifest.txt` are `paid`, and `make m1-exit` exits **0**.
 2. **The async producer is CLOSED** (N7-18). `async fn g() { print("x"); }` compiled and emitted
@@ -617,8 +622,68 @@ enum-owned method is unreachable by its path form. Each row carries a
    an evaluation-order obligation over every call, not a method-call one. **N3-09** and **N3-10**
    (top-level `const` and `static`) were listed in this item and belong to N3: they are still
    `owed`, and nothing in these four commits touched them.
-4. **Patterns** (N6-02…N6-11) — literal, range, tuple, or- and `@` patterns, guards, exhaustiveness
-   for **every** scrutinee type, and a trap where `match` currently falls through. This is **C3**.
+4. **Patterns** (N6-02…N6-11) — **DONE, all nine rows, plus N4-12 which turned out to be
+   underneath one of them.** This was **C3**. Five commits: `d3600e4` (literal patterns, guards),
+   `c983653` (or-patterns, `@` bindings), `6b3e501` (range patterns), `316e47b` (tuples as values,
+   then tuple patterns), `0ba980f` (exhaustiveness for every scrutinee type, and the trap).
+   `verified` moved 68 → 75 and `reject` 30 → 41; `make selfhost` held its fixed point at
+   `9b0cf24e…` throughout, because `bootstrap/pdc.pd` uses none of this.
+
+   The decisions worth reading, each of which could have gone the other way:
+
+   - **A literal in a pattern is a `PatternLiteral`, not an `Expr`.** Reusing the expression type
+     would have put every expression form into pattern position and left each consumer to re-refuse
+     `match x { f() => … }` on its own; it would also have cost `Pattern` its `Eq`/`Hash`, which the
+     exhaustiveness checker derives, because `Expr` carries an `f64`. **There is no float pattern**
+     for the same reason stated forward: equality on `f64` is not the relation a reader assumes a
+     pattern means.
+   - **An or-pattern whose alternative BINDS is refused, with the binder named in the diagnostic.**
+     Rust's rule is that every alternative binds the same names at the same types; this checker
+     cannot verify that yet, and the arm is emitted as ONE `||` condition with no per-alternative
+     site to assign from. Accepting it would have meant choosing a branch on the reader's behalf.
+   - **`name @ pattern` is transparent to exhaustiveness** — it covers exactly what its inner covers.
+     Reading it as a bare binder would have made `all @ Circle` a catch-all that swallows every
+     later arm as unreachable.
+   - **A defect the first commit shipped, found and fixed in the second.** Literal patterns made
+     nested positions writable while the condition still stopped at the enum tag, so `P::Num(1)`
+     matched every `Num` — a silent wrong answer, exit 0. The repair is one recursion over a
+     SUBJECT (the C lvalue under test) shared by the condition and the binding emission, which is
+     also what made tuple elements, `@` under a payload and nested ranges fall out for free.
+   - **Tuples became values before tuple patterns existed**, because they had to: `N4-12` was
+     `owed`, `Expr` had no tuple form, and `Type::Tuple` lowered to `void*` behind a TODO nobody
+     could observe. One C struct per SHAPE, mangled from the element C types (stable — no counter,
+     no hash seed), with a constructor apiece.
+   - **`p.0.1` is refused rather than guessed.** The float rule is `[0-9]+\.[0-9]+`, so `.0.1`
+     after an expression is ONE `Float(0.1)` token and the two indices are gone before the parser
+     sees them; `p.0.10` and `p.0.1` both round-trip to 0.1, so recovering the second index would
+     be a guess with a wrong answer available. `(p.0).1` is the spelling, and it runs.
+   - **A tuple in an ENUM PAYLOAD is refused by name.** Tuple structs are emitted after the enum
+     definitions because a tuple's element may be an enum; a payload of tuple type needs the
+     reverse order, and satisfying both is a dependency sort over generated types. Without the
+     refusal the program reached gcc as `unknown type name '__pd_tuple2_long_long_long_long'` —
+     our own C failing on the user's behalf.
+   - **An empty range is a typo, not dead code.** `5..=1` and `3..3` can never match, so the arm
+     they head is dead the moment it is written and the two numbers are almost always transposed.
+     Refused at the type checker with both bounds in the message.
+   - **The corpus sweep for N6-10 found NOTHING, and is reported as finding nothing.** Making a
+     non-exhaustive match an error for every scrutinee type could have broken fixtures written when
+     that position was unchecked; it broke none — conformance and the whole Rust suite stayed green.
+     The rule's bite is shown by `tests/reject/nonexhaustive_int_match.pd` and by probes, not by a
+     manufactured list.
+   - **The trap ARMED the linker, through a four-step handoff that was written down years' worth of
+     rounds earlier.** See [the discharge](#the-missing-final-else-discharged) below.
+   - **The value-`match` zero-initialiser stays, by measurement.** The trap makes no path leave the
+     temporary unwritten, but gcc cannot see that: deleting ` = 0` from generated C and recompiling
+     with `-Wall -Wextra` gives five `-Wuninitialized` diagnostics in `tests/06_match_expression`'s
+     C and two in `tests/06_guards`'. The trap makes the PROGRAM whole, not the flow analysis.
+
+   *What this item deliberately does NOT include:* **N6-06** (slice patterns) is owned by **M3** and
+   stays `owed` — slices are not a type this language has yet. **Field shorthand** in a struct-variant
+   pattern (`Message::Move { x, y }`) is not implemented; `test_pattern_matching_guards` stays
+   `#[ignore]`d with its reason re-declared to that and nothing else, its guards half having been
+   paid. **Destructuring `let`** (`let (a, b) = pair;`) is not implemented either — `grammar.ebnf`
+   says `let` patterns do not exist — which is what `test_type_aliases_complex` now waits on, after
+   its tuple-expression blocker was paid.
 5. **Lexical completion** (N2-03…N2-11): float and char literals, escapes, **nesting block
    comments** ([F10](#f10-block-comments-do-not-nest-and-nothing-said-so)), and **the `#` attribute
    token** — the token only. An attribute that lexes and is then ignored would recreate the class M1
@@ -800,7 +865,7 @@ show.
 is where both the bootstrap compiler and the standard library become multi-file.
 
 **Owns 8 requirement rows** — N3-11 and N11-01…N11-07 — plus the corpus's one `xfail`
-(`tests/conformance-manifest.txt:111`, cross-file imports) and the vacuous `12_modules_imports`.
+(`tests/conformance-manifest.txt:118`, cross-file imports) and the vacuous `12_modules_imports`.
 
 A `mod` item, file-based nesting, **enforced** visibility (N11-02 is a `reject` row: a private item
 imported must be an error, or visibility is decoration), and all four import forms.
@@ -821,7 +886,7 @@ on one footing.
    reads it, so it cannot reject a program, change codegen or schedule anything.
 2. **Make propagation a fixed point** (N7-04, N7-05, N7-06). It is a single forward pass whose
    fallback is "If function is unknown, we conservatively assume it's pure"
-   (`src/effects/mod.rs:304-308`) — the unsound direction.
+   (`src/effects/mod.rs:315-319`) — the unsound direction.
 3. **Analyse methods** (N7-07). The driver's loop matches only `crate::ast::Item::Function`
    (`src/driver/mod.rs:173-174`).
 4. **Delete `async` and `await` from the language** (N7-01, N7-02) — the two things N7 says the
@@ -1012,7 +1077,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:4912-4916` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:5603-5607` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -1036,7 +1101,7 @@ representation."* A `struct` with a `state` field, emitted into the program's ow
 representation.
 
 **CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
-`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:2858-2864`), the
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:3090-3096`), the
 same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
 unreachable: a private method nothing calls is one edit away from being called again. No line of
 `src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and
@@ -1196,7 +1261,7 @@ arrived with `fix/d3b-tail-if` and is what the closing paragraph of this finding
 | Row | What was broken, and what closed it |
 |---|---|
 | `tests/e2e_test.rs:322` **CLOSED** | a tail `if` was not lowered to a return — fixed in `src/parser/mod.rs` (`lower_tail_to_return`); the `#[ignore]` is gone, so `make test-xfail` would report an XPASS if it came back |
-| `tests/compiler_comprehensive_test.rs:599` **CLOSED** | `fn f() -> int { }` compiled with no diagnostic — the parser's own `returns_on_every_path` had been deciding the question since D3b and the call site did not act on a `false`; it now refuses (`src/parser/mod.rs:1213-1242`, `CompileError::missing_return`). Accept-side receipts: `tests/m1_missing_return.rs` |
+| `tests/compiler_comprehensive_test.rs:610` **CLOSED** | `fn f() -> int { }` compiled with no diagnostic — the parser's own `returns_on_every_path` had been deciding the question since D3b and the call site did not act on a `false`; it now refuses (`src/parser/mod.rs:1215-1244`, `CompileError::missing_return`). Accept-side receipts: `tests/m1_missing_return.rs` |
 | `tests/e2e_test.rs:277` **CLOSED** | `fn double` emitted `long long double(…)` and gcc rejected the compiler's own output — reserved words are escaped on the way into code generation (`src/codegen/c_ident.rs:440`). Controls on what must NOT be renamed: `tests/m1_c_keyword_idents.rs` |
 
 The first reproduced: `fib(10)` printed `8261746944` and exited 0. **A silent miscompile shipped in
@@ -1224,7 +1289,9 @@ plain sight for several rounds. Root `CLAUDE.md` requires a fact conflict to be 
 than left to coexist, and this one was not.
 
 *Resolved by measurement, not by choosing a sentence.* On the integrated tree the runner evaluates
-30 of them: `reject=30` over 108 fixtures (was 22 over 84 until `feat/m2-expressions`
+41 of them: `reject=41` over 126 fixtures (was 30 over 108 until `feat/m2-patterns` wrote down
+issue #41's refusals — eleven of them, which is what a feature round costs once every "this shape
+is not in the language" is a fixture rather than a sentence; and 22 over 84 until `feat/m2-expressions`
 transitioned `tests/reject/loop_keyword.pd` to `run` — N5-07 gave the language the `loop` that
 fixture asserted it did not have; and 21 over 82 before
 `tests/reject/zero_length_array_self_reference.pd` landed with N4-23). The refusals a second implementation must reproduce are

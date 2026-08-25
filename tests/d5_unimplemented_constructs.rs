@@ -224,7 +224,7 @@ fn help_text_does_not_presume_an_operand_shape() {
 /// The LLVM backend needs its own coverage, and it is the sharper case.
 ///
 /// Its expression lowering has no arm for either node: the catch-all at
-/// `src/codegen/llvm_text_backend.rs:1393` returns the constant `0` for
+/// `src/codegen/llvm_text_backend.rs:1425` returns the constant `0` for
 /// `Question`, `Await`, `EnumConstructor` and `MacroInvocation` alike. That is
 /// worse than the C backend's failure — it compiles, and it is wrong. These
 /// programs are only safe because the type checker refuses before backend
@@ -391,9 +391,9 @@ fn main() {
 /// The limit the help now states out loud, pinned so it cannot silently drift.
 ///
 /// Code generation skips generic enum definitions entirely, at all four sites —
-/// the two that COLLECT (`src/codegen/mod.rs:1727-1731`,
-/// `src/codegen/mod.rs:1763-1767`) and the two that EMIT
-/// (`src/codegen/mod.rs:1827-1832`, `src/codegen/mod.rs:1857-1861`) — and
+/// the two that COLLECT (`src/codegen/mod.rs:1908-1912`,
+/// `src/codegen/mod.rs:1944-1948`) and the two that EMIT
+/// (`src/codegen/mod.rs:2008-2013`, `src/codegen/mod.rs:2038-2042`) — and
 /// so a program that constructs one would reach the C compiler with no type,
 /// no tag and no constructor to link against.
 ///

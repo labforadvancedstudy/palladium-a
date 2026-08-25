@@ -141,11 +141,12 @@ enum NetA {
     /// ASSERTION FAILS, and whoever fixed it is told what to update. That is the
     /// same XPASS handoff scripts/conformance.sh uses.
     ///
-    /// THE HANDOFF, BY NAME — the rows that change together when the final
-    /// `else` is emitted, so nobody has to go looking:
+    /// THE HANDOFF, BY NAME — and it was WALKED, in the change that landed
+    /// N6-11's trap. All four rows moved together, which is what this list was
+    /// written to make happen:
     ///
-    ///   1. `tests/stdlib/DRIVERS.tsv:31`, row `stdlib_tail_match`: column 3 is
-    ///      `known_violation:area_code,sides`; promote it to `clean`.
+    ///   1. `tests/stdlib/DRIVERS.tsv:31`, row `stdlib_tail_match`: column 3 was
+    ///      `known_violation:area_code,sides` and is now `clean`.
     ///      `make stdlib-gate` announces that transition itself — the
     ///      known_violation branch is scripts/stdlib-gate.sh:379-381, the XPASS
     ///      note it prints when the C goes clean is
@@ -155,21 +156,29 @@ enum NetA {
     ///   2. This expectation: `StillFindsTheOpenMatchDefect` -> `Accepts`, at
     ///      its single use in `tail_match_arms_are_lowered_to_returns`.
     ///   3. `src/parser/mod.rs`, the NOTE inside `returns_on_every_path` that
-    ///      records this residual — it stops being a residual.
-    ///   4. AND THEN THE FLAG. `-Werror=return-type` is deliberately absent
-    ///      from the shared gcc invocation (src/linker.rs:73-86 passes only
-    ///      `-O<n>`, `-I <runtime>`, `-o`) for ONE reason: this defect would
-    ///      fail every compilation today. That is a temporary position, not a
-    ///      steady state. Once the final `else` lands, the flag belongs in that
-    ///      invocation, and Net A's role changes with it — from the primary
-    ///      structural boundary to ATTRIBUTION, which is what it is better at
-    ///      (it names the function and the line without needing a compiler, and
-    ///      it runs on C that never links). Do not add the flag before the
-    ///      `else`; do not leave it out after. THAT OBLIGATION IS TRACKED, not
-    ///      merely written here: `the_linker_will_ask_gcc_to_reject_a_function_
-    ///      that_falls_off_its_end` in this file is an #[ignore]d XFAIL with a
-    ///      row in tests/rust-debt-manifest.txt, so `make test-xfail` requires
-    ///      it to keep existing and the two declarations to agree.
+    ///      recorded this residual — it no longer records one.
+    ///   4. AND THEN THE FLAG. `-Werror=return-type` is IN the shared gcc
+    ///      invocation (`src/linker.rs:77-93`). It was deliberately absent while
+    ///      the defect stood, because it would have failed every tail-`match`
+    ///      compilation; "do not add the flag before the `else`, do not leave it
+    ///      out after" was the instruction, and both halves were honoured in one
+    ///      change. Net A's role changed with it — from the primary structural
+    ///      boundary to ATTRIBUTION, which is what it is better at (it names the
+    ///      function and the line without needing a compiler, and it runs on C
+    ///      that never links). THAT OBLIGATION WAS TRACKED, not merely written
+    ///      here: `the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_
+    ///      its_end` in this file was an #[ignore]d XFAIL with a row in
+    ///      tests/rust-debt-manifest.txt; both are `paid` now, and `make
+    ///      test-xfail` required them to move together.
+    ///
+    ///   A FIFTH ROW THE LIST DID NOT PREDICT, and worth recording because the
+    ///   handoff's value is exactly that it made somebody look: arming the flag
+    ///   exposed a second noreturn hole. `panic(...)` in a value-owing branch is
+    ///   correct C that gcc rejects, because it cannot see that a function
+    ///   defined in this file never returns. The call site now emits
+    ///   `(__pd_panic(msg), abort())`, and `scripts/check-c-returns.py`'s
+    ///   NORETURN_RE grew an optional `(` to match — pinned from the codegen side
+    ///   by `codegen_spellings_the_generated_c_invariant_depends_on`.
     ///
     /// `tests/conformance-manifest.txt` needs NO change: its
     /// `tests/stdlib/stdlib_tail_match.pd` row is `run`/`expected` and pins the
@@ -1687,10 +1696,10 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 ///
 /// What a program can do today that it should not: emit `f_Future v = f();`
 /// beside `long long f()`. `CodeGenerator.async_functions`
-/// (src/codegen/mod.rs:188-201) is INSERT-ONLY — unlike `functions`, which the
+/// (src/codegen/mod.rs:193-206) is INSERT-ONLY — unlike `functions`, which the
 /// main-program pass overwrites entry by entry — so an imported `pub async fn f`
 /// leaves `f` in the set even when a local ordinary `fn f` replaces it, and
-/// `try_infer_expr_type` (src/codegen/mod.rs:378-378) reads the set rather than
+/// `try_infer_expr_type` (src/codegen/mod.rs:406-406) reads the set rather than
 /// asking `crate::ast::local_definition_shadows_import`.
 ///
 /// Measured: gcc reports `use of undeclared identifier 'f_Future'` against C
@@ -1706,7 +1715,7 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 /// budget: preserving the number by omitting known debt is precisely what a
 /// closed inventory exists to prevent, so the row is here and the number moved.
 #[test]
-#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:188-201) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:378-378) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
+#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:193-206) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:406-406) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
 fn a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future() {
     let out = compile_and_run_with_import(
         "pub async fn f() { print_int(1); }\n",

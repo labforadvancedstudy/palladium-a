@@ -1591,7 +1591,7 @@ mod tests {
     /// _by_typeck` a loop over an empty set — a test that passes while proving
     /// nothing, which is the exact species this milestone exists to remove. It
     /// is not deleted (the machinery it guards is still live in
-    /// `src/typeck/mod.rs:3277-3285` and the moment any built-in is marked
+    /// `src/typeck/mod.rs:3326-3334` and the moment any built-in is marked
     /// unsupported the loop has work again), and it is not left to look like
     /// coverage either. This assertion is the declaration: if it ever fails,
     /// the loop below has become meaningful again and this comment is stale.
