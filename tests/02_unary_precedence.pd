@@ -1,0 +1,44 @@
+// Test 02: unary minus binds tighter than multiplication (requirement N5-16).
+//
+// `a * -b` did not parse. The cause was one call in one line: the ladder's
+// multiplication level parsed its LEFT operand with `parse_unary` and its RIGHT
+// operand with `parse_postfix`, skipping the unary level entirely, so a `-`
+// after `*` had nothing to read it. grammar.ebnf states the correction as
+// normative: `multiplication = unary { ( '*' | '/' | '%' ) unary } ;`
+//
+// The values below are checked, not just parsed. A precedence bug that binds
+// `a * -b` as `(a * -) b` cannot compile at all, but one that binds it as
+// `-(a * b)` compiles and prints the same number whenever `a` and `b` are both
+// positive — so every case here uses operands whose two readings DISAGREE.
+
+fn main() {
+    let a = 10;
+    let b = 3;
+
+    print("Multiplication:");
+    print_int(a * -b);
+    print_int(-a * b);
+    print_int(-a * -b);
+
+    print("Division and remainder:");
+    print_int(a / -b);
+    print_int(a % -b);
+    print_int(-a / b);
+
+    print("Chained:");
+    print_int(a * -b * -b);
+    print_int(-a * -b * -b);
+
+    print("Mixed with addition, where the two readings differ:");
+    // `-(2 * 3) + 100` is 94; `(-2) * 3 + 100` is also 94, so use a shape
+    // where the unary binds to the second operand instead.
+    print_int(100 + a * -b);
+    print_int(100 - a * -b);
+
+    print("Unary on a parenthesised operand:");
+    print_int(a * -(b + 1));
+
+    print("Unary minus after every multiplicative operator, twice over:");
+    print_int(a * - -b);
+    print_int(a / - -b);
+}

@@ -1,0 +1,64 @@
+// Test 02: `as` casts (requirement N5-15).
+//
+// The `as` token existed and no parser site consumed it, so `let y = x as i64;`
+// died with "Expected ';' after let statement".
+//
+// WHAT IS CASTABLE. The specification names `as` casts (language-spec.md N5)
+// and grammar.ebnf gives the form (`cast_expr = expression "as" type`), but
+// NEITHER states which conversions are legal. So the set implemented is the
+// narrow one — conversions among the numeric primitives and `bool` — and every
+// other cast is refused by name rather than guessed at. When the spec says
+// which further casts are meant, the refusal is the thing to edit.
+
+fn main() {
+    print("Widening and narrowing between integer widths:");
+    let small: i32 = 7;
+    let wide = small as i64;
+    print_int(wide);
+    let back = wide as i32;
+    print_int(back as i64);
+
+    print("Float to integer truncates toward zero, as C does:");
+    let pi = 3.9;
+    print_int(pi as i64);
+    let neg = -3.9;
+    print_int(neg as i64);
+
+    print("Integer to float:");
+    let half = 1 as f64 / 2 as f64;
+    print_int(half as i64);
+
+    print("Bool to integer:");
+    print_int(true as i64);
+    print_int(false as i64);
+
+    print("Integer to bool is a comparison against zero:");
+    let zero = 0;
+    let nonzero = 5;
+    if zero as bool {
+        print("zero was true");
+    } else {
+        print("zero was false");
+    }
+    if nonzero as bool {
+        print("nonzero was true");
+    } else {
+        print("nonzero was false");
+    }
+
+    print("Chained:");
+    print_int(3.7 as i64 as i32 as i64);
+
+    print("A cast binds tighter than a binary operator:");
+    // `1 + 2.9 as i64` is `1 + (2.9 as i64)` = 3, not `(1 + 2.9) as i64` = 3.
+    // Those agree, so use a shape where they do not: `10 / 4.0 as i64` is
+    // `10 / 4` = 2 under the tight reading.
+    print_int(10 / 4.0 as i64);
+
+    print("On a function's result, and on a variable:");
+    print_int(half_of(9) as i64);
+}
+
+fn half_of(n: i64) -> f64 {
+    n as f64 / 2.0
+}

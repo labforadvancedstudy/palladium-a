@@ -767,6 +767,10 @@ fn escape_expr(expr: &mut Expr) {
                 escape_expr(v);
             }
         }
+        Expr::Cast { expr, ty, .. } => {
+            escape_expr(expr);
+            escape_type(ty);
+        }
         Expr::Loop { body, .. } => escape_block(body),
         Expr::Match { expr, arms, .. } => {
             escape_expr(expr);

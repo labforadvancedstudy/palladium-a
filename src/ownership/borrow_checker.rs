@@ -1061,6 +1061,9 @@ impl BorrowChecker {
             Expr::Block { stmts, value, .. } => {
                 self.check_value_block(stmts, value.as_deref())?;
             }
+            Expr::Cast { expr, .. } => {
+                self.check_expr(expr)?;
+            }
             Expr::Loop { body, .. } => {
                 self.check_value_block(body, None)?;
             }

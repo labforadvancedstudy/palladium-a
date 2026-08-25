@@ -368,6 +368,44 @@ pub enum Token {
     #[token("||")]
     OrOr,
 
+    // Bitwise (N5-12). `&` and `|` already exist above and below — `&` for
+    // references, `|` for nothing at all until now — so only the four missing
+    // lexemes are added here.
+    #[token("^")]
+    Caret,
+
+    #[token("~")]
+    Tilde,
+
+    #[token("<<")]
+    Shl,
+
+    // THERE IS DELIBERATELY NO `>>` TOKEN, AND THE ASYMMETRY IS MEASURED.
+    // `Option<Vec<Stmt>>` closes two generic argument lists with two adjacent
+    // `>`; a longest-match `>>` token would swallow both and break every
+    // nested generic in the tree (stdlib/std/sync.pd, stdlib/std/net.pd,
+    // bootstrap/v2_full_compiler/ast.pd:83, …). The shift operator is
+    // recognised in the parser instead, from two `Gt` tokens that ARE adjacent
+    // in the source — see `Parser::check_shr`. `<<` needs no such care: the
+    // two `<` of `Vec<Vec<T>>` have an identifier between them and are never
+    // adjacent.
+
+    // Compound assignment (N5-13).
+    #[token("+=")]
+    PlusEq,
+
+    #[token("-=")]
+    MinusEq,
+
+    #[token("*=")]
+    StarEq,
+
+    #[token("/=")]
+    SlashEq,
+
+    #[token("%=")]
+    PercentEq,
+
     // Delimiters
     #[token("(")]
     LeftParen,
@@ -401,6 +439,11 @@ pub enum Token {
 
     #[token("..")]
     DotDot,
+
+    /// Inclusive range (N5-14). Longer than `..`, so logos prefers it and
+    /// `0..=5` lexes as `0`, `..=`, `5`.
+    #[token("..=")]
+    DotDotEq,
 
     #[token("->")]
     Arrow,
@@ -457,6 +500,7 @@ impl Token {
                 | Token::LeftParen
                 | Token::Minus
                 | Token::Not
+                | Token::Tilde
         )
     }
 
@@ -494,6 +538,15 @@ impl std::fmt::Display for Token {
             Token::If => write!(f, "'if'"),
             Token::Else => write!(f, "'else'"),
             Token::While => write!(f, "'while'"),
+            Token::Caret => write!(f, "'^'"),
+            Token::Tilde => write!(f, "'~'"),
+            Token::Shl => write!(f, "'<<'"),
+            Token::PlusEq => write!(f, "'+='"),
+            Token::MinusEq => write!(f, "'-='"),
+            Token::StarEq => write!(f, "'*='"),
+            Token::SlashEq => write!(f, "'/='"),
+            Token::PercentEq => write!(f, "'%='"),
+            Token::DotDotEq => write!(f, "'..='"),
             Token::Loop => write!(f, "'loop'"),
             Token::Return => write!(f, "'return'"),
             Token::True => write!(f, "'true'"),

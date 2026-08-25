@@ -539,10 +539,21 @@ pub enum Expr {
         data: Option<EnumConstructorData>,
         span: Span,
     },
-    /// Range expression (start..end)
+    /// Range expression — `start..end` and `start..=end` (N5-14).
+    ///
+    /// `inclusive` is a flag rather than a second variant because the two
+    /// forms differ in exactly one bit of behaviour (whether `end` is visited)
+    /// and agree in everything else — their type, their storage, and every
+    /// pass that walks them. Two variants would duplicate all of that to
+    /// express one boolean.
+    ///
+    /// Kept as an unnormalised flag rather than lowered to `start..end+1`,
+    /// because `end + 1` is not always a number: `0..=i64::MAX` would wrap to
+    /// an empty range, quietly.
     Range {
         start: Box<Expr>,
         end: Box<Expr>,
+        inclusive: bool,
         span: Span,
     },
     /// Reference expression (&expr or &mut expr)
@@ -586,6 +597,17 @@ pub enum Expr {
         then_value: Option<Box<Expr>>,
         else_branch: Option<Vec<Stmt>>,
         else_value: Option<Box<Expr>>,
+        span: Span,
+    },
+    /// `as` cast — `x as i64` (N5-15).
+    ///
+    /// The target is a `Type` and not a string, because it is parsed by the
+    /// ordinary type parser: `as` takes a type, per grammar.ebnf
+    /// (`cast_expr = expression "as" type`), and a second spelling of types
+    /// here would be a second place for `int` to mean something.
+    Cast {
+        expr: Box<Expr>,
+        ty: Type,
         span: Span,
     },
     /// `loop` in VALUE position — `let x = loop { …; break v; };` (N5-07).
@@ -654,6 +676,13 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    /// Bitwise `&`, `|`, `^` and the shifts (N5-12). Integer-only; the type
+    /// checker refuses every other operand type by name.
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 /// Unary operators
@@ -663,6 +692,11 @@ pub enum UnaryOp {
     Neg,
     /// Logical not (!)
     Not,
+    /// Bitwise complement (~) — N5-12. Distinct from `Not`: `!` is a
+    /// truth-value operator over `bool` and `~` flips the bits of an integer,
+    /// and folding them together would make `!0` and `~0` the same expression
+    /// with two different answers.
+    BitNot,
 }
 
 impl Expr {
@@ -691,6 +725,7 @@ impl Expr {
             Expr::Await { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Block { span, .. } => *span,
+            Expr::Cast { span, .. } => *span,
             Expr::Loop { span, .. } => *span,
             Expr::Match { span, .. } => *span,
         }
@@ -1246,8 +1281,13 @@ impl std::fmt::Display for Expr {
                     None => Ok(()),
                 }
             }
-            Expr::Range { start, end, .. } => {
-                write!(f, "{}..{}", start, end)
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+                ..
+            } => {
+                write!(f, "{}..{}{}", start, if *inclusive { "=" } else { "" }, end)
             }
             Expr::Reference { mutable, expr, .. } => {
                 if *mutable {
@@ -1308,6 +1348,7 @@ impl std::fmt::Display for Expr {
                     None => Ok(()),
                 }
             }
+            Expr::Cast { expr, ty, .. } => write!(f, "{} as {}", expr, ty),
             Expr::Loop { body, .. } => {
                 write!(f, "loop {{")?;
                 if !body.is_empty() {
@@ -1395,6 +1436,11 @@ impl std::fmt::Display for BinOp {
             BinOp::Ge => write!(f, ">="),
             BinOp::And => write!(f, "&&"),
             BinOp::Or => write!(f, "||"),
+            BinOp::BitAnd => write!(f, "&"),
+            BinOp::BitOr => write!(f, "|"),
+            BinOp::BitXor => write!(f, "^"),
+            BinOp::Shl => write!(f, "<<"),
+            BinOp::Shr => write!(f, ">>"),
         }
     }
 }
@@ -1404,6 +1450,7 @@ impl std::fmt::Display for UnaryOp {
         match self {
             UnaryOp::Neg => write!(f, "-"),
             UnaryOp::Not => write!(f, "!"),
+            UnaryOp::BitNot => write!(f, "~"),
         }
     }
 }

@@ -171,7 +171,6 @@ fn test_loop_keyword() {
 }
 
 #[test]
-#[ignore = "XFAIL: `as` casts — grammar.ebnf:251 'no `as` casts'; the parser stops at 'as' (owned by M2, surface syntax)"]
 fn test_as_cast() {
     compile_and_verify("fn main() { let x = 5 as int; }", &["(long long)5"]);
 }
@@ -233,7 +232,6 @@ fn test_logical_operators() {
 }
 
 #[test]
-#[ignore = "XFAIL: bitwise operators — the expression grammar (grammar.ebnf:215-223) has no `&`/`|`/`^`/`<<`/`>>` level and the lexer has no '^' token at all (owned by M2, surface syntax)"]
 fn test_bitwise_operators() {
     for (op, expected) in [
         ("&", "(a & b)"),
@@ -250,17 +248,30 @@ fn test_bitwise_operators() {
 }
 
 #[test]
-#[ignore = "XFAIL: compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`) — missing lexer tokens, so `x += 1` parses as `x +` then fails on '=' (owned by M2, item 3)"]
 fn test_compound_assignment_operators() {
+    // THE PARENTHESES ARE THE EMITTER'S, NOT THE DESUGARING'S. This test was
+    // written before the feature existed and expected `x = x + 1;`; code
+    // generation wraps EVERY binary expression in parentheses and always has
+    // (it is why `-Wparentheses-equality` is the most common diagnostic this
+    // compiler produces — see `NON_FATAL_DIAGNOSTIC_TAGS` in src/linker.rs), so
+    // the real output is `x = (x + 1);`. The claim under test is unchanged:
+    // `t op= v` lowers to `t = t op v`, with THAT operator.
+    //
+    // THE OPERAND IS 3 AND NOT 1, for the reason `test_arithmetic_operators`
+    // below already records about literals: the optimizer folds. `x * 1` and
+    // `x / 1` are IDENTITIES, and `simplify` removes them — measured, both
+    // emitted `x = x;` — so with `1` this test could never observe `*=` or
+    // `/=` at all, whatever the lowering did. 3 is an identity for none of the
+    // five.
     for (op, expected) in [
-        ("+=", "x = x + 1;"),
-        ("-=", "x = x - 1;"),
-        ("*=", "x = x * 1;"),
-        ("/=", "x = x / 1;"),
-        ("%=", "x = x % 1;"),
+        ("+=", "x = (x + 3);"),
+        ("-=", "x = (x - 3);"),
+        ("*=", "x = (x * 3);"),
+        ("/=", "x = (x / 3);"),
+        ("%=", "x = (x % 3);"),
     ] {
         compile_and_verify(
-            &format!("fn main() {{ let mut x = 6; x {} 1; }}", op),
+            &format!("fn main() {{ let mut x = 6; x {} 3; }}", op),
             &[expected],
         );
     }

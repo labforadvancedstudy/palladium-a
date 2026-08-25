@@ -1,0 +1,16 @@
+Exclusive range in a for header:
+10
+Inclusive range in a for header:
+15
+Bound by a let, then iterated:
+6
+An inclusive range bound by a let:
+10
+The same binding iterated twice:
+6
+Computed endpoints:
+15
+An empty range visits nothing:
+0
+An inclusive range with equal ends visits one element:
+1

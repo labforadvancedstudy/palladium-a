@@ -1,0 +1,74 @@
+// Test 02: compound assignment (requirement N5-13).
+//
+// `+= -= *= /= %=`. There were no such tokens, so `x += 1` lexed as `x`, `+`,
+// `=` and died on the `=`.
+//
+// LOWERED BY DESUGARING, not by emitting C's own `x += 1`. The reviewed test
+// `test_compound_assignment_operators` in tests/compiler_comprehensive_test.rs
+// asserts the emitted C contains `x = x + 1;`, and grammar.ebnf states the
+// normative form as a STATEMENT — `place ( "+=" | … ) expression ";"` — not as
+// an operator. So `t op= v` becomes `t = t op v`.
+//
+// THE RESIDUAL THAT COMES WITH THAT CHOICE: the target is written twice, so it
+// is EVALUATED twice. For an identifier or a field that is unobservable. For an
+// index whose subscript has a side effect — `a[next()] += 1` — it is not:
+// `next()` runs twice. Nothing here does that, and nothing in this fixture
+// should be read as evidence that it is safe.
+
+struct Counter {
+    hits: i64,
+    misses: i64,
+}
+
+fn main() {
+    print("On an identifier:");
+    let mut x = 6;
+    x += 1;
+    print_int(x);
+    x -= 3;
+    print_int(x);
+    x *= 5;
+    print_int(x);
+    x /= 2;
+    print_int(x);
+    x %= 4;
+    print_int(x);
+
+    print("The right-hand side is a whole expression:");
+    let mut y = 100;
+    y += 2 * 3 + 1;
+    print_int(y);
+    y -= -5;
+    print_int(y);
+
+    print("On an array element:");
+    let mut nums = [1, 2, 3];
+    nums[0] += 10;
+    nums[1] *= 7;
+    nums[2] -= 1;
+    print_int(nums[0]);
+    print_int(nums[1]);
+    print_int(nums[2]);
+
+    print("On a struct field:");
+    let mut c = Counter { hits: 0, misses: 0 };
+    c.hits += 3;
+    c.hits *= 2;
+    c.misses += 1;
+    print_int(c.hits);
+    print_int(c.misses);
+
+    print("In a loop:");
+    let mut total = 0;
+    let mut i = 1;
+    while i <= 5 {
+        total += i;
+        i += 1;
+    }
+    print_int(total);
+
+    print("On a string, where `+` is concatenation:");
+    let mut s = "a";
+    s += "bc";
+    print(s);
+}

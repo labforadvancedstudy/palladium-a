@@ -1,0 +1,65 @@
+// Test 02: bitwise operators (requirement N5-12).
+//
+// `& | ^ ~ << >>`. The lexer had `&` (references) and `|` (nothing consumed it)
+// and no `^`, `~`, `<<` or `>>` at all; `BinOp` had no bitwise variants and
+// `UnaryOp` had only `Neg` and `Not`.
+//
+// PRECEDENCE. The spec's normative sentence names the operators and fixes only
+// one ordering (unary before multiplication, N5-16). The order used here is
+// Rust's, which is also C's for everything except that C puts the comparisons
+// tighter than `&`/`^`/`|` — a C wart that the language this compiler emits to
+// warns about. Written out, tightest first:
+//
+//     unary  >  * / %  >  + -  >  << >>  >  &  >  ^  >  |  >  comparisons
+//
+// The cases below are chosen so that a WRONG grouping gives a different
+// number, not merely a different tree.
+
+fn main() {
+    let a = 12;   // 1100
+    let b = 10;   // 1010
+
+    print("And, or, xor:");
+    print_int(a & b);
+    print_int(a | b);
+    print_int(a ^ b);
+
+    print("Shifts:");
+    print_int(a << 2);
+    print_int(a >> 2);
+    print_int(1 << 10);
+
+    print("Complement:");
+    print_int(~a);
+    print_int(~0);
+    print_int(~ -1);
+
+    print("Shifts bind tighter than `&`:");
+    // 1 << 3 is 8; 8 & 12 is 8. If `&` bound tighter it would be 1 << (3 & 12)
+    // = 1 << 0 = 1.
+    print_int(1 << 3 & a);
+
+    print("`&` binds tighter than `^`, which binds tighter than `|`:");
+    // a & b is 8; 8 ^ 5 is 13; 13 | 2 is 15.
+    print_int(a & b ^ 5 | 2);
+
+    print("Addition binds tighter than the shifts:");
+    // Both sides group first: (1 + 1) << (1 + 1) is 2 << 2, which is 8. If the
+    // shift bound tighter it would be 1 + (1 << 1) + 1, which is 4.
+    print_int(1 + 1 << 1 + 1);
+
+    print("Complement binds tighter than everything binary:");
+    // ~0 is -1; -1 & 12 is 12. If `&` bound tighter it would be ~(0 & 12) = -1.
+    print_int(~0 & a);
+
+    print("Parentheses still override:");
+    print_int((a | b) & 6);
+    print_int(a | (b & 6));
+
+    print("Bitwise on variables, through a function:");
+    print_int(mask(255, 12));
+}
+
+fn mask(value: i64, bits: i64) -> i64 {
+    value & bits
+}

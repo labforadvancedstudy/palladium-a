@@ -614,6 +614,15 @@ pub enum CheckerType {
         args: Vec<GenericArgValue>,
     },
     Tuple(Vec<CheckerType>),
+    /// `a..b` and `a..=b` (N5-14).
+    ///
+    /// A TYPE OF ITS OWN, replacing the `Array(Int, 0)` this used to answer.
+    /// That answer was a lie told to make the `for` header typecheck, and it
+    /// type-checked much more than a `for` header: it made a range assignable
+    /// to an `[i64; 0]`, indexable, and passable wherever an array was wanted.
+    /// The specification names no operations on a range beyond iterating it,
+    /// so this type has none.
+    Range,
 }
 
 /// Map a built-in's type (from the canonical registry) to a checker type.
@@ -725,6 +734,7 @@ impl std::fmt::Display for CheckerType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CheckerType::Unit => write!(f, "()"),
+            CheckerType::Range => write!(f, "a range"),
             CheckerType::String => write!(f, "String"),
             CheckerType::Int => write!(f, "Int"),
             CheckerType::Float => write!(f, "Float"),
@@ -2920,6 +2930,9 @@ impl TypeChecker {
                 // Extract element type from array
                 let elem_type = match iter_type {
                     CheckerType::Array(elem_type, _size) => elem_type.as_ref().clone(),
+                    // A range yields the integers between its ends — whether it
+                    // was written in the header or bound by a `let` first.
+                    CheckerType::Range => CheckerType::Int,
                     _ => {
                         return Err(CompileError::Generic(format!(
                             "For loop requires an array, found {}",
@@ -3393,6 +3406,35 @@ impl TypeChecker {
                             });
                         }
                         Ok(CheckerType::Bool)
+                    }
+                    // N5-12. INTEGER OPERANDS ONLY, both sides, no exceptions.
+                    // C would happily accept a `double` for `&` after an
+                    // implicit conversion nobody wrote, and `bool` operands
+                    // would make `true & 2` a number; the specification names
+                    // these as bitwise operators, and bits are what integers
+                    // have.
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                        if left_type != CheckerType::Int {
+                            return Err(CompileError::TypeMismatch {
+                                expected: format!(
+                                    "an integer on the left of `{}`, which is a bitwise operator",
+                                    op
+                                ),
+                                found: left_type.to_string(),
+                                span: None,
+                            });
+                        }
+                        if right_type != CheckerType::Int {
+                            return Err(CompileError::TypeMismatch {
+                                expected: format!(
+                                    "an integer on the right of `{}`, which is a bitwise operator",
+                                    op
+                                ),
+                                found: right_type.to_string(),
+                                span: None,
+                            });
+                        }
+                        Ok(CheckerType::Int)
                     }
                 }
             }
@@ -3961,12 +4003,7 @@ impl TypeChecker {
                     });
                 }
 
-                // Range expressions have a special internal type
-                // For now, we'll treat them as arrays when used in for loops
-                Ok(CheckerType::Array(
-                    Box::new(CheckerType::Int),
-                    ArraySizeValue::Literal(0),
-                ))
+                Ok(CheckerType::Range)
             }
             Expr::Unary { op, operand, .. } => {
                 let operand_type = self.check_expression(operand)?;
@@ -3993,6 +4030,21 @@ impl TypeChecker {
                             });
                         }
                         Ok(CheckerType::Bool)
+                    }
+                    UnaryOp::BitNot => {
+                        // `~` flips bits, so it wants the thing that has them.
+                        // Kept distinct from `!` on purpose: folding the two
+                        // together would make `!0` and `~0` the same
+                        // expression with two different answers.
+                        if operand_type != CheckerType::Int {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "an integer operand for `~`, which flips its bits"
+                                    .to_string(),
+                                found: operand_type.to_string(),
+                                span: None,
+                            });
+                        }
+                        Ok(CheckerType::Int)
                     }
                 }
             }
@@ -4095,6 +4147,36 @@ impl TypeChecker {
             }
             Expr::Block { stmts, value, span } => {
                 self.check_value_block(stmts, value.as_deref(), *span)
+            }
+            Expr::Cast { expr, ty, span } => {
+                let from = self.check_expression(expr)?;
+                let to = CheckerType::from(ty);
+
+                // THE LEGAL CAST SET IS NARROW ON PURPOSE.
+                //
+                // The specification names `as` casts (language-spec.md N5) and
+                // grammar.ebnf gives the form, and NEITHER says which
+                // conversions are meant. So the set here is the one that has an
+                // unambiguous meaning in the target language — conversions
+                // among the numeric primitives and `bool` — and everything else
+                // is refused BY NAME rather than guessed at. A cast from
+                // `String` to `i64` in particular would be a pointer
+                // reinterpreted as a number in C: it would compile, run, and
+                // print an address.
+                let castable = |t: &CheckerType| {
+                    matches!(t, CheckerType::Int | CheckerType::Float | CheckerType::Bool)
+                };
+                if !castable(&from) || !castable(&to) {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "a cast between the numeric primitives and `bool`, which is \
+                                   the set `as` is defined over here"
+                            .to_string(),
+                        found: format!("a cast from {} to {}", from, to),
+                        span: Some(*span),
+                    });
+                }
+
+                Ok(to)
             }
             Expr::Loop { body, span } => {
                 // The loop's type is decided by its `break`s, so the frame is
@@ -4705,6 +4787,9 @@ impl TypeChecker {
     fn checker_type_to_string(&self, ty: &CheckerType) -> String {
         match ty {
             CheckerType::Unit => "()".to_string(),
+            // Not a spellable type argument: there is no surface name for a
+            // range, so a generic can never be instantiated at one.
+            CheckerType::Range => "range".to_string(),
             CheckerType::String => "String".to_string(),
             CheckerType::Int => "i64".to_string(),
             CheckerType::Float => "f64".to_string(),

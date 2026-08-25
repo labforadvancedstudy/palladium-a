@@ -1394,6 +1394,11 @@ impl LLVMTextBackend {
                             result_var, op_var
                         ));
                     }
+                    UnaryOp::BitNot => {
+                        // `~x` is `x ^ -1` in two's complement, which is what
+                        // LLVM's canonical form for it is too.
+                        ir.push_str(&format!("  {} = xor i64 {}, -1\n", result_var, op_var));
+                    }
                 }
                 
                 Ok((ir, result_var))
@@ -1453,6 +1458,20 @@ impl LLVMTextBackend {
             | Expr::Block { span, .. }
             | Expr::Loop { span, .. }
             | Expr::Match { span, .. } => Err(unimplemented_value_block(*span)),
+
+            // No numeric conversion lowering here (`sext`/`trunc`/`fptosi`/…),
+            // and inventing one would be this backend making a promise the
+            // supported one has to keep.
+            Expr::Cast { span, .. } => Err(CompileError::Unimplemented {
+                construct: "an `as` cast".to_string(),
+                consequence: "this backend has no numeric conversion lowering, so the operand \
+                     would be used at its original width and sign"
+                    .to_string(),
+                workaround: "compile without `--llvm`, which is the supported backend and emits \
+                     the C cast"
+                    .to_string(),
+                span: Some(*span),
+            }),
         }
     }
 

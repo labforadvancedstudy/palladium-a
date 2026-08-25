@@ -1,0 +1,20 @@
+Widening and narrowing between integer widths:
+7
+7
+Float to integer truncates toward zero, as C does:
+3
+-3
+Integer to float:
+0
+Bool to integer:
+1
+0
+Integer to bool is a comparison against zero:
+zero was false
+nonzero was true
+Chained:
+3
+A cast binds tighter than a binary operator:
+2
+On a function's result, and on a variable:
+4

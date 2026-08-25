@@ -96,9 +96,9 @@ tests/advanced_features_test.rs	test_module_system	owed	M2	Compilation failed: S
 tests/advanced_features_test.rs	test_pattern_matching_advanced	owed	M4	Compilation failed: Type mismatch: expected Result<Int, String>, found Result<(), String>
 tests/advanced_features_test.rs	test_trait_system	owed	M4	Compilation failed: Unexpected token: expected parameter name, found '&'
 tests/advanced_features_test.rs	test_unsafe_operations	owed	M4	Compilation failed: Unexpected token: expected ';' (Expected ';' after let statement), found 'as'
-tests/compiler_comprehensive_test.rs	test_as_cast	owed	M2	Error: Unexpected token: expected ';' (Expected ';' after let statement), found 'as'
-tests/compiler_comprehensive_test.rs	test_bitwise_operators	owed	M2	Error: Unexpected token: expected ';' (Expected ';' after let statement), found '&'
-tests/compiler_comprehensive_test.rs	test_compound_assignment_operators	owed	M2	Error: Unexpected token: expected expression, found '='
+tests/compiler_comprehensive_test.rs	test_as_cast	paid	-	-
+tests/compiler_comprehensive_test.rs	test_bitwise_operators	paid	-	-
+tests/compiler_comprehensive_test.rs	test_compound_assignment_operators	paid	-	-
 tests/compiler_comprehensive_test.rs	test_else_if_chain	paid	-	-
 tests/compiler_comprehensive_test.rs	test_loop_keyword	paid	-	-
 tests/compiler_comprehensive_test.rs	test_match_on_integer_literal	owed	M2	Error: Unexpected token: expected pattern, found integer 1

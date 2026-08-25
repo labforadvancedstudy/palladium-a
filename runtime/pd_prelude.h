@@ -10,6 +10,21 @@
 #include <ctype.h>
 #include <stdint.h>
 
+// Range values (N5-14)
+typedef struct {
+    long long start;
+    long long end;
+    int inclusive;
+} __pd_range;
+
+static __pd_range __pd_range_new(long long start, long long end, int inclusive) {
+    __pd_range r;
+    r.start = start;
+    r.end = end;
+    r.inclusive = inclusive;
+    return r;
+}
+
 // String memory pool to prevent leaks
 #define STRING_POOL_SIZE 65536
 #define MAX_STRINGS 1024

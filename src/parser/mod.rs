@@ -645,6 +645,7 @@ impl Parser {
             Expr::MacroInvocation { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Block { span, .. } => *span,
+            Expr::Cast { span, .. } => *span,
             Expr::Loop { span, .. } => *span,
             Expr::Match { span, .. } => *span,
             Expr::Await { span, .. } => *span,
@@ -2085,14 +2086,57 @@ impl Parser {
                 let checkpoint = self.current;
                 let expr = self.parse_expression()?; // Parse full expression including dereference
 
-                // Check if this is an assignment
-                if self.check(&Token::Eq) && !self.check_at(1, &Token::Eq) {
+                // Check if this is an assignment, plain or compound.
+                //
+                // COMPOUND ASSIGNMENT IS DESUGARED HERE (N5-13):
+                // `t op= v` becomes `t = t op v`. Two reasons, and neither is
+                // taste. grammar.ebnf gives the normative form as a STATEMENT
+                // (`place ( "+=" | … ) expression ";"`) rather than as an
+                // operator, so there is nothing to put in `BinOp`; and the
+                // reviewed test `test_compound_assignment_operators` reads the
+                // emitted C for `x = x + 1;`, not for C's own `x += 1`.
+                //
+                // THE RESIDUAL THIS CHOICE BUYS, STATED RATHER THAN SOLVED:
+                // the target appears twice in the desugaring, so it is
+                // EVALUATED twice. `x`, `s.field` and `*p` cannot tell the
+                // difference. `a[next()] += 1` can — it calls `next()` twice.
+                // Fixing it needs a place-expression lowering that binds the
+                // subscript to a temporary first, which is a change to how
+                // every assignment target is emitted and is not this row.
+                let compound_op = match self.peek() {
+                    Ok(Token::PlusEq) => Some(BinOp::Add),
+                    Ok(Token::MinusEq) => Some(BinOp::Sub),
+                    Ok(Token::StarEq) => Some(BinOp::Mul),
+                    Ok(Token::SlashEq) => Some(BinOp::Div),
+                    Ok(Token::PercentEq) => Some(BinOp::Mod),
+                    _ => None,
+                };
+                if compound_op.is_some() || (self.check(&Token::Eq) && !self.check_at(1, &Token::Eq))
+                {
                     // This is an assignment
                     let start_span = expr.span();
-                    self.advance()?; // consume '='
-                    let value = self.parse_expression()?;
+                    self.advance()?; // consume '=' or the compound operator
+                    let rhs = self.parse_expression()?;
                     let end_span =
                         self.consume(Token::Semicolon, "Expected ';' after assignment")?;
+
+                    let value = match compound_op {
+                        None => rhs,
+                        Some(op) => {
+                            let span = Span::new(
+                                start_span.start,
+                                end_span.end,
+                                start_span.line,
+                                start_span.column,
+                            );
+                            Expr::Binary {
+                                left: Box::new(expr.clone()),
+                                op,
+                                right: Box::new(rhs),
+                                span,
+                            }
+                        }
+                    };
 
                     // Convert expression to assignment target
                     let target = match expr {
@@ -2826,25 +2870,30 @@ impl Parser {
         let mut left = self.parse_logical_or()?;
 
         while let Ok(token) = self.peek() {
-            match token {
-                Token::DotDot => {
-                    let left_span = Self::expr_span(&left);
-                    self.advance()?; // consume '..'
-                    let right = self.parse_logical_or()?;
-                    let right_span = Self::expr_span(&right);
-                    left = Expr::Range {
-                        start: Box::new(left),
-                        end: Box::new(right),
-                        span: Span::new(
-                            left_span.start,
-                            right_span.end,
-                            left_span.line,
-                            left_span.column,
-                        ),
-                    };
-                }
+            // `..` and `..=` (N5-14). Both are the same production with one bit
+            // different; `..=` is its own token, so the lexer's longest match
+            // has already told them apart.
+            let inclusive = match token {
+                Token::DotDot => false,
+                Token::DotDotEq => true,
                 _ => break,
-            }
+            };
+
+            let left_span = Self::expr_span(&left);
+            self.advance()?; // consume '..' or '..='
+            let right = self.parse_logical_or()?;
+            let right_span = Self::expr_span(&right);
+            left = Expr::Range {
+                start: Box::new(left),
+                end: Box::new(right),
+                inclusive,
+                span: Span::new(
+                    left_span.start,
+                    right_span.end,
+                    left_span.line,
+                    left_span.column,
+                ),
+            };
         }
 
         Ok(left)
@@ -2949,7 +2998,7 @@ impl Parser {
 
     /// Parse comparison operators (<, >, <=, >=)
     fn parse_comparison(&mut self) -> Result<Expr> {
-        let mut left = self.parse_addition()?;
+        let mut left = self.parse_bitor()?;
 
         while let Ok(token) = self.peek() {
             match token {
@@ -2962,7 +3011,7 @@ impl Parser {
                         Token::Ge => BinOp::Ge,
                         _ => unreachable!(),
                     };
-                    let right = self.parse_addition()?;
+                    let right = self.parse_bitor()?;
                     let right_span = Self::expr_span(&right);
                     let span = Span::new(
                         left_span.start,
@@ -2982,6 +3031,184 @@ impl Parser {
         }
 
         Ok(left)
+    }
+
+    /// Is the current token the start of a `>>` written as two ADJACENT `>`?
+    ///
+    /// THERE IS NO `>>` LEXER TOKEN, AND THAT IS DELIBERATE (see
+    /// `src/lexer/token.rs`): `Option<Vec<Stmt>>` closes two generic argument
+    /// lists with two `>` in a row, and a longest-match `>>` token would eat
+    /// both and break every nested generic in the tree. So the shift operator
+    /// is recognised HERE, where the two readings can be told apart by the one
+    /// thing that distinguishes them — whether the characters touch.
+    ///
+    /// `a > > b` is therefore not a shift, and `Vec<Vec<i64>>` is not one
+    /// either, because in the type the `>`s are adjacent but no expression
+    /// parser ever looks at them.
+    fn check_shr(&self) -> bool {
+        let (Some((Token::Gt, first)), Some((Token::Gt, second))) = (
+            self.tokens.get(self.current),
+            self.tokens.get(self.current + 1),
+        ) else {
+            return false;
+        };
+        first.end == second.start
+    }
+
+    /// Parse bitwise OR (`|`) — the loosest of the bitwise levels (N5-12).
+    ///
+    /// The three bitwise levels and the shifts sit BETWEEN the comparisons and
+    /// addition, which is Rust's order and not C's: C binds `==` tighter than
+    /// `&`, so `a & b == c` means `a & (b == c)` there — a wart C compilers
+    /// themselves warn about. Emitted C is fully parenthesised, so the
+    /// difference cannot leak into the object code.
+    fn parse_bitor(&mut self) -> Result<Expr> {
+        let mut left = self.parse_bitxor()?;
+
+        while matches!(self.peek(), Ok(Token::Pipe)) {
+            let left_span = Self::expr_span(&left);
+            self.advance()?; // consume '|'
+            let right = self.parse_bitxor()?;
+            let right_span = Self::expr_span(&right);
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinOp::BitOr,
+                right: Box::new(right),
+                span: Span::new(
+                    left_span.start,
+                    right_span.end,
+                    left_span.line,
+                    left_span.column,
+                ),
+            };
+        }
+
+        Ok(left)
+    }
+
+    /// Parse bitwise XOR (`^`).
+    fn parse_bitxor(&mut self) -> Result<Expr> {
+        let mut left = self.parse_bitand()?;
+
+        while matches!(self.peek(), Ok(Token::Caret)) {
+            let left_span = Self::expr_span(&left);
+            self.advance()?; // consume '^'
+            let right = self.parse_bitand()?;
+            let right_span = Self::expr_span(&right);
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinOp::BitXor,
+                right: Box::new(right),
+                span: Span::new(
+                    left_span.start,
+                    right_span.end,
+                    left_span.line,
+                    left_span.column,
+                ),
+            };
+        }
+
+        Ok(left)
+    }
+
+    /// Parse bitwise AND (`&`).
+    ///
+    /// The same `&` that starts a reference. There is no ambiguity to resolve:
+    /// a reference is a PREFIX and is read by `parse_unary` before any operand
+    /// exists, while this loop only looks for `&` once a complete left operand
+    /// has been parsed. `&&` is its own token, so it cannot be mistaken for
+    /// two of these.
+    fn parse_bitand(&mut self) -> Result<Expr> {
+        let mut left = self.parse_shift()?;
+
+        while matches!(self.peek(), Ok(Token::Ampersand)) {
+            let left_span = Self::expr_span(&left);
+            self.advance()?; // consume '&'
+            let right = self.parse_shift()?;
+            let right_span = Self::expr_span(&right);
+            left = Expr::Binary {
+                left: Box::new(left),
+                op: BinOp::BitAnd,
+                right: Box::new(right),
+                span: Span::new(
+                    left_span.start,
+                    right_span.end,
+                    left_span.line,
+                    left_span.column,
+                ),
+            };
+        }
+
+        Ok(left)
+    }
+
+    /// Parse the shifts (`<<`, `>>`).
+    fn parse_shift(&mut self) -> Result<Expr> {
+        let mut left = self.parse_addition()?;
+
+        loop {
+            let op = if matches!(self.peek(), Ok(Token::Shl)) {
+                self.advance()?; // consume '<<'
+                BinOp::Shl
+            } else if self.check_shr() {
+                self.advance()?; // consume the first '>'
+                self.advance()?; // consume the second '>'
+                BinOp::Shr
+            } else {
+                break;
+            };
+
+            let left_span = Self::expr_span(&left);
+            let right = self.parse_addition()?;
+            let right_span = Self::expr_span(&right);
+            left = Expr::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+                span: Span::new(
+                    left_span.start,
+                    right_span.end,
+                    left_span.line,
+                    left_span.column,
+                ),
+            };
+        }
+
+        Ok(left)
+    }
+
+    /// Parse `as` casts (N5-15).
+    ///
+    /// Sits between multiplication and unary, which is Rust's placement:
+    /// `10 / 4.0 as i64` is `10 / (4.0 as i64)`, and `-x as i64` is
+    /// `(-x) as i64` because the unary level is read first and the `as` then
+    /// applies to whatever it produced.
+    ///
+    /// The loop is what makes casts CHAINABLE — `3.7 as i64 as i32` — and it
+    /// is a loop rather than recursion so the chain is left-associative, which
+    /// is the only reading that means anything: each cast takes the previous
+    /// one's result.
+    fn parse_cast(&mut self) -> Result<Expr> {
+        let mut expr = self.parse_unary()?;
+
+        while matches!(self.peek(), Ok(Token::As)) {
+            let start_span = Self::expr_span(&expr);
+            self.advance()?; // consume 'as'
+            let ty = self.parse_type()?;
+            let end_span = self.current_span().unwrap_or(start_span);
+            expr = Expr::Cast {
+                expr: Box::new(expr),
+                ty,
+                span: Span::new(
+                    start_span.start,
+                    end_span.end,
+                    start_span.line,
+                    start_span.column,
+                ),
+            };
+        }
+
+        Ok(expr)
     }
 
     /// Parse addition and subtraction
@@ -3021,7 +3248,7 @@ impl Parser {
 
     /// Parse multiplication and division
     fn parse_multiplication(&mut self) -> Result<Expr> {
-        let mut left = self.parse_unary()?;
+        let mut left = self.parse_cast()?;
 
         while let Ok(token) = self.peek() {
             match token {
@@ -3033,7 +3260,23 @@ impl Parser {
                         Token::Percent => BinOp::Mod,
                         _ => unreachable!(),
                     };
-                    let right = self.parse_postfix()?;
+                    // `parse_unary`, NOT `parse_postfix` (N5-16). This one call
+                    // was the whole defect: the LEFT operand descended through
+                    // the unary level and the right one skipped it, so a `-`
+                    // after `*` had nothing to read it and `a * -b` did not
+                    // parse. grammar.ebnf states the correction as normative:
+                    // `multiplication = unary { ( '*' | '/' | '%' ) unary } ;`
+                    //
+                    // Every other level of this ladder was already symmetric —
+                    // equality descends to comparison on both sides,
+                    // comparison to addition, addition to multiplication —
+                    // which is why this was the only expression that failed.
+                    //
+                    // Both sides now go through `parse_cast`, which is
+                    // `parse_unary` plus the `as` suffix (N5-15); the unary
+                    // level is still reached on both sides, which is the whole
+                    // point of this row.
+                    let right = self.parse_cast()?;
                     let right_span = Self::expr_span(&right);
                     let span = Span::new(
                         left_span.start,
@@ -3405,6 +3648,21 @@ impl Parser {
                 let end_span = operand.span();
                 Ok(Expr::Unary {
                     op: UnaryOp::Neg,
+                    operand: Box::new(operand),
+                    span: Span::new(
+                        start_span.start,
+                        end_span.end,
+                        start_span.line,
+                        start_span.column,
+                    ),
+                })
+            }
+            Ok(Token::Tilde) => {
+                let (_, start_span) = self.advance()?; // consume '~'
+                let operand = self.parse_unary()?; // Right associative
+                let end_span = operand.span();
+                Ok(Expr::Unary {
+                    op: UnaryOp::BitNot,
                     operand: Box::new(operand),
                     span: Span::new(
                         start_span.start,

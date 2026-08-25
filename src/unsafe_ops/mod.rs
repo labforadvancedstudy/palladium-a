@@ -276,6 +276,7 @@ impl UnsafeChecker {
                 }
                 Ok(())
             }
+            Expr::Cast { expr, .. } => self.check_expression(expr),
             Expr::Loop { body, .. } => {
                 for stmt in body {
                     self.check_statement(stmt)?;

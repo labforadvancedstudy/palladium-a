@@ -1,0 +1,25 @@
+And, or, xor:
+8
+14
+6
+Shifts:
+48
+3
+1024
+Complement:
+-13
+-1
+0
+Shifts bind tighter than `&`:
+8
+`&` binds tighter than `^`, which binds tighter than `|`:
+15
+Addition binds tighter than the shifts:
+8
+Complement binds tighter than everything binary:
+12
+Parentheses still override:
+6
+14
+Bitwise on variables, through a function:
+12

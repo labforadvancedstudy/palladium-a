@@ -1,0 +1,86 @@
+// Test 04: ranges as VALUES, and the inclusive form (requirement N5-14).
+//
+// `..` parsed anywhere an expression could appear, but code generation refused
+// it outside a `for` header ("Range expressions can only be used in for loops"),
+// and `..=` did not lex at all.
+//
+// WHAT THIS FIXTURE PROVES, AND WHY IT IS NOT MORE. The specification's
+// normative text for N5-14 is one clause of one sentence — "ranges `..` and
+// `..=`" among the operators (language-spec.md N5) — plus grammar.ebnf's
+// `range_incl = expression "..=" expression`. It names NO accessors, NO methods
+// and NO type name for a range. So what is proved here is exactly what is
+// written down: `..` and `..=` are expressions, they may be bound by a `let`
+// (which is what "outside a `for` header" means), and iterating one visits the
+// right elements — inclusive of its endpoint for `..=` and exclusive for `..`.
+//
+// A range cannot be passed to or returned from a function here, because that
+// needs a TYPE NAME in a signature and the specification gives none. Inventing
+// one would be adding surface syntax nobody asked for.
+
+fn main() {
+    print("Exclusive range in a for header:");
+    let mut sum = 0;
+    for i in 0..5 {
+        sum = sum + i;
+    }
+    print_int(sum);
+
+    print("Inclusive range in a for header:");
+    let mut isum = 0;
+    for i in 0..=5 {
+        isum = isum + i;
+    }
+    print_int(isum);
+
+    print("Bound by a let, then iterated:");
+    let r = 1..4;
+    let mut a = 0;
+    for i in r {
+        a = a + i;
+    }
+    print_int(a);
+
+    print("An inclusive range bound by a let:");
+    let ri = 1..=4;
+    let mut b = 0;
+    for i in ri {
+        b = b + i;
+    }
+    print_int(b);
+
+    print("The same binding iterated twice:");
+    let twice = 0..3;
+    let mut c = 0;
+    for i in twice {
+        c = c + i;
+    }
+    for i in twice {
+        c = c + i;
+    }
+    print_int(c);
+
+    print("Computed endpoints:");
+    let n = 3;
+    let computed = n - 3..n * 2;
+    let mut d = 0;
+    for i in computed {
+        d = d + i;
+    }
+    print_int(d);
+
+    print("An empty range visits nothing:");
+    let empty = 5..5;
+    let mut e = 0;
+    for i in empty {
+        e = e + 1;
+    }
+    print_int(e);
+
+    print("An inclusive range with equal ends visits one element:");
+    let one = 5..=5;
+    let mut f = 0;
+    for i in one {
+        f = f + 1;
+    }
+    print_int(f);
+}

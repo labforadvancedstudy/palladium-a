@@ -492,6 +492,12 @@ impl CodeGenerator {
                     | BinOp::Ge
                     | BinOp::And
                     | BinOp::Or => Some("int".to_string()),
+                    // Bitwise and shift results are the LEFT operand's type
+                    // (integers, by the type checker's rule), not a fixed
+                    // `long long`: `let m: i32 = a & b;` must not widen.
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                        self.try_infer_expr_type(left)
+                    }
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
                         // The operands decide, because the answer is not always
                         // `long long`: `let d = x / y;` over two `double`s used
@@ -521,6 +527,9 @@ impl CodeGenerator {
             }
             Expr::Unary { op, operand, .. } => match op {
                 UnaryOp::Not => Some("int".to_string()),
+                // `~` is an INTEGER operator: its result is the operand's
+                // type, not the `int` a truth value would be.
+                UnaryOp::BitNot => self.try_infer_expr_type(operand),
                 UnaryOp::Neg => self.try_infer_expr_type(operand),
             },
             Expr::EnumConstructor { enum_name, .. } => {
@@ -612,6 +621,9 @@ impl CodeGenerator {
                         .and_then(|v| self.try_infer_expr_type(v))
                 }),
             Expr::Block { value, .. } => value.as_ref().and_then(|v| self.try_infer_expr_type(v)),
+            // A cast's type is the type it names — that is the whole content of
+            // the expression.
+            Expr::Cast { ty, .. } => Some(self.type_to_c(ty)),
             // Both of these carry their value in places whose bindings are not
             // in scope out here — a `match` arm's payload binding, a `break`
             // inside a loop body. The answer that counts is recorded while the
@@ -625,10 +637,8 @@ impl CodeGenerator {
             }
             // No rule yet: ranges are only meaningful inside `for`, `?` and
             // macros are lowered elsewhere, and await/async is unimplemented.
-            Expr::Range { .. }
-            | Expr::Question { .. }
-            | Expr::MacroInvocation { .. }
-            | Expr::Await { .. } => None,
+            Expr::Range { .. } => Some("__pd_range".to_string()),
+            Expr::Question { .. } | Expr::MacroInvocation { .. } | Expr::Await { .. } => None,
         }
     }
 
@@ -965,6 +975,7 @@ impl CodeGenerator {
             Expr::Await { .. } => "await",
             Expr::If { .. } => "`if` expression",
             Expr::Block { .. } => "block expression",
+            Expr::Cast { .. } => "`as` cast",
             Expr::Loop { .. } => "`loop` expression",
             Expr::Match { .. } => "`match` expression",
         }
@@ -1012,6 +1023,33 @@ impl CodeGenerator {
         self.output.push_str("#include <stdlib.h>\n");
         self.output.push_str("#include <ctype.h>\n");
         self.output.push_str("#include <stdint.h>\n\n");
+
+        // Ranges as VALUES (N5-14). `a..b` used to be refused outside a `for`
+        // header because there was nothing for it to BE; this is that thing.
+        //
+        // The end is kept as written, with a flag, rather than normalised to an
+        // exclusive bound: `a..=b` would become `a..b+1`, and `b + 1` is not
+        // always a number — `0..=<i64 max>` would wrap to an empty range with
+        // no diagnostic.
+        //
+        // Constructed through a function rather than a compound literal
+        // (`(__pd_range){a, b, 0}`), which is C99; the rest of this prelude is
+        // C89 and the backend is whatever `cc` the host has.
+        self.output.push_str("// Range values (N5-14)\n");
+        self.output.push_str("typedef struct {\n");
+        self.output.push_str("    long long start;\n");
+        self.output.push_str("    long long end;\n");
+        self.output.push_str("    int inclusive;\n");
+        self.output.push_str("} __pd_range;\n\n");
+        self.output.push_str(
+            "static __pd_range __pd_range_new(long long start, long long end, int inclusive) {\n",
+        );
+        self.output.push_str("    __pd_range r;\n");
+        self.output.push_str("    r.start = start;\n");
+        self.output.push_str("    r.end = end;\n");
+        self.output.push_str("    r.inclusive = inclusive;\n");
+        self.output.push_str("    return r;\n");
+        self.output.push_str("}\n\n");
 
         // Memory management for strings
         self.output
@@ -3245,8 +3283,16 @@ impl CodeGenerator {
 
                 // Check if iterating over a range
                 match iter {
-                    Expr::Range { start, end, .. } => {
-                        // Generate C-style for loop for range
+                    Expr::Range {
+                        start,
+                        end,
+                        inclusive,
+                        ..
+                    } => {
+                        // A range written IN the header keeps its fast path:
+                        // the bounds go straight into the `for`, with no
+                        // `__pd_range` value built and thrown away. `..=` is
+                        // the same loop with `<=`.
                         self.output.push_str("        // For loop with range\n");
                         self.output
                             .push_str(&format!("        for (long long {} = ", var));
@@ -3257,7 +3303,11 @@ impl CodeGenerator {
                         let loop_scope = self.open_binding_scope();
                         self.bind_non_array(var, "long long".to_string());
                         self.generate_expression(start)?;
-                        self.output.push_str(&format!("; {} < ", var));
+                        self.output.push_str(&format!(
+                            "; {} {} ",
+                            var,
+                            if *inclusive { "<=" } else { "<" }
+                        ));
                         self.generate_expression(end)?;
                         self.output.push_str(&format!("; {}++) {{\n", var));
 
@@ -3270,6 +3320,36 @@ impl CodeGenerator {
                         generated?;
                         self.close_binding_scope(loop_scope);
 
+                        self.output.push_str("        }\n");
+                    }
+                    // A range that is not written in the header — a `let`
+                    // binding, a call's result — is a `__pd_range` value, and
+                    // its bound has to be read out of the struct rather than
+                    // from the source. The comparison consults `inclusive` on
+                    // every step instead of computing `end + 1` once, because
+                    // `end + 1` wraps at the maximum.
+                    _ if self
+                        .try_infer_expr_type(iter)
+                        .is_some_and(|t| t == "__pd_range") =>
+                    {
+                        self.output
+                            .push_str("        // For loop over a range value\n");
+                        self.output.push_str("        __pd_range __pd_r = ");
+                        self.generate_expression(iter)?;
+                        self.output.push_str(";\n");
+                        let loop_scope = self.open_binding_scope();
+                        self.bind_non_array(var, "long long".to_string());
+                        self.output.push_str(&format!(
+                            "        for (long long {v} = __pd_r.start; \
+                             __pd_r.inclusive ? ({v} <= __pd_r.end) : ({v} < __pd_r.end); \
+                             {v}++) {{\n",
+                            v = var
+                        ));
+                        self.break_temps.push(None);
+                        let generated = self.generate_block(body, "        ");
+                        self.break_temps.pop();
+                        generated?;
+                        self.close_binding_scope(loop_scope);
                         self.output.push_str("        }\n");
                     }
                     _ => {
@@ -4185,6 +4265,16 @@ impl CodeGenerator {
                         BinOp::Ge => " >= ",
                         BinOp::And => " && ",
                         BinOp::Or => " || ",
+                        // N5-12. Every binary operand is already wrapped in
+                        // parentheses by the emitter around this match, so C's
+                        // own precedence for these — which puts `&`/`^`/`|`
+                        // LOOSER than the comparisons, unlike Palladium and
+                        // unlike Rust — cannot change what the program means.
+                        BinOp::BitAnd => " & ",
+                        BinOp::BitOr => " | ",
+                        BinOp::BitXor => " ^ ",
+                        BinOp::Shl => " << ",
+                        BinOp::Shr => " >> ",
                     };
                     self.output.push_str(op_str);
 
@@ -4337,12 +4427,22 @@ impl CodeGenerator {
                     }
                 }
             }
-            Expr::Range { .. } => {
-                // Range expressions are not directly translatable to C
-                // They should only appear in for loops which handle them specially
-                return Err(CompileError::Generic(
-                    "Range expressions can only be used in for loops".to_string(),
-                ));
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+                ..
+            } => {
+                // N5-14. This arm used to be the refusal "Range expressions can
+                // only be used in for loops", which was true of the CODE and
+                // not of the language: the parser built a range anywhere an
+                // expression could go, and the program died three passes later.
+                self.output.push_str("__pd_range_new(");
+                self.generate_expression(start)?;
+                self.output.push_str(", ");
+                self.generate_expression(end)?;
+                self.output
+                    .push_str(&format!(", {})", if *inclusive { 1 } else { 0 }));
             }
             Expr::Unary { op, operand, .. } => {
                 // Generate unary expression
@@ -4354,6 +4454,11 @@ impl CodeGenerator {
                     }
                     UnaryOp::Not => {
                         self.output.push_str("(!(");
+                        self.generate_expression(operand)?;
+                        self.output.push_str("))");
+                    }
+                    UnaryOp::BitNot => {
+                        self.output.push_str("(~(");
                         self.generate_expression(operand)?;
                         self.output.push_str("))");
                     }
@@ -4407,6 +4512,26 @@ impl CodeGenerator {
             // where those get spliced back in.
             Expr::If { .. } => self.generate_if_expression(expr)?,
             Expr::Block { .. } => self.generate_block_expression(expr)?,
+            Expr::Cast { expr, ty, .. } => {
+                // `(long long)5`, with no parentheses added around the operand:
+                // `generate_expression` already parenthesises every compound
+                // form, and the reviewed test `test_as_cast` reads the emitted
+                // C for exactly this spelling.
+                //
+                // THE ONE CONVERSION C DOES NOT DO FOR US is to `bool`.
+                // Palladium's `bool` is C's `int`, so `(int)5` would be 5 —
+                // truthy, but not `true`, and `5 as bool as i64` would print 5
+                // instead of 1. A cast to `bool` is a comparison against zero,
+                // which is what the conversion MEANS.
+                if matches!(ty, Type::Bool) {
+                    self.output.push_str("((");
+                    self.generate_expression(expr)?;
+                    self.output.push_str(") != 0)");
+                } else {
+                    self.output.push_str(&format!("({})", self.type_to_c(ty)));
+                    self.generate_expression(expr)?;
+                }
+            }
             Expr::Match { .. } => self.generate_match_expression(expr)?,
             Expr::Loop { .. } => self.generate_loop_expression(expr)?,
         }

@@ -418,6 +418,7 @@ impl EffectAnalyzer {
                 Ok(effects)
             }
             Expr::Block { stmts, value, .. } => self.analyze_value_block(stmts, value.as_deref()),
+            Expr::Cast { expr, .. } => self.analyze_expression(expr),
             Expr::Loop { body, .. } => self.analyze_value_block(body, None),
             Expr::Match { expr, arms, .. } => {
                 let mut effects = self.analyze_expression(expr)?;
