@@ -207,6 +207,85 @@ pub struct ImplBlock {
     pub span: Span,
 }
 
+impl ImplBlock {
+    /// This block's methods with every `Self` replaced by the type the block is
+    /// for (N5-17).
+    ///
+    /// WHY THIS EXISTS AT ALL. `fn area(self) -> i64` parses into a parameter
+    /// whose type is `Custom("Self")`, and nothing resolved it: the type
+    /// checker refused the method with "Unknown struct type: Self", and where
+    /// it got past the checker code generation emitted `struct Self self` —
+    /// a type nothing declares, so gcc refused C that the front end had
+    /// approved. That is the one outcome the conformance runner never accepts.
+    ///
+    /// WHY IT IS ONE FUNCTION AND NOT A SUBSTITUTION IN EACH PASS. The type
+    /// checker and the code generator both walk these methods, and if they
+    /// resolved `Self` separately they could resolve it differently — which is
+    /// the exact defect class this repository has closed twice already
+    /// (`builtins.rs`, `RecursiveLayout`). Both call this.
+    ///
+    /// The RETURN type was already being substituted, in codegen's
+    /// `collect_impl_method_types` and nowhere else, which is why
+    /// `fn new(..) -> Self` worked and `fn area(self)` did not.
+    pub fn methods_with_self_resolved(&self) -> Vec<Function> {
+        self.methods
+            .iter()
+            .map(|method| {
+                let mut method = method.clone();
+                for param in &mut method.params {
+                    param.ty = substitute_self(&param.ty, &self.for_type);
+                }
+                method.return_type = method
+                    .return_type
+                    .as_ref()
+                    .map(|ty| substitute_self(ty, &self.for_type));
+                method
+            })
+            .collect()
+    }
+}
+
+/// Replace `Self` with `for_type`, everywhere inside `ty`.
+///
+/// Recursive rather than a top-level match, because `Self` can be nested:
+/// `&Self`, `[Self; 3]` and `Option<Self>` are all reachable from an impl
+/// block's signature, and a shallow replacement would leave the inner one to
+/// reach the backend.
+pub fn substitute_self(ty: &Type, for_type: &Type) -> Type {
+    match ty {
+        Type::Custom(name) if name == "Self" => for_type.clone(),
+        Type::Reference {
+            lifetime,
+            mutable,
+            inner,
+        } => Type::Reference {
+            lifetime: lifetime.clone(),
+            mutable: *mutable,
+            inner: Box::new(substitute_self(inner, for_type)),
+        },
+        Type::Array(elem, size) => {
+            Type::Array(Box::new(substitute_self(elem, for_type)), size.clone())
+        }
+        Type::Future { output } => Type::Future {
+            output: Box::new(substitute_self(output, for_type)),
+        },
+        Type::Tuple(items) => {
+            Type::Tuple(items.iter().map(|t| substitute_self(t, for_type)).collect())
+        }
+        Type::Generic { name, args } => Type::Generic {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| match arg {
+                    GenericArg::Type(t) => GenericArg::Type(substitute_self(t, for_type)),
+                    other => other.clone(),
+                })
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
 /// Type alias definition
 #[derive(Debug, Clone)]
 pub struct TypeAlias {

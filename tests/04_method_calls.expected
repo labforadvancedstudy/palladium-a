@@ -1,0 +1,26 @@
+Dot syntax:
+12
+120
+26
+The static path form, which the spec recommends and which also did not work:
+12
+120
+An associated function with no receiver:
+42
+A method that calls another method on its own receiver:
+24
+Chained — the receiver of the second call is the first call's value:
+15
+18
+A method call as an argument to another call:
+54
+A method call inside an expression:
+96
+Two different types, each with a method of its own:
+99
+The receiver is a parenthesised value expression (N5-03/N5-05):
+12
+inside the receiver block
+42
+A method call in the receiver position of another:
+45

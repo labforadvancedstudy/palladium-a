@@ -1,0 +1,117 @@
+// Test 04: method call syntax `x.f()` (requirement N5-17).
+//
+// THE BREAK WAS IN THREE PLACES, and only the first was documented.
+//
+//   1. `x.f()` parsed as a call whose callee is a field access, and the type
+//      checker refused any callee that was not a bare identifier:
+//      "Indirect function calls not yet supported".
+//   2. The workaround the specification recommends — "call them as
+//      `Type::method(receiver, args)`" (language-spec.md A4.5, A6.4) — DID NOT
+//      WORK EITHER. `Type::method(x)` never reached the call path at all: the
+//      parser builds every `A::b(...)` as an enum constructor, so a struct on
+//      the left produced "Undefined enum type: Rect".
+//   3. `self` was emitted into C as `struct Self self`, a type nothing
+//      declares, so any method with a receiver was refused by gcc — the one
+//      failure class the conformance runner never accepts from a program the
+//      front end approved.
+//
+// So this fixture proves the whole path, not just the dot.
+
+struct Rect {
+    w: i64,
+    h: i64,
+}
+
+struct Counter {
+    n: i64,
+}
+
+impl Rect {
+    // An associated function with NO receiver: the constructor form.
+    fn new(w: i64, h: i64) -> Rect {
+        Rect { w: w, h: h }
+    }
+
+    fn area(self) -> i64 {
+        self.w * self.h
+    }
+
+    fn scaled_area(self, k: i64) -> i64 {
+        self.w * self.h * k
+    }
+
+    // Two parameters after the receiver, to prove the receiver is inserted
+    // FIRST and the written arguments keep their order.
+    fn combine(self, a: i64, b: i64) -> i64 {
+        self.w * a + self.h * b
+    }
+
+    // A method whose body calls another method on its own receiver.
+    fn doubled_area(self) -> i64 {
+        Rect::area(self) * 2
+    }
+
+    fn taller(self) -> Rect {
+        Rect { w: self.w, h: self.h + 1 }
+    }
+}
+
+impl Counter {
+    fn value(self) -> i64 {
+        self.n
+    }
+}
+
+fn main() {
+    let r = Rect { w: 3, h: 4 };
+
+    print("Dot syntax:");
+    print_int(r.area());
+    print_int(r.scaled_area(10));
+    print_int(r.combine(2, 5));
+
+    print("The static path form, which the spec recommends and which also did not work:");
+    print_int(Rect::area(r));
+    print_int(Rect::scaled_area(r, 10));
+
+    print("An associated function with no receiver:");
+    let made = Rect::new(6, 7);
+    print_int(made.area());
+
+    print("A method that calls another method on its own receiver:");
+    print_int(r.doubled_area());
+
+    print("Chained — the receiver of the second call is the first call's value:");
+    print_int(r.taller().area());
+    print_int(r.taller().taller().area());
+
+    print("A method call as an argument to another call:");
+    print_int(add(r.area(), made.area()));
+
+    print("A method call inside an expression:");
+    print_int(r.area() + made.area() * 2);
+
+    print("Two different types, each with a method of its own:");
+    let c = Counter { n: 99 };
+    print_int(c.value());
+
+    print("The receiver is a parenthesised value expression (N5-03/N5-05):");
+    // grammar.ebnf's `postfix = primary { ... '.' identifier ... }` and
+    // `primary = ... | '(' expression ')'`, so a parenthesised expression is a
+    // legal receiver — including the ones N5-03 and N5-05 made expressions.
+    print_int((if r.area() > 10 { r } else { made }).area());
+    print_int(({ print("inside the receiver block"); made }).area());
+    // NOT proved here, and the reason is worth writing down: a block whose
+    // trailing expression names a binding the block itself makes —
+    // `({ let t = Rect::new(2, 8); t }).area()` — is refused, because code
+    // generation must know the receiver's type before it generates the block
+    // that introduces `t`. The same residual `try_infer_expr_type` already
+    // carries for N5-05.
+
+    print("A method call in the receiver position of another:");
+    print_int(r.taller().scaled_area(3));
+}
+
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}

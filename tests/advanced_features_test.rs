@@ -277,7 +277,7 @@ fn test_closures() {
 }
 
 #[test]
-#[ignore = "XFAIL: method-call syntax `x.f()` — grammar.ebnf:248 says it parses and is then rejected with 'Indirect function calls not yet supported' (owned by M2, item 1)"]
+#[ignore = "XFAIL: METHODS ON A PRIMITIVE. `x.f()` itself works now (N5-17), so the blanket 'Indirect function calls not yet supported' is gone; this fixture calls `x.len()` on a String, and a String can carry no `impl` block, so there is no `len` to find. What is owed is a method surface for the primitives — N14 gives the string operations as free builtins (`string_len`), not as methods (owned by M2, item 1)"]
 fn test_lifetime_annotations() {
     let source = r#"
     struct Ref<'a, T> {

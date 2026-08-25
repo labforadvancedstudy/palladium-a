@@ -2118,8 +2118,13 @@ impl TypeChecker {
                             .check_trait_impl_complete(impl_block, trait_name)?;
                     }
 
-                    // Register methods from impl blocks
-                    for method in &impl_block.methods {
+                    // Register methods from impl blocks.
+                    //
+                    // `Self` is resolved FIRST (N5-17): a method registered
+                    // with a `Custom("Self")` parameter is a signature no call
+                    // site can ever satisfy, because no call site can name that
+                    // type. See `ImplBlock::methods_with_self_resolved`.
+                    for method in &impl_block.methods_with_self_resolved() {
                         // Create qualified method name
                         let method_name = if let Some(_trait_type) = &impl_block.trait_type {
                             // Trait implementation method
@@ -2213,8 +2218,11 @@ impl TypeChecker {
                         continue;
                     }
 
-                    // Type check impl block methods
-                    for method in &impl_block.methods {
+                    // Type check impl block methods, with `Self` resolved —
+                    // the same substitution the registration above used, from
+                    // the same function, so the signature that is checked is
+                    // the signature that was registered.
+                    for method in &impl_block.methods_with_self_resolved() {
                         self.check_function(method)?;
                     }
 
@@ -3198,7 +3206,21 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Call { func, args, .. } => {
+            Expr::Call { func, args, span } => {
+                // METHOD CALL SYNTAX (N5-17). `x.f(a)` parses as a call whose
+                // callee is a field access, and this arm used to refuse every
+                // callee that was not a bare identifier.
+                //
+                // It is REWRITTEN rather than checked in place: `x.f(a)` means
+                // `TypeOfX::f(x, a)`, which is a shape this arm already knows
+                // how to check completely — argument counts, generic
+                // instantiation, built-ins, the lot. Checking it separately
+                // would be a second call-checker to keep in step with this one.
+                if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
+                    let rewritten = self.method_call_as_path_call(object, field, args, *span)?;
+                    return self.check_expression(&rewritten);
+                }
+
                 // Get function name (for v0.1, only direct calls)
                 let func_name = match func.as_ref() {
                     Expr::Ident(name) => name,
@@ -3799,8 +3821,38 @@ impl TypeChecker {
                 enum_name,
                 variant,
                 data,
-                ..
+                span,
             } => {
+                // `Type::method(args)` ARRIVES HERE, not at `Expr::Call`
+                // (N5-17). The parser builds every `A::b(...)` as an enum
+                // constructor because it has no types to tell them apart; the
+                // enum table does, and a name that is not an enum's is a path
+                // to a function. Before this, `Rect::area(r)` — the call form
+                // the specification itself recommends — was refused with
+                // "Undefined enum type: Rect".
+                if !self.path_names_an_enum(enum_name) {
+                    let call_args = match data {
+                        Some(crate::ast::EnumConstructorData::Tuple(exprs)) => exprs.clone(),
+                        // `Type::CONST` and `Type::name { .. }` are not calls,
+                        // and there is nothing else they could be, so they fall
+                        // through to the enum error below, which names the
+                        // missing enum.
+                        _ => Vec::new(),
+                    };
+                    if matches!(data, Some(crate::ast::EnumConstructorData::Tuple(_))) {
+                        let qualified = format!("{}::{}", enum_name, variant);
+                        if self.functions.contains_key(&qualified)
+                            || self.generic_functions.contains_key(&qualified)
+                        {
+                            return self.check_expression(&Expr::Call {
+                                func: Box::new(Expr::Ident(qualified)),
+                                args: call_args,
+                                span: *span,
+                            });
+                        }
+                    }
+                }
+
                 // Type check enum constructors
                 // First check if the enum exists (could be generic or regular)
                 if let Some(generic_enum) = self.generic_enums.get(enum_name).cloned() {
@@ -4373,6 +4425,89 @@ impl TypeChecker {
                 }),
             },
         }
+    }
+
+    /// The name of the type a method call dispatches on, for `TypeName::method`.
+    ///
+    /// Only NAMED types can carry an `impl`, so anything else has no method to
+    /// find and says so rather than producing a qualified name that could not
+    /// resolve.
+    fn method_owner_name(ty: &CheckerType) -> Option<String> {
+        match ty {
+            CheckerType::Struct(name) | CheckerType::Enum(name) => Some(name.clone()),
+            CheckerType::Generic { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// Rewrite `object.field(args)` into `TypeOfObject::field(object, args)`.
+    ///
+    /// The receiver becomes the FIRST argument, before the written ones, which
+    /// is what makes `self` an ordinary parameter for every pass after this.
+    fn method_call_as_path_call(
+        &mut self,
+        object: &Expr,
+        field: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<Expr> {
+        let receiver_type = self.check_expression(object)?;
+
+        let Some(owner) = Self::method_owner_name(&receiver_type) else {
+            return Err(CompileError::Generic(format!(
+                "`{}` has no method `{}`: only a struct or an enum can have an `impl` block, \
+                 and the receiver here is {}",
+                object, field, receiver_type
+            )));
+        };
+
+        let qualified = format!("{}::{}", owner, field);
+        if !self.functions.contains_key(&qualified)
+            && !self.generic_functions.contains_key(&qualified)
+        {
+            // NAME THE RIGHT FAILURE. A field that exists but is not a
+            // function is a different mistake from a method that does not
+            // exist, and the two used to arrive as the same message.
+            let has_field = self
+                .structs
+                .get(&owner)
+                .is_some_and(|fields| fields.iter().any(|(name, _)| name == field));
+            if has_field {
+                return Err(CompileError::Generic(format!(
+                    "`{}.{}` is a field, not a method: it cannot be called. There is no \
+                     `{}` in an `impl {}` block, and a field holding a function is not \
+                     callable either — function values do not exist in this language",
+                    object, field, field, owner
+                )));
+            }
+            return Err(CompileError::Generic(format!(
+                "no method `{}` on `{}`: no `impl {}` block declares `fn {}`",
+                field, owner, owner, field
+            )));
+        }
+
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+        call_args.push(object.clone());
+        call_args.extend(args.iter().cloned());
+
+        Ok(Expr::Call {
+            func: Box::new(Expr::Ident(qualified)),
+            args: call_args,
+            span,
+        })
+    }
+
+    /// Is `name` an enum this program declares?
+    ///
+    /// THE ONE RULE THAT SEPARATES `Color::Red(1)` FROM `Rect::area(r)`, and
+    /// the parser cannot apply it: it builds every `A::b(...)` as an enum
+    /// constructor because it has no types. Both the type checker and the code
+    /// generator ask this same question of their own copy of the enum table,
+    /// and the answer decides which of the two the expression is. Code
+    /// generation states the rule again where it applies it; if these two ever
+    /// disagree, a constructor is emitted as a call or a call as a constructor.
+    fn path_names_an_enum(&self, name: &str) -> bool {
+        self.enums.contains_key(name) || self.generic_enums.contains_key(name)
     }
 
     /// Type check `{ stmts...; value }` in VALUE position and return the type

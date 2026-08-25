@@ -77,6 +77,7 @@ tests/04_control_flow_while.pd	run	-	expected	-	-
 tests/04_else_if.pd	run	-	expected	-	-
 tests/04_if_expression.pd	run	-	expected	-	-
 tests/04_loop_break_value.pd	run	-	expected	-	-
+tests/04_method_calls.pd	run	-	expected	-	-
 tests/04_ranges.pd	run	-	expected	-	-
 tests/05_borrowing_references.pd	run	-	expected	-	-
 tests/05_ownership_basic.pd	run	-	expected	-	-

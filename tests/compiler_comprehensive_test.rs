@@ -682,7 +682,7 @@ fn test_complex_programs() {
 }
 
 #[test]
-#[ignore = "XFAIL: an `impl` block's `Self` is not a known type — this fixture is refused with 'Unknown struct type: Self' before it reaches the `&self` receiver and the method-call syntax (`x.f()`, grammar.ebnf:248, rejected as \"Indirect function calls not yet supported\") it was written for. All three are owed; this is the one that fires (owned by M4, 'Traits with real dispatch' / a real reference type)"]
+#[ignore = "XFAIL: THE `&self` RECEIVER. Two of the three defects this row used to name are fixed by N5-17: `Self` resolves to the impl type, and `x.f()` is method-call syntax rather than 'Indirect function calls not yet supported'. What is left is the reference receiver — `fn area(&self)` emits a `const struct Rectangle*` parameter while the call site passes the value, and gcc refuses our own C with 'take the address with &'. Auto-referencing a receiver needs a real reference type, which is why this stays where it was (owned by M4, 'Traits with real dispatch' / a real reference type). Its own assertion is also stale: it greps the emitted C for the SOURCE text `rect.area()`, which no lowering produces — the C says `__pd_Rectangle_area(rect)`"]
 fn test_struct_with_methods() {
     compile_and_verify(
         r#"

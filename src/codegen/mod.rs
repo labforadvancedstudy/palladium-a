@@ -432,6 +432,20 @@ impl CodeGenerator {
             // means codegen genuinely does not know the type.
             Expr::Ident(name) => self.variables.get(name).cloned(),
             Expr::Call { func, args, .. } => {
+                // A METHOD CALL IS A CALL (N5-17), and it has to be typed here
+                // as well as emitted, because a method call can itself be a
+                // receiver: `r.taller().area()` asks this what `r.taller()` is.
+                if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
+                    let receiver_type = self.try_infer_expr_type(object)?;
+                    let owner = Self::struct_name_of(&receiver_type)?;
+                    let qualified = format!("{}::{}", owner, field);
+                    if let Some(ret) = self.impl_methods.get(&qualified) {
+                        return self.return_type_to_c(ret.as_ref());
+                    }
+                    let (_, ret) = self.functions.get(&qualified)?;
+                    return self.return_type_to_c(ret.as_ref());
+                }
+
                 let Expr::Ident(func_name) = func.as_ref() else {
                     // Indirect calls are rejected by generate_expression anyway.
                     return None;
@@ -532,7 +546,22 @@ impl CodeGenerator {
                 UnaryOp::BitNot => self.try_infer_expr_type(operand),
                 UnaryOp::Neg => self.try_infer_expr_type(operand),
             },
-            Expr::EnumConstructor { enum_name, .. } => {
+            Expr::EnumConstructor {
+                enum_name, variant, ..
+            } => {
+                // A path CALL wears this node too (N5-17), and its type is the
+                // function's return type, not the "enum" it is not. Same rule
+                // as everywhere else: it is a constructor only if the name is
+                // an enum's.
+                if !self.enums.contains_key(enum_name) {
+                    let qualified = format!("{}::{}", enum_name, variant);
+                    if let Some(ret) = self.impl_methods.get(&qualified) {
+                        return self.return_type_to_c(ret.as_ref());
+                    }
+                    if let Some((_, ret)) = self.functions.get(&qualified) {
+                        return self.return_type_to_c(ret.as_ref());
+                    }
+                }
                 // generate_enum emits `typedef struct <Enum> { ... } <Enum>;`,
                 // so `struct <Enum>` names the same type type_to_c() produces
                 // for an explicit annotation.
@@ -657,15 +686,19 @@ impl CodeGenerator {
             return;
         }
         let for_type = impl_block.for_type.to_string();
-        for method in &impl_block.methods {
+        // `Self` resolved by the ONE function that resolves it
+        // (`ImplBlock::methods_with_self_resolved`). This used to substitute
+        // the return type here and nowhere else, which is exactly why
+        // `fn new(..) -> Self` worked while `fn area(self)` reached gcc as
+        // `struct Self self`.
+        for method in &impl_block.methods_with_self_resolved() {
             if !method.type_params.is_empty() {
                 continue;
             }
-            let ret = method.return_type.clone().map(|ty| match ty {
-                Type::Custom(name) if name == "Self" => impl_block.for_type.clone(),
-                other => other,
-            });
-            impl_methods.insert(format!("{}::{}", for_type, method.name), ret);
+            impl_methods.insert(
+                format!("{}::{}", for_type, method.name),
+                method.return_type.clone(),
+            );
         }
     }
 
@@ -1894,8 +1927,10 @@ impl CodeGenerator {
                     // They are resolved during type checking
                 }
                 Item::Impl(impl_block) => {
-                    // Generate methods from impl blocks
-                    for method in &impl_block.methods {
+                    // Generate methods from impl blocks, with `Self` resolved to
+                    // the impl type — otherwise the receiver is emitted as
+                    // `struct Self`, which nothing declares.
+                    for method in &impl_block.methods_with_self_resolved() {
                         if !method.type_params.is_empty() {
                             continue;
                         }
@@ -2522,7 +2557,10 @@ impl CodeGenerator {
                     push(&mut prototypes, &func.name, sig);
                 }
                 Item::Impl(impl_block) => {
-                    for method in &impl_block.methods {
+                    // Same substitution as the definitions above; a prototype
+                    // that disagreed with its definition would be a conflicting
+                    // C declaration.
+                    for method in &impl_block.methods_with_self_resolved() {
                         if !method.type_params.is_empty() || method.is_async {
                             continue;
                         }
@@ -3674,6 +3712,51 @@ impl CodeGenerator {
     }
 
     /// Generate code for an expression
+    /// Rewrite `object.field(args)` into `TypeOfObject::field(object, args)`
+    /// (N5-17).
+    ///
+    /// The receiver becomes the first argument and appears EXACTLY ONCE, so a
+    /// receiver with a side effect happens once however the call is written.
+    /// Its position among the arguments is C's business: C does not specify
+    /// the order in which a call's arguments are evaluated, and that is already
+    /// true of every multi-argument call this compiler emits.
+    fn method_call_as_path_call(
+        &self,
+        object: &Expr,
+        field: &str,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<Expr> {
+        let receiver_type =
+            self.try_infer_expr_type(object)
+                .ok_or_else(|| CompileError::CodegenError {
+                    message: format!(
+                        "cannot infer the type of the receiver of `.{}`: no type rule for this \
+                         {} expression",
+                        field,
+                        Self::expr_kind_name(object)
+                    ),
+                })?;
+        let owner =
+            Self::struct_name_of(&receiver_type).ok_or_else(|| CompileError::CodegenError {
+                message: format!(
+                    "the receiver of `.{}` has C type `{}`, which names no type that can carry \
+                     an `impl` block; this should have been refused by the type checker",
+                    field, receiver_type
+                ),
+            })?;
+
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+        call_args.push(object.clone());
+        call_args.extend(args.iter().cloned());
+
+        Ok(Expr::Call {
+            func: Box::new(Expr::Ident(format!("{}::{}", owner, field))),
+            args: call_args,
+            span,
+        })
+    }
+
     /// A name no source program can collide with, for one hoisted value.
     fn fresh_hoist_name(&mut self) -> String {
         let n = self.hoist_counter;
@@ -4127,7 +4210,23 @@ impl CodeGenerator {
                     self.output.push_str(name);
                 }
             }
-            Expr::Call { func, args, .. } => {
+            Expr::Call { func, args, span } => {
+                // METHOD CALL SYNTAX (N5-17). Rewritten to the path call it
+                // means — `x.f(a)` is `TypeOfX::f(x, a)` — and then emitted by
+                // the ordinary call path below, which already mangles a `::`
+                // name to `__pd_Type_f`. Rewriting rather than emitting here
+                // keeps ONE call emitter: the array-capability check, the
+                // built-in mapping and the generic mangling all still run.
+                //
+                // The type checker performed the same rewrite and already
+                // proved the method exists; this arm re-derives it from the C
+                // type because code generation does not receive the checker's
+                // conclusions.
+                if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
+                    let rewritten = self.method_call_as_path_call(object, field, args, *span)?;
+                    return self.generate_expression(&rewritten);
+                }
+
                 // A call is the other way to write into an array parameter, so
                 // it is checked before anything is emitted.
                 if let Expr::Ident(name) = func.as_ref() {
@@ -4390,8 +4489,30 @@ impl CodeGenerator {
                 enum_name,
                 variant,
                 data,
-                ..
+                span,
             } => {
+                // `Type::method(args)` arrives here as an enum constructor
+                // because the parser had no types to tell the two apart
+                // (N5-17). THE RULE IS THE TYPE CHECKER'S, restated where it is
+                // applied: it is a constructor if and only if the name is an
+                // enum's. See `TypeChecker::path_names_an_enum` — if these two
+                // ever disagree, a call is emitted as a constructor or the
+                // reverse, and gcc is what notices.
+                if !self.enums.contains_key(enum_name) {
+                    if let Some(EnumConstructorData::Tuple(exprs)) = data {
+                        let qualified = format!("{}::{}", enum_name, variant);
+                        if self.functions.contains_key(&qualified)
+                            || self.impl_methods.contains_key(&qualified)
+                        {
+                            return self.generate_expression(&Expr::Call {
+                                func: Box::new(Expr::Ident(qualified)),
+                                args: exprs.clone(),
+                                span: *span,
+                            });
+                        }
+                    }
+                }
+
                 // Generate enum constructor call
                 match data {
                     None => {
@@ -5428,11 +5549,15 @@ mod tests {
     // every array is passed as a pointer into the caller's storage.
     //
     // A builtin is the reachable callee that `functions` does not contain.
-    // `impl` methods were the case the review named, but `Type::method(x)` does
-    // not reach this guard at all: the parser builds an `EnumConstructor`, not
-    // a `Call` (it emits `Holder_mutate__new(xs)` and the type checker rejects
-    // it with "Undefined enum type: Holder"), so that hole is latent rather
-    // than live. The refusal covers it if `::` calls are ever routed here.
+    // `impl` methods were the case the review named, and THE HOLE IS LIVE NOW,
+    // not latent. This comment used to end "the refusal covers it if `::` calls
+    // are ever routed here" — N5-17 routed them here. Both `Type::method(xs)`
+    // and `x.method(xs)` are rewritten into an ordinary `Expr::Call` whose
+    // callee is `Type::method` (see `method_call_as_path_call` and the
+    // `EnumConstructor` arm), so they reach this guard, and `impl` methods are
+    // still deliberately kept out of `functions`. Measured on the shape the
+    // review named: passing an array to `h.mutate(v)` is refused with the
+    // message below naming `Holder::mutate`.
     #[test]
     fn test_array_passed_to_an_unknown_callee_is_refused() {
         let err = generate(
