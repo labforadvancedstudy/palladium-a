@@ -4152,6 +4152,26 @@ impl CodeGenerator {
             Pattern::Literal(PatternLiteral::Str(value)) => {
                 format!("__pd_string_eq({}, \"{}\")", subject, c_string_body(value))
             }
+            // N6-03. Two comparisons on the same subject. Parenthesised because
+            // this string is pasted into larger conditions — an `&&` inside an
+            // `||` alternative, or beside an enum tag test.
+            Pattern::Range { lo, hi, inclusive } => {
+                let bound = |literal: &PatternLiteral| match literal {
+                    PatternLiteral::Int(value) => value.to_string(),
+                    PatternLiteral::Bool(value) => (if *value { 1 } else { 0 }).to_string(),
+                    // Refused by the type checker before this point; a range of
+                    // strings has no `>=` in C either.
+                    PatternLiteral::Str(value) => format!("\"{}\"", c_string_body(value)),
+                };
+                format!(
+                    "({} >= {} && {} {} {})",
+                    subject,
+                    bound(lo),
+                    subject,
+                    if *inclusive { "<=" } else { "<" },
+                    bound(hi)
+                )
+            }
         })
     }
 
@@ -4251,8 +4271,8 @@ impl CodeGenerator {
         subject_type: &str,
     ) -> Result<()> {
         match pattern {
-            // Neither binds anything.
-            Pattern::Wildcard | Pattern::Literal(_) => Ok(()),
+            // None of these bind anything.
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => Ok(()),
             // N6-07. An alternative may not bind — the type checker refuses that
             // by name, because a single `||` condition has no per-alternative
             // site to assign from.

@@ -1451,8 +1451,8 @@ impl BorrowChecker {
                 }
             }
             Pattern::Wildcard => {}
-            // A literal pattern binds nothing — it is a test, not a binder.
-            Pattern::Literal(_) => {}
+            // Neither binds anything — both are tests, not binders.
+            Pattern::Literal(_) | Pattern::Range { .. } => {}
             // N6-08. `name @ inner` declares the name AND whatever `inner`
             // declares under it.
             Pattern::Binding { name, inner } => {

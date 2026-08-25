@@ -1010,7 +1010,7 @@ impl LLVMTextBackend {
                         // TESTS anything would be taken whatever the scrutinee
                         // is. A binding is refused with its inner rather than
                         // let through, because `n @ 1` is a test too.
-                        Pattern::Or(_) | Pattern::Binding { .. } => {
+                        Pattern::Or(_) | Pattern::Binding { .. } | Pattern::Range { .. } => {
                             return Err(unimplemented_composite_pattern(
                                 &arm.pattern,
                                 *match_span,
@@ -1658,7 +1658,8 @@ fn unimplemented_literal_pattern(literal: &crate::ast::PatternLiteral, span: Spa
     }
 }
 
-/// An or-pattern or a binding pattern, neither of which this backend can test.
+/// A composite pattern — or, binding, or range — none of which this backend can
+/// test.
 fn unimplemented_composite_pattern(pattern: &crate::ast::Pattern, span: Span) -> CompileError {
     CompileError::Unimplemented {
         construct: format!("the pattern `{}`", pattern),

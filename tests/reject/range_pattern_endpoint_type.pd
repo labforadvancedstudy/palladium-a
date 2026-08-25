@@ -1,0 +1,18 @@
+// NEGATIVE TEST — a range pattern's endpoints are integers (N6-03).
+//
+// The normative production spells an endpoint `expression`, which no pattern
+// position in this compiler can evaluate; what a range needs is an ORDER, and
+// the only ordered literal this language has today is the integer. `char` is the
+// obvious second one and waits on N4-04, which owes `char` as a type at all —
+// so a `char` endpoint cannot be checked against a scrutinee type that does not
+// exist.
+//
+// Refused with the offending end named, rather than lowered into a C comparison
+// between string pointers, which compares addresses and would answer.
+fn main() {
+    let v = match 4 {
+        "a".."z" => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

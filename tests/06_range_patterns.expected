@@ -1,0 +1,25 @@
+Inclusive ranges pick their band:
+0
+0
+1
+2
+9
+An exclusive range stops one short:
+0
+1
+Negative endpoints:
+1
+0
+A range with alternatives:
+1
+0
+A range under a guard:
+2
+A binding over a range, which binds AND tests:
+40
+9
+A range inside an enum payload:
+1
+0
+Statement form:
+high

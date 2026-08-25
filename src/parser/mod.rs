@@ -2779,6 +2779,68 @@ impl Parser {
         })
     }
 
+    /// `-` then an integer, in pattern position.
+    ///
+    /// THE MINUS IS READ HERE AND NOT BY AN EXPRESSION PARSER: `-1` in pattern
+    /// position is one literal, not a unary operator applied to one, and there
+    /// is no other expression a pattern may hold. Only an integer may follow it
+    /// — `-"x"` and `-true` are refused by name rather than parsed into a shape
+    /// the type checker would have to refuse later.
+    fn parse_negative_pattern_integer(&mut self) -> Result<i64> {
+        self.advance()?; // consume '-'
+        match self.advance()? {
+            (Token::Integer(value), _) => Ok(-value),
+            (found, _) => Err(CompileError::UnexpectedToken {
+                expected: "an integer literal after `-` in a pattern".to_string(),
+                found: found.to_string(),
+                span: self.current_span(),
+            }),
+        }
+    }
+
+    /// Having read a literal, decide whether it was a literal or a range's low
+    /// end (N6-03).
+    ///
+    /// Both endpoints are required, so a `..` with nothing usable after it is an
+    /// error here and not a silently open range.
+    fn maybe_range(&mut self, lo: PatternLiteral) -> Result<Pattern> {
+        let inclusive = match self.peek() {
+            Ok(Token::DotDot) => false,
+            Ok(Token::DotDotEq) => true,
+            _ => return Ok(Pattern::Literal(lo)),
+        };
+        self.advance()?; // consume '..' or '..='
+        let hi = match self.peek()?.clone() {
+            Token::Minus => PatternLiteral::Int(self.parse_negative_pattern_integer()?),
+            Token::Integer(value) => {
+                self.advance()?;
+                PatternLiteral::Int(value)
+            }
+            Token::String(value) => {
+                self.advance()?;
+                PatternLiteral::Str(value)
+            }
+            Token::True => {
+                self.advance()?;
+                PatternLiteral::Bool(true)
+            }
+            Token::False => {
+                self.advance()?;
+                PatternLiteral::Bool(false)
+            }
+            found => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "a literal for the high end of this range pattern (open-ended \
+                               range patterns are not in the language)"
+                        .to_string(),
+                    found: found.to_string(),
+                    span: self.current_span(),
+                });
+            }
+        };
+        Ok(Pattern::Range { lo, hi, inclusive })
+    }
+
     /// Parse a pattern, including any `|` alternatives (N6-07).
     ///
     /// The entry point every caller uses. `|` binds LOOSER than `@`, so
@@ -2800,6 +2862,9 @@ impl Parser {
     }
 
     /// Parse one pattern, stopping before any `|`.
+    ///
+    /// A literal here may turn out to be the low end of a RANGE (N6-03), so the
+    /// literal cases funnel through `maybe_range`.
     fn parse_pattern_primary(&mut self) -> Result<Pattern> {
         // First, peek and clone the token to avoid borrowing issues
         let token = self.peek()?.clone();
@@ -2816,34 +2881,35 @@ impl Parser {
             // refused by name rather than parsed into a shape typeck would have
             // to refuse later.
             Token::Minus => {
-                self.advance()?; // consume '-'
-                match self.advance()? {
-                    (Token::Integer(value), _) => {
-                        Ok(Pattern::Literal(PatternLiteral::Int(-value)))
-                    }
-                    (found, _) => Err(CompileError::UnexpectedToken {
-                        expected: "an integer literal after `-` in a pattern".to_string(),
-                        found: found.to_string(),
-                        span: self.current_span(),
-                    }),
-                }
+                let value = self.parse_negative_pattern_integer()?;
+                self.maybe_range(PatternLiteral::Int(value))
             }
             Token::Integer(value) => {
                 self.advance()?;
-                Ok(Pattern::Literal(PatternLiteral::Int(value)))
+                self.maybe_range(PatternLiteral::Int(value))
             }
             Token::String(value) => {
                 self.advance()?;
-                Ok(Pattern::Literal(PatternLiteral::Str(value)))
+                self.maybe_range(PatternLiteral::Str(value))
             }
             Token::True => {
                 self.advance()?;
-                Ok(Pattern::Literal(PatternLiteral::Bool(true)))
+                self.maybe_range(PatternLiteral::Bool(true))
             }
             Token::False => {
                 self.advance()?;
-                Ok(Pattern::Literal(PatternLiteral::Bool(false)))
+                self.maybe_range(PatternLiteral::Bool(false))
             }
+            // N6-03. A range needs a LOW end, and `..5` has none. Refused here
+            // by name: the spec's two range forms are both closed, so this is a
+            // form the language does not have rather than one nobody wrote yet.
+            Token::DotDot | Token::DotDotEq => Err(CompileError::UnexpectedToken {
+                expected: "a range pattern to have both endpoints, as `lo..hi` or `lo..=hi` \
+                           (open-ended range patterns are not in the language)"
+                    .to_string(),
+                found: token.to_string(),
+                span: self.current_span(),
+            }),
             Token::Identifier(name) => {
                 self.advance()?;
 

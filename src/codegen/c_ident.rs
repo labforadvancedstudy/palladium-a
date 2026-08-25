@@ -644,6 +644,8 @@ fn escape_pattern(pattern: &mut Pattern) {
         // A literal pattern holds no identifier, so there is nothing here that
         // could collide with a C keyword.
         Pattern::Literal(_) => {}
+        // A range holds two literals and no identifier.
+        Pattern::Range { .. } => {}
         // N6-07 / N6-08. An alternative may hold a pattern that binds nothing
         // today, but this walk must stay total: a form whose identifiers are
         // silently not escaped is a program that fails in the C compiler.

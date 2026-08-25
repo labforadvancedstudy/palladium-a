@@ -4432,7 +4432,7 @@ impl TypeChecker {
         match pattern {
             Pattern::Ident(name) => Some(name),
             Pattern::Binding { name, .. } => Some(name),
-            Pattern::Wildcard | Pattern::Literal(_) => None,
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => None,
             Pattern::Or(alternatives) => alternatives.iter().find_map(Self::first_binder),
             Pattern::EnumPattern { data, .. } => match data {
                 None => None,
@@ -4743,6 +4743,61 @@ impl TypeChecker {
             // N6-08. The binding names this position; what it may match is
             // decided by the inner pattern.
             Pattern::Binding { inner, .. } => self.check_pattern(inner, expected_type),
+            // N6-03. Three questions, all answerable here and nowhere later:
+            // the endpoints must be integers, the scrutinee must be an integer
+            // too, and the interval must be able to contain something.
+            //
+            // AN EMPTY RANGE IS REFUSED RATHER THAN COMPILED. `5..=1` and `3..3`
+            // can never match, so the arm they head is dead the moment it is
+            // written — and a reader who wrote one meant a different pair of
+            // numbers. Emitting `x >= 5 && x <= 1` and letting the arm never fire
+            // is how a typo becomes a silent behaviour change.
+            Pattern::Range { lo, hi, inclusive } => {
+                for (literal, which) in [(lo, "low"), (hi, "high")] {
+                    if !matches!(literal, PatternLiteral::Int(_)) {
+                        return Err(CompileError::TypeMismatch {
+                            expected: "the endpoints of a range pattern to be integer literals \
+                                       (`char` endpoints wait on N4-04, which owes `char` as a \
+                                       type at all)"
+                                .to_string(),
+                            found: format!(
+                                "the {} end `{}`",
+                                which,
+                                Pattern::Literal(literal.clone())
+                            ),
+                            span: None,
+                        });
+                    }
+                }
+                if *expected_type != CheckerType::Int {
+                    return Err(CompileError::TypeMismatch {
+                        expected: format!(
+                            "a pattern of type {}, which is what this `match` is on",
+                            expected_type
+                        ),
+                        found: "a range pattern, which matches integers".to_string(),
+                        span: None,
+                    });
+                }
+                let (PatternLiteral::Int(low), PatternLiteral::Int(high)) = (lo, hi) else {
+                    unreachable!("both endpoints were just checked to be integers");
+                };
+                let empty = if *inclusive { low > high } else { low >= high };
+                if empty {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "a range pattern that can match something".to_string(),
+                        found: format!(
+                            "`{}`, which is empty — no integer is both >= {} and {} {}",
+                            pattern,
+                            low,
+                            if *inclusive { "<=" } else { "<" },
+                            high
+                        ),
+                        span: None,
+                    });
+                }
+                Ok(())
+            }
             // N6-02. A literal pattern is an EQUALITY TEST, so its type has to
             // be the scrutinee's: `match n { "x" => … }` on an `i64` compares
             // two things C would happily compare and Palladium must not.
@@ -4804,8 +4859,8 @@ impl TypeChecker {
                 Ok(())
             }
             // A literal binds nothing either — it constrains the value instead
-            // of naming it.
-            Pattern::Literal(_) => Ok(()),
+            // of naming it. Nor does a range.
+            Pattern::Literal(_) | Pattern::Range { .. } => Ok(()),
             // N6-08. `name @ inner` binds `name` to THIS position's value and
             // then lets `inner` bind whatever it binds under it.
             Pattern::Binding { name, inner } => {

@@ -557,6 +557,24 @@ pub enum Pattern {
         name: String,
         inner: Box<Pattern>,
     },
+    /// Range pattern — `lo .. hi` and `lo ..= hi` (N6-03).
+    ///
+    /// BOTH ENDPOINTS, ALWAYS. The normative production
+    /// (`docs/specification/grammar.ebnf`) gives exactly two range forms and
+    /// both are closed; open-ended ranges are named nowhere, so the parser
+    /// refuses them rather than this type carrying an `Option` for a form the
+    /// language does not have.
+    ///
+    /// The endpoints are `PatternLiteral` and not `Expr` for N6-02's reason —
+    /// one carrier for "a literal in pattern position", and no expression forms
+    /// smuggled into a place nothing can evaluate them. Which literals are
+    /// ACCEPTABLE is a type question (integers today), so the type checker
+    /// answers it and names the type it found.
+    Range {
+        lo: PatternLiteral,
+        hi: PatternLiteral,
+        inclusive: bool,
+    },
 }
 
 /// The literals a pattern may be, and no others.
@@ -1513,6 +1531,13 @@ impl std::fmt::Display for Pattern {
                 write!(f, "{}", parts.join(" | "))
             }
             Pattern::Binding { name, inner } => write!(f, "{} @ {}", name, inner),
+            Pattern::Range { lo, hi, inclusive } => write!(
+                f,
+                "{}{}{}",
+                Pattern::Literal(lo.clone()),
+                if *inclusive { "..=" } else { ".." },
+                Pattern::Literal(hi.clone())
+            ),
             Pattern::Literal(PatternLiteral::Int(v)) => write!(f, "{}", v),
             Pattern::Literal(PatternLiteral::Str(v)) => write!(f, "{:?}", v),
             Pattern::Literal(PatternLiteral::Bool(v)) => write!(f, "{}", v),

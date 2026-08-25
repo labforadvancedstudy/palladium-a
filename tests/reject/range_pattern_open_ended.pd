@@ -1,0 +1,19 @@
+// NEGATIVE TEST — a range pattern has both endpoints (N6-03).
+//
+// The normative pattern production in `docs/specification/grammar.ebnf` gives
+// exactly two range forms, `expression ".." expression` and
+// `expression "..=" expression`, and both are closed. `1..` is named nowhere, so
+// it is a form the language does not have rather than one nobody has written
+// yet — and inventing "to the maximum integer" here would put a rule in the
+// compiler that no reader of the spec could have predicted.
+//
+// The mirror spelling `..5` is refused by the same rule one function earlier, in
+// the pattern parser's primary position. The two messages differ in which end is
+// missing and agree on the clause the manifest pins.
+fn main() {
+    let v = match 4 {
+        1.. => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

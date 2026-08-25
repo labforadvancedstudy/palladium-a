@@ -1,0 +1,16 @@
+// NEGATIVE TEST — a range pattern must be able to match (N6-03).
+//
+// `5..=1` is empty: no integer is both >= 5 and <= 1. The arm it heads can never
+// be taken, so the program a reader thought they wrote is not the program that
+// would run — and the two numbers are almost always a transposition. Compiling
+// it into `x >= 5 && x <= 1` and letting the arm silently never fire is how a
+// typo becomes a behaviour change nobody sees.
+//
+// `3..3` is the same defect in the exclusive form: `>= 3 && < 3`.
+fn main() {
+    let v = match 4 {
+        5..=1 => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

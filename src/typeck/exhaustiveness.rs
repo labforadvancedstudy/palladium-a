@@ -20,6 +20,13 @@ pub enum PatternKind {
     },
     /// Or-pattern (N6-07) — matches if any alternative does.
     Or(Vec<PatternKind>),
+    /// Range pattern (N6-03) — matches an interval, and contributes nothing to
+    /// completeness for the reason given at the walk that ignores it.
+    Range {
+        lo: crate::ast::PatternLiteral,
+        hi: crate::ast::PatternLiteral,
+        inclusive: bool,
+    },
     /// Literal pattern (N6-02) — matches one value of its type.
     ///
     /// CONTRIBUTES TO COMPLETENESS OVER `bool` AND NOTHING ELSE. `true` and
@@ -172,7 +179,13 @@ impl ExhaustivenessChecker {
                 // A literal is not a variant, and `check_pattern` in the type
                 // checker has already refused it against an enum scrutinee.
                 // Counted as covering nothing rather than assumed unreachable.
-                Pattern::Literal(_) => {}
+                // N6-03. A RANGE CONTRIBUTES NOTHING, and `normalize` leaves it
+                // alone for that reason: `i64` is not enumerable by any finite
+                // set of ranges this checker counts, so `0..=59` plus `60..=100`
+                // is not "complete" here even when a reader can see that it is.
+                // Full product/interval analysis is N6-10's problem (4e), not a
+                // half-measure smuggled in as a normalisation.
+                Pattern::Literal(_) | Pattern::Range { .. } => {}
                 // `normalize` removed these before the walk began; the arms
                 // exist so a future caller that forgets to normalise fails to
                 // compile rather than silently counting nothing.
@@ -247,7 +260,10 @@ impl ExhaustivenessChecker {
                     }
                     seen_wildcard = true;
                 }
-                Pattern::Literal(_) | Pattern::Or(_) | Pattern::Binding { .. } => {}
+                Pattern::Literal(_)
+                | Pattern::Range { .. }
+                | Pattern::Or(_)
+                | Pattern::Binding { .. } => {}
                 Pattern::EnumPattern {
                     enum_name, variant, ..
                 } => {
@@ -275,6 +291,15 @@ impl Pattern {
             Pattern::Wildcard => PatternKind::Wildcard,
             Pattern::Ident(name) => PatternKind::Binding(name.clone()),
             Pattern::Literal(literal) => PatternKind::Literal(literal.clone()),
+            Pattern::Range {
+                lo,
+                hi,
+                inclusive,
+            } => PatternKind::Range {
+                lo: lo.clone(),
+                hi: hi.clone(),
+                inclusive: *inclusive,
+            },
             Pattern::Or(alternatives) => {
                 PatternKind::Or(alternatives.iter().map(|p| p.to_pattern_kind()).collect())
             }

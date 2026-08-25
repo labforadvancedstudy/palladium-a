@@ -90,6 +90,7 @@ tests/06_guards.pd	run	-	expected	-	-
 tests/06_literal_patterns.pd	run	-	expected	-	-
 tests/06_match_expression.pd	run	-	expected	-	-
 tests/06_or_patterns.pd	run	-	expected	-	-
+tests/06_range_patterns.pd	run	-	expected	-	-
 tests/06_pattern_matching.pd	run	-	expected	-	-
 tests/07_traits_basic.pd	vacuous	-	-	M4	claims: traits. Declares no trait and no impl; body is only print calls. Trait conformance is ZERO.
 tests/08_generics_basic.pd	vacuous	-	-	M4	claims: generics. Instantiates no generic type or function; body is only print calls. Generic conformance is ZERO.
@@ -153,6 +154,9 @@ tests/reject/generic_method_path_call.pd	reject	compile	`Rect::id` is a generic 
 tests/reject/loop_keyword.pd	run	-	expected	-	-
 tests/reject/method_mut_parameter.pd	reject	compile	`Rect::bump` takes `mut n`, and `mut` parameters on methods are not implemented	-	the definition lowers a `mut` parameter to a pointer and the method call path passes by value, so gcc refused C the front end had approved -- the one outcome no fixture may declare
 tests/reject/mut_borrow_of_immutable.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	feature-index.toml recorded this exact program as accepted and mutating an immutable local with no diagnostic; the borrow checker refuses it and names the repair
+tests/reject/range_pattern_empty.pd	reject	compile	a range pattern that can match something	-	N6-03. `5..=1` can never match, so the arm is dead the moment it is written; the two numbers are almost always transposed, and compiling it would turn a typo into a silent behaviour change
+tests/reject/range_pattern_endpoint_type.pd	reject	compile	the endpoints of a range pattern to be integer literals	-	N6-03. A range needs an ORDER, and the integer is the only ordered literal the language has; `char` waits on N4-04. A string endpoint would lower to a C pointer comparison, which answers without meaning anything
+tests/reject/range_pattern_open_ended.pd	reject	compile	open-ended range patterns are not in the language	-	N6-03. grammar.ebnf's two range productions are both closed, so `1..` is a form the language does not have; inventing an implicit maximum would be a rule no reader of the spec could predict
 tests/reject/ref_parameter.pd	reject	compile	Unexpected token: expected ')' (Expected ')'), found identifier 'String'	-	the spec writes a shared borrow `ref T` (N9); the implemented spelling is Rust's &/&mut, so `ref` is not a keyword and the parser sees an identifier where a type belongs
 tests/reject/attribute_inner.pd	reject	compile	unknown attribute `frobnicate`	-	N2-10 shape three: `#![name(args)]` at the top of a compilation unit. `#!` is ONE token, so `#![a]` and `# ![a]` are distinguishable; reaching the NAME is what proves the shape lexed
 tests/reject/attribute_with_args.pd	reject	compile	unknown attribute `frobnicate`	-	N2-10 shape two: `#[name(args)]`. The argument list is balanced on parens, so `(a, b(c))` is consumed as one attribute; a scanner that stopped at the first `)` would fail with a different message, which is what makes this distinct from unknown_attribute.pd
