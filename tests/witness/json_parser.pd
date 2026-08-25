@@ -21,9 +21,12 @@
 // escape set behaving correctly, not a workaround; and `"\\t"` lexes to
 // backslash + `t` (N2-09, `satisfied`), so the hand-assembled backslash is
 // gone. One move went the other way. The number workaround was tagged N4-02,
-// which is `satisfied` — `f64` exists — so the tag was wrong; what is actually
-// missing there is a float-to-text builtin, and no row owns one, so re-tagging
-// it UNOWNED raised that count from three to four.
+// which is `satisfied` — `f64` exists — so the tag was wrong. What is actually
+// missing is any way to move a float ACROSS the text boundary, in EITHER
+// direction: no `string_to_float` and no `parse_float`, so a lexeme cannot
+// become a value, and no `float_to_string` and no `print_float`, so a value
+// cannot be printed. No row owns either direction, so re-tagging it UNOWNED
+// raised that count from three to four.
 //
 // The shape this file would have if nothing were missing is written out in
 // tests/witness/json_parser.no-workarounds.md, beside a per-workaround diff, so
@@ -32,9 +35,12 @@
 //
 // What it does: parses one JSON document into a flat arena, re-serialises it
 // canonically, answers structural queries against it, and refuses fifteen
-// malformed documents at a named byte offset. The transcript is
-// tests/witness/json_parser.expected; every line of it is checkable by reading
-// the input strings in `main` below.
+// malformed documents at a named byte offset. Fifteen is checkable rather than
+// claimed: `grep -cE '^[[:space:]]*show_err\(j,' tests/witness/json_parser.pd`
+// is 15 — the call sites in `main`, anchored so that this sentence does not
+// count itself — and the pinned transcript carries fifteen lines after its
+// `-- refused --` marker. The transcript is tests/witness/json_parser.expected;
+// every line of it is checkable by reading the input strings in `main` below.
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -819,7 +825,9 @@ fn main() {
     print(string_concat("n              ", int_to_string(j.num[n])));
     let ratio: i64 = js_member(j, doc, "ratio");
     print(string_concat("ratio lexeme   ", j.text[ratio]));
-    // The UNOWNED float-to-text gap again, as an observable: only text, no value.
+    // The UNOWNED float↔text boundary gap again, as an observable: only text, no
+    // value. Nothing turns the lexeme "0.5" into an f64, and nothing would print
+    // one back out, so `exact` is 0 and the lexeme is all this program can carry.
     print(string_concat("ratio exact    ", int_to_string(j.exact[ratio])));
     // Downstream cost of the `mut j` workaround above: `js_kind_name` only
     // reads, but it takes `mut`, so nesting the two calls is two mutable

@@ -15,8 +15,8 @@ original. Rows 8 and 18 are **closed** there, and the commit that closed them is
 but `bec9635` — the lexical completion naming N2-03/04/08/09/10/11, merged to `main` as
 `fb12f6f`, with `c3307ed` later refining the escape fixture whose bytes row 18 quotes. Rows 10
 and 11 moved because closing row 8 changed what blocks them, and row 16 moved because its gap
-turned out to be printing rather than parsing. Every row not named in this paragraph carries
-its pre-`cfa7e7f` measurement.
+turned out to be the numeric↔text boundary in both directions rather than float arithmetic.
+Every row not named in this paragraph carries its pre-`cfa7e7f` measurement.
 
 ## The shape it would have
 
@@ -79,7 +79,7 @@ exists and the row is history.
 
 | # | Wanted | Diagnostic today | Workaround in the witness | Owner |
 |---|---|---|---|---|
-| 1 | `enum Json { Array(Vec<Json>) }` — a recursive type | **none — closed at `cfa7e7f`.** `enum V { Leaf(i64), Pair(V, V) }` compiles, links and runs (a self-recursive `depth` returns 3 for `Pair(Leaf, Pair(Leaf, Leaf))`), and a cycle with no `enum` payload slot to stop at is now refused by name: ``recursive type `J` has no layout: it stores itself by value (J -> J), and nothing on that cycle can stop. …`` | none needed for the recursion; the arena stays for rows 2 and 3 | **closed** (was UNOWNED) |
+| 1 | `enum Json { Array(Vec<Json>) }` — a recursive type | **none — closed at `cfa7e7f` for the recursion mechanism, as measured over `Custom`, `Array` and `Tuple` payload slots.** `enum V { Leaf(i64), Pair(V, V) }` compiles, links and runs (a self-recursive `depth` returns 3 for `Pair(Leaf, Pair(Leaf, Leaf))`), and a cycle with no `enum` payload slot to stop at is now refused by name: ``recursive type `J` has no layout: it stores itself by value (J -> J), and nothing on that cycle can stop. …`` Both probes are replayable as tests, in the 940-line suite that commit landed: `tests/m2_recursive_data_types.rs::a_match_arm_binds_a_subtree_and_recurses_on_it` is the depth-3 run, `tests/m2_recursive_data_types.rs::recursion_through_an_array_is_refused_rather_than_guessed_at` is the named refusal. **What was measured is not this row's own spelling.** `Vec<Json>` is a *generic* payload, and the layout rule never sees a generic cycle: `enum J { Num(i64), Arr(Vec<J>) }` reaches exit 0 through `void*` without the layout rule ever seeing the cycle. The row is counted closed because the recursion mechanism is what its workaround needed — the generic-payload case is untested residual, carried in full by the first bullet of *What is better than the roadmap assumes* below | none needed for the recursion; the arena stays for rows 2 and 3 | **closed** (was UNOWNED) |
 | 2 | `Vec<Json>` | — | fixed capacity 192 | N14-09 (M8) |
 | 3 | `Vec<(String, Json)>` for object members | `Expected ')' after expression, but found ','` | a `key: [String; 192]` array parallel to the nodes | N4-12 (M2) |
 | 4 | `[Kind; N]` — an array of a user `enum` | `Type mismatch: expected [K; 4], found [K; 4]` for **both** `[K::A; 4]` and `[K::A, K::A, K::A, K::A]` | kinds are `i64`, named by zero-arg functions | **UNOWNED** (N4-09 is `satisfied` and states it is witnessed for `[i64; N]`/`[String; N]` only) |
@@ -94,17 +94,47 @@ exists and the row is history.
 | 13 | `loop { … }` | `loop` lexes as an identifier: `Expected ';' after expression, but found '{'` | `while true` | N5-07 (M2) |
 | 14 | `self.pos += 1` | `Expected expression, but found '='` | `j.pos = j.pos + 1` | N5-13 (M2) |
 | 15 | `(v << 4) \| d`, `cp >> 6`, `cp & 63` | `<<` → `Expected expression, but found '<'`; `\|` and `&` end the enclosing expression; `^` → `Unexpected character '^'` | `v * 16 + d`, `cp / 64`, `cp % 64` | N5-12 (M2) |
-| 16 | `Number(f64)` | **not the parsing of floats — the printing.** `let x: f64 = 1.5;`, `x + 2.25` and `y > 3.0` all compile (rc=0). `print_float(x)` is `Undefined function: 'print_float'. Did you mean 'print_int'?`, and `src/builtins.rs` declares no `float_to_string`, `string_to_float` or `parse_float` either | integer numbers carry a value; non-integers carry only their source lexeme, and an `exact` flag says which | **UNOWNED** (N4-02 is `f32 f64` and is `satisfied`; no row owns a float-to-text builtin) |
+| 16 | `Number(f64)` | **not float arithmetic — the numeric↔text boundary, in both directions.** `let x: f64 = 1.5;`, `x + 2.25` and `y > 3.0` all compile (rc=0), so N4-02 is not the missing piece. Nothing carries a float across the text boundary either way: `src/builtins.rs` declares no `string_to_float` and no `parse_float`, so a parsed lexeme cannot become a value, and no `float_to_string` and no `print_float`, so a computed value cannot be printed — `print_float(x)` is `Undefined function: 'print_float'. Did you mean 'print_int'?` | integer numbers carry a value; non-integers carry only their source lexeme, and an `exact` flag says which | **UNOWNED** (N4-02 is `f32 f64` and is `satisfied`; no row owns either direction of the boundary) |
 | 17 | `const CAP: usize = 192;` | `Expected function, struct, enum, trait, type, impl, or macro declaration` | zero-arg functions | N3-09 / N3-10 (M2) |
 | 18 | `"\\t"` — a backslash followed by `t` | **closed.** Measured now: `"\\t"` → bytes `92 116`, `"\\n"` → `92 110`, `"\\"` → the single byte `92`, and `"[\"tab\\there\"]"` → exactly the 13 bytes of `["tab\there"]`. The `String::replace` chain this row described is gone — `grep -rn 'replace(' src/lexer/` is empty; escapes are lexed against the closed set `\n \t \r \" \\ \'` and anything outside it is a compile error carrying the offending character (`LexError::UnknownEscape`) | none. `bs()` is deleted and the three renderer sites emit the literal | N2-09 (M2), `satisfied` |
 | 19 | a JSON document containing `\u0000` | — | refused with a named reason; `String` is a NUL-terminated `char*` (`__pd_string_from_char` writes `result[1] = '\0'`) so the byte cannot be carried | **UNOWNED** (N4-05 is the single word `String`, and is `satisfied`) |
 
 Rows 1–19 above are 19 wants, **of which rows 1, 8 and 18 are closed**; the file carries **fifteen**
 `// WORKAROUND` comments — fourteen distinct, N5-12 twice — because rows 1, 8 and 18 are closed and
-carry no marker at all, rows 2 and 3 share the arena marker at `json_parser.pd:82`, and rows 7 and 9
-share the `match`-to-`if`-staircase marker at `json_parser.pd:561`. 19 − 3 − 1 − 1 = 14 distinct;
-N5-12 is marked at two separate sites, giving 15 comments. That arithmetic has to land on the
-anchored grep below, and does; it is not asserted against it.
+carry no marker at all, rows 2 and 3 share the arena marker at `json_parser.pd:88`, and rows 7 and 9
+share the `match`-to-`if`-staircase marker at `json_parser.pd:567`. 19 − 3 − 1 − 1 = 14 distinct;
+N5-12 is marked at two separate sites, giving 15 comments.
+
+The arena marker names **three** owners, not two — `// WORKAROUND N14-09 + N4-12 + N4-15` — and the
+third is why row 2's single line of the table is not the whole bill. `Vec<Json>` needs `Vec`, which
+the closed builtin set does not have (N14-09, M8; `Vec::new()` is `Undefined enum type: Vec` today),
+*and* it needs the mechanism underneath `Vec<T>`: named generic types `Name<A, B>`, monomorphised,
+which is N4-15 (`docs/contributing/1.0-requirements.tsv:188`, M3, `owed`). `(String, Json)` for the
+member pairs needs tuples, N4-12 (M2). The gap list gives N4-15 no row of its own because it is not
+a separate *want* of this parser — row 2's want already **is** a named generic instantiation, so
+the table counts the want once and the marker names every row that has to land before that want
+can be written. The same shape is why row 3 shares the marker rather than carrying its own.
+
+That arithmetic has to land on the anchored greps below, and does; it is not asserted against them.
+Distinctness is checkable by command too:
+
+```
+grep -E '^[[:space:]]*// WORKAROUND ' tests/witness/json_parser.pd \
+  | sed -E 's@^[[:space:]]*// WORKAROUND ([^:]+):.*@\1@; s/ again$//' \
+  | sort | uniq -c | sort -rn
+```
+
+It prints **12** marker strings over the 15 comments, and its decisive property is the top two
+lines: `3 UNOWNED` and `2 N5-12`, with every other string at 1. `N5-12` is the only requirement id
+that repeats, which is the duplicate this paragraph names — the second `s///` is what makes it
+visible, because the file spells the repeat `N5-12 again` on purpose at `json_parser.pd:285`.
+`UNOWNED` is a word rather than an id, and its three sites are three *different* workarounds — rows
+4, 16 and 19 — distinguished by site and not by string; so 12 strings + 2 (the two extra UNOWNED
+workarounds) = 14 distinct workarounds across 15 comments. The fourth UNOWNED finding, row 5, does
+not collapse here because its marker is spelled `UNOWNED (codegen) + N9-01`; the UNOWNED count of 4
+is the second anchored grep below, not this pipeline. The repeat can also be isolated on its
+own: `grep -nE '^[[:space:]]*// WORKAROUND [^:]* again:' tests/witness/json_parser.pd` prints
+exactly one line, and that line names N5-12.
 
 ## The four UNOWNED findings, which are the point of the exercise
 
@@ -129,11 +159,13 @@ Item 4 took its place when the number workaround was re-measured: it had been ta
    implementation it is a NUL-terminated C `char*`, so `\u0000` is not representable — a
    conformance question for any parser of a format that permits it, decided today by an
    implementation detail rather than by a row.
-4. **Nothing converts a float to text.** `f64` exists and arithmetic on it compiles, so N4-02
-   (`f32 f64`, `satisfied`) is not the missing piece. `print_float` is `Undefined function:
-   'print_float'. Did you mean 'print_int'?`, and `src/builtins.rs` declares no `float_to_string`,
-   `string_to_float` or `parse_float` either — grepping that file for `float` returns nothing. A
-   value the language can compute cannot be printed, and no row says it should be able to.
+4. **Nothing moves a float across the text boundary, in either direction.** `f64` exists and
+   arithmetic on it compiles, so N4-02 (`f32 f64`, `satisfied`) is not the missing piece. Inward,
+   `src/builtins.rs` declares no `string_to_float` and no `parse_float`, so a lexeme this parser
+   has already validated cannot become a value. Outward, it declares no `float_to_string` and no
+   `print_float` — `print_float(x)` is `Undefined function: 'print_float'. Did you mean
+   'print_int'?` — so a value the language can compute cannot be printed. Grepping that file for
+   `float` returns nothing at all, and no row owns *either* direction.
 
 ## What is *better* than the roadmap assumes
 
@@ -141,7 +173,11 @@ Recorded because a pessimistic manifest costs as much as an optimistic one.
 
 - **Recursive data has a layout rule and a named diagnostic**, as of `cfa7e7f` — which lands *after*
   the gap list above was measured, and closes its row 1. `enum V { Leaf(i64), Pair(V, V) }` compiles,
-  links and runs. The one indirection the compiler introduces is an `enum` payload slot whose type
+  links and runs. The probes behind that sentence are not one-off shell runs: they live as
+  replayable tests in the 940-line `tests/m2_recursive_data_types.rs` that commit landed —
+  `a_match_arm_binds_a_subtree_and_recurses_on_it` is the depth-3 run over bound payloads, and
+  `recursion_through_an_array_is_refused_rather_than_guessed_at` is the named refusal of a cycle
+  with no `enum` payload slot on it. The one indirection the compiler introduces is an `enum` payload slot whose type
   reaches its own enum; a cycle carrying no such slot is refused with a named, actionable message
   instead of being handed to gcc. What still blocks the natural `enum Json` is `Vec` (row 2, N14-09,
   M8) and tuples (row 3, N4-12, M2) — both **owned**. What the closure does *not* establish is that
@@ -164,7 +200,11 @@ Recorded because a pessimistic manifest costs as much as an optimistic one.
   `js_render` as `[Memory]` and `show_ok` as `[IO, Memory]`, propagated transitively through
   eleven functions.
 - **Diagnostics carry byte offsets and the parser's own error positions are exact** — all fifteen
-  refusal transcript lines name the right offset.
+  refusal transcript lines name the right offset. Fifteen is a measured number, not a rounded one:
+  `grep -cE '^[[:space:]]*show_err\(j,' tests/witness/json_parser.pd` is 15 — the call sites in
+  `main`, anchored for the same reason the two greps below are, so that a comment quoting the
+  pattern cannot inflate it — matching the fifteen lines after `-- refused --` in the pinned
+  transcript `tests/witness/json_parser.expected`.
 
 ## The recommended manifest change, and its evidence
 
