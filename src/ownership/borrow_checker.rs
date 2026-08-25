@@ -996,6 +996,20 @@ impl BorrowChecker {
                 self.check_expr(object)?;
             }
 
+            // N4-12. Constructing a tuple uses its elements; reading one uses
+            // the tuple. Neither is a place this pass models further — a tuple
+            // is Copy in the emitted C (a struct assignment copies), which is
+            // what `is_copy_type` answers for it.
+            Expr::Tuple { elements, .. } => {
+                for element in elements {
+                    self.check_expr(element)?;
+                }
+            }
+
+            Expr::TupleIndex { expr, .. } => {
+                self.check_expr(expr)?;
+            }
+
             Expr::EnumConstructor {
                 enum_name,
                 variant,
@@ -1469,6 +1483,12 @@ impl BorrowChecker {
             Pattern::Or(alternatives) => {
                 for alternative in alternatives {
                     self.bind_pattern(alternative)?;
+                }
+            }
+            // N6-05. Each element may bind.
+            Pattern::Tuple(elements) => {
+                for element in elements {
+                    self.bind_pattern(element)?;
                 }
             }
         }

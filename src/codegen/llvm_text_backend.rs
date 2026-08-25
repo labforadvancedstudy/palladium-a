@@ -1010,7 +1010,10 @@ impl LLVMTextBackend {
                         // TESTS anything would be taken whatever the scrutinee
                         // is. A binding is refused with its inner rather than
                         // let through, because `n @ 1` is a test too.
-                        Pattern::Or(_) | Pattern::Binding { .. } | Pattern::Range { .. } => {
+                        Pattern::Or(_)
+                        | Pattern::Binding { .. }
+                        | Pattern::Range { .. }
+                        | Pattern::Tuple(_) => {
                             return Err(unimplemented_composite_pattern(
                                 &arm.pattern,
                                 *match_span,
@@ -1329,6 +1332,15 @@ impl LLVMTextBackend {
                 Ok((ir, struct_var))
             }
             
+            // N4-12. This backend has no aggregate lowering for tuples: it would
+            // need a struct type, a constructor and a member read, and the
+            // catch-all it used to have returned the constant `0` for shapes it
+            // did not know — which is exactly how two distinct enum variants once
+            // compiled to identical IR.
+            Expr::Tuple { span, .. } | Expr::TupleIndex { span, .. } => {
+                Err(unimplemented_tuple(*span))
+            }
+
             Expr::FieldAccess { object, field: _, .. } => {
                 let (obj_ir, obj_var) = self.generate_expression(object)?;
                 ir.push_str(&obj_ir);
@@ -1668,6 +1680,20 @@ fn unimplemented_composite_pattern(pattern: &crate::ast::Pattern, span: Span) ->
             .to_string(),
         workaround: "compile without `--llvm`, which is the supported backend and lowers these \
                      patterns to real tests"
+            .to_string(),
+        span: Some(span),
+    }
+}
+
+/// A tuple value, which this backend has no aggregate lowering for.
+fn unimplemented_tuple(span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: "a tuple value".to_string(),
+        consequence: "this backend has no aggregate type, constructor or member read for one, \
+                      so the value would have to be fabricated"
+            .to_string(),
+        workaround: "compile without `--llvm`, which is the supported backend and emits a C \
+                     struct per tuple shape"
             .to_string(),
         span: Some(span),
     }

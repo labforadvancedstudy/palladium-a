@@ -1,0 +1,24 @@
+Construction and .0 access:
+1
+2
+With an annotation, and a String element:
+7
+seven
+Through a function, in both directions:
+4
+3
+Arity three:
+5
+Nested, one level at a time:
+1
+2
+3
+A tuple is copied by value:
+30
+A bool element, read by an `if`:
+true element
+An element is an ordinary expression:
+6
+4
+Grouping still groups:
+20

@@ -196,6 +196,13 @@ impl UnsafeChecker {
             }
 
             Expr::FieldAccess { object, .. } => self.check_expression(object),
+            Expr::TupleIndex { expr, .. } => self.check_expression(expr),
+            Expr::Tuple { elements, .. } => {
+                for element in elements {
+                    self.check_expression(element)?;
+                }
+                Ok(())
+            }
 
             Expr::StructLiteral { fields, .. } => {
                 for (_, field_expr) in fields {

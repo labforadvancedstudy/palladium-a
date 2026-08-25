@@ -217,6 +217,16 @@ pub struct CodeGenerator {
     /// Filled in `compile_escaped` from the ESCAPED program, because the layout
     /// is keyed by type name and `escape_reserved_names` can rename one.
     recursive_layout: crate::typeck::RecursiveLayout,
+    /// Every distinct TUPLE SHAPE this translation unit needs, in the order it
+    /// must be defined (N4-12).
+    ///
+    /// C has no tuple, so each shape becomes a struct. The key is the mangled
+    /// name and the value is the element C types, which is also what
+    /// `Expr::TupleIndex` reads back to type an element: the mangled name alone
+    /// cannot be un-mangled, and guessing is how a `.1` would get the type of
+    /// `.0`. Insertion order is definition order, and a nested shape registers
+    /// its inner shapes first because its own element types ARE those names.
+    tuple_shapes: indexmap_lite::OrderedMap,
     /// Variant constructors, held back until every type definition has been
     /// emitted. They are the only output that needs a payload type COMPLETE,
     /// and for a terminating mutual recursion no ordering of the definitions
@@ -303,6 +313,7 @@ impl CodeGenerator {
             async_functions: std::collections::HashSet::new(),
             defined_structs: std::collections::HashSet::new(),
             recursive_layout: crate::typeck::RecursiveLayout::default(),
+            tuple_shapes: indexmap_lite::OrderedMap::default(),
             enum_constructors: String::new(),
             pending_hoists: String::new(),
             hoist_counter: 0,
@@ -436,6 +447,23 @@ impl CodeGenerator {
         match expr {
             Expr::Integer(_) => Some("long long".to_string()),
             Expr::Float(_) => Some("double".to_string()),
+            // N4-12. A tuple's C type is the struct emitted for its SHAPE, and
+            // the shape is the elements' own C types — so this is the same
+            // mangling `type_to_c` performs on a written `(A, B)`.
+            Expr::Tuple { elements, .. } => {
+                let mut element_types = Vec::with_capacity(elements.len());
+                for element in elements {
+                    element_types.push(self.try_infer_expr_type_in(element, locals)?);
+                }
+                Some(Self::tuple_c_name(&element_types))
+            }
+            // Read back from the registry, because a mangled name cannot be
+            // un-mangled: `__pd_tuple2_long_long_const_char_p` has to be looked
+            // up to know that `.1` is a `const char*` and not a `long long`.
+            Expr::TupleIndex { expr, index, .. } => {
+                let base = self.try_infer_expr_type_in(expr, locals)?;
+                self.tuple_shapes.element_types(&base)?.get(*index).cloned()
+            }
             // A char literal's TYPE is i64 today (N4-04 is still owed), so it
             // must infer as `long long` and not as C's `char`: inferring `char`
             // here would silently narrow `let c = 'a';` to one byte while the
@@ -1058,6 +1086,8 @@ impl CodeGenerator {
         match expr {
             Expr::String(_) => "string literal",
             Expr::Integer(_) => "integer literal",
+            Expr::Tuple { .. } => "tuple",
+            Expr::TupleIndex { .. } => "tuple element access",
             Expr::Float(_) => "float literal",
             Expr::Char(_) => "char literal",
             Expr::Bool(_) => "boolean literal",
@@ -1875,6 +1905,18 @@ impl CodeGenerator {
         }
         self.generate_type_definitions(&local_defs)?;
 
+        // Every tuple shape a written TYPE names is registered before the
+        // marker is taken, so a function that only RECEIVES a tuple (and never
+        // builds one) still has its struct.
+        self.register_tuple_types_in(program);
+
+        // N4-12. Tuple structs go HERE — after the struct and enum definitions,
+        // because an element may be one of those. The shapes are not all known
+        // yet (a tuple built inside a function body registers when that body is
+        // generated), so the position is recorded and the definitions spliced in
+        // at the end.
+        let tuple_marker = self.output.len();
+
         // Generate monomorphized versions of generic structs FIRST
         if !self.generic_struct_instantiations.is_empty() {
             self.output.push_str("// Monomorphized generic structs\n");
@@ -2020,6 +2062,11 @@ impl CodeGenerator {
             }
         }
 
+        let tuple_defs = self.tuple_definitions();
+        if !tuple_defs.is_empty() {
+            self.output.insert_str(tuple_marker, &tuple_defs);
+        }
+
         Ok(())
     }
 
@@ -2066,9 +2113,14 @@ impl CodeGenerator {
                 // Futures compile to a struct with state and result
                 format!("Future_{}", self.type_to_c(output))
             }
-            Type::Tuple(_) => {
-                // Tuples not yet supported in C codegen
-                "void*".to_string() // TODO: Generate struct for tuple
+            // N4-12. A tuple is the struct emitted for its SHAPE. This read
+            // `void*` with a TODO for as long as no tuple could be constructed,
+            // which is why nothing ever noticed: a `void*` that no value can
+            // have is indistinguishable from a correct answer.
+            Type::Tuple(types) => {
+                let element_types: Vec<String> =
+                    types.iter().map(|ty| self.type_to_c(ty)).collect();
+                Self::tuple_c_name(&element_types)
             }
         }
     }
@@ -2163,6 +2215,35 @@ impl CodeGenerator {
 \n",
             enum_def.name
         ));
+
+        // N4-12. A TUPLE IN A PAYLOAD IS REFUSED, and by name rather than by
+        // gcc. Tuple structs are emitted after the enum definitions, because a
+        // tuple's element may be an enum; a payload of tuple type needs the
+        // reverse order, and satisfying both would take a real dependency sort
+        // over generated types. Measured without this: `enum E { P((i64, i64)) }`
+        // reached the C compiler as "unknown type name
+        // '__pd_tuple2_long_long_long_long'", which is our own C failing on the
+        // user's behalf — the failure mode this compiler refuses to ship.
+        for variant in &enum_def.variants {
+            let payload_types: Vec<&Type> = match &variant.data {
+                EnumVariantData::Unit => Vec::new(),
+                EnumVariantData::Tuple(types) => types.iter().collect(),
+                EnumVariantData::Struct(fields) => fields.iter().map(|(_, ty)| ty).collect(),
+            };
+            for ty in payload_types {
+                if matches!(ty, Type::Tuple(_)) {
+                    return Err(CompileError::CodegenError {
+                        message: format!(
+                            "`{}::{}` carries a TUPLE in its payload, and code generation emits \
+                             tuple structs after the enums that would use them, so this type \
+                             would be referenced before it is defined. Give the variant its \
+                             elements as separate fields, or wrap the tuple in a struct",
+                            enum_def.name, variant.name
+                        ),
+                    });
+                }
+            }
+        }
 
         // Generate data structs for variants with data
         for variant in &enum_def.variants {
@@ -2957,6 +3038,11 @@ impl CodeGenerator {
                 // forced `for x in arr` to fall back to `sizeof` on a pointer,
                 // and left `let e = arr[i];` with no inferable type at all.
                 Type::Array(_, _) => self.type_to_c(&param.ty),
+                // N4-12. A tuple parameter's type is its shape's struct, and it
+                // has to be recorded under that name: `p.0` is typed by looking
+                // the name up in the shape registry, and the catch-all below
+                // would have called every tuple a `long long`.
+                Type::Tuple(_) => self.type_to_c(&param.ty),
                 Type::Reference { inner, .. } => {
                     // For references, we track the base type
                     match inner.as_ref() {
@@ -4093,6 +4179,193 @@ impl CodeGenerator {
         }
     }
 
+    /// The C name of the struct standing for a tuple shape (N4-12).
+    ///
+    /// PURE, so `type_to_c` can call it from a `&self` context: mangling a shape
+    /// and REGISTERING one are different acts, and only the second needs to
+    /// mutate. The mangling is of the element C types themselves, so it is
+    /// stable across runs (no hash seed, no counter) and a nested shape's name
+    /// contains its inner shape's name.
+    fn tuple_c_name(element_c_types: &[String]) -> String {
+        let mut name = format!("__pd_tuple{}", element_c_types.len());
+        for c_type in element_c_types {
+            name.push('_');
+            let mut last_was_underscore = true;
+            for ch in c_type.chars() {
+                if ch.is_ascii_alphanumeric() {
+                    name.push(ch);
+                    last_was_underscore = false;
+                } else if ch == '*' {
+                    name.push_str("p");
+                    last_was_underscore = false;
+                } else if !last_was_underscore {
+                    name.push('_');
+                    last_was_underscore = true;
+                }
+            }
+        }
+        name
+    }
+
+    /// Record a tuple shape so its struct and constructor are emitted, and
+    /// answer with its C name.
+    fn register_tuple(&mut self, element_c_types: &[String]) -> String {
+        let name = Self::tuple_c_name(element_c_types);
+        self.tuple_shapes
+            .insert(name.clone(), element_c_types.to_vec());
+        name
+    }
+
+    /// Walk every written type in the program and register the tuple shapes.
+    ///
+    /// TYPES ONLY. A tuple that is CONSTRUCTED registers itself when its
+    /// expression is generated; this pass exists for the tuples that are only
+    /// ever named — a parameter, a return type, a `let` annotation — which no
+    /// expression in this unit may build.
+    fn register_tuple_types_in(&mut self, program: &Program) {
+        fn types_in_stmt(stmt: &Stmt, out: &mut Vec<Type>) {
+            match stmt {
+                Stmt::Let { ty: Some(ty), .. } => out.push(ty.clone()),
+                Stmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    for s in then_branch {
+                        types_in_stmt(s, out);
+                    }
+                    for s in else_branch.iter().flatten() {
+                        types_in_stmt(s, out);
+                    }
+                }
+                Stmt::While { body, .. }
+                | Stmt::For { body, .. }
+                | Stmt::Loop { body, .. }
+                | Stmt::Unsafe { body, .. } => {
+                    for s in body {
+                        types_in_stmt(s, out);
+                    }
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        for s in &arm.body {
+                            types_in_stmt(s, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut types: Vec<Type> = Vec::new();
+        let mut functions: Vec<&Function> = Vec::new();
+        for item in &program.items {
+            match item {
+                Item::Function(func) => functions.push(func),
+                Item::Impl(impl_block) => functions.extend(impl_block.methods.iter()),
+                _ => {}
+            }
+        }
+        for func in functions {
+            for param in &func.params {
+                types.push(param.ty.clone());
+            }
+            if let Some(ret) = &func.return_type {
+                types.push(ret.clone());
+            }
+            for stmt in &func.body {
+                types_in_stmt(stmt, &mut types);
+            }
+        }
+        for ty in &types {
+            self.register_tuple_type(ty);
+        }
+    }
+
+    /// Register every tuple shape a written TYPE names, innermost first.
+    fn register_tuple_type(&mut self, ty: &Type) {
+        match ty {
+            Type::Tuple(types) => {
+                let mut element_types = Vec::with_capacity(types.len());
+                for element in types {
+                    self.register_tuple_type(element);
+                    element_types.push(self.type_to_c(element));
+                }
+                self.register_tuple(&element_types);
+            }
+            Type::Array(element, _) => self.register_tuple_type(element),
+            Type::Reference { inner, .. } => self.register_tuple_type(inner),
+            Type::Future { output } => self.register_tuple_type(output),
+            _ => {}
+        }
+    }
+
+    /// The C type of an expression, or a refusal that names the expression.
+    ///
+    /// Tuple construction needs its elements' types to pick the struct, and an
+    /// element whose type this backend cannot work out is a program it must not
+    /// emit C for — silently choosing `long long` is how a `String` element
+    /// would become an integer.
+    fn expr_c_type(&self, expr: &Expr, span: Span) -> Result<String> {
+        self.try_infer_expr_type(expr)
+            .ok_or_else(|| CompileError::CodegenError {
+                message: format!(
+                    "cannot infer the type of this {} used as a tuple element",
+                    Self::expr_kind_name(expr)
+                ),
+            })
+            .map_err(|e| {
+                let _ = span;
+                e
+            })
+    }
+
+    /// Emit one C struct and one constructor per tuple shape (N4-12).
+    ///
+    /// AFTER the struct and enum definitions, because an element may be one of
+    /// those; a tuple INSIDE an enum payload or a struct field is refused by
+    /// name for the mirror reason — its definition would have to come first.
+    fn tuple_definitions(&self) -> String {
+        if self.tuple_shapes.is_empty() {
+            return String::new();
+        }
+        let shapes: Vec<(String, Vec<String>)> = self
+            .tuple_shapes
+            .iter()
+            .map(|(name, types)| (name.clone(), types.clone()))
+            .collect();
+        let mut out = String::from("// Tuple shapes (N4-12)\n");
+        // (built into a string and spliced at the marker recorded after the
+        // struct and enum definitions: a shape may be registered while a
+        // FUNCTION BODY is generated, long after that point in the output)
+        for (name, element_types) in shapes {
+            out.push_str("typedef struct {\n");
+            for (i, c_type) in element_types.iter().enumerate() {
+                out.push_str(&format!("    {} f{};\n", c_type, i));
+            }
+            out.push_str(&format!("}} {};\n", name));
+
+            let params: Vec<String> = element_types
+                .iter()
+                .enumerate()
+                .map(|(i, c_type)| format!("{} f{}", c_type, i))
+                .collect();
+            out.push_str(&format!(
+                "static {} {}_new({}) {{\n",
+                name,
+                name,
+                params.join(", ")
+            ));
+            out.push_str(&format!("    {} t;\n", name));
+            for i in 0..element_types.len() {
+                out.push_str(&format!("    t.f{} = f{};\n", i, i));
+            }
+            out.push_str("    return t;\n");
+            out.push_str("}\n\n");
+        }
+        out
+    }
+
     /// The C expression that decides whether an arm's PATTERN matches `subject`.
     ///
     /// One place, because the two match shapes above (else-if chain and
@@ -4112,6 +4385,25 @@ impl CodeGenerator {
             Pattern::Wildcard | Pattern::Ident(_) => "1".to_string(),
             // N6-08. The binding is transparent: what decides is its inner.
             Pattern::Binding { inner, .. } => self.pattern_condition(inner, subject)?,
+            // N6-05. Element by element, on the members the tuple struct has.
+            // The same recursion as an enum payload, so everything that composes
+            // there composes here: a literal, a range, an `@`, alternatives, a
+            // nested tuple.
+            Pattern::Tuple(elements) => {
+                let mut parts = Vec::new();
+                for (i, element) in elements.iter().enumerate() {
+                    let member = format!("{}.f{}", subject, i);
+                    let condition = self.pattern_condition(element, &member)?;
+                    if condition != "1" {
+                        parts.push(format!("({})", condition));
+                    }
+                }
+                if parts.is_empty() {
+                    "1".to_string()
+                } else {
+                    parts.join(" && ")
+                }
+            }
             // N6-07. The alternatives' own tests, joined. `||` short-circuits,
             // so a later alternative is not evaluated once an earlier one holds
             // — which matters as soon as an alternative's test is a `strcmp`.
@@ -4277,6 +4569,25 @@ impl CodeGenerator {
             // by name, because a single `||` condition has no per-alternative
             // site to assign from.
             Pattern::Or(_) => Ok(()),
+            // N6-05. Each element binds against its own member, typed from the
+            // shape registry — the same read `Expr::TupleIndex` performs, so a
+            // `String` element cannot become a `long long` here either.
+            Pattern::Tuple(elements) => {
+                let element_types: Vec<String> = self
+                    .tuple_shapes
+                    .element_types(subject_type)
+                    .map(|types| types.to_vec())
+                    .unwrap_or_default();
+                for (i, element) in elements.iter().enumerate() {
+                    let member = format!("{}.f{}", subject, i);
+                    let member_type = element_types
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(|| "long long".to_string());
+                    self.emit_pattern_bindings(element, &member, &member_type)?;
+                }
+                Ok(())
+            }
             Pattern::Ident(name) => {
                 // TYPED AS THE SUBJECT, not as `long long`. The old hardcoded
                 // width was invisible while only enums could be matched; a
@@ -4555,6 +4866,32 @@ impl CodeGenerator {
 
     fn generate_expression(&mut self, expr: &Expr) -> Result<()> {
         match expr {
+            // N4-12. Built through a CONSTRUCTOR FUNCTION and not a compound
+            // literal `(T){a, b}`: compound literals are C99 and the generated
+            // prelude is C89 against whatever `cc` the host has — the same
+            // reason `__pd_range_new` exists.
+            Expr::Tuple { elements, span } => {
+                let mut element_types = Vec::with_capacity(elements.len());
+                for element in elements {
+                    element_types.push(self.expr_c_type(element, *span)?);
+                }
+                let name = self.register_tuple(&element_types);
+                self.output.push_str(&format!("{}_new(", name));
+                for (i, element) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.output.push_str(", ");
+                    }
+                    self.generate_expression(element)?;
+                }
+                self.output.push(')');
+            }
+            Expr::TupleIndex { expr, index, .. } => {
+                // Parenthesised: the base may be any expression, and `f().f0`
+                // parses differently from `(f()).f0` only by luck.
+                self.output.push('(');
+                self.generate_expression(expr)?;
+                self.output.push_str(&format!(").f{}", index));
+            }
             Expr::String(s) => {
                 self.output.push_str(&format!("\"{}\"", c_string_body(s)));
             }
@@ -6252,5 +6589,45 @@ mod tests {
         .unwrap();
         assert!(c.contains("void a(long long xs[3])"), "{}", c);
         assert!(c.contains("void b(long long xs[3])"), "{}", c);
+    }
+}
+
+/// A tiny insertion-ordered map, because tuple shapes must be EMITTED in the
+/// order they were registered and LOOKED UP by name.
+///
+/// A `HashMap` loses the order, a `BTreeMap` imposes an alphabetical one that
+/// puts a nested shape before the shapes it is built from, and pulling in a
+/// dependency for eleven lines would be the larger change. Order is definition
+/// order: `((i64, i64), i64)` registers its inner shape while computing its own
+/// element types, so the inner name is already present when the outer arrives.
+mod indexmap_lite {
+    #[derive(Default)]
+    pub struct OrderedMap {
+        entries: Vec<(String, Vec<String>)>,
+    }
+
+    impl OrderedMap {
+        /// Record a shape under `name` if it is new. Returns nothing: the caller
+        /// already holds the name it computed.
+        pub fn insert(&mut self, name: String, element_types: Vec<String>) {
+            if !self.entries.iter().any(|(existing, _)| existing == &name) {
+                self.entries.push((name, element_types));
+            }
+        }
+
+        pub fn element_types(&self, name: &str) -> Option<&[String]> {
+            self.entries
+                .iter()
+                .find(|(existing, _)| existing == name)
+                .map(|(_, types)| types.as_slice())
+        }
+
+        pub fn iter(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
+            self.entries.iter().map(|(name, types)| (name, types))
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.entries.is_empty()
+        }
     }
 }

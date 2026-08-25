@@ -1,0 +1,16 @@
+// NEGATIVE TEST — a tuple has at least two elements (N4-12).
+//
+// `(e)` is grouping, in this corpus and in every language its readers know, so a
+// one-element tuple would have to be `(e,)` — a spelling whose only purpose is
+// to disambiguate against grouping, decided by a comma a reader can miss.
+//
+// The normative production (`grammar.ebnf:428`, `"(" expression { "," expression }
+// [ "," ] ")"`) PERMITS the one-element form. Refusing it is a documented SUBSET
+// of the spec rather than a contradiction: the requirement row this fixture
+// serves is "Tuples (A, B) with construction and .0 access", the two-or-more
+// spelling, and a form whose meaning turns on a trailing comma is the kind of
+// thing this project refuses to add before somebody needs it.
+fn main() {
+    let p = (1,);
+    print_int(p.0);
+}

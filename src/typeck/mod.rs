@@ -3187,6 +3187,47 @@ impl TypeChecker {
             Expr::String(_) => Ok(CheckerType::String),
             Expr::Integer(_) => Ok(CheckerType::Int),
             Expr::Float(_) => Ok(CheckerType::Float),
+            // N4-12. A tuple's type is the tuple of its elements' types — there
+            // is nothing to unify, because the elements are not required to
+            // agree with each other about anything.
+            Expr::Tuple { elements, span } => {
+                if elements.len() < 2 {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "a tuple to have at least two elements".to_string(),
+                        found: format!("a tuple with {}", elements.len()),
+                        span: Some(*span),
+                    });
+                }
+                let mut element_types = Vec::with_capacity(elements.len());
+                for element in elements {
+                    element_types.push(self.check_expression(element)?);
+                }
+                Ok(CheckerType::Tuple(element_types))
+            }
+            // N4-12. `.0` is SYNTAX: the index is read at compile time, and the
+            // type it produces is the one that element has. An out-of-range
+            // index is refused with both numbers, because "index out of bounds"
+            // without the arity is a message the reader has to go and check.
+            Expr::TupleIndex { expr, index, span } => {
+                let base = self.check_expression(expr)?;
+                let CheckerType::Tuple(element_types) = base else {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "a tuple, which is what `.0` reads an element of".to_string(),
+                        found: base.to_string(),
+                        span: Some(*span),
+                    });
+                };
+                element_types.get(*index).cloned().ok_or_else(|| {
+                    CompileError::TypeMismatch {
+                        expected: format!(
+                            "a tuple index below {}, which is this tuple's arity",
+                            element_types.len()
+                        ),
+                        found: format!("`.{}`", index),
+                        span: Some(*span),
+                    }
+                })
+            }
             // A CHAR LITERAL IS AN `Int` HERE, AND THAT IS A RECORDED DECISION
             // RATHER THAN AN OVERSIGHT.
             //
@@ -4434,6 +4475,7 @@ impl TypeChecker {
             Pattern::Binding { name, .. } => Some(name),
             Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => None,
             Pattern::Or(alternatives) => alternatives.iter().find_map(Self::first_binder),
+            Pattern::Tuple(elements) => elements.iter().find_map(Self::first_binder),
             Pattern::EnumPattern { data, .. } => match data {
                 None => None,
                 Some(PatternData::Tuple(patterns)) => {
@@ -4743,6 +4785,36 @@ impl TypeChecker {
             // N6-08. The binding names this position; what it may match is
             // decided by the inner pattern.
             Pattern::Binding { inner, .. } => self.check_pattern(inner, expected_type),
+            // N6-05. Arity and element types both, against the tuple this match
+            // is on. An arity mismatch is reported with BOTH numbers: "expected a
+            // tuple pattern" without them sends the reader to count parentheses.
+            Pattern::Tuple(elements) => {
+                let CheckerType::Tuple(element_types) = expected_type else {
+                    return Err(CompileError::TypeMismatch {
+                        expected: format!(
+                            "a pattern of type {}, which is what this `match` is on",
+                            expected_type
+                        ),
+                        found: "a tuple pattern".to_string(),
+                        span: None,
+                    });
+                };
+                if elements.len() != element_types.len() {
+                    return Err(CompileError::TypeMismatch {
+                        expected: format!(
+                            "a tuple pattern with {} elements, matching the tuple this `match` \
+                             is on",
+                            element_types.len()
+                        ),
+                        found: format!("a tuple pattern with {}", elements.len()),
+                        span: None,
+                    });
+                }
+                for (element, element_type) in elements.iter().zip(element_types.iter()) {
+                    self.check_pattern(element, element_type)?;
+                }
+                Ok(())
+            }
             // N6-03. Three questions, all answerable here and nowhere later:
             // the endpoints must be integers, the scrutinee must be an integer
             // too, and the interval must be able to contain something.
@@ -4870,6 +4942,19 @@ impl TypeChecker {
             // N6-07. No alternative may bind (refused in `check_pattern`), so
             // there is nothing to define here.
             Pattern::Or(_) => Ok(()),
+            // N6-05. Each element binds against its own element type.
+            Pattern::Tuple(elements) => {
+                let CheckerType::Tuple(element_types) = value_type else {
+                    // `check_pattern` refused this shape already; binding
+                    // nothing is the honest answer for a pattern that will not
+                    // be reached.
+                    return Ok(());
+                };
+                for (element, element_type) in elements.iter().zip(element_types.iter()) {
+                    self.bind_pattern_variables(element, element_type)?;
+                }
+                Ok(())
+            }
             Pattern::Ident(name) => {
                 // Bind the identifier to the value type
                 self.symbols.define(

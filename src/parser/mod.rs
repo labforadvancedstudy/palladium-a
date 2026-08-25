@@ -629,6 +629,8 @@ impl Parser {
             Expr::Bool(_) => Span::dummy(),
             Expr::Ident(_) => Span::dummy(),
             // Expressions with span field
+            Expr::Tuple { span, .. } => *span,
+            Expr::TupleIndex { span, .. } => *span,
             Expr::Binary { span, .. } => *span,
             Expr::Unary { span, .. } => *span,
             Expr::Call { span, .. } => *span,
@@ -2900,6 +2902,37 @@ impl Parser {
                 self.advance()?;
                 self.maybe_range(PatternLiteral::Bool(false))
             }
+            // N6-05. A tuple pattern. The same arity rule as the VALUE side:
+            // `(p)` is grouping, and grouping is not a pattern form, so it is
+            // refused by name instead of quietly meaning its inner pattern.
+            Token::LeftParen => {
+                let start = self.advance()?.1;
+                let mut elements = Vec::new();
+                if !self.check(&Token::RightParen) {
+                    loop {
+                        elements.push(self.parse_pattern()?);
+                        if !self.check(&Token::Comma) {
+                            break;
+                        }
+                        self.advance()?; // consume ','
+                        if self.check(&Token::RightParen) {
+                            break; // trailing comma
+                        }
+                    }
+                }
+                self.consume(Token::RightParen, "Expected ')' after tuple pattern")?;
+                if elements.len() < 2 {
+                    let _ = start;
+                    return Err(CompileError::UnexpectedToken {
+                        expected: "a tuple pattern to have at least two elements; grouping is not \
+                                   a pattern form, so `(p)` is not a way to write `p`"
+                            .to_string(),
+                        found: format!("a pattern with {} element(s) in parentheses", elements.len()),
+                        span: self.current_span(),
+                    });
+                }
+                Ok(Pattern::Tuple(elements))
+            }
             // N6-03. A range needs a LOW end, and `..5` has none. Refused here
             // by name: the spec's two range forms are both closed, so this is a
             // form the language does not have rather than one nobody wrote yet.
@@ -3726,11 +3759,45 @@ impl Parser {
                     Ok(Expr::Ident(name))
                 }
             }
-            (Token::LeftParen, _) => {
-                // Parse parenthesized expression
-                let expr = self.parse_expression()?;
-                self.consume(Token::RightParen, "Expected ')' after expression")?;
-                Ok(expr)
+            (Token::LeftParen, start_span) => {
+                // Grouping, or a TUPLE (N4-12). The comma decides, and nothing
+                // else does: `(e)` has been grouping in every program this
+                // corpus contains, so it stays grouping.
+                let first = self.parse_expression()?;
+                if !self.check(&Token::Comma) {
+                    self.consume(Token::RightParen, "Expected ')' after expression")?;
+                    return Ok(first);
+                }
+                let mut elements = vec![first];
+                while self.check(&Token::Comma) {
+                    self.advance()?; // consume ','
+                    if self.check(&Token::RightParen) {
+                        // Trailing comma. `(a, b,)` is a 2-tuple; `(a,)` would be
+                        // a ONE-tuple, which this language does not have — see
+                        // the refusal below.
+                        break;
+                    }
+                    elements.push(self.parse_expression()?);
+                }
+                let end_span = self.consume(Token::RightParen, "Expected ')' after tuple")?;
+                if elements.len() < 2 {
+                    return Err(CompileError::UnexpectedToken {
+                        expected: "a tuple to have at least two elements; `(e)` is grouping and \
+                                   a one-element tuple `(e,)` is not a form this language has"
+                            .to_string(),
+                        found: "a one-element tuple".to_string(),
+                        span: self.current_span(),
+                    });
+                }
+                Ok(Expr::Tuple {
+                    elements,
+                    span: Span::new(
+                        start_span.start,
+                        end_span.end,
+                        start_span.line,
+                        start_span.column,
+                    ),
+                })
             }
             (Token::LeftBracket, span) => {
                 // Parse array literal: [1, 2, 3] or array repeat: [0; 10]
@@ -3961,6 +4028,49 @@ impl Parser {
                                 ),
                             };
                             continue;
+                        }
+                        // N4-12. `p.0`. The lexer already tells this apart from a
+                        // float: the float rule needs digits on BOTH sides of the
+                        // dot, so `.0` after an expression is `Dot` then
+                        // `Integer(0)`.
+                        (Token::Integer(index), span) => {
+                            if index < 0 {
+                                return Err(CompileError::UnexpectedToken {
+                                    expected: "a tuple index, which is a non-negative integer"
+                                        .to_string(),
+                                    found: format!("`.{}`", index),
+                                    span: self.current_span(),
+                                });
+                            }
+                            let end_span = span;
+                            expr = Expr::TupleIndex {
+                                expr: Box::new(expr),
+                                index: index as usize,
+                                span: Span::new(
+                                    start_span.start,
+                                    end_span.end,
+                                    start_span.line,
+                                    start_span.column,
+                                ),
+                            };
+                            continue;
+                        }
+                        // `p.0.1` — REFUSED, NOT GUESSED. `[0-9]+\.[0-9]+` is the
+                        // float rule, so `.0.1` lexes as ONE `Float(0.1)` token
+                        // and the two indices are gone before this point. The f64
+                        // cannot be split back: `p.0.10` and `p.0.1` both hold
+                        // 0.1, so recovering "10" from it would be a guess with a
+                        // wrong answer available.
+                        (Token::Float(_), _) => {
+                            return Err(CompileError::UnexpectedToken {
+                                expected: "a field name or a tuple index; a CHAINED tuple index \
+                                           has to be parenthesised, as `(p.0).1`, because `.0.1` \
+                                           lexes as one float literal and the two indices cannot \
+                                           be recovered from it"
+                                    .to_string(),
+                                found: "a float literal".to_string(),
+                                span: self.current_span(),
+                            });
                         }
                         (token, _) => {
                             return Err(CompileError::UnexpectedToken {

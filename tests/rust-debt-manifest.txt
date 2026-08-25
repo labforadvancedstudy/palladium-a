@@ -81,7 +81,7 @@ tests/advanced_e2e_test.rs	test_option_enum	owed	M2	constructs a variant of a GE
 tests/advanced_e2e_test.rs	test_pattern_matching_guards	owed	M2	Compilation failed: Unexpected token: expected ':' (Expected ':' after field name in pattern), found ','
 tests/advanced_e2e_test.rs	test_result_error_handling	owed	M4	constructs a variant of a GENERIC enum, and generic enums are not implemented
 tests/advanced_e2e_test.rs	test_trait_implementation	owed	M4	Compilation failed: Unexpected token: expected parameter name, found '&'
-tests/advanced_e2e_test.rs	test_type_aliases_complex	owed	M2	Compilation failed: Unexpected token: expected ')' (Expected ')' after expression), found ','
+tests/advanced_e2e_test.rs	test_type_aliases_complex	owed	M2	Expected '=' (Expected '=' after variable name), but found ';'
 tests/advanced_features_test.rs	test_async_await_basic	owed	unscheduled	Compilation failed: a `return` with a value inside an `async fn` is not implemented
 tests/advanced_features_test.rs	test_async_await_multiple	owed	unscheduled	Compilation failed: a `return` with a value inside an `async fn` is not implemented
 tests/advanced_features_test.rs	test_closures	owed	M4	Compilation failed: Unexpected token: expected expression, found '|'

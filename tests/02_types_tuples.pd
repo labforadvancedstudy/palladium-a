@@ -1,0 +1,76 @@
+// Test 02: TUPLES (requirement N4-12) — `(A, B)` construction and `.0` access.
+//
+// The type existed in the type grammar the whole time and lowered to `void*`
+// with a TODO; there was no tuple EXPRESSION, so no tuple was ever constructible
+// and the `void*` could never be observed. This fixture is the first program in
+// which a tuple is a value.
+//
+// ARITY IS TWO OR MORE. `(e)` is grouping and stays grouping — it is how every
+// program in this corpus parenthesises a subexpression — and a one-element tuple
+// would need `(e,)`, a spelling whose only purpose is to disambiguate against
+// that. The normative grammar (`grammar.ebnf:428`) permits the one-element form;
+// this compiler refuses it by name, which is a SUBSET of the spec rather than a
+// contradiction of it: `tests/reject/tuple_one_element.pd`. `()` is untouched —
+// it is a primitive type spelled in `grammar.ebnf:188`, not a zero-tuple.
+//
+// `p.0.1` IS REFUSED, NOT PARSED. The float rule is `[0-9]+\.[0-9]+`, so `.0.1`
+// after an identifier lexes as one `Float(0.1)` token and the two indices are
+// gone before the parser sees them — the f64 cannot be turned back into "0" and
+// "1" without guessing (`p.0.10` and `p.0.1` both round-trip to 0.1). Write
+// `(p.0).1`, which this fixture does.
+
+fn swap(p: (i64, i64)) -> (i64, i64) {
+    return (p.1, p.0);
+}
+
+fn first_of_three(t: (i64, i64, i64)) -> i64 {
+    return t.0;
+}
+
+fn main() {
+    print("Construction and .0 access:");
+    let p = (1, 2);
+    print_int(p.0);
+    print_int(p.1);
+
+    print("With an annotation, and a String element:");
+    let q: (i64, String) = (7, "seven");
+    print_int(q.0);
+    print(q.1);
+
+    print("Through a function, in both directions:");
+    let s = swap((3, 4));
+    print_int(s.0);
+    print_int(s.1);
+
+    print("Arity three:");
+    print_int(first_of_three((5, 6, 7)));
+
+    print("Nested, one level at a time:");
+    let n = ((1, 2), 3);
+    print_int((n.0).0);
+    print_int((n.0).1);
+    print_int(n.1);
+
+    print("A tuple is copied by value:");
+    let a = (10, 20);
+    let b = a;
+    print_int(b.0 + b.1);
+
+    print("A bool element, read by an `if`:");
+    let flag = (1, 2 > 1);
+    if flag.1 {
+        print("true element");
+    } else {
+        print("false element");
+    }
+
+    print("An element is an ordinary expression:");
+    let computed = (2 * 3, string_len("abcd"));
+    print_int(computed.0);
+    print_int(computed.1);
+
+    print("Grouping still groups:");
+    let grouped = (2 + 3) * 4;
+    print_int(grouped);
+}

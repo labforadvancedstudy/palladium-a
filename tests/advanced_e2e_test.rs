@@ -568,7 +568,7 @@ fn test_const_generics_arrays() {
 }
 
 #[test]
-#[ignore = "XFAIL: tuple expressions — grammar.ebnf:308 'no tuple expressions'; tuple *types* parse but lower to void* and cannot be constructed (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: AN UNINITIALISED `let`. The tuple half of this row is paid (N4-12): `(from, to, weight)` constructs, tuple types lower to a struct per shape, and `.0` reads an element — measured. What stops this fixture now is `let mut graph: Graph;` with no initialiser, which the parser refuses with \"Expected '=' after variable name\"; behind that sits `let (from, to, weight) = graph[i];`, a DESTRUCTURING `let`, which grammar.ebnf:212 says this language does not have (`let` patterns do not exist) (owned by M2, surface syntax)"]
 fn test_type_aliases_complex() {
     let source = r#"
     type NodeId = int;

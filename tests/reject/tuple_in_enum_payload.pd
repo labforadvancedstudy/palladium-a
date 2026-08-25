@@ -1,0 +1,23 @@
+// NEGATIVE TEST — an enum variant may not carry a tuple (N4-12, ordering).
+//
+// Tuple structs are emitted AFTER the enum definitions, because a tuple's
+// element may be an enum. A payload of tuple type needs the reverse order, and
+// satisfying both directions takes a real dependency sort over generated types —
+// which is type-model work, not pattern work.
+//
+// Refused by name rather than left to the C compiler. Measured without this
+// refusal, the program reached gcc as `unknown type name
+// '__pd_tuple2_long_long_long_long'`: our own generated C failing on the user's
+// behalf, which is the failure mode this compiler exists to not have.
+enum E {
+    P((i64, i64)),
+    Empty,
+}
+
+fn main() {
+    let e = E::P((1, 2));
+    match e {
+        E::P(t) => { print_int(t.0); }
+        E::Empty => { print("none"); }
+    }
+}

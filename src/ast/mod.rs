@@ -557,6 +557,12 @@ pub enum Pattern {
         name: String,
         inner: Box<Pattern>,
     },
+    /// Tuple pattern — `(p1, p2)` (N6-05).
+    ///
+    /// ARITY IS TWO OR MORE, matching the values of N4-12: `(p)` is refused as
+    /// grouping rather than read as a one-element tuple, so the parentheses mean
+    /// one thing in pattern position too.
+    Tuple(Vec<Pattern>),
     /// Range pattern — `lo .. hi` and `lo ..= hi` (N6-03).
     ///
     /// BOTH ENDPOINTS, ALWAYS. The normative production
@@ -778,6 +784,27 @@ pub enum Expr {
         value: Option<Box<Expr>>,
         span: Span,
     },
+    /// Tuple construction — `(a, b)` (N4-12).
+    ///
+    /// ARITY IS TWO OR MORE. `(e)` is grouping, which every program in this
+    /// corpus already relies on, so a one-element tuple would have to be `(e,)`
+    /// — a spelling whose only job is to disambiguate against grouping. The
+    /// parser refuses it by name rather than giving the same parentheses two
+    /// meanings decided by a trailing comma.
+    Tuple {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    /// Tuple element access — `p.0` (N4-12).
+    ///
+    /// The index is a `usize` and not an expression: `.0` is SYNTAX. A tuple's
+    /// elements may have different types, so an index the compiler cannot read
+    /// at compile time has no type to be.
+    TupleIndex {
+        expr: Box<Expr>,
+        index: usize,
+        span: Span,
+    },
 }
 
 /// Enum constructor data
@@ -867,6 +894,8 @@ impl Expr {
             Expr::Await { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::Block { span, .. } => *span,
+            Expr::Tuple { span, .. } => *span,
+            Expr::TupleIndex { span, .. } => *span,
             Expr::Cast { span, .. } => *span,
             Expr::Loop { span, .. } => *span,
             Expr::Match { span, .. } => *span,
@@ -1345,6 +1374,11 @@ impl std::fmt::Display for Expr {
             Expr::Char(c) => write!(f, "'{}'", c.escape_debug()),
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Ident(name) => write!(f, "{}", name),
+            Expr::Tuple { elements, .. } => {
+                let parts: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
+                write!(f, "({})", parts.join(", "))
+            }
+            Expr::TupleIndex { expr, index, .. } => write!(f, "{}.{}", expr, index),
             Expr::ArrayLiteral { elements, .. } => {
                 write!(f, "[")?;
                 for (i, elem) in elements.iter().enumerate() {
@@ -1531,6 +1565,10 @@ impl std::fmt::Display for Pattern {
                 write!(f, "{}", parts.join(" | "))
             }
             Pattern::Binding { name, inner } => write!(f, "{} @ {}", name, inner),
+            Pattern::Tuple(elements) => {
+                let parts: Vec<String> = elements.iter().map(|p| p.to_string()).collect();
+                write!(f, "({})", parts.join(", "))
+            }
             Pattern::Range { lo, hi, inclusive } => write!(
                 f,
                 "{}{}{}",

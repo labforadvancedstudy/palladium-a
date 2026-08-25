@@ -1,0 +1,94 @@
+// Test 06: TUPLE PATTERNS (requirement N6-05) — `(p1, p2)` in a match arm.
+//
+// Element-wise: the arm's condition is the conjunction of its elements' own
+// conditions, each asked of that element's C member, and its bindings are those
+// elements' bindings. Everything N6 has built so far composes inside an element
+// — literals (N6-02), ranges (N6-03), alternatives (N6-07), `@` bindings
+// (N6-08) — because the machinery is one recursion over a SUBJECT rather than a
+// list of special cases.
+//
+// ARITY IS TWO OR MORE, matching the tuple values of N4-12: `(p)` is refused
+// with "grouping is not a pattern form" rather than read as a one-element tuple
+// (`tests/reject/tuple_pattern_one_element.pd`). The normative production
+// permits the one-element form; this is a documented subset, the same choice the
+// value side makes.
+//
+// EXHAUSTIVENESS: a tuple pattern contributes coverage only when EVERY element
+// is irrefutable. `(a, b)` covers everything; `(0, b)` covers nothing the checker
+// can count, because counting it would need the product space. That is N6-10's
+// problem (4e), so every match below is exhausted by an irrefutable arm.
+
+enum P {
+    Num(i64),
+    Empty,
+}
+
+fn classify(p: (i64, i64)) -> i64 {
+    match p {
+        (0, 0) => 0,
+        (0, _) => 1,
+        (_, 0) => 2,
+        (a, b) if a == b => 3,
+        (a, _) => a,
+    }
+}
+
+fn main() {
+    print("Element-wise literal tests:");
+    print_int(classify((0, 0)));
+    print_int(classify((0, 5)));
+    print_int(classify((5, 0)));
+    print_int(classify((4, 4)));
+    print_int(classify((9, 1)));
+
+    print("A binding over a range inside an element:");
+    let r = match (7, 2) {
+        (n @ 1..=9, 2) => n * 10,
+        _ => 0,
+    };
+    print_int(r);
+
+    print("Alternatives inside an element:");
+    let o = match (3, 8) {
+        (1 | 2 | 3, x) => x,
+        _ => 0,
+    };
+    print_int(o);
+    let o2 = match (4, 8) {
+        (1 | 2 | 3, x) => x,
+        _ => 0,
+    };
+    print_int(o2);
+
+    print("An enum in a tuple element:");
+    let e = match (P::Num(4), 1) {
+        (P::Num(v), 1) => v,
+        _ => 0,
+    };
+    print_int(e);
+    let e2 = match (P::Empty, 1) {
+        (P::Num(v), 1) => v,
+        _ => 0,
+    };
+    print_int(e2);
+
+    print("A tuple nested in a tuple element:");
+    let t = match ((1, 2), 3) {
+        ((1, b), c) => b + c,
+        _ => 0,
+    };
+    print_int(t);
+
+    print("A String element:");
+    let s = match (1, "yes") {
+        (1, "yes") => 1,
+        _ => 0,
+    };
+    print_int(s);
+
+    print("Statement form, with a guard:");
+    match (2, 2) {
+        (a, b) if a == b => { print("equal"); }
+        _ => { print("different"); }
+    }
+}

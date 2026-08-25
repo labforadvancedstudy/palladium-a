@@ -20,6 +20,8 @@ pub enum PatternKind {
     },
     /// Or-pattern (N6-07) — matches if any alternative does.
     Or(Vec<PatternKind>),
+    /// Tuple pattern (N6-05) — matches element-wise.
+    Tuple(Vec<PatternKind>),
     /// Range pattern (N6-03) — matches an interval, and contributes nothing to
     /// completeness for the reason given at the walk that ignores it.
     Range {
@@ -186,6 +188,13 @@ impl ExhaustivenessChecker {
                 // Full product/interval analysis is N6-10's problem (4e), not a
                 // half-measure smuggled in as a normalisation.
                 Pattern::Literal(_) | Pattern::Range { .. } => {}
+                // N6-05. A tuple covers something only when EVERY element is
+                // irrefutable, and then it covers everything — which for an enum
+                // scrutinee is not reachable anyway (a tuple is not a variant).
+                // Counting `(0, b)` would need the product space: `(0, _)` plus
+                // `(1, _)` plus … is not a completeness question this checker can
+                // answer without one. N6-10 (4e) is where that lives.
+                Pattern::Tuple(_) => {}
                 // `normalize` removed these before the walk began; the arms
                 // exist so a future caller that forgets to normalise fails to
                 // compile rather than silently counting nothing.
@@ -263,6 +272,7 @@ impl ExhaustivenessChecker {
                 Pattern::Literal(_)
                 | Pattern::Range { .. }
                 | Pattern::Or(_)
+                | Pattern::Tuple(_)
                 | Pattern::Binding { .. } => {}
                 Pattern::EnumPattern {
                     enum_name, variant, ..
@@ -302,6 +312,9 @@ impl Pattern {
             },
             Pattern::Or(alternatives) => {
                 PatternKind::Or(alternatives.iter().map(|p| p.to_pattern_kind()).collect())
+            }
+            Pattern::Tuple(elements) => {
+                PatternKind::Tuple(elements.iter().map(|p| p.to_pattern_kind()).collect())
             }
             // Transparent, exactly as it is to completeness counting.
             Pattern::Binding { inner, .. } => inner.to_pattern_kind(),

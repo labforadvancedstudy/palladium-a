@@ -1,0 +1,20 @@
+Element-wise literal tests:
+0
+1
+2
+3
+9
+A binding over a range inside an element:
+70
+Alternatives inside an element:
+8
+0
+An enum in a tuple element:
+4
+0
+A tuple nested in a tuple element:
+5
+A String element:
+1
+Statement form, with a guard:
+equal

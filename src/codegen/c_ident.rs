@@ -658,6 +658,11 @@ fn escape_pattern(pattern: &mut Pattern) {
             escape_in_place(name);
             escape_pattern(inner);
         }
+        Pattern::Tuple(elements) => {
+            for element in elements {
+                escape_pattern(element);
+            }
+        }
         Pattern::Ident(name) => escape_in_place(name),
         Pattern::EnumPattern {
             enum_name,
@@ -699,6 +704,10 @@ fn escape_expr(expr: &mut Expr) {
     match expr {
         Expr::Ident(name) => escape_in_place(name),
         Expr::ArrayLiteral { elements, .. } => elements.iter_mut().for_each(escape_expr),
+        // N4-12. A tuple holds expressions; its INDEX is a number and can collide
+        // with nothing.
+        Expr::Tuple { elements, .. } => elements.iter_mut().for_each(escape_expr),
+        Expr::TupleIndex { expr, .. } => escape_expr(expr),
         Expr::ArrayRepeat { value, count, .. } => {
             escape_expr(value);
             escape_expr(count);

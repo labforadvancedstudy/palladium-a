@@ -68,6 +68,7 @@ tests/02_types_floats.pd	run	-	expected	-	-
 tests/02_types_enums.pd	vacuous	-	-	unscheduled	claims: enum types. Declares no enum, constructs no variant, matches on nothing; body is only print calls. Enum conformance is ZERO.
 tests/02_types_primitives.pd	run	-	expected	-	-
 tests/02_types_structs.pd	run	-	expected	-	-
+tests/02_types_tuples.pd	run	-	expected	-	-
 tests/02_unary_precedence.pd	run	-	expected	-	-
 tests/03_functions_basic.pd	run	-	expected	-	-
 tests/04_block_expression.pd	run	-	expected	-	-
@@ -92,6 +93,7 @@ tests/06_match_expression.pd	run	-	expected	-	-
 tests/06_or_patterns.pd	run	-	expected	-	-
 tests/06_range_patterns.pd	run	-	expected	-	-
 tests/06_pattern_matching.pd	run	-	expected	-	-
+tests/06_tuple_patterns.pd	run	-	expected	-	-
 tests/07_traits_basic.pd	vacuous	-	-	M4	claims: traits. Declares no trait and no impl; body is only print calls. Trait conformance is ZERO.
 tests/08_generics_basic.pd	vacuous	-	-	M4	claims: generics. Instantiates no generic type or function; body is only print calls. Generic conformance is ZERO.
 tests/09_effects_system.pd	vacuous	-	-	unscheduled	claims: the effect system. No effect annotation appears anywhere; body is only print calls. Effect conformance is ZERO.
@@ -161,6 +163,10 @@ tests/reject/ref_parameter.pd	reject	compile	Unexpected token: expected ')' (Exp
 tests/reject/attribute_inner.pd	reject	compile	unknown attribute `frobnicate`	-	N2-10 shape three: `#![name(args)]` at the top of a compilation unit. `#!` is ONE token, so `#![a]` and `# ![a]` are distinguishable; reaching the NAME is what proves the shape lexed
 tests/reject/attribute_with_args.pd	reject	compile	unknown attribute `frobnicate`	-	N2-10 shape two: `#[name(args)]`. The argument list is balanced on parens, so `(a, b(c))` is consumed as one attribute; a scanner that stopped at the first `)` would fail with a different message, which is what makes this distinct from unknown_attribute.pd
 tests/reject/total_attribute.pd	reject	compile	unknown attribute `total`	-	the totality surface is attributes. THE FINGERPRINT MOVED at N2-10/N2-11: it was `Unexpected character '#'` when there was no `#` token and the failure was one level below the parser. `#` lexes now, so #[total] is read as an attribute named `total` and refused because KNOWN_ATTRIBUTES is empty. It moves again -- to acceptance -- only when M6 can discharge the obligation
+tests/reject/tuple_in_enum_payload.pd	reject	compile	carries a TUPLE in its payload	-	N4-12 ordering. Tuple structs are emitted after the enums whose payloads would use them, and reversing that breaks a tuple whose element is an enum; a real dependency sort over generated types is type-model work. Refused by name rather than reaching gcc as `unknown type name`
+tests/reject/tuple_index_chained.pd	reject	compile	a CHAINED tuple index has to be parenthesised	-	N4-12 lexing. `.0.1` is ONE Float token (the float rule is digits-dot-digits), and an f64 cannot be split back into the digits that made it -- `p.0.10` and `p.0.1` both hold 0.1. `(p.0).1` is the spelling that works
+tests/reject/tuple_one_element.pd	reject	compile	a tuple to have at least two elements	-	N4-12. `(e)` is grouping, so a one-element tuple would be `(e,)`, a meaning decided by a comma. The normative production permits it; refusing it is a documented subset, not a contradiction
+tests/reject/tuple_pattern_one_element.pd	reject	compile	a tuple pattern to have at least two elements	-	N6-05. The mirror of the value rule, plus a second reason: there is no grouping form for PATTERNS, so accepting `(p)` would give the parentheses two meanings decided by counting commas
 tests/reject/unknown_attribute.pd	reject	compile	unknown attribute `frobnicate`	-	N2-11 itself: an attribute the compiler does not implement is a compile error and the diagnostic names it. Lexing `#[...]` and ignoring it would recreate the class M1 removed -- a source that requests a property and a binary without it
 tests/reject/unknown_escape.pd	reject	compile	unknown escape sequence `\q` in a literal	-	N2-09's negative half. `"\\q"` used to produce the two characters `\` and `q` with no diagnostic; the escape set is closed and the message lists it
 tests/reject/unterminated_block_comment.pd	reject	compile	unterminated block comment: `/*` is never closed	-	N2-08's negative half. Only distinguishable once comments NEST: under the old regex the same file lexed as a closed comment plus live source and failed at the trailing `*/` with `Expected expression, but found '/'`

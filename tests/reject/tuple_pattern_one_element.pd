@@ -1,0 +1,15 @@
+// NEGATIVE TEST — a tuple pattern has at least two elements (N6-05).
+//
+// The mirror of `tests/reject/tuple_one_element.pd` on the pattern side, and it
+// has to be refused for a second reason as well: THERE IS NO GROUPING FORM FOR
+// PATTERNS. If `(p)` were accepted as "just p", the parentheses would mean
+// grouping here and a tuple one element later, decided by counting commas — and
+// `n @ (1 | 2)`, which 4b deliberately left unwritable, would start parsing with
+// a meaning nothing in the language defines.
+fn main() {
+    let v = match 4 {
+        (x) => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

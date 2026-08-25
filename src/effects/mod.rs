@@ -275,6 +275,17 @@ impl EffectAnalyzer {
     /// Analyze effects for an expression
     fn analyze_expression(&mut self, expr: &Expr) -> Result<EffectSet> {
         match expr {
+            // N4-12. A tuple's effects are its elements' effects; reading an
+            // element has none of its own.
+            Expr::Tuple { elements, .. } => {
+                let mut effects = EffectSet::new();
+                for element in elements {
+                    let element_effects = self.analyze_expression(element)?;
+                    effects.union(&element_effects);
+                }
+                Ok(effects)
+            }
+            Expr::TupleIndex { expr, .. } => self.analyze_expression(expr),
             // Literals are pure
             Expr::Integer(_)
             | Expr::Float(_)

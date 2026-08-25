@@ -1,0 +1,14 @@
+// NEGATIVE TEST — a chained tuple index must be parenthesised (N4-12).
+//
+// `p.0.1` never reaches the parser as two indices. The float rule is
+// `-?[0-9]+\.[0-9]+` (`src/lexer/token.rs`), so `.0.1` after an expression is ONE
+// `Float(0.1)` token, and an f64 cannot be split back into the digits that made
+// it: `p.0.10` and `p.0.1` both hold 0.1, so recovering "10" would be a guess
+// with a wrong answer available.
+//
+// The workaround is in the diagnostic and costs two characters: `(p.0).1`, which
+// `tests/02_types_tuples.pd` uses and runs.
+fn main() {
+    let p = ((1, 2), 3);
+    print_int(p.0.1);
+}
