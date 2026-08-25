@@ -1393,21 +1393,25 @@ why `scripts/conformance.sh` reports `SKIP_NO_MAIN` for two files rather than fa
 
 `scripts/conformance.sh` compiles, links, and runs every `.pd` under `tests/` and `examples/`
 against `tests/conformance-manifest.txt`, a **closed inventory** declaring what each fixture is
-expected to do. Current status, re-measured on the tree integrating `fix/m2-lexical`
+expected to do. Current status, re-measured on the tree integrating `feat/m2-witness-json`
 (2026-08-23):
 
-**verified 51 · untranscribed 0 · vacuous 7 · xfail 1 · reject 22 · skip 2 · failures 0**, over 83
-fixtures. (The previous figure — 48 verified, reject 16, over 74 — was taken before
-`fix/m2-lexical` landed the N2-08…N2-11 lexical rows: three `run` fixtures
+**verified 52 · untranscribed 0 · vacuous 7 · xfail 1 · reject 22 · skip 2 · failures 0**, over 84
+fixtures. (The previous figure — 51 verified, reject 22, over 83 — was taken before
+`feat/m2-witness-json` added `tests/witness/json_parser.pd`, the second witness program thesis
+condition 4 names; it is one `run` row, so only `verified` and the corpus size move. The one
+before that — 48 verified, reject 16, over 74 — was taken before
+`fix/m2-lexical` landed the N2-03/04/08/09/10/11 lexical rows: three `run` fixtures
 (`01_lexical_escapes`, `02_types_chars`, `02_types_floats`) and five `reject` fixtures
 (`unknown_attribute`, `attribute_with_args`, `attribute_inner`, `unknown_escape`,
-`unterminated_block_comment`). The one before that — 48 verified, reject 15, over 73 — was taken
+`unterminated_block_comment`), which is 51 verified, reject 21, over 82; the single `reject`
+row between that and 83 is `tests/reject/zero_length_array_self_reference.pd` (N4-23). The one before that — 48 verified, reject 15, over 73 — was taken
 before
 `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro, which is a
 `reject` and moves both counts by one. The one before that — 46 verified, reject 14, over 70 — was
 taken before `fix/d3b-tail-if` landed 3 fixtures and closed D3b, which moved its defect fixture
 into `verified`. The figure before
-that — 43 verified, reject 0, over 53 — was taken before 16 rows landed, 14 of them `reject`. A11 is the authority a release plan
+that — 43 verified, reject 0, over 53 — was taken before 17 rows landed, 14 of them `reject`. A11 is the authority a release plan
 reads, so a stale number here is release governance and not a documentation nit; that sentence is
 this file's own, and it is why the figure is re-measured rather than left.)
 
@@ -1455,7 +1459,7 @@ Each fixture declares a class:
 
 Because the inventory is closed, a fixture that is deleted, renamed, or added without a declaration
 fails the gate rather than silently shrinking or growing it. The gate's own ability to fail is
-tested by `make test-conformance-runner` (96 cases).
+tested by `make test-conformance-runner` (133 cases).
 
 **There are no failures.** The one remaining `xfail` is
 `tests/projects/hello_pdm/tests/test_math.pd` ("Undefined function: add"), which needs cross-file

@@ -351,10 +351,10 @@ Measured at this revision; every row names the command that produced it.
 |---|---|---|
 | **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
-| Conformance | `verified=51 untranscribed=0 vacuous=7 xfail=1 reject=22 skip=2 failures=0` over 83 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment) | `make conformance` |
-| Conformance gate itself | 96 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 291 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 224 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 404 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
+| Conformance | `verified=52 untranscribed=0 vacuous=7 xfail=1 reject=22 skip=2 failures=0` over 84 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`) | `make conformance` |
+| Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
+| Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
+| Documentation | every snippet compiles; 419 citations fingerprinted, 28 no-compile fences pinned | `make check-docs` |
 | Rust tests | 768 pass, **0 fail**, 55 ignored (538 lib + 230 integration, 23 binaries) | `make test-honest` |
 | Declared failures | 54 `xfail` + 1 `slow`, none passing; 54 of 54 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
@@ -509,8 +509,8 @@ Receipts:
 | The LLVM backend fabricated rather than lowered at 14 sites, seven of them silently | `--llvm` refuses unconditionally. `tests/d10_llvm_refuses.rs`, 9 tests |
 | `stdlib/` had no coverage at all | `make stdlib-gate`: 21 files pinned per file, 38 builtins accounted (34 since M2 removed the four `*_ex` names), generated C checked structurally. The premise was wrong and is recorded as such — **0 of 21 compile** ([`stdlib/STATUS.md`](../../stdlib/STATUS.md)) |
 | A green exit code was counted as a correct program | Every `run` fixture is diffed against a recorded transcript; there is no exit-code-only class |
-| Seven fixtures proved nothing while counting as coverage | Declared `vacuous`, each naming the feature it fails to cover. Seven of 53, on the summary line of every run |
-| The gates could not fail | `make test-conformance-runner` (96 cases), `make test-gate-probe` (every evidence producer fault-injected) |
+| Seven fixtures proved nothing while counting as coverage | Declared `vacuous`, each naming the feature it fails to cover. Seven of 84, on the summary line of every run |
+| The gates could not fail | `make test-conformance-runner` (133 cases), `make test-gate-probe` (every evidence producer fault-injected) |
 | `tests/*.rs` never ran under `make test-rust` | `make test-honest`, and every remaining failure converted to a declared `xfail` with an owner |
 
 Not paid, and re-owned by M2: three M1 `#[ignore]` rows
@@ -1081,7 +1081,9 @@ rather than restating them.
 
 **The RED count went from 11 to 22, and that increase is the deliverable.** TH-01 and TH-02 were
 green only because `bootstrap/pdc.pd` happens to contain no `async` and no lifetimes — a prohibition
-satisfied by absence — while the second witness the same condition covers does not exist at all.
+satisfied by absence — while the second witness the same condition covers did not exist at all.
+(As of this branch the fixture exists and runs; the condition stays owed on the words *no
+workarounds* — see `tests/witness/json_parser.no-workarounds.md`.)
 They are now honestly red.
 
 ### F12. The thesis gate's first lexer could not fail on what it checked
@@ -1137,7 +1139,7 @@ plain sight for several rounds. Root `CLAUDE.md` requires a fact conflict to be 
 than left to coexist, and this one was not.
 
 *Resolved by measurement, not by choosing a sentence.* On the integrated tree the runner evaluates
-22 of them: `reject=22` over 83 fixtures (was 21 over 82 until
+22 of them: `reject=22` over 84 fixtures (was 21 over 82 until
 `tests/reject/zero_length_array_self_reference.pd` landed with N4-23). The refusals a second implementation must reproduce are
 in the corpus, not only in `tests/d5_unimplemented_constructs.rs` and `tests/d10_llvm_refuses.rs`,
 which the bootstrap compiler will never run.

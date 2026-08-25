@@ -1,0 +1,35 @@
+-- accepted --
+scalars    [null,true,false,0,-17,3.25,1e3,2E-2]
+strings    ["","a\"b","sl/ash","Aé€"]
+surrogate  ["😀"]
+tab escape ["tab\there"]
+nesting    {"a":{"b":[1,[2,[3,{}]]]},"c":[]}
+whitespace {"k":[1,2]}
+dup keys   {"k":1,"k":2}
+-- queries --
+root kind      object
+member count   4
+name           pd
+tags length    3
+tags[1]        b
+n              42
+ratio lexeme   0.5
+ratio exact    0
+missing        absent
+nodes used     8
+-- refused --
+empty         at 0: unexpected end of input
+trailing      at 2: trailing content after the document
+unterminated  at 4: unterminated string
+control char  at 2: unescaped control character in string
+bad escape    at 3: unknown escape
+short \u      at 5: \u needs four hexadecimal digits
+lone surrog.  at 7: high surrogate is not followed by a low surrogate
+nul escape    at 7: \u0000 is not representable in a NUL-terminated String
+leading zero  at 1: trailing content after the document
+bare dot      at 2: expected a digit after '.'
+no exponent   at 2: expected a digit in the exponent
+missing comma at 3: expected ',' or ']'
+missing colon at 5: expected ':'
+bad member    at 1: expected a member name
+junk          at 0: unexpected character
