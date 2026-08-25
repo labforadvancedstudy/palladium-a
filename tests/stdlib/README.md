@@ -14,7 +14,7 @@ the 38 builtins in `src/builtins.rs` that a real standard library would be built
 |---|---|
 | `stdlib_tail_return.pd` | D3 — every shape of tail-expression return, plus explicit `return` and the unit tail that must *not* be lowered |
 | `stdlib_tail_if.pd` | D3b, **closed** — a tail `if` is the return value. Was `stdlib_tail_if_defect.pd`, pinned `known_violation:fib,classify`; now `clean`, and its `main` calls `fib`/`classify`/`sign`/… and asserts their values instead of avoiding them |
-| `stdlib_tail_match.pd` | D3b for `match` — the arms are lowered and the transcript proves the values, but codegen emits an `if`/`else if` chain with **no final `else`**, so the C cannot prove it returns on every path (gcc agrees: `-Wreturn-type`). Pinned `known_violation:area_code,sides` for that **separate** open defect |
+| `stdlib_tail_match.pd` | D3b for `match`, **closed**, and with it the separate missing-final-`else` defect it used to pin. The arms are lowered, the transcript proves the values, and the chain now ends in an `else` that traps (N6-11), so the C proves it returns on every path. Was `known_violation:area_code,sides`; now `clean` |
 | `stdlib_builtins_string.pd` | the 8 string builtins + `print` / `print_int` |
 | `stdlib_builtins_char_args.pd` | `char_is_*`, `arg_count`, `arg_at` |
 | `stdlib_builtins_file.pd` | the 16 usable file and path builtins |

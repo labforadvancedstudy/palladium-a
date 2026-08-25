@@ -559,19 +559,17 @@ fn main() {
     assert_eq!(out.trim(), "a\nb");
 }
 
-/// A tail `match` whose arms all return.
+/// A tail `match` whose arms all return, COMPILED, LINKED AND RUN.
 ///
-/// NOT routed through `compile_and_run`: codegen lowers `match` to an
-/// `if`/`else if` chain with no final `else`, so the emitted C can fall past
-/// the last arm and Net A is right to flag it. That is the open
-/// match-exhaustiveness defect, pinned at `tests/stdlib/DRIVERS.tsv`
-/// (`stdlib_tail_match`, `known_violation:area_code,sides`) and by
-/// `NetA::StillFindsTheOpenMatchDefect` in `tests/d3b_tail_if.rs` — not this
-/// one. What this test states is the part that IS this refusal's business: a
-/// tail `match` with every arm valued must not be refused by the parser.
+/// It used not to be run. Codegen lowered `match` to an `if`/`else if` chain
+/// with no final `else`, so the emitted C could fall past the last arm and Net A
+/// was right to flag it; the detour existed to keep this refusal's test out of
+/// that defect's way. N6-11's trap closed the defect — the chain ends in an
+/// `else` that aborts — so the detour is void and the stronger check is back:
+/// the program's own answer, not merely the parser's acceptance.
 #[test]
 fn a_tail_match_with_every_arm_valued_is_still_accepted() {
-    compile(
+    let out = compile_and_run(
         r#"
 enum Shape {
     Circle,
@@ -591,7 +589,8 @@ fn main() {
 "#,
         "m1mr_ok_match",
     )
-    .expect("every arm has a value, so the parser must accept it");
+    .expect("every arm has a value, so the parser must accept it — and the C must run");
+    assert_eq!(out.trim(), "4", "`sides(Square)` is 4");
 }
 
 // ---------------------------------------------------------------------------

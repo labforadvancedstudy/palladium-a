@@ -35,9 +35,9 @@
 // emitted C to require that every non-void function here returns on every path.
 // That net needs no execution and is optimisation-independent.
 
-// The tail `match` half of D3b lives in stdlib_tail_match.pd, not here: the C
-// emitted for a `match` is an `if`/`else if` chain with no final `else`, so it
-// cannot be declared `clean` even with every arm returning. See that file.
+// The tail `match` half of D3b lives in stdlib_tail_match.pd, not here. That
+// file was `known_violation` for a second defect — a `match` chain with no final
+// `else` — which N6-11's trap discharged; it is `clean` now too. See that file.
 
 // --- the shape that defined D3b: a recursive base case in a tail if/else ---
 

@@ -16,5 +16,8 @@ A tuple nested in a tuple element:
 5
 A String element:
 1
+A String element is BOUND as a String, not as an integer:
+seven
+seven!
 Statement form, with a guard:
 equal

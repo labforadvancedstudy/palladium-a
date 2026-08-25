@@ -1492,7 +1492,9 @@ impl CodeGenerator {
 
         // Generate panic function wrapper.
         //
-        // MARKED NORETURN, and it has to be: `panic(...)` in a branch that owes
+        // NOT marked noreturn — the ATTRIBUTE is what this could not have, and
+        // the call site carries `abort()` instead. `panic(...)` in a branch that
+        // owes
         // a value emits this call and nothing after it, which is correct C and
         // which `-Werror=return-type` rejects unless the compiler knows the call
         // does not come back. `scripts/check-c-returns.py` has known that since
@@ -2048,7 +2050,7 @@ impl CodeGenerator {
         // Every tuple shape a written TYPE names is registered before the
         // marker is taken, so a function that only RECEIVES a tuple (and never
         // builds one) still has its struct.
-        self.register_tuple_types_in(program);
+        self.register_tuple_types_in(program)?;
 
         // N4-12. Tuple structs go HERE — after the struct and enum definitions,
         // because an element may be one of those. The shapes are not all known
@@ -2377,8 +2379,11 @@ impl CodeGenerator {
                             "`{}::{}` carries a TUPLE in its payload, and code generation emits \
                              tuple structs after the enums that would use them, so this type \
                              would be referenced before it is defined. Give the variant its \
-                             elements as separate fields, or wrap the tuple in a struct",
-                            enum_def.name, variant.name
+                             elements as separate fields (`{}(i64, i64)`), or declare a struct \
+                             whose fields ARE those elements and use that — a struct with a \
+                             TUPLE field is refused for the mirror reason, so wrapping the tuple \
+                             is not a way out",
+                            enum_def.name, variant.name, variant.name
                         ),
                     });
                 }
@@ -4360,11 +4365,39 @@ impl CodeGenerator {
 
     /// Record a tuple shape so its struct and constructor are emitted, and
     /// answer with its C name.
-    fn register_tuple(&mut self, element_c_types: &[String]) -> String {
+    ///
+    /// THE MANGLING IS NOT INJECTIVE, and this is where that is caught rather
+    /// than where it would be paid. `tuple_c_name` sanitises each element type
+    /// and joins with `_`, so a struct named `A_B` beside `C` mangles to the same
+    /// name as `A` beside `B_C`. The encoding could be length-framed instead;
+    /// refusing is cheaper and, for a collision nobody has hit, more honest than
+    /// a scheme whose correctness argument is longer than the bug. What must NOT
+    /// happen is the silent version: keeping the first layout and emitting the
+    /// second tuple with the first's fields.
+    fn register_tuple(&mut self, element_c_types: &[String]) -> Result<String> {
         let name = Self::tuple_c_name(element_c_types);
-        self.tuple_shapes
-            .insert(name.clone(), element_c_types.to_vec());
-        name
+        if !self
+            .tuple_shapes
+            .insert(name.clone(), element_c_types.to_vec())
+        {
+            let existing = self
+                .tuple_shapes
+                .element_types(&name)
+                .map(|t| t.join(", "))
+                .unwrap_or_default();
+            return Err(CompileError::CodegenError {
+                message: format!(
+                    "two different tuple shapes mangle to the same C name `{}`: ({}) and ({}). \
+                     The name is built by sanitising each element type, so an underscore in a \
+                     type name can move the boundary between elements. Rename one of the types \
+                     involved; this is a compiler limitation and not a limit of the language",
+                    name,
+                    existing,
+                    element_c_types.join(", ")
+                ),
+            });
+        }
+        Ok(name)
     }
 
     /// Walk every written type in the program and register the tuple shapes.
@@ -4373,7 +4406,7 @@ impl CodeGenerator {
     /// expression is generated; this pass exists for the tuples that are only
     /// ever named — a parameter, a return type, a `let` annotation — which no
     /// expression in this unit may build.
-    fn register_tuple_types_in(&mut self, program: &Program) {
+    fn register_tuple_types_in(&mut self, program: &Program) -> Result<()> {
         fn types_in_stmt(stmt: &Stmt, out: &mut Vec<Type>) {
             match stmt {
                 Stmt::Let { ty: Some(ty), .. } => out.push(ty.clone()),
@@ -4429,26 +4462,28 @@ impl CodeGenerator {
             }
         }
         for ty in &types {
-            self.register_tuple_type(ty);
+            self.register_tuple_type(ty)?;
         }
+        Ok(())
     }
 
     /// Register every tuple shape a written TYPE names, innermost first.
-    fn register_tuple_type(&mut self, ty: &Type) {
+    fn register_tuple_type(&mut self, ty: &Type) -> Result<()> {
         match ty {
             Type::Tuple(types) => {
                 let mut element_types = Vec::with_capacity(types.len());
                 for element in types {
-                    self.register_tuple_type(element);
+                    self.register_tuple_type(element)?;
                     element_types.push(self.type_to_c(element));
                 }
-                self.register_tuple(&element_types);
+                self.register_tuple(&element_types)?;
             }
-            Type::Array(element, _) => self.register_tuple_type(element),
-            Type::Reference { inner, .. } => self.register_tuple_type(inner),
-            Type::Future { output } => self.register_tuple_type(output),
+            Type::Array(element, _) => self.register_tuple_type(element)?,
+            Type::Reference { inner, .. } => self.register_tuple_type(inner)?,
+            Type::Future { output } => self.register_tuple_type(output)?,
             _ => {}
         }
+        Ok(())
     }
 
     /// The C type of an expression, or a refusal that names the expression.
@@ -4604,7 +4639,7 @@ impl CodeGenerator {
             // into every output file, and this is the comparison a reader means
             // by a string pattern.
             Pattern::Literal(PatternLiteral::Int(value)) => {
-                format!("{} == {}", subject, value)
+                format!("{} == {}", subject, Self::c_i64_literal(*value))
             }
             Pattern::Literal(PatternLiteral::Bool(value)) => {
                 format!("{} == {}", subject, if *value { 1 } else { 0 })
@@ -4617,7 +4652,7 @@ impl CodeGenerator {
             // `||` alternative, or beside an enum tag test.
             Pattern::Range { lo, hi, inclusive } => {
                 let bound = |literal: &PatternLiteral| match literal {
-                    PatternLiteral::Int(value) => value.to_string(),
+                    PatternLiteral::Int(value) => Self::c_i64_literal(*value),
                     PatternLiteral::Bool(value) => (if *value { 1 } else { 0 }).to_string(),
                     // Refused by the type checker before this point; a range of
                     // strings has no `>=` in C either.
@@ -4633,6 +4668,26 @@ impl CodeGenerator {
                 )
             }
         })
+    }
+
+    /// An `i64` as a C expression of type `long long`.
+    ///
+    /// `i64::MIN` IS NOT WRITABLE AS A C LITERAL, and writing it anyway is a
+    /// sign inversion rather than a syntax error: `-9223372036854775808` is unary
+    /// minus applied to `9223372036854775808`, which does not fit in `long long`,
+    /// so the constant takes an UNSIGNED type and `x >= <that>` asks "is x
+    /// negative" instead of "is x at least the minimum". Measured before the
+    /// repair: `match 5 { -9223372036854775808..=10 => 1, _ => 0 }` printed 0.
+    ///
+    /// `(-9223372036854775807LL - 1)` is the spelling C guarantees — the operand
+    /// fits, the subtraction is exact, and the type is `long long`. Every other
+    /// `i64` prints as itself, so no other emission moves.
+    fn c_i64_literal(value: i64) -> String {
+        if value == i64::MIN {
+            "(-9223372036854775807LL - 1)".to_string()
+        } else {
+            value.to_string()
+        }
     }
 
     /// Every sub-pattern of an enum variant's payload, paired with the C lvalue
@@ -4741,17 +4796,36 @@ impl CodeGenerator {
             // shape registry — the same read `Expr::TupleIndex` performs, so a
             // `String` element cannot become a `long long` here either.
             Pattern::Tuple(elements) => {
-                let element_types: Vec<String> = self
-                    .tuple_shapes
-                    .element_types(subject_type)
-                    .map(|types| types.to_vec())
-                    .unwrap_or_default();
+                // A REGISTRY MISS IS AN ERROR, NOT A `long long`. This binds C
+                // variables, and the rule stated at `infer_expr_type` applies:
+                // a caller that DECLARES a variable may not guess its type,
+                // because guessing emits silently wrong C — a `const char*`
+                // element bound to a `long long` is a pointer stored in an
+                // integer, which surfaces as a gcc error against code the user
+                // never wrote, if it surfaces at all.
+                let Some(element_types) = self.tuple_shapes.element_types(subject_type) else {
+                    return Err(CompileError::CodegenError {
+                        message: format!(
+                            "no tuple shape is registered for `{}`, so the elements this \
+                             pattern binds have no types to be declared with",
+                            subject_type
+                        ),
+                    });
+                };
+                let element_types = element_types.to_vec();
                 for (i, element) in elements.iter().enumerate() {
                     let member = format!("{}.f{}", subject, i);
-                    let member_type = element_types
-                        .get(i)
-                        .cloned()
-                        .unwrap_or_else(|| "long long".to_string());
+                    let Some(member_type) = element_types.get(i).cloned() else {
+                        return Err(CompileError::CodegenError {
+                            message: format!(
+                                "the tuple shape `{}` has {} element(s), and this pattern binds \
+                                 element {}",
+                                subject_type,
+                                element_types.len(),
+                                i
+                            ),
+                        });
+                    };
                     self.emit_pattern_bindings(element, &member, &member_type)?;
                 }
                 Ok(())
@@ -4847,16 +4921,25 @@ impl CodeGenerator {
             self.generate_into_hoist_temp(&temp, |g| g.generate_statement(&synthesised))?;
         let c_type = self.hoist_temp_type([c_type, None], "`match`")?;
 
-        // DECLARED WITH AN INITIALISER, AND IT STAYS — measured, not assumed.
+        // DECLARED WITH AN INITIALISER, AND THE REASON IS NOW BELT-AND-BRACES
+        // — said plainly, because the measurement that used to be cited here was
+        // WRONG.
         //
-        // The reason it was added is gone: `match` now ends in a trap, so no
-        // path leaves this temporary unwritten. The reason it stays is that gcc
-        // still cannot see that. Measured on this edit by deleting the ` = 0`
-        // from generated C and recompiling with `-Wall -Wextra`: five
+        // The reason it was added is gone: `match` ends in a trap, so no path
+        // leaves this temporary unwritten. A previous revision of this comment
+        // claimed the initialiser was still load-bearing and cited five
         // `-Wuninitialized` diagnostics in `tests/06_match_expression`'s C and
-        // two in `tests/06_guards`'. So the trap makes the PROGRAM whole and
-        // not gcc's flow analysis, and dropping the store would trade one
-        // instruction for warnings on generated code the user never wrote.
+        // two in `tests/06_guards`'. RE-MEASURED, stripping ONLY the value-match
+        // temporaries' ` = 0` (the earlier pass had also stripped initialisers
+        // off unrelated declarations, which is where its warnings came from):
+        // Apple clang 21, `-O2 -Wall -Wextra`, 16/9/8 initialisers removed from
+        // three fixtures' C — ZERO uninitialized diagnostics in all three.
+        //
+        // So it is kept as belt-and-braces, not as a load-bearing store: one
+        // instruction against a compiler with weaker flow analysis than the one
+        // this box has (GNU gcc is not installed here, so that half is unmeasured
+        // and is claimed as a possibility rather than a fact). If someone wants
+        // it gone, the measurement above is the argument for deleting it.
         self.pending_hoists.push_str(&format!(
             "    {} {} = {};\n",
             c_type,
@@ -5042,11 +5125,25 @@ impl CodeGenerator {
             // prelude is C89 against whatever `cc` the host has — the same
             // reason `__pd_range_new` exists.
             Expr::Tuple { elements, span } => {
+                // EACH ELEMENT IS GENERATED — and therefore REGISTERED — BEFORE
+                // this tuple's own shape is. Registration order is definition
+                // order in the emitted C, so an outer shape recorded first would
+                // be defined before the inner struct its field has the type of:
+                // measured, `let n = ((1, 2), 3);` in a program with no other
+                // tuple reached gcc as "unknown type name
+                // '__pd_tuple2_long_long_long_long'". The shipped fixtures hid it
+                // because a function signature had already named the inner shape.
                 let mut element_types = Vec::with_capacity(elements.len());
                 for element in elements {
+                    if let Expr::Tuple { .. } = element {
+                        // Registers the nested shape (and anything nested in it)
+                        // through this same arm; the text is discarded because
+                        // the element is generated again in place below.
+                        let _ = self.capture_output(|g| g.generate_expression(element))?;
+                    }
                     element_types.push(self.expr_c_type(element, *span)?);
                 }
-                let name = self.register_tuple(&element_types);
+                let name = self.register_tuple(&element_types)?;
                 self.output.push_str(&format!("{}_new(", name));
                 for (i, element) in elements.iter().enumerate() {
                     if i > 0 {
@@ -5151,7 +5248,11 @@ impl CodeGenerator {
                             // always accepted (its `NORETURN_RE`). The comma
                             // operator puts `abort()` at the call site, where
                             // gcc reads it, and keeps the whole thing an
-                            // EXPRESSION so it still works wherever a call did.
+                            // EXPRESSION — of type `void`, like the call it
+                            // replaces, so it works in the STATEMENT positions a
+                            // `void` call worked in. It does not make `panic`
+                            // usable where a value is wanted, and nothing in this
+                            // language puts it there.
                             "panic" => {
                                 self.output.push_str("(__pd_panic");
                             }
@@ -6794,11 +6895,20 @@ mod indexmap_lite {
     }
 
     impl OrderedMap {
-        /// Record a shape under `name` if it is new. Returns nothing: the caller
-        /// already holds the name it computed.
-        pub fn insert(&mut self, name: String, element_types: Vec<String>) {
-            if !self.entries.iter().any(|(existing, _)| existing == &name) {
-                self.entries.push((name, element_types));
+        /// Record a shape under `name` if it is new.
+        ///
+        /// Answers `false` when the name is already taken by a DIFFERENT layout,
+        /// which the caller turns into an error. Keeping the first silently is
+        /// what the mangling's non-injectivity would otherwise cost: two shapes
+        /// would share one struct and one of them would be emitted with the
+        /// other's fields.
+        pub fn insert(&mut self, name: String, element_types: Vec<String>) -> bool {
+            match self.entries.iter().find(|(existing, _)| existing == &name) {
+                Some((_, existing_types)) => existing_types == &element_types,
+                None => {
+                    self.entries.push((name, element_types));
+                    true
+                }
             }
         }
 
@@ -6816,5 +6926,61 @@ mod indexmap_lite {
         pub fn is_empty(&self) -> bool {
             self.entries.is_empty()
         }
+    }
+}
+
+#[cfg(test)]
+mod tuple_shape_tests {
+    use super::*;
+
+    /// THE MANGLING IS NOT INJECTIVE, and this test says so in one line.
+    ///
+    /// `tuple_c_name` sanitises each element's C type and joins with `_`, so an
+    /// underscore inside a type name is indistinguishable from the separator
+    /// between two elements. This is not hypothetical: it is why `register_tuple`
+    /// refuses a second layout under a name it has already given out.
+    #[test]
+    fn the_mangling_can_collide() {
+        assert_eq!(
+            CodeGenerator::tuple_c_name(&["A_B".to_string(), "C".to_string()]),
+            CodeGenerator::tuple_c_name(&["A".to_string(), "B_C".to_string()]),
+            "if these ever differ the mangling became injective — delete the refusal below \
+             and say so, do not leave a check nobody can reach"
+        );
+    }
+
+    /// And the collision is REFUSED rather than silently resolved in favour of
+    /// whichever shape arrived first.
+    #[test]
+    fn a_colliding_layout_is_refused_by_name() {
+        let mut codegen = CodeGenerator::new("collision_probe").expect("a generator");
+        let first = codegen
+            .register_tuple(&["A_B".to_string(), "C".to_string()])
+            .expect("the first shape registers");
+        let second = codegen.register_tuple(&["A".to_string(), "B_C".to_string()]);
+        let err = second.expect_err(
+            "the second shape mangles to the same name with different fields; accepting it \
+             would emit one struct and use it for both",
+        );
+        let text = format!("{}", err);
+        assert!(
+            text.contains("mangle to the same C name") && text.contains(&first),
+            "the refusal must name the collision and the name involved: {}",
+            text
+        );
+    }
+
+    /// Registering the SAME layout twice is not a collision — it is the ordinary
+    /// case, and it must stay idempotent.
+    #[test]
+    fn the_same_layout_registers_twice() {
+        let mut codegen = CodeGenerator::new("collision_probe").expect("a generator");
+        let a = codegen
+            .register_tuple(&["long long".to_string(), "const char*".to_string()])
+            .expect("first");
+        let b = codegen
+            .register_tuple(&["long long".to_string(), "const char*".to_string()])
+            .expect("second registration of the same shape is not a collision");
+        assert_eq!(a, b);
     }
 }

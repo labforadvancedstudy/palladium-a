@@ -184,10 +184,25 @@ the corroboration.
 
     clean 50 · finding 1 · UNACCOUNTED 0
 
-and the single finding is the already-declared, already-pinned tail-`match`
-defect (tests/stdlib/stdlib_tail_match.pd, `known_violation:area_code,sides` in
-tests/stdlib/DRIVERS.tsv:31). Zero unaccounted means no codegen shape unique to
-the conformance corpus is outside this reader.
+and the single finding was the then-declared tail-`match` defect
+(tests/stdlib/stdlib_tail_match.pd, `known_violation:area_code,sides`). Zero
+unaccounted meant no codegen shape unique to the conformance corpus was outside
+this reader.
+
+RE-MEASURED after N6-11 (same sweep, over the corpus's generated .c):
+
+    clean 78 · finding 0 · UNACCOUNTED 5
+
+The finding is GONE — every `match` chain now ends in an `else` that traps, so no
+generated function falls off its end and `-Werror=return-type` is on the gcc
+command line besides. The five UNACCOUNTED are new and are a GAP, reported as
+one: a `match` carrying a guard is lowered to `if (pattern) { … goto _match_endN; }`
+ending in a label, and this reader refuses any function containing a `goto`
+because a jump can leave a loop its `contains_break` model would otherwise have
+reasoned about. The refusal is loud (exit 2, MALFUNCTION) rather than a false
+clean, which is the right failure direction — but it does mean the six
+guard-carrying corpus fixtures are outside the reader until it learns the shape.
+Teaching it `goto` is a change to this gate's model and is not made here.
 
 So: the gap is real, and it is currently empty. It is NOT closed here on
 purpose. The natural home for a structural verdict on those fixtures is a
@@ -230,10 +245,13 @@ DEF_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9 *]*\(.*\)[ \t]*\{[ \t]*$")
 VOID_RE = re.compile(r"^(?:static\s+)?(?:inline\s+)?void\s+[A-Za-z_]")
 # Calls that do not return, so a body ending in one cannot fall through.
 # The optional `(` is the comma-expression spelling codegen emits for `panic`
-# since N6-11: `(__pd_panic("..."), abort());`. The parentheses are what keep it
-# usable in value position — `x = __pd_panic(...), abort()` would parse as
-# `(x = __pd_panic(...)), abort()`, an assignment from void — and this reader has
-# to recognise the statement it actually finds, not the one it would prefer.
+# since N6-11: `(__pd_panic("..."), abort());`. The parentheses are grouping, not
+# a promise about value position: the expression's type is `void`, exactly like
+# the call it replaces. Without them the comma would associate outward — a
+# hypothetical `x = __pd_panic(...), abort()` parses as
+# `(x = __pd_panic(...)), abort()` — which is why they are written even though no
+# emission puts this in an operand position. This reader has to recognise the
+# statement it actually finds, not the one it would prefer.
 # Pinned from the codegen side by `codegen_spellings_the_generated_c_invariant_
 # depends_on` in tests/d3b_tail_if.rs.
 NORETURN_RE = re.compile(

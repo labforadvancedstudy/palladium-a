@@ -21,5 +21,8 @@ A binding over a range, which binds AND tests:
 A range inside an enum payload:
 1
 0
+The minimum is a real bound, and the scrutinee here is POSITIVE:
+1
+0
 Statement form:
 high

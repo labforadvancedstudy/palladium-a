@@ -1,0 +1,18 @@
+// NEGATIVE TEST — a payload literal must have the FIELD's type (N6-02).
+//
+// `P::Num` carries an `i64`, and `"a"` is not one. Before the type checker
+// recursed into payloads this reached code generation, which emitted
+// `__pd_string_eq(_match_expr.data.Num.field0, "a")` — a string comparison
+// against an integer — and the user met it as a gcc error in C they never wrote.
+enum P {
+    Num(i64),
+    Empty,
+}
+
+fn main() {
+    let v = match P::Num(9) {
+        P::Num("a") => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

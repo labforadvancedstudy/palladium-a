@@ -1,0 +1,14 @@
+// NEGATIVE TEST — `3..3` is empty in the EXCLUSIVE form (N6-03).
+//
+// The sibling of `tests/reject/range_pattern_empty.pd`, which pins `5..=1`. The
+// two are different arithmetic: `lo > hi` for the inclusive form, `lo >= hi` for
+// the exclusive one. A single fixture pins one comparison and leaves the other
+// free to be written `>` — which would accept `3..3`, an arm that can never be
+// taken.
+fn main() {
+    let v = match 4 {
+        3..3 => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

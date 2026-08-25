@@ -13,5 +13,10 @@ guard ran
 1
 A guard holding a value expression:
 60
+A guard that HOISTS, on an arm whose pattern does not match:
+2
+Two guarded matches in one function need two labels:
+24
+17
 Statement form:
 big

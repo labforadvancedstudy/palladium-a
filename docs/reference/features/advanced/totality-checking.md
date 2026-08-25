@@ -333,10 +333,12 @@ with. `tests/reject/total_attribute.pd` pins the current answer.
 returns one unrelated hit (`src/runtime/string_ops.rs:398`, a test named `test_null_termination`).
 There is no recursion analysis, no measure checking, and no proof representation.
 
-**3. The prerequisites are missing too.** Structural recursion is stated over inductive types with
-pattern matching on subterms. Today `match` has exactly three pattern forms
-(`src/ast/mod.rs:531`) — no literal, range, guard or tuple patterns — and generic types do not
-survive codegen (`src/codegen/mod.rs:2709-2709`). A totality checker has nothing to be total over yet.
+**3. One prerequisite arrived; the other did not.** Structural recursion is stated over inductive
+types with pattern matching on subterms. `match` HAS the pattern forms now (`src/ast/mod.rs:531`:
+literal, range, tuple, or- and `@` patterns, with guards), so the matching half is no longer the
+blocker. Generic types still do not survive codegen (`src/codegen/mod.rs:2714-2714`), and there is
+still no recursion analysis, no measure checking and no proof representation — so a totality checker
+would now have something to match on and nothing to reason with.
 
 ## Design intent, not measurements
 

@@ -1,0 +1,13 @@
+// NEGATIVE TEST — `..5` has no low end (N6-03).
+//
+// The mirror of `tests/reject/range_pattern_open_ended.pd`, and a SEPARATE parser
+// branch: a missing HIGH end is caught after `..` is consumed, while a missing LOW
+// end is caught in primary position, before any range parsing starts. One fixture
+// could not cover both, and the branch nobody exercises is the branch that rots.
+fn main() {
+    let v = match 4 {
+        ..5 => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

@@ -262,8 +262,13 @@ fn main() {
 }
 ```
 
-`match` works on enums only. There are no literal patterns, so you cannot match on an integer or
-a string — use an `if`/`else` chain for those. There are no match guards and no or-patterns.
+`match` works on enums, integers, strings, bools and tuples. Literal patterns (`1 =>`, `"s" =>`,
+`true =>`), ranges (`1..=9`), or-patterns (`A | B`), `@` bindings and arm guards (`if cond`) all
+work. What is still missing: slice patterns, `ref`/`mut` bindings, field shorthand in a
+struct-variant pattern (write `Move { x: x, y: y }`), and destructuring `let`.
+
+A `match` must be exhaustive for EVERY scrutinee type, not only for enums — on an integer or a
+string that means a `_` or a binding arm, because no set of literal or range arms is complete.
 
 The annotations on `let c: Shape = ...` are optional — enum construction is inferred — but they
 document the intent, and `match` reads better when the scrutinee's type is stated nearby.

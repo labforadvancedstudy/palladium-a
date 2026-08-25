@@ -143,6 +143,21 @@ impl ExhaustivenessChecker {
         }
     }
 
+    /// Does an enum variant's payload accept every value the variant can hold?
+    ///
+    /// The question `check_enum_exhaustiveness` needs before it may count a
+    /// variant as covered. No payload at all is irrefutable (a unit variant
+    /// matches whenever its tag does); otherwise every sub-pattern must be.
+    fn payload_is_irrefutable(data: Option<&PatternData>) -> bool {
+        match data {
+            None => true,
+            Some(PatternData::Tuple(patterns)) => patterns.iter().all(Self::is_irrefutable),
+            Some(PatternData::Struct(fields)) => {
+                fields.iter().all(|(_, pattern)| Self::is_irrefutable(pattern))
+            }
+        }
+    }
+
     /// Check that a `bool` scrutinee is covered.
     ///
     /// THE ONLY TYPE A LITERAL ARM CAN EXHAUST. `true` and `false` are two
@@ -224,7 +239,9 @@ impl ExhaustivenessChecker {
                 // compile rather than silently counting nothing.
                 Pattern::Or(_) | Pattern::Binding { .. } => {}
                 Pattern::EnumPattern {
-                    enum_name, variant, ..
+                    enum_name,
+                    variant,
+                    data,
                 } => {
                     if enum_name != &enum_info.name {
                         return Err(CompileError::TypeMismatch {
@@ -242,10 +259,22 @@ impl ExhaustivenessChecker {
                         )));
                     }
 
-                    // Check if already covered by wildcard
-                    if has_wildcard || covered_variants.contains(variant) {
+                    // A VARIANT IS COVERED ONLY IF ITS PAYLOAD IS IRREFUTABLE.
+                    // `P::Num(1)` matches SOME `Num`s, and counting it as the
+                    // variant made `match P::Num(9) { P::Num(1) => 10 }` a
+                    // complete match: it compiled, took no arm at run time and
+                    // trapped — which is the trap doing its job for a program the
+                    // checker should never have accepted. Same rule as everywhere
+                    // else in this file, and the same predicate (`is_irrefutable`).
+                    //
+                    // It follows that a refutable arm cannot make a later arm
+                    // unreachable either: `P::Num(1)` then `P::Num(2)` are two
+                    // different questions about the same variant, and neither
+                    // answers the other.
+                    let covers = Self::payload_is_irrefutable(data.as_ref());
+                    if has_wildcard || (covers && covered_variants.contains(variant)) {
                         unreachable_patterns.push((i, pattern.to_string()));
-                    } else {
+                    } else if covers {
                         covered_variants.insert(variant.clone());
                     }
                 }

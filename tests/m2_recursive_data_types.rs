@@ -33,15 +33,16 @@
 //! because a program that compiles and prints the wrong answer is the defect
 //! rather than the cure.
 //!
-//! WHAT IS DELIBERATELY NOT ASSERTED
+//! WHAT THIS FILE USED NOT TO ASSERT, AND WHY IT NO LONGER MATTERS
 //!
-//! `scripts/check-c-returns.py` reports `non-void function may fall off its end`
-//! for every function whose body is a `match`, because code generation lowers
-//! `match` to an `if`/`else if` chain with no final `else`. That is a declared
-//! open defect (`tests/stdlib/stdlib_tail_match.pd`, `known_violation`), it is
-//! reproduced on the UNMODIFIED compiler with a non-recursive `match`, and it is
-//! not owned here. The programs below are still linked and run, which is the
-//! stronger check.
+//! `scripts/check-c-returns.py` used to report `non-void function may fall off
+//! its end` for every function whose body is a `match`, because code generation
+//! lowered `match` to an `if`/`else if` chain with no final `else`. That was a
+//! declared open defect (`tests/stdlib/stdlib_tail_match.pd`, then
+//! `known_violation`) and was not owned here. N6-11's trap closed it: the chain
+//! ends in an `else` that aborts, the driver row is `clean`, and the reader finds
+//! nothing. The programs below are linked and run either way, which was always
+//! the stronger check.
 
 use palladium::linker::{link_command, OptLevel};
 use palladium::{CompileError, Driver};
@@ -271,11 +272,13 @@ fn the_recursive_slot_is_a_pointer_that_is_allocated_and_read_through() {
         c
     );
     assert!(
-        // PARENTHESISED SINCE N6-08. The same subject string is now pasted into
-        // nested pattern positions, and `*x.data.M.f` is `*(x.data.M.f)` — so a
-        // pattern under a recursive payload would dereference the wrong thing.
-        // `(*x).data.M.f` is the read this test has always been about; the
-        // parentheses are what keep it that read one level down.
+        // PARENTHESISED SINCE N6-08, and the parentheses are around the WHOLE
+        // read: the assertion below is `(*_match_expr.data.Pair.field0)`, which
+        // is `*(_match_expr.data.Pair.field0)` with a wrapper — the same value,
+        // grouped. It is grouped because the string is pasted into nested pattern
+        // positions: a sub-pattern appends `.data.M.f` to it, and
+        // `*x.data.Pair.field0.data.M.f` would dereference at the wrong depth
+        // while `(*x.data.Pair.field0).data.M.f` reads through the cell first.
         c.contains("= (*_match_expr.data.Pair.field0);"),
         "a match binding must read THROUGH the cell;\nemitted:\n{}",
         c

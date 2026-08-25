@@ -171,9 +171,10 @@ emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:174-174
 `src/typeck/mod.rs:1074-1074`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: modules at `src/codegen/mod.rs:1755-1755` and `src/typeck/mod.rs:1439-1439`,
-the two later codegen walks off one sorted local (`src/codegen/mod.rs:1860-1860`), and the
-instantiation keys at `src/typeck/mod.rs:5528-5528` and `src/typeck/mod.rs:5589-5589`. Pinned by
+sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:1883-1884` and
+`src/typeck/mod.rs:1439-1439`, the two later codegen walks off their own sorted locals
+(`src/codegen/mod.rs:1969-1969`, `src/codegen/mod.rs:2818-2818`), and the instantiation keys at
+`src/typeck/mod.rs:5600-5601` and `src/typeck/mod.rs:5662-5663`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -351,7 +352,7 @@ Measured at this revision; every row names the command that produced it.
 |---|---|---|
 | **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
-| Conformance | `verified=75 untranscribed=0 vacuous=7 xfail=1 reject=41 skip=2 failures=0` over 126 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `1f64c32` added three
+| Conformance | `verified=76 untranscribed=0 vacuous=7 xfail=1 reject=50 skip=2 failures=0` over 136 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `1f64c32` added three
 `run` fixtures for the review-round repairs and SEVEN `reject`s for the refusals those repairs
 introduced, which is the shape a fix round leaves — the negative rows outnumber the positive ones
 because most of what a review finds is a program that should never have been accepted; then review
@@ -367,7 +368,7 @@ type, and the non-exhaustive integer match N6-10 now refuses) | `make conformanc
 | Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 414 citations fingerprinted, 27 no-compile fences pinned | `make check-docs` |
-| Rust tests | 925 pass, **0 fail**, 48 ignored (566 lib + 359 integration, 28 binaries) | `make test-honest` |
+| Rust tests | 928 pass, **0 fail**, 48 ignored (569 lib + 359 integration, 28 binaries) | `make test-honest` |
 | Declared failures | 47 `xfail` + 1 `slow`, none passing; 47 of 47 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
@@ -622,8 +623,9 @@ enum-owned method is unreachable by its path form. Each row carries a
    an evaluation-order obligation over every call, not a method-call one. **N3-09** and **N3-10**
    (top-level `const` and `static`) were listed in this item and belong to N3: they are still
    `owed`, and nothing in these four commits touched them.
-4. **Patterns** (N6-02…N6-11) — **DONE, all nine rows, plus N4-12 which turned out to be
-   underneath one of them.** This was **C3**. Five commits: `d3600e4` (literal patterns, guards),
+4. **Patterns** (N6-02…N6-11) — **DONE: all EIGHT of the N6 rows M2 owns, plus N4-12, which
+   turned out to be underneath one of them. Nine rows in total.** (N6-01 and N6-04 were already
+   `satisfied` and belong to nobody; N6-06, slice patterns, is M3's and stays owed.) This was **C3**. Five commits: `d3600e4` (literal patterns, guards),
    `c983653` (or-patterns, `@` bindings), `6b3e501` (range patterns), `316e47b` (tuples as values,
    then tuple patterns), `0ba980f` (exhaustiveness for every scrutinee type, and the trap).
    `verified` moved 68 → 75 and `reject` 30 → 41; `make selfhost` held its fixed point at
@@ -671,7 +673,11 @@ enum-owned method is unreachable by its path form. Each row carries a
      The rule's bite is shown by `tests/reject/nonexhaustive_int_match.pd` and by probes, not by a
      manufactured list.
    - **The trap ARMED the linker, through a four-step handoff that was written down years' worth of
-     rounds earlier.** See [the discharge](#the-missing-final-else-discharged) below.
+     rounds earlier.** `tests/stdlib/DRIVERS.tsv`'s `stdlib_tail_match` row went from
+     `known_violation:area_code,sides` to `clean`, `NetA::StillFindsTheOpenMatchDefect` became
+     `NetA::Accepts`, the parser's residual NOTE stopped recording one, and `-Werror=return-type`
+     went into the shared gcc invocation — in one change, because the handoff's own interlock test
+     turned red the moment the first of them moved.
    - **The value-`match` zero-initialiser stays, by measurement.** The trap makes no path leave the
      temporary unwritten, but gcc cannot see that: deleting ` = 0` from generated C and recompiling
      with `-Wall -Wextra` gives five `-Wuninitialized` diagnostics in `tests/06_match_expression`'s
@@ -865,7 +871,7 @@ show.
 is where both the bootstrap compiler and the standard library become multi-file.
 
 **Owns 8 requirement rows** — N3-11 and N11-01…N11-07 — plus the corpus's one `xfail`
-(`tests/conformance-manifest.txt:118`, cross-file imports) and the vacuous `12_modules_imports`.
+(`tests/conformance-manifest.txt:119`, cross-file imports) and the vacuous `12_modules_imports`.
 
 A `mod` item, file-based nesting, **enforced** visibility (N11-02 is a `reject` row: a private item
 imported must be an error, or visibility is decoration), and all four import forms.
@@ -1077,7 +1083,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:5603-5607` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:5704-5708` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -1101,7 +1107,7 @@ representation."* A `struct` with a `state` field, emitted into the program's ow
 representation.
 
 **CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
-`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:3090-3096`), the
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:3095-3101`), the
 same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
 unreachable: a private method nothing calls is one edit away from being called again. No line of
 `src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and
@@ -1289,7 +1295,7 @@ plain sight for several rounds. Root `CLAUDE.md` requires a fact conflict to be 
 than left to coexist, and this one was not.
 
 *Resolved by measurement, not by choosing a sentence.* On the integrated tree the runner evaluates
-41 of them: `reject=41` over 126 fixtures (was 30 over 108 until `feat/m2-patterns` wrote down
+50 of them: `reject=50` over 136 fixtures (was 30 over 108 until `feat/m2-patterns` wrote down
 issue #41's refusals — eleven of them, which is what a feature round costs once every "this shape
 is not in the language" is a fixture rather than a sentence; and 22 over 84 until `feat/m2-expressions`
 transitioned `tests/reject/loop_keyword.pd` to `run` — N5-07 gave the language the `loop` that

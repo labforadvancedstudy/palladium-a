@@ -1,0 +1,20 @@
+// NEGATIVE TEST — an alternative inside a PAYLOAD may not bind either (N6-07).
+//
+// The type checker's enum arm used to stop at the enum's name, so every rule this
+// file's siblings pin was skipped one level down. Measured before the repair:
+// this program COMPILED, and `P::Num(x | 1)` matched every `Num` — the or-pattern
+// was emitted as `(1) || (1)`, because a binder condition is `1`.
+//
+// A pattern that is checked at the top and unchecked inside is not checked.
+enum P {
+    Num(i64),
+    Empty,
+}
+
+fn main() {
+    let v = match P::Num(9) {
+        P::Num(x | 1) => x,
+        P::Empty => 0,
+    };
+    print_int(v);
+}

@@ -325,7 +325,7 @@ tuple_index    = postfix '.' integer ;
 # See language-spec.md §6.5.
 
 # =============================================================================
-# Patterns  (every N6 form except slices)
+# Patterns  (the eight N6 rows M2 owns; four forms N6 names are still absent)
 # =============================================================================
 
 pattern        = pattern_primary { '|' pattern_primary } ;   (* N6-07 *)
@@ -348,10 +348,24 @@ match_arm      = pattern [ "if" expression ] "=>" ( block | expression ) [ ',' ]
 # a binder from. There is no grouping form for patterns, so `n @ (1 | 2)` is
 # unwritable rather than silently reinterpreted.
 #
-# A range's endpoints are INTEGER literals and both are required: `1..` and `..5`
-# are named nowhere in Part B and are refused by name, and an empty range
-# (`5..=1`, `3..3`) is refused as the transposition it almost always is. `char`
-# endpoints wait on N4-04, which owes `char` as a type at all.
+# A range's endpoints are INTEGER LITERALS, which is a SUBSET of the normative
+# production: Part B spells an endpoint `expression`, and nothing in pattern
+# position can be evaluated — there is no constant folder a pattern may call, and
+# a pattern is matched, not computed. The subset is named here for the same
+# reason the arity-2 tuple rule is, and pinned by
+# `tests/reject/range_pattern_endpoint_type.pd`. `char` endpoints wait on N4-04,
+# which owes `char` as a type at all.
+#
+# Both ends are required: `1..` and `..5` are named nowhere in Part B and are
+# refused by name (two separate parser branches, one fixture each).
+#
+# AND AN EMPTY RANGE IS REFUSED — `5..=1`, `3..3`. That rule is NOT in Part B and
+# is owned by this implementation: the production admits any two endpoints, and
+# nothing in the spec says an unsatisfiable pattern is an error. It is refused
+# because an arm that can never be taken is a transposition far more often than
+# it is a deliberate no-op, and because the alternative is a silently dead arm.
+# If the owner would rather have the spec's literal reading, this is the rule to
+# delete, and the two fixtures name it.
 #
 # A tuple pattern takes two or more elements, mirroring the value side.
 #
@@ -482,8 +496,11 @@ try_expr        = "try" block ;
 # type, and a trap where no arm is taken. What Part A implements is a SUBSET of
 # the productions below in three named places — a range's endpoints are integer
 # literals rather than expressions (nothing in pattern position can be
-# evaluated), a tuple pattern needs two or more elements, and a match arm's
-# guard is checked in the arm's own scope so it can read the pattern's bindings.
+# evaluated), a tuple pattern needs two or more elements, and NO ALTERNATIVE OF
+# AN `|` PATTERN MAY BIND, which the production permits and this implementation
+# refuses because it cannot yet check that every alternative binds the same names
+# at the same types. (Guard scoping is not a subset: a guard reading its arm's
+# bindings is what N6-09 means, not a narrowing of it.)
 #
 # WHAT IS STILL ONLY NORMATIVE: slice patterns (N6-06, owned by M3 — there is no
 # slice type to pattern), field shorthand and `..` rest in a struct pattern.

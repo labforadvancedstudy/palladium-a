@@ -4246,7 +4246,7 @@ impl TypeChecker {
             // program that satisfied the old type rules failed inside gcc —
             // against C the user never wrote. The LLVM backend is worse: its
             // catch-all returns the constant `0` for both nodes
-            // (`src/codegen/llvm_text_backend.rs:1425`), which compiles and is
+            // (`src/codegen/llvm_text_backend.rs:1435`), which compiles and is
             // wrong. Refuse here, at the construct's own span, so no backend
             // gets the chance.
             //
@@ -4925,21 +4925,94 @@ impl TypeChecker {
             }
             Pattern::EnumPattern {
                 enum_name,
-                variant: _,
-                data: _,
+                variant,
+                data,
             } => {
                 // Check that the expected type matches the enum
                 match expected_type {
-                    CheckerType::Enum(name) if name == enum_name => Ok(()),
-                    CheckerType::Generic { name, .. } if name == enum_name => Ok(()),
-                    _ => Err(CompileError::TypeMismatch {
-                        expected: format!("enum {}", enum_name),
-                        found: expected_type.to_string(),
-                        span: None,
-                    }),
+                    CheckerType::Enum(name) if name == enum_name => {}
+                    CheckerType::Generic { name, .. } if name == enum_name => {
+                        // A generic enum's payload types are its type parameters,
+                        // which are not resolved here; the constructor for one is
+                        // refused before code generation either way.
+                        return Ok(());
+                    }
+                    _ => {
+                        return Err(CompileError::TypeMismatch {
+                            expected: format!("enum {}", enum_name),
+                            found: expected_type.to_string(),
+                            span: None,
+                        });
+                    }
                 }
+
+                // AND THE PAYLOAD IS CHECKED TOO. This arm used to stop at the
+                // enum's name, which meant every rule this function enforces was
+                // skipped one level down: `P::Num(x | 1)` bypassed the
+                // or-alternative-may-not-bind refusal and matched every `Num`,
+                // `P::Num("a")` on an `i64` payload reached gcc as a type error
+                // in OUR C, and `P::Num(true)` compiled to a comparison against
+                // 1. A pattern that is checked at the top and unchecked inside is
+                // not checked.
+                for (sub_pattern, field_type) in self.payload_pattern_types(enum_name, variant, data.as_ref())? {
+                    self.check_pattern(sub_pattern, &field_type)?;
+                }
+                Ok(())
             }
         }
+    }
+
+    /// An enum variant's payload sub-patterns, paired with the field types they
+    /// apply to.
+    ///
+    /// ONE lookup shared by the two passes that need it. `bind_pattern_variables`
+    /// grew its own copy first, which is how `check_pattern` came to have none:
+    /// the binding walk descended into payloads and the CHECKING walk did not.
+    fn payload_pattern_types<'p>(
+        &self,
+        enum_name: &str,
+        variant: &str,
+        data: Option<&'p PatternData>,
+    ) -> Result<Vec<(&'p Pattern, CheckerType)>> {
+        let Some(pattern_data) = data else {
+            return Ok(Vec::new());
+        };
+        let Some(variants) = self.enums.get(enum_name) else {
+            return Ok(Vec::new());
+        };
+        let Some(variant_info) = variants.iter().find(|v| v.name == variant) else {
+            return Ok(Vec::new());
+        };
+        Ok(match (pattern_data, &variant_info.fields) {
+            (PatternData::Tuple(patterns), EnumVariantFields::Tuple(field_types)) => {
+                if patterns.len() != field_types.len() {
+                    return Err(CompileError::Generic(format!(
+                        "Pattern has wrong number of fields for {}::{}",
+                        enum_name, variant
+                    )));
+                }
+                patterns
+                    .iter()
+                    .zip(field_types.iter().cloned())
+                    .collect()
+            }
+            (PatternData::Struct(field_patterns), EnumVariantFields::Named(expected)) => {
+                let mut out = Vec::with_capacity(field_patterns.len());
+                for (field_name, pattern) in field_patterns {
+                    let Some((_, field_type)) =
+                        expected.iter().find(|(name, _)| name == field_name)
+                    else {
+                        return Err(CompileError::Generic(format!(
+                            "Unknown field {} in {}::{}",
+                            field_name, enum_name, variant
+                        )));
+                    };
+                    out.push((pattern, field_type.clone()));
+                }
+                out
+            }
+            _ => Vec::new(),
+        })
     }
 
     /// Bind variables from patterns to the symbol table
@@ -5496,7 +5569,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:5762-5826`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:5863-5927`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -5779,7 +5852,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4208-4216`, `src/parser/mod.rs:4002-4010`). That is not
+    /// (`src/parser/mod.rs:4229-4237`, `src/parser/mod.rs:4002-4010`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

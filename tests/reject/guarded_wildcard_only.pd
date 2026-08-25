@@ -1,0 +1,13 @@
+// NEGATIVE TEST — a GUARDED wildcard does not exhaust anything (N6-09 / N6-10).
+//
+// `_ if cond` is taken only sometimes, and which times is not decidable from the
+// pattern, so it counts toward completeness exactly as much as any other guarded
+// arm: not at all. A match whose only arm is a guarded wildcard is therefore
+// non-exhaustive, and refusing it is the difference between a program that falls
+// out of its `match` and one that never compiles.
+fn main() {
+    let v = match 4 {
+        _ if 1 > 0 => 1,
+    };
+    print_int(v);
+}

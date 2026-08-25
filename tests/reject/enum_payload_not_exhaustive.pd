@@ -1,0 +1,18 @@
+// NEGATIVE TEST — a refutable payload does not cover its variant (N6-10).
+//
+// `P::Num(1)` matches SOME `Num`s. Counting it as the variant made this match
+// "complete": it compiled, took no arm at run time, and hit N6-11's trap — the
+// trap doing its job for a program the checker should never have accepted.
+//
+// The rule is the one used everywhere else in the checker: a variant is covered
+// only when every one of its payload sub-patterns is irrefutable.
+enum P {
+    Num(i64),
+}
+
+fn main() {
+    let v = match P::Num(9) {
+        P::Num(1) => 10,
+    };
+    print_int(v);
+}

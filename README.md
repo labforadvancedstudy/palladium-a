@@ -281,24 +281,33 @@ When you compile, you'll see detailed progress:
 
 - `?` operator — emits C referencing a `struct Result` layout codegen never defines
 - `async` / `.await` — emits a call to a `poll` member that is never generated
-- Tuples — become `void*`; no tuple expression exists, so none can be constructed
+- Generic types in a struct field, and tuples in a struct field or an enum payload — refused by name
 - Generics — generic arguments that are all-uppercase are misparsed as const generics
 - `for` over an array *parameter* — uses `sizeof` on a decayed pointer
 
 ### ❌ Not implemented
 
+> **This list is older than the compiler in places.** The pattern and tuple entries were corrected
+> when issue #41 landed; the entries marked *(stale)* were falsified by earlier branches and are
+> left standing rather than quietly deleted, because correcting them is that branch's receipt to
+> write, not this one's. `docs/specification/language-spec.md`'s A-sections are the measured status.
+
 - Traits (parse, then emit nothing — no dispatch mechanism exists)
-- Closures, method call syntax `obj.method()`, `else if`, `loop`
-- Floats, chars, bitwise operators, compound assignment (`+=`), `as` casts
-- Literal/range/or patterns and match guards
+- Closures
+- *(stale)* method call syntax `obj.method()`, `else if`, `loop` — all implemented by
+  `feat/m2-expressions`
+- *(stale)* floats, bitwise operators, compound assignment (`+=`), `as` casts — same branch
+- Chars as a distinct TYPE (`'a'` lexes and carries its scalar; its type is `i64`)
+- Slice patterns, `ref`/`mut` bindings, field shorthand in a struct-variant pattern,
+  destructuring `let`
 - String interpolation
 
 ### ⚠️ Known Limitations
 
-- No implicit returns — use explicit `return`
-- No `else if` — nest an `if` inside the `else` block
-- No method syntax — call `Type::method(receiver, ...)`
-- `match` cannot dispatch on integers (no literal patterns) — use `if`/`else` chains
+- A `match` on any type other than an enum or a `bool` needs a `_` or binding arm: no set of
+  literal or range arms is complete, and coverage by ranges is not checked
+- A chained tuple index needs parentheses — `(p.0).1`, because `.0.1` lexes as one float literal
+- A one-element tuple `(e,)` is not a form this language has; `(e)` is grouping
 - `print` and `print_int` output on separate lines
 - `pdc` must be run from the repository root: it links `runtime/palladium_runtime.c` by
   relative path

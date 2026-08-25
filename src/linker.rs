@@ -241,14 +241,15 @@ pub const NON_FATAL_DIAGNOSTIC_TAGS: &[(&str, &str)] = &[
     ),
     (
         "-Wreturn-type",
-        "a generated function that falls off its end (2 occurrences, both in \
-         stdlib_tail_match.c). Already owned, with its own sequencing: codegen \
-         lowers `match` to an if/else-if chain with no final `else`, so gcc \
-         cannot prove every path returns for any tail `match`. The obligation is \
-         held open by \
+        "ZERO occurrences since N6-11, re-measured: every `match` chain ends in \
+         an `else` that traps, so gcc can prove a tail `match` returns on every \
+         path. It was 2, both in stdlib_tail_match.c. The obligation that held \
+         this open — \
          `the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end` \
-         in tests/rust-debt-manifest.txt, which asks for `-Werror=return-type` \
-         on the gcc command line rather than a stderr scan here.",
+         in tests/rust-debt-manifest.txt — is PAID: `-Werror=return-type` is on \
+         the gcc command line above, so this tag can no longer arrive as a note \
+         at all. The row stays because a tag that has become impossible is worth \
+         one line saying which change made it so.",
     ),
     (
         "-Wreturn-stack-address",

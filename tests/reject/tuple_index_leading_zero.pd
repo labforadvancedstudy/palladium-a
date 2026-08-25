@@ -1,0 +1,11 @@
+// NEGATIVE TEST — `p.01` is not a way to write `p.1` (N4-12).
+//
+// The lexer parses the digits and hands the parser an `i64`, so the SPELLING is
+// gone — but the span is not, and an index written with leading zeros covers more
+// source than its value has digits. Without that check `p.01` compiled silently
+// as `.1`: a typo that changes which element a program reads, with no diagnostic
+// anywhere.
+fn main() {
+    let p = (1, 2);
+    print_int(p.01);
+}

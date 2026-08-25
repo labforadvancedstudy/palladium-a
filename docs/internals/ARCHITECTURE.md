@@ -194,7 +194,7 @@ palladium/
 ### 2. Effect System
 
 > **PROPOSAL — not implemented.** Effect clauses do not exist in the surface syntax; the parser
-> hardcodes `effects: None` (`src/parser/mod.rs:1259`). Effects are inferred after the fact and
+> hardcodes `effects: None` (`src/parser/mod.rs:1277`). Effects are inferred after the fact and
 > only printed. Nothing below parses.
 
 ```palladium no-compile

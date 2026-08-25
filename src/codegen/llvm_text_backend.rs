@@ -963,6 +963,16 @@ impl LLVMTextBackend {
                 // For now, generate a simple if-else chain
                 // TODO: Implement proper pattern matching
                 for (i, arm) in arms.iter().enumerate() {
+                    // N6-09. A GUARD IS A SECOND TEST, and this backend has no
+                    // way to run it: an arm here becomes an unconditional branch,
+                    // so a guarded arm would be taken whether or not its guard
+                    // holds. Refused by name, like the literal and composite
+                    // patterns above — the house rule is that a backend which
+                    // cannot express a construct says so rather than emitting IR
+                    // that means something else.
+                    if arm.guard.is_some() {
+                        return Err(unimplemented_guard(*match_span));
+                    }
                     let arm_label = self.fresh_label(&format!("match_arm{}", i));
                     // Only the enum-pattern arm ever branched here, and that
                     // arm now refuses, so nothing reads this. The label is
@@ -1637,25 +1647,6 @@ fn unimplemented_backend() -> CompileError {
     }
 }
 
-/// Enum construction, e.g. `Color::Green`.
-///
-/// This is the sharpest of the four expression refusals, because it is the
-/// only one whose fabricated value used to *link and run*. The old catch-all
-/// returned `("", "0")`, so `Color::Red` and `Color::Green` compiled to
-/// byte-identical IR (`store i64 0`) and the arguments of a data-carrying
-/// variant — `Wrapper::Val(loud(99))` — vanished with the call inside them.
-///
-/// The workaround says *non-generic* because that is exactly as far as the
-/// receipts go, and no further. Measured on the C backend: unit and tuple
-/// variants run (`enum_help_recommends_the_c_backend_and_the_c_backend_delivers`)
-/// and struct variants run (`enum_help_covers_struct_variants_because_it_says_so`)
-/// — but a generic enum does not. `enum Opt<T> { None, Some(T) }` with
-/// `Opt::Some(41)` emits
-/// `struct Opt o = Opt_Some__new(41);` against a type it only forward-declares,
-/// and gcc answers `variable has incomplete type 'struct Opt'`. Advising the C
-/// backend without that qualifier would send a `Result<T, E>` user to a second
-/// broken backend, which is the disease, not the cure. Pinned by
-/// `the_generic_enum_caveat_in_the_help_is_real`.
 /// A literal pattern, which this backend has no equality test for.
 fn unimplemented_literal_pattern(literal: &crate::ast::PatternLiteral, span: Span) -> CompileError {
     CompileError::Unimplemented {
@@ -1699,6 +1690,39 @@ fn unimplemented_tuple(span: Span) -> CompileError {
     }
 }
 
+/// An arm guard, which this backend cannot evaluate.
+fn unimplemented_guard(span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: "a match arm guard (`pattern if cond =>`)".to_string(),
+        consequence: "this backend lowers a match arm to an unconditional branch, so a guarded \
+                      arm would be taken whether or not its guard holds"
+            .to_string(),
+        workaround: "compile without `--llvm`, which is the supported backend and emits the \
+                     guard as a test the arm is taken through"
+            .to_string(),
+        span: Some(span),
+    }
+}
+
+/// Enum construction, e.g. `Color::Green`.
+///
+/// This is the sharpest of the four expression refusals, because it is the
+/// only one whose fabricated value used to *link and run*. The old catch-all
+/// returned `("", "0")`, so `Color::Red` and `Color::Green` compiled to
+/// byte-identical IR (`store i64 0`) and the arguments of a data-carrying
+/// variant — `Wrapper::Val(loud(99))` — vanished with the call inside them.
+///
+/// The workaround says *non-generic* because that is exactly as far as the
+/// receipts go, and no further. Measured on the C backend: unit and tuple
+/// variants run (`enum_help_recommends_the_c_backend_and_the_c_backend_delivers`)
+/// and struct variants run (`enum_help_covers_struct_variants_because_it_says_so`)
+/// — but a generic enum does not. `enum Opt<T> { None, Some(T) }` with
+/// `Opt::Some(41)` emits
+/// `struct Opt o = Opt_Some__new(41);` against a type it only forward-declares,
+/// and gcc answers `variable has incomplete type 'struct Opt'`. Advising the C
+/// backend without that qualifier would send a `Result<T, E>` user to a second
+/// broken backend, which is the disease, not the cure. Pinned by
+/// `the_generic_enum_caveat_in_the_help_is_real`.
 fn unimplemented_enum_constructor(enum_name: &str, variant: &str, span: Span) -> CompileError {
     CompileError::Unimplemented {
         construct: format!("enum construction (`{}::{}`)", enum_name, variant),

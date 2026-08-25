@@ -29,6 +29,28 @@ fn noisy(v: i64) -> bool {
     return v > 0;
 }
 
+// Two guarded matches in ONE function, plus a guarded match nested inside an
+// arm of another. Each lowers to its own `goto` label; a shared label name would
+// make the first arm of the outer match jump past the inner one.
+fn twice(n: i64) -> i64 {
+    let a = match n {
+        m if m > 100 => 1,
+        _ => 2,
+    };
+    let b = match n {
+        m if m > 100 => {
+            let inner = match m {
+                k if k > 150 => 7,
+                _ => 8,
+            };
+            inner
+        }
+        m if m > 1 => 4,
+        _ => 5,
+    };
+    return a * 10 + b;
+}
+
 fn describe(p: Payload) -> i64 {
     match p {
         Payload::Num(n) if n > 5 => n * 10,
@@ -82,6 +104,21 @@ fn main() {
         _ => 0,
     };
     print_int(hoisted);
+
+    print("A guard that HOISTS, on an arm whose pattern does not match:");
+    // The guard holds a value expression, so it hoists statements of its own.
+    // Those statements sit inside the pattern test, which is why nothing here
+    // runs: `noisy` is never called and the `if` is never evaluated.
+    let hoisted_quiet = match Payload::Empty {
+        Payload::Num(v) if (if noisy(v) { 1 } else { 0 }) == 1 => 1,
+        Payload::Empty => 2,
+        Payload::Num(_) => 3,
+    };
+    print_int(hoisted_quiet);
+
+    print("Two guarded matches in one function need two labels:");
+    print_int(twice(50));
+    print_int(twice(200));
 
     print("Statement form:");
     let s = 12;

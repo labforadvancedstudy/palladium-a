@@ -1,0 +1,15 @@
+// NEGATIVE TEST — a guarded `true` does not cover `true` (N6-02 / N6-09).
+//
+// `bool` is the one scrutinee type literal patterns can exhaust, and this match
+// looks complete: `true` and `false` are both written. But the `true` arm carries
+// a guard, so it is taken only sometimes and covers nothing — leaving `true` with
+// nowhere to go when the guard fails. The bool rule and the guard rule are the
+// same rule seen twice, and this is where they meet.
+fn main() {
+    let b = 1 < 2;
+    let v = match b {
+        true if 1 > 0 => 1,
+        false => 0,
+    };
+    print_int(v);
+}

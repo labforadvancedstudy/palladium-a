@@ -86,6 +86,14 @@ fn main() {
     };
     print_int(s);
 
+    print("A String element is BOUND as a String, not as an integer:");
+    let named = (7, "seven");
+    let word = match named {
+        (_, w) => w,
+    };
+    print(word);
+    print(string_concat(word, "!"));
+
     print("Statement form, with a guard:");
     match (2, 2) {
         (a, b) if a == b => { print("equal"); }

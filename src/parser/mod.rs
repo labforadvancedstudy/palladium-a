@@ -4044,6 +4044,27 @@ impl Parser {
                                     span: self.current_span(),
                                 });
                             }
+                            // `p.01` IS NOT `p.1`. The lexer parses the digits
+                            // and hands over an `i64`, so the spelling is gone by
+                            // the time this sees it — but the SPAN is not: an
+                            // index written with leading zeros covers more source
+                            // than its value has digits. Without this check
+                            // `p.01` silently compiled as `.1`, which is the
+                            // shape of a typo that changes which element a
+                            // program reads.
+                            let width = span.end.saturating_sub(span.start);
+                            if width > index.to_string().len() {
+                                return Err(CompileError::UnexpectedToken {
+                                    expected: "a tuple index written without leading zeros"
+                                        .to_string(),
+                                    found: format!(
+                                        "an index whose spelling is {} characters wide for the \
+                                         value {} — `.0{}` is not a way to write `.{}`",
+                                        width, index, index, index
+                                    ),
+                                    span: self.current_span(),
+                                });
+                            }
                             let end_span = span;
                             expr = Expr::TupleIndex {
                                 expr: Box::new(expr),

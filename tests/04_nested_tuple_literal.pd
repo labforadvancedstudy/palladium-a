@@ -1,0 +1,28 @@
+// Test 04: A NESTED TUPLE LITERAL IS THE FIRST TUPLE THIS PROGRAM MENTIONS
+// (N4-12, regression).
+//
+// Tuple structs are emitted in REGISTRATION order, so a shape recorded before
+// the shapes its fields are typed by would be defined before them. Measured on
+// this exact program before the repair: gcc answered `unknown type name
+// '__pd_tuple2_long_long_long_long'`, because the outer `((i64,i64), i64)`
+// registered first and the inner `(i64,i64)` second.
+//
+// THE SHIPPED FIXTURES COULD NOT SEE IT. `tests/02_types_tuples.pd` builds the
+// same nested value, but a function signature there names `(i64, i64)` first, so
+// the inner shape was already registered by the time the literal ran. This file
+// declares no tuple-typed signature at all: the literal is the only thing that
+// registers anything, which is what makes it a regression test rather than a
+// second copy of a passing one.
+
+fn main() {
+    let n = ((1, 2), 3);
+    print_int((n.0).0);
+    print_int((n.0).1);
+    print_int(n.1);
+
+    // Three levels, same rule.
+    let deep = (((4, 5), 6), 7);
+    print_int(((deep.0).0).1);
+    print_int((deep.0).1);
+    print_int(deep.1);
+}

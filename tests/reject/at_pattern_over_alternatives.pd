@@ -1,0 +1,17 @@
+// NEGATIVE TEST — `n @ 1 | 2` binds inside an alternative (N6-07 / N6-08).
+//
+// `|` binds LOOSER than `@`, so this parses as `(n @ 1) | 2` — an or-pattern one
+// of whose alternatives binds `n`. That is the refusal N6-07 already carries, and
+// it fires here for a reader who meant `n @ (1 | 2)`: a form the language does not
+// have, because there is no grouping form for patterns.
+//
+// The precedence is stated at the production in grammar.ebnf. It is pinned here
+// because "binds looser" is the kind of sentence a reader believes and a compiler
+// has to prove.
+fn main() {
+    let v = match 4 {
+        n @ 1 | 2 => n,
+        _ => 0,
+    };
+    print_int(v);
+}
