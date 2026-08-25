@@ -257,9 +257,10 @@ src/ownership/borrow_checker.rs	1495-1497	tests/m3_imported_calls.rs	55ccf3b4f0d
 src/ownership/borrow_checker.rs	151-154	tests/d3b_tail_if.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
 src/ownership/borrow_checker.rs	151-154	tests/m3_imported_calls.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
 src/ownership/borrow_checker.rs	352-361	tests/d3b_tail_if.rs	aa896335d3f2	// First pass: collect function signatures and struct layouts for item in &pr ... ields.clone()); } Item::Function(func) => { self.collect_function_sig(func); }
-src/ownership/borrow_checker.rs	386-392	docs/specification/bootstrap-subset.md	534ae550da38	for item in &program.items { match item { Item::Function(func) => { self.chec ... (func)?; } Item::Impl(impl_block) => { // Check method bodies from impl blocks
 src/ownership/borrow_checker.rs	391-397	docs/specification/language-spec.md	4f479bc9111b	Item::Impl(impl_block) => { // Check method bodies from impl blocks for method in &impl_block.methods { self.check_function(method)?; } } _ => {}
 src/ownership/borrow_checker.rs	546-548	docs/specification/language-spec.md	928a2535411c	if param.mutable { params.push(ParamOwnership::BorrowMut); continue;
+src/ownership/borrow_checker.rs	551-560	docs/specification/bootstrap-subset.md	f27c8fc81be9	Type::Array(_, _) => { // An array parameter is a *reference*, not a move. Th ... d // only the mutability of the binding picks the kind. ParamOwnership::Borrow
+src/ownership/borrow_checker.rs	566-567	docs/specification/bootstrap-subset.md	74e443ccb752	// Non-copy types Type::Custom(_) => ParamOwnership::Move,
 src/ownership/borrow_checker.rs	582-582	docs/specification/language-spec.md	3975922a5a94	ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))
 src/ownership/borrow_checker.rs	613-615	src/codegen/mod.rs	412332b30331	for param in &func.params { let place = Place::Local(param.name.clone()); self.context.declare(&place);
 src/ownership/borrow_checker.rs	63-64	docs/specification/language-spec.md	52913fa77a92	/// Return value ownership #[allow(dead_code)]

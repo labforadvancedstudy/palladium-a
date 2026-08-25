@@ -361,7 +361,7 @@ and a generic enum's constructor, both of which the front end used to accept and
 compiler that had no such function and no such type to link) | `make conformance` |
 | Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 412 citations fingerprinted, 27 no-compile fences pinned | `make check-docs` |
+| Documentation | every snippet compiles; 413 citations fingerprinted, 27 no-compile fences pinned | `make check-docs` |
 | Rust tests | 918 pass, **0 fail**, 50 ignored (565 lib + 353 integration, 27 binaries) | `make test-honest` |
 | Declared failures | 49 `xfail` + 1 `slow`, none passing; 49 of 49 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |

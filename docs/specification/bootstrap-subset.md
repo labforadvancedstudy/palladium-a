@@ -113,9 +113,13 @@ unimplementable in a single-pass translator.
 
 3. **Struct and array parameters that are written are declared `mut`.**
    A `mut` parameter of struct type becomes `struct S*` in C, so mutations propagate to the
-   caller — verified: `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` struct or
-   array parameter is classified as a *move* by the borrow checker
-   (`src/ownership/borrow_checker.rs:386-392`) and can never be used again by the caller.
+   caller — verified: `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` STRUCT parameter
+   is classified as a *move* by the borrow checker (`src/ownership/borrow_checker.rs:566-567`) and
+   can never be used again by the caller. A non-`mut` ARRAY parameter is not: it is a *borrow*
+   (`src/ownership/borrow_checker.rs:551-560`), because codegen passes `T name[N]` as a pointer
+   into the caller's storage, so the caller keeps using it afterwards — the same fact D6's row
+   below records. This bullet said "struct or array … move" and cited `check_program`'s item walk,
+   which is neither classification.
 
 4. **Struct literals appear only as `let` initializers.** They translate to a C99 designated
    initializer, `S { a: 1 }` → `(struct S){ .a = 1 }`.

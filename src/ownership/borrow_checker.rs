@@ -1984,6 +1984,38 @@ mod tests {
         );
     }
 
+    /// THE MOVED ROOT IS STILL SEEN THROUGH A FIELD, and the fail-open above does
+    /// not reach this far.
+    ///
+    /// The declared gap is that a field-access RECEIVER is untyped, so the method
+    /// it calls has its parameters unenforced. It is NOT that a move of the root
+    /// stops being a move: `consume(p)` moves `p`, and `p.inner.take()` after it
+    /// reads a place rooted at `p`, which `check_expr` refuses whatever the
+    /// receiver's type turns out to be. Pinned because the two are one line apart
+    /// in the reader's mind and only one of them is a hole.
+    #[test]
+    fn test_a_moved_root_is_refused_through_a_field_receiver() {
+        let result = borrow_check(
+            r#"
+            struct Inner { v: i64 }
+            struct P { inner: Inner }
+            impl Inner { fn take(self) -> i64 { return self.v; } }
+            fn consume(p: P) -> i64 { return p.inner.v; }
+            fn main() {
+                let p = P { inner: Inner { v: 1 } };
+                let a = consume(p);
+                let b = p.inner.take();
+                print_int(a + b);
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::UseOfMovedValue { .. })),
+            "a field-rooted use of a moved value was accepted: {:?}",
+            result
+        );
+    }
+
     /// GENUINE ERROR, still rejected: two mutable borrows of the same array that
     /// really are live at the same time, because they are arguments to the *same*
     /// call. Releasing borrows per call must not release them per argument.
