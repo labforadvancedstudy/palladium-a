@@ -427,10 +427,33 @@ elif w == "pin-relocate":      # the stored hash is a tripwire only, never an ad
     # back to being an undifferentiated MOVED, which is the state that made authors shape
     # source code around line numbers.
     t = t.replace("    hits: list = []", "    return []\n    hits: list = []", 1)
+elif w == "pin-relocate-fail":     # a relocation is REPORTED, and the run still passes
+    # The relocation branch appends to two lists: `relocated` prints the move as its own
+    # section, `fail` makes it a failure. Removing only the second leaves the printed report
+    # byte-identical and exits 0 -- exactly the state this branch's parent fixed, where a
+    # gate printed "RELOCATED" beside a green exit and nobody had to read it. `[].append`
+    # still builds the message and throws it away, so what is reverted here is the FAILURE
+    # and nothing else: the control that dies must die on the exit status.
+    t = t.replace("                    relocated.append((key, want[key], hits[0]))\n"
+                  "                    ns, ne, _ = hits[0]\n"
+                  "                    fail.append(",
+                  "                    relocated.append((key, want[key], hits[0]))\n"
+                  "                    ns, ne, _ = hits[0]\n"
+                  "                    [].append(", 1)
 elif w == "pin-relocate-unique":   # any match will do, take the first
     # Repeated boilerplate is real, so a relocation that does not require UNIQUENESS
     # repoints the citation at whichever copy happens to come first in the file.
     t = t.replace("                if len(hits) == 1:", "                if hits:", 1)
+elif w == "pin-relocate-trim":     # a window is named by its raw span, blank edges and all
+    # `norm()` deletes a blank line, so a window ENDING on one and the window one line below
+    # it STARTING on one hold the same text and hash to the same value. Named by their raw
+    # spans they are TWO hits over ONE piece of content, and the pin is refused as AMBIGUOUS
+    # between two ranges with no second copy to choose between -- an ambiguity manufactured
+    # by the search rather than found in the file. Reverting the trim to identity also
+    # neutralises the dedupe below it, since two windows can only share a span once their
+    # blank edges are gone: they are one fix and this is the one reversion.
+    t = t.replace("            tstart, tend, twindow = trim_blank_edges(start, end, window)",
+                  "            tstart, tend, twindow = start, end, window", 1)
 elif w == "pin-relocate-width":    # the range's HEIGHT is not held fixed
     # `norm()` collapses newlines, so a two-line range and the single line holding the same
     # two statements hash identically. Searching other widths lets a CHANGED citation
@@ -559,6 +582,8 @@ l1-downstream|scripts/check_doc_evidence.py
 blank-targets|scripts/check_doc_evidence.py
 pin-semantic|scripts/check_doc_evidence.py
 pin-relocate|scripts/check_doc_evidence.py
+pin-relocate-fail|scripts/check_doc_evidence.py
+pin-relocate-trim|scripts/check_doc_evidence.py
 pin-relocate-unique|scripts/check_doc_evidence.py
 pin-relocate-width|scripts/check_doc_evidence.py
 pin-relocate-zero|scripts/check_doc_evidence.py

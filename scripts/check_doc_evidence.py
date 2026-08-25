@@ -1650,7 +1650,15 @@ RELOCATION_HIT_CAP = 8      # enough to say "several" and name them; not a full 
 
 
 def pin_windows(lines, nlines):
-    """Every candidate range of the pin's own height. -> (start, end, [line, ...])"""
+    """Every candidate range of the pin's own height. -> (start, end, [line, ...])
+
+    UNTRIMMED, and that is the contract rather than an accident of who calls it: this
+    enumerates the ranges a pin of `nlines` lines could name, and the digest compared against
+    the pin is taken over the WHOLE window — blank edges included — because that is what the
+    pin was taken over. Trimming belongs to whoever NAMES a hit (locate_fingerprint), not to
+    whoever offers a candidate; a generator that handed back trimmed spans would be answering
+    a different question and would change which windows are compared at all.
+    """
     for i in range(len(lines) - nlines + 1):
         yield i + 1, i + nlines, lines[i:i + nlines]
 
@@ -1681,7 +1689,8 @@ def locate_fingerprint(lines, want_fp: str, nlines: int, cap: int = RELOCATION_H
     their blank line sits hold one piece of content, and counting them as two matches is how
     a unique relocation was reported AMBIGUOUS. See THE HEIGHT OF THE RANGE IS HELD FIXED.
     The height searched is still exactly the pin's; trimming names a hit, it does not admit
-    one.
+    one — the comparison happens on the untrimmed window pin_windows yields, and only a
+    window that already matched is then named by its trimmed span.
     """
     hits: list = []
     seen: set = set()
@@ -1732,22 +1741,30 @@ def report_relocations(relocated) -> None:
 
     The excerpt of what was FOUND is printed beside the excerpt that was PINNED, for the
     same reason the pin file carries an excerpt column at all: hash equality is a machine's
-    statement about bytes, and only a reader can say whether the claim still holds. Here the
-    two excerpts must read identically — if they do not, the digest is not what it seems.
+    statement about NORMALISED text — norm() collapses every run of whitespace, including
+    inside a string literal, so two ranges differing only in indentation hash alike — and only
+    a reader can say whether the claim still holds. Here the two excerpts must read
+    identically; if they do not, the digest is not what it seems.
     """
     if not relocated:
         return
-    print(f"\n{len(relocated)} citation(s) RELOCATED — the pinned content is intact and "
-          f"unique, at different lines:")
+    print(f"\n{len(relocated)} citation(s) RELOCATED — the pinned content is unchanged "
+          f"AFTER WHITESPACE NORMALISATION and unique, at different lines:")
     for (p, s, d), (_, pinned_x), (ns, ne, body) in relocated:
         print(f"  {p}:{s} -> {p}:{ns}-{ne}   (cited by {d})")
         print(f"      pinned: {pinned_x}")
         print(f"      found:  {excerpt(body)}")
     print("  Each move is justified by sha256(norm(range)) equality and by there being "
           "exactly ONE such range,\n"
-          "  so the text did not change — it moved. THE CITING DOCUMENT STILL NAMES THE OLD "
-          "LINES: rewrite it to\n"
-          "  the new ones and re-run --update. A relocation says the cited code still "
+          "  so the text is unchanged AFTER NORMALISATION — it moved. norm() collapses every "
+          "run of whitespace,\n"
+          "  including inside string literals, so equal digests mean equal normalised text "
+          "and not equal bytes:\n"
+          "  read the two excerpts. The printed range may also be SHORTER than the one the "
+          "author wrote, because a\n"
+          "  blank edge is no part of the pinned content. THE CITING DOCUMENT STILL NAMES THE "
+          "OLD LINES: rewrite it\n"
+          "  to the new ones and re-run --update. A relocation says the cited code still "
           "exists; it does not say the\n"
           "  claim made about it was ever right (see the module docstring, and the sibling "
           "quoted-token proposal).")
@@ -1919,7 +1936,8 @@ def main() -> int:
         return 0
 
     fail = []
-    # A pin whose content is provably intact somewhere else in the same file. Every entry
+    # A pin whose content, after whitespace normalisation, is provably still in the same
+    # file at other lines. Every entry
     # here ALSO has one in `fail`: the two lists are separate so the moves print together as
     # their own section, ahead of the failure list, and not so that one of them escapes the
     # exit code. A relocation that appeared here and nowhere in `fail` is a stale pin the gate
@@ -1980,16 +1998,21 @@ def main() -> int:
                     ns, ne, _ = hits[0]
                     fail.append(
                         f"citation {key[0]}:{key[1]} cited by {key[2]} MOVED, and its "
-                        f"pinned content is intact and unique at {key[0]}:{ns}-{ne} — "
-                        f"RELOCATED\n"
-                        f"      pinned: {want[key][1]}\n"
-                        f"      now:    {x}\n"
-                        f"      Hash equality says the text did not change, so this is a "
-                        f"renumbering and not a judgement —\n"
+                        f"pinned content is unchanged after whitespace normalisation and "
+                        f"unique at {key[0]}:{ns}-{ne} — RELOCATED\n"
+                        f"      pinned:          {want[key][1]}\n"
+                        f"      at {key[1]} it is now: {x}\n"
+                        f"      Hash equality says the text is unchanged AFTER NORMALISATION "
+                        f"— norm() collapses every run of\n"
+                        f"      whitespace, including inside a string literal — so this is a "
+                        f"renumbering and not a judgement,\n"
                         f"      but the citing document still names {key[1]}, which holds "
                         f"something else, and the pin's line\n"
-                        f"      numbers are stale. Rewrite the citation to {ns}-{ne}, then "
-                        f"re-run --update to re-stamp the pin.")
+                        f"      numbers are stale. Rewrite the citation to {ns}-{ne} — which "
+                        f"may be SHORTER than what you\n"
+                        f"      wrote, since a blank edge is no part of the pinned content — "
+                        f"then re-run --update to\n"
+                        f"      re-stamp the pin.")
                 elif len(hits) > 1:
                     where = ", ".join(f"{a}-{b}" for a, b, _ in hits)
                     fail.append(

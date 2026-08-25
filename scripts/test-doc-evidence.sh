@@ -1138,9 +1138,9 @@ pin_case "--update refuses to record a content-free pin, and writes nothing" 1 \
   "REFUSED" "Nothing was written"
 
 echo
-echo "== a pin whose CONTENT is intact somewhere else has MOVED, and only then =="
+echo "== a pin whose CONTENT is still in the file, elsewhere, has MOVED and only then =="
 
-# CASES 37-41. RELOCATION BY CONTENT HASH.
+# CASES 37-42. RELOCATION BY CONTENT HASH.
 #
 # Until now the line numbers were the only way to find a cited range, so an edit that
 # shifted a cited file failed the gate and the repair was a hand search with
@@ -1152,9 +1152,12 @@ echo "== a pin whose CONTENT is intact somewhere else has MOVED, and only then =
 #
 # WHAT MAKES THESE FAITHFUL. Under the previous scheme every one of them is simply MOVED,
 # so a control asserting "MOVED" would pass before and after and measure nothing. Each
-# asserts the VERDICT the hash search produces -- RELOCATED, AMBIGUOUS, or CHANGED -- and
-# case 37 asserts a GREEN run, which no earlier version of this gate could produce for a
-# citation whose line numbers no longer hold its content.
+# asserts the VERDICT the hash search produces -- RELOCATED, AMBIGUOUS or CHANGED -- and no
+# earlier version of this gate could print any of the three. Case 37 asserts that verdict
+# AND the exit status, as two separate controls: the destination is NAMED, and the run still
+# FAILS. An earlier version of this case asserted exit 0 instead, which is the defect the
+# parent commit fixed -- so "names the move" and "is still a failure" are split here, and
+# each half is killed by its own mutation rather than sharing one.
 #
 # The pin is taken from the file's OLD state and the file is then edited, which is exactly
 # the state a real shift leaves behind: a pin holding content that is no longer where the
@@ -1193,17 +1196,38 @@ pin_check() {  # run the citation half against the recorded pins -> RC, OUT
 
 T="$PROBE_DIR/target.rs"
 
-# CASE 37. THE MOVE. The cited statement is unchanged; a comment inserted above it pushed it
-# down one line. Exactly one range in the file hashes to the pin, so the content did not
-# change -- it moved -- and the gate NAMES WHERE TO instead of demanding the author keep the
-# line number still. Two assertions, and they are separate: the verdict is RELOCATED with the
-# destination spelled out, which no previous version of this gate could produce; and the run
-# still exits 1, because the probe document names line 2 and line 2 now holds a comment. A
-# stale citation is not a passing one. What the hash buys is the SIZE of the repair -- rewrite
+# CASE 37. THE MOVE. The cited statement is unchanged after normalisation; a comment inserted
+# above it pushed it down one line. Exactly one range in the file hashes to the pin, so the
+# content did not change -- it moved -- and the gate NAMES WHERE TO instead of demanding the
+# author keep the line number still. What the hash buys is the SIZE of the repair -- rewrite
 # the citation to the printed lines and re-run --update -- not its absence.
 #
-# The earlier version of this case asserted exit 0, and that was the defect: a gate that
-# prints "RELOCATED" beside a green exit is a gate whose report nobody has to read.
+# TWO CONTROLS OVER ONE RUN, AND THEY ARE SPLIT BECAUSE THEY DIE TO DIFFERENT REVERSIONS.
+# The first asserts the VERDICT and the destination -- deleting the search (mutation
+# `pin-relocate`) leaves an undifferentiated MOVED and kills it. The second asserts nothing
+# about the text and only that THE RUN EXITS 1: deleting the `fail` append in the relocation
+# branch while leaving the printed report intact (mutation `pin-relocate-fail`) exits 0 and
+# kills it, and it is the only mutation that does -- under `pin-relocate` this run still
+# fails, for the older reason. That is why the assertions are not merged: a single control
+# naming both would be credited to one mutation and would die to the other for a reason it
+# does not name, which is the shape this file calls WRONG-CONTROL. The earlier version of
+# this case asserted exit 0, and that was the defect it now measures: a gate that prints
+# "RELOCATED" beside a green exit is a gate whose report nobody has to read. Measured, and
+# stated because a killset is not one-to-one: `pin-relocate-fail` also reddens the first
+# control and CASE 42, since pin_case checks the exit status of every case. Each of those is
+# credited to a different mutation and dies there for the reason its label names, which is
+# what scripts/doc-evidence-controls.tsv checks; being killed by more than one reversion is
+# not the defect, being killed by NONE that names the property is.
+#
+# WHAT NEITHER CONTROL COVERS, stated because it is a real residual. Both run `--pins-only`;
+# no case here exercises the FULL run's exit path. The two paths return over the SAME `fail`
+# list -- the pins-only return and the full return in check_doc_evidence.py read the same
+# variable -- so a failure cannot be present in one and absent from the other. A manual
+# full-run probe of this exact setup at review time reported `cmd=42 (all EXECUTED)`, exit 1,
+# and ONE item in the FAIL list: this relocation. It is not automated because those 42 `cmd:`
+# items are the cost the `--pins-only` note above exists to avoid, and a control that runs
+# them is a control nobody will run. So: the pins-only exit is MEASURED, the full-run exit is
+# ARGUED from a shared `fail` list plus a probe that is not checked in.
 cat > "$T" <<'EOF'
 fn build(&self) {
     let build_dir = self.output_dir.join("build");
@@ -1217,9 +1241,10 @@ fn build(&self) {
 }
 EOF
 pin_check
-pin_case "a pin whose content MOVED VERBATIM names its new lines, and the stale pin still FAILS" 1 \
+pin_case "a pin whose content MOVED VERBATIM names its new lines" 1 \
   "RELOCATED" "$PROBE_DIR/target.rs:2-2 -> $PROBE_DIR/target.rs:3-3" \
   "re-stamp the pin"
+pin_case "a RELOCATION is a FAILURE, not a report printed beside a green exit" 1
 
 # CASE 38. THE CONTENT CHANGED, AND THERE IS BAIT. The cited two-line range was edited
 # (`build` -> `cache`), and the file separately contains a single line whose text is exactly
@@ -1324,6 +1349,46 @@ if [ "$before" != "$after" ]; then
 fi
 pin_case "--update refuses to record over an unapplied RELOCATION, and writes nothing" 1 \
   "REFUSED" "Nothing was written" "$PROBE_DIR/target.rs:2-2 -> $PROBE_DIR/target.rs:3-3"
+
+# CASE 42. ONE PIECE OF CONTENT IS ONE HIT. This belongs beside CASE 39 and is numbered after
+# CASE 41 only because these numbers are append-only. Where 39 has TWO REAL COPIES and must
+# refuse to choose, this has ONE copy that the search used to see twice.
+#
+# `norm()` deletes a blank line, so a window that ENDS on one and the window one line below
+# it that STARTS on one hold the SAME text and hash to the SAME value. The pin here is a
+# two-line range whose FIRST line is blank; after the file is shifted down by one comment,
+# two windows of the pin's height hash to it -- 3-4 and 4-5 -- and both name one line of
+# content, line 4. Untrimmed they are two hits and the gate says AMBIGUOUS between two spans
+# for a piece of content with no second copy: a verdict the author cannot act on, and one the
+# search MANUFACTURED rather than found. Trimmed, both are 4-4, the dedupe counts them once,
+# and the citation RELOCATES.
+#
+# THIS IS THE ONLY CASE THAT MEASURES THE TRIM. Every other probe in this file has a target
+# without a blank line in it, so `trim_blank_edges` and the `seen` set could both be deleted
+# and every one of them would stay green -- measured, not supposed. It also pins the
+# SHORTER-SPAN report: the pin names two lines and the relocation names one, because a blank
+# edge is no part of what a citation cites and 4-4 is the range the author should write --
+# re-pinning THAT leaves no blank edge to shift. CASE 38's label was narrowed to stop
+# claiming this; here it is claimed and checked.
+cat > "$T" <<'EOF'
+fn head() {}
+
+let build_dir = self.output_dir.join("build");
+
+fn tail() {}
+EOF
+pin_take 2-3
+cat > "$T" <<'EOF'
+// LC_ALL=C is set here so gcc's diagnostics are stable
+fn head() {}
+
+let build_dir = self.output_dir.join("build");
+
+fn tail() {}
+EOF
+pin_check
+pin_case "a BLANK-EDGED pin relocates onto ONE trimmed span, not an AMBIGUOUS pair" 1 \
+  "RELOCATED" "$PROBE_DIR/target.rs:2-3 -> $PROBE_DIR/target.rs:4-4"
 
 rm -rf "$PROBE_DIR"
 
