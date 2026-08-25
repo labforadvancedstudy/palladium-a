@@ -1,0 +1,23 @@
+// NEGATIVE TEST — a non-exhaustive match is a compile error for EVERY scrutinee
+// type, not only for enums (N6-10).
+//
+// The spec's sentence is one sentence: "`match` is exhaustive: a non-exhaustive
+// match is a compile error, not a silent fall-through, and this applies to every
+// scrutinee type, not only enums." Enums were checked from the start and `bool`
+// since N6-02; every other type was an UNCHECKED position, so this program
+// compiled, fell through all of its arms at run time, and left the value it
+// binds holding whatever the temporary was initialised to.
+//
+// NO INTERVAL ARITHMETIC IS PROMISED, and the diagnostic says so. `0..=59` beside
+// `60..=<i64 max>` beside `<i64 min>..=-1` covers every integer, and this checker
+// still refuses it: proving that is arithmetic over intervals, and a checker that
+// did it for `i64` would owe the same for every other unenumerable type. The rule
+// is the simple one — some arm must match every value — and the fix is a `_` or a
+// binding arm.
+fn main() {
+    let v = match 4 {
+        1 => 10,
+        2 => 20,
+    };
+    print_int(v);
+}

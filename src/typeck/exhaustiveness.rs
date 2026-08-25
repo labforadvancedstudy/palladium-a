@@ -97,6 +97,30 @@ impl ExhaustivenessChecker {
         out
     }
 
+    /// Does this pattern match EVERY value of its type?
+    ///
+    /// N6-10's whole question for a type whose values cannot be enumerated. The
+    /// four irrefutable shapes, and no others:
+    ///
+    ///  * `_` and a bare binding, which is what irrefutable means;
+    ///  * `name @ inner`, exactly when `inner` is — the binding tests nothing;
+    ///  * `a | b`, when EITHER alternative is — one of them always fires;
+    ///  * `(a, b)`, when EVERY element is — the conjunction always holds.
+    ///
+    /// A literal and a range are refutable however wide they are. `0..=<i64 max>`
+    /// beside `<i64 min>..=-1` covers the domain and is still refused: proving
+    /// that is interval arithmetic, and this checker does not do arithmetic. The
+    /// diagnostic says so rather than leaving a reader to infer it.
+    pub fn is_irrefutable(pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Wildcard | Pattern::Ident(_) => true,
+            Pattern::Binding { inner, .. } => Self::is_irrefutable(inner),
+            Pattern::Or(alternatives) => alternatives.iter().any(Self::is_irrefutable),
+            Pattern::Tuple(elements) => elements.iter().all(Self::is_irrefutable),
+            Pattern::Literal(_) | Pattern::Range { .. } | Pattern::EnumPattern { .. } => false,
+        }
+    }
+
     /// Check if a match expression is exhaustive
     pub fn check_match(&self, matched_type: &str, patterns: &[Pattern], span: Span) -> Result<()> {
         let patterns = &Self::normalize(patterns);

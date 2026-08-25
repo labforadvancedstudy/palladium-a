@@ -165,6 +165,11 @@ pub struct CodeGenerator {
     /// was a second — `generate_async_function_with_name` set it too — and it
     /// is gone with the rest of the Future/poll emitter (N7-18).
     current_fn_unit_return: Option<&'static str>,
+    /// The C name of the function being generated, for the match trap's message
+    /// (N6-11). The generator has spans but no source FILE name, so "where" is
+    /// the function plus the match's line — which is what a reader of a crash
+    /// needs and all this pass can honestly say.
+    current_fn_name: String,
     /// Imported modules
     imported_modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
     /// Generic function instantiations to generate
@@ -296,6 +301,7 @@ impl CodeGenerator {
         let initial_capacity = 64 * 1024; // 64KB initial capacity
         Ok(Self {
             current_fn_unit_return: None,
+            current_fn_name: String::new(),
             module_name: module_name.to_string(),
             output: String::with_capacity(initial_capacity),
             functions: std::collections::HashMap::new(),
@@ -410,6 +416,81 @@ impl CodeGenerator {
     /// for that expression kind.
     fn try_infer_expr_type(&self, expr: &Expr) -> Option<String> {
         self.try_infer_expr_type_in(expr, &std::collections::HashMap::new())
+    }
+
+    /// The names an arm's PATTERN binds, at the C types the scrutinee gives
+    /// them.
+    ///
+    /// The mirror of `emit_pattern_bindings`, for inference rather than
+    /// emission, and it walks the same three sources of a position's type: the
+    /// scrutinee itself for a whole-value binding, the tuple shape registry for
+    /// an element (N4-12), and the enum's own payload types for a variant field.
+    /// Where a position's type is not derivable the name is simply not recorded
+    /// — inference then answers `None` for an expression that reads it, which is
+    /// the pre-existing "cannot infer" refusal rather than a guess.
+    fn bind_pattern_locals(
+        &self,
+        pattern: &Pattern,
+        subject_type: &str,
+        out: &mut std::collections::HashMap<String, String>,
+    ) {
+        match pattern {
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {}
+            Pattern::Ident(name) => {
+                out.insert(name.clone(), subject_type.to_string());
+            }
+            Pattern::Binding { name, inner } => {
+                out.insert(name.clone(), subject_type.to_string());
+                self.bind_pattern_locals(inner, subject_type, out);
+            }
+            // An alternative may not bind (N6-07), so there is nothing here.
+            Pattern::Or(_) => {}
+            Pattern::Tuple(elements) => {
+                let element_types: Vec<String> = self
+                    .tuple_shapes
+                    .element_types(subject_type)
+                    .map(|types| types.to_vec())
+                    .unwrap_or_default();
+                for (i, element) in elements.iter().enumerate() {
+                    if let Some(element_type) = element_types.get(i) {
+                        self.bind_pattern_locals(element, element_type, out);
+                    }
+                }
+            }
+            Pattern::EnumPattern {
+                enum_name,
+                variant,
+                data,
+            } => {
+                let Some(pattern_data) = data else {
+                    return;
+                };
+                let Some(enum_def) = self.enums.get(enum_name) else {
+                    return;
+                };
+                let Some(variant_def) = enum_def.variants.iter().find(|v| &v.name == variant)
+                else {
+                    return;
+                };
+                match (&variant_def.data, pattern_data) {
+                    (EnumVariantData::Tuple(types), PatternData::Tuple(patterns)) => {
+                        for (sub, ty) in patterns.iter().zip(types.iter()) {
+                            self.bind_pattern_locals(sub, &self.type_to_c(ty), out);
+                        }
+                    }
+                    (EnumVariantData::Struct(fields), PatternData::Struct(field_patterns)) => {
+                        for (field_name, sub) in field_patterns {
+                            if let Some((_, ty)) =
+                                fields.iter().find(|(fname, _)| fname == field_name)
+                            {
+                                self.bind_pattern_locals(sub, &self.type_to_c(ty), out);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// The bindings a block's statements add, over the ones already visible.
@@ -755,12 +836,23 @@ impl CodeGenerator {
             // inside a loop body. The answer that counts is recorded while the
             // construct is generated (`hoist_types`); this arm only answers the
             // easy cases, and `None` is not a refusal, it is "ask again later".
-            Expr::Match { arms, .. } => arms.iter().find_map(|arm| {
-                let arm_locals = self.locals_of(&arm.body, locals);
-                arm.value
-                    .as_ref()
-                    .and_then(|v| self.try_infer_expr_type_in(v, &arm_locals))
-            }),
+            // AN ARM'S PATTERN BINDINGS ARE LOCALS OF THAT ARM, and this used
+            // to forget them: `let t = match n { other => other };` reported
+            // "cannot infer the type of `t`" for a program whose type is written
+            // on the scrutinee. `locals_of` collects `let`s and nothing else, so
+            // an arm value that IS its binding had no entry to find.
+            Expr::Match { expr, arms, .. } => {
+                let scrutinee = self.try_infer_expr_type_in(expr, locals);
+                arms.iter().find_map(|arm| {
+                    let mut arm_locals = self.locals_of(&arm.body, locals);
+                    if let Some(scrutinee) = scrutinee.as_deref() {
+                        self.bind_pattern_locals(&arm.pattern, scrutinee, &mut arm_locals);
+                    }
+                    arm.value
+                        .as_ref()
+                        .and_then(|v| self.try_infer_expr_type_in(v, &arm_locals))
+                })
+            }
             Expr::Loop { body, .. } => Self::first_break_value(body)
                 .and_then(|expr| self.try_infer_expr_type_in(expr, locals)),
             // No rule yet: ranges are only meaningful inside `for`, `?` and
@@ -1185,6 +1277,29 @@ impl CodeGenerator {
         self.output.push_str("    return r;\n");
         self.output.push_str("}\n\n");
 
+        // N6-11. THE TRAP. A `match` that takes no arm must stop the program
+        // rather than continue: with N6-10 enforced this is unreachable for a
+        // well-typed program, which is exactly why it belongs here — it is the
+        // defence for the gap between the checker's approximation and what a
+        // running program can actually hold (a corrupted tag, a future checker
+        // bug), and a defence that only exists where the checker is already
+        // right is no defence.
+        //
+        // The message goes to stderr and the site calls `abort()` ITSELF rather
+        // than leaving it to this helper. Two reasons, both measured: gcc's
+        // `-Wreturn-type` analysis is not interprocedural, so a call to a static
+        // helper that happens to end in `abort()` does not make the end of the
+        // caller unreachable — and `-Werror=return-type` is what this trap earns
+        // the right to turn on.
+        self.output
+            .push_str("// The match trap (N6-11)\n");
+        self.output
+            .push_str("static void __pd_match_trap(const char* where) {\n");
+        self.output.push_str(
+            "    fprintf(stderr, \"palladium: no match arm was taken in %s\\n\", where);\n",
+        );
+        self.output.push_str("}\n\n");
+
         // Memory management for strings
         self.output
             .push_str("// String memory pool to prevent leaks\n");
@@ -1375,7 +1490,32 @@ impl CodeGenerator {
         self.output.push_str("    printf(\"%lld\\n\", value);\n");
         self.output.push_str("}\n\n");
 
-        // Generate panic function wrapper
+        // Generate panic function wrapper.
+        //
+        // MARKED NORETURN, and it has to be: `panic(...)` in a branch that owes
+        // a value emits this call and nothing after it, which is correct C and
+        // which `-Werror=return-type` rejects unless the compiler knows the call
+        // does not come back. `scripts/check-c-returns.py` has known that since
+        // it was written (its `NORETURN_RE`); gcc could not, because a plain
+        // definition says nothing about control flow to a caller in the same
+        // translation unit that the optimiser has not inlined yet. Measured on
+        // this edit: without the attribute, `a_branch_that_panics_is_not_refused`
+        // fails with "non-void function does not return a value in all control
+        // paths" against C that is right.
+        //
+        // A FUNCTION, and `abort()` is added at the CALL SITE instead (see the
+        // `panic` case in the builtin call emission). Two other shapes were
+        // tried and rejected, both measured:
+        //
+        //  * `__attribute__((noreturn))` behind `#if defined(__GNUC__)` — made
+        //    `scripts/check-c-returns.py` refuse the whole file, which is the
+        //    right call for a reader of generated C ("a preprocessor directive
+        //    that can decide which definitions exist") and not something to
+        //    weaken for a hint;
+        //  * a macro instead of a function — broke the seam gate in
+        //    src/builtins.rs, which requires the emitted prelude to DEFINE a
+        //    `__pd_<name>` for every registered built-in and reads that
+        //    definition's signature.
         self.output.push_str("void __pd_panic(const char* msg) {\n");
         self.output
             .push_str("    fprintf(stderr, \"panic: %s\\n\", msg);\n");
@@ -2976,6 +3116,7 @@ impl CodeGenerator {
         // `Some(Type::Unit)` are one return type and must generate one shape.
         // And `main` is INSIDE the rule, not an exception to it — it just needs
         // a different replacement, because its C type is `int`.
+        self.current_fn_name = name.to_string();
         self.current_fn_unit_return = if matches!(func.return_type, None | Some(Type::Unit)) {
             if name == "main" {
                 Some("    return 0;\n")
@@ -3816,7 +3957,7 @@ impl CodeGenerator {
             Stmt::Continue { .. } => {
                 self.output.push_str("    continue;\n");
             }
-            Stmt::Match { expr, arms, .. } => {
+            Stmt::Match { expr, arms, span } => {
                 // Generate a series of if-else statements for pattern matching
                 self.output.push_str("    // Match statement\n");
                 self.output.push_str("    {\n");
@@ -3852,14 +3993,10 @@ impl CodeGenerator {
                 // a sequence of `if (!done)` blocks instead, evaluated in arm
                 // order, and an unguarded match is emitted exactly as before.
                 if arms.iter().any(|arm| arm.guard.is_some()) {
-                    let done = format!("_match_done{}", self.hoist_counter);
+                    let end_label = format!("_match_end{}", self.hoist_counter);
                     self.hoist_counter += 1;
-                    self.output
-                        .push_str(&format!("        int {} = 0;\n", done));
 
                     for arm in arms {
-                        self.output
-                            .push_str(&format!("        if (!{}) {{\n", done));
                         let condition = self.pattern_condition(&arm.pattern, "_match_expr")?;
                         self.output
                             .push_str(&format!("        if ({}) {{\n", condition));
@@ -3870,9 +4007,9 @@ impl CodeGenerator {
 
                             match &arm.guard {
                                 None => {
-                                    self.output
-                                        .push_str(&format!("            {} = 1;\n", done));
                                     self.generate_block(&arm.body, "        ")?;
+                                    self.output
+                                        .push_str(&format!("            goto {};\n", end_label));
                                 }
                                 Some(guard) => {
                                     // The guard's own hoisted statements land
@@ -3885,9 +4022,9 @@ impl CodeGenerator {
                                     self.output.push_str(&guard_hoists);
                                     self.output
                                         .push_str(&format!("        if ({}) {{\n", guard_src));
-                                    self.output
-                                        .push_str(&format!("            {} = 1;\n", done));
                                     self.generate_block(&arm.body, "        ")?;
+                                    self.output
+                                        .push_str(&format!("            goto {};\n", end_label));
                                     self.output.push_str("        }\n");
                                 }
                             }
@@ -3897,8 +4034,17 @@ impl CodeGenerator {
                         emitted?;
 
                         self.output.push_str("        }\n");
-                        self.output.push_str("        }\n");
                     }
+
+                    // N6-11, and the reason this shape uses a LABEL rather than
+                    // the `int done` flag it used to: with a flag, the trap sits
+                    // behind `if (!done)` and gcc cannot prove the end of a
+                    // tail-`match` function is unreachable — measured, and it is
+                    // the single thing that kept `-Werror=return-type` out of the
+                    // shared gcc invocation. A `goto` past the trap leaves the
+                    // fall-through path unconditional, which gcc reads exactly.
+                    self.output.push_str(&self.match_trap_body(*span));
+                    self.output.push_str(&format!("    {}: ;\n", end_label));
 
                     self.output.push_str("    }\n");
                     return Ok(());
@@ -3928,8 +4074,13 @@ impl CodeGenerator {
                     self.output.push_str("        }");
                 }
 
-                // If no wildcard pattern, we might need a default case
-                // TODO: Add exhaustiveness checking
+                // N6-11. THE FINAL ELSE. Every arm having failed, the program
+                // stops here instead of walking out of the block with nothing
+                // done — which for a value `match` meant reading a temporary
+                // that held only its zero-initialiser.
+                self.output.push_str(" else {\n");
+                self.output.push_str(&self.match_trap_body(*span));
+                self.output.push_str("        }");
 
                 self.output.push_str("\n    }\n");
             }
@@ -4366,6 +4517,23 @@ impl CodeGenerator {
         out
     }
 
+    /// The two statements a failed `match` runs (N6-11).
+    ///
+    /// `abort()` is written HERE and not inside `__pd_match_trap`, and that is
+    /// the whole reason the helper only prints: `-Wreturn-type` is not
+    /// interprocedural, so a tail `match` whose arms all `return` would still
+    /// look like it can fall off the end of its function if the noreturn call
+    /// were one level down. With `abort()` at the site, gcc can see the end is
+    /// unreachable — which is what lets `-Werror=return-type` be turned on at
+    /// all (src/linker.rs) and what retires the zero-initialiser that stood in
+    /// for it.
+    fn match_trap_body(&self, span: Span) -> String {
+        format!(
+            "            __pd_match_trap(\"{} at line {}\");\n            abort();\n",
+            self.current_fn_name, span.line
+        )
+    }
+
     /// The C expression that decides whether an arm's PATTERN matches `subject`.
     ///
     /// One place, because the two match shapes above (else-if chain and
@@ -4679,13 +4847,16 @@ impl CodeGenerator {
             self.generate_into_hoist_temp(&temp, |g| g.generate_statement(&synthesised))?;
         let c_type = self.hoist_temp_type([c_type, None], "`match`")?;
 
-        // DECLARED WITH AN INITIALISER, and the reason is in the emitted C:
-        // `match` lowers to an if/else-if chain with NO final `else`
-        // (a separate, already-owned defect — see the `-Wreturn-type` row in
-        // src/linker.rs), so a C compiler cannot prove the temporary is
-        // written even though the type checker proved the arms are exhaustive.
-        // Zero-initialising costs one store and keeps gcc from diagnosing
-        // generated code the user never wrote.
+        // DECLARED WITH AN INITIALISER, AND IT STAYS — measured, not assumed.
+        //
+        // The reason it was added is gone: `match` now ends in a trap, so no
+        // path leaves this temporary unwritten. The reason it stays is that gcc
+        // still cannot see that. Measured on this edit by deleting the ` = 0`
+        // from generated C and recompiling with `-Wall -Wextra`: five
+        // `-Wuninitialized` diagnostics in `tests/06_match_expression`'s C and
+        // two in `tests/06_guards`'. So the trap makes the PROGRAM whole and
+        // not gcc's flow analysis, and dropping the store would trade one
+        // instruction for warnings on generated code the user never wrote.
         self.pending_hoists.push_str(&format!(
             "    {} {} = {};\n",
             c_type,
@@ -4971,6 +5142,19 @@ impl CodeGenerator {
                         // silently miss a newly registered built-in, emitting a bare
                         // call to an undeclared C function.
                         match name.as_str() {
+                            // N6-11's neighbour. `panic(...)` never comes back,
+                            // and gcc has no way to know that from a call to a
+                            // function defined in this file whose body it has
+                            // not inlined — so `-Werror=return-type` rejected
+                            // `if c { v } else { panic("...") }`, C that is
+                            // right and that `scripts/check-c-returns.py` has
+                            // always accepted (its `NORETURN_RE`). The comma
+                            // operator puts `abort()` at the call site, where
+                            // gcc reads it, and keeps the whole thing an
+                            // EXPRESSION so it still works wherever a call did.
+                            "panic" => {
+                                self.output.push_str("(__pd_panic");
+                            }
                             name if crate::builtins::is_builtin(name) => {
                                 self.output.push_str(&format!("__pd_{}", name));
                             }
@@ -5052,6 +5236,9 @@ impl CodeGenerator {
                     }
                 }
                 self.output.push(')');
+                if matches!(func.as_ref(), Expr::Ident(name) if name == "panic") {
+                    self.output.push_str(", abort())");
+                }
             }
             Expr::Binary {
                 left, op, right, ..

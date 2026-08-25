@@ -28,7 +28,7 @@
 #
 stdlib_tail_return	stdlib_tail_return.expected	clean	D3 regression: every shape of tail-expression return, plus explicit return and the unit tail that must NOT be lowered. The reason this directory exists.
 stdlib_tail_if	stdlib_tail_if.expected	clean	D3b regression: a tail `if` IS the return value. Was stdlib_tail_if_defect, pinned known_violation:fib,classify; the parser now lowers tail branches (src/parser/mod.rs lower_tail_to_return) so main calls fib/classify/sign/... and asserts their values instead of avoiding them.
-stdlib_tail_match	stdlib_tail_match.expected	known_violation:area_code,sides	D3b for `match`: the arms ARE lowered now and the transcript proves the values, but codegen emits an if/else-if chain with NO final `else`, so the C cannot prove it returns on every path (gcc agrees: -Wreturn-type). Pins that SECOND, still-open defect - exhaustive match lowering - not D3b. Promote to `clean` when codegen emits a final `else`.
+stdlib_tail_match	stdlib_tail_match.expected	clean	D3b for `match`, and the exhaustive-match lowering behind it, BOTH closed. The arms are lowered to returns and the chain now ends in an `else` that traps (N6-11), so the C proves it returns on every path and `scripts/check-c-returns.py` finds nothing. Was known_violation:area_code,sides; promoted when the trap landed, which is the transition the handoff on NetA::StillFindsTheOpenMatchDefect (tests/d3b_tail_if.rs) demanded.
 stdlib_builtins_string	stdlib_builtins_string.expected	clean	the 8 string builtins plus print and print_int
 stdlib_builtins_char_args	stdlib_builtins_char_args.expected	clean	char_is_digit/alpha/whitespace, arg_count, arg_at
 stdlib_builtins_file	stdlib_builtins_file.expected	clean	the 16 usable file and path builtins

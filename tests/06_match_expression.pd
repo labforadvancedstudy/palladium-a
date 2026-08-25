@@ -119,6 +119,43 @@ fn main() {
     };
     print_int(composed);
 
+    print("An arm whose VALUE is its own binding:");
+    // Regression, found while N6 was being built and fixed with N6-10/11:
+    // `let t = match n { other => other };` was refused by CODE GENERATION with
+    // "cannot infer the type of `t`". The type is written on the scrutinee, but
+    // codegen's inference collected only the `let`s an arm's body declares, so an
+    // arm value that IS the pattern's binding had nothing to look up. Every
+    // binding shape below reaches its type through a different route: the
+    // scrutinee itself, an enum payload, a tuple element, and an `@` over a whole
+    // tuple.
+    let ident_arm = match 41 {
+        other => other + 1,
+    };
+    print_int(ident_arm);
+
+    let string_arm = match "yes" {
+        other => other,
+    };
+    print(string_arm);
+
+    let payload_arm = match Payload::Num(8) {
+        Payload::Num(n) => n,
+        Payload::Empty => 0,
+        Payload::Pair(a, b) => a + b,
+    };
+    print_int(payload_arm);
+
+    let pair = (3, "three");
+    let element_arm = match pair {
+        (n, _) => n,
+    };
+    print_int(element_arm);
+
+    let whole_arm = match pair {
+        all @ (_, _) => all.1,
+    };
+    print(whole_arm);
+
     print("Statement match still works:");
     print_int(area_code(Shape::Circle));
     print_int(area_code(Shape::Square));

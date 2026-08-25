@@ -111,7 +111,7 @@ tests/compiler_comprehensive_test.rs	test_type_alias_emits_typedef	owed	M4	Outpu
 tests/d3b_tail_if.rs	a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future	owed	M4	error: use of undeclared identifier 'f_Future'
 tests/d3b_tail_if.rs	an_imported_function_is_visible_to_the_borrow_checker	paid	-	-
 tests/d3b_tail_if.rs	selective_import_excludes_a_symbol_from_the_consumers	owed	M4	error: `async fn main` is not implemented
-tests/d3b_tail_if.rs	the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end	owed	unscheduled	gcc is invoked without -Werror=return-type
+tests/d3b_tail_if.rs	the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end	paid	-	-
 tests/d3b_tail_if.rs	two_modules_exporting_one_name_are_deterministic	owed	M4	error: conflicting types for 'dup'
 tests/e2e_test.rs	test_c_keyword_identifier_still_links	paid	-	-
 tests/m2_value_form_lowering.rs	an_enum_owned_method_is_reachable_by_its_path_form	owed	M4	Unknown variant Color::code

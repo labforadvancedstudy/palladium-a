@@ -76,6 +76,15 @@ pub fn link_command(c_file: &Path, output: &Path, opt: OptLevel) -> Result<Comma
 
     let mut cmd = Command::new("gcc");
     cmd.arg(opt.flag())
+        // N6-11 ARMED THIS. A generated function that falls off its end used to
+        // link silently, and only `scripts/check-c-returns.py` objected; the
+        // flag was deliberately absent because codegen's `match` had no final
+        // `else`, so it would have rejected every tail-`match` program. Both
+        // match shapes now end in a trap gcc can see is unreachable-past, so the
+        // flag is a real gate rather than a promise: if this ever fires, the C
+        // WE generated is wrong, and the user should never be the one to find
+        // out.
+        .arg("-Werror=return-type")
         .arg("-I")
         .arg(&runtime_dir)
         .arg(c_file)

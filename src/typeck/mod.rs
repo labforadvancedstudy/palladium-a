@@ -4538,7 +4538,30 @@ impl TypeChecker {
         }
 
         let CheckerType::Enum(enum_name) = scrutinee else {
-            return Ok(());
+            // N6-10. EVERY OTHER SCRUTINEE TYPE NEEDS AN IRREFUTABLE ARM. The
+            // spec's sentence is "a non-exhaustive match is a compile error, not
+            // a silent fall-through, and this applies to every scrutinee type,
+            // not only enums" — it asks for no interval arithmetic, and this
+            // does none: an `i64` match is complete when some arm matches every
+            // `i64`, which is what `is_irrefutable` answers.
+            //
+            // This was an UNCHECKED POSITION until now, which is why the sweep
+            // that landed this rule had to repair fixtures: a match with no
+            // catch-all compiled, fell through every arm at run time, and left a
+            // value-match temporary holding its zero-initialiser.
+            if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
+                return Ok(());
+            }
+            return Err(CompileError::NonExhaustiveMatch {
+                missing_patterns: vec![format!(
+                    "a `_` or binding arm — the scrutinee is `{}`, whose values this checker \
+                     cannot enumerate, so no set of literal or range arms is complete (coverage \
+                     by ranges is not completeness: proving it takes interval arithmetic, which \
+                     this checker does not do)",
+                    scrutinee
+                )],
+                span: Some(span),
+            });
         };
 
         let mut enum_infos = HashMap::new();

@@ -826,14 +826,13 @@ fn main() {
 /// parses with `parse_statement` and so demands a `;`, making `Circle => { 1 }`
 /// a parse error.
 ///
-/// AND IT IS THE ONE PLACE THE TWO ANALYSES DISAGREE — declared, not exempted.
-/// The parser lowers every arm to a `return`; codegen lowers the `match` to an
-/// `if`/`else if` chain with no final `else`, so the emitted C can still fall
-/// past the last arm and `scripts/check-c-returns.py` correctly says so. That
-/// is the open missing-`else` defect, separate from D3b. See
-/// `NetA::StillFindsTheOpenMatchDefect` for why this is spelled as a REQUIRED
-/// finding: when the defect is fixed, this line goes red and asks to be changed
-/// rather than rotting into a silent exemption.
+/// THE TWO ANALYSES NOW AGREE, and this line is the receipt for the transition
+/// the handoff demanded. The parser lowers every arm to a `return`; codegen ends
+/// the chain in an `else` that traps (N6-11), so the emitted C cannot fall past
+/// the last arm and `scripts/check-c-returns.py` finds nothing. This expectation
+/// read `NetA::StillFindsTheOpenMatchDefect("area")` until the trap landed —
+/// spelled as a REQUIRED finding precisely so that fixing the defect would turn
+/// this line red and make somebody come here, which is what happened.
 #[test]
 fn tail_match_arms_are_lowered_to_returns() {
     let out = compile_and_run_expecting(
@@ -856,7 +855,7 @@ fn main() {
 }
 "#,
         "d3b_match",
-        NetA::StillFindsTheOpenMatchDefect("area"),
+        NetA::Accepts,
     )
     .expect("must compile, link and run");
     assert_eq!(out.trim(), "1\n2", "each arm returns its own value");
@@ -2048,29 +2047,26 @@ fn the_missing_else_may_not_be_fixed_without_arming_the_linker() {
     );
 }
 
-/// `-Werror=return-type` belongs in the shared gcc invocation, and does not
-/// belong there YET.
+/// `-Werror=return-type` is in the shared gcc invocation. PAID by N6-11.
 ///
-/// WHY IT IS ABSENT: the open missing-`else` defect (see
-/// `NetA::StillFindsTheOpenMatchDefect`) makes gcc reject the C emitted for any
-/// tail `match`, so turning the flag on today breaks every such program. That
-/// is a temporary position.
+/// WHY IT WAS ABSENT: the missing-`else` defect made gcc reject the C emitted
+/// for any tail `match`, so the flag would have broken every such program. That
+/// was declared a temporary position, and it was.
 ///
-/// WHY IT IS A TEST AND NOT A COMMENT: a comment in a handoff cannot make
-/// anybody do anything. When someone flips that expectation to `Accepts`, the
-/// missing `else` is fixed and this flag is the next step — and nothing was
-/// mechanically asking for it. This branch built a closed debt inventory for
-/// exactly this shape of obligation, so the obligation goes in it:
-/// `tests/rust-debt-manifest.txt` declares this row, `make test-xfail` requires
-/// the row and the `#[ignore]` to agree, and deleting either is a gate failure
-/// rather than a tidy-up.
+/// WHAT PAID IT: both `match` shapes now end in a trap. The chain form ends in
+/// `else { __pd_match_trap(...); abort(); }`; the GUARDED form ends in the same
+/// two statements followed by a label the arms `goto`. The label is why the
+/// guarded form counts — measured: with the `int done` flag it used to carry,
+/// the trap sat behind `if (!done)` and gcc still called the end of a tail
+/// `match` reachable, so the flag would have rejected `tests/06_guards.pd`. A
+/// `goto` past the trap makes the fall-through path unconditional, which gcc
+/// reads exactly.
 ///
-/// WHEN IT PASSES: delete the `#[ignore]` and transition the manifest row to
-/// `paid`. Net A does not go away — its role changes, from the primary
-/// structural boundary to ATTRIBUTION (it names the function and the line
-/// without a compiler, and reads C that never links).
+/// WHY IT WAS A TEST AND NOT A COMMENT: a comment in a handoff cannot make
+/// anybody do anything. Flipping `NetA::StillFindsTheOpenMatchDefect` to
+/// `Accepts` turned `the_missing_else_may_not_be_fixed_without_arming_the_linker`
+/// red, which is what brought the author here — mechanically, in the same change.
 #[test]
-#[ignore = "XFAIL: the shared gcc invocation (src/linker.rs:73-86) omits -Werror=return-type, so a generated function that falls off its end links silently and only scripts/check-c-returns.py objects. It cannot be added until codegen emits a final `else` for `match` — that defect makes gcc reject every tail-`match` program today (pinned by tests/stdlib/DRIVERS.tsv:31, known_violation:area_code,sides, and by NetA::StillFindsTheOpenMatchDefect in this file). Add the flag in the same change that lands the `else`. (owned by unscheduled: it is sequenced behind the exhaustive-match defect, which no milestone currently owns)"]
 fn the_linker_will_ask_gcc_to_reject_a_function_that_falls_off_its_end() {
     let cmd = link_command(
         Path::new("/tmp/x.c"),
@@ -2164,7 +2160,19 @@ fn main() {
          is stricter and the direction of the divergence must be re-judged:\n{}",
         c
     );
-    // `panic(...)` -> `__pd_panic(`: NORETURN_RE.
+    // `panic(...)` -> `(__pd_panic(`: NORETURN_RE.
+    //
+    // The leading `(` arrived with N6-11: the call is emitted as the comma
+    // expression `(__pd_panic(msg), abort())` so that gcc — which cannot see
+    // that a function defined in this file never returns — reads the `abort()`
+    // at the call site and lets `-Werror=return-type` stay on. NORETURN_RE grew
+    // an optional `(` in the same change.
+    assert!(
+        c.contains("(__pd_panic(") && c.contains(", abort())"),
+        "`panic` must emit `(__pd_panic(...), abort())` so gcc sees the noreturn \
+         call at the site:\n{}",
+        c
+    );
     assert!(
         c.contains("__pd_panic("),
         "`panic` must emit `__pd_panic(` so NORETURN_RE matches:\n{}",

@@ -16,6 +16,12 @@ As an argument:
 222
 Composed with the 1a value forms:
 36
+An arm whose VALUE is its own binding:
+42
+yes
+8
+3
+three
 Statement match still works:
 1
 2

@@ -25,6 +25,11 @@ static __pd_range __pd_range_new(long long start, long long end, int inclusive) 
     return r;
 }
 
+// The match trap (N6-11)
+static void __pd_match_trap(const char* where) {
+    fprintf(stderr, "palladium: no match arm was taken in %s\n", where);
+}
+
 // String memory pool to prevent leaks
 #define STRING_POOL_SIZE 65536
 #define MAX_STRINGS 1024

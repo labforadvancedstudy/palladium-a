@@ -229,7 +229,16 @@ DEF_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9 *]*\(.*\)[ \t]*\{[ \t]*$")
 # `void f(...)` is void; `void* f(...)` is NOT.
 VOID_RE = re.compile(r"^(?:static\s+)?(?:inline\s+)?void\s+[A-Za-z_]")
 # Calls that do not return, so a body ending in one cannot fall through.
-NORETURN_RE = re.compile(r"^(?:__pd_panic|abort|exit|__builtin_unreachable)\s*\(")
+# The optional `(` is the comma-expression spelling codegen emits for `panic`
+# since N6-11: `(__pd_panic("..."), abort());`. The parentheses are what keep it
+# usable in value position — `x = __pd_panic(...), abort()` would parse as
+# `(x = __pd_panic(...)), abort()`, an assignment from void — and this reader has
+# to recognise the statement it actually finds, not the one it would prefer.
+# Pinned from the codegen side by `codegen_spellings_the_generated_c_invariant_
+# depends_on` in tests/d3b_tail_if.rs.
+NORETURN_RE = re.compile(
+    r"^\(?(?:__pd_panic|abort|exit|__builtin_unreachable)\s*\("
+)
 # `return` as a whole word. `returning();` is a call, not a return statement.
 RETURN_RE = re.compile(r"^return\b")
 
