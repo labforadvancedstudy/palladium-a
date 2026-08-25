@@ -1,0 +1,21 @@
+// NEGATIVE TEST — a bool split covers only when the REST of the payload is
+// irrefutable (N6-10).
+//
+// `Pair(true, 1)` and `Pair(false, 2)` do split the bool position, and they cover
+// nothing: `Pair(true, 2)` matches neither. Unioning them would be a claim about
+// the product space, which is exactly what the bool rule is scoped to avoid — the
+// rule is "one bool position, everything else accepts anything", and this program
+// is why the second half is written down.
+enum E {
+    Pair(bool, i64),
+    N,
+}
+
+fn main() {
+    let v = match E::Pair(true, 1) {
+        E::Pair(true, 1) => 1,
+        E::Pair(false, 2) => 2,
+        E::N => 3,
+    };
+    print_int(v);
+}

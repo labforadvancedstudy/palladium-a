@@ -819,7 +819,7 @@ enum is compiled to. Use `match`.
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
 rejected outright by the type checker (`src/typeck/mod.rs:4262-4262`) and again by code generation
-(`src/codegen/mod.rs:5813-5817`). It used to typecheck against a `Generic{name:"Result"}` shape
+(`src/codegen/mod.rs:5856-5860`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -927,7 +927,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3307`) and code generation (`src/codegen/mod.rs:5342-5345`)
+both the type checker (`src/typeck/mod.rs:3307`) and code generation (`src/codegen/mod.rs:5385-5388`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once;
 its position among the arguments is C's unspecified evaluation order, which is the same residual
@@ -1001,8 +1001,8 @@ syntactic trap is worth stating: a `match` arm that is a block must not be follo
 and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4262-4262`, `.await` at
-`src/typeck/mod.rs:4269-4269`) and again by code generation (`?` at `src/codegen/mod.rs:5813-5817`,
-`.await` at `src/codegen/mod.rs:5825-5829`), which is callable on its own.
+`src/typeck/mod.rs:4269-4269`) and again by code generation (`?` at `src/codegen/mod.rs:5856-5860`,
+`.await` at `src/codegen/mod.rs:5868-5872`), which is callable on its own.
 
 What they used to do:
 
@@ -1210,7 +1210,7 @@ One divergence remains, and two are closed:
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:1128-1128`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:5380-5380`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+(`src/codegen/mod.rs:5423-5423`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:1489-1489`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
@@ -1519,7 +1519,7 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-patterns`
 (2026-08-26):
 
-**verified 76 · untranscribed 0 · vacuous 7 · xfail 1 · reject 52 · skip 2 · failures 0**, over 138
+**verified 76 · untranscribed 0 · vacuous 7 · xfail 1 · reject 57 · skip 2 · failures 0**, over 143
 fixtures. (Issue #41 — the pattern forms, exhaustiveness and the trap, plus tuples as values —
 added eight `run` fixtures and TWENTY `reject`s, nine of them from the review round that followed:
 an `i64::MIN` bound that inverted its own comparison, a payload the type checker never looked

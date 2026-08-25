@@ -18,6 +18,9 @@ A binding under a RECURSIVE payload, which is stored indirectly:
 A bool payload is covered by `true` and `false` together:
 1
 2
+The split works with other positions present, if they accept anything:
+1
+2
 Statement form:
 5
 5

@@ -4372,15 +4372,19 @@ impl CodeGenerator {
     /// The catch-all covers the expression forms that cannot lexically contain
     /// another expression (literals, identifiers, paths) and the forms whose
     /// contents are refused before code generation (`?`, `.await`, macros).
-    fn register_tuple_shapes_in(&mut self, expr: &Expr) -> Result<()> {
+    fn register_tuple_shapes_in(
+        &mut self,
+        expr: &Expr,
+        locals: &std::collections::HashMap<String, String>,
+    ) -> Result<()> {
         match expr {
             Expr::Tuple { elements, span } => {
                 for element in elements {
-                    self.register_tuple_shapes_in(element)?;
+                    self.register_tuple_shapes_in(element, locals)?;
                 }
                 let mut element_types = Vec::with_capacity(elements.len());
                 for element in elements {
-                    element_types.push(self.expr_c_type(element, *span)?);
+                    element_types.push(self.expr_c_type(element, locals, *span)?);
                 }
                 self.register_tuple(&element_types)?;
             }
@@ -4391,37 +4395,37 @@ impl CodeGenerator {
             | Expr::Deref { expr, .. }
             | Expr::Reference { expr, .. }
             | Expr::Question { expr, .. }
-            | Expr::Await { expr, .. } => self.register_tuple_shapes_in(expr)?,
+            | Expr::Await { expr, .. } => self.register_tuple_shapes_in(expr, locals)?,
             Expr::Binary { left, right, .. } => {
-                self.register_tuple_shapes_in(left)?;
-                self.register_tuple_shapes_in(right)?;
+                self.register_tuple_shapes_in(left, locals)?;
+                self.register_tuple_shapes_in(right, locals)?;
             }
             Expr::Index { array, index, .. } => {
-                self.register_tuple_shapes_in(array)?;
-                self.register_tuple_shapes_in(index)?;
+                self.register_tuple_shapes_in(array, locals)?;
+                self.register_tuple_shapes_in(index, locals)?;
             }
             Expr::Range { start, end, .. } => {
-                self.register_tuple_shapes_in(start)?;
-                self.register_tuple_shapes_in(end)?;
+                self.register_tuple_shapes_in(start, locals)?;
+                self.register_tuple_shapes_in(end, locals)?;
             }
             Expr::Call { func, args, .. } => {
-                self.register_tuple_shapes_in(func)?;
+                self.register_tuple_shapes_in(func, locals)?;
                 for arg in args {
-                    self.register_tuple_shapes_in(arg)?;
+                    self.register_tuple_shapes_in(arg, locals)?;
                 }
             }
             Expr::ArrayLiteral { elements, .. } => {
                 for element in elements {
-                    self.register_tuple_shapes_in(element)?;
+                    self.register_tuple_shapes_in(element, locals)?;
                 }
             }
             Expr::ArrayRepeat { value, count, .. } => {
-                self.register_tuple_shapes_in(value)?;
-                self.register_tuple_shapes_in(count)?;
+                self.register_tuple_shapes_in(value, locals)?;
+                self.register_tuple_shapes_in(count, locals)?;
             }
             Expr::StructLiteral { fields, .. } => {
                 for (_, value) in fields {
-                    self.register_tuple_shapes_in(value)?;
+                    self.register_tuple_shapes_in(value, locals)?;
                 }
             }
             Expr::EnumConstructor { data, .. } => {
@@ -4429,38 +4433,60 @@ impl CodeGenerator {
                     match data {
                         EnumConstructorData::Tuple(args) => {
                             for arg in args {
-                                self.register_tuple_shapes_in(arg)?;
+                                self.register_tuple_shapes_in(arg, locals)?;
                             }
                         }
                         EnumConstructorData::Struct(fields) => {
                             for (_, value) in fields {
-                                self.register_tuple_shapes_in(value)?;
+                                self.register_tuple_shapes_in(value, locals)?;
                             }
                         }
                     }
                 }
             }
+            // THE THREE FORMS THAT OPEN A SCOPE extend `locals` exactly as
+            // `try_infer_expr_type_in` does, and for the same reason: a tuple
+            // built from a name this expression binds has a type, and a walk
+            // that looked only at the function's variables could not see it.
+            // Measured before this: `(match p { P::Num(n) => (n, 1), … }, 9)`
+            // and a tuple built from a branch-local were refused outright.
             Expr::If {
                 condition,
+                then_branch,
                 then_value,
+                else_branch,
                 else_value,
                 ..
             } => {
-                self.register_tuple_shapes_in(condition)?;
-                for value in [then_value, else_value].into_iter().flatten() {
-                    self.register_tuple_shapes_in(value)?;
+                self.register_tuple_shapes_in(condition, locals)?;
+                if let Some(value) = then_value {
+                    let branch_locals = self.locals_of(then_branch, locals);
+                    self.register_tuple_shapes_in(value, &branch_locals)?;
+                }
+                if let Some(value) = else_value {
+                    let branch_locals = match else_branch {
+                        Some(stmts) => self.locals_of(stmts, locals),
+                        None => locals.clone(),
+                    };
+                    self.register_tuple_shapes_in(value, &branch_locals)?;
                 }
             }
-            Expr::Block { value, .. } => {
+            Expr::Block { stmts, value, .. } => {
                 if let Some(value) = value {
-                    self.register_tuple_shapes_in(value)?;
+                    let block_locals = self.locals_of(stmts, locals);
+                    self.register_tuple_shapes_in(value, &block_locals)?;
                 }
             }
             Expr::Match { expr, arms, .. } => {
-                self.register_tuple_shapes_in(expr)?;
+                self.register_tuple_shapes_in(expr, locals)?;
+                let scrutinee = self.try_infer_expr_type_in(expr, locals);
                 for arm in arms {
                     if let Some(value) = &arm.value {
-                        self.register_tuple_shapes_in(value)?;
+                        let mut arm_locals = self.locals_of(&arm.body, locals);
+                        if let Some(scrutinee) = scrutinee.as_deref() {
+                            self.bind_pattern_locals(&arm.pattern, scrutinee, &mut arm_locals);
+                        }
+                        self.register_tuple_shapes_in(value, &arm_locals)?;
                     }
                 }
             }
@@ -4598,11 +4624,24 @@ impl CodeGenerator {
     /// element whose type this backend cannot work out is a program it must not
     /// emit C for — silently choosing `long long` is how a `String` element
     /// would become an integer.
-    fn expr_c_type(&self, expr: &Expr, span: Span) -> Result<String> {
-        self.try_infer_expr_type(expr)
+    fn expr_c_type(
+        &self,
+        expr: &Expr,
+        locals: &std::collections::HashMap<String, String>,
+        span: Span,
+    ) -> Result<String> {
+        self.try_infer_expr_type_in(expr, locals)
             .ok_or_else(|| CompileError::CodegenError {
+                // NOT "un-inferable". A name bound by a `match` arm or declared
+                // in a branch has a type; what this pass may lack is the SCOPE it
+                // was bound in, and saying so points the reader at the right
+                // thing. `locals` is threaded from the walk for exactly that
+                // reason — the message is what is left when threading it is not
+                // enough.
                 message: format!(
-                    "cannot infer the type of this {} used as a tuple element",
+                    "this {} has no type code generation can see here, so the tuple it is an \
+                     element of has no C struct to be built from. If it is a name, it is bound \
+                     in a scope this pass did not thread through",
                     Self::expr_kind_name(expr)
                 ),
             })
@@ -5250,10 +5289,14 @@ impl CodeGenerator {
                 // `tuple_shapes` — and on that list staying complete as the
                 // generator grows. `register_tuple_shapes_in` asks for none of
                 // that: it walks the expression, computes C types, and registers.
-                self.register_tuple_shapes_in(expr)?;
+                // The generator's own variable map is the outer scope here: a
+                // tuple written in statement position sees the function's
+                // locals, and the walk extends that as it descends.
+                let outer: std::collections::HashMap<String, String> = self.variables.clone();
+                self.register_tuple_shapes_in(expr, &outer)?;
                 let mut element_types = Vec::with_capacity(elements.len());
                 for element in elements {
-                    element_types.push(self.expr_c_type(element, *span)?);
+                    element_types.push(self.expr_c_type(element, &outer, *span)?);
                 }
                 let name = self.register_tuple(&element_types)?;
                 self.output.push_str(&format!("{}_new(", name));

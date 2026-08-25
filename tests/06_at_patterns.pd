@@ -32,6 +32,11 @@ enum Flag {
     Off,
 }
 
+enum Both {
+    Pair(bool, i64),
+    None,
+}
+
 fn sum(t: Tree) -> i64 {
     match t {
         Tree::Leaf(n) => n,
@@ -134,6 +139,26 @@ fn main() {
         Flag::Off => 3,
     };
     print_int(split_false);
+
+    print("The split works with other positions present, if they accept anything:");
+    // `Pair(true, _)` plus `Pair(false, _)` is the same rule with a second
+    // position along for the ride: the bool half is the whole domain and the
+    // `_` accepts every `i64`, so between them they cover every `Pair`. Pin the
+    // near-misses too — `tests/reject/bool_split_needs_irrefutable_rest.pd`
+    // (`Pair(true, 1)` + `Pair(false, 2)`) and
+    // `tests/reject/bool_split_values_not_positions.pd`.
+    let pair_true = match Both::Pair(true, 7) {
+        Both::Pair(true, _) => 1,
+        Both::Pair(false, _) => 2,
+        Both::None => 3,
+    };
+    print_int(pair_true);
+    let pair_false = match Both::Pair(false, 7) {
+        Both::Pair(true, _) => 1,
+        Both::Pair(false, _) => 2,
+        Both::None => 3,
+    };
+    print_int(pair_false);
 
     print("Statement form:");
     match P::Pair(2, 3) {

@@ -1,0 +1,23 @@
+// NEGATIVE TEST — an arm after a completed bool split is DEAD (N6-10).
+//
+// `On(true)` and `On(false)` are the whole domain of that payload position, so
+// the variant is covered the moment the second of them is read — and `On(_)`
+// below them can never be taken. The union used to be folded in AFTER the arm
+// walk, which meant no later arm was ever compared against it; that is the same
+// defect `enum_payload_dead_arm.pd` pins for an irrefutable payload, one rule
+// over. Promoting the variant the instant the split completes puts both under
+// one check.
+enum F {
+    On(bool),
+    Off,
+}
+
+fn main() {
+    let v = match F::On(true) {
+        F::On(true) => 1,
+        F::On(false) => 2,
+        F::On(_) => 3,
+        F::Off => 4,
+    };
+    print_int(v);
+}

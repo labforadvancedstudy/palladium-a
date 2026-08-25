@@ -333,10 +333,19 @@ impl ExhaustivenessChecker {
                         // `B(true)` + `B(false)` can add up).
                         seen_refutably.insert(variant.clone());
                         if let Some((slot, value)) = Self::bool_split_slot(data.as_ref()) {
-                            bool_splits
-                                .entry((variant.clone(), slot))
-                                .or_default()
-                                .insert(value);
+                            let values = bool_splits.entry((variant.clone(), slot)).or_default();
+                            values.insert(value);
+                            // PROMOTED THE MOMENT THE SPLIT COMPLETES, not after
+                            // the walk. `bool` has two values, so the arm that
+                            // supplies the second one finishes the variant — and
+                            // anything written after it is dead. Folding this in
+                            // at the end left `On(true)`, `On(false)`, `On(_)`
+                            // compiling with a third arm nothing could reach,
+                            // which is the defect H1 fixed for irrefutable
+                            // payloads showing up again one rule over.
+                            if values.contains(&true) && values.contains(&false) {
+                                covered_variants.insert(variant.clone());
+                            }
                         }
                     }
                 }
@@ -351,19 +360,13 @@ impl ExhaustivenessChecker {
             });
         }
 
-        // A BOOL PAYLOAD POSITION IS THE ONE PAYLOAD SPACE THAT ADDS UP.
-        // `bool` has two values and no third, so a variant matched once with
-        // `true` in a position and once with `false` in the same position — with
-        // every other position irrefutable in both — is covered by the pair. This
-        // is 4a's rule (a `bool` scrutinee is exhausted by `true` and `false`)
-        // reaching one level down, and it stops there: enum, integer and string
-        // payload spaces are NOT unioned, because two arms that pin different
-        // values of a non-bool position leave the rest of that position open.
-        for ((variant, _slot), values) in &bool_splits {
-            if values.contains(&true) && values.contains(&false) {
-                covered_variants.insert(variant.clone());
-            }
-        }
+        // (The bool split that completes a variant is promoted INSIDE the walk
+        // above, so a later arm on that variant meets the dead-arm check like any
+        // other. `bool` is the one payload space that adds up: two values and no
+        // third, which is 4a's rule for a `bool` SCRUTINEE reaching one level
+        // down. Enum, integer and string payload spaces are NOT unioned, because
+        // two arms pinning different values of such a position leave the rest of
+        // it open.)
 
         // Check if all variants are covered
         if !has_wildcard && covered_variants.len() < enum_info.variants.len() {

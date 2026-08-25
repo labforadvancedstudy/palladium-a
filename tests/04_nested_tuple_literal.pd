@@ -14,6 +14,11 @@
 // registers anything, which is what makes it a regression test rather than a
 // second copy of a passing one.
 
+enum P {
+    Num(i64),
+    Nil,
+}
+
 fn main() {
     let n = ((1, 2), 3);
     print_int((n.0).0);
@@ -35,6 +40,22 @@ fn main() {
     let mixed = ((if 1 < 2 { 10 } else { 20 }, 3), 4);
     print_int((mixed.0).0);
     print_int((mixed.0).1 + mixed.1);
+
+    // A TUPLE BUILT FROM A NAME A SCOPE INSIDE THE EXPRESSION BINDS. The shape
+    // registration walk carries the same `locals` map inference does, extending
+    // it at a `match` arm and at a branch — without that it saw `n` and `a` as
+    // untyped and refused both of these outright, though the C it would have
+    // emitted was fine.
+    let from_arm = (match P::Num(5) {
+        P::Num(n) => (n, 1),
+        P::Nil => (0, 2),
+    }, 9);
+    print_int((from_arm.0).0);
+    print_int((from_arm.0).1 + from_arm.1);
+
+    let from_branch = (if 1 < 2 { let a = 3; (a, 4) } else { (5, 6) }, 7);
+    print_int((from_branch.0).0);
+    print_int((from_branch.0).1 + from_branch.1);
 
     // N4-12 with the value `i64` cannot spell: the optimizer folds this to the
     // minimum, and `-9223372036854775808` as a C literal is unsigned.

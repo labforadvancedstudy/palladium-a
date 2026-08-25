@@ -1,0 +1,24 @@
+// NEGATIVE TEST — the bool rule does not reach through another enum (N6-10).
+//
+// `Q::W(B::T(true))` and `Q::W(B::T(false))` do cover every `Q::W`, and this is
+// refused. The union is a rule about ONE payload position holding a bool, not a
+// recursive search for a bool somewhere below: reaching through `B::T` would mean
+// unioning an enum payload space, which is the product space the conservative
+// half of A7's rule declines. The diagnostic says what is actually wrong.
+enum B {
+    T(bool),
+}
+
+enum Q {
+    W(B),
+    Z,
+}
+
+fn main() {
+    let v = match Q::W(B::T(true)) {
+        Q::W(B::T(true)) => 1,
+        Q::W(B::T(false)) => 2,
+        Q::Z => 3,
+    };
+    print_int(v);
+}

@@ -1,0 +1,20 @@
+// NEGATIVE TEST — a GUARDED arm feeds no bool split (N6-09 / N6-10).
+//
+// `On(true) if cond` is taken only sometimes, so it supplies no half of the
+// domain: when the guard fails, `true` still needs somewhere to go. Guarded arms
+// are dropped before the completeness walk begins, which is what makes this
+// refusal fall out rather than being a case anybody had to write — this fixture
+// exists so that dropping them cannot be quietly undone.
+enum F {
+    On(bool),
+    Off,
+}
+
+fn main() {
+    let v = match F::On(true) {
+        F::On(true) if 1 > 0 => 1,
+        F::On(false) => 2,
+        F::Off => 3,
+    };
+    print_int(v);
+}

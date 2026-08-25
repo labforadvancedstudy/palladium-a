@@ -1,0 +1,20 @@
+// NEGATIVE TEST — a bool split is two values in ONE position, not one value in
+// two positions (N6-10).
+//
+// `P(true, _)` and `P(_, false)` each pin a different position, and between them
+// they miss `P(false, true)`. The check records the position a literal was seen
+// in and requires both values there; an implementation that merely counted a
+// `true` and a `false` somewhere would accept this and be wrong.
+enum E {
+    P(bool, bool),
+    N,
+}
+
+fn main() {
+    let v = match E::P(true, false) {
+        E::P(true, _) => 1,
+        E::P(_, false) => 2,
+        E::N => 3,
+    };
+    print_int(v);
+}
