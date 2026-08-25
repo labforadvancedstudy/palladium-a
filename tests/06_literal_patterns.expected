@@ -14,5 +14,8 @@ Bool literal patterns, exhaustive with no wildcard:
 0
 A binding arm still catches what the literals miss:
 77
+The minimum as a literal PATTERN, not only as a range bound:
+1
+0
 Literal arms inside a value block inside a value match:
 400

@@ -27,6 +27,11 @@ enum Tree {
     Pair(Tree, Tree),
 }
 
+enum Flag {
+    On(bool),
+    Off,
+}
+
 fn sum(t: Tree) -> i64 {
     match t {
         Tree::Leaf(n) => n,
@@ -110,6 +115,25 @@ fn main() {
         _ => 0,
     };
     print_int(r);
+
+    print("A bool payload is covered by `true` and `false` together:");
+    // The ONE payload space this checker unions, and it is 4a's rule one level
+    // down: `bool` has two values and no third, so these two arms are the whole
+    // domain of that position and no catch-all is needed. Enum, integer and
+    // string payload spaces are NOT unioned — see
+    // tests/reject/enum_payload_collective_coverage.pd for the refusal and why.
+    let split = match Flag::On(true) {
+        Flag::On(true) => 1,
+        Flag::On(false) => 2,
+        Flag::Off => 3,
+    };
+    print_int(split);
+    let split_false = match Flag::On(false) {
+        Flag::On(true) => 1,
+        Flag::On(false) => 2,
+        Flag::Off => 3,
+    };
+    print_int(split_false);
 
     print("Statement form:");
     match P::Pair(2, 3) {

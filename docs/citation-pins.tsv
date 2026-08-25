@@ -18,8 +18,8 @@ bootstrap/pdc.pd	849-853	docs/specification/bootstrap-subset.md	7bde5af5d8d1	if 
 bootstrap/v2_full_compiler/ast.pd	83-83	docs/contributing/MILESTONES.md	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/ast.pd	83-83	src/lexer/token.rs	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
-docs/contributing/MILESTONES.md	834-834	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
-docs/contributing/MILESTONES.md	868-874	tests/m3_imported_calls.rs	6b84a47281b8	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... e-manifest.txt:119`, cross-file imports) and the vacuous `12_modules_imports`.
+docs/contributing/MILESTONES.md	839-839	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
+docs/contributing/MILESTONES.md	873-879	tests/m3_imported_calls.rs	6b84a47281b8	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... e-manifest.txt:119`, cross-file imports) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	117-119	src/codegen/mod.rs	a2f7869a25a1	3. **Struct and array parameters that are written are declared `mut`.** A `mu ... : `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` STRUCT parameter
@@ -89,8 +89,7 @@ src/cli.rs	78-80	tests/d10_llvm_refuses.rs	1cca5b0da712	/// Use LLVM backend ins
 src/codegen/c_ident.rs	440-440	docs/contributing/MILESTONES.md	0888f82f6d67	pub fn escape_reserved_names(program: &Program) -> Program {
 src/codegen/llvm_text_backend.rs	1161-1165	docs/specification/language-spec.md	f70be3603af9	_ => { return Err(CompileError::Generic( "Unsupported binary operator".to_string(), )) }
 src/codegen/llvm_text_backend.rs	1302-1305	docs/specification/language-spec.md	d737bf88b944	} else { Err(CompileError::Generic( "Complex function calls not yet supported".to_string(), ))
-src/codegen/llvm_text_backend.rs	1435-1435	src/typeck/mod.rs	349b55d16a33	" {} = xor i1 {}, true\n",
-src/codegen/llvm_text_backend.rs	1435-1435	tests/d5_unimplemented_constructs.rs	349b55d16a33	" {} = xor i1 {}, true\n",
+src/codegen/llvm_text_backend.rs	1469-1482	tests/d5_unimplemented_constructs.rs	3b6b8334400a	ir.push_str(&format!(" {} = load i64, i64* {}\n", result_var, expr_var)); Ok( ... come `0` in the first place. Expr::EnumConstructor { enum_name, variant, span,
 src/codegen/llvm_text_backend.rs	1479-1492	docs/specification/language-spec.md	5ebb6d5146c0	Expr::EnumConstructor { enum_name, variant, span, .. } => Err(unimplemented_e ... n(name, *span)) } Expr::Await { span, .. } => Err(unimplemented_await(*span)),
 src/codegen/llvm_text_backend.rs	16-16	docs/reference/features/feature-index.toml	bd32cf16a105	const BACKEND_REFUSES: bool = true;
 src/codegen/llvm_text_backend.rs	71-73	docs/reference/features/feature-index.toml	8f2f382eaef4	pub fn compile(&mut self, program: &Program) -> Result<String> { if BACKEND_REFUSES { return Err(unimplemented_backend());
@@ -167,23 +166,23 @@ src/codegen/mod.rs	406-406	tests/d3b_tail_if.rs	2dfe8fd03528	.unwrap_or_else(|| 
 src/codegen/mod.rs	4086-4088	docs/reference/features/feature-index.toml	a968432d7e02	self.output.push_str(" else {\n"); self.output.push_str(&self.match_trap_body(*span)); self.output.push_str(" }");
 src/codegen/mod.rs	4086-4088	docs/specification/language-spec.md	a968432d7e02	self.output.push_str(" else {\n"); self.output.push_str(&self.match_trap_body(*span)); self.output.push_str(" }");
 src/codegen/mod.rs	4345-4345	docs/specification/language-spec.md	f280ce1e525a	fn tuple_c_name(element_c_types: &[String]) -> String {
-src/codegen/mod.rs	5221-5224	docs/specification/language-spec.md	05dc8467f79a	if let Expr::FieldAccess { object, field, .. } = func.as_ref() { let rewritte ... l(object, field, args, *span)?; return self.generate_expression(&rewritten); }
-src/codegen/mod.rs	5259-5259	docs/specification/language-spec.md	5fb3ee501c7c	name if crate::builtins::is_builtin(name) => {
-src/codegen/mod.rs	5259-5261	tests/m3_imported_calls.rs	1286e294e25e	name if crate::builtins::is_builtin(name) => { self.output.push_str(&format!("__pd_{}", name)); }
-src/codegen/mod.rs	5692-5696	docs/reference/features/async-system/async-as-effect.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	5692-5696	docs/reference/features/feature-index.toml	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	5692-5696	docs/specification/bootstrap-subset.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	5692-5696	docs/specification/language-spec.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	5693-5695	docs/reference/features/async-system/async-as-effect.md	805f59bdf4ee	// D5. The type checker refuses this first, but this backend is // what emitt ... t`, and it is callable // on its own, so the refusal also lives at the defect.
-src/codegen/mod.rs	5704-5708	docs/contributing/MILESTONES.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5704-5708	docs/reference/features/async-system/async-as-effect.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5704-5708	docs/reference/features/feature-index.toml	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5704-5708	docs/specification/bootstrap-subset.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5704-5708	docs/specification/language-spec.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5705-5707	docs/reference/features/async-system/async-as-effect.md	1c660937d386	// D5. Same shape as `?` above: this arm emitted // `future.poll(&future)`, w ... le the poll routine // that WAS generated was the free function `<name>_poll`.
-src/codegen/mod.rs	5863-5927	src/typeck/mod.rs	dda6700ebae8	let mut instantiations_for_func = Vec::new(); for (name, type_args, _) in &se ... s_for_func[0])) } /// Substitute type parameters with concrete types in a type
-src/codegen/mod.rs	6013-6024	tests/common/mod.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
-src/codegen/mod.rs	6013-6024	tests/e2e_test.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
+src/codegen/mod.rs	5342-5345	docs/specification/language-spec.md	05dc8467f79a	if let Expr::FieldAccess { object, field, .. } = func.as_ref() { let rewritte ... l(object, field, args, *span)?; return self.generate_expression(&rewritten); }
+src/codegen/mod.rs	5380-5380	docs/specification/language-spec.md	5fb3ee501c7c	name if crate::builtins::is_builtin(name) => {
+src/codegen/mod.rs	5380-5382	tests/m3_imported_calls.rs	1286e294e25e	name if crate::builtins::is_builtin(name) => { self.output.push_str(&format!("__pd_{}", name)); }
+src/codegen/mod.rs	5813-5817	docs/reference/features/async-system/async-as-effect.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	5813-5817	docs/reference/features/feature-index.toml	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	5813-5817	docs/specification/bootstrap-subset.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	5813-5817	docs/specification/language-spec.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	5814-5816	docs/reference/features/async-system/async-as-effect.md	805f59bdf4ee	// D5. The type checker refuses this first, but this backend is // what emitt ... t`, and it is callable // on its own, so the refusal also lives at the defect.
+src/codegen/mod.rs	5825-5829	docs/contributing/MILESTONES.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5825-5829	docs/reference/features/async-system/async-as-effect.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5825-5829	docs/reference/features/feature-index.toml	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5825-5829	docs/specification/bootstrap-subset.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5825-5829	docs/specification/language-spec.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5826-5828	docs/reference/features/async-system/async-as-effect.md	1c660937d386	// D5. Same shape as `?` above: this arm emitted // `future.poll(&future)`, w ... le the poll routine // that WAS generated was the free function `<name>_poll`.
+src/codegen/mod.rs	5984-6048	src/typeck/mod.rs	dda6700ebae8	let mut instantiations_for_func = Vec::new(); for (name, type_args, _) in &se ... s_for_func[0])) } /// Substitute type parameters with concrete types in a type
+src/codegen/mod.rs	6134-6145	tests/common/mod.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
+src/codegen/mod.rs	6134-6145	tests/e2e_test.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
 src/codegen/mod.rs	631-631	docs/specification/language-spec.md	bde1aa20b222	return self.return_type_to_c(ret_type.as_ref());
 src/driver/mod.rs	104-107	tests/d3b_tail_if.rs	47ed61cc361f	// Pass resolved modules to type checker if !resolved_modules.is_empty() { type_checker.set_imported_modules(resolved_modules.clone()); }
 src/driver/mod.rs	104-107	tests/m3_imported_calls.rs	47ed61cc361f	// Pass resolved modules to type checker if !resolved_modules.is_empty() { type_checker.set_imported_modules(resolved_modules.clone()); }
@@ -333,8 +332,8 @@ src/parser/mod.rs	3564-3574	docs/specification/language-spec.md	6a82fd150f5e	// 
 src/parser/mod.rs	3687-3699	docs/specification/language-spec.md	916b3c869108	// to `parse_if`, and `parse_block_with_implicit_return` routes it to // `par ... Match) { return self.parse_match_expression(); } if self.check(&Token::Loop) {
 src/parser/mod.rs	3689-3690	docs/reference/features/feature-index.toml	6a86569d6dc0	if self.check(&Token::If) { return self.parse_if_expression();
 src/parser/mod.rs	4002-4010	src/typeck/mod.rs	5e053ccaef88	let end_span = self.consume(Token::Await, "Expected 'await'")?; expr = Expr:: ... Span::new( start_span.start, end_span.end, start_span.line, start_span.column,
-src/parser/mod.rs	4104-4145	tests/m3_imported_calls.rs	f4512157a7a3	} }; } Ok(Token::DoubleColon) => { // Handle enum constructor: EnumName::Vari ... enum constructor expression expr = Expr::EnumConstructor { enum_name, variant,
-src/parser/mod.rs	4229-4237	src/typeck/mod.rs	7ec8d5a46538	let (_, end_span) = self.advance()?; // consume '?' expr = Expr::Question { e ... Span::new( start_span.start, end_span.end, start_span.line, start_span.column,
+src/parser/mod.rs	4108-4149	tests/m3_imported_calls.rs	f4512157a7a3	} }; } Ok(Token::DoubleColon) => { // Handle enum constructor: EnumName::Vari ... enum constructor expression expr = Expr::EnumConstructor { enum_name, variant,
+src/parser/mod.rs	4233-4241	src/typeck/mod.rs	7ec8d5a46538	let (_, end_span) = self.advance()?; // consume '?' expr = Expr::Question { e ... Span::new( start_span.start, end_span.end, start_span.line, start_span.column,
 src/parser/mod.rs	456-456	docs/specification/bootstrap-subset.md	6edd925b7892	fn lower_tail_to_return(stmts: &mut [Stmt], tail: &BlockTail) {
 src/parser/mod.rs	516-516	docs/reference/features/core-language/implicit-lifetimes.md	941171fa2fb0	let mut lifetime_params = Vec::new();
 src/parser/mod.rs	538-540	docs/reference/features/feature-index.toml	a90547973646	} else if self.check(&Token::Const) { // It's a const parameter self.advance()?; // consume 'const'
@@ -387,22 +386,22 @@ src/typeck/mod.rs	3326-3334	src/builtins.rs	8af373d3bc2a	if let Some(builtin) = 
 src/typeck/mod.rs	3751-3751	docs/specification/bootstrap-subset.md	e92658c899d3	GenericArgValue::Type(t) => match t {
 src/typeck/mod.rs	4056-4060	tests/m3_imported_calls.rs	3ad1ebfc685e	if !self.enums.contains_key(enum_name) { return Err(CompileError::Generic(format!( "Undefined enum type: {}", enum_name )));
 src/typeck/mod.rs	4226-4226	src/codegen/mod.rs	4cba7df8d4d6	mutable: _, expr, ..
-src/typeck/mod.rs	4260-4260	docs/reference/features/async-system/async-as-effect.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
-src/typeck/mod.rs	4260-4260	docs/reference/features/feature-index.toml	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
-src/typeck/mod.rs	4260-4260	docs/specification/bootstrap-subset.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
-src/typeck/mod.rs	4260-4260	docs/specification/language-spec.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
-src/typeck/mod.rs	4263-4265	src/codegen/llvm_text_backend.rs	2a8d2b321e39	Err(CompileError::Generic( "Unexpected macro invocation in type checking - macros should be expanded before this phase".to_string() ))
-src/typeck/mod.rs	4267-4267	docs/reference/features/async-system/async-as-effect.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-src/typeck/mod.rs	4267-4267	docs/specification/bootstrap-subset.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-src/typeck/mod.rs	4267-4267	docs/specification/language-spec.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-src/typeck/mod.rs	4552-4552	docs/reference/features/feature-index.toml	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
-src/typeck/mod.rs	4552-4552	docs/specification/language-spec.md	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
-src/typeck/mod.rs	5352-5356	docs/specification/language-spec.md	628e7c502a43	if elements.is_empty() { return Err(CompileError::Generic( "Cannot infer type from empty array".to_string(), )); }
-src/typeck/mod.rs	5354-5354	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
-src/typeck/mod.rs	5600-5600	tests/m3_imported_calls.rs	284927a601b1	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect();
-src/typeck/mod.rs	5600-5601	docs/contributing/MILESTONES.md	8803e64de7ca	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect(); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
-src/typeck/mod.rs	5662-5662	tests/m3_imported_calls.rs	11f0f244039f	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().collect();
-src/typeck/mod.rs	5662-5663	docs/contributing/MILESTONES.md	f6fd74b6bf82	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().c ... ); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+src/typeck/mod.rs	4262-4262	docs/reference/features/async-system/async-as-effect.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+src/typeck/mod.rs	4262-4262	docs/reference/features/feature-index.toml	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+src/typeck/mod.rs	4262-4262	docs/specification/bootstrap-subset.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+src/typeck/mod.rs	4262-4262	docs/specification/language-spec.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+src/typeck/mod.rs	4265-4267	src/codegen/llvm_text_backend.rs	2a8d2b321e39	Err(CompileError::Generic( "Unexpected macro invocation in type checking - macros should be expanded before this phase".to_string() ))
+src/typeck/mod.rs	4269-4269	docs/reference/features/async-system/async-as-effect.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+src/typeck/mod.rs	4269-4269	docs/specification/bootstrap-subset.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+src/typeck/mod.rs	4269-4269	docs/specification/language-spec.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+src/typeck/mod.rs	4554-4554	docs/reference/features/feature-index.toml	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
+src/typeck/mod.rs	4554-4554	docs/specification/language-spec.md	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
+src/typeck/mod.rs	5354-5358	docs/specification/language-spec.md	628e7c502a43	if elements.is_empty() { return Err(CompileError::Generic( "Cannot infer type from empty array".to_string(), )); }
+src/typeck/mod.rs	5356-5356	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
+src/typeck/mod.rs	5602-5602	tests/m3_imported_calls.rs	284927a601b1	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect();
+src/typeck/mod.rs	5602-5603	docs/contributing/MILESTONES.md	8803e64de7ca	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect(); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+src/typeck/mod.rs	5664-5664	tests/m3_imported_calls.rs	11f0f244039f	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().collect();
+src/typeck/mod.rs	5664-5665	docs/contributing/MILESTONES.md	f6fd74b6bf82	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().c ... ); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
 src/typeck/mod.rs	714-718	docs/contributing/MILESTONES.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	714-718	docs/reference/features/core-language/implicit-lifetimes.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	714-718	docs/reference/features/feature-index.toml	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }

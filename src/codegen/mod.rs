@@ -4363,6 +4363,112 @@ impl CodeGenerator {
         name
     }
 
+    /// Register every tuple shape an EXPRESSION builds, innermost first.
+    ///
+    /// A pure walk: it reads, infers and registers, and writes nothing to the
+    /// output. That is the whole point — see the note at the `Expr::Tuple` arm
+    /// for what the alternative cost.
+    ///
+    /// The catch-all covers the expression forms that cannot lexically contain
+    /// another expression (literals, identifiers, paths) and the forms whose
+    /// contents are refused before code generation (`?`, `.await`, macros).
+    fn register_tuple_shapes_in(&mut self, expr: &Expr) -> Result<()> {
+        match expr {
+            Expr::Tuple { elements, span } => {
+                for element in elements {
+                    self.register_tuple_shapes_in(element)?;
+                }
+                let mut element_types = Vec::with_capacity(elements.len());
+                for element in elements {
+                    element_types.push(self.expr_c_type(element, *span)?);
+                }
+                self.register_tuple(&element_types)?;
+            }
+            Expr::TupleIndex { expr, .. }
+            | Expr::Unary { operand: expr, .. }
+            | Expr::Cast { expr, .. }
+            | Expr::FieldAccess { object: expr, .. }
+            | Expr::Deref { expr, .. }
+            | Expr::Reference { expr, .. }
+            | Expr::Question { expr, .. }
+            | Expr::Await { expr, .. } => self.register_tuple_shapes_in(expr)?,
+            Expr::Binary { left, right, .. } => {
+                self.register_tuple_shapes_in(left)?;
+                self.register_tuple_shapes_in(right)?;
+            }
+            Expr::Index { array, index, .. } => {
+                self.register_tuple_shapes_in(array)?;
+                self.register_tuple_shapes_in(index)?;
+            }
+            Expr::Range { start, end, .. } => {
+                self.register_tuple_shapes_in(start)?;
+                self.register_tuple_shapes_in(end)?;
+            }
+            Expr::Call { func, args, .. } => {
+                self.register_tuple_shapes_in(func)?;
+                for arg in args {
+                    self.register_tuple_shapes_in(arg)?;
+                }
+            }
+            Expr::ArrayLiteral { elements, .. } => {
+                for element in elements {
+                    self.register_tuple_shapes_in(element)?;
+                }
+            }
+            Expr::ArrayRepeat { value, count, .. } => {
+                self.register_tuple_shapes_in(value)?;
+                self.register_tuple_shapes_in(count)?;
+            }
+            Expr::StructLiteral { fields, .. } => {
+                for (_, value) in fields {
+                    self.register_tuple_shapes_in(value)?;
+                }
+            }
+            Expr::EnumConstructor { data, .. } => {
+                if let Some(data) = data {
+                    match data {
+                        EnumConstructorData::Tuple(args) => {
+                            for arg in args {
+                                self.register_tuple_shapes_in(arg)?;
+                            }
+                        }
+                        EnumConstructorData::Struct(fields) => {
+                            for (_, value) in fields {
+                                self.register_tuple_shapes_in(value)?;
+                            }
+                        }
+                    }
+                }
+            }
+            Expr::If {
+                condition,
+                then_value,
+                else_value,
+                ..
+            } => {
+                self.register_tuple_shapes_in(condition)?;
+                for value in [then_value, else_value].into_iter().flatten() {
+                    self.register_tuple_shapes_in(value)?;
+                }
+            }
+            Expr::Block { value, .. } => {
+                if let Some(value) = value {
+                    self.register_tuple_shapes_in(value)?;
+                }
+            }
+            Expr::Match { expr, arms, .. } => {
+                self.register_tuple_shapes_in(expr)?;
+                for arm in arms {
+                    if let Some(value) = &arm.value {
+                        self.register_tuple_shapes_in(value)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Record a tuple shape so its struct and constructor are emitted, and
     /// answer with its C name.
     ///
@@ -5125,22 +5231,28 @@ impl CodeGenerator {
             // prelude is C89 against whatever `cc` the host has — the same
             // reason `__pd_range_new` exists.
             Expr::Tuple { elements, span } => {
-                // EACH ELEMENT IS GENERATED — and therefore REGISTERED — BEFORE
-                // this tuple's own shape is. Registration order is definition
-                // order in the emitted C, so an outer shape recorded first would
-                // be defined before the inner struct its field has the type of:
+                // EVERY NESTED SHAPE IS REGISTERED BEFORE THIS ONE, by a walk
+                // that EMITS NOTHING. Registration order is definition order in
+                // the emitted C, so an outer shape recorded first would be
+                // defined before the inner struct its field has the type of:
                 // measured, `let n = ((1, 2), 3);` in a program with no other
                 // tuple reached gcc as "unknown type name
                 // '__pd_tuple2_long_long_long_long'". The shipped fixtures hid it
                 // because a function signature had already named the inner shape.
+                //
+                // THE FIRST REPAIR SPECULATIVELY GENERATED each nested element
+                // into a discarded buffer, which registered the shapes as a side
+                // effect. That worked, and it was the wrong shape of fix: it ran
+                // real emission for its side effects, so its correctness depended
+                // on `capture_output` snapshotting every mutable channel the
+                // generation could touch — `pending_hoists`, `hoist_counter`,
+                // `open_hoists`, `break_temps`, `variables`, `array_bindings`,
+                // `tuple_shapes` — and on that list staying complete as the
+                // generator grows. `register_tuple_shapes_in` asks for none of
+                // that: it walks the expression, computes C types, and registers.
+                self.register_tuple_shapes_in(expr)?;
                 let mut element_types = Vec::with_capacity(elements.len());
                 for element in elements {
-                    if let Expr::Tuple { .. } = element {
-                        // Registers the nested shape (and anything nested in it)
-                        // through this same arm; the text is discarded because
-                        // the element is generated again in place below.
-                        let _ = self.capture_output(|g| g.generate_expression(element))?;
-                    }
                     element_types.push(self.expr_c_type(element, *span)?);
                 }
                 let name = self.register_tuple(&element_types)?;
@@ -5164,7 +5276,16 @@ impl CodeGenerator {
                 self.output.push_str(&format!("\"{}\"", c_string_body(s)));
             }
             Expr::Integer(n) => {
-                self.output.push_str(&format!("{}", n));
+                // Through the same helper the patterns use: `i64::MIN` has no C
+                // literal spelling, and writing it as one silently changes the
+                // constant's TYPE to unsigned. No expression reaches it by
+                // parsing (the lexer's `-?[0-9]+` cannot produce it either, since
+                // the digits alone overflow), but the optimizer folds
+                // `-9223372036854775807 - 1` into exactly this node — and with
+                // `-Werror=return-type` and friends on the command line, an
+                // unsigned constant in a signed comparison is a diagnostic away
+                // from being a build failure.
+                self.output.push_str(&Self::c_i64_literal(*n));
             }
             Expr::Float(x) => {
                 // `{:?}` on an f64 always writes a `.`, so `3.0` cannot come out
@@ -6937,8 +7058,24 @@ mod tuple_shape_tests {
     ///
     /// `tuple_c_name` sanitises each element's C type and joins with `_`, so an
     /// underscore inside a type name is indistinguishable from the separator
-    /// between two elements. This is not hypothetical: it is why `register_tuple`
-    /// refuses a second layout under a name it has already given out.
+    /// between two elements. It is why `register_tuple` refuses a second layout
+    /// under a name it has already given out.
+    ///
+    /// SYNTHETIC ELEMENT TYPES, DELIBERATELY — and this is the part worth
+    /// reading. No Palladium program known to this author can reach the refusal,
+    /// because every element spelling `type_to_c` produces carries a delimiter no
+    /// other spelling can fake: a named type becomes `struct X` (the space
+    /// sanitises to `_`, so `A_B` beside `C` is `struct_A_B_struct_C` while `A`
+    /// beside `B_C` is `struct_A_struct_B_C`), a primitive is one of a closed set
+    /// (`long_long`, `const_char_p`, `int`, `double`), and a nested tuple's name
+    /// begins `__pd_tupleN_`, whose arity digit fixes how many elements follow.
+    /// Tried and refused for other reasons: type aliases (`type A_B = i64;` is
+    /// not transparent to the type checker here).
+    ///
+    /// So the refusal is a guard against a FUTURE spelling, and the only way to
+    /// test it today is to hand `register_tuple` the strings such a spelling
+    /// would produce. A test that could not run is worse than one whose inputs
+    /// are honest about being constructed.
     #[test]
     fn the_mangling_can_collide() {
         assert_eq!(

@@ -223,12 +223,14 @@ fn help_text_does_not_presume_an_operand_shape() {
 
 /// The LLVM backend needs its own coverage, and it is the sharper case.
 ///
-/// Its expression lowering has no arm for either node: the catch-all at
-/// `src/codegen/llvm_text_backend.rs:1435` returns the constant `0` for
-/// `Question`, `Await`, `EnumConstructor` and `MacroInvocation` alike. That is
-/// worse than the C backend's failure — it compiles, and it is wrong. These
-/// programs are only safe because the type checker refuses before backend
-/// selection happens, and that ordering is what this test pins.
+/// Its expression lowering HAD no arm for either node: a catch-all returned the
+/// constant `0` for `Question`, `Await`, `EnumConstructor` and `MacroInvocation`
+/// alike — worse than the C backend's failure, because it compiled and was wrong.
+/// D10 replaced it with four separate refusals
+/// (`src/codegen/llvm_text_backend.rs:1469-1482`), so the deleted catch-all is
+/// described here without a citation form. What this test pins is unchanged and
+/// is the reason those programs were safe even then: the type checker refuses
+/// before backend selection happens.
 #[test]
 fn both_are_rejected_before_the_llvm_backend_can_return_zero() {
     let err = compile(QUESTION_REPRO, "question_llvm", true).unwrap_err();

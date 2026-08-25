@@ -818,8 +818,8 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
-rejected outright by the type checker (`src/typeck/mod.rs:4260-4260`) and again by code generation
-(`src/codegen/mod.rs:5692-5696`). It used to typecheck against a `Generic{name:"Result"}` shape
+rejected outright by the type checker (`src/typeck/mod.rs:4262-4262`) and again by code generation
+(`src/codegen/mod.rs:5813-5817`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -915,7 +915,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:5352-5356`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
+  (`src/typeck/mod.rs:5354-5358`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
@@ -927,7 +927,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3307`) and code generation (`src/codegen/mod.rs:5221-5224`)
+both the type checker (`src/typeck/mod.rs:3307`) and code generation (`src/codegen/mod.rs:5342-5345`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once;
 its position among the arguments is C's unspecified evaluation order, which is the same residual
@@ -1000,9 +1000,9 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4260-4260`, `.await` at
-`src/typeck/mod.rs:4267-4267`) and again by code generation (`?` at `src/codegen/mod.rs:5692-5696`,
-`.await` at `src/codegen/mod.rs:5704-5708`), which is callable on its own.
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4262-4262`, `.await` at
+`src/typeck/mod.rs:4269-4269`) and again by code generation (`?` at `src/codegen/mod.rs:5813-5817`,
+`.await` at `src/codegen/mod.rs:5825-5829`), which is callable on its own.
 
 What they used to do:
 
@@ -1144,7 +1144,7 @@ struct patterns, `ref`/`mut` bindings, field shorthand (`Move { x, y }`), `..` r
 **Exhaustiveness holds for every scrutinee type** (N6-10). An enum must cover its variants; a
 `bool` is covered by `true` and `false` together; every other type needs an arm that matches every
 value — `_`, a binding, `name @ <irrefutable>`, an `a | b` with an irrefutable alternative, or a
-tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:4552`). NO INTERVAL
+tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:4554`). NO INTERVAL
 ARITHMETIC IS PROMISED: `0..=59` beside `60..=<i64 max>` beside `<i64 min>..=-1` covers every
 integer and is still refused, and the diagnostic says why rather than leaving the reader to infer
 it. A guarded arm counts toward nothing — whether it is taken is not decidable from the pattern.
@@ -1210,7 +1210,7 @@ One divergence remains, and two are closed:
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:1128-1128`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:5259-5259`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+(`src/codegen/mod.rs:5380-5380`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:1489-1489`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
@@ -1519,7 +1519,7 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-patterns`
 (2026-08-26):
 
-**verified 76 · untranscribed 0 · vacuous 7 · xfail 1 · reject 50 · skip 2 · failures 0**, over 136
+**verified 76 · untranscribed 0 · vacuous 7 · xfail 1 · reject 52 · skip 2 · failures 0**, over 138
 fixtures. (Issue #41 — the pattern forms, exhaustiveness and the trap, plus tuples as values —
 added eight `run` fixtures and TWENTY `reject`s, nine of them from the review round that followed:
 an `i64::MIN` bound that inverted its own comparison, a payload the type checker never looked

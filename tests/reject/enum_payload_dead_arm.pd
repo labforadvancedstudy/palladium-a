@@ -1,0 +1,25 @@
+// NEGATIVE TEST — an arm after the variant is covered is DEAD (N6-10).
+//
+// `P::Num(_)` accepts every `Num`, so the `P::Num(1)` below it can never be
+// taken. The check that finds this used to ask whether the LATER arm covers the
+// variant, which is the wrong question: a refutable arm covers nothing, so it was
+// never compared against what came before it and this program compiled with a
+// dead arm in the middle of it.
+//
+// The right question is whether the variant is ALREADY covered when the arm is
+// reached, and it is asked of every arm now — which still leaves `P::Num(1)` then
+// `P::Num(2)` legal, because neither of those covers the variant and so neither
+// answers the other.
+enum P {
+    Num(i64),
+    Nil,
+}
+
+fn main() {
+    let v = match P::Num(5) {
+        P::Num(_) => 1,
+        P::Num(1) => 2,
+        P::Nil => 3,
+    };
+    print_int(v);
+}

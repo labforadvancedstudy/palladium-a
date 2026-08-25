@@ -4244,11 +4244,13 @@ impl TypeChecker {
             // emitter produced a `struct Result` layout nothing else emits, and
             // an await that calls a `poll` member no generated struct has, so a
             // program that satisfied the old type rules failed inside gcc —
-            // against C the user never wrote. The LLVM backend is worse: its
-            // catch-all returns the constant `0` for both nodes
-            // (`src/codegen/llvm_text_backend.rs:1435`), which compiles and is
-            // wrong. Refuse here, at the construct's own span, so no backend
-            // gets the chance.
+            // against C the user never wrote. The LLVM backend WAS worse: a
+            // catch-all returned the constant `0` for both nodes, which compiled
+            // and was wrong. That catch-all is gone (D10 made each of the four
+            // its own refusal), and it is described here without a citation form
+            // because there is no live line to cite. Refusing here, at the
+            // construct's own span, is what kept either backend from getting the
+            // chance.
             //
             // Refusing in this phase rather than only in codegen is deliberate:
             // it lands before the codegen `let`-inference error (D7), which
@@ -5569,7 +5571,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:5863-5927`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:5984-6048`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -5852,7 +5854,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4229-4237`, `src/parser/mod.rs:4002-4010`). That is not
+    /// (`src/parser/mod.rs:4233-4241`, `src/parser/mod.rs:4002-4010`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

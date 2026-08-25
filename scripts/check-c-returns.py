@@ -200,12 +200,14 @@ one: a `match` carrying a guard is lowered to `if (pattern) { … goto _match_en
 ending in a label, and this reader refuses any function containing a `goto`
 because a jump can leave a loop its `contains_break` model would otherwise have
 reasoned about. The refusal is loud (exit 2, MALFUNCTION) rather than a false
-clean, which is the right failure direction — but it does mean the six
-guard-carrying corpus fixtures are outside the reader until it learns the shape.
-Teaching it `goto` is a change to this gate's model and is not made here.
+clean, which is the right failure direction — but it does mean FIVE corpus
+fixtures are outside the reader until it learns the shape, named so nobody has to
+re-derive the list: 06_at_patterns, 06_guards, 06_or_patterns, 06_range_patterns
+and 06_tuple_patterns. Teaching it `goto` is a change to this gate's model and is
+not made here.
 
-So: the gap is real, and it is currently empty. It is NOT closed here on
-purpose. The natural home for a structural verdict on those fixtures is a
+So: the gap is real, and it is no longer empty — the five fixtures above sit in
+it. It is still NOT closed here, on purpose. The natural home for a structural verdict on those fixtures is a
 column in tests/conformance-manifest.txt — that runner's design is that every
 row declares its own expectation and an undeclared one fails
 (scripts/conformance.sh:10-13 lists the four failure directions, :121-132 the six

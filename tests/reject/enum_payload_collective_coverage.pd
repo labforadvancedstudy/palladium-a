@@ -1,0 +1,34 @@
+// NEGATIVE TEST — collective coverage of an ENUM payload is not checked (N6-10).
+//
+// `Q::W(Inner::A)` and `Q::W(Inner::B)` do cover every `Q::W` between them, and
+// this checker refuses the program anyway. That is the conservative half of A7's
+// rule: payload spaces are not unioned, because doing it for enums means the
+// product space, and a checker that does it for one shape and not the others is
+// harder to predict than one that does it for none.
+//
+// THE ONE EXCEPTION IS `bool`, and it is not an exception to the reasoning — it
+// is the same rule 4a stated for a bool SCRUTINEE, reaching one level down:
+// `bool` has two values and no third, so `E::B(true)` plus `E::B(false)` is the
+// whole domain of that position. `tests/06_at_patterns.pd` exercises that.
+//
+// The diagnostic is the point of this fixture. Naming `Q::W` as "missing" when
+// the program writes it twice reads as a compiler that cannot see the code, so
+// it says what is actually wrong and what would fix it.
+enum Inner {
+    A,
+    B,
+}
+
+enum Q {
+    W(Inner),
+    Z,
+}
+
+fn main() {
+    let v = match Q::W(Inner::A) {
+        Q::W(Inner::A) => 1,
+        Q::W(Inner::B) => 2,
+        Q::Z => 3,
+    };
+    print_int(v);
+}

@@ -81,6 +81,22 @@ fn main() {
     };
     print_int(leftover);
 
+    print("The minimum as a literal PATTERN, not only as a range bound:");
+    // The equality site had the same hazard as the range bound and none of the
+    // coverage: `_match_expr == -9223372036854775808` takes an unsigned constant,
+    // which makes the comparison ask something else entirely.
+    let low = -9223372036854775807 - 1;
+    let at_min = match low {
+        -9223372036854775808 => 1,
+        _ => 0,
+    };
+    print_int(at_min);
+    let not_min = match 0 {
+        -9223372036854775808 => 1,
+        _ => 0,
+    };
+    print_int(not_min);
+
     print("Literal arms inside a value block inside a value match:");
     let nested = match 1 {
         1 => {

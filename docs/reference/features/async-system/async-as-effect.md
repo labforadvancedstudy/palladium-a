@@ -301,9 +301,9 @@ no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 
 **7. `.await` is refused, and the lowering that used to be here is deleted.**
 Codegen for an await expression returns `await_unimplemented` at the construct's own span
-(`src/codegen/mod.rs:5704-5708`), and the type checker refuses it before that
-(`src/typeck/mod.rs:4267-4267`). `?` is the same shape: refused in codegen
-(`src/codegen/mod.rs:5692-5696`) and in the type checker (`src/typeck/mod.rs:4260-4260`).
+(`src/codegen/mod.rs:5825-5829`), and the type checker refuses it before that
+(`src/typeck/mod.rs:4269-4269`). `?` is the same shape: refused in codegen
+(`src/codegen/mod.rs:5813-5817`) and in the type checker (`src/typeck/mod.rs:4262-4262`).
 
 *Historical, and the reason those refusals exist — this paragraph described it in the present
 tense until D5 was fixed.* Codegen used to emit `while (!<tmp>.poll(&<tmp>)) { }` and then read
@@ -314,7 +314,7 @@ is deleted too, and an `async fn` is refused); `?` used to emit a
 an error at any earlier stage — it was silent breakage discovered by the C compiler, which is the
 failure mode `language-spec.md` §6.5 recorded. Both lowerings are gone: searching
 `src/codegen/mod.rs` for `poll(&` and `struct Result` now matches only the two comments that
-explain why the arms refuse (`src/codegen/mod.rs:5693-5695`, `src/codegen/mod.rs:5705-5707`).
+explain why the arms refuse (`src/codegen/mod.rs:5814-5816`, `src/codegen/mod.rs:5826-5828`).
 
 Direction of travel: making `.await` a hard compile error is *consistent* with this document,
 because `.await` is not part of the language. The end state is that neither `async` nor `await` is

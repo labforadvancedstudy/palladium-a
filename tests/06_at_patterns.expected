@@ -15,6 +15,9 @@ A binding whose inner is a wildcard:
 13
 A binding under a RECURSIVE payload, which is stored indirectly:
 202
+A bool payload is covered by `true` and `false` together:
+1
+2
 Statement form:
 5
 5

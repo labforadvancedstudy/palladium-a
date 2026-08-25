@@ -4059,8 +4059,12 @@ impl Parser {
                                         .to_string(),
                                     found: format!(
                                         "an index whose spelling is {} characters wide for the \
-                                         value {} — `.0{}` is not a way to write `.{}`",
-                                        width, index, index, index
+                                         value {} — `.{}{}` is not a way to write `.{}`",
+                                        width,
+                                        index,
+                                        "0".repeat(width - index.to_string().len()),
+                                        index,
+                                        index
                                     ),
                                     span: self.current_span(),
                                 });

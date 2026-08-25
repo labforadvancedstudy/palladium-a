@@ -143,6 +143,47 @@ impl ExhaustivenessChecker {
         }
     }
 
+    /// The one payload shape whose values can be UNIONED across arms: a single
+    /// bool literal in one position, with every other position irrefutable.
+    ///
+    /// Answers the position's key and the literal's value. Any other shape — two
+    /// refutable positions, a non-bool literal, a range — answers `None`, because
+    /// unioning it would be a claim about a space this checker does not model.
+    fn bool_split_slot(data: Option<&PatternData>) -> Option<(String, bool)> {
+        fn peel(pattern: &Pattern) -> &Pattern {
+            match pattern {
+                Pattern::Binding { inner, .. } => peel(inner),
+                other => other,
+            }
+        }
+        let slots: Vec<(String, &Pattern)> = match data? {
+            PatternData::Tuple(patterns) => patterns
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (i.to_string(), p))
+                .collect(),
+            PatternData::Struct(fields) => fields
+                .iter()
+                .map(|(name, p)| (name.clone(), p))
+                .collect(),
+        };
+        let mut found: Option<(String, bool)> = None;
+        for (key, pattern) in slots {
+            match peel(pattern) {
+                Pattern::Literal(crate::ast::PatternLiteral::Bool(value)) => {
+                    if found.is_some() {
+                        // Two bool positions is a product space again.
+                        return None;
+                    }
+                    found = Some((key, *value));
+                }
+                other if Self::is_irrefutable(other) => {}
+                _ => return None,
+            }
+        }
+        found
+    }
+
     /// Does an enum variant's payload accept every value the variant can hold?
     ///
     /// The question `check_enum_exhaustiveness` needs before it may count a
@@ -207,6 +248,10 @@ impl ExhaustivenessChecker {
         let mut covered_variants = HashSet::new();
         let mut has_wildcard = false;
         let mut unreachable_patterns = Vec::new();
+        // Variants a pattern named but did not cover, and the bool literals those
+        // patterns pinned. See `bool_split_slot` for the one shape that adds up.
+        let mut seen_refutably: HashSet<String> = HashSet::new();
+        let mut bool_splits: HashMap<(String, String), HashSet<bool>> = HashMap::new();
 
         for (i, pattern) in patterns.iter().enumerate() {
             match pattern {
@@ -267,15 +312,32 @@ impl ExhaustivenessChecker {
                     // checker should never have accepted. Same rule as everywhere
                     // else in this file, and the same predicate (`is_irrefutable`).
                     //
-                    // It follows that a refutable arm cannot make a later arm
-                    // unreachable either: `P::Num(1)` then `P::Num(2)` are two
-                    // different questions about the same variant, and neither
-                    // answers the other.
+                    // A refutable arm cannot make a LATER arm unreachable:
+                    // `P::Num(1)` then `P::Num(2)` are two different questions
+                    // about the same variant, and neither answers the other. But
+                    // an arm reached after the variant is ALREADY COVERED is dead
+                    // whatever its own payload asks — measured: `P::Num(_)` then
+                    // `P::Num(1)` compiled with the second arm unreachable,
+                    // because the check asked whether the LATER arm covers rather
+                    // than whether the variant already was.
                     let covers = Self::payload_is_irrefutable(data.as_ref());
-                    if has_wildcard || (covers && covered_variants.contains(variant)) {
+                    if has_wildcard || covered_variants.contains(variant) {
                         unreachable_patterns.push((i, pattern.to_string()));
                     } else if covers {
                         covered_variants.insert(variant.clone());
+                    } else {
+                        // Not covered by this arm. Two things are still worth
+                        // recording: that the variant was SEEN refutably (so the
+                        // diagnostic can say what is actually wrong), and any
+                        // bool literal it pins in a payload position (so
+                        // `B(true)` + `B(false)` can add up).
+                        seen_refutably.insert(variant.clone());
+                        if let Some((slot, value)) = Self::bool_split_slot(data.as_ref()) {
+                            bool_splits
+                                .entry((variant.clone(), slot))
+                                .or_default()
+                                .insert(value);
+                        }
                     }
                 }
             }
@@ -289,13 +351,46 @@ impl ExhaustivenessChecker {
             });
         }
 
+        // A BOOL PAYLOAD POSITION IS THE ONE PAYLOAD SPACE THAT ADDS UP.
+        // `bool` has two values and no third, so a variant matched once with
+        // `true` in a position and once with `false` in the same position — with
+        // every other position irrefutable in both — is covered by the pair. This
+        // is 4a's rule (a `bool` scrutinee is exhausted by `true` and `false`)
+        // reaching one level down, and it stops there: enum, integer and string
+        // payload spaces are NOT unioned, because two arms that pin different
+        // values of a non-bool position leave the rest of that position open.
+        for ((variant, _slot), values) in &bool_splits {
+            if values.contains(&true) && values.contains(&false) {
+                covered_variants.insert(variant.clone());
+            }
+        }
+
         // Check if all variants are covered
         if !has_wildcard && covered_variants.len() < enum_info.variants.len() {
             let missing_variants: Vec<String> = enum_info
                 .variants
                 .iter()
                 .filter(|v| !covered_variants.contains(&v.name))
-                .map(|v| format!("{}::{}", enum_info.name, v.name))
+                .map(|v| {
+                    // NAMING A VARIANT AS "MISSING" WHEN IT IS WRITTEN THREE
+                    // TIMES reads as a compiler that cannot see the program. If
+                    // the variant appears with payloads none of which accept
+                    // every value, say THAT, and say what would fix it.
+                    if seen_refutably.contains(&v.name) {
+                        format!(
+                            "{}::{} — it is matched only with refutable payloads, so no arm \
+                             accepts every {}::{}; add `{}::{}(_)` or a `_` arm",
+                            enum_info.name,
+                            v.name,
+                            enum_info.name,
+                            v.name,
+                            enum_info.name,
+                            v.name
+                        )
+                    } else {
+                        format!("{}::{}", enum_info.name, v.name)
+                    }
+                })
                 .collect();
 
             return Err(CompileError::NonExhaustiveMatch {

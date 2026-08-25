@@ -25,4 +25,19 @@ fn main() {
     print_int(((deep.0).0).1);
     print_int((deep.0).1);
     print_int(deep.1);
+
+    // AN ELEMENT THAT HOISTS, inside a nested literal. The shapes are registered
+    // by a walk that emits nothing, so the value-`if` here is generated exactly
+    // once, in its own place, with its hoisted statements where they belong. The
+    // first repair for the ordering defect registered shapes by speculatively
+    // GENERATING each nested element into a discarded buffer; this case is what
+    // that approach had to get right and what the current one cannot get wrong.
+    let mixed = ((if 1 < 2 { 10 } else { 20 }, 3), 4);
+    print_int((mixed.0).0);
+    print_int((mixed.0).1 + mixed.1);
+
+    // N4-12 with the value `i64` cannot spell: the optimizer folds this to the
+    // minimum, and `-9223372036854775808` as a C literal is unsigned.
+    let m = -9223372036854775807 - 1;
+    print_int(m);
 }
