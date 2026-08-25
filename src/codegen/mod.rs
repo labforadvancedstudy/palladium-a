@@ -269,6 +269,17 @@ pub struct CodeGenerator {
     hoist_counter: usize,
 }
 
+/// Where a payload sub-pattern applies: the C lvalue that holds it, and the C
+/// type of that lvalue.
+///
+/// Returned by `payload_subjects` so the condition and the binding emission read
+/// ONE description of the layout. They were written separately once, and only
+/// one of the two knew that a payload could hold a sub-pattern at all.
+struct PayloadSubject {
+    subject: String,
+    c_type: String,
+}
+
 impl CodeGenerator {
     pub fn new(module_name: &str) -> Result<Self> {
         // Pre-allocate string capacity for better performance
@@ -3763,13 +3774,13 @@ impl CodeGenerator {
                     for arm in arms {
                         self.output
                             .push_str(&format!("        if (!{}) {{\n", done));
-                        let condition = self.pattern_condition(&arm.pattern)?;
+                        let condition = self.pattern_condition(&arm.pattern, "_match_expr")?;
                         self.output
                             .push_str(&format!("        if ({}) {{\n", condition));
 
                         let arm_scope = self.open_binding_scope();
                         let emitted = (|| -> Result<()> {
-                            self.emit_pattern_bindings(&arm.pattern, &temp_type)?;
+                            self.emit_pattern_bindings(&arm.pattern, "_match_expr", &temp_type)?;
 
                             match &arm.guard {
                                 None => {
@@ -3815,13 +3826,13 @@ impl CodeGenerator {
                         self.output.push_str(" else if (");
                     }
 
-                    let condition = self.pattern_condition(&arm.pattern)?;
+                    let condition = self.pattern_condition(&arm.pattern, "_match_expr")?;
                     self.output.push_str(&condition);
                     self.output.push_str(") {\n");
 
                     let arm_scope = self.open_binding_scope();
                     let emitted = (|| -> Result<()> {
-                        self.emit_pattern_bindings(&arm.pattern, &temp_type)?;
+                        self.emit_pattern_bindings(&arm.pattern, "_match_expr", &temp_type)?;
                         self.generate_block(&arm.body, "        ")?;
                         Ok(())
                     })();
@@ -4082,27 +4093,50 @@ impl CodeGenerator {
         }
     }
 
-    /// Lower a `match` in value position (N5-04) to portable C.
-    ///
-    /// Rewrites each arm's value into `<temp> = <value>;` appended to that
-    /// arm's statements, then hands the resulting STATEMENT `match` to the
-    /// ordinary emitter. Everything the arms need — the tag test, the payload
-    /// extraction, the binding scopes — is already there and is not written
-    /// twice.
-    /// The C expression that decides whether an arm's PATTERN matches.
+    /// The C expression that decides whether an arm's PATTERN matches `subject`.
     ///
     /// One place, because the two match shapes above (else-if chain and
     /// `if (!done)` sequence) must ask the same question; two spellings of
     /// "does this arm match" is how a guarded and an unguarded match would come
     /// to disagree about the same pattern.
-    fn pattern_condition(&self, pattern: &Pattern) -> Result<String> {
+    ///
+    /// RECURSIVE OVER THE SUBJECT, and it has to be. A pattern nested in an
+    /// enum payload tests a FIELD, not the scrutinee, and the first version of
+    /// this stopped at the tag: `P::Num(1)` matched every `Num` and the program
+    /// ran with the wrong arm, exit 0. `subject` is the C lvalue this pattern
+    /// is being asked about — `_match_expr` at the top, a payload member below.
+    fn pattern_condition(&self, pattern: &Pattern, subject: &str) -> Result<String> {
         Ok(match pattern {
             // Both match everything. `1` rather than an omitted test, so the
             // emitted chain keeps one shape.
             Pattern::Wildcard | Pattern::Ident(_) => "1".to_string(),
+            // N6-08. The binding is transparent: what decides is its inner.
+            Pattern::Binding { inner, .. } => self.pattern_condition(inner, subject)?,
+            // N6-07. The alternatives' own tests, joined. `||` short-circuits,
+            // so a later alternative is not evaluated once an earlier one holds
+            // — which matters as soon as an alternative's test is a `strcmp`.
+            Pattern::Or(alternatives) => {
+                let mut parts = Vec::with_capacity(alternatives.len());
+                for alternative in alternatives {
+                    parts.push(format!("({})", self.pattern_condition(alternative, subject)?));
+                }
+                parts.join(" || ")
+            }
             Pattern::EnumPattern {
-                enum_name, variant, ..
-            } => format!("_match_expr.tag == __{}__{}", enum_name, variant),
+                enum_name,
+                variant,
+                data,
+            } => {
+                let mut condition = format!("{}.tag == __{}__{}", subject, enum_name, variant);
+                for (sub_pattern, member) in self.payload_subjects(enum_name, variant, data.as_ref(), subject)
+                {
+                    let sub_condition = self.pattern_condition(&sub_pattern, &member.subject)?;
+                    if sub_condition != "1" {
+                        condition.push_str(&format!(" && ({})", sub_condition));
+                    }
+                }
+                condition
+            }
             // N6-02. An integer or a bool is C's own `==`; a STRING is not —
             // `const char* == const char*` compares addresses, so `"be" + "ta"`
             // would fail to match `"beta"` despite being the same text. The
@@ -4110,130 +4144,166 @@ impl CodeGenerator {
             // into every output file, and this is the comparison a reader means
             // by a string pattern.
             Pattern::Literal(PatternLiteral::Int(value)) => {
-                format!("_match_expr == {}", value)
+                format!("{} == {}", subject, value)
             }
             Pattern::Literal(PatternLiteral::Bool(value)) => {
-                format!("_match_expr == {}", if *value { 1 } else { 0 })
+                format!("{} == {}", subject, if *value { 1 } else { 0 })
             }
             Pattern::Literal(PatternLiteral::Str(value)) => {
-                format!("__pd_string_eq(_match_expr, \"{}\")", c_string_body(value))
+                format!("__pd_string_eq({}, \"{}\")", subject, c_string_body(value))
             }
         })
+    }
+
+    /// Every sub-pattern of an enum variant's payload, paired with the C lvalue
+    /// and type it applies to.
+    ///
+    /// ONE PLACE THAT KNOWS THE PAYLOAD LAYOUT, consulted by both the condition
+    /// and the binding emission. They used to be written separately, and only
+    /// one of them knew about payload sub-patterns at all.
+    fn payload_subjects(
+        &self,
+        enum_name: &str,
+        variant: &str,
+        data: Option<&PatternData>,
+        subject: &str,
+    ) -> Vec<(Pattern, PayloadSubject)> {
+        let Some(pattern_data) = data else {
+            return Vec::new();
+        };
+        let Some(enum_def) = self.enums.get(enum_name) else {
+            return Vec::new();
+        };
+        let Some(variant_def) = enum_def.variants.iter().find(|v| v.name == variant) else {
+            return Vec::new();
+        };
+
+        // An indirect slot holds a CELL: the pattern is about the value, so the
+        // subject reads through it. Parenthesised because `*x.y` binds the way C
+        // says and every caller pastes this into a larger expression.
+        let read = |subject: String, ty: &Type| {
+            if self.recursive_layout.payload_is_indirect(enum_name, ty) {
+                format!("(*{})", subject)
+            } else {
+                subject
+            }
+        };
+
+        match (&variant_def.data, pattern_data) {
+            (EnumVariantData::Tuple(types), PatternData::Tuple(patterns)) => patterns
+                .iter()
+                .zip(types.iter())
+                .enumerate()
+                .map(|(i, (pattern, ty))| {
+                    (
+                        pattern.clone(),
+                        PayloadSubject {
+                            subject: read(
+                                format!(
+                                    "{}.data.{}.field{}",
+                                    subject,
+                                    c_ident::c_enum_payload_member(variant),
+                                    i
+                                ),
+                                ty,
+                            ),
+                            c_type: self.type_to_c(ty),
+                        },
+                    )
+                })
+                .collect(),
+            (EnumVariantData::Struct(fields), PatternData::Struct(field_patterns)) => {
+                field_patterns
+                    .iter()
+                    .filter_map(|(field_name, pattern)| {
+                        let (_, field_type) =
+                            fields.iter().find(|(fname, _)| fname == field_name)?;
+                        Some((
+                            pattern.clone(),
+                            PayloadSubject {
+                                subject: read(
+                                    format!(
+                                    "{}.data.{}.{}",
+                                    subject,
+                                    c_ident::c_enum_payload_member(variant),
+                                    field_name
+                                ),
+                                    field_type,
+                                ),
+                                c_type: self.type_to_c(field_type),
+                            },
+                        ))
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Declare the variables an arm's pattern binds, at the top of its block.
     ///
     /// The bindings are written before anything else in the arm — before the
     /// guard, which may read them, and before the body.
-    fn emit_pattern_bindings(&mut self, pattern: &Pattern, temp_type: &str) -> Result<()> {
+    fn emit_pattern_bindings(
+        &mut self,
+        pattern: &Pattern,
+        subject: &str,
+        subject_type: &str,
+    ) -> Result<()> {
         match pattern {
             // Neither binds anything.
             Pattern::Wildcard | Pattern::Literal(_) => Ok(()),
+            // N6-07. An alternative may not bind — the type checker refuses that
+            // by name, because a single `||` condition has no per-alternative
+            // site to assign from.
+            Pattern::Or(_) => Ok(()),
             Pattern::Ident(name) => {
-                // TYPED AS THE SCRUTINEE, not as `long long`. The old hardcoded
+                // TYPED AS THE SUBJECT, not as `long long`. The old hardcoded
                 // width was invisible while only enums could be matched; a
                 // `String` scrutinee bound to a `long long` is a program gcc
                 // refuses.
                 self.output.push_str(&format!(
-                    "            {} {} = _match_expr;\n",
-                    temp_type, name
+                    "            {} {} = {};\n",
+                    subject_type, name, subject
                 ));
-                self.bind_non_array(name, temp_type.to_string());
+                self.bind_non_array(name, subject_type.to_string());
                 Ok(())
+            }
+            // N6-08. Both: the name for this whole position, and whatever the
+            // inner pattern binds under it.
+            Pattern::Binding { name, inner } => {
+                self.output.push_str(&format!(
+                    "            {} {} = {};\n",
+                    subject_type, name, subject
+                ));
+                self.bind_non_array(name, subject_type.to_string());
+                self.emit_pattern_bindings(inner, subject, subject_type)
             }
             Pattern::EnumPattern {
                 enum_name,
                 variant,
                 data,
             } => {
-                let Some(pattern_data) = data else {
-                    return Ok(());
-                };
-                // Cloned out of `self.enums` before anything is emitted: the
-                // writes below need `&mut self`, and holding a borrow of the
-                // map across them is what forced the previous version to reach
-                // into `self.variables` by hand.
-                let Some(enum_def) = self.enums.get(enum_name).cloned() else {
-                    return Ok(());
-                };
-                let Some(variant_def) = enum_def
-                    .variants
-                    .iter()
-                    .find(|v| &v.name == variant)
-                    .cloned()
-                else {
-                    return Ok(());
-                };
-
-                match (&variant_def.data, pattern_data) {
-                    (EnumVariantData::Tuple(types), PatternData::Tuple(patterns)) => {
-                        for (i, (pattern, ty)) in patterns.iter().zip(types.iter()).enumerate() {
-                            if let Pattern::Ident(name) = pattern {
-                                let c_type = self.type_to_c(ty);
-                                // An indirect slot holds a cell; the binding is
-                                // the value, so it reads through.
-                                let read = if self
-                                    .recursive_layout
-                                    .payload_is_indirect(enum_name, ty)
-                                {
-                                    "*"
-                                } else {
-                                    ""
-                                };
-                                self.output.push_str(&format!(
-                                    "            {} {} = {}_match_expr.data.{}.field{};\n",
-                                    c_type,
-                                    name,
-                                    read,
-                                    c_ident::c_enum_payload_member(variant),
-                                    i
-                                ));
-                                self.bind_non_array(name, c_type);
-                            }
-                        }
-                    }
-                    (EnumVariantData::Struct(fields), PatternData::Struct(field_patterns)) => {
-                        for (field_name, pattern) in field_patterns {
-                            if let Pattern::Ident(name) = pattern {
-                                let Some((_, field_type)) =
-                                    fields.iter().find(|(fname, _)| fname == field_name)
-                                else {
-                                    continue;
-                                };
-                                let field_type = field_type.clone();
-                                let c_type = self.type_to_c(&field_type);
-                                let read = if self
-                                    .recursive_layout
-                                    .payload_is_indirect(enum_name, &field_type)
-                                {
-                                    "*"
-                                } else {
-                                    ""
-                                };
-                                self.output.push_str(&format!(
-                                    "            {} {} = {}_match_expr.data.{}.{};\n",
-                                    c_type,
-                                    name,
-                                    read,
-                                    c_ident::c_enum_payload_member(variant),
-                                    field_name
-                                ));
-                                self.bind_non_array(name, c_type);
-                            }
-                        }
-                    }
-                    _ => {
-                        // Fallback for mismatched patterns (shouldn't happen with proper type checking)
-                        return Err(CompileError::Generic(
-                            "Pattern type mismatch in enum variant".to_string(),
-                        ));
-                    }
+                // Collected before anything is emitted: the writes below need
+                // `&mut self`, and holding a borrow of `self.enums` across them
+                // is what forced the previous version to reach into
+                // `self.variables` by hand.
+                let payload = self.payload_subjects(enum_name, variant, data.as_ref(), subject);
+                for (sub_pattern, member) in payload {
+                    self.emit_pattern_bindings(&sub_pattern, &member.subject, &member.c_type)?;
                 }
                 Ok(())
             }
         }
     }
 
+    /// Lower a `match` in value position (N5-04) to portable C.
+    ///
+    /// Rewrites each arm's value into `<temp> = <value>;` appended to that
+    /// arm's statements, then hands the resulting STATEMENT `match` to the
+    /// ordinary emitter. Everything the arms need — the tag test, the payload
+    /// extraction, the binding scopes — is already there and is not written
+    /// twice.
     fn generate_match_expression(&mut self, expr: &Expr) -> Result<()> {
         let Expr::Match {
             expr: scrutinee,

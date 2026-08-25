@@ -644,6 +644,18 @@ fn escape_pattern(pattern: &mut Pattern) {
         // A literal pattern holds no identifier, so there is nothing here that
         // could collide with a C keyword.
         Pattern::Literal(_) => {}
+        // N6-07 / N6-08. An alternative may hold a pattern that binds nothing
+        // today, but this walk must stay total: a form whose identifiers are
+        // silently not escaped is a program that fails in the C compiler.
+        Pattern::Or(alternatives) => {
+            for alternative in alternatives {
+                escape_pattern(alternative);
+            }
+        }
+        Pattern::Binding { name, inner } => {
+            escape_in_place(name);
+            escape_pattern(inner);
+        }
         Pattern::Ident(name) => escape_in_place(name),
         Pattern::EnumPattern {
             enum_name,

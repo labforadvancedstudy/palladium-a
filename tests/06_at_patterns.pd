@@ -1,0 +1,123 @@
+// Test 06: BINDING PATTERNS (requirement N6-08) — `name @ pattern`.
+//
+// `n @ 1` names the value AND still tests it. The binding is transparent to
+// everything else: it contributes exactly what its inner pattern contributes to
+// exhaustiveness, and its inner pattern's own bindings are established beside it
+// — `all @ P::Num(v)` binds both `all` (the whole enum value) and `v` (the
+// payload).
+//
+// `@` is a new token. Nothing else in the language used it, so there is no
+// spelling this steals: the lexer had no rule for `@` at all and a program
+// containing one could not be tokenised.
+//
+// A NESTED PATTERN IS A REAL TEST HERE. `P::Num(n @ 5)` matches `Num` whose
+// payload is 5 and nothing else — the arm's condition tests the tag AND the
+// field. That was not true when literal patterns first landed: the condition
+// stopped at the tag, so `P::Num(1)` matched every `Num`. The two lines below
+// that print `0` are the receipts for the repair.
+
+enum P {
+    Num(i64),
+    Pair(i64, i64),
+    Empty,
+}
+
+enum Tree {
+    Leaf(i64),
+    Pair(Tree, Tree),
+}
+
+fn sum(t: Tree) -> i64 {
+    match t {
+        Tree::Leaf(n) => n,
+        Tree::Pair(a, b) => sum(a) + sum(b),
+    }
+}
+
+fn payload(p: P) -> i64 {
+    match p {
+        P::Num(v) => v,
+        P::Pair(a, b) => a + b,
+        P::Empty => 0,
+    }
+}
+
+fn main() {
+    print("A binding with a literal inner:");
+    let a = match 1 {
+        n @ 1 => n * 10,
+        _ => 0,
+    };
+    print_int(a);
+
+    print("...and the inner still decides:");
+    let b = match 7 {
+        n @ 1 => n * 10,
+        other => other,
+    };
+    print_int(b);
+
+    print("Binding the whole enum value while its payload also binds:");
+    let c = match P::Num(6) {
+        all @ P::Num(v) => v + payload(all),
+        P::Pair(x, y) => x + y,
+        P::Empty => 0,
+    };
+    print_int(c);
+
+    print("A binding under a guard that reads both names:");
+    let d = match P::Num(9) {
+        all @ P::Num(v) if v > 5 => payload(all) * 2,
+        P::Num(v) => v,
+        P::Pair(x, y) => x + y,
+        P::Empty => 0,
+    };
+    print_int(d);
+
+    print("A binding inside a payload:");
+    let e = match P::Num(5) {
+        P::Num(n @ 5) => n * 100,
+        _ => 0,
+    };
+    print_int(e);
+    let f = match P::Num(4) {
+        P::Num(n @ 5) => n * 100,
+        _ => 0,
+    };
+    print_int(f);
+
+    print("A nested literal is a test, not a formality:");
+    let g = match P::Num(9) {
+        P::Num(1) => 111,
+        _ => 0,
+    };
+    print_int(g);
+
+    print("A binding whose inner is a wildcard:");
+    let h = match 12 {
+        whole @ _ => whole + 1,
+    };
+    print_int(h);
+
+    print("A binding under a RECURSIVE payload, which is stored indirectly:");
+    // The payload of `Tree::Pair` is a pointer, so the subject of a pattern
+    // under it is `(*x.data.Pair.field0)` — parenthesised, because a further
+    // `.data.…` on an unparenthesised `*x.data.…` would dereference the wrong
+    // thing. This arm has a nested enum pattern, a nested literal and an `@`
+    // binding all under that pointer at once.
+    let r = match Tree::Pair(Tree::Leaf(1), Tree::Leaf(2)) {
+        Tree::Pair(Tree::Leaf(1), inner @ Tree::Leaf(n)) => n * 100 + sum(inner),
+        _ => 0,
+    };
+    print_int(r);
+
+    print("Statement form:");
+    match P::Pair(2, 3) {
+        both @ P::Pair(x, y) => {
+            print_int(x + y);
+            print_int(payload(both));
+        }
+        P::Num(v) => { print_int(v); }
+        P::Empty => { print("empty"); }
+    }
+}

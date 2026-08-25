@@ -1005,6 +1005,17 @@ impl LLVMTextBackend {
                         Pattern::Literal(literal) => {
                             return Err(unimplemented_literal_pattern(literal, *match_span));
                         }
+                        // N6-07 / N6-08. Same reason as the literal above: this
+                        // backend branches unconditionally, so a pattern that
+                        // TESTS anything would be taken whatever the scrutinee
+                        // is. A binding is refused with its inner rather than
+                        // let through, because `n @ 1` is a test too.
+                        Pattern::Or(_) | Pattern::Binding { .. } => {
+                            return Err(unimplemented_composite_pattern(
+                                &arm.pattern,
+                                *match_span,
+                            ));
+                        }
                     }
                     
                     ir.push_str(&format!("{}:\n", arm_label));
@@ -1642,6 +1653,20 @@ fn unimplemented_literal_pattern(literal: &crate::ast::PatternLiteral, span: Spa
             .to_string(),
         workaround: "compile without `--llvm`, which is the supported backend and lowers literal \
                      patterns to equality tests"
+            .to_string(),
+        span: Some(span),
+    }
+}
+
+/// An or-pattern or a binding pattern, neither of which this backend can test.
+fn unimplemented_composite_pattern(pattern: &crate::ast::Pattern, span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: format!("the pattern `{}`", pattern),
+        consequence: "this backend lowers a match arm to an unconditional branch, so a pattern \
+                      that tests anything would be taken whatever the scrutinee is"
+            .to_string(),
+        workaround: "compile without `--llvm`, which is the supported backend and lowers these \
+                     patterns to real tests"
             .to_string(),
         span: Some(span),
     }

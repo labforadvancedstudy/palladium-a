@@ -18,6 +18,8 @@ pub enum PatternKind {
         variant: String,
         arity: usize,
     },
+    /// Or-pattern (N6-07) — matches if any alternative does.
+    Or(Vec<PatternKind>),
     /// Literal pattern (N6-02) — matches one value of its type.
     ///
     /// CONTRIBUTES TO COMPLETENESS OVER `bool` AND NOTHING ELSE. `true` and
@@ -52,8 +54,43 @@ impl ExhaustivenessChecker {
         Self { enums }
     }
 
+    /// The patterns a completeness count should actually see.
+    ///
+    /// TWO NORMALISATIONS, both of them required for a right answer rather than
+    /// a convenience:
+    ///
+    ///  * an OR-PATTERN contributes ALL of its alternatives (N6-07), so
+    ///    `Circle | Square` covers two variants and a match carrying it plus
+    ///    `Triangle` needs no wildcard;
+    ///  * a BINDING PATTERN contributes exactly what its inner contributes
+    ///    (N6-08) — `all @ Circle` is a `Circle` arm that also names the value,
+    ///    and reading it as a bare binder would make it a catch-all that swallows
+    ///    every later arm as unreachable.
+    ///
+    /// Done once, here, so the enum walk and the redundancy walk cannot disagree
+    /// about what an arm covers.
+    fn normalize(patterns: &[Pattern]) -> Vec<Pattern> {
+        fn push(pattern: &Pattern, out: &mut Vec<Pattern>) {
+            match pattern {
+                Pattern::Or(alternatives) => {
+                    for alternative in alternatives {
+                        push(alternative, out);
+                    }
+                }
+                Pattern::Binding { inner, .. } => push(inner, out),
+                other => out.push(other.clone()),
+            }
+        }
+        let mut out = Vec::with_capacity(patterns.len());
+        for pattern in patterns {
+            push(pattern, &mut out);
+        }
+        out
+    }
+
     /// Check if a match expression is exhaustive
     pub fn check_match(&self, matched_type: &str, patterns: &[Pattern], span: Span) -> Result<()> {
+        let patterns = &Self::normalize(patterns);
         // If the matched type is an enum, check exhaustiveness
         if let Some(enum_info) = self.enums.get(matched_type) {
             self.check_enum_exhaustiveness(enum_info, patterns, span)
@@ -86,6 +123,7 @@ impl ExhaustivenessChecker {
     /// for integers would refuse programs this compiler accepts today without
     /// the trap N6-11 requires to make that refusal honest.
     pub fn check_bool_match(&self, patterns: &[Pattern], span: Span) -> Result<()> {
+        let patterns = &Self::normalize(patterns);
         let mut has_true = false;
         let mut has_false = false;
         for pattern in patterns {
@@ -135,6 +173,10 @@ impl ExhaustivenessChecker {
                 // checker has already refused it against an enum scrutinee.
                 // Counted as covering nothing rather than assumed unreachable.
                 Pattern::Literal(_) => {}
+                // `normalize` removed these before the walk began; the arms
+                // exist so a future caller that forgets to normalise fails to
+                // compile rather than silently counting nothing.
+                Pattern::Or(_) | Pattern::Binding { .. } => {}
                 Pattern::EnumPattern {
                     enum_name, variant, ..
                 } => {
@@ -205,7 +247,7 @@ impl ExhaustivenessChecker {
                     }
                     seen_wildcard = true;
                 }
-                Pattern::Literal(_) => {}
+                Pattern::Literal(_) | Pattern::Or(_) | Pattern::Binding { .. } => {}
                 Pattern::EnumPattern {
                     enum_name, variant, ..
                 } => {
@@ -233,6 +275,11 @@ impl Pattern {
             Pattern::Wildcard => PatternKind::Wildcard,
             Pattern::Ident(name) => PatternKind::Binding(name.clone()),
             Pattern::Literal(literal) => PatternKind::Literal(literal.clone()),
+            Pattern::Or(alternatives) => {
+                PatternKind::Or(alternatives.iter().map(|p| p.to_pattern_kind()).collect())
+            }
+            // Transparent, exactly as it is to completeness counting.
+            Pattern::Binding { inner, .. } => inner.to_pattern_kind(),
             Pattern::EnumPattern {
                 enum_name,
                 variant,

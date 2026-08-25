@@ -4423,6 +4423,29 @@ impl TypeChecker {
     /// A non-enum scrutinee is not checked, which is the pre-existing position:
     /// there are no literal or range patterns yet (N6), so the only patterns an
     /// `i64` can carry are a wildcard and a binding, and both match everything.
+    /// The first name a pattern would bind, if any.
+    ///
+    /// Used to refuse binders inside an or-pattern with the offending name in
+    /// the message: "this alternative binds `x`" is actionable, "or-patterns may
+    /// not bind" is a rule the reader has to map onto their own code.
+    fn first_binder(pattern: &Pattern) -> Option<&str> {
+        match pattern {
+            Pattern::Ident(name) => Some(name),
+            Pattern::Binding { name, .. } => Some(name),
+            Pattern::Wildcard | Pattern::Literal(_) => None,
+            Pattern::Or(alternatives) => alternatives.iter().find_map(Self::first_binder),
+            Pattern::EnumPattern { data, .. } => match data {
+                None => None,
+                Some(PatternData::Tuple(patterns)) => {
+                    patterns.iter().find_map(Self::first_binder)
+                }
+                Some(PatternData::Struct(fields)) => {
+                    fields.iter().find_map(|(_, pattern)| Self::first_binder(pattern))
+                }
+            },
+        }
+    }
+
     /// A guard is a condition, so it must be a `bool`.
     ///
     /// Called from inside the arm's scope by both `match` forms, which is what
@@ -4687,6 +4710,39 @@ impl TypeChecker {
     /// Check that a pattern is compatible with the given type
     fn check_pattern(&self, pattern: &Pattern, expected_type: &CheckerType) -> Result<()> {
         match pattern {
+            // N6-07. Every alternative is asked the same question, because an
+            // arm accepting several shapes still accepts ONE type.
+            //
+            // AND NO ALTERNATIVE MAY BIND. Rust's rule is that all alternatives
+            // bind the same names at the same types; this checker does not know
+            // how to verify that yet, and code generation emits an or-pattern as
+            // a single `||` condition with no per-alternative site to assign a
+            // binder from. Accepting one would mean choosing a branch for the
+            // reader. Refused by name instead, and pinned by
+            // tests/reject/or_pattern_binds.pd. A binding OUTSIDE the or —
+            // `n @ …` — is N6-08 and is fine.
+            Pattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    if let Some(binder) = Self::first_binder(alternative) {
+                        return Err(CompileError::TypeMismatch {
+                            expected: "an alternative of an `|` pattern to bind nothing"
+                                .to_string(),
+                            found: format!(
+                                "the alternative `{}`, which binds `{}` — every alternative would \
+                                 have to bind the same names at the same types for this to mean \
+                                 anything, and that is not checked yet",
+                                alternative, binder
+                            ),
+                            span: None,
+                        });
+                    }
+                    self.check_pattern(alternative, expected_type)?;
+                }
+                Ok(())
+            }
+            // N6-08. The binding names this position; what it may match is
+            // decided by the inner pattern.
+            Pattern::Binding { inner, .. } => self.check_pattern(inner, expected_type),
             // N6-02. A literal pattern is an EQUALITY TEST, so its type has to
             // be the scrutinee's: `match n { "x" => … }` on an `i64` compares
             // two things C would happily compare and Palladium must not.
@@ -4750,6 +4806,15 @@ impl TypeChecker {
             // A literal binds nothing either — it constrains the value instead
             // of naming it.
             Pattern::Literal(_) => Ok(()),
+            // N6-08. `name @ inner` binds `name` to THIS position's value and
+            // then lets `inner` bind whatever it binds under it.
+            Pattern::Binding { name, inner } => {
+                self.symbols.define(name.clone(), value_type.clone(), false)?;
+                self.bind_pattern_variables(inner, value_type)
+            }
+            // N6-07. No alternative may bind (refused in `check_pattern`), so
+            // there is nothing to define here.
+            Pattern::Or(_) => Ok(()),
             Pattern::Ident(name) => {
                 // Bind the identifier to the value type
                 self.symbols.define(

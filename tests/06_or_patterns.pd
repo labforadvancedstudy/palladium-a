@@ -1,0 +1,97 @@
+// Test 06: OR-PATTERNS (requirement N6-07) — `A | B` in one arm.
+//
+// One arm, several shapes it accepts. The emitted C is the disjunction of the
+// alternatives' own tests, so an or-pattern costs nothing a hand-written
+// `if (a || b)` would not.
+//
+// BINDINGS ARE REFUSED INSIDE AN OR-PATTERN, and the diagnostic says so by name.
+// Rust requires every alternative to bind the same names at the same types; this
+// compiler does not check that yet, and the emitted condition is a single `||`
+// with no per-alternative binding site to assign from — so a binder inside an
+// alternative could only be filled from whichever branch a reader guessed. The
+// refusal is `tests/reject/or_pattern_binds.pd`. A binding OUTSIDE the or is a
+// different thing and is N6-08's `@`.
+//
+// Exhaustiveness counts every alternative: `Circle | Square` covers two
+// variants, which is why `kind` below needs no wildcard.
+
+enum Shape {
+    Circle,
+    Square,
+    Triangle,
+}
+
+enum P {
+    Num(i64),
+    Pair(i64, i64),
+    Empty,
+}
+
+fn kind(s: Shape) -> i64 {
+    match s {
+        Shape::Circle | Shape::Square => 1,
+        Shape::Triangle => 2,
+    }
+}
+
+fn main() {
+    print("Enum alternatives in one arm:");
+    print_int(kind(Shape::Circle));
+    print_int(kind(Shape::Square));
+    print_int(kind(Shape::Triangle));
+
+    print("Integer alternatives:");
+    let g = match 2 {
+        1 | 2 | 3 => 10,
+        _ => 20,
+    };
+    print_int(g);
+    let h = match 7 {
+        1 | 2 | 3 => 10,
+        _ => 20,
+    };
+    print_int(h);
+
+    print("String alternatives:");
+    let s = match "b" {
+        "a" | "b" => 1,
+        _ => 0,
+    };
+    print_int(s);
+
+    print("Bool alternatives exhaust the domain:");
+    let b = match 1 < 2 {
+        true | false => 5,
+    };
+    print_int(b);
+
+    print("An or-pattern followed by a guard:");
+    let og = match 4 {
+        3 | 4 if 2 > 1 => 40,
+        _ => 0,
+    };
+    print_int(og);
+    let og2 = match 3 {
+        3 | 4 if 1 > 2 => 40,
+        _ => 0,
+    };
+    print_int(og2);
+
+    print("Alternatives inside a payload:");
+    let np = match P::Num(2) {
+        P::Num(1 | 2) => 1,
+        _ => 2,
+    };
+    print_int(np);
+    let np2 = match P::Num(9) {
+        P::Num(1 | 2) => 1,
+        _ => 2,
+    };
+    print_int(np2);
+
+    print("Statement form:");
+    match Shape::Square {
+        Shape::Circle | Shape::Square => { print("round-ish"); }
+        Shape::Triangle => { print("pointy"); }
+    }
+}

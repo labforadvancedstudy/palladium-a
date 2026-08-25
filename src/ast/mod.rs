@@ -541,6 +541,22 @@ pub enum Pattern {
     },
     /// Literal pattern — `0`, `-1`, `"beta"`, `true` (N6-02).
     Literal(PatternLiteral),
+    /// Or-pattern — `A | B | C` (N6-07).
+    ///
+    /// FLAT, NOT NESTED PAIRS. `A | B | C` is one arm accepting three shapes,
+    /// and every consumer wants exactly that list: exhaustiveness expands it
+    /// into its alternatives, and code generation joins their tests with `||`.
+    /// A right-leaning pair tree would make both walk a shape that carries no
+    /// information — `|` has no associativity anyone can observe.
+    Or(Vec<Pattern>),
+    /// Binding pattern — `name @ pattern` (N6-08).
+    ///
+    /// Names the value AND keeps testing it. Transparent to exhaustiveness: it
+    /// covers exactly what `inner` covers.
+    Binding {
+        name: String,
+        inner: Box<Pattern>,
+    },
 }
 
 /// The literals a pattern may be, and no others.
@@ -1492,6 +1508,11 @@ impl std::fmt::Display for Expr {
 impl std::fmt::Display for Pattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Pattern::Or(alternatives) => {
+                let parts: Vec<String> = alternatives.iter().map(|p| p.to_string()).collect();
+                write!(f, "{}", parts.join(" | "))
+            }
+            Pattern::Binding { name, inner } => write!(f, "{} @ {}", name, inner),
             Pattern::Literal(PatternLiteral::Int(v)) => write!(f, "{}", v),
             Pattern::Literal(PatternLiteral::Str(v)) => write!(f, "{:?}", v),
             Pattern::Literal(PatternLiteral::Bool(v)) => write!(f, "{}", v),

@@ -271,7 +271,12 @@ fn the_recursive_slot_is_a_pointer_that_is_allocated_and_read_through() {
         c
     );
     assert!(
-        c.contains("= *_match_expr.data.Pair.field0;"),
+        // PARENTHESISED SINCE N6-08. The same subject string is now pasted into
+        // nested pattern positions, and `*x.data.M.f` is `*(x.data.M.f)` — so a
+        // pattern under a recursive payload would dereference the wrong thing.
+        // `(*x).data.M.f` is the read this test has always been about; the
+        // parentheses are what keep it that read one level down.
+        c.contains("= (*_match_expr.data.Pair.field0);"),
         "a match binding must read THROUGH the cell;\nemitted:\n{}",
         c
     );

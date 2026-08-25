@@ -481,6 +481,15 @@ pub enum Token {
     #[token("|")]
     Pipe,
 
+    /// `@`, which exists only to bind a name to what a pattern matched (N6-08).
+    ///
+    /// A NEW SPELLING THAT STEALS NOTHING: the lexer had no rule for `@` at all,
+    /// so every program containing one was rejected at tokenisation ("Unexpected
+    /// character '@'"). There is no expression, attribute or string-adjacent use
+    /// to disambiguate against.
+    #[token("@")]
+    At,
+
     // End of file marker (not produced by logos)
     Eof,
 }
@@ -602,6 +611,7 @@ impl std::fmt::Display for Token {
             Token::Question => write!(f, "'?'"),
             Token::Dollar => write!(f, "'$'"),
             Token::Pipe => write!(f, "'|'"),
+            Token::At => write!(f, "'@'"),
             Token::Eof => write!(f, "EOF"),
             Token::Const => write!(f, "'const'"),
             Token::Async => write!(f, "'async'"),

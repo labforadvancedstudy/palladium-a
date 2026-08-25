@@ -1,0 +1,20 @@
+A binding with a literal inner:
+10
+...and the inner still decides:
+7
+Binding the whole enum value while its payload also binds:
+12
+A binding under a guard that reads both names:
+18
+A binding inside a payload:
+500
+0
+A nested literal is a test, not a formality:
+0
+A binding whose inner is a wildcard:
+13
+A binding under a RECURSIVE payload, which is stored indirectly:
+202
+Statement form:
+5
+5

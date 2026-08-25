@@ -1453,6 +1453,24 @@ impl BorrowChecker {
             Pattern::Wildcard => {}
             // A literal pattern binds nothing — it is a test, not a binder.
             Pattern::Literal(_) => {}
+            // N6-08. `name @ inner` declares the name AND whatever `inner`
+            // declares under it.
+            Pattern::Binding { name, inner } => {
+                let place = Place::Local(name.clone());
+                self.context.declare(&place);
+                self.context.init_owned(place);
+                self.mutable_bindings.insert(name.clone(), false);
+                self.bind_pattern(inner)?;
+            }
+            // N6-07. An alternative may not bind (the type checker refuses
+            // that), so there is nothing to declare — but the walk stays total
+            // and recurses, so if that restriction is ever lifted this pass
+            // does not silently miss the binders.
+            Pattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.bind_pattern(alternative)?;
+                }
+            }
         }
         Ok(())
     }

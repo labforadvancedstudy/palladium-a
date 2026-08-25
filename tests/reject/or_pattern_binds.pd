@@ -1,0 +1,22 @@
+// NEGATIVE TEST — an alternative of an `|` pattern may not bind (N6-07).
+//
+// Rust's rule is that every alternative binds the SAME names at the SAME types,
+// and that is what makes `P::Num(x) | P::Pair(x, _)` mean something. This
+// compiler does not check that yet, and the arm's test is emitted as ONE `||`
+// expression with no per-alternative place to assign a binder from — so
+// accepting this would mean picking a branch on the reader's behalf and hoping.
+//
+// Refused with the offending name in the message rather than as a rule the
+// reader has to map onto their own code. A binding OUTSIDE the alternatives —
+// `n @ …` (N6-08) — is a different construct and is accepted.
+enum P {
+    Num(i64),
+    Pair(i64, i64),
+}
+
+fn main() {
+    let v = match P::Num(1) {
+        P::Num(x) | P::Pair(x, _) => x,
+    };
+    print_int(v);
+}

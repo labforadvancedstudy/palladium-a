@@ -1,0 +1,19 @@
+Enum alternatives in one arm:
+1
+1
+2
+Integer alternatives:
+10
+20
+String alternatives:
+1
+Bool alternatives exhaust the domain:
+5
+An or-pattern followed by a guard:
+40
+0
+Alternatives inside a payload:
+1
+2
+Statement form:
+round-ish

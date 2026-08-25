@@ -2779,8 +2779,28 @@ impl Parser {
         })
     }
 
-    /// Parse a pattern
+    /// Parse a pattern, including any `|` alternatives (N6-07).
+    ///
+    /// The entry point every caller uses. `|` binds LOOSER than `@`, so
+    /// `n @ 1 | 2` is `(n @ 1) | 2` — which the type checker then refuses,
+    /// because an alternative may not bind. There is no grouping form for
+    /// patterns yet, so `n @ (1 | 2)` is unwritable rather than silently
+    /// reinterpreted.
     fn parse_pattern(&mut self) -> Result<Pattern> {
+        let first = self.parse_pattern_primary()?;
+        if !self.check(&Token::Pipe) {
+            return Ok(first);
+        }
+        let mut alternatives = vec![first];
+        while self.check(&Token::Pipe) {
+            self.advance()?; // consume '|'
+            alternatives.push(self.parse_pattern_primary()?);
+        }
+        Ok(Pattern::Or(alternatives))
+    }
+
+    /// Parse one pattern, stopping before any `|`.
+    fn parse_pattern_primary(&mut self) -> Result<Pattern> {
         // First, peek and clone the token to avoid borrowing issues
         let token = self.peek()?.clone();
 
@@ -2897,6 +2917,18 @@ impl Parser {
                         enum_name: name,
                         variant,
                         data,
+                    })
+                } else if self.check(&Token::At) {
+                    // N6-08. `name @ pattern`. The inner is a PRIMARY pattern:
+                    // binding an alternative set would need the grouping form
+                    // this language does not have, and reading `n @ 1 | 2` as
+                    // `n @ (1 | 2)` would give `|` two meanings depending on
+                    // what preceded it.
+                    self.advance()?; // consume '@'
+                    let inner = self.parse_pattern_primary()?;
+                    Ok(Pattern::Binding {
+                        name,
+                        inner: Box::new(inner),
                     })
                 } else {
                     // Simple identifier pattern
