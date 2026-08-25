@@ -1,0 +1,64 @@
+// Test 04: blocks in expression position (requirement N5-05).
+//
+// A `{ ... }` whose last statement is written without a `;` has that
+// statement's value. There was no `Expr::Block`, so the `{` was simply not
+// something an expression could start with. The shapes below:
+//
+//   * a block whose value is a plain expression
+//   * a block that binds locals first, then produces a value from them
+//   * a block nested inside another block's statements
+//   * a block passed directly as a function argument
+//   * a block whose value is an `if` expression, and an `if` whose branch
+//     value is a block — the two constructs have to compose
+//   * a block that shadows an outer name without leaking the shadow
+
+fn main() {
+    print("Simple:");
+    let simple = { 1 + 2 };
+    print_int(simple);
+
+    print("With locals:");
+    let withlocals = {
+        let a = 3;
+        let b = 4;
+        a * b
+    };
+    print_int(withlocals);
+
+    print("Nested:");
+    let nested = {
+        let inner = {
+            let seed = 5;
+            seed + 5
+        };
+        inner * 2
+    };
+    print_int(nested);
+
+    print("As an argument:");
+    print_int({ 7 * 6 });
+    print({ "a block can produce a string" });
+
+    print("Composed with if:");
+    let composed = {
+        let flag = 9 > 4;
+        if flag { 1 } else { 0 }
+    };
+    print_int(composed);
+
+    let other = if 2 > 1 {
+        { 100 + 11 }
+    } else {
+        { 0 }
+    };
+    print_int(other);
+
+    print("Shadowing stays inside:");
+    let shadowed = 1;
+    let fromblock = {
+        let shadowed = 41;
+        shadowed + 1
+    };
+    print_int(fromblock);
+    print_int(shadowed);
+}

@@ -729,6 +729,36 @@ fn escape_expr(expr: &mut Expr) {
         | Expr::Deref { expr, .. }
         | Expr::Question { expr, .. }
         | Expr::Await { expr, .. } => escape_expr(expr),
+        // A value `if`/block carries STATEMENTS as well as expressions, and
+        // both halves bind names that can collide with a C keyword; walking
+        // only the values would leave `let double = 1;` inside a branch
+        // unescaped while the same `let` one line out was renamed.
+        Expr::If {
+            condition,
+            then_branch,
+            then_value,
+            else_branch,
+            else_value,
+            ..
+        } => {
+            escape_expr(condition);
+            escape_block(then_branch);
+            if let Some(v) = then_value {
+                escape_expr(v);
+            }
+            if let Some(eb) = else_branch {
+                escape_block(eb);
+            }
+            if let Some(v) = else_value {
+                escape_expr(v);
+            }
+        }
+        Expr::Block { stmts, value, .. } => {
+            escape_block(stmts);
+            if let Some(v) = value {
+                escape_expr(v);
+            }
+        }
         // Expanded before code generation; see the doc comment.
         Expr::MacroInvocation { .. } => {}
         Expr::String(_) | Expr::Integer(_) | Expr::Float(_) | Expr::Char(_) | Expr::Bool(_) => {}

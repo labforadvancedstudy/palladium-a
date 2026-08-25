@@ -1,0 +1,82 @@
+// Test 04: `else if` chains (requirement N5-06).
+//
+// The parser used to refuse `else if` outright ("Expected '{' after else"), so
+// every chain in this corpus was written as a nest of `else { if ... }`. This
+// fixture is the same shapes written the way the requirement spells them:
+//
+//   * a chain of four arms ending in a final `else`
+//   * a chain with NO final `else`, where every arm may be false
+//   * a chain in TAIL position, whose arms are the function's return value —
+//     the case that proves the tail machinery still travels through the `else`
+
+fn grade(score: i64) -> i64 {
+    if score >= 90 {
+        4
+    } else if score >= 80 {
+        3
+    } else if score >= 70 {
+        2
+    } else if score >= 60 {
+        1
+    } else {
+        0
+    }
+}
+
+fn describe(n: i64) {
+    // No final `else`: nothing at all is printed for a value that matches no arm.
+    if n < 0 {
+        print("negative");
+    } else if n == 0 {
+        print("zero");
+    } else if n < 10 {
+        print("small");
+    }
+}
+
+fn main() {
+    print("Grades:");
+    print_int(grade(95));
+    print_int(grade(85));
+    print_int(grade(75));
+    print_int(grade(65));
+    print_int(grade(30));
+
+    print("Descriptions:");
+    describe(-3);
+    describe(0);
+    describe(7);
+    describe(42);
+
+    // The chain as a statement, with side effects rather than a value.
+    let mut bucket = 0;
+    let value = 17;
+    if value < 10 {
+        bucket = 1;
+    } else if value < 20 {
+        bucket = 2;
+    } else if value < 30 {
+        bucket = 3;
+    } else {
+        bucket = 4;
+    }
+    print("Bucket:");
+    print_int(bucket);
+
+    // A chain nested inside the arm of another chain.
+    let a = 5;
+    let b = 8;
+    if a > b {
+        print("a wins");
+    } else if a < b {
+        if b - a > 10 {
+            print("b wins by a lot");
+        } else if b - a > 2 {
+            print("b wins by some");
+        } else {
+            print("b wins by a little");
+        }
+    } else {
+        print("tie");
+    }
+}

@@ -222,6 +222,27 @@ pub struct CodeGenerator {
     /// and for a terminating mutual recursion no ordering of the definitions
     /// can give them that in place.
     enum_constructors: String,
+    /// Statements hoisted out of the expression currently being generated, to
+    /// be spliced in front of the statement that contains it.
+    ///
+    /// C HAS NO EXPRESSION WITH A BLOCK IN IT. `let x = if c { 1 } else { 2 };`
+    /// has to become a declaration, an `if` statement that assigns it, and a
+    /// use of the name — three statements where Palladium wrote one. GNU
+    /// statement-expressions (`({ ... })`) would express it in one, and are not
+    /// available: the backend is plain `gcc`/`cc` invoked without `-std=gnu*`
+    /// guarantees (`src/linker.rs`), and portable C is the contract.
+    ///
+    /// Emptied by `generate_statement`, which inserts it at the point the
+    /// statement started. Nested value expressions work because each
+    /// `generate_statement` saves and restores this buffer, so an inner
+    /// hoist lands inside the branch it belongs to and not in front of the
+    /// outer statement.
+    pending_hoists: String,
+    /// Serial number for hoisted temporaries. Function-scoped names would be
+    /// enough for C, but a single counter over the whole translation unit costs
+    /// nothing and makes every emitted name unique in the file, which is what a
+    /// reader diffing generated C wants.
+    hoist_counter: usize,
 }
 
 impl CodeGenerator {
@@ -248,6 +269,8 @@ impl CodeGenerator {
             defined_structs: std::collections::HashSet::new(),
             recursive_layout: crate::typeck::RecursiveLayout::default(),
             enum_constructors: String::new(),
+            pending_hoists: String::new(),
+            hoist_counter: 0,
         })
     }
 
@@ -538,6 +561,30 @@ impl CodeGenerator {
                 };
                 Some(Self::array_of(&elem_type, size))
             }
+            // The value of an `if`/block expression is its tail, so the tail's
+            // type is the temporary's type. Asked of the `then` side first and
+            // the `else` side only as a fallback: the type checker has already
+            // proved the two agree, so this is about which side this pass
+            // happens to have a rule for, not about which one is right.
+            //
+            // A block's tail may name a local the block itself binds, and those
+            // bindings do not exist yet when this is called from outside.
+            // `generate_hoisted_block` re-asks the question with the block's
+            // scope open; this arm is the answer for the cases that do not need
+            // it (a literal, a call, an outer variable).
+            Expr::If {
+                then_value,
+                else_value,
+                ..
+            } => then_value
+                .as_ref()
+                .and_then(|v| self.try_infer_expr_type(v))
+                .or_else(|| {
+                    else_value
+                        .as_ref()
+                        .and_then(|v| self.try_infer_expr_type(v))
+                }),
+            Expr::Block { value, .. } => value.as_ref().and_then(|v| self.try_infer_expr_type(v)),
             // No rule yet: ranges are only meaningful inside `for`, `?` and
             // macros are lowered elsewhere, and await/async is unimplemented.
             Expr::Range { .. }
@@ -878,6 +925,8 @@ impl CodeGenerator {
             Expr::Question { .. } => "`?` operator",
             Expr::MacroInvocation { .. } => "macro invocation",
             Expr::Await { .. } => "await",
+            Expr::If { .. } => "`if` expression",
+            Expr::Block { .. } => "block expression",
         }
     }
 
@@ -2773,11 +2822,22 @@ impl CodeGenerator {
     /// parameter iterated twice.
     fn generate_block(&mut self, stmts: &[Stmt], indent: &str) -> Result<()> {
         let outer = self.open_binding_scope();
+        let result = self.generate_stmts_in_current_scope(stmts, indent);
+        self.close_binding_scope(outer);
+        result
+    }
+
+    /// The body of [`CodeGenerator::generate_block`] WITHOUT the scope.
+    ///
+    /// Split out for the value-block lowering, which has to ask
+    /// `try_infer_expr_type` about the block's tail expression while the
+    /// block's own bindings are still visible — `{ let a = 3; a * 2 }` types its
+    /// value as `a`'s type, and `a` stops existing the moment the scope closes.
+    fn generate_stmts_in_current_scope(&mut self, stmts: &[Stmt], indent: &str) -> Result<()> {
         for stmt in stmts {
             self.output.push_str(indent);
             self.generate_statement(stmt)?;
         }
-        self.close_binding_scope(outer);
         Ok(())
     }
 
@@ -2822,8 +2882,74 @@ impl CodeGenerator {
         self.variables = variables;
     }
 
-    /// Generate code for a statement
+    /// Generate code for a statement.
+    ///
+    /// Owns the SPLICE POINT for hoisted value expressions: an `if` or a block
+    /// used as a value cannot be written inside a C expression, so
+    /// `generate_expression` emits its statements into `self.pending_hoists`
+    /// and leaves a temporary's name behind. Those statements have to appear
+    /// *before* the statement that used the value, and the only place that
+    /// knows where the statement began is here.
+    ///
+    /// `mark` is taken before the body runs and the buffer is inserted at that
+    /// offset afterwards, rather than appended, because by then the statement's
+    /// own text is already in `self.output`.
+    ///
+    /// Saving and restoring `pending_hoists` around the body is what makes
+    /// nesting work: a value expression inside a branch is generated by a
+    /// recursive `generate_statement`, which splices it into the branch and
+    /// hands an empty buffer back to the outer level.
     fn generate_statement(&mut self, stmt: &Stmt) -> Result<()> {
+        let mark = self.output.len();
+        let outer_hoists = std::mem::take(&mut self.pending_hoists);
+        let result = self.generate_statement_body(stmt);
+        let mine = std::mem::replace(&mut self.pending_hoists, outer_hoists);
+        result?;
+        if !mine.is_empty() {
+            // Splice in front of the statement's INDENTATION, not after it.
+            // `generate_block` writes the indent before calling this, so
+            // inserting at `mark` would put the first hoisted line behind that
+            // indent and leave the statement itself flush against the margin.
+            let (line_start, indent) = self.statement_indent(mark);
+            let spliced = Self::reindent_to(&mine, &indent);
+            self.output.insert_str(line_start, &spliced);
+        }
+        Ok(())
+    }
+
+    /// Where the statement's line begins, and the indentation already written
+    /// on it — empty when anything other than spaces precedes `offset`.
+    fn statement_indent(&self, offset: usize) -> (usize, String) {
+        let line_start = self.output[..offset].rfind('\n').map_or(0, |i| i + 1);
+        let prefix = &self.output[line_start..offset];
+        if prefix.chars().all(|c| c == ' ') {
+            (line_start, prefix.to_string())
+        } else {
+            (offset, String::new())
+        }
+    }
+
+    /// Prefix every non-empty line of `text` with `indent`.
+    ///
+    /// Purely cosmetic, and worth the few lines anyway: generated C is read
+    /// here (`build_output/*.c` is what a reviewer diffs when a lowering
+    /// changes), and a hoisted `if` left at column 4 inside a block indented to
+    /// 12 reads as if it escaped the block it is actually inside.
+    fn reindent_to(text: &str, indent: &str) -> String {
+        if indent.is_empty() {
+            return text.to_string();
+        }
+        let mut out = String::with_capacity(text.len() + indent.len() * 4);
+        for line in text.split_inclusive('\n') {
+            if !line.trim_start().is_empty() {
+                out.push_str(indent);
+            }
+            out.push_str(line);
+        }
+        out
+    }
+
+    fn generate_statement_body(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
             Stmt::Expr(expr) => {
                 self.output.push_str("    ");
@@ -2996,13 +3122,54 @@ impl CodeGenerator {
                 self.output.push_str("    }");
 
                 // Generate else branch if present
-                if let Some(else_stmts) = else_branch {
-                    self.output.push_str(" else {\n");
-                    self.generate_block(else_stmts, "")?;
-                    self.output.push_str("    }");
-                }
+                match else_branch {
+                    None => self.output.push('\n'),
+                    Some(else_stmts) => {
+                        // `else if` (N5-06) is emitted as C's `else if`, not as
+                        // a nested block. The parser represents the chain as
+                        // nesting, and emitting that nesting literally would
+                        // indent a five-arm chain five levels deep and make the
+                        // generated C read as something the programmer did not
+                        // write.
+                        //
+                        // WITH ONE EXCEPTION, AND IT IS A CORRECTNESS ONE: a
+                        // condition containing a value `if`/block hoists
+                        // statements in front of itself, and in front of an
+                        // `else if` means in front of the WHOLE chain — i.e.
+                        // evaluated unconditionally, on a path the programmer
+                        // wrote as unreachable. Whether that happens is not
+                        // decidable from the condition's shape here, so it is
+                        // MEASURED: generate the nested `if`, and fall back to
+                        // the block form (where the hoists stay inside the
+                        // `else`) if anything came out.
+                        let chained = match else_stmts.as_slice() {
+                            [nested @ Stmt::If { .. }] => {
+                                let saved = std::mem::take(&mut self.pending_hoists);
+                                let text =
+                                    self.capture_output(|g| g.generate_statement_body(nested))?;
+                                let hoisted = std::mem::replace(&mut self.pending_hoists, saved);
+                                if hoisted.is_empty() {
+                                    Some(text)
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        };
 
-                self.output.push('\n');
+                        match chained {
+                            Some(text) => {
+                                self.output.push_str(" else ");
+                                self.output.push_str(text.trim_start_matches(' '));
+                            }
+                            None => {
+                                self.output.push_str(" else {\n");
+                                self.generate_block(else_stmts, "")?;
+                                self.output.push_str("    }\n");
+                            }
+                        }
+                    }
+                }
             }
             Stmt::While {
                 condition, body, ..
@@ -3333,6 +3500,197 @@ impl CodeGenerator {
     }
 
     /// Generate code for an expression
+    /// A name no source program can collide with, for one hoisted value.
+    fn fresh_hoist_name(&mut self) -> String {
+        let n = self.hoist_counter;
+        self.hoist_counter += 1;
+        // `__pd` is reserved to this compiler and the digits make it unique;
+        // `c_ident::escape_reserved_names` never produces this shape.
+        format!("__pd_val{}", n)
+    }
+
+    /// Run `f` with a FRESH output buffer and return what it wrote, leaving
+    /// `self.output` exactly as it was.
+    ///
+    /// Everything in this file writes by appending to one string, so composing
+    /// a fragment out of order — a declaration whose type is only known after
+    /// the body has been generated — needs the body captured rather than
+    /// appended.
+    fn capture_output<F>(&mut self, f: F) -> Result<String>
+    where
+        F: FnOnce(&mut Self) -> Result<()>,
+    {
+        let saved = std::mem::take(&mut self.output);
+        let result = f(self);
+        let captured = std::mem::replace(&mut self.output, saved);
+        result?;
+        Ok(captured)
+    }
+
+    /// Emit `{ stmts...; <temp> = value; }` for one branch of a value
+    /// expression, and report the C type of `value`.
+    ///
+    /// The type is asked for INSIDE the block's binding scope, which is the
+    /// whole reason this is not `generate_block`: the tail of
+    /// `{ let a = 3; a * 2 }` is typed from `a`.
+    ///
+    /// The value's own hoists (an `if` expression nested in the tail) are
+    /// collected separately and emitted inside this block, in front of the
+    /// assignment — they are statements of THIS branch, not of the statement
+    /// that contains the whole construct.
+    fn generate_hoisted_block(
+        &mut self,
+        stmts: &[Stmt],
+        value: Option<&Expr>,
+        temp: &str,
+        indent: &str,
+    ) -> Result<(String, Option<String>)> {
+        let Some(value) = value else {
+            // The type checker refuses a value block with no tail expression
+            // (`check_value_block`), so reaching this means the two passes
+            // disagree — say so rather than emitting a C block that assigns
+            // nothing and leaves the temporary uninitialised.
+            return Err(CompileError::CodegenError {
+                message: "a block used as a value has no trailing expression; this should have \
+                          been refused by the type checker"
+                    .to_string(),
+            });
+        };
+
+        let outer = self.open_binding_scope();
+        let saved_hoists = std::mem::take(&mut self.pending_hoists);
+
+        let generated = (|| -> Result<(String, Option<String>)> {
+            let mut text =
+                self.capture_output(|g| g.generate_stmts_in_current_scope(stmts, indent))?;
+            let c_type = self.try_infer_expr_type(value);
+            let value_src = self.capture_output(|g| g.generate_expression(value))?;
+            let value_hoists = std::mem::take(&mut self.pending_hoists);
+            text.push_str(&Self::reindent_to(&value_hoists, indent));
+            text.push_str(&format!("{}{} = {};\n", indent, temp, value_src));
+            Ok((text, c_type))
+        })();
+
+        self.pending_hoists = saved_hoists;
+        self.close_binding_scope(outer);
+        generated
+    }
+
+    /// The C declaration type for a hoisted temporary, or a diagnostic.
+    fn hoist_temp_type(&self, candidates: [Option<String>; 2], kind: &str) -> Result<String> {
+        let inferred =
+            candidates
+                .into_iter()
+                .flatten()
+                .next()
+                .ok_or_else(|| CompileError::CodegenError {
+                    message: format!(
+                        "cannot infer the type of this {} expression's value, so the temporary \
+                         that holds it cannot be declared. Bind the branches to annotated \
+                         `let`s instead.",
+                        kind
+                    ),
+                })?;
+        if inferred.contains('[') {
+            // `T x[n]` is not assignable in C, so a hoisted array temporary
+            // would emit code gcc refuses. Refused here, by name.
+            return Err(CompileError::CodegenError {
+                message: format!(
+                    "an array cannot be the value of a {} expression: C has no array assignment, \
+                     so the hoisted temporary could not be written to",
+                    kind
+                ),
+            });
+        }
+        Ok(inferred)
+    }
+
+    /// Lower an `if` in value position (N5-03) to portable C.
+    ///
+    /// `let x = if c { 1 } else { 2 };` becomes
+    ///
+    /// ```text
+    /// long long __pd_val0;
+    /// if (c) { __pd_val0 = 1; } else { __pd_val0 = 2; }
+    /// long long x = __pd_val0;
+    /// ```
+    ///
+    /// A conditional expression (`c ? 1 : 2`) would be shorter and is wrong:
+    /// a branch may run statements before its value, and C's `?:` has nowhere
+    /// to put them.
+    fn generate_if_expression(&mut self, expr: &Expr) -> Result<()> {
+        let Expr::If {
+            condition,
+            then_branch,
+            then_value,
+            else_branch,
+            else_value,
+            ..
+        } = expr
+        else {
+            unreachable!("generate_if_expression called on {:?}", expr);
+        };
+        let Some(else_branch) = else_branch else {
+            return Err(CompileError::CodegenError {
+                message: "an `if` used as a value has no `else` branch; this should have been \
+                          refused by the type checker"
+                    .to_string(),
+            });
+        };
+
+        let temp = self.fresh_hoist_name();
+
+        // The condition is evaluated BEFORE the `if`, so anything it hoists
+        // belongs in the enclosing statement's prelude - which is where
+        // `pending_hoists` already points.
+        let condition_src = self.capture_output(|g| g.generate_expression(condition))?;
+
+        let (then_text, then_type) =
+            self.generate_hoisted_block(then_branch, then_value.as_deref(), &temp, "        ")?;
+        let (else_text, else_type) =
+            self.generate_hoisted_block(else_branch, else_value.as_deref(), &temp, "        ")?;
+
+        let c_type = self.hoist_temp_type([then_type, else_type], "`if`")?;
+
+        self.pending_hoists
+            .push_str(&format!("    {} {};\n", c_type, temp));
+        self.pending_hoists
+            .push_str(&format!("    if ({}) {{\n", condition_src));
+        self.pending_hoists.push_str(&then_text);
+        self.pending_hoists.push_str("    } else {\n");
+        self.pending_hoists.push_str(&else_text);
+        self.pending_hoists.push_str("    }\n");
+
+        self.output.push_str(&temp);
+        Ok(())
+    }
+
+    /// Lower a block in value position (N5-05) to portable C.
+    ///
+    /// The braces are kept in the emitted C rather than flattened, so a local
+    /// the block binds cannot collide with a name in the enclosing function -
+    /// `{ let a = 3; a }` beside an outer `a` is two variables in Palladium and
+    /// has to stay two in C.
+    fn generate_block_expression(&mut self, expr: &Expr) -> Result<()> {
+        let Expr::Block { stmts, value, .. } = expr else {
+            unreachable!("generate_block_expression called on {:?}", expr);
+        };
+
+        let temp = self.fresh_hoist_name();
+        let (body, c_type) =
+            self.generate_hoisted_block(stmts, value.as_deref(), &temp, "        ")?;
+        let c_type = self.hoist_temp_type([c_type, None], "block")?;
+
+        self.pending_hoists
+            .push_str(&format!("    {} {};\n", c_type, temp));
+        self.pending_hoists.push_str("    {\n");
+        self.pending_hoists.push_str(&body);
+        self.pending_hoists.push_str("    }\n");
+
+        self.output.push_str(&temp);
+        Ok(())
+    }
+
     fn generate_expression(&mut self, expr: &Expr) -> Result<()> {
         match expr {
             Expr::String(s) => {
@@ -3736,6 +4094,11 @@ impl CodeGenerator {
                 // that is generated is the free function `<name>_poll`.
                 return Err(CompileError::await_unimplemented(*span));
             }
+            // Value positions. Both leave a temporary's NAME here and their
+            // statements in `pending_hoists`; see `generate_statement` for
+            // where those get spliced back in.
+            Expr::If { .. } => self.generate_if_expression(expr)?,
+            Expr::Block { .. } => self.generate_block_expression(expr)?,
         }
         Ok(())
     }

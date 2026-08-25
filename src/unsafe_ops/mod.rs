@@ -232,6 +232,45 @@ impl UnsafeChecker {
 
             Expr::Await { expr, .. } => self.check_expression(expr),
 
+            // A value `if`/block runs statements, and a raw-pointer
+            // dereference hidden in one of them is exactly what this pass is
+            // for. Walking only the tail expression would have made
+            // `let x = { *p };` unsafe and `let x = { let v = *p; v };` not.
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                self.check_expression(condition)?;
+                for stmt in then_branch {
+                    self.check_statement(stmt)?;
+                }
+                if let Some(v) = then_value {
+                    self.check_expression(v)?;
+                }
+                if let Some(stmts) = else_branch {
+                    for stmt in stmts {
+                        self.check_statement(stmt)?;
+                    }
+                }
+                if let Some(v) = else_value {
+                    self.check_expression(v)?;
+                }
+                Ok(())
+            }
+            Expr::Block { stmts, value, .. } => {
+                for stmt in stmts {
+                    self.check_statement(stmt)?;
+                }
+                if let Some(v) = value {
+                    self.check_expression(v)?;
+                }
+                Ok(())
+            }
+
             // Literals and identifiers are safe
             Expr::Integer(_)
             | Expr::Float(_)

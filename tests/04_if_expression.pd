@@ -1,0 +1,70 @@
+// Test 04: `if` in expression position (requirement N5-03).
+//
+// `let x = if c { 1 } else { 2 };` used to die in the parser at the `if`,
+// because `Expr` had no `If` form at all and `parse_let` only ever reached the
+// precedence ladder. The shapes below are the ones the requirement names:
+//
+//   * bound by a `let`, with and without a type annotation
+//   * nested — an `if` expression as the value of another one's branch
+//   * passed straight to a function as an argument
+//   * a branch that runs statements BEFORE the value it produces
+//   * a non-integer value, so the hoisted temporary cannot be assumed `i64`
+
+fn max(a: i64, b: i64) -> i64 {
+    let m = if a > b { a } else { b };
+    m
+}
+
+fn main() {
+    print("Bound by let:");
+    let x = if 10 > 5 { 1 } else { 2 };
+    print_int(x);
+
+    let annotated: i64 = if 10 < 5 { 100 } else { 200 };
+    print_int(annotated);
+
+    print("Nested:");
+    let a = 3;
+    let b = 9;
+    let nested = if a > b {
+        if a > 100 { 1 } else { 2 }
+    } else {
+        if b > 100 { 3 } else { 4 }
+    };
+    print_int(nested);
+
+    print("As an argument:");
+    print_int(if a < b { 111 } else { 222 });
+    print(if a < b { "a is smaller" } else { "b is smaller" });
+
+    print("Inside arithmetic:");
+    let sum = 1000 + if a == 3 { 7 } else { 8 };
+    print_int(sum);
+
+    print("Branch with statements before its value:");
+    let computed = if a < b {
+        let doubled = b * 2;
+        doubled + a
+    } else {
+        let halved = b / 2;
+        halved - a
+    };
+    print_int(computed);
+
+    print("Through a function:");
+    print_int(max(4, 17));
+    print_int(max(23, 5));
+
+    print("Chained through else if:");
+    let n = 75;
+    let grade = if n >= 90 {
+        "A"
+    } else if n >= 80 {
+        "B"
+    } else if n >= 70 {
+        "C"
+    } else {
+        "F"
+    };
+    print(grade);
+}

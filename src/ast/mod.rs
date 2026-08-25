@@ -344,7 +344,7 @@ pub fn local_type_shadows_import(program: &Program, name: &str) -> bool {
 }
 
 /// Statements
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     /// Expression statement
     Expr(Expr),
@@ -399,7 +399,7 @@ pub enum Stmt {
 }
 
 /// Match arm
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Vec<Stmt>,
@@ -532,6 +532,40 @@ pub enum Expr {
     },
     /// Await expression
     Await { expr: Box<Expr>, span: Span },
+    /// `if` in VALUE position — `let x = if c { 1 } else { 2 };` (N5-03).
+    ///
+    /// Distinct from [`Stmt::If`] rather than a flag on it, because the two
+    /// carry different obligations: a statement `if` may have no `else` and
+    /// neither branch has to produce anything, while this one must have both
+    /// and both must agree on a type. Folding them together would have made
+    /// every consumer of `Stmt::If` ask "but is this one the value kind?".
+    ///
+    /// WHY THE BRANCH VALUE IS SEPARATE FROM THE BRANCH STATEMENTS: a branch
+    /// is `{ stmts... ; value }`, and once the tail is inside the `Vec<Stmt>`
+    /// nothing downstream can tell it from a `;`-terminated statement — the
+    /// same fact that forced `BlockTail` to exist in the parser.
+    ///
+    /// WHY THE VALUES ARE `Option`: the parser accepts `if c { print("x"); }`
+    /// here and the TYPE CHECKER refuses it, so the diagnostic can say
+    /// "an `if` used as a value needs an `else`" instead of the parser's
+    /// "expected ...". `None` never reaches codegen.
+    If {
+        condition: Box<Expr>,
+        then_branch: Vec<Stmt>,
+        then_value: Option<Box<Expr>>,
+        else_branch: Option<Vec<Stmt>>,
+        else_value: Option<Box<Expr>>,
+        span: Span,
+    },
+    /// A block in VALUE position — `let x = { let a = 1; a + 1 };` (N5-05).
+    ///
+    /// `value` is the trailing `;`-less expression; `None` is a block that ends
+    /// in a statement, which the type checker refuses in value position.
+    Block {
+        stmts: Vec<Stmt>,
+        value: Option<Box<Expr>>,
+        span: Span,
+    },
 }
 
 /// Enum constructor data
@@ -544,7 +578,7 @@ pub enum EnumConstructorData {
 }
 
 /// Assignment targets
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AssignTarget {
     /// Simple variable assignment
     Ident(String),
@@ -607,6 +641,8 @@ impl Expr {
             Expr::Question { span, .. } => *span,
             Expr::MacroInvocation { span, .. } => *span,
             Expr::Await { span, .. } => *span,
+            Expr::If { span, .. } => *span,
+            Expr::Block { span, .. } => *span,
         }
     }
 }
@@ -1179,6 +1215,51 @@ impl std::fmt::Display for Expr {
                 write!(f, ")")
             }
             Expr::Await { expr, .. } => write!(f, "{}.await", expr),
+            // The STATEMENTS of a value block are not printed. This `Display`
+            // is used in diagnostics, where the interesting part is the value
+            // and a multi-statement body would run the message off the line;
+            // `...` says something was elided rather than pretending the block
+            // was empty.
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                write!(f, "if {} {{ ", condition)?;
+                if !then_branch.is_empty() {
+                    write!(f, "... ")?;
+                }
+                match then_value {
+                    Some(v) => write!(f, "{} }}", v)?,
+                    None => write!(f, "}}")?,
+                }
+                match else_branch {
+                    Some(stmts) => {
+                        write!(f, " else {{ ")?;
+                        if !stmts.is_empty() {
+                            write!(f, "... ")?;
+                        }
+                        match else_value {
+                            Some(v) => write!(f, "{} }}", v),
+                            None => write!(f, "}}"),
+                        }
+                    }
+                    None => Ok(()),
+                }
+            }
+            Expr::Block { stmts, value, .. } => {
+                write!(f, "{{ ")?;
+                if !stmts.is_empty() {
+                    write!(f, "... ")?;
+                }
+                match value {
+                    Some(v) => write!(f, "{} }}", v),
+                    None => write!(f, "}}"),
+                }
+            }
         }
     }
 }

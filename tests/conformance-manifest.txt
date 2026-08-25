@@ -66,9 +66,12 @@ tests/02_types_enums.pd	vacuous	-	-	unscheduled	claims: enum types. Declares no 
 tests/02_types_primitives.pd	run	-	expected	-	-
 tests/02_types_structs.pd	run	-	expected	-	-
 tests/03_functions_basic.pd	run	-	expected	-	-
+tests/04_block_expression.pd	run	-	expected	-	-
 tests/04_control_flow_for.pd	run	-	expected	-	-
 tests/04_control_flow_if.pd	run	-	expected	-	-
 tests/04_control_flow_while.pd	run	-	expected	-	-
+tests/04_else_if.pd	run	-	expected	-	-
+tests/04_if_expression.pd	run	-	expected	-	-
 tests/05_borrowing_references.pd	run	-	expected	-	-
 tests/05_ownership_basic.pd	run	-	expected	-	-
 tests/06_pattern_matching.pd	run	-	expected	-	-

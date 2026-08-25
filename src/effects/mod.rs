@@ -251,6 +251,20 @@ impl EffectAnalyzer {
         }
     }
 
+    /// Effects of `{ stmts...; value }` in value position.
+    fn analyze_value_block(&mut self, stmts: &[Stmt], value: Option<&Expr>) -> Result<EffectSet> {
+        let mut effects = EffectSet::new();
+        for stmt in stmts {
+            let stmt_effects = self.analyze_statement(stmt)?;
+            effects.union(&stmt_effects);
+        }
+        if let Some(expr) = value {
+            let value_effects = self.analyze_expression(expr)?;
+            effects.union(&value_effects);
+        }
+        Ok(effects)
+    }
+
     /// Analyze effects for an expression
     fn analyze_expression(&mut self, expr: &Expr) -> Result<EffectSet> {
         match expr {
@@ -378,6 +392,25 @@ impl EffectAnalyzer {
                 effects.add(Effect::Panic);
                 Ok(effects)
             }
+
+            // A value `if`/block has the effects of everything it runs: the
+            // statements of each branch as well as the value it produces.
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                let mut effects = self.analyze_expression(condition)?;
+                effects.union(&self.analyze_value_block(then_branch, then_value.as_deref())?);
+                if let Some(stmts) = else_branch {
+                    effects.union(&self.analyze_value_block(stmts, else_value.as_deref())?);
+                }
+                Ok(effects)
+            }
+            Expr::Block { stmts, value, .. } => self.analyze_value_block(stmts, value.as_deref()),
 
             // Await has async effect
             Expr::Await { expr, .. } => {

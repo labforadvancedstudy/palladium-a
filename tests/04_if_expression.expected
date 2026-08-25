@@ -1,0 +1,17 @@
+Bound by let:
+1
+200
+Nested:
+4
+As an argument:
+111
+a is smaller
+Inside arithmetic:
+1007
+Branch with statements before its value:
+21
+Through a function:
+17
+23
+Chained through else if:
+C

@@ -336,7 +336,6 @@ fn test_control_flow() {
 }
 
 #[test]
-#[ignore = "XFAIL: `else if` — grammar.ebnf:198 'There is NO `else if`: after `else` the parser requires \\'{\\'' (owned by M2, item 2)"]
 fn test_else_if_chain() {
     compile_and_verify(
         "fn main() {

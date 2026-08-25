@@ -1025,9 +1025,45 @@ impl BorrowChecker {
             Expr::Await { expr, .. } => {
                 self.check_expr(expr)?;
             }
+            // A branch is a SCOPE: a local bound inside it dies at its `}`,
+            // exactly like the `unsafe` block above. Checking the statements
+            // without entering a scope would let a branch-local binding
+            // outlive the branch and answer for an outer name of the same
+            // spelling.
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                self.check_expr(condition)?;
+                self.check_value_block(then_branch, then_value.as_deref())?;
+                if let Some(stmts) = else_branch {
+                    self.check_value_block(stmts, else_value.as_deref())?;
+                }
+            }
+            Expr::Block { stmts, value, .. } => {
+                self.check_value_block(stmts, value.as_deref())?;
+            }
         }
 
         Ok(())
+    }
+
+    /// Check `{ stmts...; value }` in value position, in its own scope.
+    fn check_value_block(&mut self, stmts: &[Stmt], value: Option<&Expr>) -> Result<()> {
+        self.context.enter_scope();
+        let result = (|| {
+            self.check_block_stmts(stmts)?;
+            match value {
+                Some(expr) => self.check_expr(expr),
+                None => Ok(()),
+            }
+        })();
+        self.context.exit_scope();
+        result
     }
 
     /// Check the statements of a nested block, with their own mutability scope.

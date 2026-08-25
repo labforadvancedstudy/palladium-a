@@ -638,6 +638,8 @@ impl Parser {
             Expr::Deref { span, .. } => *span,
             Expr::Question { span, .. } => *span,
             Expr::MacroInvocation { span, .. } => *span,
+            Expr::If { span, .. } => *span,
+            Expr::Block { span, .. } => *span,
             Expr::Await { span, .. } => *span,
         }
     }
@@ -2203,13 +2205,29 @@ impl Parser {
         let mut else_tail = None;
         let else_branch = if self.check(&Token::Else) {
             self.advance()?; // consume 'else'
-            self.consume(Token::LeftBrace, "Expected '{' after else")?;
 
-            let (else_stmts, tail) = self.parse_block_with_implicit_return()?;
-            else_tail = Some(Box::new(tail));
+            if self.check(&Token::If) {
+                // `else if` (N5-06). There is no `ElseIf` node and there does
+                // not need to be one: the chain IS the nesting the corpus used
+                // to have to write by hand, so the rest of the compiler sees
+                // exactly the shape it already handles.
+                //
+                // The tail travels with it. An `else if` arm is a branch like
+                // any other, and dropping its `BlockTail` here would silently
+                // un-return the arms of every tail-position chain — the D3
+                // defect one level further in (see `BlockTail`).
+                let (nested, nested_tail) = self.parse_if_with_tail()?;
+                else_tail = Some(Box::new(nested_tail));
+                Some(vec![nested])
+            } else {
+                self.consume(Token::LeftBrace, "Expected '{' after else")?;
 
-            let _end_span = self.consume(Token::RightBrace, "Expected '}' after else body")?;
-            Some(else_stmts)
+                let (else_stmts, tail) = self.parse_block_with_implicit_return()?;
+                else_tail = Some(Box::new(tail));
+
+                let _end_span = self.consume(Token::RightBrace, "Expected '}' after else body")?;
+                Some(else_stmts)
+            }
         } else {
             None
         };
@@ -2235,6 +2253,127 @@ impl Parser {
                 span,
             },
         ))
+    }
+
+    /// Parse an `if` in VALUE position — `let x = if c { 1 } else { 2 };`.
+    ///
+    /// The parse is the STATEMENT parse: `parse_if_with_tail` already reads
+    /// every branch and already reports which statement of each branch was in
+    /// tail position, and those two facts are exactly what a value `if` needs.
+    /// Writing a second `if` parser here would be a second grammar that could
+    /// drift from the first, and `else if` chains would have to be implemented
+    /// twice.
+    ///
+    /// What this adds is the REINTERPRETATION: statements plus a `BlockTail`
+    /// become statements plus a value expression (see [`Parser::split_value_block`]).
+    fn parse_if_expression(&mut self) -> Result<Expr> {
+        let (stmt, tail) = self.parse_if_with_tail()?;
+        Ok(Self::if_stmt_into_expr(stmt, &tail))
+    }
+
+    /// Parse a block in VALUE position — `let x = { let a = 1; a + 1 };`.
+    ///
+    /// The opening `{` has already been consumed by `parse_primary`.
+    fn parse_block_expression(&mut self, start_span: Span) -> Result<Expr> {
+        let (stmts, tail) = self.parse_block_with_implicit_return()?;
+        let end_span = self.consume(Token::RightBrace, "Expected '}' after block expression")?;
+        let (stmts, value) = Self::split_value_block(stmts, &tail);
+        Ok(Expr::Block {
+            stmts,
+            value,
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
+        })
+    }
+
+    /// Reinterpret a parsed `Stmt::If` + its `BlockTail` as an `Expr::If`.
+    ///
+    /// Total by construction: anything that is not the `if` shape the tail
+    /// describes yields a branch with no value, which the type checker refuses
+    /// by name. This function never invents a diagnostic of its own, because
+    /// the shape it would be complaining about is one it built itself.
+    fn if_stmt_into_expr(stmt: Stmt, tail: &BlockTail) -> Expr {
+        let Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            span,
+        } = stmt
+        else {
+            // `parse_if_with_tail` returns nothing else.
+            unreachable!("parse_if_with_tail returned a statement that is not an `if`");
+        };
+        let (then_tail, else_tail) = match tail {
+            BlockTail::If {
+                then_tail,
+                else_tail,
+                ..
+            } => (then_tail.as_ref(), else_tail.as_ref()),
+            _ => unreachable!("parse_if_with_tail returned a tail that is not an `if` tail"),
+        };
+
+        let (then_branch, then_value) = Self::split_value_block(then_branch, then_tail);
+        let (else_branch, else_value) = match (else_branch, else_tail) {
+            (Some(stmts), Some(t)) => {
+                let (stmts, value) = Self::split_value_block(stmts, t);
+                (Some(stmts), value)
+            }
+            // No `else` at all: the type checker names the missing branch.
+            (eb, _) => (eb, None),
+        };
+
+        Expr::If {
+            condition: Box::new(condition),
+            then_branch,
+            then_value,
+            else_branch,
+            else_value,
+            span,
+        }
+    }
+
+    /// Split a parsed block into "the statements it runs" and "the value it
+    /// produces", using the tail the block parser recorded.
+    ///
+    /// The tail is the only witness that the last statement was written
+    /// without a `;`; by the time there is a `Vec<Stmt>` the two spellings are
+    /// the same node. That is the whole reason `BlockTail` exists, and it is
+    /// why this cannot be a pass over the AST.
+    ///
+    /// A block whose tail is itself an `if` produces an `Expr::If` value — so
+    /// `let x = if a { if b { 1 } else { 2 } } else { 3 };` nests without the
+    /// inner `if` ever being parsed a second time.
+    fn split_value_block(mut stmts: Vec<Stmt>, tail: &BlockTail) -> (Vec<Stmt>, Option<Box<Expr>>) {
+        match tail {
+            BlockTail::Expr => match stmts.pop() {
+                Some(Stmt::Expr(expr)) => (stmts, Some(Box::new(expr))),
+                // Put it back: the tail said `Expr` and the statement is not
+                // one, so this block has no value the checker can use.
+                Some(other) => {
+                    stmts.push(other);
+                    (stmts, None)
+                }
+                None => (stmts, None),
+            },
+            BlockTail::If { .. } => match stmts.pop() {
+                Some(stmt @ Stmt::If { .. }) => {
+                    let expr = Self::if_stmt_into_expr(stmt, tail);
+                    (stmts, Some(Box::new(expr)))
+                }
+                Some(other) => {
+                    stmts.push(other);
+                    (stmts, None)
+                }
+                None => (stmts, None),
+            },
+            // `match` in value position is N5-04 and is not implemented; the
+            // block is reported as valueless rather than mis-lowered.
+            BlockTail::Match { .. } | BlockTail::NoValue => (stmts, None),
+        }
     }
 
     /// Parse a while statement
@@ -2978,6 +3117,21 @@ impl Parser {
 
     /// Parse a primary expression
     fn parse_primary(&mut self) -> Result<Expr> {
+        // `if` and `{` in expression position (N5-03, N5-05). Peeked rather
+        // than consumed, because both sub-parsers start by consuming their own
+        // opening token.
+        //
+        // Statement position is unaffected: `parse_statement` routes `Token::If`
+        // to `parse_if`, and `parse_block_with_implicit_return` routes it to
+        // `parse_if_with_tail`, both of which run before any expression parse.
+        if self.check(&Token::If) {
+            return self.parse_if_expression();
+        }
+        if self.check(&Token::LeftBrace) {
+            let start_span = self.advance()?.1; // consume '{'
+            return self.parse_block_expression(start_span);
+        }
+
         match self.advance()? {
             (Token::String(s), _) => Ok(Expr::String(s)),
             (Token::Integer(n), _) => Ok(Expr::Integer(n)),

@@ -1,0 +1,15 @@
+Simple:
+3
+With locals:
+12
+Nested:
+20
+As an argument:
+42
+a block can produce a string
+Composed with if:
+1
+111
+Shadowing stays inside:
+42
+1

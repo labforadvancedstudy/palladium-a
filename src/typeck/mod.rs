@@ -4012,7 +4012,96 @@ impl TypeChecker {
                 ))
             }
             Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                span,
+            } => {
+                let cond_type = self.check_expression(condition)?;
+                if cond_type != CheckerType::Bool {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "Bool".to_string(),
+                        found: cond_type.to_string(),
+                        span: Some(*span),
+                    });
+                }
+
+                // AN `if` USED AS A VALUE NEEDS AN `else`. Not a parse error,
+                // because the parser cannot see the difference: the same tokens
+                // are a perfectly good statement one line up. The refusal has
+                // to say which of the two readings failed, so it is stated
+                // here, where "this `if` is in value position" is a fact rather
+                // than a guess.
+                if else_branch.is_none() {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "an `if` used as a value to have an `else` branch, so every \
+                                   path produces one"
+                            .to_string(),
+                        found: "an `if` with no `else`".to_string(),
+                        span: Some(*span),
+                    });
+                }
+
+                let then_type =
+                    self.check_value_block(then_branch, then_value.as_deref(), *span)?;
+                let else_type = self.check_value_block(
+                    else_branch.as_deref().unwrap_or(&[]),
+                    else_value.as_deref(),
+                    *span,
+                )?;
+
+                // ONE TYPE, NOT TWO. The value is stored in a single
+                // hoisted temporary (see `src/codegen/mod.rs`), so branches
+                // that disagree have no C declaration to be given.
+                if then_type != else_type {
+                    return Err(CompileError::TypeMismatch {
+                        expected: format!("both branches of this `if` to have type {}", then_type),
+                        found: format!("an `else` branch of type {}", else_type),
+                        span: Some(*span),
+                    });
+                }
+
+                Ok(then_type)
+            }
+            Expr::Block { stmts, value, span } => {
+                self.check_value_block(stmts, value.as_deref(), *span)
+            }
         }
+    }
+
+    /// Type check `{ stmts...; value }` in VALUE position and return the type
+    /// of `value`.
+    ///
+    /// A block with no trailing expression has no value to give — `()` is not
+    /// an answer here, because nothing in this language can hold one, and
+    /// accepting it would send codegen looking for a C type for a variable that
+    /// stores nothing. So it is refused, and the message names the missing
+    /// tail rather than a type mismatch nobody wrote.
+    fn check_value_block(
+        &mut self,
+        stmts: &[Stmt],
+        value: Option<&Expr>,
+        span: Span,
+    ) -> Result<CheckerType> {
+        self.symbols.enter_scope();
+        let result = (|| {
+            for stmt in stmts {
+                self.check_statement(stmt)?;
+            }
+            match value {
+                Some(expr) => self.check_expression(expr),
+                None => Err(CompileError::TypeMismatch {
+                    expected: "this block to end in an expression, so it has a value".to_string(),
+                    found: "a block whose last statement ends in `;`".to_string(),
+                    span: Some(span),
+                }),
+            }
+        })();
+        self.symbols.exit_scope();
+        result
     }
 
     /// Check that a pattern is compatible with the given type

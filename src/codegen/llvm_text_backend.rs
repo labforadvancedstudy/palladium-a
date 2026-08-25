@@ -1435,6 +1435,15 @@ impl LLVMTextBackend {
             }
 
             Expr::Await { span, .. } => Err(unimplemented_await(*span)),
+
+            // The LLVM text backend is refused wholesale at the driver, so
+            // these arms exist to keep the match exhaustive. They are NOT a
+            // lowering: an honest one needs basic blocks and a phi, and
+            // claiming one here would be a second backend making promises the
+            // first has to keep.
+            Expr::If { span, .. } | Expr::Block { span, .. } => {
+                Err(unimplemented_value_block(*span))
+            }
         }
     }
 
@@ -1670,6 +1679,25 @@ fn unimplemented_await(span: Span) -> CompileError {
         workaround: "declare the function to return its value directly (`-> T`, not \
              `-> Future<T>`) and call it; deleting `.await` on its own leaves a Future where a \
              value is required"
+            .to_string(),
+        span: Some(span),
+    }
+}
+
+/// An `if` or a block used as a VALUE (N5-03, N5-05).
+///
+/// The C backend lowers these by hoisting: a temporary, a statement-form `if`
+/// that assigns it, and a use of the name. The same shape here needs basic
+/// blocks and a phi node, and this backend's statement lowering has neither —
+/// so the arm refuses instead of emitting something that links.
+fn unimplemented_value_block(span: Span) -> CompileError {
+    CompileError::Unimplemented {
+        construct: "an `if` or a block used as a value".to_string(),
+        consequence: "this backend has no branch-and-merge lowering for an expression, so the \
+             expression would be replaced by a constant and neither branch would run"
+            .to_string(),
+        workaround: "compile without `--llvm`, which is the supported backend and implements \
+             both; or bind the value with a `let mut` and assign it from a statement `if`"
             .to_string(),
         span: Some(span),
     }
