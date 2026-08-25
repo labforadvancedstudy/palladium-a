@@ -147,7 +147,7 @@ stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fi
 **D6은 결함이 아니었다 (철회).** `CLAUDE.md`가 열린 결함으로 올려뒀으나 `191f8c1`에서 이미 고쳐졌고,
 이 파일의 베이스보다 12커밋 앞선다. 명시된 다섯 프로그램 전부 재실행 — 하나도 재현되지 않는다
 (`t(s); t(s)` → `5 5`, `take2(s,s)` → `10`, `bump(&mut p)` 연속 → `2`, 필드→빌트인 후 재사용 → `abc 3 1`).
-호출 경로 `src/ownership/borrow_checker.rs:912-919`이 per-call lifetime을 만들고 인자 검사 후 끝낸다
+호출 경로 `src/ownership/borrow_checker.rs:954-961`이 per-call lifetime을 만들고 인자 검사 후 끝낸다
 (`new_lifetime()` :891 → `check_call_args` :894 → `end_borrows(&call_lifetime)` :897).
 당시 인용됐던 줄은 대여된 **반환값**의 소유권 분류이지 인자 lifetime이 아니다 — green 핀이 붙은 채로
 거짓 주장을 뒷받침하고 있었다. (옛 줄번호는 일부러 적지 않는다: 이 트리에 없는 리비전을 가리키는

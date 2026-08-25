@@ -133,7 +133,7 @@ evidence = [
   "conformance: tests/reject/uncalled_body_is_checked.pd reject",
   "src: tests/reject/uncalled_body_is_checked.pd:21-24 \"fn bad()\" is called by nothing and still refused, which is what makes the fixture above a statement about lifetimes",
   "gate: make conformance -> reject=30 verified=68 -- the pair above is in the corpus those numbers count",
-  "src: src/ownership/borrow_checker.rs:731-734 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
+  "src: src/ownership/borrow_checker.rs:765-768 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
   "src: src/ownership/mod.rs:25-33 \"pub enum Lifetime\" -- the four variants a lifetime can be, none of which carries a relation to another",
   "src: src/ownership/mod.rs:101-126 \"constraints: Vec<LifetimeConstraint>\" at :101 and \"pub struct LifetimeConstraint\" at :124 with its longer/shorter pair -- the only type in the module that RELATES two lifetimes",
   "src: src/ownership/mod.rs:450-454 add_constraint, the only writer of that vector",
@@ -178,8 +178,8 @@ evidence = [
   "conformance: tests/05_ownership_basic.pd run",
   "conformance: tests/05_borrowing_references.pd run",
   "src: src/typeck/mod.rs:714-718 Type::Reference maps to its inner type — 'TODO: Proper reference type handling'",
-  "src: src/ownership/borrow_checker.rs:912 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",
-  "src: src/ownership/borrow_checker.rs:918 self.context.end_borrows(&call_lifetime) — argument borrows end with the call",
+  "src: src/ownership/borrow_checker.rs:954 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",
+  "src: src/ownership/borrow_checker.rs:960 self.context.end_borrows(&call_lifetime) — argument borrows end with the call",
   "conformance: tests/regression/param_reused_after_call.pd run",
   "conformance: tests/reject/mut_borrow_of_immutable.pd reject",
 ]
@@ -252,7 +252,7 @@ evidence = [
   "conformance: tests/06_pattern_matching.pd run",
   "src: src/ast/mod.rs:520 pub enum Pattern — three variants only",
   "src: src/typeck/mod.rs:4417-4423 exhaustiveness runs only when the scrutinee is an enum",
-  "src: src/codegen/mod.rs:3732-3732 match lowers to an if/else-if chain",
+  "src: src/codegen/mod.rs:3745-3750 match lowers to an if/else-if chain",
 ]
 note = "No literal, range, or-, guard, tuple or slice patterns, so `match` cannot dispatch on an integer."
 
@@ -265,7 +265,7 @@ evidence = [
   "conformance: tests/04_control_flow_while.pd run",
   "conformance: tests/reject/loop_keyword.pd run",
   "conformance: tests/04_loop_break_value.pd run",
-  "src: src/codegen/mod.rs:3637-3639 for-over-array emits sizeof(...)/sizeof(...[0]), which counts elements only for an array OBJECT -- see src/codegen/mod.rs:3614-3622 for the branch that refuses to use it on a decayed parameter",
+  "src: src/codegen/mod.rs:3654-3656 for-over-array emits sizeof(...)/sizeof(...[0]), which counts elements only for an array OBJECT -- see src/codegen/mod.rs:3631-3639 for the branch that refuses to use it on a decayed parameter",
 ]
 
 [core_language.control_flow.conditionals]
@@ -337,13 +337,13 @@ note = "Result and Option are ordinary user enums if you declare them."
 [error_handling.question_mark]
 description = "`?` for error propagation with early return."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
-implementation = "partial"
+implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:2780-2781 emits a struct Result temporary — a layout codegen never defines",
-  "src: src/codegen/mod.rs:3812-3812 the comment describing that layout",
+  "src: src/typeck/mod.rs:4211-4211 the type checker refuses `?` by name, before any C exists",
+  "src: src/codegen/mod.rs:4900-4904 the code generator refuses it too, at the arm that used to lower it",
   "conformance: tests/reject/question_mark_operator.pd reject",
 ]
-note = "No longer silent. This row used to read \"it typechecks, and the failure surfaces in gcc\" -- true of the codegen path the two citations above describe, and no longer true of the compiler: the type checker refuses `?` by name before any C exists (defect D5's fix). The lowering is still there and still refers to a layout nothing defines, which is why the citations stay and why this is `partial` rather than `unimplemented`."
+note = "No longer silent, and no longer lowered. This row used to read \"it typechecks, and the failure surfaces in gcc\", then `partial` on the grounds that the lowering was still there emitting a `struct Result` layout nothing defines. It is not there: both citations for it pointed at code that had been deleted (reference-array parameter handling and a match-field comment occupied those lines), so the two claims are retracted and stated here without a citation form, as A6.4's withdrawn claim is -- a deleted line cannot be pinned, and pinning a live line that does not contain the claim is worse than saying so."
 
 [error_handling.try_blocks]
 description = "`try { ... }` for scoped error handling."
@@ -373,7 +373,7 @@ description = "No await operator; the compiler places async boundaries."
 spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:4895-4900 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
+  "src: src/codegen/mod.rs:4912-4916 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
   "conformance: tests/reject/async_fn.pd reject",
   "conformance: tests/10_async_await.pd vacuous",
 ]

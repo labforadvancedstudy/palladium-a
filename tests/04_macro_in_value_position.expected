@@ -6,5 +6,7 @@ A macro as the tail of a value block:
 42
 A macro inside a value block inside a value if:
 100
-A macro in a value loop's break, and in a value match arm:
+A macro in a value loop's break:
 42
+A macro in a value match arm:
+100

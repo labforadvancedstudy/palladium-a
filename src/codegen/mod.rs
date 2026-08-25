@@ -925,7 +925,7 @@ impl CodeGenerator {
     /// front end and here re-checks a reference's mutability - the typechecker
     /// drops it (`src/typeck/mod.rs:4177`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
-    /// (`src/ownership/borrow_checker.rs:579-581`). So `fn f(xs: &[i64; 3])` could
+    /// (`src/ownership/borrow_checker.rs:613-615`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
     /// the callee's mutable binding, where it is legitimate. Measured, before
     /// this check: the caller's `v[0]` came back 99 through both a shared and a
@@ -1182,7 +1182,7 @@ impl CodeGenerator {
 
         // AN OWNED EMPTY STRING. `src/builtins.rs` declares seven builtins
         // `ReturnMode::Owned`, and the ownership pass derives its signatures from
-        // that table (src/ownership/borrow_checker.rs:112). Four of them —
+        // that table (src/ownership/borrow_checker.rs:121). Four of them —
         // string_substring, file_read_all, file_read_line, read_file_to_string —
         // had REACHABLE branches returning the literal `""`, which is static
         // storage the builtin did not allocate. The declaration was false against
@@ -3490,8 +3490,21 @@ impl CodeGenerator {
                                  __pd_k{n}++) {{\n",
                                 n = n
                             ));
+                            // AND THE VISITED VALUE IS ADDED IN UNSIGNED
+                            // ARITHMETIC TOO. `lo + (long long)k` is a SIGNED
+                            // addition whose right operand runs up to the span,
+                            // so for a span wider than the signed maximum the
+                            // last additions overflow — undefined behaviour by
+                            // the same rule that made `v++` unusable, and
+                            // invisible to any run test because reaching them
+                            // takes 2^63 iterations. Adding as `unsigned long
+                            // long` wraps by definition; the conversion back is
+                            // implementation-defined rather than undefined, and
+                            // gcc and clang both define it as modular, which is
+                            // the value wanted.
                             self.output.push_str(&format!(
-                                "        long long {} = {} + (long long)__pd_k{};\n",
+                                "        long long {} = (long long)((unsigned long long){} + \
+                                 __pd_k{});\n",
                                 var, lo, n
                             ));
                         } else {
@@ -3570,8 +3583,12 @@ impl CodeGenerator {
                              __pd_k{n}++) {{\n",
                             n = n
                         ));
+                        // Same unsigned addition as the header form: the
+                        // signed `start + (long long)k` overflows on a span
+                        // wider than the signed maximum.
                         self.output.push_str(&format!(
-                            "        long long {} = {}.start + (long long)__pd_k{};\n",
+                            "        long long {} = (long long)((unsigned long long){}.start + \
+                             __pd_k{});\n",
                             var, r, n
                         ));
                         self.break_temps.push(None);
@@ -4895,7 +4912,7 @@ impl CodeGenerator {
             Expr::Await { expr: _, span } => {
                 // D5. Same shape as `?` above: this arm emitted
                 // `future.poll(&future)`, which is not C, while the poll routine
-                // that is generated is the free function `<name>_poll`.
+                // that WAS generated was the free function `<name>_poll`.
                 return Err(CompileError::await_unimplemented(*span));
             }
             // Value positions. Both leave a temporary's NAME here and their

@@ -503,10 +503,11 @@ The C backend is the real backend. An LLVM text backend exists
 (`src/codegen/llvm_text_backend.rs`, 2543 lines) but is skeletal: `break` and `continue` are refused
 outright, naming the `%loop_end_placeholder` / `%loop_inc_placeholder` the TODO would have emitted
 (`src/codegen/llvm_text_backend.rs:944-946`, `src/codegen/llvm_text_backend.rs:948-950`), `match` is a TODO if/else chain
-(`src/codegen/llvm_text_backend.rs:952-964`), and enum construction, `?`, macro invocation and `await` are one unimplemented TODO
-together (`src/codegen/llvm_text_backend.rs:1388`). It also bails on ordinary code — "Unsupported iterator type in for loop"
-(`src/codegen/llvm_text_backend.rs:606`), "Unsupported binary operator" (`src/codegen/llvm_text_backend.rs:1128-1132`), "Complex function calls not yet supported"
-(`src/codegen/llvm_text_backend.rs:1237`). No conformance row exercises it.
+(`src/codegen/llvm_text_backend.rs:952-964`), and enum construction, `?`, macro invocation and `await` are four
+separate refusals (`src/codegen/llvm_text_backend.rs:1437-1450`) — they were ONE catch-all
+returning the constant `0`, which is how two distinct enum variants compiled to byte-identical IR. It also bails on ordinary code — "Unsupported iterator type in for loop"
+(`src/codegen/llvm_text_backend.rs:845-847`), "Unsupported binary operator" (`src/codegen/llvm_text_backend.rs:1128-1132`), "Complex function calls not yet supported"
+(`src/codegen/llvm_text_backend.rs:1269-1272`). No conformance row exercises it.
 
 Generated C is linked against `runtime/palladium_runtime.c`, which supplies 16 file/path symbols.
 `pdc` resolves that runtime relative to its own install location — `pdc --print-runtime` shows
@@ -818,7 +819,7 @@ enum is compiled to. Use `match`.
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
 rejected outright by the type checker (`src/typeck/mod.rs:4211-4211`) and again by code generation
-(`src/codegen/mod.rs:4883-4887`). It used to typecheck against a `Generic{name:"Result"}` shape
+(`src/codegen/mod.rs:4900-4904`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -838,7 +839,7 @@ and then emit C for a `struct Result` layout nothing defines (see
   travels with it, which is what keeps a tail-position chain returning. *(This bullet read
   "unimplemented — after `else` the parser requires `{`" until `66dab38`.)*
 - **implemented: `loop`** (N5-07), a keyword since `src/lexer/token.rs:250`, parsed at
-  `src/parser/mod.rs:2598` and emitted as C `while (1)` (`src/codegen/mod.rs:3675`). Its `break`
+  `src/parser/mod.rs:2598` and emitted as C `while (1)` (`src/codegen/mod.rs:3692`). Its `break`
   may carry a value. *(It read "not a keyword. Use `while true`" until `f729cda`.)*
 - **implemented: compound assignment** `+= -= *= /= %=` (N5-13), DESUGARED at
   `src/parser/mod.rs:2106` into `t = t op v` rather than emitted as C's own compound operator —
@@ -920,7 +921,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3258`) and code generation (`src/codegen/mod.rs:5581`)
+both the type checker (`src/typeck/mod.rs:3258`) and code generation (`src/codegen/mod.rs:4449-4452`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once;
 its position among the arguments is C's unspecified evaluation order, which is the same residual
@@ -994,8 +995,8 @@ syntactic trap is worth stating: a `match` arm that is a block must not be follo
 and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4211-4211`, `.await` at
-`src/typeck/mod.rs:4218-4218`) and again by code generation (`?` at `src/codegen/mod.rs:4883-4887`,
-`.await` at `src/codegen/mod.rs:4895-4899`), which is callable on its own.
+`src/typeck/mod.rs:4218-4218`) and again by code generation (`?` at `src/codegen/mod.rs:4900-4904`,
+`.await` at `src/codegen/mod.rs:4912-4916`), which is callable on its own.
 
 What they used to do:
 
@@ -1003,8 +1004,10 @@ What they used to do:
   other part of codegen emits** — enums are generated with a `.tag` field and `__Enum__Variant`
   constants instead. gcc reported `variable has incomplete type 'struct Result'`.
 - `.await` emitted `while (!f.poll(&f)) {}`. C has no member function calls, and the poll
-  routine that *is* generated is the free function `<name>_poll`
-  (`src/codegen/mod.rs:3831-3831`), which that call never names. There is no async runtime.
+  routine that *was* generated was the free function `<name>_poll`, which that call never named.
+  That generator is deleted too — an `async fn` is refused at
+  `generate_function_with_name` — so no live line carries this claim and it is written
+  without a citation form, as A6.4's withdrawn claim is. There is no async runtime.
 
 Both lowerings are deleted rather than kept behind a flag: they encoded a representation a real
 implementation must not reuse, and version control holds them.
@@ -1110,7 +1113,7 @@ bindings, `@` bindings, field shorthand, `..` rest. [N6](#n6-patterns) requires 
 
 Exhaustiveness is checked only when the scrutinee is an enum (`src/typeck/mod.rs:4417-4423`,
 corrected from line 2760–2790 of the pre-cleanup revision). Codegen lowers `match` to an if/else-if chain
-(`src/codegen/mod.rs:3732-3732`, `src/codegen/mod.rs:2828-2839`) with a wildcard arm becoming the final `else`; when no
+(`src/codegen/mod.rs:3722-3724`, `src/codegen/mod.rs:3745-3750`) with a wildcard arm becoming the final `else`; when no
 arm matches and no wildcard arm was written, control simply falls through — there is no trap.
 
 Consequence: **you cannot dispatch on an integer with `match`.** Use `if`/`else` chains.
@@ -1159,7 +1162,7 @@ One divergence remains, and two are closed:
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:1128-1128`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:4453-4453`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+(`src/codegen/mod.rs:4470-4470`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:1333-1333`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
@@ -1375,7 +1378,7 @@ how a whole section came to be stale without any reader noticing it was there.
 
 [N12](#n12-memory-model) requires that `&mut` be takeable only of a `mut` binding, and the
 implementation now enforces it for every referent kind. The check is
-`check_mutable_borrow_allowed` (`src/ownership/borrow_checker.rs:363-369`), which reads the
+`check_mutable_borrow_allowed` (`src/ownership/borrow_checker.rs:391-397`), which reads the
 `mutable_bindings` map described in [A9.2](#a92-array-parameters); a name no binder
 registered is refused rather than permitted.
 
@@ -1406,11 +1409,11 @@ A previous version of this annex, and of
 borrowed as `Lifetime::Named("fn")` and released against `Lifetime::Scope(n)`, so the borrow is
 never released and a value cannot be passed twice. That claim cited a line of
 `src/ownership/borrow_checker.rs` whose content is at
-`src/ownership/borrow_checker.rs:68` today. The old number is deliberately not repeated here:
+`src/ownership/borrow_checker.rs:77` today. The old number is deliberately not repeated here:
 a bare `path:line` naming a revision this tree no longer has is unpinnable, and an unpinnable
 citation cannot be told from one that has silently drifted.
 
-**The claim is false and the citation was wrong.** `src/ownership/borrow_checker.rs:544` is
+**The claim is false and the citation was wrong.** `src/ownership/borrow_checker.rs:582` is
 `ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))` — the ownership classification for a
 function's **borrowed return value**, which has nothing to do with argument lifetimes. The citation
 had a green fingerprint the whole time, which is exactly the gate's limit: a pin proves a line has
@@ -1427,9 +1430,9 @@ Re-measured from scratch at `abeb665`:
 | `print(p.name); f(p.name); p.n` — field to a builtin, then reused | accepted, prints `abc 3 1` |
 
 None of D6's symptoms reproduce. The call path creates a per-call lifetime and ends its borrows
-when the call finishes: `src/ownership/borrow_checker.rs:544` (`let call_lifetime =
-self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:912` (`self.context.end_borrows(&call_lifetime);`), with the
-contract stated at `src/ownership/borrow_checker.rs:918` — "the caller-side borrow always lasts exactly for the call
+when the call finishes: `src/ownership/borrow_checker.rs:954` (`let call_lifetime =
+self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:960` (`self.context.end_borrows(&call_lifetime);`), with the
+contract stated at `src/ownership/borrow_checker.rs:78-80` — "the caller-side borrow always lasts exactly for the call
 expression".
 
 D6 was **fixed in commit `191f8c1`** ("fix(compiler): five defects that made the language
@@ -1444,7 +1447,7 @@ Two rejections do still occur, and both are correct rather than defects:
 - `take2(p, p)` where `p` is a **struct** — `Use of moved value: p`. Struct parameters are moves
   (`src/ownership/borrow_checker.rs:63-64`), so this is move semantics working.
 - `sum2(v, v)` with two `mut [i64; 3]` parameters — `Conflicting borrows`. A `mut` array parameter
-  is a mutable borrow (`src/ownership/borrow_checker.rs:527`), so passing the same array as two
+  is a mutable borrow (`src/ownership/borrow_checker.rs:546-548`), so passing the same array as two
   simultaneous mutable borrows is refused. **This is expected under the current aliasing
   convention, not unconditionally correct**: it follows from Option B's reading of
   [N12.1](#n121-array-parameters-open-decision), which is still open. Under Option A a `[T; N]`

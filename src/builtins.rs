@@ -1851,7 +1851,7 @@ mod tests {
     /// `file_read_line` at EOF and with a bad handle, `read_file_to_string` on a
     /// missing file, `string_substring` with `start >= end`. A literal is static
     /// storage the built-in did not allocate, so the declaration was false and
-    /// `src/ownership/borrow_checker.rs:112` derives the ownership model from it.
+    /// `src/ownership/borrow_checker.rs:121` derives the ownership model from it.
     /// They return `__pd_empty_owned()` now. This test exists so those four cannot
     /// come back.
     ///
@@ -1957,7 +1957,7 @@ mod tests {
     ///
     /// The two tests above are about the registry and about the emitted C. This
     /// one drives `BorrowChecker::check_program` — the pass that
-    /// `src/ownership/borrow_checker.rs:112` builds its signatures from — on real
+    /// `src/ownership/borrow_checker.rs:121` builds its signatures from — on real
     /// source that takes each formerly-borrowed branch and then USES the value.
     /// That is the live path a false `Owned` propagates into: it is not a
     /// documentation defect, it is an input to the ownership model.

@@ -1638,17 +1638,17 @@ fn a_user_written_return_zero_in_a_unit_function_is_refused() {
 ///                               `resolved_modules` is LIVE in that scope and
 ///                               is not passed. That omission is the whole
 ///                               mechanism.
-///   src/ownership/borrow_checker.rs:134-138
+///   src/ownership/borrow_checker.rs:151-154
 ///                               `functions` is seeded from `BUILTINS` and
 ///                               nothing else.
-///   src/ownership/borrow_checker.rs:335-355
+///   src/ownership/borrow_checker.rs:352-361
 ///                               `check_program` walks `program.items` only.
 ///                               `Program.imports` (src/ast/mod.rs:9) is never
 ///                               read, and `Item` (src/ast/mod.rs:24-32) has no
 ///                               `Import` variant, so nothing in the local AST
 ///                               could have carried the imported signatures
 ///                               either.
-///   src/ownership/borrow_checker.rs:903 -> :502 -> :527
+///   src/ownership/borrow_checker.rs:937 -> :502 -> :527
 ///                               `Expr::Call` checks its callee expression;
 ///                               `Expr::Ident` misses `functions`, falls
 ///                               through to the ownership table, finds no

@@ -361,8 +361,8 @@ and a generic enum's constructor, both of which the front end used to accept and
 compiler that had no such function and no such type to link) | `make conformance` |
 | Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 416 citations fingerprinted, 27 no-compile fences pinned | `make check-docs` |
-| Rust tests | 913 pass, **0 fail**, 50 ignored (561 lib + 352 integration, 27 binaries) | `make test-honest` |
+| Documentation | every snippet compiles; 412 citations fingerprinted, 27 no-compile fences pinned | `make check-docs` |
+| Rust tests | 918 pass, **0 fail**, 50 ignored (565 lib + 353 integration, 27 binaries) | `make test-honest` |
 | Declared failures | 49 `xfail` + 1 `slow`, none passing; 49 of 49 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
@@ -654,7 +654,7 @@ enum-owned method is unreachable by its path form. Each row carries a
    they allocate their result while having **reachable branches returning the literal `""`**,
    which is static storage they did not allocate. The corpus reaches all of them (bad handle, EOF,
    missing file, `start >= end`). This is not a documentation defect:
-   `src/ownership/borrow_checker.rs:112` derives its signatures from this table, so the ownership
+   `src/ownership/borrow_checker.rs:121` derives its signatures from this table, so the ownership
    model was wrong on those branches. They return `__pd_empty_owned()` now — one byte from the
    same bump pool every other owned string comes from, which is why allocating was the right fix
    and `strdup` was not: it adds **no failure class the other owned returns do not already have**.
@@ -1012,7 +1012,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:4895-4899` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:4912-4916` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".

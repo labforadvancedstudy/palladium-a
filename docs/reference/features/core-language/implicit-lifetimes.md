@@ -243,8 +243,8 @@ document restated from the other side: the pass has scopes, and it has never had
 *A previous version of this paragraph asserted a live defect here — that a call argument is
 borrowed as `Lifetime::Named("fn")` and never released, so a value cannot be passed twice. That is
 false and is retracted: the defect was real, it is D6, and it was fixed in commit `191f8c1`, before
-this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:912`) and end
-its borrows when the call finishes (`src/ownership/borrow_checker.rs:918`). Five probes are in
+this branch existed. Calls take a per-call lifetime (`src/ownership/borrow_checker.rs:954`) and end
+its borrows when the call finishes (`src/ownership/borrow_checker.rs:960`). Five probes are in
 [`language-spec.md` A9.4](../../../specification/language-spec.md#a94-defect-d6-retracted). This
 paragraph then named `&mut` of an immutable local as the defect that WAS live; that one is fixed
 too, and re-measured it is refused for struct, array and scalar referents alike

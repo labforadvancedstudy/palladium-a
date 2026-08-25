@@ -142,6 +142,31 @@ fn the_inclusive_span_is_subtracted_in_unsigned_arithmetic() {
 }
 
 #[test]
+fn the_visited_value_is_added_in_unsigned_arithmetic() {
+    // The counter is unsigned and can run up to the span, so `lo + (long long)k`
+    // is a SIGNED addition that overflows for any span wider than the signed
+    // maximum: `-1..=i64::MAX` reaches `-1 + 9223372036854775808` on its last
+    // iteration. No run test can see it — getting there takes 2^63 iterations —
+    // which is exactly why the shape is pinned here instead.
+    for source in [
+        "fn main() { let mut s = 0; for i in 0..=3 { s = s + i; } print_int(s); }",
+        "fn main() { let r = 0..=3; let mut s = 0; for i in r { s = s + i; } print_int(s); }",
+    ] {
+        let c = c_of(source);
+        assert!(
+            c.contains("(long long)((unsigned long long)"),
+            "the visited value should be added as `unsigned long long` and converted back:\n{}",
+            c
+        );
+        assert!(
+            !c.contains("+ (long long)__pd_k0"),
+            "the signed `lo + (long long)k` addition is still emitted:\n{}",
+            c
+        );
+    }
+}
+
+#[test]
 fn a_full_domain_inclusive_range_terminates() {
     // With `k <= n; k++` and `n == ULLONG_MAX`, `k++` wraps to 0 and the test
     // is true forever. The exit condition must be "was the one just visited the

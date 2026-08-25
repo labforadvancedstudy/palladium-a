@@ -15,12 +15,12 @@
 //! AST (`src/driver/mod.rs:137`, `src/driver/mod.rs:163`) while `resolved_modules` sat
 //! live and unused in the same scope. Its function table was seeded from
 //! `crate::builtins::BUILTINS` and nothing else
-//! (`src/ownership/borrow_checker.rs:134-137`), and its first pass walks
+//! (`src/ownership/borrow_checker.rs:151-154`), and its first pass walks
 //! `program.items` only — `Program.imports` (`src/ast/mod.rs:9`) is never read, and
 //! `Item` (`src/ast/mod.rs:24-32`) has no `Import` variant, so no walk over items could
 //! have reached one. `helper()` therefore fell out of the function table at
-//! `Expr::Ident` (`src/ownership/borrow_checker.rs:842`), was looked up as a *value*,
-//! was not found, and died at `src/ownership/borrow_checker.rs:895` as
+//! `Expr::Ident` (`src/ownership/borrow_checker.rs:876`), was looked up as a *value*,
+//! was not found, and died at `src/ownership/borrow_checker.rs:929` as
 //! `UseOfUninitializedValue`.
 //!
 //! The pass was not wrong; it was structurally single-file. These tests drive the real
@@ -901,7 +901,7 @@ fn test_local_twin_of_the_unchecked_import_is_rejected() {
 /// Walking imported bodies is only half of the job; the walk has to be handed the
 /// same ENVIRONMENT the local walk gets. It was not. `register_imported_functions`
 /// registered signatures and nothing else, so `struct_fields` — the map that
-/// `place_type` (`src/ownership/borrow_checker.rs:1529`) consults to decide
+/// `place_type` (`src/ownership/borrow_checker.rs:1495-1497`) consults to decide
 /// whether `p.x` is Copy — held local struct layouts only. An imported struct's
 /// `i64` field therefore had no resolvable type, `is_expr_copy` fell into its
 /// conservative `false` default, and the FIRST read of the field MOVED it:
@@ -1362,7 +1362,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// An imported name can shadow a built-in in the checkers but never in codegen,
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
-/// (`src/codegen/mod.rs:4452-4455`), while the type checker
+/// (`src/codegen/mod.rs:4469-4472`), while the type checker
 /// (`src/typeck/mod.rs:1553-1553`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
@@ -1372,7 +1372,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1553-1553 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:4452-4455 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1553-1553 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:4469-4472 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],

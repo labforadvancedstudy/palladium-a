@@ -90,15 +90,14 @@ src/cli.rs	60-62	tests/d10_llvm_refuses.rs	1cca5b0da712	/// Use LLVM backend ins
 src/cli.rs	78-80	tests/d10_llvm_refuses.rs	1cca5b0da712	/// Use LLVM backend instead of C #[arg(long)] llvm: bool,
 src/codegen/c_ident.rs	440-440	docs/contributing/MILESTONES.md	0888f82f6d67	pub fn escape_reserved_names(program: &Program) -> Program {
 src/codegen/llvm_text_backend.rs	1128-1132	docs/specification/language-spec.md	f70be3603af9	_ => { return Err(CompileError::Generic( "Unsupported binary operator".to_string(), )) }
-src/codegen/llvm_text_backend.rs	1237-1237	docs/specification/language-spec.md	a248e19a42c7	let mut arg_types = Vec::new();
-src/codegen/llvm_text_backend.rs	1388-1388	docs/specification/language-spec.md	b17e459f8ef2	result_var, op_var
-src/codegen/llvm_text_backend.rs	1393-1393	docs/specification/bootstrap-subset.md	349b55d16a33	" {} = xor i1 {}, true\n",
+src/codegen/llvm_text_backend.rs	1269-1272	docs/specification/language-spec.md	d737bf88b944	} else { Err(CompileError::Generic( "Complex function calls not yet supported".to_string(), ))
 src/codegen/llvm_text_backend.rs	1393-1393	src/typeck/mod.rs	349b55d16a33	" {} = xor i1 {}, true\n",
 src/codegen/llvm_text_backend.rs	1393-1393	tests/d5_unimplemented_constructs.rs	349b55d16a33	" {} = xor i1 {}, true\n",
 src/codegen/llvm_text_backend.rs	1393-1395	docs/specification/language-spec.md	1b5626080957	" {} = xor i1 {}, true\n", result_var, op_var ));
+src/codegen/llvm_text_backend.rs	1437-1450	docs/specification/language-spec.md	5ebb6d5146c0	Expr::EnumConstructor { enum_name, variant, span, .. } => Err(unimplemented_e ... n(name, *span)) } Expr::Await { span, .. } => Err(unimplemented_await(*span)),
 src/codegen/llvm_text_backend.rs	16-16	docs/reference/features/feature-index.toml	bd32cf16a105	const BACKEND_REFUSES: bool = true;
-src/codegen/llvm_text_backend.rs	606-606	docs/specification/language-spec.md	2c9d430efb41	break; // Don't generate unreachable code
 src/codegen/llvm_text_backend.rs	71-73	docs/reference/features/feature-index.toml	8f2f382eaef4	pub fn compile(&mut self, program: &Program) -> Result<String> { if BACKEND_REFUSES { return Err(unimplemented_backend());
+src/codegen/llvm_text_backend.rs	845-847	docs/specification/language-spec.md	2409719694a7	return Err(CompileError::Generic( "Unsupported iterator type in for loop".to_string(), ));
 src/codegen/llvm_text_backend.rs	944-946	docs/specification/language-spec.md	5209b7d642f1	Stmt::Break { span, .. } => { return Err(unimplemented_loop_jump("break", "loop_end", *span)); }
 src/codegen/llvm_text_backend.rs	948-950	docs/specification/language-spec.md	220568c5ea84	Stmt::Continue { span } => { return Err(unimplemented_loop_jump("continue", "loop_inc", *span)); }
 src/codegen/llvm_text_backend.rs	952-964	docs/specification/language-spec.md	ecd77081720e	Stmt::Match { expr, arms, span: match_span, } => { // Generate switch-like co ... ow, generate a simple if-else chain // TODO: Implement proper pattern matching
@@ -159,38 +158,34 @@ src/codegen/mod.rs	2599-2599	tests/m3_imported_calls.rs	a1f9db9d02a0	for (func_n
 src/codegen/mod.rs	2718-2722	docs/specification/bootstrap-subset.md	36da81766b2c	Some(Type::Array(_, _)) => { // Arrays cannot be returned by value in C, woul ... neric( "Returning arrays from functions is not yet supported".to_string(), ));
 src/codegen/mod.rs	2756-2756	docs/reference/features/feature-index.toml	3f9012e4c426	// In C, array parameters are passed as pointers.
 src/codegen/mod.rs	2776-2782	docs/reference/features/feature-index.toml	a8be79742b15	Type::Reference { inner, mutable, .. } => { // A reference to an array is pas ... ort.pd did not compile. if let Type::Array(elem_type, size) = inner.as_ref() {
-src/codegen/mod.rs	2780-2781	docs/reference/features/feature-index.toml	5ac98f2e0a74	// Without this case the whole parameter was rejected, which // is why examples/practical/simple_sort.pd did not compile.
-src/codegen/mod.rs	2828-2839	docs/specification/language-spec.md	ce03910b3003	} } _ => { return Err(CompileError::Generic( "Unsupported type in reference p ... r".to_string(), )); } } sig.push_str(&param.name); } _ => { // For other types
 src/codegen/mod.rs	2858-2864	docs/contributing/MILESTONES.md	fd1c36def60c	fn generate_function_with_name(&mut self, func: &Function, name: &str) -> Res ... func.is_async { return Err(CompileError::async_fn_unimplemented(func.span)); }
-src/codegen/mod.rs	3036-3036	docs/specification/bootstrap-subset.md	1abc8c2a15b6	/// `for` variable and a match binding are written into these maps *before*
 src/codegen/mod.rs	3130-3133	docs/specification/bootstrap-subset.md	5d9f66eee407	Stmt::Expr(expr) => { self.output.push_str(" "); self.generate_expression(expr)?; self.output.push_str(";\n");
-src/codegen/mod.rs	3614-3622	docs/reference/features/feature-index.toml	cde6b63dbbc5	( Some(ArrayLen::Unproven(spelling)), Some(ArrayStorage::Parameter(_)), ) =>  ... name.as_str(), _ => "<expression>", }; return Err(CompileError::CodegenError {
-src/codegen/mod.rs	3637-3639	docs/reference/features/feature-index.toml	ad66b9f6ed85	self.output.push_str("sizeof("); self.generate_expression(iter)?; self.output.push_str(")/sizeof(");
-src/codegen/mod.rs	3644-3644	docs/specification/bootstrap-subset.md	af6886c60970	self.output.push_str("; _i++) {\n");
-src/codegen/mod.rs	3675-3675	docs/specification/language-spec.md	0aef7825af71	self.output.push_str(" while (1) {\n");
-src/codegen/mod.rs	3732-3732	docs/reference/features/feature-index.toml	c45e86272754	self.output.push_str(" else if (");
-src/codegen/mod.rs	3732-3732	docs/specification/language-spec.md	c45e86272754	self.output.push_str(" else if (");
+src/codegen/mod.rs	3631-3639	docs/reference/features/feature-index.toml	cde6b63dbbc5	( Some(ArrayLen::Unproven(spelling)), Some(ArrayStorage::Parameter(_)), ) =>  ... name.as_str(), _ => "<expression>", }; return Err(CompileError::CodegenError {
+src/codegen/mod.rs	3654-3656	docs/reference/features/feature-index.toml	ad66b9f6ed85	self.output.push_str("sizeof("); self.generate_expression(iter)?; self.output.push_str(")/sizeof(");
+src/codegen/mod.rs	3692-3692	docs/specification/language-spec.md	0aef7825af71	self.output.push_str(" while (1) {\n");
+src/codegen/mod.rs	3722-3724	docs/specification/language-spec.md	bed91988d3f4	Stmt::Match { expr, arms, .. } => { // Generate a series of if-else statements for pattern matching self.output.push_str(" // Match statement\n");
+src/codegen/mod.rs	3745-3750	docs/reference/features/feature-index.toml	a3bafe5d18e0	for (i, arm) in arms.iter().enumerate() { if i == 0 { self.output.push_str(" if ("); } else { self.output.push_str(" else if ("); }
+src/codegen/mod.rs	3745-3750	docs/specification/language-spec.md	a3bafe5d18e0	for (i, arm) in arms.iter().enumerate() { if i == 0 { self.output.push_str(" if ("); } else { self.output.push_str(" else if ("); }
 src/codegen/mod.rs	378-378	tests/d3b_tail_if.rs	2dfe8fd03528	.unwrap_or_else(|| "long long".to_string())
-src/codegen/mod.rs	3812-3812	docs/reference/features/feature-index.toml	af750a79ff49	// variable; type it for
-src/codegen/mod.rs	3831-3831	docs/specification/language-spec.md	e923217334ec	for (field_name, pattern) in field_patterns {
 src/codegen/mod.rs	4-10	docs/reference/features/feature-index.toml	53c4d7e7b952	pub mod c_ident; pub mod c_literal; pub mod llvm_backend; pub mod llvm_backend_improved; pub mod llvm_native; pub mod llvm_text_backend;
-src/codegen/mod.rs	4452-4455	tests/m3_imported_calls.rs	0e4149b48e69	match name.as_str() { name if crate::builtins::is_builtin(name) => { self.output.push_str(&format!("__pd_{}", name)); }
-src/codegen/mod.rs	4453-4453	docs/specification/language-spec.md	5fb3ee501c7c	name if crate::builtins::is_builtin(name) => {
-src/codegen/mod.rs	4883-4887	docs/reference/features/async-system/async-as-effect.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	4883-4887	docs/specification/language-spec.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	4887-4887	docs/specification/bootstrap-subset.md	e2e93d2c8921	return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	4895-4899	docs/contributing/MILESTONES.md	c86405b6532b	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	4895-4899	docs/specification/language-spec.md	c86405b6532b	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	4895-4900	docs/reference/features/async-system/async-as-effect.md	278af32401b2	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ... unction `<name>_poll`. return Err(CompileError::await_unimplemented(*span)); }
-src/codegen/mod.rs	4895-4900	docs/reference/features/feature-index.toml	278af32401b2	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ... unction `<name>_poll`. return Err(CompileError::await_unimplemented(*span)); }
-src/codegen/mod.rs	4899-4899	docs/specification/bootstrap-subset.md	6ed7f53189a9	return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5054-5118	src/typeck/mod.rs	dda6700ebae8	let mut instantiations_for_func = Vec::new(); for (name, type_args, _) in &se ... s_for_func[0])) } /// Substitute type parameters with concrete types in a type
+src/codegen/mod.rs	4449-4452	docs/specification/language-spec.md	05dc8467f79a	if let Expr::FieldAccess { object, field, .. } = func.as_ref() { let rewritte ... l(object, field, args, *span)?; return self.generate_expression(&rewritten); }
+src/codegen/mod.rs	4469-4472	tests/m3_imported_calls.rs	0e4149b48e69	match name.as_str() { name if crate::builtins::is_builtin(name) => { self.output.push_str(&format!("__pd_{}", name)); }
+src/codegen/mod.rs	4470-4470	docs/specification/language-spec.md	5fb3ee501c7c	name if crate::builtins::is_builtin(name) => {
+src/codegen/mod.rs	4900-4904	docs/reference/features/async-system/async-as-effect.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	4900-4904	docs/reference/features/feature-index.toml	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	4900-4904	docs/specification/bootstrap-subset.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	4900-4904	docs/specification/language-spec.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	4901-4903	docs/reference/features/async-system/async-as-effect.md	805f59bdf4ee	// D5. The type checker refuses this first, but this backend is // what emitt ... t`, and it is callable // on its own, so the refusal also lives at the defect.
+src/codegen/mod.rs	4912-4916	docs/contributing/MILESTONES.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	4912-4916	docs/reference/features/async-system/async-as-effect.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	4912-4916	docs/reference/features/feature-index.toml	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	4912-4916	docs/specification/bootstrap-subset.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	4912-4916	docs/specification/language-spec.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	4913-4915	docs/reference/features/async-system/async-as-effect.md	1c660937d386	// D5. Same shape as `?` above: this arm emitted // `future.poll(&future)`, w ... le the poll routine // that WAS generated was the free function `<name>_poll`.
+src/codegen/mod.rs	5071-5135	src/typeck/mod.rs	dda6700ebae8	let mut instantiations_for_func = Vec::new(); for (name, type_args, _) in &se ... s_for_func[0])) } /// Substitute type parameters with concrete types in a type
 src/codegen/mod.rs	511-511	docs/specification/language-spec.md	bde1aa20b222	return self.return_type_to_c(ret_type.as_ref());
-src/codegen/mod.rs	5204-5215	tests/common/mod.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
-src/codegen/mod.rs	5204-5215	tests/e2e_test.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
-src/codegen/mod.rs	5581-5581	docs/specification/language-spec.md	40b8f39b1c12	let c = generate(
-src/codegen/mod.rs	6038-6038	docs/reference/features/async-system/async-as-effect.md	44231d08b61d	// function types do not reach here at all - the parser refuses them
-src/codegen/mod.rs	6050-6050	docs/reference/features/async-system/async-as-effect.md	a38302f709b5	assert!(
+src/codegen/mod.rs	5221-5232	tests/common/mod.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
+src/codegen/mod.rs	5221-5232	tests/e2e_test.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
 src/driver/mod.rs	104-107	tests/d3b_tail_if.rs	47ed61cc361f	// Pass resolved modules to type checker if !resolved_modules.is_empty() { type_checker.set_imported_modules(resolved_modules.clone()); }
 src/driver/mod.rs	104-107	tests/m3_imported_calls.rs	47ed61cc361f	// Pass resolved modules to type checker if !resolved_modules.is_empty() { type_checker.set_imported_modules(resolved_modules.clone()); }
 src/driver/mod.rs	109-109	CLAUDE.md	f4efbeeb4ae6	type_checker.check(&ast)?;
@@ -255,32 +250,33 @@ src/main.rs	154-156	tests/d10_llvm_refuses.rs	d4347d793f49	if llvm { driver = dr
 src/optimizer/constant_folding.rs	154-154	src/parser/mod.rs	a47431fb26aa	BinOp::Eq => {
 src/optimizer/constant_folding.rs	154-154	tests/d3b_tail_if.rs	a47431fb26aa	BinOp::Eq => {
 src/optimizer/dead_code.rs	35-70	src/optimizer/dead_code_test.rs	8b72f3893594	// A constant condition tells us exactly which arm runs, so the // other arm  ... ation: saying // "can continue" when it cannot only leaves dead code in place,
-src/ownership/borrow_checker.rs	112-112	docs/contributing/MILESTONES.md	fa082a7e040b	let returns = match b.ret_mode {
-src/ownership/borrow_checker.rs	112-112	src/builtins.rs	fa082a7e040b	let returns = match b.ret_mode {
-src/ownership/borrow_checker.rs	112-112	src/codegen/mod.rs	fa082a7e040b	let returns = match b.ret_mode {
-src/ownership/borrow_checker.rs	134-137	tests/m3_imported_calls.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
-src/ownership/borrow_checker.rs	134-138	tests/d3b_tail_if.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
-src/ownership/borrow_checker.rs	1529-1529	tests/m3_imported_calls.rs	beed6fe0c0e7	Expr::Bool(_) => Type::Bool,
-src/ownership/borrow_checker.rs	335-355	tests/d3b_tail_if.rs	b83e3313b0df	// First pass: collect function signatures and struct layouts for item in &pr ...  self.collect_function_sig_with_name(method, &qualified_name); } } _ => {} } }
-src/ownership/borrow_checker.rs	358-364	docs/specification/bootstrap-subset.md	534ae550da38	for item in &program.items { match item { Item::Function(func) => { self.chec ... (func)?; } Item::Impl(impl_block) => { // Check method bodies from impl blocks
-src/ownership/borrow_checker.rs	363-369	docs/specification/language-spec.md	4f479bc9111b	Item::Impl(impl_block) => { // Check method bodies from impl blocks for method in &impl_block.methods { self.check_function(method)?; } } _ => {}
-src/ownership/borrow_checker.rs	527-527	docs/specification/language-spec.md	1b5d3f823599	// keeps using the array afterwards — see the parameter
-src/ownership/borrow_checker.rs	544-544	docs/specification/language-spec.md	af0940c0792c	ParamOwnership::Borrow
-src/ownership/borrow_checker.rs	579-581	src/codegen/mod.rs	412332b30331	for param in &func.params { let place = Place::Local(param.name.clone()); self.context.declare(&place);
+src/ownership/borrow_checker.rs	121-121	docs/contributing/MILESTONES.md	fa082a7e040b	let returns = match b.ret_mode {
+src/ownership/borrow_checker.rs	121-121	src/builtins.rs	fa082a7e040b	let returns = match b.ret_mode {
+src/ownership/borrow_checker.rs	121-121	src/codegen/mod.rs	fa082a7e040b	let returns = match b.ret_mode {
+src/ownership/borrow_checker.rs	1495-1497	tests/m3_imported_calls.rs	55ccf3b4f0d6	fn place_type(&self, expr: &Expr) -> Option<Type> { match expr { Expr::Ident(name) => self.local_types.get(name).cloned(),
+src/ownership/borrow_checker.rs	151-154	tests/d3b_tail_if.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
+src/ownership/borrow_checker.rs	151-154	tests/m3_imported_calls.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
+src/ownership/borrow_checker.rs	352-361	tests/d3b_tail_if.rs	aa896335d3f2	// First pass: collect function signatures and struct layouts for item in &pr ... ields.clone()); } Item::Function(func) => { self.collect_function_sig(func); }
+src/ownership/borrow_checker.rs	386-392	docs/specification/bootstrap-subset.md	534ae550da38	for item in &program.items { match item { Item::Function(func) => { self.chec ... (func)?; } Item::Impl(impl_block) => { // Check method bodies from impl blocks
+src/ownership/borrow_checker.rs	391-397	docs/specification/language-spec.md	4f479bc9111b	Item::Impl(impl_block) => { // Check method bodies from impl blocks for method in &impl_block.methods { self.check_function(method)?; } } _ => {}
+src/ownership/borrow_checker.rs	546-548	docs/specification/language-spec.md	928a2535411c	if param.mutable { params.push(ParamOwnership::BorrowMut); continue;
+src/ownership/borrow_checker.rs	582-582	docs/specification/language-spec.md	3975922a5a94	ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))
+src/ownership/borrow_checker.rs	613-615	src/codegen/mod.rs	412332b30331	for param in &func.params { let place = Place::Local(param.name.clone()); self.context.declare(&place);
 src/ownership/borrow_checker.rs	63-64	docs/specification/language-spec.md	52913fa77a92	/// Return value ownership #[allow(dead_code)]
-src/ownership/borrow_checker.rs	68-68	docs/specification/language-spec.md	d6fcadd1772d	/// How a callee takes each parameter.
-src/ownership/borrow_checker.rs	731-734	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
-src/ownership/borrow_checker.rs	842-842	tests/m3_imported_calls.rs	3ca7efc9179c	Expr::Ident(name) => {
-src/ownership/borrow_checker.rs	895-895	tests/m3_imported_calls.rs	e4a8f92b213a	return Err(CompileError::UseOfUninitializedValue {
-src/ownership/borrow_checker.rs	903-903	tests/d3b_tail_if.rs	4379d6381a6b	Expr::Call { func, args, span } => {
-src/ownership/borrow_checker.rs	912-912	docs/reference/features/core-language/implicit-lifetimes.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	912-912	docs/reference/features/feature-index.toml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	912-912	docs/specification/language-spec.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	912-919	CLAUDE.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
-src/ownership/borrow_checker.rs	912-919	docs/contributing/claude-md-coverage.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
-src/ownership/borrow_checker.rs	918-918	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/borrow_checker.rs	918-918	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/borrow_checker.rs	918-918	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	765-768	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
+src/ownership/borrow_checker.rs	77-77	docs/specification/language-spec.md	d6fcadd1772d	/// How a callee takes each parameter.
+src/ownership/borrow_checker.rs	78-80	docs/specification/language-spec.md	3f7c8868ce02	/// /// The borrowing modes carry no lifetime: the caller-side borrow always  ...  exactly for the call expression, so `check_call_args` supplies that lifetime.
+src/ownership/borrow_checker.rs	876-876	tests/m3_imported_calls.rs	3ca7efc9179c	Expr::Ident(name) => {
+src/ownership/borrow_checker.rs	929-929	tests/m3_imported_calls.rs	e4a8f92b213a	return Err(CompileError::UseOfUninitializedValue {
+src/ownership/borrow_checker.rs	937-937	tests/d3b_tail_if.rs	4379d6381a6b	Expr::Call { func, args, span } => {
+src/ownership/borrow_checker.rs	954-954	docs/reference/features/core-language/implicit-lifetimes.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	954-954	docs/reference/features/feature-index.toml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	954-954	docs/specification/language-spec.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	954-961	CLAUDE.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
+src/ownership/borrow_checker.rs	954-961	docs/contributing/claude-md-coverage.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
+src/ownership/borrow_checker.rs	960-960	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	960-960	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	960-960	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
 src/ownership/mod.rs	101-126	docs/reference/features/feature-index.toml	087766658e2c	constraints: Vec<LifetimeConstraint>, /// Places *declared* by each open scop ... ] pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime,
 src/ownership/mod.rs	141-178	docs/specification/bootstrap-subset.md	670019bc9327	pub fn exit_scope(&mut self) { // End every borrow this scope (or anything ne ...  } None => { self.ownership.remove(&place); } } } } self.current_scope -= 1; }
 src/ownership/mod.rs	147-148	docs/reference/features/feature-index.toml	6bb90e116f0c	let closing = self.current_scope; self.release_borrows(|borrow| borrow.scope >= closing);

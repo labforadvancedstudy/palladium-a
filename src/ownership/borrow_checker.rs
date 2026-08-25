@@ -63,6 +63,15 @@ struct FunctionSig {
     /// Return value ownership
     #[allow(dead_code)]
     returns: ReturnOwnership,
+    /// The DECLARED return type, when the callee declares one.
+    ///
+    /// `returns` above answers "who owns what comes back"; this answers "what
+    /// comes back", and nothing had the second answer. Without it a receiver
+    /// that is itself a call — `make().consume(x)`, `s.dup().take()` — typed as
+    /// `i64` by default, no `Type::method` signature was found for it, and the
+    /// method's parameters went unenforced: measured, `let a = make().consume(x);
+    /// let b = x.v;` COMPILED with `x` moved.
+    ret_ty: Option<Type>,
 }
 
 /// How a callee takes each parameter.
@@ -120,7 +129,15 @@ impl FunctionSig {
             ReturnMode::Unit => ReturnOwnership::Unit,
         };
 
-        FunctionSig { params, returns }
+        // A built-in's return type is not modelled here: no built-in returns a
+        // struct or an enum, so no built-in call can be the receiver of a
+        // method. Left `None` deliberately rather than mapped through a second
+        // spelling of the builtin type table.
+        FunctionSig {
+            params,
+            returns,
+            ret_ty: None,
+        }
     }
 }
 
@@ -348,6 +365,17 @@ impl BorrowChecker {
                         // Create qualified method name
                         let qualified_name = format!("{}::{}", impl_block.for_type, method.name);
                         self.collect_function_sig_with_name(method, &qualified_name);
+                        // `fn dup(self) -> Self` returns the impl's type, and
+                        // `Self` is a name no `impl` block is registered under.
+                        // Resolved through the one substitution point the type
+                        // checker and code generation also call, so a third
+                        // reading of `Self` does not appear here.
+                        if let Some(sig) = self.functions.get_mut(&qualified_name) {
+                            sig.ret_ty = sig
+                                .ret_ty
+                                .as_ref()
+                                .map(|ty| crate::ast::substitute_self(ty, &impl_block.for_type));
+                        }
                     }
                 }
                 _ => {}
@@ -557,8 +585,14 @@ impl BorrowChecker {
             None => ReturnOwnership::Unit,
         };
 
-        self.functions
-            .insert(name.to_string(), FunctionSig { params, returns });
+        self.functions.insert(
+            name.to_string(),
+            FunctionSig {
+                params,
+                returns,
+                ret_ty: func.return_type.clone(),
+            },
+        );
     }
 
     /// Check a function for ownership violations.
@@ -901,8 +935,16 @@ impl BorrowChecker {
             }
 
             Expr::Call { func, args, span } => {
-                // Check function expression
-                self.check_expr(func)?;
+                // Check function expression — EXCEPT a method callee, whose
+                // receiver `check_call_args` checks itself as argument 0.
+                // Checking it here as well visits the receiver TWICE, which is
+                // harmless for a name and wrong for anything that moves:
+                // measured, `a.dup().take()` reported "Use of moved value: a"
+                // for a program that uses `a` exactly once, because the inner
+                // call ran its own argument moves on both visits.
+                if !matches!(func.as_ref(), Expr::FieldAccess { .. }) {
+                    self.check_expr(func)?;
+                }
 
                 // A borrow taken to pass an argument lasts exactly as long as
                 // the call expression. Give this call its own lifetime, tag
@@ -1504,7 +1546,6 @@ impl BorrowChecker {
         }
     }
 
-    /// Get the type of an expression (simplified version)
     /// The type name a method call on `object` dispatches on.
     ///
     /// Only NAMED types carry an `impl`, so anything else has no method to look
@@ -1518,6 +1559,20 @@ impl BorrowChecker {
         }
     }
 
+    /// The type of an expression — A SIMPLIFIED MODEL, AND SAID SO HERE.
+    ///
+    /// This pass needs types for two decisions: whether a value is Copy, and
+    /// which `impl` a method call dispatches on. It answers them from types
+    /// somebody WROTE — a literal, a `let` annotation, a struct or enum
+    /// construction, a callee's declared return type — and never infers one.
+    ///
+    /// Where no written type reaches an expression it answers `I64` and the
+    /// caller carries on: for a receiver that means no `Type::method` signature
+    /// is found and that call's parameters go unenforced, so the failure mode is
+    /// FAIL-OPEN — a program that should be refused compiles. The shapes that
+    /// currently land there are listed at the fallback arm below. The real type
+    /// model is in `src/typeck`; the repair is to read it, not to grow a second
+    /// one here.
     fn expr_type(&self, expr: &Expr) -> Type {
         match expr {
             Expr::Integer(_) => Type::I64,
@@ -1538,7 +1593,66 @@ impl BorrowChecker {
             // cases where the type is written in the expression itself.
             Expr::StructLiteral { name, .. } => Type::Custom(name.clone()),
             Expr::EnumConstructor { enum_name, .. } => Type::Custom(enum_name.clone()),
-            _ => Type::I64, // Default for now
+            // A CALL IS TYPED BY THE CALLEE'S OWN DECLARATION, which is the only
+            // way a chained receiver can be resolved: `make().consume(x)` needs
+            // `make`'s return type before `T::consume` can be looked up at all.
+            // Still not an inferencer — every answer here is a type somebody
+            // WROTE in a signature.
+            Expr::Call { func, .. } => self.call_return_type(func).unwrap_or(Type::I64),
+            // The value forms produce the type of the value they carry out. The
+            // branches are required to agree by the type checker, so reading one
+            // is reading all of them.
+            Expr::If {
+                then_value,
+                else_value,
+                ..
+            } => then_value
+                .as_ref()
+                .or(else_value.as_ref())
+                .map(|v| self.expr_type(v))
+                .unwrap_or(Type::I64),
+            Expr::Block { value, .. } => value
+                .as_ref()
+                .map(|v| self.expr_type(v))
+                .unwrap_or(Type::I64),
+            Expr::Match { arms, .. } => arms
+                .iter()
+                .find_map(|arm| arm.value.as_ref())
+                .map(|v| self.expr_type(v))
+                .unwrap_or(Type::I64),
+            // FAIL-OPEN, AND NAMED. Everything else answers `I64`, which for a
+            // receiver means "no method signature found" and so no enforcement
+            // of that call's parameters. The shapes this currently covers, all
+            // of them receivers this pass cannot type:
+            //   * a field access — `p.inner.take()`; struct_fields holds the
+            //     layout, but a field's type is not read back here;
+            //   * an index — `xs[0].take()`;
+            //   * a unary/binary/cast expression, a range, a reference or a
+            //     dereference;
+            //   * a `loop` used as a value, whose type lives in its `break`s.
+            // Widening this is a type model, not a patch, and the model already
+            // exists in src/typeck; the honest state is that this pass has a
+            // simplified one. Declared here and in the debt inventory rather
+            // than left for a reader to discover from a program that compiles.
+            _ => Type::I64,
+        }
+    }
+
+    /// The declared return type of a call, by callee shape.
+    ///
+    /// The two shapes are the two spellings of a call this language has: a bare
+    /// name, and a method reached through `.`, which is registered under
+    /// `Type::method` exactly as `check_call_args` looks it up.
+    fn call_return_type(&self, callee: &Expr) -> Option<Type> {
+        match callee {
+            Expr::Ident(name) => self.functions.get(name).and_then(|s| s.ret_ty.clone()),
+            Expr::FieldAccess { object, field, .. } => {
+                let owner = self.method_owner_name(object)?;
+                self.functions
+                    .get(&format!("{}::{}", owner, field))
+                    .and_then(|s| s.ret_ty.clone())
+            }
+            _ => None,
         }
     }
 }
@@ -1746,6 +1860,126 @@ mod tests {
         assert!(
             matches!(result, Err(CompileError::UseOfMovedValue { .. })),
             "use after move was accepted: {:?}",
+            result
+        );
+    }
+
+    /// A CALL AS A RECEIVER IS TYPED BY THE CALLEE'S SIGNATURE.
+    ///
+    /// Measured before this: `let a = make().consume(x); let b = x.v;` COMPILED.
+    /// The receiver `make()` had no case in `expr_type`, so it answered `I64`,
+    /// no `T::consume` signature was found for an `i64`, and the method's
+    /// by-value parameter `x: S` was never enforced — the identical free-function
+    /// spelling was refused the whole time.
+    #[test]
+    fn test_a_call_receiver_enforces_the_methods_parameters() {
+        let result = borrow_check(
+            r#"
+            struct S { v: i64 }
+            struct T { w: i64 }
+            impl T { fn consume(self, x: S) -> i64 { return x.v + self.w; } }
+            fn make() -> T { return T { w: 1 }; }
+            fn main() {
+                let x = S { v: 5 };
+                let a = make().consume(x);
+                let b = x.v;
+                print_int(a + b);
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::UseOfMovedValue { .. })),
+            "a moved argument to a method on a call receiver was accepted: {:?}",
+            result
+        );
+    }
+
+    /// The same, one link further along: the receiver is itself a METHOD call,
+    /// so the chain resolves only if a method's return type is available too —
+    /// and `-> Self` has to resolve to the impl type before the lookup can hit.
+    #[test]
+    fn test_a_method_chain_receiver_enforces_the_next_calls_parameters() {
+        let result = borrow_check(
+            r#"
+            struct S { v: i64 }
+            impl S {
+                fn dup(self) -> Self { return S { v: self.v }; }
+                fn eat(self, o: S) -> i64 { return self.v + o.v; }
+            }
+            fn main() {
+                let a = S { v: 1 };
+                let b = S { v: 2 };
+                let n = a.dup().eat(b);
+                let m = b.v;
+                print_int(n + m);
+            }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::UseOfMovedValue { .. })),
+            "a moved argument to a method on a method-chain receiver was accepted: {:?}",
+            result
+        );
+    }
+
+    /// NO FALSE POSITIVE: one use is one use, however the receiver is spelled.
+    ///
+    /// The contract on the repair above — enforcing a chained receiver's
+    /// signature must not invent a second move. A fresh binding per by-value
+    /// receiver, a chain used once, and a method taking an argument by copy all
+    /// stay accepted. (`a.dup()` CONSUMES `a`, so a later `a.take()` is a real
+    /// second use and belongs in the refusal tests above; it was written here
+    /// first, and the pass was right to refuse it.)
+    #[test]
+    fn test_single_use_chains_are_still_accepted() {
+        let result = borrow_check(
+            r#"
+            struct S { v: i64 }
+            impl S {
+                fn dup(self) -> Self { return S { v: self.v }; }
+                fn take(self) -> i64 { return self.v; }
+                fn add(self, n: i64) -> i64 { return self.v + n; }
+            }
+            fn make() -> S { return S { v: 7 }; }
+            fn main() {
+                let a = S { v: 1 };
+                let b = S { v: 2 };
+                print_int(a.dup().take());
+                print_int(b.add(3));
+                print_int(make().take());
+            }
+            "#,
+        );
+        assert!(result.is_ok(), "a single-use chain was refused: {:?}", result);
+    }
+
+    /// THE DECLARED FAIL-OPEN, pinned so the declaration cannot rot into a lie.
+    ///
+    /// A FIELD-ACCESS receiver (`p.inner.take()`) is still typed `I64`, so the
+    /// method's parameters are not enforced and this program is ACCEPTED. It is
+    /// the shape named in `expr_type`'s fail-open comment and in the debt
+    /// inventory. If this test ever fails because the program is refused, the
+    /// repair landed and both declarations should be narrowed to match.
+    #[test]
+    fn test_a_field_access_receiver_is_the_declared_fail_open() {
+        let result = borrow_check(
+            r#"
+            struct S { v: i64 }
+            struct P { inner: S }
+            impl S { fn eat(self, o: S) -> i64 { return self.v + o.v; } }
+            fn main() {
+                let p = P { inner: S { v: 1 } };
+                let b = S { v: 2 };
+                let n = p.inner.eat(b);
+                let m = b.v;
+                print_int(n + m);
+            }
+            "#,
+        );
+        assert!(
+            result.is_ok(),
+            "a field-access receiver now enforces its signature — narrow the fail-open \
+             declaration in expr_type and in the debt inventory: {:?}",
             result
         );
     }

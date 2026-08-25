@@ -13,6 +13,11 @@
 // is the lossy token-stream conversion A4.6 records. A fixture that used one
 // would be testing that gap rather than this one.
 
+enum Pick {
+    First,
+    Second,
+}
+
 macro forty_two!() {
     42
 }
@@ -38,7 +43,15 @@ fn main() {
     let d = if 2 > 1 { { one_hundred!() } } else { { 0 } };
     print_int(d);
 
-    print("A macro in a value loop's break, and in a value match arm:");
+    print("A macro in a value loop's break:");
     let e = loop { break forty_two!(); };
     print_int(e);
+
+    print("A macro in a value match arm:");
+    let k = Pick::Second;
+    let f = match k {
+        Pick::First => forty_two!(),
+        Pick::Second => one_hundred!(),
+    };
+    print_int(f);
 }
