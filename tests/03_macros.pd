@@ -53,6 +53,29 @@ macro square!(x) { $x * $x }
 macro sub!(a, b) { $a - $b }
 macro bump!(v) { helper($v) }
 
+// --- the punctuation a body may carry ---
+//
+// `AstToken::Punct` is one `char`, so the table of what a macro body can store
+// is a list of single characters. N3-12 completed it with the eight the reverse
+// conversion had always accepted (`% < > & | ? $ :`) — `$` is the one that made
+// parameters work at all, and the other seven had been silently degrading into
+// identifiers named after their Rust debug spelling. These macros exercise the
+// ones the language has a consumer for; `?` round-trips but is refused
+// everywhere as an operator, so no program can observe it.
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+macro remainder!(a, b) { $a % $b }
+macro bit_and!(a, b) { $a & $b }
+macro bit_or!(a, b) { $a | $b }
+macro less!(a, b) { $a < $b }
+macro greater!(a, b) { $a > $b }
+// A `:` inside a body, which only a struct literal gives it a place to be.
+macro origin!() { Point { x: 1, y: 2 } }
+
 // --- statement bodies ---
 //
 // A body whose tokens are STATEMENTS expands in statement position. The shape
@@ -120,6 +143,28 @@ fn main() {
     print_int(v[0]);
     let w = vec!(1 + 2);
     print_int(w[0]);
+
+    // The punctuation round-trips. Each of these used to be an identifier named
+    // after a Rust enum variant by the time the type checker saw it.
+    print_int(remainder!(7, 4));
+    print_int(bit_and!(6, 3));
+    print_int(bit_or!(6, 3));
+    if less!(1, 2) {
+        print("less");
+    }
+    if greater!(3, 1) {
+        print("greater");
+    }
+    let p = origin!();
+    print_int(p.x + p.y);
+
+    // N3-14's OVER-REFUSAL CONTROL. What is refused is `macro_rules` followed by
+    // `!`, in item and invocation position (tests/reject/macro_rules.pd and
+    // tests/reject/macro_rules_invocation.pd). The bare spelling is an ordinary
+    // identifier and stays one — a refusal keyed on the NAME would have taken a
+    // legal variable name away from every program.
+    let macro_rules = 5;
+    print_int(macro_rules);
 
     print("macros_ok");
 }

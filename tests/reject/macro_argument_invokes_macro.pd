@@ -1,0 +1,22 @@
+// NEGATIVE TEST -- a macro invocation may not appear in another macro's
+// ARGUMENTS (N3-12).
+//
+// The sibling of tests/reject/macro_invokes_macro.pd, which refuses the same
+// thing written in a macro BODY. Both are the single-pass fact: the inner
+// invocation is captured as argument TOKENS, spliced into the expansion, and
+// the expansion is re-parsed into an AST containing a `MacroInvocation` node --
+// after the pass that expands them has gone by.
+//
+// Measured before this refusal, and it is why the body-side check alone was not
+// enough: this shape reached the type checker as "Unexpected macro invocation in
+// type checking - macros should be expanded before this phase", an internal
+// assertion about a compiler phase raised at the call site. The repair for both
+// is expansion to a FIXED POINT, which is a change to the expansion driver.
+//
+// The working spelling is one line longer and is pinned in tests/03_macros.pd:
+// bind the inner result to a `let`, then pass the name.
+macro double!(x) { $x * 2 }
+
+fn main() {
+    print_int(double!(double!(1)));
+}

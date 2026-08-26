@@ -1,0 +1,20 @@
+// NEGATIVE TEST -- a `for` loop variable may not take a top-level item's name
+// (N3-09, N3-10).
+//
+// The same fresh-binder question as tests/reject/pattern_binder_shadows_item.pd,
+// one construct over: `for LIMIT in 0..3` declares a NEW `LIMIT` for the body,
+// so the item is invisible inside the loop and the body reads 0, 1, 2 instead.
+// Measured before this refusal: printed 0 1 2 with no diagnostic.
+//
+// The three binder positions -- `let`, a parameter, a pattern, and a `for`
+// header -- are now asked the same question by one function
+// (`refuse_global_shadow` in src/typeck/mod.rs). It had TWO call sites and the
+// other two positions were silent, which is why the rule looked implemented
+// while half of it was not.
+const LIMIT: i64 = 10;
+
+fn main() {
+    for LIMIT in 0..3 {
+        print_int(LIMIT);
+    }
+}

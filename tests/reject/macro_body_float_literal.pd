@@ -1,0 +1,19 @@
+// NEGATIVE TEST -- a macro body may not contain a float literal (N3-12).
+//
+// The float half of the literal-kind loss that tests/reject/macro_body_string_literal.pd
+// pins for strings, and it is pinned separately because the SILENT OUTCOME was
+// different and both were measured. `AstToken::Literal` is a `String` carrying
+// no kind, and the reverse conversion guesses with `parse::<i64>()`, which fails
+// for `3.5` -- so the literal came back as a `Token::String`.
+//
+// Measured at e8eb1a9, compiling and running with no diagnostic:
+//     macro pi!() { 3.5 }
+//     fn main() { print(pi!()); }
+// printed `3.5` -- the four characters, as a String. Used as the number it
+// looks like, the same macro failed with "Type mismatch: expected Float, found
+// String", which is the same defect wearing a diagnostic.
+macro pi!() { 3.5 }
+
+fn main() {
+    print_int(1);
+}

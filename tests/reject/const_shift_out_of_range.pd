@@ -1,0 +1,15 @@
+// NEGATIVE TEST -- a shift amount outside 0..63 has no value (N3-09).
+//
+// An i64 has 64 bits and C leaves a shift by the width of the type -- or by a
+// negative amount -- undefined, so there is no answer for this compiler to
+// compute and no answer for the C compiler to agree with. Refused by name, with
+// the bound in the message.
+//
+// The accepted case is pinned in tests/03_const_items.pd: `1 << 10` is 1024,
+// evaluated here and emitted as the same expression for C to evaluate again.
+// That agreement is the whole reason the bound is checked rather than assumed.
+const X: i64 = 1 << 64;
+
+fn main() {
+    print_int(X);
+}

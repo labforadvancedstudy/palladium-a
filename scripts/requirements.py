@@ -97,8 +97,15 @@ MILESTONE_RE = re.compile(r"\A(M[1-9](?:-start)?|P1|unscheduled|-)\Z")
 #
 # NOTHING ELSE PINNED IT. `scripts/thesis_exit.py::EXPECTED_THESIS_CONTRACT`
 # pins the 26 `thesis` rows and pins (kind, evidence, fingerprint) — not the
-# milestone column, and not the other 167 rows. Measured: all 46 M2 rows are
-# `disposition = 1.0`, so every one of them was unpinned.
+# milestone column, and not the other 167 rows. Measured WHEN THIS PIN WAS
+# WRITTEN: all 46 M2 rows carried `disposition = 1.0`, so every one of them was
+# unpinned. Both halves of that sentence have moved since — M2 owns 49 rows now
+# and N3-13 left for M5 — and it is left in the past tense rather than
+# re-measured into the comment, because the ARGUMENT is about what the thesis
+# contract does not cover and that has not changed. The live count is whatever
+# `MILESTONE_ROSTER` below says, which the self-test reconciles against the
+# manifest on every run; a number in a comment is exactly the thing this file
+# exists to stop people trusting.
 #
 # This is the same reviewed cross-check `thesis-exit.sh` describes about its own
 # contract copy, and it buys the same thing: moving a requirement between

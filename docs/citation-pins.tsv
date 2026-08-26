@@ -18,8 +18,8 @@ bootstrap/pdc.pd	849-853	docs/specification/bootstrap-subset.md	7bde5af5d8d1	if 
 bootstrap/v2_full_compiler/ast.pd	83-83	docs/contributing/MILESTONES.md	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/ast.pd	83-83	src/lexer/token.rs	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
-docs/contributing/MILESTONES.md	944-944	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
-docs/contributing/MILESTONES.md	978-984	tests/m3_imported_calls.rs	7473e1ee090f	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... e-manifest.txt:122`, cross-file imports) and the vacuous `12_modules_imports`.
+docs/contributing/MILESTONES.md	954-954	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
+docs/contributing/MILESTONES.md	988-994	tests/m3_imported_calls.rs	7473e1ee090f	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... e-manifest.txt:122`, cross-file imports) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	117-119	src/codegen/mod.rs	a2f7869a25a1	3. **Struct and array parameters that are written are declared `mut`.** A `mu ... : `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` STRUCT parameter
@@ -147,42 +147,42 @@ src/codegen/mod.rs	2746-2746	docs/specification/language-spec.md	08e3d0b4aa7f	"R
 src/codegen/mod.rs	2754-2757	docs/specification/bootstrap-subset.md	00a0d839f52a	Type::Tuple(_) => { return Err(CompileError::Generic( "Tuple types in structs not yet supported".to_string(), ));
 src/codegen/mod.rs	2754-2758	docs/specification/language-spec.md	ac8f71103506	Type::Tuple(_) => { return Err(CompileError::Generic( "Tuple types in structs not yet supported".to_string(), )); }
 src/codegen/mod.rs	2812-2812	docs/specification/language-spec.md	83d99f09c543	fn generate_global_items(&mut self, program: &Program) -> Result<()> {
-src/codegen/mod.rs	2918-2918	docs/contributing/MILESTONES.md	28cac0ec4e20	imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
-src/codegen/mod.rs	2921-2932	tests/m3_imported_calls.rs	2d5191aa8eba	if let Item::Function(func) = item { if matches!(func.visibility, crate::ast: ... on_signature(func, &func.name)?; push(&mut prototypes, &func.name, sig); } } }
-src/codegen/mod.rs	2924-2924	tests/m3_imported_calls.rs	6f750da56d8f	&& !crate::ast::local_definition_shadows_import(program, &func.name)
-src/codegen/mod.rs	3055-3059	docs/specification/bootstrap-subset.md	36da81766b2c	Some(Type::Array(_, _)) => { // Arrays cannot be returned by value in C, woul ... neric( "Returning arrays from functions is not yet supported".to_string(), ));
-src/codegen/mod.rs	3093-3093	docs/reference/features/feature-index.toml	3f9012e4c426	// In C, array parameters are passed as pointers.
-src/codegen/mod.rs	3113-3119	docs/reference/features/feature-index.toml	a8be79742b15	Type::Reference { inner, mutable, .. } => { // A reference to an array is pas ... ort.pd did not compile. if let Type::Array(elem_type, size) = inner.as_ref() {
-src/codegen/mod.rs	3195-3201	docs/contributing/MILESTONES.md	fd1c36def60c	fn generate_function_with_name(&mut self, func: &Function, name: &str) -> Res ... func.is_async { return Err(CompileError::async_fn_unimplemented(func.span)); }
-src/codegen/mod.rs	3479-3482	docs/specification/bootstrap-subset.md	5d9f66eee407	Stmt::Expr(expr) => { self.output.push_str(" "); self.generate_expression(expr)?; self.output.push_str(";\n");
-src/codegen/mod.rs	3732-3732	docs/specification/language-spec.md	0aef7825af71	self.output.push_str(" while (1) {\n");
-src/codegen/mod.rs	3980-3988	docs/reference/features/feature-index.toml	cde6b63dbbc5	( Some(ArrayLen::Unproven(spelling)), Some(ArrayStorage::Parameter(_)), ) =>  ... name.as_str(), _ => "<expression>", }; return Err(CompileError::CodegenError {
+src/codegen/mod.rs	2927-2927	docs/contributing/MILESTONES.md	28cac0ec4e20	imported_modules.sort_by(|(a, _), (b, _)| a.cmp(b));
+src/codegen/mod.rs	2930-2941	tests/m3_imported_calls.rs	2d5191aa8eba	if let Item::Function(func) = item { if matches!(func.visibility, crate::ast: ... on_signature(func, &func.name)?; push(&mut prototypes, &func.name, sig); } } }
+src/codegen/mod.rs	2933-2933	tests/m3_imported_calls.rs	6f750da56d8f	&& !crate::ast::local_definition_shadows_import(program, &func.name)
+src/codegen/mod.rs	3064-3068	docs/specification/bootstrap-subset.md	36da81766b2c	Some(Type::Array(_, _)) => { // Arrays cannot be returned by value in C, woul ... neric( "Returning arrays from functions is not yet supported".to_string(), ));
+src/codegen/mod.rs	3102-3102	docs/reference/features/feature-index.toml	3f9012e4c426	// In C, array parameters are passed as pointers.
+src/codegen/mod.rs	3122-3128	docs/reference/features/feature-index.toml	a8be79742b15	Type::Reference { inner, mutable, .. } => { // A reference to an array is pas ... ort.pd did not compile. if let Type::Array(elem_type, size) = inner.as_ref() {
+src/codegen/mod.rs	3204-3210	docs/contributing/MILESTONES.md	fd1c36def60c	fn generate_function_with_name(&mut self, func: &Function, name: &str) -> Res ... func.is_async { return Err(CompileError::async_fn_unimplemented(func.span)); }
+src/codegen/mod.rs	3488-3491	docs/specification/bootstrap-subset.md	5d9f66eee407	Stmt::Expr(expr) => { self.output.push_str(" "); self.generate_expression(expr)?; self.output.push_str(";\n");
+src/codegen/mod.rs	3741-3741	docs/specification/language-spec.md	0aef7825af71	self.output.push_str(" while (1) {\n");
+src/codegen/mod.rs	3989-3997	docs/reference/features/feature-index.toml	cde6b63dbbc5	( Some(ArrayLen::Unproven(spelling)), Some(ArrayStorage::Parameter(_)), ) =>  ... name.as_str(), _ => "<expression>", }; return Err(CompileError::CodegenError {
 src/codegen/mod.rs	4-10	docs/reference/features/feature-index.toml	53c4d7e7b952	pub mod c_ident; pub mod c_literal; pub mod llvm_backend; pub mod llvm_backend_improved; pub mod llvm_native; pub mod llvm_text_backend;
-src/codegen/mod.rs	4003-4005	docs/reference/features/feature-index.toml	ad66b9f6ed85	self.output.push_str("sizeof("); self.generate_expression(iter)?; self.output.push_str(")/sizeof(");
-src/codegen/mod.rs	4071-4073	docs/specification/language-spec.md	1e3e2f8cadd7	Stmt::Match { expr, arms, span } => { // Generate a series of if-else statements for pattern matching self.output.push_str(" // Match statement\n");
-src/codegen/mod.rs	4107-4107	docs/specification/language-spec.md	37f0ce8ecb37	let end_label = format!("_match_end{}", self.hoist_counter);
+src/codegen/mod.rs	4012-4014	docs/reference/features/feature-index.toml	ad66b9f6ed85	self.output.push_str("sizeof("); self.generate_expression(iter)?; self.output.push_str(")/sizeof(");
+src/codegen/mod.rs	4080-4082	docs/specification/language-spec.md	1e3e2f8cadd7	Stmt::Match { expr, arms, span } => { // Generate a series of if-else statements for pattern matching self.output.push_str(" // Match statement\n");
+src/codegen/mod.rs	4116-4116	docs/specification/language-spec.md	37f0ce8ecb37	let end_label = format!("_match_end{}", self.hoist_counter);
 src/codegen/mod.rs	415-415	tests/d3b_tail_if.rs	2dfe8fd03528	.unwrap_or_else(|| "long long".to_string())
-src/codegen/mod.rs	4165-4170	docs/specification/language-spec.md	a3bafe5d18e0	for (i, arm) in arms.iter().enumerate() { if i == 0 { self.output.push_str(" if ("); } else { self.output.push_str(" else if ("); }
-src/codegen/mod.rs	4192-4194	docs/reference/features/feature-index.toml	a968432d7e02	self.output.push_str(" else {\n"); self.output.push_str(&self.match_trap_body(*span)); self.output.push_str(" }");
-src/codegen/mod.rs	4192-4194	docs/specification/language-spec.md	a968432d7e02	self.output.push_str(" else {\n"); self.output.push_str(&self.match_trap_body(*span)); self.output.push_str(" }");
-src/codegen/mod.rs	4451-4451	docs/specification/language-spec.md	f280ce1e525a	fn tuple_c_name(element_c_types: &[String]) -> String {
-src/codegen/mod.rs	5495-5498	docs/specification/language-spec.md	05dc8467f79a	if let Expr::FieldAccess { object, field, .. } = func.as_ref() { let rewritte ... l(object, field, args, *span)?; return self.generate_expression(&rewritten); }
-src/codegen/mod.rs	5533-5533	docs/specification/language-spec.md	5fb3ee501c7c	name if crate::builtins::is_builtin(name) => {
-src/codegen/mod.rs	5533-5535	tests/m3_imported_calls.rs	1286e294e25e	name if crate::builtins::is_builtin(name) => { self.output.push_str(&format!("__pd_{}", name)); }
-src/codegen/mod.rs	5966-5970	docs/reference/features/async-system/async-as-effect.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	5966-5970	docs/reference/features/feature-index.toml	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	5966-5970	docs/specification/bootstrap-subset.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	5966-5970	docs/specification/language-spec.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
-src/codegen/mod.rs	5967-5969	docs/reference/features/async-system/async-as-effect.md	805f59bdf4ee	// D5. The type checker refuses this first, but this backend is // what emitt ... t`, and it is callable // on its own, so the refusal also lives at the defect.
-src/codegen/mod.rs	5978-5982	docs/contributing/MILESTONES.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5978-5982	docs/reference/features/async-system/async-as-effect.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5978-5982	docs/reference/features/feature-index.toml	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5978-5982	docs/specification/bootstrap-subset.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5978-5982	docs/specification/language-spec.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
-src/codegen/mod.rs	5979-5981	docs/reference/features/async-system/async-as-effect.md	1c660937d386	// D5. Same shape as `?` above: this arm emitted // `future.poll(&future)`, w ... le the poll routine // that WAS generated was the free function `<name>_poll`.
-src/codegen/mod.rs	6137-6201	src/typeck/mod.rs	dda6700ebae8	let mut instantiations_for_func = Vec::new(); for (name, type_args, _) in &se ... s_for_func[0])) } /// Substitute type parameters with concrete types in a type
-src/codegen/mod.rs	6287-6298	tests/common/mod.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
-src/codegen/mod.rs	6287-6298	tests/e2e_test.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
+src/codegen/mod.rs	4174-4179	docs/specification/language-spec.md	a3bafe5d18e0	for (i, arm) in arms.iter().enumerate() { if i == 0 { self.output.push_str(" if ("); } else { self.output.push_str(" else if ("); }
+src/codegen/mod.rs	4201-4203	docs/reference/features/feature-index.toml	a968432d7e02	self.output.push_str(" else {\n"); self.output.push_str(&self.match_trap_body(*span)); self.output.push_str(" }");
+src/codegen/mod.rs	4201-4203	docs/specification/language-spec.md	a968432d7e02	self.output.push_str(" else {\n"); self.output.push_str(&self.match_trap_body(*span)); self.output.push_str(" }");
+src/codegen/mod.rs	4460-4460	docs/specification/language-spec.md	f280ce1e525a	fn tuple_c_name(element_c_types: &[String]) -> String {
+src/codegen/mod.rs	5504-5507	docs/specification/language-spec.md	05dc8467f79a	if let Expr::FieldAccess { object, field, .. } = func.as_ref() { let rewritte ... l(object, field, args, *span)?; return self.generate_expression(&rewritten); }
+src/codegen/mod.rs	5542-5542	docs/specification/language-spec.md	5fb3ee501c7c	name if crate::builtins::is_builtin(name) => {
+src/codegen/mod.rs	5542-5544	tests/m3_imported_calls.rs	1286e294e25e	name if crate::builtins::is_builtin(name) => { self.output.push_str(&format!("__pd_{}", name)); }
+src/codegen/mod.rs	5975-5979	docs/reference/features/async-system/async-as-effect.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	5975-5979	docs/reference/features/feature-index.toml	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	5975-5979	docs/specification/bootstrap-subset.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	5975-5979	docs/specification/language-spec.md	60124e93b537	Expr::Question { expr: _, span } => { // D5. The type checker refuses this fi ...  lives at the defect. return Err(CompileError::question_unimplemented(*span));
+src/codegen/mod.rs	5976-5978	docs/reference/features/async-system/async-as-effect.md	805f59bdf4ee	// D5. The type checker refuses this first, but this backend is // what emitt ... t`, and it is callable // on its own, so the refusal also lives at the defect.
+src/codegen/mod.rs	5987-5991	docs/contributing/MILESTONES.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5987-5991	docs/reference/features/async-system/async-as-effect.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5987-5991	docs/reference/features/feature-index.toml	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5987-5991	docs/specification/bootstrap-subset.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5987-5991	docs/specification/language-spec.md	0a0f56a68e5c	Expr::Await { expr: _, span } => { // D5. Same shape as `?` above: this arm e ...  function `<name>_poll`. return Err(CompileError::await_unimplemented(*span));
+src/codegen/mod.rs	5988-5990	docs/reference/features/async-system/async-as-effect.md	1c660937d386	// D5. Same shape as `?` above: this arm emitted // `future.poll(&future)`, w ... le the poll routine // that WAS generated was the free function `<name>_poll`.
+src/codegen/mod.rs	6146-6210	src/typeck/mod.rs	dda6700ebae8	let mut instantiations_for_func = Vec::new(); for (name, type_args, _) in &se ... s_for_func[0])) } /// Substitute type parameters with concrete types in a type
+src/codegen/mod.rs	6296-6307	tests/common/mod.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
+src/codegen/mod.rs	6296-6307	tests/e2e_test.rs	2eaf01410221	pub fn write_output(&self) -> Result<PathBuf> { // Create build_output direct ... le_name) .file_stem() .and_then(|s| s.to_str()) .unwrap_or(&self.module_name);
 src/codegen/mod.rs	640-640	docs/specification/language-spec.md	bde1aa20b222	return self.return_type_to_c(ret_type.as_ref());
 src/driver/mod.rs	104-107	tests/d3b_tail_if.rs	47ed61cc361f	// Pass resolved modules to type checker if !resolved_modules.is_empty() { type_checker.set_imported_modules(resolved_modules.clone()); }
 src/driver/mod.rs	104-107	tests/m3_imported_calls.rs	47ed61cc361f	// Pass resolved modules to type checker if !resolved_modules.is_empty() { type_checker.set_imported_modules(resolved_modules.clone()); }
@@ -237,6 +237,7 @@ src/lib.rs	5-5	docs/contributing/MILESTONES.md	edf3e84c20a2	pub mod async_runtim
 src/lib.rs	5-5	docs/reference/features/feature-index.toml	edf3e84c20a2	pub mod async_runtime;
 src/linker.rs	77-93	tests/d3b_tail_if.rs	e0c57f0823c8	let mut cmd = Command::new("gcc"); cmd.arg(opt.flag()) // N6-11 ARMED THIS. A ... -I") .arg(&runtime_dir) .arg(c_file) .arg(&runtime_c) .arg("-o") .arg(output);
 src/macros/expander.rs	372-372	docs/specification/language-spec.md	c32b83e66d7b	pub fn substitute_template(template: &[Token], context: &MatchContext) -> Result<Vec<Token>> {
+src/macros/expander.rs	400-400	docs/reference/features/feature-index.toml	6f85ed4f92dc	result.push(Token::LeftParen);
 src/macros/expander.rs	454-454	docs/specification/language-spec.md	b63a51957108	fn tokens_to_string(tokens: &[Token]) -> String {
 src/macros/mod.rs	107-107	docs/specification/bootstrap-subset.md	e9048b339b04	Token::LeftBrace,
 src/macros/mod.rs	167-167	docs/reference/features/feature-index.toml	4937b6ff3ab8	Token::Identifier("print_debug".to_string()),
@@ -312,7 +313,7 @@ src/parser/mod.rs	1786-1792	docs/specification/language-spec.md	50e8492a734c	whi
 src/parser/mod.rs	1910-1910	docs/specification/language-spec.md	f36b31251b01	fn parse_global(&mut self) -> Result<GlobalDef> {
 src/parser/mod.rs	2005-2005	docs/specification/language-spec.md	b800e579d21a	fn validate_global_initializer(expr: &Expr, noun: &str) -> Result<()> {
 src/parser/mod.rs	2170-2170	docs/specification/language-spec.md	94c5f4047586	fn token_to_ast_token(&self, token: Token) -> Result<crate::ast::Token> {
-src/parser/mod.rs	2227-2227	docs/reference/features/feature-index.toml	a5ed0a1a429c	Token::Not => AstToken::Punct('!'),
+src/parser/mod.rs	2267-2273	docs/reference/features/feature-index.toml	1abd6c919dd4	other => { return refuse( &format!("{}", other), "the macro token stream can  ... s, integer literals and \ single-character punctuation, and nothing else", ) }
 src/parser/mod.rs	2298-2300	docs/reference/features/feature-index.toml	63c500336476	while !self.check(&Token::RightBrace) && !self.is_at_end() { if self.check(&Token::If) { let (stmt, if_tail) = self.parse_if_with_tail()?;
 src/parser/mod.rs	2298-2300	docs/specification/language-spec.md	63c500336476	while !self.check(&Token::RightBrace) && !self.is_at_end() { if self.check(&Token::If) { let (stmt, if_tail) = self.parse_if_with_tail()?;
 src/parser/mod.rs	2359-2359	docs/specification/language-spec.md	efe2f78c7527	pub fn parse_statement(&mut self) -> Result<Stmt> {
@@ -364,60 +365,60 @@ src/runtime/io.rs	470-470	src/builtins.rs	66e11b278a21	*out_str = Box::into_raw(
 src/runtime/string_ops.rs	398-398	docs/reference/features/advanced/totality-checking.md	b8736fb052c9	fn test_null_termination() {
 src/typeck/exhaustiveness.rs	114-114	docs/reference/features/feature-index.toml	f639078a7515	pub fn is_irrefutable(pattern: &Pattern) -> bool {
 src/typeck/exhaustiveness.rs	114-114	docs/specification/language-spec.md	f639078a7515	pub fn is_irrefutable(pattern: &Pattern) -> bool {
-src/typeck/mod.rs	1066-1066	docs/contributing/MILESTONES.md	f2727a84bd5d	instantiations: HashMap<FunctionInstantiation, CheckerType>,
-src/typeck/mod.rs	1074-1074	docs/contributing/MILESTONES.md	ab6613350d50	struct_instantiations: HashMap<StructInstantiation, CheckerType>,
-src/typeck/mod.rs	1138-1138	docs/specification/language-spec.md	f28ef1a76718	// src/builtins.rs so that this pass and the borrow checker can never
-src/typeck/mod.rs	1138-1144	docs/specification/bootstrap-subset.md	db4e2b3c7b6b	// src/builtins.rs so that this pass and the borrow checker can never // drif ... ap(|b| { let params = b.params.iter().map(|p| builtin_type(p.ty)).collect(); (
-src/typeck/mod.rs	1389-1389	src/ownership/borrow_checker.rs	607f77772877	pub fn set_imported_modules(&mut self, modules: HashMap<String, crate::resolver::ModuleInfo>) {
-src/typeck/mod.rs	1450-1450	docs/contributing/MILESTONES.md	49c4e85fd63d	sorted_modules.sort_by_key(|(name, _)| *name);
-src/typeck/mod.rs	1450-1450	tests/m3_imported_calls.rs	49c4e85fd63d	sorted_modules.sort_by_key(|(name, _)| *name);
-src/typeck/mod.rs	1483-1494	tests/d3b_tail_if.rs	756da528428a	// raised at the end of `check`, when it is known // whether it was instantia ... lf.deferred_generic_async_value_returns .push((func.name.clone(), func.span));
-src/typeck/mod.rs	1564-1564	docs/contributing/citation-and-predicate-debt.md	d60e1ee18e1a	self.functions.insert(func.name.clone(), func_type.clone());
-src/typeck/mod.rs	1564-1564	tests/m3_imported_calls.rs	d60e1ee18e1a	self.functions.insert(func.name.clone(), func_type.clone());
-src/typeck/mod.rs	1564-1565	src/typeck/mod.rs	cde259ca3dd0	self.functions.insert(func.name.clone(), func_type.clone()); self.functions.insert(qualified_name, func_type);
-src/typeck/mod.rs	1567-1569	src/typeck/mod.rs	976a2cb7e59d	} } crate::ast::Item::Struct(struct_def) => {
-src/typeck/mod.rs	1569-1570	src/ownership/borrow_checker.rs	0984e6d24e1c	crate::ast::Item::Struct(struct_def) => { if matches!(struct_def.visibility, crate::ast::Visibility::Public) {
-src/typeck/mod.rs	1664-1665	src/typeck/mod.rs	fc96e829cb37	fields .iter()
-src/typeck/mod.rs	1810-1810	docs/specification/language-spec.md	17c4d76b3ea8	fn register_global(&mut self, global: &crate::ast::GlobalDef) -> Result<()> {
-src/typeck/mod.rs	2295-2296	docs/specification/language-spec.md	459dfb6fab18	// Second pass: type check function bodies for item in &program.items {
-src/typeck/mod.rs	2307-2309	docs/reference/features/feature-index.toml	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
-src/typeck/mod.rs	2307-2310	docs/design/trait_system_design.md	b3187d597291	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies }
-src/typeck/mod.rs	2447-2453	tests/d3b_tail_if.rs	a2f01bad413f	let generic_offenders = self.emitted_generic_offenders(program, &self.deferre ... eError::async_value_return_unimplemented_in_imports( &generic_offenders, )); }
-src/typeck/mod.rs	2487-2508	tests/d3b_tail_if.rs	4326381ba4ac	fn emitted_generic_offenders( &self, program: &Program, deferred: &[(String,  ...  .then(a.1.start.cmp(&b.1.start)) .then(a.1.end.cmp(&b.1.end)) }); offenders }
-src/typeck/mod.rs	2675-2677	src/typeck/mod.rs	3a4cde271d4d	if func.is_async && Self::has_value_return(&func.body) { return Err(CompileError::async_value_return_unimplemented(func.span)); }
-src/typeck/mod.rs	2701-2701	docs/specification/language-spec.md	de12aa7cdb7f	// the construct cannot be honoured wherever it sits, while an imported
-src/typeck/mod.rs	3435-3435	docs/specification/language-spec.md	517c4f4b07b2	if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
-src/typeck/mod.rs	3454-3462	src/builtins.rs	8af373d3bc2a	if let Some(builtin) = crate::builtins::lookup(func_name) { if let Some(reaso ... tin { name: func_name.clone(), reason: reason.to_string(), span: None, }); } }
-src/typeck/mod.rs	3879-3879	docs/specification/bootstrap-subset.md	e92658c899d3	GenericArgValue::Type(t) => match t {
-src/typeck/mod.rs	4184-4188	tests/m3_imported_calls.rs	3ad1ebfc685e	if !self.enums.contains_key(enum_name) { return Err(CompileError::Generic(format!( "Undefined enum type: {}", enum_name )));
-src/typeck/mod.rs	4354-4354	src/codegen/mod.rs	4cba7df8d4d6	mutable: _, expr, ..
-src/typeck/mod.rs	4390-4390	docs/reference/features/async-system/async-as-effect.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
-src/typeck/mod.rs	4390-4390	docs/reference/features/feature-index.toml	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
-src/typeck/mod.rs	4390-4390	docs/specification/bootstrap-subset.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
-src/typeck/mod.rs	4390-4390	docs/specification/language-spec.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
-src/typeck/mod.rs	4393-4395	src/codegen/llvm_text_backend.rs	2a8d2b321e39	Err(CompileError::Generic( "Unexpected macro invocation in type checking - macros should be expanded before this phase".to_string() ))
-src/typeck/mod.rs	4397-4397	docs/reference/features/async-system/async-as-effect.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-src/typeck/mod.rs	4397-4397	docs/specification/bootstrap-subset.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-src/typeck/mod.rs	4397-4397	docs/specification/language-spec.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-src/typeck/mod.rs	4682-4682	docs/reference/features/feature-index.toml	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
-src/typeck/mod.rs	4682-4682	docs/specification/language-spec.md	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
-src/typeck/mod.rs	5482-5486	docs/specification/language-spec.md	628e7c502a43	if elements.is_empty() { return Err(CompileError::Generic( "Cannot infer type from empty array".to_string(), )); }
-src/typeck/mod.rs	5484-5484	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
-src/typeck/mod.rs	5730-5730	tests/m3_imported_calls.rs	284927a601b1	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect();
-src/typeck/mod.rs	5730-5731	docs/contributing/MILESTONES.md	8803e64de7ca	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect(); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
-src/typeck/mod.rs	5792-5792	tests/m3_imported_calls.rs	11f0f244039f	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().collect();
-src/typeck/mod.rs	5792-5793	docs/contributing/MILESTONES.md	f6fd74b6bf82	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().c ... ); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+src/typeck/mod.rs	1089-1089	docs/contributing/MILESTONES.md	f2727a84bd5d	instantiations: HashMap<FunctionInstantiation, CheckerType>,
+src/typeck/mod.rs	1097-1097	docs/contributing/MILESTONES.md	ab6613350d50	struct_instantiations: HashMap<StructInstantiation, CheckerType>,
+src/typeck/mod.rs	1161-1161	docs/specification/language-spec.md	f28ef1a76718	// src/builtins.rs so that this pass and the borrow checker can never
+src/typeck/mod.rs	1161-1167	docs/specification/bootstrap-subset.md	db4e2b3c7b6b	// src/builtins.rs so that this pass and the borrow checker can never // drif ... ap(|b| { let params = b.params.iter().map(|p| builtin_type(p.ty)).collect(); (
+src/typeck/mod.rs	1412-1412	src/ownership/borrow_checker.rs	607f77772877	pub fn set_imported_modules(&mut self, modules: HashMap<String, crate::resolver::ModuleInfo>) {
+src/typeck/mod.rs	1473-1473	docs/contributing/MILESTONES.md	49c4e85fd63d	sorted_modules.sort_by_key(|(name, _)| *name);
+src/typeck/mod.rs	1473-1473	tests/m3_imported_calls.rs	49c4e85fd63d	sorted_modules.sort_by_key(|(name, _)| *name);
+src/typeck/mod.rs	1506-1517	tests/d3b_tail_if.rs	756da528428a	// raised at the end of `check`, when it is known // whether it was instantia ... lf.deferred_generic_async_value_returns .push((func.name.clone(), func.span));
+src/typeck/mod.rs	1587-1587	docs/contributing/citation-and-predicate-debt.md	d60e1ee18e1a	self.functions.insert(func.name.clone(), func_type.clone());
+src/typeck/mod.rs	1587-1587	tests/m3_imported_calls.rs	d60e1ee18e1a	self.functions.insert(func.name.clone(), func_type.clone());
+src/typeck/mod.rs	1587-1588	src/typeck/mod.rs	cde259ca3dd0	self.functions.insert(func.name.clone(), func_type.clone()); self.functions.insert(qualified_name, func_type);
+src/typeck/mod.rs	1590-1592	src/typeck/mod.rs	976a2cb7e59d	} } crate::ast::Item::Struct(struct_def) => {
+src/typeck/mod.rs	1592-1593	src/ownership/borrow_checker.rs	0984e6d24e1c	crate::ast::Item::Struct(struct_def) => { if matches!(struct_def.visibility, crate::ast::Visibility::Public) {
+src/typeck/mod.rs	1687-1688	src/typeck/mod.rs	fc96e829cb37	fields .iter()
+src/typeck/mod.rs	1833-1833	docs/specification/language-spec.md	17c4d76b3ea8	fn register_global(&mut self, global: &crate::ast::GlobalDef) -> Result<()> {
+src/typeck/mod.rs	2562-2563	docs/specification/language-spec.md	459dfb6fab18	// Second pass: type check function bodies for item in &program.items {
+src/typeck/mod.rs	2574-2576	docs/reference/features/feature-index.toml	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
+src/typeck/mod.rs	2574-2577	docs/design/trait_system_design.md	b3187d597291	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies }
+src/typeck/mod.rs	2714-2720	tests/d3b_tail_if.rs	a2f01bad413f	let generic_offenders = self.emitted_generic_offenders(program, &self.deferre ... eError::async_value_return_unimplemented_in_imports( &generic_offenders, )); }
+src/typeck/mod.rs	2754-2775	tests/d3b_tail_if.rs	4326381ba4ac	fn emitted_generic_offenders( &self, program: &Program, deferred: &[(String,  ...  .then(a.1.start.cmp(&b.1.start)) .then(a.1.end.cmp(&b.1.end)) }); offenders }
+src/typeck/mod.rs	2942-2944	src/typeck/mod.rs	3a4cde271d4d	if func.is_async && Self::has_value_return(&func.body) { return Err(CompileError::async_value_return_unimplemented(func.span)); }
+src/typeck/mod.rs	2968-2968	docs/specification/language-spec.md	de12aa7cdb7f	// the construct cannot be honoured wherever it sits, while an imported
+src/typeck/mod.rs	3705-3705	docs/specification/language-spec.md	517c4f4b07b2	if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
+src/typeck/mod.rs	3724-3732	src/builtins.rs	8af373d3bc2a	if let Some(builtin) = crate::builtins::lookup(func_name) { if let Some(reaso ... tin { name: func_name.clone(), reason: reason.to_string(), span: None, }); } }
+src/typeck/mod.rs	4149-4149	docs/specification/bootstrap-subset.md	e92658c899d3	GenericArgValue::Type(t) => match t {
+src/typeck/mod.rs	4454-4458	tests/m3_imported_calls.rs	3ad1ebfc685e	if !self.enums.contains_key(enum_name) { return Err(CompileError::Generic(format!( "Undefined enum type: {}", enum_name )));
+src/typeck/mod.rs	4624-4624	src/codegen/mod.rs	4cba7df8d4d6	mutable: _, expr, ..
+src/typeck/mod.rs	4660-4660	docs/reference/features/async-system/async-as-effect.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+src/typeck/mod.rs	4660-4660	docs/reference/features/feature-index.toml	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+src/typeck/mod.rs	4660-4660	docs/specification/bootstrap-subset.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+src/typeck/mod.rs	4660-4660	docs/specification/language-spec.md	4ac6233df4b9	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+src/typeck/mod.rs	4663-4665	src/codegen/llvm_text_backend.rs	2a8d2b321e39	Err(CompileError::Generic( "Unexpected macro invocation in type checking - macros should be expanded before this phase".to_string() ))
+src/typeck/mod.rs	4667-4667	docs/reference/features/async-system/async-as-effect.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+src/typeck/mod.rs	4667-4667	docs/specification/bootstrap-subset.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+src/typeck/mod.rs	4667-4667	docs/specification/language-spec.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+src/typeck/mod.rs	4952-4952	docs/reference/features/feature-index.toml	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
+src/typeck/mod.rs	4952-4952	docs/specification/language-spec.md	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
+src/typeck/mod.rs	5764-5768	docs/specification/language-spec.md	628e7c502a43	if elements.is_empty() { return Err(CompileError::Generic( "Cannot infer type from empty array".to_string(), )); }
+src/typeck/mod.rs	5766-5766	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
+src/typeck/mod.rs	6012-6012	tests/m3_imported_calls.rs	284927a601b1	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect();
+src/typeck/mod.rs	6012-6013	docs/contributing/MILESTONES.md	8803e64de7ca	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect(); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+src/typeck/mod.rs	6074-6074	tests/m3_imported_calls.rs	11f0f244039f	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().collect();
+src/typeck/mod.rs	6074-6075	docs/contributing/MILESTONES.md	f6fd74b6bf82	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().c ... ); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
 src/typeck/mod.rs	714-718	docs/contributing/MILESTONES.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	714-718	docs/reference/features/core-language/implicit-lifetimes.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	714-718	docs/reference/features/feature-index.toml	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	714-718	docs/specification/language-spec.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
 tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	9efc88caac80	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:181 defines only `macro name ... ests/reject/macro_rules.pd. Retiring it is the owner's call, not this test's"]
-tests/compiler_comprehensive_test.rs	616-616	docs/contributing/MILESTONES.md	33e1b803ccb2	fn test_missing_return_is_an_error() {
+tests/compiler_comprehensive_test.rs	624-624	docs/contributing/MILESTONES.md	33e1b803ccb2	fn test_missing_return_is_an_error() {
 tests/conformance-manifest.txt	122-122	docs/contributing/MILESTONES.md	be3ef13e1247	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
 tests/e2e_test.rs	277-277	docs/contributing/MILESTONES.md	da9d5556e31e	fn test_c_keyword_identifier_still_links() {
 tests/e2e_test.rs	322-322	docs/contributing/MILESTONES.md	42427853e62c	fn test_tail_if_function_emits_a_return() {
-tests/m3_imported_calls.rs	1219-1223	docs/contributing/citation-and-predicate-debt.md	ec1a6fef4c0b	/// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consu ... / `register_imported_functions`. So `import lib2::{helper};` imports the whole
+tests/m3_imported_calls.rs	1219-1223	docs/contributing/citation-and-predicate-debt.md	4e9eb9057a56	/// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consu ... / `register_imported_functions`. So `import lib2::{helper};` imports the whole
 tests/regression/lifetimes_uninferred.pd	26-29	docs/reference/features/feature-index.toml	72af1a529f72	fn dangling() -> &i64 { let x: i64 = 5; return &x; }
 tests/reject/uncalled_body_is_checked.pd	21-24	docs/reference/features/feature-index.toml	d225dd41e15a	fn bad() { let v: S = S { x: 0 }; borrow_it(&mut v); }
 tests/stdlib/DRIVERS.tsv	31-31	tests/d3b_tail_if.rs	ec981692eace	stdlib_tail_match stdlib_tail_match.expected clean D3b for `match`, and the e ... handoff on NetA::StillFindsTheOpenMatchDefect (tests/d3b_tail_if.rs) demanded.

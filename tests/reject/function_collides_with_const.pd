@@ -1,0 +1,17 @@
+// NEGATIVE TEST -- a function and a top-level item may not share a name
+// (N3-09), the function-first direction.
+//
+// The mirror of tests/reject/const_collides_with_function.pd. Two directions
+// rather than one rule applied once, because the check lives in two places: the
+// declaration walk asks whether a global already owns the name, and
+// `register_global` asks whether a function does. A single check in either place
+// would have left one order reaching gcc.
+fn g() -> i64 {
+    return 2;
+}
+
+const g: i64 = 1;
+
+fn main() {
+    print_int(g);
+}

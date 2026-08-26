@@ -303,8 +303,12 @@ When you compile, you'll see detailed progress:
   destructuring `let`
 - String interpolation
 - Macro hygiene — expansion is textual and a macro body reads the CALL SITE's names. The macro
-  system itself works for a token template with `$name` substitution (`macro double!(x) { $x * 2 }`);
-  what it cannot do is refused by name, and `println!`, `assert!` and `dbg!` are unusable
+  system itself works for a token template with `$name` substitution (`macro double!(x) { $x * 2 }`).
+  What a macro BODY or ARGUMENT may contain is a closed set and everything outside it is refused by
+  name — non-integer literals, two-character operators, a bare parameter name, an unknown `$name`,
+  a nested invocation. The three unusable builtins are NOT in that set: `println!`, `assert!` and
+  `dbg!` fail with ordinary parse errors from their own expansions, which `A4.6` of the
+  specification lists shape by shape
 
 ### ⚠️ Known Limitations
 

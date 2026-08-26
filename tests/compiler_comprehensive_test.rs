@@ -160,12 +160,20 @@ fn test_top_level_const() {
 
 #[test]
 fn test_top_level_static() {
-    // N3-10. Also unchanged: a `static` is emitted without the `const`
-    // qualifier, which is what makes `static mut` assignable in the C as well
-    // as in the language.
+    // N3-10. THE ORIGINAL ASSERTION IS UNCHANGED and now names the form it
+    // actually describes: `static mut` is the writable one, so it is the one
+    // emitted without the C `const` qualifier.
+    compile_and_verify(
+        "static mut Y: int = 10;\nfn main() { }",
+        &["static long long Y = 10;"],
+    );
+    // AND THE READ-ONLY FORM CARRIES THE QUALIFIER, which is the half the XFAIL
+    // never asked for. A `static` without `mut` may not be assigned in this
+    // language; emitting `const` makes gcc enforce that too, so a code
+    // generation bug that stored to one is a C error rather than a silent write.
     compile_and_verify(
         "static Y: int = 10;\nfn main() { }",
-        &["static long long Y = 10;"],
+        &["static const long long Y = 10;"],
     );
 }
 

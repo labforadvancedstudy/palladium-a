@@ -1,0 +1,11 @@
+// NEGATIVE TEST -- `%` by zero has no value either (N3-09).
+//
+// Separated from division rather than folded into it, because the two are
+// undefined in C for the same reason and a reader hitting one should not be
+// told about the other. `checked_rem` answers None for both a zero divisor and
+// `i64::MIN % -1`; the message says which happened.
+const X: i64 = 1 % 0;
+
+fn main() {
+    print_int(X);
+}

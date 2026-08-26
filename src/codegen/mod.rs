@@ -1072,7 +1072,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4354`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4624`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -2826,9 +2826,18 @@ impl CodeGenerator {
             .push_str("// Top-level const and static items\n");
         for global in globals {
             let c_type = self.type_to_c(&global.ty);
+            // THE C `const` FOLLOWS THE LANGUAGE RULE, NOT THE KEYWORD. A
+            // `static` without `mut` is read-only in Palladium — the type
+            // checker refuses an assignment to it — so emitting it without the
+            // qualifier left the rule enforced in exactly one place. With it,
+            // gcc is a second enforcer of the same rule, and a code-generation
+            // bug that emitted a store to a read-only item becomes a C error
+            // rather than a silent write. `static mut` is the one form that
+            // stays writable, so it is the one form emitted without `const`.
             let qualifier = match global.kind {
-                crate::ast::GlobalKind::Const => "static const ",
-                crate::ast::GlobalKind::Static { .. } => "static ",
+                crate::ast::GlobalKind::Const
+                | crate::ast::GlobalKind::Static { is_mut: false } => "static const ",
+                crate::ast::GlobalKind::Static { is_mut: true } => "static ",
             };
             let mut definition = String::new();
             definition.push_str(qualifier);

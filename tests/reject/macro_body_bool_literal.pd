@@ -1,0 +1,15 @@
+// NEGATIVE TEST -- a macro body may not contain `true` or `false` (N3-12).
+//
+// The third measured shape of the literal-kind loss, after the string and the
+// float. `true` was stored as the text "true" with no kind and came back as the
+// STRING "true": `print(yes!())` printed `true` and `if yes!() { … }` failed
+// with "Type mismatch: expected Bool, found String".
+//
+// The three are pinned separately on purpose. They share one cause and produced
+// three different wrong programs, and a single fixture would have made the
+// other two look like the same case rather than like independent evidence.
+macro yes!() { true }
+
+fn main() {
+    print_int(1);
+}

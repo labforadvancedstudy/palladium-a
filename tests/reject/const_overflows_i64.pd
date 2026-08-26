@@ -1,0 +1,17 @@
+// NEGATIVE TEST -- a top-level initialiser may not overflow i64 (N3-09).
+//
+// WHY THIS IS NOT A PEDANTIC RULE. Signed overflow is UNDEFINED in C, so the
+// number this used to produce was not a wrong answer, it was an arbitrary one.
+// Measured before the evaluator existed: this program compiled, linked, ran,
+// exited 0 and printed -9223372036854775808, which is what one optimiser on one
+// host chose to do with an expression the standard says nothing about.
+//
+// Every arithmetic operator is checked, so `*` and `-` and unary negation
+// refuse the same way. What is still ACCEPTED is the value `i64` cannot spell
+// directly: `-9223372036854775807 - 1` evaluates in range and is pinned by
+// tests/03_const_items.pd.
+const X: i64 = 9223372036854775807 + 1;
+
+fn main() {
+    print_int(X);
+}

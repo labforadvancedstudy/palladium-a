@@ -167,14 +167,14 @@ generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec ex
 `bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
 subset it implements"*). Both exclusions mattered because there were **two independent unordered
 emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:182-182`) emitted by iterating
-`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:1066-1066`,
-`src/typeck/mod.rs:1074-1074`) emitted by iterating `.keys()`.
+`.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:1089-1089`,
+`src/typeck/mod.rs:1097-1097`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
 sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:1901-1902` and
-`src/typeck/mod.rs:1450-1450`, the two later codegen walks off their own sorted locals
-(`src/codegen/mod.rs:1987-1987`, `src/codegen/mod.rs:2918-2918`), and the instantiation keys at
-`src/typeck/mod.rs:5730-5731` and `src/typeck/mod.rs:5792-5793`. Pinned by
+`src/typeck/mod.rs:1473-1473`, the two later codegen walks off their own sorted locals
+(`src/codegen/mod.rs:1987-1987`, `src/codegen/mod.rs:2927-2927`), and the instantiation keys at
+`src/typeck/mod.rs:6012-6013` and `src/typeck/mod.rs:6074-6075`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -352,7 +352,7 @@ Measured at this revision; every row names the command that produced it.
 |---|---|---|
 | **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
-| Conformance | `verified=80 untranscribed=0 vacuous=6 xfail=1 reject=69 skip=2 failures=0` over 158 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `feat/m2-items` added FIFTEEN across two commits — three `run` fixtures (top-level `const`, top-level `static`, the macro system) plus the `02_types_enums` vacuous->run transition, and twelve `reject`s: five for the const/static rules, `missing_return.pd` for N3-03, and six for the macro system, every one of the six replacing either a SILENT wrong expansion or a diagnostic that named a compiler phase; then `1f64c32` added three
+| Conformance | `verified=80 untranscribed=0 vacuous=6 xfail=1 reject=82 skip=2 failures=0` over 171 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `feat/m2-items` added FIFTEEN across two commits — three `run` fixtures (top-level `const`, top-level `static`, the macro system) plus the `02_types_enums` vacuous->run transition, and twelve `reject`s: five for the const/static rules, `missing_return.pd` for N3-03, and six for the macro system, every one of the six replacing either a SILENT wrong expansion or a diagnostic that named a compiler phase; then `1f64c32` added three
 `run` fixtures for the review-round repairs and SEVEN `reject`s for the refusals those repairs
 introduced, which is the shape a fix round leaves — the negative rows outnumber the positive ones
 because most of what a review finds is a program that should never have been accepted; then review
@@ -367,7 +367,7 @@ binds, three range-pattern defects, a bool match missing `false`, a literal patt
 type, and the non-exhaustive integer match N6-10 now refuses) | `make conformance` |
 | Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 423 citations fingerprinted, 29 no-compile fences pinned | `make check-docs` |
+| Documentation | every snippet compiles; 419 citations fingerprinted, 29 no-compile fences pinned | `make check-docs` |
 | Rust tests | 930 pass, **0 fail**, 46 ignored (569 lib + 361 integration, 28 binaries) | `make test-honest` |
 | Declared failures | 45 `xfail` + 1 `slow`, none passing; 45 of 45 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
@@ -397,8 +397,10 @@ rows: `07_traits_basic`, `08_generics_basic` (**M3**),
 `02_types_enums` was the seventh and was M2's only one; item 9 made it real and transitioned the
 row, which is the protocol this file states for a vacuous fixture whose feature gets implemented —
 rewrite the fixture, then transition the row, and never delete either.
-`reject` is empty ([F3](#f3-the-conformance-corpus-has-no-negative-tests)). Every one of these rows
-is named by a requirement, and that direction of the reconciliation is checked.
+`reject` WAS empty when this inventory was taken ([F3](#f3-the-conformance-corpus-has-no-negative-tests));
+it holds 82 rows now, and the sentence is left in the past tense rather than deleted because F3 is
+the finding this paragraph is evidence for. Every one of these rows is named by a requirement, and
+that direction of the reconciliation is checked.
 
 **4. Declared Rust failures** — `make test-xfail`; owners parsed by `scripts/test-xfail.py:186`:
 18 tagged M4 → now **M3**; 14 tagged M2 → **M2**; 5 tagged `unscheduled` → **M5**; 3 tagged M1 →
@@ -414,7 +416,7 @@ by the requirement manifest; this is the reading list.
 | D3b — a tail `if` is not lowered to a `return`; `fib(10)` prints `8261746944` and exits 0 | [A6.6](../specification/language-spec.md#a66-tail-expressions) | N3-02, N3-03 |
 | The async producer — `async fn g() { … }` compiled and emitted a `Future` struct with a `state` field and a `_poll` function, which N7 forbids outright. **CLOSED**: `async fn` is refused at the construct in typeck and again in codegen, and the emitter is deleted; receipts in `tests/m2_async_producer.rs` | [F11](#f11-the-async-producer-was-alive-and-violated-n7--closed) | N7-18 |
 | C-keyword identifiers — `fn double` emitted `long long double(…)`. **CLOSED**: escaped on the way into code generation, `src/codegen/c_ident.rs:440`; the `#[ignore]` is gone and the debt row is `paid` | `tests/e2e_test.rs:277` | N3-01 |
-| No missing-return diagnostic — `fn f() -> int { }` compiled silently. **CLOSED**: the parser already decided "returns on every path" and now refuses when it does not, `src/parser/mod.rs:1245-1274`; the `#[ignore]` is gone and the debt row is `paid` | `tests/compiler_comprehensive_test.rs:616` | N3-03 |
+| No missing-return diagnostic — `fn f() -> int { }` compiled silently. **CLOSED**: the parser already decided "returns on every path" and now refuses when it does not, `src/parser/mod.rs:1245-1274`; the `#[ignore]` is gone and the debt row is `paid` | `tests/compiler_comprehensive_test.rs:624` | N3-03 |
 | Block comments do not nest, which N2 requires | [F10](#f10-block-comments-do-not-nest-and-nothing-said-so) | N2-08 |
 | Nested arrays work in neither locals nor parameters | [A5](../specification/language-spec.md#a5-types) | N4-10 |
 | Filesystem builtins return `i64`/`bool` rather than `Result`, because `Result` is not built in *(the handle-representation split that made six of them uncallable is closed — M2)* | [A8](../specification/language-spec.md#a8-builtins) | N14-03 |
@@ -548,12 +550,14 @@ gates scan for `N` and `N of M`, and a number spelled out is invisible to them. 
 unscheduled 5, M5 1, and **M1 zero**: the three M1 rows were paid, and the sentence had gone on
 counting them. M2 fell 9 -> 6 and `unscheduled` 6 -> 5 across items 3, 9 and the round between
 them, each by PAYING a row rather than by retagging one.)* *(It read "45
-rows" while GI-06 was `owed`; GI-06, GI-09 and N14-01 are now `satisfied`, and 46 is the count of
-rows owned, not of rows outstanding — the two were being used interchangeably.)*
+rows" while GI-06 was `owed`; GI-06, GI-09 and N14-01 are now `satisfied`, and 46 was the count of
+rows OWNED, not of rows outstanding — the two were being used interchangeably. That parenthetical
+is historical: it records a confusion at the commit that had it, and 46 is not today's number.
+Today's is the bolded figure above, re-derived by `scripts/requirements.py` on every run.)*
 
 1. **The M1 debt is PAID, and it was the live miscompile.** A tail `if` was not lowered to a return
    — `fib(10)` printed `8261746944` (N3-02); the missing-return diagnostic landed with it (N3-03),
-   as `tests/compiler_comprehensive_test.rs:616` says it must; and C-keyword identifier escaping
+   as `tests/compiler_comprehensive_test.rs:624` says it must; and C-keyword identifier escaping
    (N3-01) landed with those. All three `#[ignore]`s are gone, their rows in
    `tests/rust-debt-manifest.txt` are `paid`, and `make m1-exit` exits **0**.
 2. **The async producer is CLOSED** (N7-18). `async fn g() { print("x"); }` compiled and emitted
@@ -939,7 +943,13 @@ enum-owned method is unreachable by its path form. Each row carries a
      one-element array. `A4.6` in the specification claimed `println!` and `assert!` were
      implemented; that claim was false when it was written and is corrected.
 
-**Exit**: `make m2-exit` (`Makefile:312-365`) — four inventories, RED until items 1–9 land.
+**Exit**: `make m2-exit` (`Makefile:312-365`) — four inventories. **The condition is not "items
+1–9 land"**, and saying so was a category error this line carried for three rounds: the gate reads
+the MANIFEST, so it goes green when no row owned by M2 is `owed` or `blocked` — all 49 of them —
+and six of the eight still outstanding are named by no item at all. Even then it exits **2
+(NO_VERDICT)** rather than 0, because steps 3 and 4 of its own specification do not run: it does
+not resolve each evidence locator and execute it, and it does not reconcile the Rust debt inventory
+by `req:` id. "No row says owed" is a statement about a status column.
 
 ## M3 — Traits and generics (v0.5.0)
 
@@ -1193,7 +1203,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:5978-5982` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:5987-5991` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -1217,7 +1227,7 @@ representation."* A `struct` with a `state` field, emitted into the program's ow
 representation.
 
 **CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
-`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:3195-3201`), the
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:3204-3210`), the
 same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
 unreachable: a private method nothing calls is one edit away from being called again. No line of
 `src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and
@@ -1377,7 +1387,7 @@ arrived with `fix/d3b-tail-if` and is what the closing paragraph of this finding
 | Row | What was broken, and what closed it |
 |---|---|
 | `tests/e2e_test.rs:322` **CLOSED** | a tail `if` was not lowered to a return — fixed in `src/parser/mod.rs` (`lower_tail_to_return`); the `#[ignore]` is gone, so `make test-xfail` would report an XPASS if it came back |
-| `tests/compiler_comprehensive_test.rs:616` **CLOSED** | `fn f() -> int { }` compiled with no diagnostic — the parser's own `returns_on_every_path` had been deciding the question since D3b and the call site did not act on a `false`; it now refuses (`src/parser/mod.rs:1245-1274`, `CompileError::missing_return`). Accept-side receipts: `tests/m1_missing_return.rs` |
+| `tests/compiler_comprehensive_test.rs:624` **CLOSED** | `fn f() -> int { }` compiled with no diagnostic — the parser's own `returns_on_every_path` had been deciding the question since D3b and the call site did not act on a `false`; it now refuses (`src/parser/mod.rs:1245-1274`, `CompileError::missing_return`). Accept-side receipts: `tests/m1_missing_return.rs` |
 | `tests/e2e_test.rs:277` **CLOSED** | `fn double` emitted `long long double(…)` and gcc rejected the compiler's own output — reserved words are escaped on the way into code generation (`src/codegen/c_ident.rs:440`). Controls on what must NOT be renamed: `tests/m1_c_keyword_idents.rs` |
 
 The first reproduced: `fib(10)` printed `8261746944` and exited 0. **A silent miscompile shipped in
@@ -1405,7 +1415,7 @@ plain sight for several rounds. Root `CLAUDE.md` requires a fact conflict to be 
 than left to coexist, and this one was not.
 
 *Resolved by measurement, not by choosing a sentence.* On the integrated tree the runner evaluates
-69 of them: `reject=69` over 158 fixtures (was 63 over 151 until the macro round of `feat/m2-items`
+82 of them: `reject=82` over 171 fixtures (was 69 over 158 until the review round of `feat/m2-items` added THIRTEEN more, which is what a review round costs when the reviewers probe rather than read: two fresh-binder shadowing shapes, both directions of a cross-kind name collision, four initialisers with no value, `pub` on an item, a macro invocation in an argument, two literal-kind losses and the macro_rules invocation spelling; and was 63 over 151 until the macro round of `feat/m2-items`
 added six more: every one of them a refusal that replaced a SILENT wrong expansion or a diagnostic
 naming a compiler phase, which is what measuring a subsystem before writing its fixture buys; and
 was 57 over 143 until the same branch added six — the

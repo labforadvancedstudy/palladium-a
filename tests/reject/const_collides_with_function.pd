@@ -1,0 +1,21 @@
+// NEGATIVE TEST -- a top-level item and a function may not share a name
+// (N3-09), the item-first direction.
+//
+// A program has ONE namespace for these. Both become C file-scope definitions
+// of the same identifier, so the emitted C is
+// `static const long long f = 1;` beside `long long f() { … }` and gcc answers
+// "redefinition of 'f' as different kind of symbol" -- a diagnostic about
+// GENERATED code for a collision visible in three lines of source.
+//
+// Refused in both orders, because the first pass walks items in source order
+// and either declaration can come first: the function-first direction is pinned
+// by tests/reject/function_collides_with_const.pd.
+const f: i64 = 1;
+
+fn f() -> i64 {
+    return 2;
+}
+
+fn main() {
+    print_int(f());
+}

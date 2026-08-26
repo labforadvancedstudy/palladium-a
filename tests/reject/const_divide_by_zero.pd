@@ -1,0 +1,17 @@
+// NEGATIVE TEST -- a top-level initialiser must HAVE a value (N3-09).
+//
+// THE RULE THIS FIXTURE CLOSES WAS SYNTACTIC. It said "a literal, or operators
+// over literals", and `1 / 0` is exactly that: the SHAPE is legal and the VALUE
+// does not exist. So the expression passed every check the compiler had and
+// reached the C compiler, which answered
+// "initializer element is not a compile-time constant" at the emitted line --
+// a diagnostic about generated code, for a division the author wrote.
+//
+// The initialiser is EVALUATED now, over the same closed list the parser
+// accepts. Nothing new became writable; what changed is that a form with no
+// value is refused by name instead of being passed on.
+const X: i64 = 1 / 0;
+
+fn main() {
+    print_int(X);
+}

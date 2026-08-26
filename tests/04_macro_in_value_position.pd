@@ -7,11 +7,17 @@
 // negative half of that is pinned by unit tests; this is the positive half —
 // the value the program actually prints.
 //
-// THE MACROS TAKE NO PARAMETERS ON PURPOSE. A macro parameter is not
-// substituted into the body today (`macro double!(x) { x + x }` used with
-// `double!(21)` is refused with "Undefined variable or function: 'x'"), which
-// is the lossy token-stream conversion A4.6 records. A fixture that used one
-// would be testing that gap rather than this one.
+// THE MACROS TAKE NO PARAMETERS ON PURPOSE, and the reason has CHANGED since
+// this comment was written. It used to say a parameter is never substituted and
+// quoted "Undefined variable or function: 'x'" — true at the time, because `$`
+// was missing from the parser's token table so no macro had ever substituted
+// anything. N3-12 fixed that: `macro double!(x) { $x * 2 }` works and
+// `tests/03_macros.pd` pins it. What the quoted spelling now gets is a
+// DEFINITION-SIDE refusal, because a body that writes the bare parameter name
+// resolves it at the call site: "macro `double` writes `x` in its body, which
+// is the name of a parameter but is not a substitution: write `$x`".
+// These macros stay parameterless because this fixture is about the EXPANDER'S
+// WALK over value positions, and a parameter would add a second subject.
 
 enum Pick {
     First,

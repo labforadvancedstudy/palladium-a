@@ -1,0 +1,23 @@
+// NEGATIVE TEST -- a pattern binder may not take a top-level item's name
+// (N3-09, N3-10).
+//
+// THE SHAPE THAT MAKES THIS WORTH A REFUSAL RATHER THAN A LINT: a bare name in
+// pattern position is a FRESH BINDER, not a read. So this program does not
+// compare `x` against `LIMIT` -- it binds a new `LIMIT` to whatever `x` is,
+// matches ALWAYS, leaves the second arm dead, and prints 111 for every input.
+// Measured before this refusal existed, with no diagnostic anywhere.
+//
+// The author of `match x { LIMIT => … }` meant the comparison, and the language
+// has one: `match x { 10 => … }`, or an `if`. What it does not have is a way to
+// spell "match this constant", so the name is refused where it is bound rather
+// than silently given a second meaning.
+const LIMIT: i64 = 10;
+
+fn main() {
+    let x = 3;
+    let r = match x {
+        LIMIT => 111,
+        _ => 222,
+    };
+    print_int(r);
+}

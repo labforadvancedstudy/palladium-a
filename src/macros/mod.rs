@@ -532,6 +532,7 @@ impl MacroExpander {
 
             // Convert AST tokens to lexer tokens
             let arg_tokens = self.convert_ast_tokens_to_lexer_tokens(args)?;
+            refuse_nested_invocation(&arg_tokens, name)?;
 
             // Match pattern
             if let Some(context) = match_pattern(&parsed_macro.pattern, &arg_tokens)? {
@@ -564,6 +565,7 @@ impl MacroExpander {
 
                 // Convert AST tokens to lexer tokens
                 let arg_tokens = self.convert_ast_tokens_to_lexer_tokens(args)?;
+                refuse_nested_invocation(&arg_tokens, name)?;
 
                 // Match pattern
                 if let Some(context) = match_pattern(&parsed_macro.pattern, &arg_tokens)? {
@@ -727,4 +729,35 @@ fn unknown_macro(name: &str) -> CompileError {
         );
     }
     CompileError::Generic(format!("Unknown macro '{}'", name))
+}
+
+/// Refuse a macro invocation written inside another macro's ARGUMENTS.
+///
+/// The sibling of the check `register_macro` performs over a macro BODY, and it
+/// is the same one-pass fact seen from the other side. `double!(double!(1))`
+/// captures the inner invocation as argument TOKENS; substitution splices those
+/// tokens into the expansion, and the expansion is re-parsed into an AST that
+/// contains a `MacroInvocation` node — after the pass that expands them has
+/// gone by. Measured, it reached the type checker as "Unexpected macro
+/// invocation in type checking - macros should be expanded before this phase":
+/// an internal assertion about a compiler phase, raised at the call site, naming
+/// nothing the author can act on.
+///
+/// The real repair for both shapes is the same and is not this: expansion to a
+/// FIXED POINT, which is a change to the expansion driver. Until that exists the
+/// boundary is stated where the program can be edited.
+fn refuse_nested_invocation(tokens: &[Token], outer: &str) -> Result<()> {
+    for (i, token) in tokens.iter().enumerate() {
+        if let Token::Identifier(callee) = token {
+            if matches!(tokens.get(i + 1), Some(Token::Not)) {
+                return Err(CompileError::Generic(format!(
+                    "the macro `{}` is given `{}!(…)` as an argument, and expansion is a single \
+                     pass: an invocation that an expansion produces is never expanded. Bind it to \
+                     a `let` first, or call a function",
+                    outer, callee
+                )));
+            }
+        }
+    }
+    Ok(())
 }

@@ -1,0 +1,16 @@
+// NEGATIVE TEST -- `macro_rules!` in INVOCATION position gets the same sentence
+// as in item position (N3-14).
+//
+// tests/reject/macro_rules.pd pins the declaration `macro_rules! name { … }`.
+// This is the other place a reader arriving from Rust types the name, and it
+// used to answer "Unknown macro 'macro_rules'" -- which reads as a typo in the
+// NAME when the problem is the SYSTEM. One refusal, two positions, and the
+// sentence names what this language has rather than what it lacks
+// (src/macros/mod.rs, `unknown_macro`).
+//
+// The control for over-refusal is in tests/03_macros.pd: `macro_rules` as an
+// ORDINARY IDENTIFIER still compiles and runs, because what is refused is the
+// name followed by `!`, not the spelling.
+fn main() {
+    print_int(macro_rules!(4));
+}

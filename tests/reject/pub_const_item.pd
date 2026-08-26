@@ -1,0 +1,17 @@
+// NEGATIVE TEST -- `pub` on a top-level item is not implemented (N3-09, N3-10).
+//
+// `pub` PROMISES A VISIBILITY NOTHING DELIVERS. The resolver does not export a
+// `const` or a `static` (src/resolver/mod.rs), and code generation emits a
+// definition only for the program being compiled -- so an importer that writes
+// the name gets "Undefined variable or function" at the USE site: a diagnostic
+// about the reader's spelling, for a decision the language made.
+//
+// Refused where the word is written. The item is visible to every function in
+// its own file with or without it, so the repair is to delete four characters.
+// Making `pub` mean something here is cross-module code generation, which is
+// N11's work and not N3-09's.
+pub const X: i64 = 1;
+
+fn main() {
+    print_int(X);
+}

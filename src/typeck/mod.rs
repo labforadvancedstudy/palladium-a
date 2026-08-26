@@ -786,6 +786,29 @@ impl std::fmt::Display for CheckerType {
     }
 }
 
+/// The value of a top-level `const` or `static` initialiser (N3-09, N3-10).
+///
+/// THREE CASES BECAUSE THE TYPE SET HAS THREE SHAPES — the integer widths all
+/// evaluate as `i64`, floats as `f64`, and `bool` as itself. It is not a type:
+/// `register_global` has already type-checked the expression, and this is only
+/// the arithmetic.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ConstScalar {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+}
+
+impl ConstScalar {
+    fn kind(self) -> &'static str {
+        match self {
+            ConstScalar::Int(_) => "integer",
+            ConstScalar::Float(_) => "float",
+            ConstScalar::Bool(_) => "boolean",
+        }
+    }
+}
+
 /// Variable information including type and mutability
 #[derive(Debug, Clone)]
 struct VarInfo {
@@ -1195,8 +1218,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1564-1565`, `src/typeck/mod.rs:1567-1569`,
-    /// `src/typeck/mod.rs:1664-1665`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1587-1588`, `src/typeck/mod.rs:1590-1592`,
+    /// `src/typeck/mod.rs:1687-1688`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -1813,6 +1836,23 @@ impl TypeChecker {
             crate::ast::GlobalKind::Static { .. } => "static",
         };
 
+        // D4. `pub` ON A TOP-LEVEL ITEM PROMISES SOMETHING NOTHING DELIVERS.
+        // The resolver does not export a `const` or `static` and code generation
+        // emits a definition only for the program being compiled, so an importer
+        // that writes the name gets "Undefined variable" at the use site — a
+        // diagnostic about the USER'S spelling for a visibility decision the
+        // language made. Refused at the declaration, where the word is written,
+        // until cross-module items exist (N11).
+        if matches!(global.visibility, crate::ast::Visibility::Public) {
+            return Err(CompileError::Generic(format!(
+                "`pub` on a top-level `{}` is not implemented: nothing exports `{}` and nothing \
+                 emits a definition for an imported one, so the keyword would promise a \
+                 visibility that does not exist. Drop `pub` — the item is visible to every \
+                 function in its own file either way",
+                noun, global.name
+            )));
+        }
+
         if !matches!(
             global.ty,
             crate::ast::Type::I32
@@ -1828,6 +1868,29 @@ impl TypeChecker {
                  `{}`: every other type is built by code that runs, and nothing runs before \
                  `main`",
                 noun, global.name, global.ty
+            )));
+        }
+
+        // THE OTHER DIRECTION OF THE ONE-NAMESPACE RULE: a `const` written after
+        // the `fn` it collides with. Both orders end in the same C, so both are
+        // refused here rather than one of them being left to the linker.
+        if self.functions.contains_key(&global.name)
+            || self.generic_functions.contains_key(&global.name)
+        {
+            return Err(CompileError::Generic(format!(
+                "`{}` is declared as a top-level `{}` and as a function, and a program has one \
+                 namespace for both: the emitted C would define the name twice",
+                global.name, noun
+            )));
+        }
+        if self.type_aliases.contains_key(&global.name)
+            || self.structs.contains_key(&global.name)
+            || self.enums.contains_key(&global.name)
+        {
+            return Err(CompileError::Generic(format!(
+                "`{}` is declared as a top-level `{}` and as a type, and a program has one \
+                 namespace for both",
+                global.name, noun
             )));
         }
 
@@ -1849,6 +1912,9 @@ impl TypeChecker {
                 global.name, found, declared
             )));
         }
+
+        // The initialiser must HAVE a value, not merely have a legal shape.
+        self.const_eval(&global.value, &global.name)?;
 
         let mutable = matches!(
             global.kind,
@@ -1873,6 +1939,189 @@ impl TypeChecker {
                 "{} `{}` has the name of the top-level item declared at line {}: \
                  a local binding may not shadow it",
                 what, name, span.line
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// The value of a top-level initialiser, computed rather than assumed.
+    ///
+    /// WHY THIS EXISTS AT ALL: the initialiser rule was SYNTACTIC. It said "a
+    /// literal, or operators over literals", which `1 / 0` satisfies — so
+    /// `const X: i64 = 1 / 0;` passed every check this compiler had and reached
+    /// the C compiler as `static const long long X = (1 / 0);`, measured as
+    /// "initializer element is not a compile-time constant". The shape was legal
+    /// and the VALUE did not exist. Same for `9223372036854775807 + 1`, which
+    /// compiled, linked, ran and printed `-9223372036854775808`: C signed
+    /// overflow is undefined behaviour, so that number is not a wrong answer,
+    /// it is an arbitrary one.
+    ///
+    /// THE LIST IS NOT WIDENED BY EVALUATING IT. Every form here is one the
+    /// parser already accepted (`validate_global_initializer`); this decides
+    /// whether the form HAS a value, and refuses by name when it does not.
+    /// Nothing new becomes writable.
+    ///
+    /// AGREEMENT WITH C IS THE POINT, and it is why the refusals are exactly
+    /// these three: every accepted integer expression stays inside `i64`, so C's
+    /// `long long` arithmetic computes what this did; a zero divisor and a shift
+    /// outside 0..63 are undefined in C, so no answer here could be checked
+    /// against one there.
+    fn const_eval(&self, expr: &Expr, name: &str) -> Result<ConstScalar> {
+        let refuse = |what: String| -> Result<ConstScalar> {
+            Err(CompileError::Generic(format!(
+                "the initialiser of `{}` has no value: {}",
+                name, what
+            )))
+        };
+        match expr {
+            Expr::Integer(n) => Ok(ConstScalar::Int(*n)),
+            Expr::Float(f) => Ok(ConstScalar::Float(*f)),
+            Expr::Bool(b) => Ok(ConstScalar::Bool(*b)),
+            // A char literal carries its scalar and its TYPE is `i64` (N4-04 is
+            // owed), so it evaluates as the integer it already is everywhere
+            // else in this compiler.
+            Expr::Char(c) => Ok(ConstScalar::Int(*c as i64)),
+            Expr::Unary { op, operand, .. } => {
+                let value = self.const_eval(operand, name)?;
+                match (op, value) {
+                    (UnaryOp::Neg, ConstScalar::Int(n)) => match n.checked_neg() {
+                        Some(v) => Ok(ConstScalar::Int(v)),
+                        None => refuse(format!("negating {} overflows i64", n)),
+                    },
+                    (UnaryOp::Neg, ConstScalar::Float(f)) => Ok(ConstScalar::Float(-f)),
+                    (UnaryOp::Not, ConstScalar::Bool(b)) => Ok(ConstScalar::Bool(!b)),
+                    (UnaryOp::BitNot, ConstScalar::Int(n)) => Ok(ConstScalar::Int(!n)),
+                    (op, value) => refuse(format!(
+                        "`{:?}` is not defined on the {} it is applied to",
+                        op,
+                        value.kind()
+                    )),
+                }
+            }
+            Expr::Binary {
+                left, op, right, ..
+            } => {
+                let l = self.const_eval(left, name)?;
+                let r = self.const_eval(right, name)?;
+                match (l, r) {
+                    (ConstScalar::Int(a), ConstScalar::Int(b)) => Self::const_int_op(*op, a, b)
+                        .map_or_else(|why| refuse(why), Ok),
+                    (ConstScalar::Float(a), ConstScalar::Float(b)) => {
+                        Self::const_float_op(*op, a, b).map_or_else(|why| refuse(why), Ok)
+                    }
+                    (ConstScalar::Bool(a), ConstScalar::Bool(b)) => match op {
+                        BinOp::And => Ok(ConstScalar::Bool(a && b)),
+                        BinOp::Or => Ok(ConstScalar::Bool(a || b)),
+                        BinOp::Eq => Ok(ConstScalar::Bool(a == b)),
+                        BinOp::Ne => Ok(ConstScalar::Bool(a != b)),
+                        op => refuse(format!("`{:?}` is not defined on two booleans", op)),
+                    },
+                    (a, b) => refuse(format!(
+                        "a {} and a {} have no operator between them",
+                        a.kind(),
+                        b.kind()
+                    )),
+                }
+            }
+            // Unreachable through `register_global`, whose caller has already run
+            // `validate_global_initializer`. Stated as a refusal rather than a
+            // panic, because "the parser guarantees it" is the kind of sentence
+            // that stops being true in a later round.
+            other => refuse(format!(
+                "{:?} is not one of the forms a top-level initialiser may take",
+                std::mem::discriminant(other)
+            )),
+        }
+    }
+
+    /// Integer arithmetic that agrees with C or refuses to answer.
+    fn const_int_op(op: BinOp, a: i64, b: i64) -> std::result::Result<ConstScalar, String> {
+        let overflow = |what: &str| format!("{} {} {} overflows i64", a, what, b);
+        Ok(match op {
+            BinOp::Add => ConstScalar::Int(a.checked_add(b).ok_or_else(|| overflow("+"))?),
+            BinOp::Sub => ConstScalar::Int(a.checked_sub(b).ok_or_else(|| overflow("-"))?),
+            BinOp::Mul => ConstScalar::Int(a.checked_mul(b).ok_or_else(|| overflow("*"))?),
+            // `checked_div` answers None for BOTH of C's undefined cases — a
+            // zero divisor and `i64::MIN / -1` — so they are separated here to
+            // say which one happened.
+            BinOp::Div if b == 0 => return Err("division by zero".to_string()),
+            BinOp::Mod if b == 0 => return Err("the remainder of a division by zero".to_string()),
+            BinOp::Div => ConstScalar::Int(a.checked_div(b).ok_or_else(|| overflow("/"))?),
+            BinOp::Mod => ConstScalar::Int(a.checked_rem(b).ok_or_else(|| overflow("%"))?),
+            // C leaves a shift by a negative amount or by the width of the type
+            // undefined, so there is no answer to agree with.
+            BinOp::Shl | BinOp::Shr if !(0..64).contains(&b) => {
+                return Err(format!(
+                    "a shift by {} — the amount has to be between 0 and 63, because an i64 has \
+                     64 bits and C leaves the rest undefined",
+                    b
+                ))
+            }
+            BinOp::Shl => ConstScalar::Int(
+                a.checked_shl(b as u32)
+                    .ok_or_else(|| overflow("<<"))?,
+            ),
+            BinOp::Shr => ConstScalar::Int(a.checked_shr(b as u32).ok_or_else(|| overflow(">>"))?),
+            BinOp::BitAnd => ConstScalar::Int(a & b),
+            BinOp::BitOr => ConstScalar::Int(a | b),
+            BinOp::BitXor => ConstScalar::Int(a ^ b),
+            BinOp::Eq => ConstScalar::Bool(a == b),
+            BinOp::Ne => ConstScalar::Bool(a != b),
+            BinOp::Lt => ConstScalar::Bool(a < b),
+            BinOp::Gt => ConstScalar::Bool(a > b),
+            BinOp::Le => ConstScalar::Bool(a <= b),
+            BinOp::Ge => ConstScalar::Bool(a >= b),
+            BinOp::And | BinOp::Or => {
+                return Err(format!("`{:?}` is not defined on two integers", op))
+            }
+        })
+    }
+
+    /// Float arithmetic. IEEE-754 has an answer for almost everything, so the
+    /// refusals here are the two places C does not.
+    fn const_float_op(op: BinOp, a: f64, b: f64) -> std::result::Result<ConstScalar, String> {
+        Ok(match op {
+            BinOp::Add => ConstScalar::Float(a + b),
+            BinOp::Sub => ConstScalar::Float(a - b),
+            BinOp::Mul => ConstScalar::Float(a * b),
+            // Refused rather than folded to an infinity: an infinite `const` is
+            // a value this language has no literal for, so it could be written
+            // but never written down.
+            BinOp::Div if b == 0.0 => return Err("division by zero".to_string()),
+            BinOp::Div => ConstScalar::Float(a / b),
+            // `%` on two doubles is not C: gcc answers "invalid operands to
+            // binary %". UNREACHABLE THROUGH `register_global` TODAY, and said
+            // so rather than left to look like coverage: `check_expression`
+            // types `%` as integer-only, so `const X: f64 = 1.5 % 0.5;` is
+            // refused one step earlier as "Type mismatch: expected Int, found
+            // Float". The arm stays because the two rules are independent and
+            // the other one moving should not silently produce invalid C.
+            BinOp::Mod => {
+                return Err("`%` between two floats, which C has no operator for".to_string())
+            }
+            BinOp::Eq => ConstScalar::Bool(a == b),
+            BinOp::Ne => ConstScalar::Bool(a != b),
+            BinOp::Lt => ConstScalar::Bool(a < b),
+            BinOp::Gt => ConstScalar::Bool(a > b),
+            BinOp::Le => ConstScalar::Bool(a <= b),
+            BinOp::Ge => ConstScalar::Bool(a >= b),
+            op => return Err(format!("`{:?}` is not defined on two floats", op)),
+        })
+    }
+
+    /// Refuse a function or type declaration that reuses a top-level item's name.
+    ///
+    /// The sibling of `refuse_global_shadow`, one scope out: that one is about a
+    /// LOCAL hiding a global, this one is about two TOP-LEVEL declarations of
+    /// one name. The distinction matters for the message, because the repair is
+    /// different — a local can be renamed freely, a second top-level definition
+    /// means one of the two was not meant to exist.
+    fn refuse_global_collision(&self, name: &str, what: &str) -> Result<()> {
+        match self.global_items.get(name) {
+            Some(span) => Err(CompileError::Generic(format!(
+                "`{}` is declared as {} and as the top-level item at line {}, and a program has \
+                 one namespace for both: the emitted C would define the name twice",
+                name, what, span.line
             ))),
             None => Ok(()),
         }
@@ -2040,6 +2289,24 @@ impl TypeChecker {
 
         // First pass: collect all function signatures and struct definitions
         for item in &program.items {
+            // ONE NAMESPACE, CHECKED IN BOTH DIRECTIONS. A top-level `const` and
+            // a `fn` of the same name are two C file-scope definitions of one
+            // identifier, and nothing before this asked: `const f: i64 = 1;`
+            // beside `fn f() -> i64` reached gcc as
+            // "redefinition of 'f' as different kind of symbol" — a diagnostic
+            // about generated code, naming a conflict the author could see in
+            // their own source. This arm catches the FUNCTION-AFTER-GLOBAL
+            // order; `register_global` catches the other, because the first
+            // pass walks items in source order and either can come first.
+            match item {
+                Item::Function(func) => self.refuse_global_collision(&func.name, "a function")?,
+                Item::TypeAlias(alias) => {
+                    self.refuse_global_collision(&alias.name, "a type alias")?
+                }
+                Item::Struct(def) => self.refuse_global_collision(&def.name, "a struct")?,
+                Item::Enum(def) => self.refuse_global_collision(&def.name, "an enum")?,
+                _ => {}
+            }
             match item {
                 Item::Function(func) => {
                     if !func.type_params.is_empty() {
@@ -2385,7 +2652,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:2675-2677`), and walking an imported
+        // return (`src/typeck/mod.rs:2942-2944`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3100,7 +3367,10 @@ impl TypeChecker {
                 self.symbols.enter_scope();
                 self.enter_loop(BreakTarget::Statement);
 
-                // Define loop variable with element type
+                // Define loop variable with element type. `for LIMIT in 0..3`
+                // is a fresh binder too, and it silently took the name of a
+                // top-level item until this line asked.
+                self.refuse_global_shadow(var, "the loop variable")?;
                 self.symbols.define(var.clone(), elem_type, false)?;
 
                 // Type check body
@@ -5162,6 +5432,9 @@ impl TypeChecker {
             // N6-08. `name @ inner` binds `name` to THIS position's value and
             // then lets `inner` bind whatever it binds under it.
             Pattern::Binding { name, inner } => {
+                // `name @ inner` binds `name`, so it is the same question as
+                // `Pattern::Ident` one line of syntax over.
+                self.refuse_global_shadow(name, "the `@` binding")?;
                 self.symbols.define(name.clone(), value_type.clone(), false)?;
                 self.bind_pattern_variables(inner, value_type)
             }
@@ -5182,6 +5455,15 @@ impl TypeChecker {
                 Ok(())
             }
             Pattern::Ident(name) => {
+                // A PATTERN BINDER IS A BINDING, AND THE SAME RULE APPLIES.
+                // This is where the shadowing refusal is worth the most: a bare
+                // name in pattern position is a FRESH BINDER, not a read, so
+                // `match x { LIMIT => 111, _ => 222 }` over a top-level
+                // `const LIMIT` always takes the first arm, leaves the second
+                // dead, and prints 111 whatever `x` is. Measured, with no
+                // diagnostic anywhere. A reader who wrote that meant the
+                // comparison.
+                self.refuse_global_shadow(name, "the pattern binding")?;
                 // Bind the identifier to the value type
                 self.symbols.define(
                     name.clone(),
@@ -5699,7 +5981,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6137-6201`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6146-6210`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
