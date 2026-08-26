@@ -116,7 +116,7 @@ MILESTONE_ROSTER = {
     "M2": (
         "GI-06", "GI-08", "GI-09", "GI-12", "N13-03", "N14-01", "N14-02",
         "N14-04", "N2-03", "N2-04", "N2-08", "N2-09", "N2-10", "N2-11",
-        "N3-02", "N3-03", "N3-05", "N3-09", "N3-10", "N3-12", "N3-13",
+        "N3-02", "N3-03", "N3-05", "N3-09", "N3-10", "N3-12",
         "N14-17", "N3-14", "N3-15", "N4-02", "N4-04", "N4-10", "N4-12",
         "N4-22", "N4-23", "N5-03", "N5-04",
         "N5-05", "N5-06", "N5-07", "N5-12", "N5-13", "N5-14", "N5-15",
@@ -137,6 +137,11 @@ MILESTONE_ROSTER = {
         "N3-11",
     ),
     "M5": (
+        # N3-13 (macro hygiene) arrived here from M2 on 2026-08-26. The move is
+        # a two-file edit ON PURPOSE — see the manifest header for the two
+        # capture measurements that decided it — and this half is the one that
+        # makes it visible to a reviewer reading code rather than a column.
+        "N3-13",
         "N12-07", "N14-05", "N5-02", "N7-01", "N7-02", "N7-03", "N7-04",
         "N7-05", "N7-06", "N7-07", "N7-08", "N7-09", "N7-10", "N7-11",
         "N7-12",

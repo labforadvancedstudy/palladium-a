@@ -311,7 +311,7 @@ error: Unexpected character '#' at line 1, column 1
 ```
 
 `#` lexes now. `grammar.ebnf` has an attribute production and its punctuation set
-(`grammar.ebnf:103-104`) contains `#` and `#!`, so `#![total(strict)]`, `#[total]`,
+(`grammar.ebnf:106-107`) contains `#` and `#!`, so `#![total(strict)]`, `#[total]`,
 `#[decreases(...)]` and `#[partial]` all reach the parser and are read as attributes with those
 names. Every one of them is then **refused**, because the set of attributes this compiler
 implements is empty:

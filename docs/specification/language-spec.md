@@ -97,11 +97,25 @@ A compilation unit is a sequence of imports followed by items.
 
 ```ebnf
 item = function | struct_def | enum_def | trait_def | impl_block
-     | type_alias | macro_def | const_item | module ;
+     | type_alias | macro_def | const_item | static_item | module ;
 ```
+
+> **`static_item` was added to this production on 2026-08-26, resolving a conflict between two
+> normative files rather than a formatting difference.** [`grammar.ebnf`](grammar.ebnf) has defined
+> `static_item = [ "pub" ] "static" [ "mut" ] identifier ":" type "=" expression ";"` throughout,
+> and [`1.0-requirements.tsv`](../contributing/1.0-requirements.tsv) owes N3-10, "Top-level static
+> items" — while this list named `const_item` and no static at all. An implementation reading only
+> this line would have shipped `const` and refused `static` and been able to cite the specification
+> for it. Recorded here rather than silently corrected, per the repository's rule that a fact
+> conflict is written down and not resolved by picking a winner in passing.
 
 **Functions** take typed parameters, may declare a return type, and are expression-oriented: a
 body's trailing expression is its value. There is no `async` modifier ([N7](#n7-effects-and-asynchrony)).
+
+**A `const` names one value; a `static` names one address.** Both are written at the top level with
+a mandatory type and a mandatory initialiser, both are visible to every function in the file
+regardless of order, and `mut` is what makes a `static` assignable — the same rule `let` already
+carries, applied at the top level rather than excepted there.
 
 **Structs and enums** are the product and sum types. Enum variants may be unit, tuple or struct
 shaped.
@@ -609,17 +623,21 @@ requests a property and a binary without it, which is the defect class M1 was sp
 [N8](#n8-totality) is therefore no longer blocked *lexically*; it is blocked on M6 having something
 to discharge the obligation with.
 
-The 29 keywords the lexer recognizes (`src/lexer/token.rs:232`):
+The 31 keywords the lexer recognizes (`src/lexer/token.rs:232`), counted by
+`grep -oE '#\[token\("[a-zA-Z_]+"\)\]' src/lexer/token.rs | wc -l`:
 
 ```
-fn let mut if else while return true false for in break continue
-struct enum trait impl match import pub as Self self type const
+fn let mut if else while loop return true false for in break continue
+struct enum trait impl match import pub as Self self type const static
 unsafe async await macro
 ```
 
-Note `import`, not `use`. **`loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`,
+Note `import`, not `use`. **`mod`, `use`, `where`, `dyn`, `move`, `ref`,
 `crate`, `super`, `extern`, `try`, `with`, `effect` are NOT keywords** — they lex as ordinary
-identifiers, so `let loop = 1;` is legal and `loop { }` is a parse error at the `{`. The absence
+identifiers. `loop` became one with N5-07 and `static` with N3-10 (`src/lexer/token.rs:313`), and
+the second of those has a cost worth stating: `static` was previously usable as an identifier, so
+`let static: i64 = x;` used to parse and no longer does — `tests/m1_c_keyword_idents.rs`, which
+drives a C keyword through every identifier position, had to move that local to `goto`. The absence
 of `ref` is why the normative reference syntax of [N9](#n9-references-and-lifetimes) does not
 parse; the absence of `with` and `effect` is why the effect contexts of
 [N7](#n7-effects-and-asynchrony) do not.
@@ -664,9 +682,52 @@ import = "import" path [ "as" identifier ] ";"
        | "import" path "::" "{" identifier { "," identifier } "}" ";" ;
 ```
 
-Items (`src/parser/mod.rs:937`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`, `macro`.
-**unimplemented: there is no top-level `const`, `static`, `mod`, or `use` item** — so
+Items (`src/parser/mod.rs:937`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`, `macro`, `const`,
+`static`. **unimplemented: there is no top-level `mod` or `use` item** — so
 [N11](#n11-modules)'s file-based modules exist only as far as `import` reaches.
+
+**implemented — top-level `const` and `static`** (N3-09, N3-10), parsed by
+`src/parser/mod.rs:1910`, registered by `src/typeck/mod.rs:1810` and emitted by
+`src/codegen/mod.rs:2812`. Both take a MANDATORY type and a MANDATORY initialiser:
+
+```ebnf
+const_item  = [ "pub" ] "const" identifier ":" type "=" expression ";" ;
+static_item = [ "pub" ] "static" [ "mut" ] identifier ":" type "=" expression ";" ;
+```
+
+| Written | Emitted | Assignable |
+|---|---|---|
+| `const X: i64 = 5;` | `static const long long X = 5;` | no |
+| `static Y: i64 = 10;` | `static long long Y = 10;` | no |
+| `static mut C: i64 = 0;` | `static long long C = 0;` | yes |
+
+Not a `#define`: a macro is unscoped and untyped and would rewrite every later occurrence of that
+spelling in the file. The C `static` on all three is INTERNAL LINKAGE rather than the item's own
+keyword — the output is one translation unit, and a file-scope name with external linkage can
+collide with a libc symbol the program never mentions.
+
+**The type set and the initialiser set are closed**, and each excluded form is refused by name
+rather than left to the C compiler, whose `initializer element is not constant` names generated
+code. Types: `i32`, `i64`/`int`, `u32`, `u64`, `f32`, `f64`, `bool`. Initialisers: integer and float
+literals, `true`/`false`, and unary and binary operators over them
+(`src/parser/mod.rs:2005`) — so a call, another item's name, a string, an array, a struct literal,
+an enum constructor, an `if` or a `match` is a compile error. A `String` item is refused for the
+type and not only for the initialiser: a Palladium `String` is a pointer into a runtime arena, so
+its value needs code that runs, and nothing runs before `main`.
+
+**A local may not shadow a top-level item**, and a parameter may not either. C would accept the
+shadow and so would the type checker's scope stack; the refusal is at the binding, because for a
+`static mut` the two readings differ in whether the program's state changed.
+
+**`static` is a keyword as of N3-10** and is therefore no longer available as an identifier — see
+the keyword list in [A2](#a2-lexical-structure), which describes the lexer and which this changed.
+**A `pub const` in a module exports nothing**: nothing emits a definition for an imported top-level
+item, so exporting the name would type-check at the use site and fail at the linker. That is N11
+work, not an N3-09 lowering.
+
+Fixtures: `tests/03_const_items.pd`, `tests/03_static_items.pd`, and five reject fixtures —
+`tests/reject/const_initializer_calls.pd`, `const_reads_another_item.pd`, `const_string_type.pd`,
+`const_local_shadows_item.pd`, `static_assign_without_mut.pd`.
 
 ## A4. Items
 
@@ -754,21 +815,70 @@ contain only `fn` (`src/parser/mod.rs:1786-1792`, corrected from line 1030 of th
 
 ### A4.6 Macros
 
-**partial.** User macros (`macro name!(a, b) { … }`) parse into a raw token stream that is lossily
-converted; unlisted tokens degrade into `AstToken::Ident` of a debug string
-(`src/parser/mod.rs:2227`, corrected from line 1258 of the pre-cleanup revision).
+**partial, and MEASURED — this section used to describe a system nobody had run.** The previous
+version called `println!` and `assert!` "implemented"; both fail on every argument anybody would
+write, and did so before the round that measured them. What follows is what programs do.
 
-Four builtin macros exist (`src/macros/mod.rs:41`), each taking **exactly one** expression:
+A macro is a TOKEN TEMPLATE. `macro name!(a, b) { body }` stores the body as tokens at definition,
+substitutes an argument where the body writes `$name`, and re-parses the result at the call site by
+rendering the tokens back to source text and re-lexing them (`src/macros/expander.rs:454`,
+`tokens_to_string`). There is exactly one macro system: `macro_rules!` is refused by name in both
+item and invocation position (N3-14).
 
-| Macro | Expands to | Status |
+**No macro parameter had ever been substituted, in either spelling, until 2026-08-26.**
+`token_to_ast_token` (`src/parser/mod.rs:2170`) did not list `Token::Dollar`, so `$x` in a body was
+stored as the identifier `Dollar` followed by `x`, and `substitute_template`
+(`src/macros/expander.rs:372`), which keys on `Token::Dollar`, could never fire. Measured:
+`macro double!(x) { $x * 2 }` failed with "Undefined variable or function: 'Dollar'". Completing
+that one table row is the whole repair.
+
+**Every substituted capture is parenthesised.** Before that, `macro double!(x) { $x * 2 }` gave
+`double!(1 + 1)` = 3 and `double!(2 + 3)` = 8: compiled, linked, ran, exit 0, wrong number. Both
+are pinned in `tests/03_macros.pd`.
+
+**What a macro body may contain**, because the stored token type cannot carry the rest:
+identifiers, INTEGER literals, and single-character punctuation. Everything else is refused by name
+at the definition:
+
+| Refused | Why | Fixture |
 |---|---|---|
-| `println!(e)` | `print(e); print("\n")` | implemented (one argument only — `println!()` and `println!(a, b)` fail) |
-| `assert!(c)` | `if (!(c)) { panic("Assertion failed"); }` | implemented |
-| `vec![e]` | `[e]` — a **1-element array**, not a growable vector | partial; misleading name |
-| `dbg!(e)` | calls `print_debug` | unimplemented — `print_debug` is defined nowhere (`src/macros/mod.rs:167`, corrected from line 161 of the pre-cleanup revision) |
+| string, float, char, `true`/`false` literals | `AstToken::Literal` is a `String` with no KIND and the reverse conversion guesses with `parse::<i64>()`. Measured, all silent: `macro s!() { "hi" }` printed an EMPTY line, `macro pi!() { 3.5 }` printed `3.5` as a String, `macro yes!() { true }` printed `true` as a String | `tests/reject/macro_body_string_literal.pd` |
+| `==` `!=` `<=` `>=` `&&` `\|\|` `->` `::` `=>` `..` | `AstToken::Punct` is one `char`; `= =` is not `==`. These used to become an identifier named after the Rust debug spelling, surfacing as "Undefined variable or function: 'EqEq'" three phases later | `tests/reject/macro_body_two_char_operator.pd` |
+| a parameter name written without its `$` | it is a free identifier resolved at the CALL SITE. Measured: `macro double!(x) { x * 2 }` with `let x = 3;` at the call site printed **6** for `double!(21)` | `tests/reject/macro_bare_parameter.pd` |
+| `$name` that is not a parameter | the unmatched `$` was re-parsed and reported as "expected expression, found '$'" at the call site | `tests/reject/macro_unknown_substitution.pd` |
+| a body that invokes another macro | expansion is a SINGLE PASS, so an invocation produced by an expansion is never expanded and reached the type checker as an internal assertion | `tests/reject/macro_invokes_macro.pd` |
 
-Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented:
-`grep -rn hygien src/ --include='*.rs'` returns nothing.
+Four builtin macros are registered (`src/macros/mod.rs:41`), and **one of them works**:
+
+| Macro | Expands to | Status, measured |
+|---|---|---|
+| `vec!(e)` | `[e]` — a **1-element array**, not a growable vector | **the only usable builtin**; misleading name. `vec![e]`, the bracket form, does not parse |
+| `println!(e)` | `print(e); print("\n")` | **unusable**. `println!("x")` failed with "expected ')', found identifier 'x'" before the literal rule existed and is a named refusal after it; `println!(1)` fails with "Unexpected end of file"; `println!()` and `println!(a, b)` fail the arity check |
+| `assert!(c)` | `if (!(c)) { panic("Assertion failed"); }` | **unusable**. `assert!(1 == 1)` cannot be written — `==` is refused in an argument for the reason above — and `assert!(b)` on a `bool` local fails with "expected ';', found '{'" |
+| `dbg!(e)` | calls `print_debug` | **unimplemented** — `print_debug` is defined nowhere (`src/macros/mod.rs:167`) and `dbg!(5)` fails with "Unexpected end of file" |
+
+**Macro hygiene ([N3](#n3-program-structure-and-items)) is unimplemented, and the evidence is
+BEHAVIOURAL rather than a grep.** This paragraph used to rest on
+`grep -rn hygien src/ --include='*.rs'` returning nothing, which is a statement about spellings.
+Measured instead, on programs:
+
+```palladium no-compile
+macro m!() { secret }
+fn main() { let secret = 42; print_int(m!()); }   // prints 42
+```
+
+```palladium no-compile
+macro m!() { n }
+fn a() -> i64 { let n = 1; return m!(); }
+fn b() -> i64 { let n = 2; return m!(); }         // prints 1 then 2
+```
+
+The first is free capture of a call-site name; the second is one macro body with two meanings
+chosen by the caller. Expansion is textual by construction — the template is rendered to source and
+re-lexed — so no fixture can make it hygienic, and N3-13 is an implementation row owned by M5. The
+"hygiene by refusal" reading was tested and fails: the introduce-a-binding route is not defended by
+the shadowing rule, it is merely unwritable, because `let` in a macro body is refused for an
+unrelated reason.
 
 ## A5. Types
 

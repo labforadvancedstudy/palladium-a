@@ -124,7 +124,7 @@ fn test_generic_pair() {
 }
 
 #[test]
-#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:161 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
+#[ignore = "XFAIL: `&self` receivers in a trait method — grammar.ebnf:172 'A trait method declared with a `self` receiver is a PARSE ERROR' (owned by M4, traits with real dispatch)"]
 fn test_trait_implementation() {
     let source = r#"
     trait Drawable {
@@ -179,7 +179,7 @@ fn test_trait_implementation() {
 }
 
 #[test]
-#[ignore = "XFAIL: a generic enum variant does not infer the enum's type argument — `Option::None` in a function returning `Option<int>` is checked as bare `Option`, so this fixture dies at 'Type mismatch: expected Option<Int>, found Option' before it reaches the method-call syntax (`x.f()`, grammar.ebnf:278-281) it was written for. Both are owed; this is the one that fires (owned by M2, item 1)"]
+#[ignore = "XFAIL: a generic enum variant does not infer the enum's type argument — `Option::None` in a function returning `Option<int>` is checked as bare `Option`, so this fixture dies at 'Type mismatch: expected Option<Int>, found Option' before it reaches the method-call syntax (`x.f()`, grammar.ebnf:297-300) it was written for. Both are owed; this is the one that fires (owned by M2, item 1)"]
 fn test_option_enum() {
     let source = r#"
     enum Option<T> {
@@ -280,7 +280,7 @@ fn test_result_error_handling() {
 }
 
 #[test]
-#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:158-159 admits only `fn` items in a trait body (`trait_item`) (owned by M4, 'Traits with real dispatch')"]
+#[ignore = "XFAIL: associated types in a trait (`type Item;`) — grammar.ebnf:169-170 admits only `fn` items in a trait body (`trait_item`) (owned by M4, 'Traits with real dispatch')"]
 fn test_iterator_trait() {
     let source = r#"
     trait Iterator {
@@ -325,7 +325,7 @@ fn test_iterator_trait() {
 }
 
 #[test]
-#[ignore = "XFAIL: closures — grammar.ebnf:320 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: closures — grammar.ebnf:339 'There are no closures'; `|y| x + y` stops the parser at '|' (owned by M4, 'Abstraction')"]
 fn test_closure_capture() {
     let source = r#"
     fn main() {
@@ -353,7 +353,7 @@ fn test_closure_capture() {
 }
 
 #[test]
-#[ignore = "XFAIL: function types — grammar.ebnf:199 'No function types'; a parameter declared `f: fn(T) -> U` stops the parser at 'fn' (owned by M4, 'Abstraction')"]
+#[ignore = "XFAIL: function types — grammar.ebnf:218 'No function types'; a parameter declared `f: fn(T) -> U` stops the parser at 'fn' (owned by M4, 'Abstraction')"]
 fn test_higher_order_functions() {
     let source = r#"
     fn map<T, U>(arr: [T; 5], f: fn(T) -> U) -> [U; 5] {
@@ -416,7 +416,7 @@ fn test_async_await() {
 }
 
 #[test]
-#[ignore = "XFAIL: effect declarations — grammar.ebnf:142 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
+#[ignore = "XFAIL: effect declarations — grammar.ebnf:153 'Effect clauses (`![io]`) do NOT exist in the surface syntax'; `effect IO { … }` is not an item (owned by unscheduled, MILESTONES.md 'Not scheduled, and why')"]
 fn test_effects_system() {
     let source = r#"
     effect IO {
@@ -518,7 +518,7 @@ fn test_pattern_matching_guards() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:162 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1745-1754) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:173 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1745-1754) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics_arrays() {
     let source = r#"
     struct Matrix<T, const ROWS: int, const COLS: int> {
@@ -568,7 +568,7 @@ fn test_const_generics_arrays() {
 }
 
 #[test]
-#[ignore = "XFAIL: AN UNINITIALISED `let`. The tuple half of this row is paid (N4-12): `(from, to, weight)` constructs, tuple types lower to a struct per shape, and `.0` reads an element — measured. What stops this fixture now is `let mut graph: Graph;` with no initialiser, which the parser refuses with \"Expected '=' after variable name\"; behind that sits `let (from, to, weight) = graph[i];`, a DESTRUCTURING `let`, which grammar.ebnf:212 says this language does not have (`let` patterns do not exist) (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: AN UNINITIALISED `let`. The tuple half of this row is paid (N4-12): `(from, to, weight)` constructs, tuple types lower to a struct per shape, and `.0` reads an element — measured. What stops this fixture now is `let mut graph: Graph;` with no initialiser, which the parser refuses with \"Expected '=' after variable name\"; behind that sits `let (from, to, weight) = graph[i];`, a DESTRUCTURING `let`, which grammar.ebnf:231 says this language does not have (`let` patterns do not exist) (owned by M2, surface syntax)"]
 fn test_type_aliases_complex() {
     let source = r#"
     type NodeId = int;

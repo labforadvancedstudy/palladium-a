@@ -137,8 +137,15 @@ Struct parameters move. Declare them `mut`, which makes them pointers in the gen
 borrows rather than moves — and lets the callee's changes reach you.
 
 **`Expected function, struct, enum, trait, type, impl, or macro declaration`**
-Usually a top-level `const`, `static`, `mod` or `use` — none of which exist. Imports use the
-`import` keyword and must all appear before the first item.
+Usually a top-level `mod` or `use`, neither of which exists. Imports use the
+`import` keyword and must all appear before the first item. Top-level `const` and `static` DO exist
+now — `const LIMIT: i64 = 10;`, `static mut COUNT: i64 = 0;` — with a mandatory type, a mandatory
+initialiser that is a literal or arithmetic over literals, and a numeric or `bool` type; anything
+outside that is refused with a message naming what it saw.
+
+**`` `macro_rules!` is not a declaration in this language ``**
+There is one macro system and it is spelled `macro name!(params) { body }`. A parameter is
+substituted where the body writes `$name`.
 
 ## Where next
 

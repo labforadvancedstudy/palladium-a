@@ -133,6 +133,32 @@
 # refused again. `N14-01` is about the NAME SET and could not have caught it;
 # `N14-03` is about SIGNATURES and belongs to M3.
 #
+# N3-13 MOVED M2 -> M5 ON 2026-08-26, and moving a row between milestones is a
+# contract transition that this file's own doctrine says is reviewed as one. The
+# review is the branch's, and the ground is a measurement rather than an
+# estimate. "Macros are hygienic by default" was owned by M2 because the macro
+# ROW NEXT TO IT was; nothing had ever run the hygiene probe. Run, on the
+# unmodified compiler:
+#   `macro m!() { secret }` with `let secret = 42;` at the CALL site printed 42
+#   `macro m!() { n }` invoked from two functions with different local `n`
+#     printed 1 and then 2 -- one macro body, two meanings, chosen by the caller
+# Those are the two definitive capture signatures, and there is no hygiene
+# machinery for them to have defeated: expansion renders the template back to
+# SOURCE TEXT and re-lexes it (`src/macros/expander.rs`, `tokens_to_string`),
+# which is textual substitution by construction and cannot be made hygienic by
+# writing a fixture. The "hygiene by refusal" reading was tested and does not
+# hold: the introduce-a-binding route is not defended by the shadowing rule, it
+# is merely UNWRITABLE, because `let` in a macro body is refused for an
+# unrelated reason (N3-12's token table). A defence that works only while a
+# neighbouring bug survives is not a defence.
+#
+# So the row is an IMPLEMENTATION row wearing an evidence row's clothes, and its
+# work sits with the macro system's other remaining work, which is already M5's:
+# expansion to a fixed point, the `println!`/`assert!`/`dbg!` builtins, and the
+# `tests/advanced_features_test.rs::test_macros` debt row. It stays `owed` and it
+# stays enumerated -- the point of this file is that nothing is dropped
+# silently, and a row that changes milestone has not been paid.
+#
 # id  milestone  source  requirement  evidence-kind  evidence  status  disposition
 
 # --- N1 Overview and design commitments ------------------------------------
@@ -155,19 +181,19 @@ N2-11	M2	N2	An unknown attribute is a compile error, not a silently ignored anno
 
 # --- N3 Program structure and items -----------------------------------------
 N3-01	-	N3	Functions with typed parameters and return types	fixture	tests/03_functions_basic.pd	satisfied	1.0	-
-N3-02	M2	N3	A function body's trailing expression is its value, in every tail position	fixture	tests/stdlib/stdlib_tail_return.pd	owed	1.0	-
-N3-03	M2	N3	A value-returning function with no value on some path is a compile error	reject	tests/reject/missing_return.pd	owed	1.0	-
+N3-02	M2	N3	A function body's trailing expression is its value, in every tail position	fixture	tests/stdlib/stdlib_tail_return.pd	satisfied	1.0	-
+N3-03	M2	N3	A value-returning function with no value on some path is a compile error	reject	tests/reject/missing_return.pd	satisfied	1.0	-
 N3-04	-	N3	Structs	fixture	tests/02_types_structs.pd	satisfied	1.0	-
-N3-05	M2	N3	Enums with unit, tuple and struct variants	fixture	tests/02_types_enums.pd	owed	1.0	-
+N3-05	M2	N3	Enums with unit, tuple and struct variants	fixture	tests/02_types_enums.pd	satisfied	1.0	-
 N3-06	M3	N3	Traits as items	fixture	tests/07_traits_basic.pd	owed	1.0	-
 N3-07	-	N3	Impl blocks	fixture	examples/tutorial/04_structs.pd	satisfied	1.0	-
 N3-08	M3	N3	Type aliases emit a real type	fixture	tests/03_type_alias.pd	owed	1.0	-
-N3-09	M2	N3	Top-level const items	fixture	tests/03_const_items.pd	owed	1.0	-
-N3-10	M2	N3	Top-level static items	fixture	tests/03_static_items.pd	owed	1.0	-
+N3-09	M2	N3	Top-level const items	fixture	tests/03_const_items.pd	satisfied	1.0	-
+N3-10	M2	N3	Top-level static items	fixture	tests/03_static_items.pd	satisfied	1.0	-
 N3-11	M4	N3	Module items	fixture	tests/12_modules_imports.pd	owed	1.0	-
-N3-12	M2	N3	One macro system, pattern-based	fixture	tests/03_macros.pd	owed	1.0	-
-N3-13	M2	N3	Macros are hygienic by default	fixture	tests/03_macro_hygiene.pd	owed	1.0	-
-N3-14	M2	N3	There is no macro_rules!/proc-macro split — macro_rules! is refused	reject	tests/reject/macro_rules.pd	owed	1.0	-
+N3-12	M2	N3	One macro system, pattern-based	fixture	tests/03_macros.pd	satisfied	1.0	-
+N3-13	M5	N3	Macros are hygienic by default	fixture	tests/03_macro_hygiene.pd	owed	1.0	-
+N3-14	M2	N3	There is no macro_rules!/proc-macro split — macro_rules! is refused	reject	tests/reject/macro_rules.pd	satisfied	1.0	-
 N3-15	M2	N3	Item order does not decide whether a program compiles, OVER THE BY-VALUE CONTAINMENT GRAPH. The scope is in the sentence on purpose: an unqualified "item order does not matter" is a claim about every axis on which one item can depend on another, and this row buys exactly one of them. A compilation unit is a SEQUENCE of items and the specification gives that sequence no meaning beyond containing them, so `struct S { e: E }` above `enum E { A, B }` is the same program as the reverse. It was not: code generation emitted type definitions in source order, C gives a field a size only from a complete type, and the first spelling died in gcc with `field has incomplete type 'struct E'` while the second ran. THE EVIDENCE IS A PERMUTATION, not an instance -- three declarations have six orders, exactly one of which source-order emission got right, so a fixture pinned to any single order would have stayed green for five wrong reasons. Order is now derived from the by-value containment graph the recursive-layout analysis already cut for N4-22, which is why a cut enum payload slot (a pointer, needing only the tag) constrains nothing. EXPLICITLY EXCLUDED, in the way N4-23 excludes its own case rather than leaving it to be discovered: TYPE ALIASES. Struct fields and enum payloads are converted by `ast_type_to_checker_type`, which resolves aliases out of `self.type_aliases`, and that map is filled INSIDE the same walk in source order -- so `type Small = i64;` above `struct S { x: Small }` checks and the reverse is refused with `Type mismatch: expected Small, found Int`. MEASURED on three revisions: `fb12f6f` (main) refuses BOTH orders, `5fbd1fe` and this revision accept the first and refuse the second, so this is a half-fix rather than a regression -- one order went from broken to working and none went the other way. It has no corpus witness either: a repo-wide scan finds no free top-level `type X = ...;` in any `.pd`. It is named here because a row that promises more than the code delivers is the defect this manifest exists to prevent, and closing the alias axis means pre-filling the alias map before the walk, which is not this row's work	observable	tests/m2_recursive_data_types.rs::every_declaration_order_of_one_program_gives_the_same_answer	satisfied	1.0	-
 
 # --- N4 Types ----------------------------------------------------------------

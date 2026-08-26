@@ -2,17 +2,23 @@
 // WT-01 — witness 2: a JSON parser (RFC 8259).
 //
 // THIS FILE DOES NOT SATISFY WT-01. WT-01 asks for a JSON parser written with
-// NO WORKAROUNDS. This one runs, and it is built out of fourteen of them. Every
-// one is marked `// WORKAROUND <row>:` at the point of use — fifteen such
-// comments below this header, fourteen distinct workarounds, because N5-12 is
-// worked around at two separate sites. `<row>` is the requirement id that owns
+// NO WORKAROUNDS. This one runs, and it is built out of thirteen of them. Every
+// one is marked `// WORKAROUND <row>:` at the point of use — fourteen such
+// comments below this header, thirteen distinct workarounds, because N5-12 is
+// worked around at two separate sites. A fifteenth comment is marked
+// `// WORKAROUND DISCHARGED` and is not one of them: it records the constant
+// workaround that N3-09/N3-10 removed, so that the count's history stays
+// readable at the site it changed. `<row>` is the requirement id that owns
 // the missing construct, or the word UNOWNED, which means the construct that
 // would remove the workaround is declared by NOTHING in
 // docs/contributing/1.0-requirements.tsv. Four of the fourteen are UNOWNED, and
 // those are the ones a roadmap reading of N5/N6 cannot see.
 //
-// The count has moved four times, and every move is a fact about the compiler
-// rather than a rewording here. `cfa7e7f` gave recursive types a layout and a
+// The count has moved five times, and every move is a fact about the compiler
+// rather than a rewording here. The fifth is the only one where the missing
+// construct ARRIVED rather than a claim being re-measured: M2 item 9 landed
+// top-level `const` and `static`, the two zero-arg constant functions became
+// `const` items, and the count fell fourteen -> thirteen. `cfa7e7f` gave recursive types a layout and a
 // diagnostic, closing one UNOWNED workaround. Two more closed when the claims
 // under them were re-measured against the compiler that is actually here:
 // char literals lex (N2-04, `satisfied`), so twenty-nine of the thirty-one
@@ -30,8 +36,9 @@
 //
 // The shape this file would have if nothing were missing is written out in
 // tests/witness/json_parser.no-workarounds.md, beside a per-workaround diff, so
-// that when M2 items 3 and 4 land the claim "the workarounds are gone" can be
-// CHECKED rather than re-derived.
+// that when the remaining rows land the claim "the workarounds are gone" can be
+// CHECKED rather than re-derived. Items 3, 4 and 9 have landed; WT-01 stays
+// `owed` because thirteen workarounds remain, four of them UNOWNED.
 //
 // What it does: parses one JSON document into a flat arena, re-serialises it
 // canonically, answers structural queries against it, and refuses fifteen
@@ -46,14 +53,16 @@
 // ---------------------------------------------------------------------------
 // Named constants.
 //
-// WORKAROUND N3-09/N3-10: there are no top-level `const` or `static` items
-// (`const LIMIT: i64 = 10;` -> "Expected function, struct, enum, trait, type,
-// impl, or macro declaration"), so every constant in this file is a zero-arg
-// function. That is not a cosmetic difference: each use is a call.
+// WORKAROUND DISCHARGED (N3-09, N3-10): these were `fn cap_nodes() -> i64` and
+// `fn max_depth() -> i64`, zero-arg functions standing in for constants because
+// `const LIMIT: i64 = 10;` was "Expected function, struct, enum, trait, type,
+// impl, or macro declaration". Top-level `const` items exist now, so each use is
+// a name again rather than a call. This is the first workaround in this file
+// removed by the construct ARRIVING rather than by re-measuring a claim.
 // ---------------------------------------------------------------------------
 
-fn cap_nodes() -> i64 { return 192; }
-fn max_depth() -> i64 { return 24; }
+const CAP_NODES: i64 = 192;
+const MAX_DEPTH: i64 = 24;
 
 // Node kinds.
 //
@@ -214,7 +223,7 @@ fn js_skip_ws(mut j: Json) {
 // ---------------------------------------------------------------------------
 
 fn js_alloc(mut j: Json, kind: i64) -> i64 {
-    if j.count >= cap_nodes() {
+    if j.count >= CAP_NODES {
         return js_fail(j, "document has more than 192 nodes");
     }
     let i: i64 = j.count;
@@ -556,7 +565,7 @@ fn js_object(mut j: Json) -> i64 {
 fn js_value(mut j: Json) -> i64 {
     if !j.ok { return -1; }
     j.depth = j.depth + 1;
-    if j.depth > max_depth() {
+    if j.depth > MAX_DEPTH {
         j.depth = j.depth - 1;
         return js_fail(j, "nesting deeper than 24");
     }

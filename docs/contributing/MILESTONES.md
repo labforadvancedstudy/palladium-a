@@ -244,7 +244,7 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 65 satisfied · 124 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 72 satisfied · 117 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
@@ -352,7 +352,7 @@ Measured at this revision; every row names the command that produced it.
 |---|---|---|
 | **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`9b0cf24e…`) | `make selfhost` |
-| Conformance | `verified=76 untranscribed=0 vacuous=7 xfail=1 reject=57 skip=2 failures=0` over 143 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `1f64c32` added three
+| Conformance | `verified=80 untranscribed=0 vacuous=6 xfail=1 reject=69 skip=2 failures=0` over 158 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `feat/m2-items` added FIFTEEN across two commits — three `run` fixtures (top-level `const`, top-level `static`, the macro system) plus the `02_types_enums` vacuous->run transition, and twelve `reject`s: five for the const/static rules, `missing_return.pd` for N3-03, and six for the macro system, every one of the six replacing either a SILENT wrong expansion or a diagnostic that named a compiler phase; then `1f64c32` added three
 `run` fixtures for the review-round repairs and SEVEN `reject`s for the refusals those repairs
 introduced, which is the shape a fix round leaves — the negative rows outnumber the positive ones
 because most of what a review finds is a program that should never have been accepted; then review
@@ -367,12 +367,12 @@ binds, three range-pattern defects, a bool match missing `false`, a literal patt
 type, and the non-exhaustive integer match N6-10 now refuses) | `make conformance` |
 | Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 413 citations fingerprinted, 27 no-compile fences pinned | `make check-docs` |
-| Rust tests | 928 pass, **0 fail**, 48 ignored (569 lib + 359 integration, 28 binaries) | `make test-honest` |
-| Declared failures | 47 `xfail` + 1 `slow`, none passing; 47 of 47 failing for their DECLARED diagnostic | `make test-xfail` |
+| Documentation | every snippet compiles; 423 citations fingerprinted, 29 no-compile fences pinned | `make check-docs` |
+| Rust tests | 930 pass, **0 fail**, 46 ignored (569 lib + 361 integration, 28 binaries) | `make test-honest` |
+| Declared failures | 45 `xfail` + 1 `slow`, none passing; 45 of 45 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 65 satisfied · 124 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 72 satisfied · 117 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -391,9 +391,12 @@ unimplemented**. Ten now carry a `milestone` field recording 1.0 scope; the othe
 unclassified — see [Scope](#scope-what-is-in-10-and-what-is-not).
 
 **3. Conformance debt** — `make conformance`: one `xfail`
-(`tests/projects/hello_pdm/tests/test_math.pd`, cross-file imports, now **M4**) and seven `vacuous`
-rows: `02_types_enums` (**M2**), `07_traits_basic`, `08_generics_basic` (**M3**),
+(`tests/projects/hello_pdm/tests/test_math.pd`, cross-file imports, now **M4**) and six `vacuous`
+rows: `07_traits_basic`, `08_generics_basic` (**M3**),
 `12_modules_imports` (**M4**), `09_effects_system`, `10_async_await`, `11_unsafe_blocks` (**M5**).
+`02_types_enums` was the seventh and was M2's only one; item 9 made it real and transitioned the
+row, which is the protocol this file states for a vacuous fixture whose feature gets implemented —
+rewrite the fixture, then transition the row, and never delete either.
 `reject` is empty ([F3](#f3-the-conformance-corpus-has-no-negative-tests)). Every one of these rows
 is named by a requirement, and that direction of the reconciliation is checked.
 
@@ -521,7 +524,7 @@ Receipts:
 | The LLVM backend fabricated rather than lowered at 14 sites, seven of them silently | `--llvm` refuses unconditionally. `tests/d10_llvm_refuses.rs`, 9 tests |
 | `stdlib/` had no coverage at all | `make stdlib-gate`: 21 files pinned per file, 38 builtins accounted (34 since M2 removed the four `*_ex` names), generated C checked structurally. The premise was wrong and is recorded as such — **0 of 21 compile** ([`stdlib/STATUS.md`](../../stdlib/STATUS.md)) |
 | A green exit code was counted as a correct program | Every `run` fixture is diffed against a recorded transcript; there is no exit-code-only class |
-| Seven fixtures proved nothing while counting as coverage | Declared `vacuous`, each naming the feature it fails to cover. Seven of 84, on the summary line of every run |
+| Seven fixtures proved nothing while counting as coverage | Declared `vacuous`, each naming the feature it fails to cover. Seven of 84 when that was measured; **six of 158** now, `02_types_enums` having been made real by M2 item 9 — the count is on the summary line of every run |
 | The gates could not fail | `make test-conformance-runner` (133 cases), `make test-gate-probe` (every evidence producer fault-injected) |
 | `tests/*.rs` never ran under `make test-rust` | `make test-honest`, and every remaining failure converted to a declared `xfail` with an owner |
 
@@ -535,13 +538,16 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
 
-**Owns 50 requirement rows, 16 of them still owed**, 9 declared `#[ignore]` failures (all tagged
-M2), and the vacuous `tests/02_types_enums.pd`. *(It read "seventeen … (fourteen tagged M2, three
+**Owns 49 requirement rows, 8 of them still owed**, 6 declared `#[ignore]` failures (all tagged
+M2), and **no vacuous fixture** — `tests/02_types_enums.pd` was M2's last one and item 9 turned it
+into a `run` fixture that constructs and destructures a unit, a tuple and a struct variant.
+*(It read "seventeen … (fourteen tagged M2, three
 tagged M1)" in DIGITS-FREE WORDS, which is exactly why it went stale unnoticed: the prose-figure
 gates scan for `N` and `N of M`, and a number spelled out is invisible to them. Measured with
-`awk -F'\t' '$3=="owed"{print $4}' tests/rust-debt-manifest.txt | sort | uniq -c` — M2 9, M4 33,
-unscheduled 6, M5 1, and **M1 zero**: the three M1 rows were paid, and the sentence had gone on
-counting them.)* *(It read "45
+`awk -F'\t' '$3=="owed"{print $4}' tests/rust-debt-manifest.txt | sort | uniq -c` — M2 6, M4 33,
+unscheduled 5, M5 1, and **M1 zero**: the three M1 rows were paid, and the sentence had gone on
+counting them. M2 fell 9 -> 6 and `unscheduled` 6 -> 5 across items 3, 9 and the round between
+them, each by PAYING a row rather than by retagging one.)* *(It read "45
 rows" while GI-06 was `owed`; GI-06, GI-09 and N14-01 are now `satisfied`, and 46 is the count of
 rows owned, not of rows outstanding — the two were being used interchangeably.)*
 
@@ -786,24 +792,23 @@ enum-owned method is unreachable by its path form. Each row carries a
    nothing about M1. Closing GI-08 means deciding what a milestone with no rows means, which is a
    question rather than a line of Make. Its own row's evidence, `make m2-exit`, also cannot exit 0
    until items 1–7 land, so the row is measured by neither thing today.
-   **`m2-exit` is RED and that is the correct state.** It reports 25 rows `OWED_TO_M2`, down from
-   36 — item 3's eleven N5 rows moved to `satisfied` on `feat/m2-expressions`, after item 5
-   (lexical completion) had taken the figure from 43 to 36 with N2-03, N2-04, N2-08, N2-09, N2-10,
+   **`m2-exit` is RED and that is the correct state.** It reports 8 rows `OWED_TO_M2`, down from
+   25 — item 9's seven N3 rows moved to `satisfied` on `feat/m2-items`, after item 4's eight N6
+   rows plus N4-12 had taken the figure from 34 to 25, item 3's eleven N5 rows had taken it from 47
+   to 36, and item 5 (lexical completion) from 43 to 36 with N2-03, N2-04, N2-08, N2-09, N2-10,
    N2-11 and N4-02. A green `m2-exit` before M2 is done would be the defect.
 
-   *The 25, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list —
+   *The 8, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list —
    and the list is where they belong, which is not the same question as which item names them:*
-   N3-02 and N3-03 (item 1, whose prose says the M1 debt is PAID: the DEFECTS are fixed and the
-   `#[ignore]`s are gone, but these two rows want fixture evidence they do not yet cite, so the
-   item's claim and its rows disagree and this is the record of it); N6-02, N6-03, N6-05, N6-07,
-   N6-08, N6-09, N6-10, N6-11 (item 4, the whole of it); WT-01 (item 7); GI-08 (item 8).
-   **Thirteen are owned by M2 without being ASSIGNED AS AN ITEM DELIVERABLE** — N3-05, N3-09,
-   N3-10, N3-12, N3-13, N3-14, N4-04, N4-10, N4-12, N13-03, N14-02, N14-04, GI-12. Item 3's
-   sentence names N3-09 and N3-10, so "no item names them" was the wrong words for two of the
-   thirteen: being MENTIONED in an item's prose is not the same as being what that item ships,
-   and item 3 shipped the eleven N5 rows and nothing else. The rest are not mentioned anywhere.
-   Either way the effect is the one worth recording: a list of items and a manifest of rows drift
-   while both look complete.
+   WT-01 (item 7); GI-08 (item 8); and **six owned by M2 without being ASSIGNED AS AN ITEM
+   DELIVERABLE** — N4-04, N4-10, N13-03, N14-02, N14-04, GI-12. That count was THIRTEEN before item
+   9, and the six that left it are the record of what an item deliverable is worth: N3-05, N3-09,
+   N3-10, N3-12 and N3-14 became item 9's deliverables and are `satisfied`, and N3-13 left M2
+   entirely (see below). Item 3's sentence had NAMED N3-09 and N3-10 without shipping them, which
+   is the distinction the original paragraph was written to make — being mentioned in an item's
+   prose is not the same as being what that item ships. The six that remain are mentioned nowhere,
+   and the effect is the one worth recording: a list of items and a manifest of rows drift while
+   both look complete.
    **Its verdict is three-valued and Make cannot carry it**, so the aggregation lives in
    `scripts/m2-exit.sh` and the verdict is published on the last line of stdout as
    `M2_EXIT_RESULT <code> <name>` — the contract `scripts/thesis-exit.sh` already defines, reused
@@ -833,8 +838,108 @@ enum-owned method is unreachable by its path form. Each row carries a
    `gates:` citation has now been relocated TWICE during integration, each time because two branches
    grew the list independently and the conflict was resolved as a union. Both relocations were
    re-derived from content; neither was `--update`d onto whatever occupied the old line.)*
+9. **Program items and the macro system** (N3-02, N3-03, N3-05, N3-09, N3-10, N3-12, N3-14) —
+   **DONE: seven rows, on `feat/m2-items`.** Two commits: `e8eb1a9` (top-level `const` and
+   `static`, and the three N3 evidence rows) and `90c8443` (the macro system). N3-13 is the one row
+   that did NOT land and it is the most informative of the eight — it left M2 (below).
+   `make selfhost` held `9b0cf24e…` throughout: `bootstrap/pdc.pd` contains no `static`, no
+   top-level `const` and no macro.
 
-**Exit**: `make m2-exit` (`Makefile:312-365`) — four inventories, RED until items 1–7 land.
+   The decisions worth reading, each of which could have gone the other way:
+
+   - **ONE `Item::Global` NODE FOR BOTH `const` AND `static`.** Everything that distinguishes them
+     is a two-field answer — the C storage class and whether the name may be assigned — and
+     nothing about parsing, name resolution or type checking differs. Two `Item` variants would
+     have duplicated every exhaustive `match item` in the compiler, eight of them, to say the same
+     thing twice.
+   - **`const` LOWERS TO `static const long long X = 5;`, NOT TO A `#define`.** A macro is
+     unscoped and untyped and would rewrite every later occurrence of that spelling anywhere in
+     the file, including one that is a struct field or a local in an unrelated function — so a
+     `const` item would change the meaning of code that never read it. The leading `static` is
+     internal linkage rather than the item's own keyword: the emitted C is one translation unit,
+     and a file-scope name with external linkage can collide with a libc symbol the program never
+     mentions (`index`, `time` and `link` are all plausible item names).
+   - **A `static` WITHOUT `mut` IS READ-ONLY**, for the same reason a `let` without it is. Making a
+     plain `static` writable would have made it the one binding form in this language whose
+     mutability is invisible at the declaration. `static mut` is assignable and its identity is
+     observable: `tests/03_static_items.pd` increments a counter from one function and reads it
+     from another.
+   - **THE INITIALISER SET AND THE TYPE SET ARE BOTH CLOSED, and refused by name.** A top-level
+     item becomes a C file-scope definition, and C requires such an initialiser to be a constant
+     expression. So: literals and arithmetic over literals, types restricted to the integer
+     widths, `f32`, `f64` and `bool` — and a call, a name, a string, an array, a struct or an `if`
+     is refused where it is written rather than left to gcc's `initializer element is not
+     constant`, which is a diagnostic about generated code that names nothing the author wrote.
+   - **A LOCAL MAY NOT SHADOW A TOP-LEVEL ITEM.** C would accept the shadow and so would the type
+     checker's own scope stack, and both would be right about their own rules, which is the
+     problem: for a `static mut` the two readings differ in whether the program's state changed.
+   - **`static` BECAME A KEYWORD, AND THE COST IS RECORDED RATHER THAN ABSORBED.**
+     `tests/m1_c_keyword_idents.rs` drove `let static: i64 = x;` through identifier position to
+     prove a C keyword survives to valid C; that program is now a parse error before any C exists,
+     so the local was moved to `goto` — still a C keyword, and a better witness, since code
+     generation emits real `goto` labels for a guarded `match`.
+   - **THE FIRST STDLIB BLOCKER RETIRED BY A PARSER CHANGE.** `stdlib/std/math.pd` XPASSed off
+     `CONST_ITEM`: its six `pub const` lines parse now. Its next floor is `e >>= 1;` at line 50,
+     recorded as `SHIFT_ASSIGN` — `>>=` is not one token, the lexer produces `>` then `>=`. Fourth
+     move for that one file and the first that was not lexical, which is the same lesson from the
+     other side: a parser-level blocker also masks everything behind it, and measuring it
+     establishes where the floor is now and nothing else.
+   - **THE MACRO SYSTEM HAD NEVER SUBSTITUTED A PARAMETER, IN EITHER SPELLING, AND THE CAUSE WAS
+     ONE MISSING ROW IN ONE TABLE.** `token_to_ast_token` (`src/parser/mod.rs`) ended in
+     `_ => AstToken::Ident(format!("{:?}", token))` and did not list `Token::Dollar`, so `$x` in a
+     macro body was stored as the identifier `Dollar` followed by `x`, and `substitute_template`
+     — which keys on `Token::Dollar` — could never fire. Measured: `macro double!(x) { $x * 2 }`
+     failed with "Undefined variable or function: 'Dollar'", and the bare spelling
+     `macro double!(x) { x * 2 }` failed with "Undefined variable or function: 'x'". Completing
+     that table is what `tests/03_macros.pd` records, and it is a table row rather than a redesign.
+   - **FOUR SILENT WRONG-EXPANSION CLASSES BECAME NAMED REFUSALS.** `AstToken::Literal` is a
+     `String` carrying no KIND and the reverse conversion guesses with `parse::<i64>()`, so each of
+     these compiled, linked, ran and exited 0: `macro s!() { "hi" }` printed an EMPTY line;
+     `macro pi!() { 3.5 }` printed `3.5` as a String; `macro yes!() { true }` printed `true` as a
+     String; and `macro double!(x) { x * 2 }` with `let x = 3;` at the call site printed **6** for
+     `double!(21)`, discarding the argument. The last one is the one to remember: the SAME program
+     without an `x` in scope failed loudly, so whether that defect was silent depended on a
+     variable name in a different file.
+   - **EVERY SUBSTITUTED CAPTURE IS PARENTHESISED, and the parentheses are the difference between
+     substituting an expression and splicing text.** `double!(1 + 1)` printed 3 and `double!(2 + 3)`
+     printed 8 — both wrong, both green. They are pinned at 4 and 10 in `tests/03_macros.pd` so a
+     regression to token-splicing fails a transcript instead of producing arithmetic nobody checks.
+     Sound unconditionally only because `register_macro` gives every parameter `CaptureKind::Expr`;
+     a capture kind that was a type or a pattern would need the decision re-taken.
+   - **N3-14 IS ABOUT THE ABSENCE OF A SPLIT, NOT ABOUT `macro_rules!` BEING UNIMPLEMENTED.** It
+     used to fall through to "Expected function, struct, enum, trait, type, impl, or macro
+     declaration" — seven nouns, one of which is `macro`, which a reader arriving from Rust reads
+     as "no macros here". Exactly backwards, and now refused by name in both the item and the
+     invocation position.
+   - **N3-13 (macro hygiene) LEFT M2 FOR M5, MEASURED RATHER THAN ESTIMATED.** `macro m!() { secret }`
+     with `let secret = 42;` at the call site printed 42; `macro m!() { n }` invoked from two
+     functions with different local `n` printed 1 and then 2 — one macro body, two meanings, chosen
+     by the caller. Expansion renders the template back to SOURCE TEXT and re-lexes it
+     (`src/macros/expander.rs`, `tokens_to_string`), so it is textual by construction and no
+     fixture can make it hygienic. The "hygiene by refusal" reading was tested and fails: the
+     introduce-a-binding route is not defended by the shadowing rule, it is merely UNWRITABLE,
+     because `let` in a macro body is refused for an unrelated reason. A defence that works only
+     while a neighbouring bug survives is not a defence. The row is an IMPLEMENTATION row and its
+     work sits with the macro system's other remaining work, which is already M5's: expansion to a
+     fixed point, the `println!`/`assert!`/`dbg!` builtins, and
+     `tests/advanced_features_test.rs::test_macros`. **Moving it is a contract transition** and is
+     recorded in the manifest header and in the pinned roster in `scripts/requirements.py`, a
+     deliberate two-file edit.
+   - **A SPECIFICATION TENSION WAS RESOLVED IN THE HONEST DIRECTION.** `grammar.ebnf` defines
+     `static_item` and the requirement manifest owes N3-10, but the N3 normative EBNF in
+     `language-spec.md` listed `const_item` and no `static_item` at all. Two normative files
+     disagreeing is a fact conflict, not a formatting difference; the spec's production now lists
+     both.
+   - **WHAT THE MACRO SYSTEM STILL CANNOT DO**, each measured and each LOUD: expansion is a single
+     pass, so a macro body may not invoke a macro (refused by name; expanding to a fixed point is a
+     driver change); an expression body invoked in statement position fails with "Unexpected end of
+     file"; `println!`, `assert!` and `dbg!` are unusable — measured broken BEFORE this round, and
+     the string and two-character-operator refusals now say so out loud rather than letting them
+     fail three phases later; `vec![e]` does not parse and only `vec!(e)` does, building a
+     one-element array. `A4.6` in the specification claimed `println!` and `assert!` were
+     implemented; that claim was false when it was written and is corrected.
+
+**Exit**: `make m2-exit` (`Makefile:312-365`) — four inventories, RED until items 1–9 land.
 
 ## M3 — Traits and generics (v0.5.0)
 
@@ -887,7 +992,7 @@ imported must be an error, or visibility is decoration), and all four import for
 
 **Waits on**: C0 and **C2**. Everything in N7 except parallel execution.
 
-**Owns 15 requirement rows**, the five `#[ignore]` rows tagged `unscheduled`, and the vacuous
+**Owns 16 requirement rows**, the five `#[ignore]` rows tagged `unscheduled`, and the vacuous
 `09_effects_system`, `10_async_await` and `11_unsafe_blocks` — the last because
 [N7](../specification/language-spec.md#n7-effects-and-asynchrony) puts unsafe, IO, memory and panic
 on one footing.
@@ -1170,7 +1275,7 @@ emptying *or rewording* it fails the self-test. It is not a derived check, and s
 computes which probes lack a control.
 
 Two things it caught that review did not. `fn f< 'a>(x: i64)` — a *spaced* lifetime parameter
-list — **compiles today**, and `grammar.ebnf:172` makes whitespace insignificant between tokens,
+list — **compiles today**, and `grammar.ebnf:191` makes whitespace insignificant between tokens,
 so TH-02's adjacency-only `<'` missed a real violation. And running the repaired gate against the
 real repository showed TH-05 compiling a witness *before* checking whether it existed, so an
 absent witness exited 2 instead of reporting a finding — the very distinction that round's work
@@ -1373,6 +1478,14 @@ replaced with a supersession pointer.
 must never be one, and `scripts/check-doc-evidence.sh` already fails any normative document that
 writes it. A row that stays red unless the language changes is a negative test wearing the wrong
 class. N3-14 makes it a normal, passing `reject` fixture owned by M2.
+
+**HALF DONE, and the remaining half is an owner's call rather than work.** M2 item 9 landed the
+`reject` fixture (`tests/reject/macro_rules.pd`) and the named refusal, so N3-14 is `satisfied`.
+The `xfail` row still exists: its declared diagnostic was re-stated to the new refusal — it had been
+the generic "Expected function, struct, enum, trait, type, impl, or macro declaration", which the
+refusal replaced, and `make test-xfail` went red on the mismatch, which is the inventory working.
+So the row is now a debt the language has DECIDED not to pay, held by M5. Retiring it is a
+contract transition on someone else's milestone and is not taken here.
 
 ### F9. The milestone labels in the test suite were written against the old numbering
 

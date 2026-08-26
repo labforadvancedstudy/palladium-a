@@ -95,15 +95,20 @@ exists and the row is history.
 | 14 | `self.pos += 1` | `Expected expression, but found '='` | `j.pos = j.pos + 1` | N5-13 (M2) |
 | 15 | `(v << 4) \| d`, `cp >> 6`, `cp & 63` | `<<` → `Expected expression, but found '<'`; `\|` and `&` end the enclosing expression; `^` → `Unexpected character '^'` | `v * 16 + d`, `cp / 64`, `cp % 64` | N5-12 (M2) |
 | 16 | `Number(f64)` | **not float arithmetic — the numeric↔text boundary, in both directions.** `let x: f64 = 1.5;`, `x + 2.25` and `y > 3.0` all compile (rc=0), so N4-02 is not the missing piece. Nothing carries a float across the text boundary either way: `src/builtins.rs` declares no `string_to_float` and no `parse_float`, so a parsed lexeme cannot become a value, and no `float_to_string` and no `print_float`, so a computed value cannot be printed — `print_float(x)` is `Undefined function: 'print_float'. Did you mean 'print_int'?` | integer numbers carry a value; non-integers carry only their source lexeme, and an `exact` flag says which | **UNOWNED** (N4-02 is `f32 f64` and is `satisfied`; no row owns either direction of the boundary) |
-| 17 | `const CAP: usize = 192;` | `Expected function, struct, enum, trait, type, impl, or macro declaration` | zero-arg functions | N3-09 / N3-10 (M2) |
+| 17 | `const CAP: usize = 192;` | **closed.** Top-level `const` and `static` items landed with M2 item 9. The witness now writes `const CAP_NODES: i64 = 192;` and `const MAX_DEPTH: i64 = 24;` and reads them by name; the emitted C is `static const long long CAP_NODES = 192;`. `usize` is still not a type, so the row's own spelling remains unavailable and the witness uses `i64` — which is what N4's OPEN `str`/`usize` question owns, not this row | none. The two zero-arg functions are deleted | **closed** — N3-09 / N3-10 (M2), both `satisfied` |
 | 18 | `"\\t"` — a backslash followed by `t` | **closed.** Measured now: `"\\t"` → bytes `92 116`, `"\\n"` → `92 110`, `"\\"` → the single byte `92`, and `"[\"tab\\there\"]"` → exactly the 13 bytes of `["tab\there"]`. The `String::replace` chain this row described is gone — `grep -rn 'replace(' src/lexer/` is empty; escapes are lexed against the closed set `\n \t \r \" \\ \'` and anything outside it is a compile error carrying the offending character (`LexError::UnknownEscape`) | none. `bs()` is deleted and the three renderer sites emit the literal | N2-09 (M2), `satisfied` |
 | 19 | a JSON document containing `\u0000` | — | refused with a named reason; `String` is a NUL-terminated `char*` (`__pd_string_from_char` writes `result[1] = '\0'`) so the byte cannot be carried | **UNOWNED** (N4-05 is the single word `String`, and is `satisfied`) |
 
-Rows 1–19 above are 19 wants, **of which rows 1, 8 and 18 are closed**; the file carries **fifteen**
-`// WORKAROUND` comments — fourteen distinct, N5-12 twice — because rows 1, 8 and 18 are closed and
-carry no marker at all, rows 2 and 3 share the arena marker at `json_parser.pd:88`, and rows 7 and 9
-share the `match`-to-`if`-staircase marker at `json_parser.pd:567`. 19 − 3 − 1 − 1 = 14 distinct;
-N5-12 is marked at two separate sites, giving 15 comments.
+Rows 1–19 above are 19 wants, **of which rows 1, 8, 17 and 18 are closed**; the file carries
+**fourteen** `// WORKAROUND` comments — thirteen distinct, N5-12 twice — because rows 1, 8, 17 and 18
+are closed and carry no marker at all, rows 2 and 3 share the arena marker, and rows 7 and 9
+share the `match`-to-`if`-staircase marker. 19 − 4 − 1 − 1 = 13 distinct;
+N5-12 is marked at two separate sites, giving 14 comments. Row 17 is the newest closure and the
+only one of the four where the CONSTRUCT ARRIVED — N3-09 and N3-10 landed top-level `const` and
+`static` with M2 item 9; the other three closed when a claim was re-measured against the compiler
+that was already there. The file keeps one `// WORKAROUND DISCHARGED` comment at row 17's old site,
+which is not counted above: a closure with no trace at the site it changed is how a census stops
+being checkable.
 
 The arena marker names **three** owners, not two — `// WORKAROUND N14-09 + N4-12 + N4-15` — and the
 third is why row 2's single line of the table is not the whole bill. `Vec<Json>` needs `Vec`, which

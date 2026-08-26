@@ -140,7 +140,7 @@ fn test_match_on_integer_literal() {
 }
 
 #[test]
-#[ignore = "XFAIL: `trait` emits no C at all — grammar.ebnf:161-162 'Traits also emit no code'; there is no vtable mechanism anywhere in the compiler (owned by M4, 'Traits with real dispatch')"]
+#[ignore = "XFAIL: `trait` emits no C at all — grammar.ebnf:172-173 'Traits also emit no code'; there is no vtable mechanism anywhere in the compiler (owned by M4, 'Traits with real dispatch')"]
 fn test_trait_declaration_emits_code() {
     compile_and_verify("trait Display { }\nfn main() { }", &["// Trait:"]);
 }

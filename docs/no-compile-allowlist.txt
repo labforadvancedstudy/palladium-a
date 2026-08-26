@@ -7,5 +7,6 @@ docs/reference/features/PALLADIUM_V1_FEATURES.md	3
 docs/reference/features/advanced/totality-checking.md	7
 docs/reference/features/async-system/async-as-effect.md	10
 docs/reference/features/core-language/implicit-lifetimes.md	4
+docs/specification/language-spec.md	2
 docs/user-guide/getting-started.md	1
 docs/user-guide/tutorial.md	1

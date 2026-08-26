@@ -44,23 +44,23 @@ Every file, compiled with `./target/release/pdc compile <file>`:
 
 | File | Verdict | First blocker | What it is waiting on |
 |---|---|---|---|
-| `stdlib/prelude.pd` | COMPILE_FAIL | ATTRIBUTE | `#[cfg(debug_assertions)]` at line 163; behind it, 18 `use` + 2 `mod` |
+| `stdlib/prelude.pd` | COMPILE_FAIL | USE_DECL | `pub use crate::std::option::{…};` at line 9 — was ATTRIBUTE (`#[cfg]` at line 163) until N2-10 made `#` lex; the 18 `use` + 2 `mod` behind it are what it was masking |
 | `stdlib/std/async.pd` | COMPILE_FAIL | ASSOC_TYPE | `type Output;` in a trait, line 6 |
-| `stdlib/std/collections/hashmap.pd` | COMPILE_FAIL | ATTRIBUTE | `#[macro]` at line 475; also generics, `impl`, `use` |
+| `stdlib/std/collections/hashmap.pd` | COMPILE_FAIL | USE_DECL | `use crate::std::option::Option;` at line 4 — was ATTRIBUTE (`#[macro]` at line 475) until N2-10; also generics and `impl` |
 | `stdlib/std/collections/mod.pd` | COMPILE_FAIL | MOD_DECL | `pub mod vec;` at line 4 |
-| `stdlib/std/collections/vec.pd` | COMPILE_FAIL | ATTRIBUTE | `#[macro]` at line 452; also generics and `impl` |
+| `stdlib/std/collections/vec.pd` | COMPILE_FAIL | RAW_POINTER | `data: *mut T,` at line 5 — was ATTRIBUTE (`#[macro]` at line 452) until N2-10; also generics and `impl` |
 | `stdlib/std/collections/vec_i64.pd` | COMPILE_FAIL | UNINIT_LET | `let mut v: VecI64;` at line 12 — **and nothing else** |
 | `stdlib/std/env.pd` | COMPILE_FAIL | USE_DECL | `use std::result::{…};` at line 4 |
 | `stdlib/std/fs.pd` | COMPILE_FAIL | USE_DECL | `use std::io::{…};` at line 4 |
 | `stdlib/std/io.pd` | COMPILE_FAIL | USE_DECL | `use crate::std::option::Option;` at line 4 |
-| `stdlib/std/math.pd` | COMPILE_FAIL | FLOAT_LITERAL | `3.14159…` at line 5 — the lexer has no float literal |
+| `stdlib/std/math.pd` | COMPILE_FAIL | SHIFT_ASSIGN | `e >>= 1;` at line 50 — `>>=` is not one token: the lexer produces `>` then `>=`. **Fourth floor for this one file, and the first uncovered by a PARSER change rather than a lexer one**: FLOAT_LITERAL (`3.14159…` at line 5) retired at N2-03, BITWISE_XOR at N5-12, and CONST_ITEM (`pub const PI: f64 = …;` at line 5) at N3-09/N3-10, which made its six `pub const` lines parse. Not one of those moves brought the file closer to compiling — a blocker is a floor, not a bill |
 | `stdlib/std/mem.pd` | COMPILE_FAIL | USE_DECL | line 4 |
 | `stdlib/std/mod.pd` | COMPILE_FAIL | MOD_DECL | `pub mod option;` at line 5 |
 | `stdlib/std/net.pd` | COMPILE_FAIL | USE_DECL | line 4 |
 | `stdlib/std/option.pd` | COMPILE_FAIL | PUB_FN_IN_IMPL | `pub fn is_some(…)` inside `impl<T> Option<T>`, line 11 |
 | `stdlib/std/process.pd` | COMPILE_FAIL | USE_DECL | line 4 |
 | `stdlib/std/result.pd` | COMPILE_FAIL | PUB_FN_IN_IMPL | line 11 |
-| `stdlib/std/string.pd` | COMPILE_FAIL | CHAR_ESCAPE | `'\t'` at line 200 — escapes work in string literals, not char literals |
+| `stdlib/std/string.pd` | COMPILE_FAIL | USE_DECL | `use crate::std::option::Option;` at line 4 — was CHAR_ESCAPE (`'\t'` at line 200) until N2-09 |
 | `stdlib/std/sync.pd` | COMPILE_FAIL | USE_DECL | line 4 |
 | `stdlib/std/thread.pd` | COMPILE_FAIL | USE_DECL | line 4 |
 | `stdlib/std/time.pd` | COMPILE_FAIL | PUB_FN_IN_IMPL | line 12 |

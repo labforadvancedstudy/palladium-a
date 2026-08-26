@@ -274,6 +274,7 @@ When you compile, you'll see detailed progress:
 - Functions, `let`/assignment, `if`/`else`, `while`, `for`-over-range
 - `i32`/`i64`/`u32`/`u64`, `bool`, `String`, fixed-size arrays
 - Structs; enums with unit/tuple/struct variants; `match` on enums
+- Top-level `const` and `static` items, with `static mut` for writable storage
 - Ownership and borrow checking
 - C code generation and linking
 
@@ -301,6 +302,9 @@ When you compile, you'll see detailed progress:
 - Slice patterns, `ref`/`mut` bindings, field shorthand in a struct-variant pattern,
   destructuring `let`
 - String interpolation
+- Macro hygiene — expansion is textual and a macro body reads the CALL SITE's names. The macro
+  system itself works for a token template with `$name` substitution (`macro double!(x) { $x * 2 }`);
+  what it cannot do is refused by name, and `println!`, `assert!` and `dbg!` are unusable
 
 ### ⚠️ Known Limitations
 

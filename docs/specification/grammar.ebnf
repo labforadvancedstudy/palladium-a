@@ -86,10 +86,13 @@ keyword        = "fn" | "let" | "mut" | "if" | "else" | "while" | "return"
                | "true" | "false" | "for" | "in" | "break" | "continue"
                | "struct" | "enum" | "trait" | "impl" | "match" | "import"
                | "pub" | "as" | "Self" | "self" | "type" | "const"
+               | "static" | "loop"
                | "unsafe" | "async" | "await" | "macro" ;
 
-# `loop`, `mod`, `use`, `where`, `dyn`, `move`, `static`, `ref`, `crate`,
+# `mod`, `use`, `where`, `dyn`, `move`, `ref`, `crate`,
 # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
+# `loop` became one with N5-07 and `static` with N3-10; the second took a
+# spelling away, so `let static = 1;` no longer parses.
 
 operator       = '+' | '-' | '*' | '/' | '%' | '=' | "==" | "!=" | '!'
                | '<' | '>' | "<=" | ">=" | "&&" | "||" | '&' ;
@@ -123,9 +126,17 @@ import         = "import" path [ "as" identifier ] ';'
 path           = identifier { "::" identifier } ;
 
 item           = function | struct_def | enum_def | trait_def
-               | impl_block | type_alias | macro_def ;
+               | impl_block | type_alias | macro_def
+               | const_item | static_item ;
 
-# There is no top-level `const`, `static`, `mod` or `use` item.
+# `const_item` and `static_item` moved into Part A on 2026-08-26 (N3-09, N3-10);
+# their productions are the ones stated below under "Items and modules", with two
+# restrictions Part A adds and the normative form does not: the initialiser must
+# be a literal or an operator over literals, and the type must be one of the
+# integer widths, `f32`, `f64` or `bool`. Both exist because the item becomes a C
+# file-scope definition, which C requires to have a constant initialiser.
+#
+# There is still no top-level `mod` or `use` item.
 
 # =============================================================================
 # Items
@@ -168,6 +179,14 @@ impl_block     = "impl" [ generic_params ] [ type "for" ] type '{' { function } 
 type_alias     = [ "pub" ] "type" identifier [ generic_params ] '=' type ';' ;
 
 macro_def      = "macro" identifier '!' '(' [ pattern ] ')' block ;
+
+# ONE MACRO SYSTEM (N3-12), and `macro_rules!` is refused BY NAME in both item and
+# invocation position (N3-14) — not because macros are unsupported but because
+# this form exists. A body is a TOKEN TEMPLATE and can carry identifiers, integer
+# literals and single-character punctuation only; a parameter is substituted where
+# the body writes `$name`, and a bare parameter name, a two-character operator, a
+# non-integer literal and a nested invocation are each refused at the definition.
+# Hygiene is NOT implemented: expansion is textual, and N3-13 is owed by M5.
 
 generic_params = '<' generic_param { ',' generic_param } '>' ;
 generic_param  = "'" identifier                 (* lifetime *)
@@ -511,6 +530,9 @@ pattern_norm    = ... (* the Part A forms *)
 
 # ---- Items and modules (spec N3, N11) ----------------------------------------
 
+# const_item and static_item are IMPLEMENTED as of N3-09/N3-10 and are listed in
+# Part A's `item` too; what stays normative-only here is an initialiser that is
+# not a constant expression and a type outside the numeric/bool set.
 const_item      = [ "pub" ] "const" identifier ":" type "=" expression ";" ;
 static_item     = [ "pub" ] "static" [ "mut" ] identifier ":" type "=" expression ";" ;
 module_item     = [ "pub" ] "mod" identifier ( "{" { item } "}" | ";" ) ;

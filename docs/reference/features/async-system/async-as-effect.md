@@ -265,9 +265,9 @@ citations in `language-spec.md` before this change were taken from the pre-clean
 
 **1. The surface syntax took the Rust-shaped path this design rejects.**
 `async` and `await` are keywords in the lexer (`src/lexer/token.rs:319-323`), the grammar's
-`function` production carries an optional `async` (`docs/specification/grammar.ebnf:134`), `.await`
-is a postfix operator (`docs/specification/grammar.ebnf:284`), and the keyword list names both
-(`docs/specification/grammar.ebnf:89`). The parser sets `Function.is_async` from that keyword
+`function` production carries an optional `async` (`docs/specification/grammar.ebnf:145`), `.await`
+is a postfix operator (`docs/specification/grammar.ebnf:303`), and the keyword list names both
+(`docs/specification/grammar.ebnf:90`). The parser sets `Function.is_async` from that keyword
 (`src/parser/mod.rs:965`, `src/parser/mod.rs:974`). The implementation therefore offers exactly the two things this
 document says the language does not have: an `async` marker and an await operator.
 
@@ -297,7 +297,7 @@ scheduler.
 
 **6. Effect contexts do not exist.** There is no `with`, no `effect` item, no `effect::sync`, and
 no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
-(`docs/specification/grammar.ebnf:91-92`).
+(`docs/specification/grammar.ebnf:92-93`).
 
 **7. `.await` is refused, and the lowering that used to be here is deleted.**
 Codegen for an await expression returns `await_unimplemented` at the construct's own span
