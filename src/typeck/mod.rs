@@ -1114,6 +1114,16 @@ pub struct TypeChecker {
     unsafe_depth: usize,
     /// Current impl type (for resolving Self types)
     current_impl_type: Option<String>,
+    /// The top-level `const` and `static` names (N3-09, N3-10), with the span
+    /// of the declaration.
+    ///
+    /// SEPARATE FROM THE SYMBOL TABLE, which is where their TYPES live. The
+    /// symbol table's outermost scope holds them so that every function body
+    /// resolves the name without a second lookup path; this map is what makes
+    /// "is this name a top-level item" answerable, which the symbol table
+    /// cannot answer — a scope is a scope, and by the time a body is being
+    /// checked its own bindings are in there too.
+    global_items: HashMap<String, Span>,
 }
 
 impl Default for TypeChecker {
@@ -1164,6 +1174,7 @@ impl TypeChecker {
             error_helper: TypeErrorHelper::new(),
             unsafe_depth: 0,
             current_impl_type: None,
+            global_items: HashMap::new(),
         }
     }
 
@@ -1184,8 +1195,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1553-1554`, `src/typeck/mod.rs:1556-1558`,
-    /// `src/typeck/mod.rs:1653-1654`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1564-1565`, `src/typeck/mod.rs:1567-1569`,
+    /// `src/typeck/mod.rs:1664-1665`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -1767,8 +1778,103 @@ impl TypeChecker {
                     crate::ast::Item::Macro(_) => {
                         // Macros are handled during expansion phase, skip here
                     }
+                    crate::ast::Item::Global(_) => {
+                        // NOT registered from an import, deliberately. Code
+                        // generation emits a top-level item only for the program
+                        // being compiled, so registering an imported `pub const`
+                        // here would type a name no C definition backs and move
+                        // the failure to the linker. A `const` in a module is
+                        // therefore invisible to importers, and the diagnostic at
+                        // a use site is "undefined variable" rather than a link
+                        // error. Making it visible is cross-module code
+                        // generation (N11), not an N3-09 lowering.
+                    }
                 }
             }
+        }
+    }
+
+    /// Register a top-level `const` or `static` (N3-09, N3-10) and check it.
+    ///
+    /// IT GOES IN THE OUTERMOST SCOPE, which is the one `check_function` never
+    /// leaves and never pops, so every function body sees the name whether it is
+    /// written above or below the item. Order independence is not a special rule
+    /// here; it is what registering in the FIRST pass means, and it is the same
+    /// treatment functions already get.
+    ///
+    /// THE TYPE SET IS CLOSED, and small on purpose. A `String` is a pointer
+    /// into a runtime arena that no file-scope initialiser can produce, and an
+    /// array, struct, enum or tuple would need its C aggregate emitted before
+    /// the definition and its layout decided by a pass that has not run yet.
+    /// Each of those is refused by name rather than left to fail inside gcc.
+    fn register_global(&mut self, global: &crate::ast::GlobalDef) -> Result<()> {
+        let noun = match global.kind {
+            crate::ast::GlobalKind::Const => "const",
+            crate::ast::GlobalKind::Static { .. } => "static",
+        };
+
+        if !matches!(
+            global.ty,
+            crate::ast::Type::I32
+                | crate::ast::Type::I64
+                | crate::ast::Type::U32
+                | crate::ast::Type::U64
+                | crate::ast::Type::F32
+                | crate::ast::Type::F64
+                | crate::ast::Type::Bool
+        ) {
+            return Err(CompileError::Generic(format!(
+                "a top-level `{}` may only have a numeric or `bool` type, and `{}` has type \
+                 `{}`: every other type is built by code that runs, and nothing runs before \
+                 `main`",
+                noun, global.name, global.ty
+            )));
+        }
+
+        // A second item under the same name is not a redefinition question the
+        // symbol table can answer alone — its `define` reports "Variable 'X'
+        // already defined in this scope", which names neither item.
+        if let Some(previous) = self.global_items.get(&global.name) {
+            return Err(CompileError::Generic(format!(
+                "`{}` is declared twice at the top level (the first is at line {})",
+                global.name, previous.line
+            )));
+        }
+
+        let declared = self.ast_type_to_checker_type(&global.ty);
+        let found = self.check_expression(&global.value)?;
+        if found != declared {
+            return Err(CompileError::Generic(format!(
+                "the initialiser of `{}` has type `{}`, and it is declared `{}`",
+                global.name, found, declared
+            )));
+        }
+
+        let mutable = matches!(
+            global.kind,
+            crate::ast::GlobalKind::Static { is_mut: true }
+        );
+        self.symbols.define(global.name.clone(), declared, mutable)?;
+        self.global_items.insert(global.name.clone(), global.span);
+        Ok(())
+    }
+
+    /// Refuse a local binding that reuses a top-level item's name.
+    ///
+    /// C would accept the shadow and so would this checker's scope stack, and
+    /// both would be right about their own rules — which is the problem. A
+    /// reader of `X = 1;` inside a function has to know whether a `let X` ran
+    /// earlier in the same body to know whether the program's `static mut X`
+    /// changed. One name, one meaning, refused at the binding rather than
+    /// silently resolved at the use.
+    fn refuse_global_shadow(&self, name: &str, what: &str) -> Result<()> {
+        match self.global_items.get(name) {
+            Some(span) => Err(CompileError::Generic(format!(
+                "{} `{}` has the name of the top-level item declared at line {}: \
+                 a local binding may not shadow it",
+                what, name, span.line
+            ))),
+            None => Ok(()),
         }
     }
 
@@ -2175,6 +2281,9 @@ impl TypeChecker {
                 Item::Macro(_) => {
                     // Macros are handled during expansion phase, skip here
                 }
+                Item::Global(global) => {
+                    self.register_global(global)?;
+                }
             }
         }
 
@@ -2251,6 +2360,12 @@ impl TypeChecker {
                 Item::Macro(_) => {
                     // Macros are handled during expansion phase, skip here
                 }
+                Item::Global(_) => {
+                    // Registered and checked in the first pass: an initialiser
+                    // is a constant expression by the parser's rule, so there is
+                    // no body here that could depend on anything the first pass
+                    // had not yet seen.
+                }
             }
         }
 
@@ -2270,7 +2385,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:2560-2562`), and walking an imported
+        // return (`src/typeck/mod.rs:2675-2677`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -2600,6 +2715,7 @@ impl TypeChecker {
 
         // Add function parameters to symbol table
         for param in &func.params {
+            self.refuse_global_shadow(&param.name, "the parameter")?;
             let checker_type = self.ast_type_to_checker_type(&param.ty);
             self.symbols
                 .define(param.name.clone(), checker_type, param.mutable)?;
@@ -2673,6 +2789,8 @@ impl TypeChecker {
                 mutable,
                 ..
             } => {
+                self.refuse_global_shadow(name, "the local")?;
+
                 // Type check the value expression
                 let value_type = self.check_expression(value)?;
 
@@ -2717,6 +2835,16 @@ impl TypeChecker {
 
                         // Check if variable is mutable
                         if !var_mutable {
+                            // A top-level item gets its own wording: the stock
+                            // advice is "declare it with `let mut`", and there is
+                            // no `let` here to add `mut` to.
+                            if self.global_items.contains_key(name) {
+                                return Err(CompileError::Generic(format!(
+                                    "cannot assign to `{}`: a top-level item is read-only \
+                                     unless it is declared `static mut`",
+                                    name
+                                )));
+                            }
                             return Err(self.error_helper.immutable_assignment(name));
                         }
 
@@ -5571,7 +5699,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6040-6104`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6137-6201`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -5854,7 +5982,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4233-4241`, `src/parser/mod.rs:4002-4010`). That is not
+    /// (`src/parser/mod.rs:4401-4409`, `src/parser/mod.rs:4170-4178`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

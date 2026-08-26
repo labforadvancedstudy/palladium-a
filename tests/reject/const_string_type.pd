@@ -1,0 +1,16 @@
+// NEGATIVE TEST -- a top-level item may not have a `String` type (N3-09).
+//
+// A Palladium `String` is a pointer into a 64 KiB arena that the runtime sets
+// up, so its value is produced by code that runs -- and nothing runs before
+// `main`. The type set for a top-level item is therefore closed and small:
+// the integer types, `f32`, `f64` and `bool`, each of which C can initialise at
+// file scope with no code at all.
+//
+// This fixture pins the TYPE refusal rather than the initialiser refusal: the
+// initialiser is an integer literal, which is a perfectly good constant
+// expression, so the only thing wrong with the item is the type it declares.
+const NAME: String = 1;
+
+fn main() {
+    print(NAME);
+}

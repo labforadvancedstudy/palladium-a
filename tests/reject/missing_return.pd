@@ -1,0 +1,32 @@
+// NEGATIVE TEST -- a value-returning function with no value on some path is a
+// compile error (N3-03).
+//
+// THE SHAPE THIS FILE PINS is the one no reader sees as a defect: `f` returns a
+// value on the true path and simply ends on the false one. There is no missing
+// keyword, no unreachable code and no type error -- the body is well-formed and
+// the last statement is an `if`. What is wrong is a PATH.
+//
+// WHAT THE OLD BEHAVIOUR WAS, and why an exit code cannot see it: code
+// generation emitted a non-void C function that falls off its end, so `f(0)`
+// returned whatever was in the return register. The program compiled, linked,
+// ran, exited 0 and printed a number. That is the class M1 closed, and the
+// reason this is a `reject` fixture rather than a `run` one with an expected
+// transcript: there is no correct output to record for a program whose answer
+// is register contents.
+//
+// COVERAGE SPLIT, stated so this file is not read as the whole rule: the other
+// three shapes -- an empty body, a body whose last statement ends in a
+// semicolon, and a `loop` that may not be entered -- are pinned by
+// tests/m1_missing_return.rs, which asserts the rendered diagnostic. This
+// fixture is the corpus-level half: the refusal survives in the compiler the
+// conformance gate actually runs.
+fn f(n: i64) -> i64 {
+    if n > 0 {
+        return 1;
+    }
+}
+
+fn main() {
+    print_int(f(1));
+    print_int(f(0));
+}

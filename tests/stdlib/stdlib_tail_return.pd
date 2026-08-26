@@ -54,6 +54,128 @@ fn tail_index(a: i64) -> i64 {
 
 fn tail_string(a: i64) -> String { int_to_string(a) }
 
+// --- NESTED tail positions (N3-02: "in every tail position") ---
+//
+// The three files in this directory used to prove the tail rule ONE LEVEL DEEP:
+// this one for a tail expression, stdlib_tail_if.pd for a tail `if`, and
+// stdlib_tail_match.pd for a tail `match`. But `lower_tail_to_return`
+// (src/parser/mod.rs) RECURSES -- an `if` branch's own tail is lowered by the
+// same function -- so a branch that ends in another `if`, or in a `match`, or
+// an arm that ends in an `if`, is a distinct position with a distinct
+// recursive call behind it, and none of them was covered. What is asserted
+// below is exactly the depth-two shapes, plus one depth-three, because "every
+// tail position" is a claim about the recursion and not about the three
+// outermost forms.
+
+// `else if` is an `if` in the else branch of an `if`: the recursion's own
+// shape, spelled the way a programmer writes it.
+fn classify(n: i64) -> i64 {
+    if n < 0 {
+        0
+    } else if n == 0 {
+        1
+    } else if n < 10 {
+        2
+    } else {
+        3
+    }
+}
+
+// A `match` whose arms are the tail of an `if` branch.
+enum Sign {
+    Neg,
+    Zero,
+    Pos,
+}
+
+fn sign_of(n: i64) -> Sign {
+    if n < 0 {
+        Sign::Neg
+    } else if n == 0 {
+        Sign::Zero
+    } else {
+        Sign::Pos
+    }
+}
+
+fn tail_match_in_if_branch(n: i64) -> i64 {
+    if n > 100 {
+        999
+    } else {
+        match sign_of(n) {
+            Sign::Neg => -1,
+            Sign::Zero => 0,
+            Sign::Pos => 1,
+        }
+    }
+}
+
+// An `if` that is the tail of a `match` ARM, which reaches the recursion from
+// the other direction.
+fn tail_if_in_match_arm(s: Sign, n: i64) -> i64 {
+    match s {
+        Sign::Neg => {
+            if n < -10 {
+                -100
+            } else {
+                -1
+            }
+        }
+        Sign::Zero => 0,
+        Sign::Pos => {
+            if n > 10 {
+                100
+            } else {
+                1
+            }
+        }
+    }
+}
+
+// Depth three: an `if` inside an `if` inside an `if`. If the recursion stopped
+// at any fixed depth this is the shape that would return the register's
+// contents while every function above it stayed correct.
+fn deep(n: i64) -> i64 {
+    if n > 0 {
+        if n > 10 {
+            if n > 100 {
+                3
+            } else {
+                2
+            }
+        } else {
+            1
+        }
+    } else {
+        0
+    }
+}
+
+// A `let` before the tail `if`, so the tail is not the only statement in the
+// branch it is lowered in.
+fn tail_if_after_locals(a: i64) -> i64 {
+    let doubled = a * 2;
+    if doubled > 10 {
+        doubled
+    } else {
+        let bumped = doubled + 100;
+        bumped
+    }
+}
+
+// THE NEGATIVE HALF, and it belongs in this file rather than in a reject
+// fixture: a UNIT function's tail `if` must NOT be lowered. `BlockTail::NoValue`
+// is the arm that does nothing, and a lowering that recursed into every `if` it
+// found would turn this into a function that returns a value -- which C would
+// then diagnose, or worse, accept.
+fn unit_tail_if(a: i64) {
+    if a > 0 {
+        print("unit_tail_if positive");
+    } else {
+        print("unit_tail_if non-positive");
+    }
+}
+
 // An explicit `return` must keep working unchanged.
 fn explicit_return(a: i64, b: i64) -> i64 {
     return a + b;
@@ -109,5 +231,28 @@ fn main() {
     expect_str("tail_string", tail_string(77), "77");
     expect_i64("explicit_return", explicit_return(1, 2), 3);
     unit_tail(5);
+
+    // Nested tail positions.
+    expect_i64("classify_neg", classify(-5), 0);
+    expect_i64("classify_zero", classify(0), 1);
+    expect_i64("classify_small", classify(5), 2);
+    expect_i64("classify_big", classify(50), 3);
+    expect_i64("match_in_if_high", tail_match_in_if_branch(200), 999);
+    expect_i64("match_in_if_neg", tail_match_in_if_branch(-3), -1);
+    expect_i64("match_in_if_zero", tail_match_in_if_branch(0), 0);
+    expect_i64("match_in_if_pos", tail_match_in_if_branch(7), 1);
+    expect_i64("if_in_arm_deep_neg", tail_if_in_match_arm(Sign::Neg, -50), -100);
+    expect_i64("if_in_arm_neg", tail_if_in_match_arm(Sign::Neg, -1), -1);
+    expect_i64("if_in_arm_zero", tail_if_in_match_arm(Sign::Zero, 0), 0);
+    expect_i64("if_in_arm_pos", tail_if_in_match_arm(Sign::Pos, 50), 100);
+    expect_i64("deep_0", deep(0), 0);
+    expect_i64("deep_1", deep(5), 1);
+    expect_i64("deep_2", deep(50), 2);
+    expect_i64("deep_3", deep(500), 3);
+    expect_i64("tail_if_after_locals_hi", tail_if_after_locals(9), 18);
+    expect_i64("tail_if_after_locals_lo", tail_if_after_locals(1), 102);
+    unit_tail_if(1);
+    unit_tail_if(-1);
+
     print("tail_return_ok");
 }

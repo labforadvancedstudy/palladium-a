@@ -1,20 +1,148 @@
-//@ vacuous: prints that enums are partially implemented; declares no enum and matches on nothing — no milestone owns enums yet
-// Test 02: Type System - Enums (Not Yet Fully Implemented)
-// Enums have partial implementation with known issues
+// Test 02: ENUMS WITH UNIT, TUPLE AND STRUCT VARIANTS (N3-05).
+//
+// WHAT THIS FILE USED TO BE, because the replacement is the point: a `main`
+// containing seven `print` calls announcing that "enums are partially
+// implemented", declaring no enum, constructing no variant and matching on
+// nothing. It ran, it exited 0, and it was declared `vacuous` in the
+// conformance manifest for exactly that reason -- a fixture that names a
+// feature and exercises none of it is a green row that proves nothing. Enum
+// conformance was ZERO while a file called `02_types_enums.pd` passed.
+//
+// WHAT IT IS NOW: the three variant SHAPES the requirement names, each one
+// constructed, matched and read.
+//   - unit    `Empty`               -- no payload at all
+//   - tuple   `Pair(i64, i64)`      -- positional payload, read by position
+//   - struct  `Named { x, y }`      -- named payload, read by field name
+// A shape that is constructed but never destructured proves the constructor and
+// nothing about the layout, so every variant below is taken apart and its
+// contents printed.
+
+enum Shape {
+    // Unit variant: no data.
+    Empty,
+    // Tuple variants: one and two positional fields, because arity one is the
+    // case a lowering can get right by accident (a single field needs no
+    // offset arithmetic).
+    Single(i64),
+    Pair(i64, i64),
+    // Struct variant: named fields.
+    Rect { width: i64, height: i64 },
+}
+
+// A second enum, so that nothing below can pass by treating the tag as a global
+// numbering: `Colour::Red` and `Shape::Empty` are both the first variant of
+// their own type.
+enum Colour {
+    Red,
+    Green,
+    Blue,
+}
+
+fn area(s: Shape) -> i64 {
+    match s {
+        Shape::Empty => 0,
+        Shape::Single(n) => n,
+        Shape::Pair(a, b) => a * b,
+        // FIELD SHORTHAND DOES NOT PARSE: `Shape::Rect { width, height }` is
+        // refused with "Expected ':' after field name in pattern", and
+        // grammar.ebnf lists shorthand as still-normative. Written out, which is
+        // the spelling this language has.
+        Shape::Rect {
+            width: width,
+            height: height,
+        } => width * height,
+    }
+}
+
+// The same values through a DIFFERENT pattern set: `_` where the payload is not
+// wanted, which is a distinct code path from binding it.
+fn is_empty(s: Shape) -> bool {
+    match s {
+        Shape::Empty => true,
+        Shape::Single(_) => false,
+        Shape::Pair(_, _) => false,
+        Shape::Rect {
+            width: _,
+            height: _,
+        } => false,
+    }
+}
+
+fn colour_code(c: Colour) -> i64 {
+    match c {
+        Colour::Red => 1,
+        Colour::Green => 2,
+        Colour::Blue => 3,
+    }
+}
+
+// An enum VALUE that travels: constructed in one function, returned, and
+// destructured in another. A variant built and matched inside one body can be
+// folded away; this one cannot.
+fn make(n: i64) -> Shape {
+    if n == 0 {
+        Shape::Empty
+    } else if n < 10 {
+        Shape::Single(n)
+    } else if n < 100 {
+        Shape::Pair(n, 2)
+    } else {
+        Shape::Rect {
+            width: n,
+            height: 3,
+        }
+    }
+}
 
 fn main() {
-    print("=== Enum Type Test ===");
-    print("\nEnums are partially implemented but have issues:");
-    print("- Simple unit enums cause type checking errors");
-    print("- Enum variants with data have code generation issues");
-    print("- Pattern matching on enums is limited");
-    
-    // When fully implemented, enums will support:
-    // - Unit variants (no data)
-    // - Tuple variants (unnamed fields)
-    // - Struct variants (named fields)
-    // - Full pattern matching
-    // - Exhaustiveness checking
-    
-    print("\n=== Enum test complete ===");
+    // Constructed directly, matched immediately.
+    print_int(area(Shape::Empty));
+    print_int(area(Shape::Single(7)));
+    print_int(area(Shape::Pair(6, 7)));
+    print_int(area(Shape::Rect {
+        width: 4,
+        height: 5,
+    }));
+
+    // Constructed elsewhere, matched here.
+    print_int(area(make(0)));
+    print_int(area(make(9)));
+    print_int(area(make(50)));
+    print_int(area(make(1000)));
+
+    // The wildcard-payload patterns.
+    if is_empty(Shape::Empty) {
+        print("empty is empty");
+    }
+    if is_empty(Shape::Pair(1, 2)) {
+        print("unreachable");
+    }
+
+    // A second enum's variants are its own.
+    print_int(colour_code(Colour::Red));
+    print_int(colour_code(Colour::Green));
+    print_int(colour_code(Colour::Blue));
+
+    // A payload read into a local, so the binding outlives the arm it came
+    // from.
+    let boxed = Shape::Rect {
+        width: 8,
+        height: 9,
+    };
+    let a = area(boxed);
+    print_int(a);
+
+    // A `match` used as a VALUE rather than as a statement.
+    let described = match make(5) {
+        Shape::Empty => 0,
+        Shape::Single(n) => n * 100,
+        Shape::Pair(x, y) => x + y,
+        Shape::Rect {
+            width: width,
+            height: height,
+        } => width - height,
+    };
+    print_int(described);
+
+    print("enum_types_ok");
 }

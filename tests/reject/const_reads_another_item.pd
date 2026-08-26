@@ -1,0 +1,17 @@
+// NEGATIVE TEST -- one top-level item may not read another (N3-09).
+//
+// `static const long long B = A + 1;` is not valid C at file scope: `A` is a
+// const-qualified VARIABLE, not a C constant expression, and gcc answers
+// "initializer element is not constant". Folding `A` into `B` here would work
+// for this program and stop working the moment the initialiser could name
+// something the folder cannot see, so the rule is the one C can honour rather
+// than the one this program happens to fit.
+//
+// The refusal names the identifier, so the reader learns the rule from the
+// attempt.
+const A: i64 = 1;
+const B: i64 = A + 1;
+
+fn main() {
+    print_int(B);
+}

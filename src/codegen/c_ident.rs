@@ -502,6 +502,11 @@ fn escape_item(item: &mut Item) {
             escape_in_place(&mut a.name);
             escape_type(&mut a.ty);
         }
+        Item::Global(g) => {
+            escape_in_place(&mut g.name);
+            escape_type(&mut g.ty);
+            escape_expr(&mut g.value);
+        }
         // Expanded before code generation; see the doc comment.
         Item::Macro(_) => {}
     }

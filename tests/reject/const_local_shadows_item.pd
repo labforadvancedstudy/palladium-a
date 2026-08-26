@@ -1,0 +1,16 @@
+// NEGATIVE TEST -- a local may not shadow a top-level item (N3-09, N3-10).
+//
+// C would accept the shadow and so would this checker's scope stack, and both
+// would be right about their own rules -- which is the problem. A reader of
+// `LIMIT` inside a body would have to know whether a `let LIMIT` ran earlier in
+// that body to know which storage is meant, and for a `static mut` the two
+// readings differ in whether the program's state changed.
+//
+// The refusal is at the BINDING, which is the line the programmer can fix, and
+// it names the line the item is declared on.
+const LIMIT: i64 = 10;
+
+fn main() {
+    let LIMIT = 3;
+    print_int(LIMIT);
+}

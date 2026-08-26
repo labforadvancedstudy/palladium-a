@@ -225,7 +225,7 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///   `src/parser/mod.rs:339-371`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1158-1182`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1169-1193`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -1004,6 +1004,17 @@ impl Parser {
                 Ok(Item::TypeAlias(type_alias))
             }
             Token::Macro => Ok(Item::Macro(self.parse_macro()?)),
+            Token::Const | Token::Static => {
+                if is_async {
+                    return Err(CompileError::SyntaxError {
+                        message: "async can only be used with functions".to_string(),
+                        span: self.current_span(),
+                    });
+                }
+                let mut global = self.parse_global()?;
+                global.visibility = visibility;
+                Ok(Item::Global(global))
+            }
             _ => {
                 if is_async {
                     Err(CompileError::SyntaxError {
@@ -1863,6 +1874,163 @@ impl Parser {
                 start_span.column,
             ),
         })
+    }
+
+    /// Parse a top-level `const` or `static` item (N3-09, N3-10).
+    ///
+    /// ```text
+    /// const_item  = [ "pub" ] "const" identifier ":" type "=" expression ";"
+    /// static_item = [ "pub" ] "static" [ "mut" ] identifier ":" type "=" expression ";"
+    /// ```
+    ///
+    /// THE TYPE IS MANDATORY, unlike a `let`. A top-level item is read by every
+    /// function in the file, so inferring its type would make the meaning of a
+    /// name at the top of the program depend on an expression the reader has to
+    /// find; and code generation needs a C type for the definition before it has
+    /// walked any body.
+    fn parse_global(&mut self) -> Result<GlobalDef> {
+        let (keyword, start_span) = self.advance()?;
+        let kind = match keyword {
+            Token::Const => GlobalKind::Const,
+            Token::Static => GlobalKind::Static {
+                is_mut: if self.check(&Token::Mut) {
+                    self.advance()?;
+                    true
+                } else {
+                    false
+                },
+            },
+            token => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: "'const' or 'static'".to_string(),
+                    found: token.to_string(),
+                    span: self.current_span(),
+                });
+            }
+        };
+        let noun = match kind {
+            GlobalKind::Const => "const",
+            GlobalKind::Static { .. } => "static",
+        };
+
+        // `const mut` is not a spelling: a name with one value has nothing to
+        // make mutable. Saying so beats "Expected const item name, found 'mut'".
+        if matches!(kind, GlobalKind::Const) && self.check(&Token::Mut) {
+            return Err(CompileError::SyntaxError {
+                message: "a `const` may not be `mut`: it names a value, not a place. \
+                          Write `static mut` for a variable that lives for the whole program"
+                    .to_string(),
+                span: self.current_span(),
+            });
+        }
+
+        let name = match self.advance()? {
+            (Token::Identifier(name), _) => name,
+            (token, _) => {
+                return Err(CompileError::UnexpectedToken {
+                    expected: format!("{} item name", noun),
+                    found: token.to_string(),
+                    span: self.current_span(),
+                });
+            }
+        };
+
+        self.consume(
+            Token::Colon,
+            &format!("Expected ':' and a type after the {} name", noun),
+        )?;
+        let ty = self.parse_type()?;
+
+        self.consume(
+            Token::Eq,
+            &format!("Expected '=' and an initialiser after the {} type", noun),
+        )?;
+        let value = self.parse_expression()?;
+        Self::validate_global_initializer(&value, noun)?;
+
+        let end_span = self.consume(
+            Token::Semicolon,
+            &format!("Expected ';' after the {} item", noun),
+        )?;
+
+        Ok(GlobalDef {
+            visibility: Visibility::Private, // Will be set in parse_item
+            kind,
+            name,
+            ty,
+            value,
+            span: Span::new(
+                start_span.start,
+                end_span.end,
+                start_span.line,
+                start_span.column,
+            ),
+        })
+    }
+
+    /// The initialiser forms a top-level item may use, and the refusal by name
+    /// for every other one.
+    ///
+    /// WHY A CLOSED LIST RATHER THAN "ANY EXPRESSION": the item becomes a C
+    /// file-scope definition, and C requires a file-scope initialiser to be a
+    /// constant expression. Everything permitted here is one after lowering —
+    /// literals and operators over literals fold in the translation unit — so
+    /// the emitted C is valid by construction rather than by hope. Anything
+    /// else (a call, a name, an array or struct literal, an `if`) would either
+    /// need running code before `main` or would read another item, and
+    /// `initializer element is not constant` from the C compiler is a
+    /// diagnostic about generated code that names nothing the author wrote.
+    ///
+    /// The refusal names the form it saw, so the reader learns the rule from
+    /// one attempt rather than from this list.
+    fn validate_global_initializer(expr: &Expr, noun: &str) -> Result<()> {
+        let refuse = |form: &str, span: Span| -> Result<()> {
+            Err(CompileError::SyntaxError {
+                message: format!(
+                    "a top-level `{}` initialiser has to be a constant expression, \
+                     and {} is not one: write a literal, or arithmetic over literals",
+                    noun, form
+                ),
+                span: Some(span),
+            })
+        };
+        match expr {
+            Expr::Integer(_) | Expr::Float(_) | Expr::Bool(_) | Expr::Char(_) => Ok(()),
+            Expr::Binary { left, right, .. } => {
+                Self::validate_global_initializer(left, noun)?;
+                Self::validate_global_initializer(right, noun)
+            }
+            Expr::Unary { operand, .. } => Self::validate_global_initializer(operand, noun),
+            // A string is a pointer into the arena, produced by a runtime call,
+            // so it is refused HERE rather than by the type rule below — the
+            // reason is the initialiser, not the type.
+            Expr::String(_) => refuse("a string literal", expr.span()),
+            Expr::Ident(name) => refuse(
+                &format!("the name `{}` (one item may not read another)", name),
+                expr.span(),
+            ),
+            Expr::Call { .. } | Expr::MacroInvocation { .. } => {
+                refuse("a call (nothing runs before `main`)", expr.span())
+            }
+            Expr::ArrayLiteral { .. } | Expr::ArrayRepeat { .. } => {
+                refuse("an array literal", expr.span())
+            }
+            Expr::StructLiteral { .. } => refuse("a struct literal", expr.span()),
+            Expr::EnumConstructor { .. } => refuse("an enum constructor", expr.span()),
+            Expr::If { .. } => refuse("an `if`", expr.span()),
+            Expr::Match { .. } => refuse("a `match`", expr.span()),
+            Expr::Block { .. } => refuse("a block", expr.span()),
+            Expr::Loop { .. } => refuse("a `loop`", expr.span()),
+            Expr::Cast { .. } => refuse("a cast", expr.span()),
+            Expr::FieldAccess { .. } => refuse("a field access", expr.span()),
+            Expr::Index { .. } => refuse("an index", expr.span()),
+            Expr::Range { .. } => refuse("a range", expr.span()),
+            Expr::Reference { .. } | Expr::Deref { .. } => refuse("a reference", expr.span()),
+            Expr::Question { .. } => refuse("`?`", expr.span()),
+            Expr::Await { .. } => refuse("`await`", expr.span()),
+            Expr::Tuple { .. } => refuse("a tuple literal", expr.span()),
+            Expr::TupleIndex { .. } => refuse("a tuple index", expr.span()),
+        }
     }
 
     /// Parse a macro definition

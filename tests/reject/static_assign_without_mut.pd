@@ -1,0 +1,16 @@
+// NEGATIVE TEST -- a `static` without `mut` is read-only (N3-10).
+//
+// The grammar spells the mutable form `static mut`, and this language already
+// requires `mut` on a `let` before an assignment is legal. A top-level item
+// that could be written without saying so would make `static` the one binding
+// form whose mutability is invisible at the declaration.
+//
+// The diagnostic is this item's OWN, not the stock one: `immutable_assignment`
+// advises "declare it with 'let mut Y = ...'", and there is no `let` here to
+// put `mut` on. See src/typeck/mod.rs, the `AssignTarget::Ident` arm.
+static LIMIT: i64 = 10;
+
+fn main() {
+    LIMIT = 11;
+    print_int(LIMIT);
+}

@@ -6,7 +6,7 @@
 //
 //   1. `int`/`string` in the expected C. The integer type lowers to
 //      `long long` (`int` is only a source-level alias for `i64`,
-//      `src/parser/mod.rs:2511`) and `print` lowers to `__pd_print`, not
+//      `src/parser/mod.rs:2679`) and `print` lowers to `__pd_print`, not
 //      `printf`.
 //   2. Fragments with no `fn main`. The driver rejects a program without one
 //      ("No main function found"), so a declaration-only snippet cannot be
@@ -146,8 +146,12 @@ fn test_trait_declaration_emits_code() {
 }
 
 #[test]
-#[ignore = "XFAIL: top-level `const` items — grammar.ebnf:112-113 lists no const item, so the parser reports \"Expected function, struct, enum, trait, type, impl, or macro declaration\" (owned by M2, surface syntax)"]
 fn test_top_level_const() {
+    // N3-09. The assertion is UNCHANGED from the XFAIL: `const long long X = 5;`
+    // is a substring of the emitted `static const long long X = 5;`, and the
+    // leading `static` is internal linkage rather than the item's own keyword —
+    // one translation unit, and a file-scope name with external linkage can
+    // collide with a libc symbol the program never mentions.
     compile_and_verify(
         "const X: int = 5;\nfn main() { }",
         &["const long long X = 5;"],
@@ -155,8 +159,10 @@ fn test_top_level_const() {
 }
 
 #[test]
-#[ignore = "XFAIL: top-level `static` items — grammar.ebnf:112-113 lists no static item, same parse error as `const` (owned by M2, surface syntax)"]
 fn test_top_level_static() {
+    // N3-10. Also unchanged: a `static` is emitted without the `const`
+    // qualifier, which is what makes `static mut` assignable in the C as well
+    // as in the language.
     compile_and_verify(
         "static Y: int = 10;\nfn main() { }",
         &["static long long Y = 10;"],

@@ -188,6 +188,14 @@ impl ModuleResolver {
                 crate::ast::Item::Macro(_) => {
                     // Macros are handled during expansion phase, skip here
                 }
+                crate::ast::Item::Global(_) => {
+                    // A `pub const` or `pub static` exports NOTHING yet, and the
+                    // silence is deliberate: nothing emits a definition for an
+                    // imported top-level item, so exporting the name would make
+                    // it type-check at the use site and fail at the linker. The
+                    // type checker's imported-items walk says the same thing at
+                    // the other end.
+                }
             }
         }
 

@@ -307,6 +307,12 @@ pub enum Token {
     #[token("const")]
     Const,
 
+    // `static` became a keyword with N3-10. It used to lex as an ordinary
+    // identifier, which is why the spec's keyword list says it is not one:
+    // that list describes the lexer, and the lexer is what changed here.
+    #[token("static")]
+    Static,
+
     #[token("unsafe")]
     Unsafe,
 
@@ -614,6 +620,7 @@ impl std::fmt::Display for Token {
             Token::At => write!(f, "'@'"),
             Token::Eof => write!(f, "EOF"),
             Token::Const => write!(f, "'const'"),
+            Token::Static => write!(f, "'static'"),
             Token::Async => write!(f, "'async'"),
             Token::Await => write!(f, "'await'"),
             Token::SelfParam => write!(f, "'self'"),

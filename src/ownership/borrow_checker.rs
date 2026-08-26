@@ -26,6 +26,12 @@ pub struct BorrowChecker {
     /// this map is the invariant, so an unregistered binder must fail loudly
     /// instead of silently granting write permission.
     mutable_bindings: HashMap<String, bool>,
+    /// The top-level `const` and `static` items (N3-09, N3-10) with the flag
+    /// that says whether a write to one is legal. They are re-declared at the
+    /// head of EVERY function, because `local_types` and the ownership context
+    /// are per-function and a top-level item is in scope in all of them; a
+    /// global left out of that reset read as "Use of uninitialized value".
+    global_bindings: Vec<(String, Type, bool)>,
     /// Lifetime of the call expression whose arguments are being checked, if any.
     /// Every borrow created while evaluating those arguments — including the
     /// temporary `&x` / `&mut x` references written in argument position — gets
@@ -158,6 +164,7 @@ impl Default for BorrowChecker {
             functions,
             local_types: HashMap::new(),
             mutable_bindings: HashMap::new(),
+            global_bindings: Vec::new(),
             unsafe_depth: 0,
             struct_fields: HashMap::new(),
             call_lifetime: None,
@@ -187,7 +194,7 @@ impl BorrowChecker {
     /// imported function can be checked at all.
     ///
     /// Takes exactly what `TypeChecker::set_imported_modules` takes
-    /// (`src/typeck/mod.rs:1378-1378`), because the driver has one resolver result and
+    /// (`src/typeck/mod.rs:1389-1389`), because the driver has one resolver result and
     /// two passes that need it; a second shape here would be a second thing to
     /// keep in sync. Registration itself is deferred to `check_program`, which is
     /// where the ordering against local definitions is decided.
@@ -227,7 +234,7 @@ impl BorrowChecker {
     ///
     /// Public-only, and imports-before-locals, for the same reasons as functions
     /// below; the type checker registers imported layouts under exactly the same
-    /// filter (`src/typeck/mod.rs:1558-1559`), so the two passes agree on which
+    /// filter (`src/typeck/mod.rs:1569-1570`), so the two passes agree on which
     /// `P` is meant.
     ///
     /// THE REMAINING WINDOW USED TO BE UNREACHABLE, AND IS NOW REACHABLE — the
@@ -240,7 +247,7 @@ impl BorrowChecker {
     /// and it was true.
     ///
     /// It stopped being true on 2026-08-23. The emission walk now asks
-    /// `crate::ast::local_type_shadows_import` (`src/codegen/mod.rs:2003-2031`)
+    /// `crate::ast::local_type_shadows_import` (`src/codegen/mod.rs:2012-2040`)
     /// and skips the imported definition, because the same window in the TYPE
     /// CHECKER was producing `Type mismatch: expected Color, found Color` for an
     /// ordinary program — a local `struct Color` over an imported `pub enum
@@ -289,7 +296,7 @@ impl BorrowChecker {
                         // function bodies, one item kind across.
                         //
                         // Its reason was that codegen emits only NON-generic
-                        // imported structs (`src/codegen/mod.rs:2007-2012`), so a
+                        // imported structs (`src/codegen/mod.rs:2016-2021`), so a
                         // generic `P<T>` would be "a layout for a type this
                         // compilation never produces". Structs have a
                         // monomorphization path too
@@ -359,6 +366,16 @@ impl BorrowChecker {
                 Item::Function(func) => {
                     self.collect_function_sig(func);
                 }
+                Item::Global(global) => {
+                    self.global_bindings.push((
+                        global.name.clone(),
+                        global.ty.clone(),
+                        matches!(
+                            global.kind,
+                            crate::ast::GlobalKind::Static { is_mut: true }
+                        ),
+                    ));
+                }
                 Item::Impl(impl_block) => {
                     // Collect method signatures from impl blocks
                     for method in &impl_block.methods {
@@ -412,8 +429,8 @@ impl BorrowChecker {
         //
         // ONLY `Item::Function` IS WALKED, and an imported `impl` method is not a
         // gap in that. Codegen's imported walk matches `Item::Struct` and
-        // `Item::Enum` (`src/codegen/mod.rs:2003-2031`) and, separately,
-        // `Item::Function` (`src/codegen/mod.rs:2157-2158`) — there is no `Item::Impl`
+        // `Item::Enum` (`src/codegen/mod.rs:2012-2040`) and, separately,
+        // `Item::Function` (`src/codegen/mod.rs:2172-2173`) — there is no `Item::Impl`
         // arm anywhere in it. So an imported impl method is not merely uncallable:
         // IT DOES NOT EXIST IN THE OUTPUT. Measured — a module exporting
         // `pub struct P { a: i64 }` with `impl P { fn get(self) -> i64 { … } }`
@@ -455,7 +472,7 @@ impl BorrowChecker {
                     // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
                     // "produces no C, because the codegen guard is the same
                     // predicate". That is true of the DIRECT imported-emission path
-                    // (`src/codegen/mod.rs:2158-2161`, public and non-generic) and
+                    // (`src/codegen/mod.rs:2173-2176`, public and non-generic) and
                     // false of MONOMORPHIZATION, which is a different path and emits
                     // `name__T` from the same template. Measured on the guard:
                     //
@@ -608,6 +625,17 @@ impl BorrowChecker {
         self.context.enter_scope();
         self.local_types.clear();
         self.mutable_bindings.clear();
+
+        // Top-level items are live in every body, and each of them is
+        // initialised by its own declaration — which is the difference between
+        // a global and a `let` with no value.
+        for (name, ty, writable) in self.global_bindings.clone() {
+            let place = Place::Local(name.clone());
+            self.context.declare(&place);
+            self.context.init_owned(place);
+            self.local_types.insert(name.clone(), ty);
+            self.mutable_bindings.insert(name, writable);
+        }
 
         // Initialize parameters and their types
         for param in &func.params {

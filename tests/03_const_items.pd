@@ -1,0 +1,87 @@
+// Test 03: TOP-LEVEL `const` ITEMS (N3-09).
+//
+// A `const` is one value with a name, readable from every function in the file
+// and writable from none. It lowers to a file-scope `static const` C
+// definition, NOT to a `#define`: a macro is untyped, unscoped, and would
+// rewrite every later occurrence of the spelling — including one that is a
+// struct field or a local in an unrelated function — so a `const` would change
+// the meaning of code that never read it.
+//
+// WHAT THIS FIXTURE IS FOR, beyond "it compiles": the property that is easy to
+// lose is ORDER INDEPENDENCE. `used_before_declaration` below is written ABOVE
+// every item it reads, which is what registering top-level items in the type
+// checker's first pass buys, and what emitting them before the first function
+// body buys in the C. A lowering that emitted each item where it stands would
+// pass a fixture that declared everything first and fail this one.
+
+fn used_before_declaration() -> i64 {
+    // Reads two items declared further down the file.
+    LIMIT + OFFSET
+}
+
+const LIMIT: i64 = 100;
+const OFFSET: i64 = 7;
+
+// `int` is the alias for `i64`, and an item may use it.
+const ALIAS_TYPED: int = 5;
+
+// Arithmetic over literals is a constant expression and stays one in the C.
+const COMPUTED: i64 = 6 * 7 + 1;
+
+// A negative value, which is the one literal shape that is really a unary
+// operator over a literal.
+const BELOW_ZERO: i64 = -12;
+
+const ENABLED: bool = true;
+const DISABLED: bool = false;
+
+const RATIO: f64 = 0.5;
+
+// Every function sees the same names; there is no import, no parameter and no
+// local involved in any of these reads.
+fn scaled(n: i64) -> i64 {
+    n * LIMIT
+}
+
+fn describe(flag: bool) -> i64 {
+    if flag {
+        LIMIT
+    } else {
+        OFFSET
+    }
+}
+
+fn main() {
+    print_int(used_before_declaration());
+    print_int(LIMIT);
+    print_int(OFFSET);
+    print_int(ALIAS_TYPED);
+    print_int(COMPUTED);
+    print_int(BELOW_ZERO);
+    print_int(scaled(2));
+    print_int(describe(ENABLED));
+    print_int(describe(DISABLED));
+
+    if ENABLED {
+        print("enabled");
+    }
+    if DISABLED {
+        print("unreachable");
+    }
+
+    // A `const` is readable inside every expression form, not only at the top
+    // of a function: an arm value and a condition are both just expressions.
+    let doubled = LIMIT + LIMIT;
+    print_int(doubled);
+
+    // An `f64` item, bracketed rather than printed: there is no float printing
+    // builtin, and the bracket excludes the integer-truncated answer, which is
+    // the failure a wrong lowering would produce.
+    if RATIO > 0.49 {
+        if RATIO < 0.51 {
+            print("ratio is 0.5");
+        }
+    }
+
+    print("const_items_ok");
+}

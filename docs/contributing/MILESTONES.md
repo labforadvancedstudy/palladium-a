@@ -166,15 +166,15 @@ self-hosting unit **imports nothing** (`grep -c '^import' bootstrap/pdc.pd` = 0)
 generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec excludes them, and
 `bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
 subset it implements"*). Both exclusions mattered because there were **two independent unordered
-emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:174-174`) emitted by iterating
+emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:182-182`) emitted by iterating
 `.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:1066-1066`,
 `src/typeck/mod.rs:1074-1074`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:1892-1893` and
-`src/typeck/mod.rs:1439-1439`, the two later codegen walks off their own sorted locals
-(`src/codegen/mod.rs:1978-1978`, `src/codegen/mod.rs:2827-2827`), and the instantiation keys at
-`src/typeck/mod.rs:5602-5603` and `src/typeck/mod.rs:5664-5665`. Pinned by
+sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:1901-1902` and
+`src/typeck/mod.rs:1450-1450`, the two later codegen walks off their own sorted locals
+(`src/codegen/mod.rs:1987-1987`, `src/codegen/mod.rs:2918-2918`), and the instantiation keys at
+`src/typeck/mod.rs:5730-5731` and `src/typeck/mod.rs:5792-5793`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -411,7 +411,7 @@ by the requirement manifest; this is the reading list.
 | D3b — a tail `if` is not lowered to a `return`; `fib(10)` prints `8261746944` and exits 0 | [A6.6](../specification/language-spec.md#a66-tail-expressions) | N3-02, N3-03 |
 | The async producer — `async fn g() { … }` compiled and emitted a `Future` struct with a `state` field and a `_poll` function, which N7 forbids outright. **CLOSED**: `async fn` is refused at the construct in typeck and again in codegen, and the emitter is deleted; receipts in `tests/m2_async_producer.rs` | [F11](#f11-the-async-producer-was-alive-and-violated-n7--closed) | N7-18 |
 | C-keyword identifiers — `fn double` emitted `long long double(…)`. **CLOSED**: escaped on the way into code generation, `src/codegen/c_ident.rs:440`; the `#[ignore]` is gone and the debt row is `paid` | `tests/e2e_test.rs:277` | N3-01 |
-| No missing-return diagnostic — `fn f() -> int { }` compiled silently. **CLOSED**: the parser already decided "returns on every path" and now refuses when it does not, `src/parser/mod.rs:1215-1244`; the `#[ignore]` is gone and the debt row is `paid` | `tests/compiler_comprehensive_test.rs:610` | N3-03 |
+| No missing-return diagnostic — `fn f() -> int { }` compiled silently. **CLOSED**: the parser already decided "returns on every path" and now refuses when it does not, `src/parser/mod.rs:1226-1255`; the `#[ignore]` is gone and the debt row is `paid` | `tests/compiler_comprehensive_test.rs:616` | N3-03 |
 | Block comments do not nest, which N2 requires | [F10](#f10-block-comments-do-not-nest-and-nothing-said-so) | N2-08 |
 | Nested arrays work in neither locals nor parameters | [A5](../specification/language-spec.md#a5-types) | N4-10 |
 | Filesystem builtins return `i64`/`bool` rather than `Result`, because `Result` is not built in *(the handle-representation split that made six of them uncallable is closed — M2)* | [A8](../specification/language-spec.md#a8-builtins) | N14-03 |
@@ -547,7 +547,7 @@ rows owned, not of rows outstanding — the two were being used interchangeably.
 
 1. **The M1 debt is PAID, and it was the live miscompile.** A tail `if` was not lowered to a return
    — `fib(10)` printed `8261746944` (N3-02); the missing-return diagnostic landed with it (N3-03),
-   as `tests/compiler_comprehensive_test.rs:610` says it must; and C-keyword identifier escaping
+   as `tests/compiler_comprehensive_test.rs:616` says it must; and C-keyword identifier escaping
    (N3-01) landed with those. All three `#[ignore]`s are gone, their rows in
    `tests/rust-debt-manifest.txt` are `paid`, and `make m1-exit` exits **0**.
 2. **The async producer is CLOSED** (N7-18). `async fn g() { print("x"); }` compiled and emitted
@@ -730,7 +730,7 @@ enum-owned method is unreachable by its path form. Each row carries a
    they allocate their result while having **reachable branches returning the literal `""`**,
    which is static storage they did not allocate. The corpus reaches all of them (bad handle, EOF,
    missing file, `start >= end`). This is not a documentation defect:
-   `src/ownership/borrow_checker.rs:121` derives its signatures from this table, so the ownership
+   `src/ownership/borrow_checker.rs:127` derives its signatures from this table, so the ownership
    model was wrong on those branches. They return `__pd_empty_owned()` now — one byte from the
    same bump pool every other owned string comes from, which is why allocating was the right fix
    and `strdup` was not: it adds **no failure class the other owned returns do not already have**.
@@ -876,7 +876,7 @@ show.
 is where both the bootstrap compiler and the standard library become multi-file.
 
 **Owns 8 requirement rows** — N3-11 and N11-01…N11-07 — plus the corpus's one `xfail`
-(`tests/conformance-manifest.txt:119`, cross-file imports) and the vacuous `12_modules_imports`.
+(`tests/conformance-manifest.txt:121`, cross-file imports) and the vacuous `12_modules_imports`.
 
 A `mod` item, file-based nesting, **enforced** visibility (N11-02 is a `reject` row: a private item
 imported must be an error, or visibility is decoration), and all four import forms.
@@ -1088,7 +1088,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:5881-5885` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:5978-5982` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -1112,7 +1112,7 @@ representation."* A `struct` with a `state` field, emitted into the program's ow
 representation.
 
 **CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
-`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:3104-3110`), the
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:3195-3201`), the
 same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
 unreachable: a private method nothing calls is one edit away from being called again. No line of
 `src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and
@@ -1272,7 +1272,7 @@ arrived with `fix/d3b-tail-if` and is what the closing paragraph of this finding
 | Row | What was broken, and what closed it |
 |---|---|
 | `tests/e2e_test.rs:322` **CLOSED** | a tail `if` was not lowered to a return — fixed in `src/parser/mod.rs` (`lower_tail_to_return`); the `#[ignore]` is gone, so `make test-xfail` would report an XPASS if it came back |
-| `tests/compiler_comprehensive_test.rs:610` **CLOSED** | `fn f() -> int { }` compiled with no diagnostic — the parser's own `returns_on_every_path` had been deciding the question since D3b and the call site did not act on a `false`; it now refuses (`src/parser/mod.rs:1215-1244`, `CompileError::missing_return`). Accept-side receipts: `tests/m1_missing_return.rs` |
+| `tests/compiler_comprehensive_test.rs:616` **CLOSED** | `fn f() -> int { }` compiled with no diagnostic — the parser's own `returns_on_every_path` had been deciding the question since D3b and the call site did not act on a `false`; it now refuses (`src/parser/mod.rs:1226-1255`, `CompileError::missing_return`). Accept-side receipts: `tests/m1_missing_return.rs` |
 | `tests/e2e_test.rs:277` **CLOSED** | `fn double` emitted `long long double(…)` and gcc rejected the compiler's own output — reserved words are escaped on the way into code generation (`src/codegen/c_ident.rs:440`). Controls on what must NOT be renamed: `tests/m1_c_keyword_idents.rs` |
 
 The first reproduced: `fib(10)` printed `8261746944` and exited 0. **A silent miscompile shipped in
@@ -1300,7 +1300,10 @@ plain sight for several rounds. Root `CLAUDE.md` requires a fact conflict to be 
 than left to coexist, and this one was not.
 
 *Resolved by measurement, not by choosing a sentence.* On the integrated tree the runner evaluates
-57 of them: `reject=57` over 143 fixtures (was 30 over 108 until `feat/m2-patterns` wrote down
+63 of them: `reject=63` over 151 fixtures (was 57 over 143 until `feat/m2-items` added six — the
+five refusals top-level `const` and `static` needed, and `tests/reject/missing_return.pd`, which is
+the corpus half of a payment `tests/m1_missing_return.rs` had been carrying alone; and 30 over 108
+until `feat/m2-patterns` wrote down
 issue #41's refusals — eleven of them, which is what a feature round costs once every "this shape
 is not in the language" is a fixture rather than a sentence; and 22 over 84 until `feat/m2-expressions`
 transitioned `tests/reject/loop_keyword.pd` to `run` — N5-07 gave the language the `loop` that

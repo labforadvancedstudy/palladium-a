@@ -44,7 +44,9 @@
 #   GENERIC_DEFAULT  `<Rhs = Self>`             — no generic parameter defaults
 #   UNINIT_LET       `let mut v: T;`            — declaration without initialiser
 #   RAW_POINTER      `*mut T`                   — no raw pointer type
-#   CONST_ITEM       `pub const PI: f64 = …;`   — no top-level `const` item (N3-09, owed)
+#   SHIFT_ASSIGN     `x >>= 1;`                 — no compound shift assignment. `>>=`
+#                    is not one token: the lexer produces `>` then `>=`, and the
+#                    parser reports "Expected expression, but found '>='".
 #
 # RETIRED CATEGORIES, and the five rows they moved. All three were LEXICAL, and
 # lexing is a whole-file pass, so each was masking every parser-level blocker in
@@ -65,6 +67,15 @@
 #                    file has moved a layer deeper without moving closer to
 #                    compiling, which is what the header means by a blocker
 #                    being a floor and not a bill.
+#   CONST_ITEM       `pub const PI: f64 = …;`   — RETIRED at N3-09. Top-level
+#                    `const` and `static` items parse, type-check and emit, so
+#                    stdlib/std/math.pd's six `pub const` lines are no longer a
+#                    blocker at all; its next one is `e >>= 1;` at line 50:
+#                    SHIFT_ASSIGN. FOURTH move for this one file, and the first
+#                    that was not lexical — which is the same lesson from the
+#                    other side: a PARSER-level blocker also masks everything
+#                    behind it, and the only thing measuring it establishes is
+#                    where the floor is now.
 #
 stdlib/prelude.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/async.pd	COMPILE_FAIL	ASSOC_TYPE
@@ -75,7 +86,7 @@ stdlib/std/collections/vec_i64.pd	COMPILE_FAIL	UNINIT_LET
 stdlib/std/env.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/fs.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/io.pd	COMPILE_FAIL	USE_DECL
-stdlib/std/math.pd	COMPILE_FAIL	CONST_ITEM
+stdlib/std/math.pd	COMPILE_FAIL	SHIFT_ASSIGN
 stdlib/std/mem.pd	COMPILE_FAIL	USE_DECL
 stdlib/std/mod.pd	COMPILE_FAIL	MOD_DECL
 stdlib/std/net.pd	COMPILE_FAIL	USE_DECL

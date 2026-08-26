@@ -65,12 +65,14 @@ tests/02_compound_assign.pd	run	-	expected	-	-
 tests/02_types_arrays.pd	run	-	expected	-	-
 tests/02_types_chars.pd	run	-	expected	-	-
 tests/02_types_floats.pd	run	-	expected	-	-
-tests/02_types_enums.pd	vacuous	-	-	unscheduled	claims: enum types. Declares no enum, constructs no variant, matches on nothing; body is only print calls. Enum conformance is ZERO.
+tests/02_types_enums.pd	run	-	expected	-	-
 tests/02_types_primitives.pd	run	-	expected	-	-
 tests/02_types_structs.pd	run	-	expected	-	-
 tests/02_types_tuples.pd	run	-	expected	-	-
 tests/02_unary_precedence.pd	run	-	expected	-	-
+tests/03_const_items.pd	run	-	expected	-	-
 tests/03_functions_basic.pd	run	-	expected	-	-
+tests/03_static_items.pd	run	-	expected	-	-
 tests/04_block_expression.pd	run	-	expected	-	-
 tests/04_conditional_hoists.pd	run	-	expected	-	-
 tests/04_control_flow_for.pd	run	-	expected	-	-
@@ -191,6 +193,12 @@ tests/reject/unterminated_block_comment.pd	reject	compile	unterminated block com
 tests/reject/try_block.pd	reject	compile	Unknown struct type: try	-	`try` is not a keyword, so `try { }` is read as a struct literal for an undeclared struct; the diagnostic names the misreading, which is what a user actually sees
 tests/reject/uncalled_body_is_checked.pd	reject	compile	cannot borrow `v` as mutable: it is not declared mutable	-	PAIRED with tests/regression/lifetimes_uninferred.pd: proves the borrow checker reads the body of a function nothing calls, so its partner compiling is a statement about lifetimes and not about dead code being skipped
 tests/reject/const_generic_param.pd	reject	compile	Type mismatch: expected [Int; N], found [Int; 3]	-	const generic parameters parse (src/parser/mod.rs:101-103) and are never monomorphised, so N reaches typeck as a name; codegen is no better and emits the parameter name verbatim into C
+tests/reject/const_initializer_calls.pd	reject	compile	a top-level `const` initialiser has to be a constant expression, and a call (nothing runs before `main`) is not one	-	N3-09. The item becomes a C file-scope definition and nothing runs before `main`; refused by name in the parser rather than left to gcc's `initializer element is not constant`, which names generated code
+tests/reject/const_local_shadows_item.pd	reject	compile	the local `LIMIT` has the name of the top-level item declared at line 11	-	N3-09/N3-10. C and this checker's scope stack would both accept the shadow, which is the problem: a reader of `LIMIT` in a body would have to know whether a `let` ran earlier to know which storage is meant
+tests/reject/const_reads_another_item.pd	reject	compile	the name `A` (one item may not read another) is not one	-	N3-09. `static const long long B = A + 1;` is not valid C at file scope -- a const-qualified variable is not a C constant expression -- and folding would work only for the initialisers the folder can see
+tests/reject/const_string_type.pd	reject	compile	a top-level `const` may only have a numeric or `bool` type, and `NAME` has type `String`	-	N3-09. A String is a pointer into a runtime arena, so its value needs code that runs; the initialiser here is a perfectly good integer literal, so the TYPE is the only thing refused
+tests/reject/missing_return.pd	reject	compile	function `f` may return without a value: there is no `else` branch, so the false path	-	N3-03. The corpus half of the M1 payment: `f` returns on the true path and falls off the end on the false one, which used to emit a non-void C function that returned the register's contents, exit 0. tests/m1_missing_return.rs pins the other three shapes
+tests/reject/static_assign_without_mut.pd	reject	compile	cannot assign to `LIMIT`: a top-level item is read-only unless it is declared `static mut`	-	N3-10. `mut` is how this language spells an intent to assign, and a top-level item is not the one binding form exempt from it; the wording is the item's own because the stock advice says `let mut`, and there is no `let` here
 tests/reject/or_pattern_binds.pd	reject	compile	an alternative of an `|` pattern to bind nothing	-	N6-07. The arm is emitted as one `||` test, so a binder inside an alternative has no per-alternative site to be assigned from; Rust's same-names-both-sides rule is not checked yet, and accepting this would mean choosing a branch for the reader
 tests/reject/question_mark_operator.pd	reject	compile	the `?` operator is not implemented	-	D5's fix: `?` used to typecheck and then emit C referring to a struct Result layout codegen never defines, so the failure surfaced in gcc; it is refused by name before any C exists
 tests/reject/macro_invocation_bracket.pd	reject	compile	Expected '(' (Expected '(' after macro name!), but found '['	-	the macro parser accepts one call shape: vec![...] does not parse, so the registered vec! builtin is reachable only as vec!(...)

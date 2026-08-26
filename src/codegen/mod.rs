@@ -133,6 +133,14 @@ pub struct CodeGenerator {
     functions: std::collections::HashMap<String, (Vec<Param>, Option<Type>)>,
     /// Map of variable names to their C types (for type inference)
     variables: std::collections::HashMap<String, String>,
+    /// The top-level `const` and `static` names with their C types (N3-09,
+    /// N3-10). `variables` is CLEARED at every function boundary, and a
+    /// top-level item outlives every boundary — so it is kept here and copied
+    /// back in when the map is reset. Without that, a body reading a global was
+    /// emitted correctly and then had no type for it, which is only visible
+    /// where a type is required: `let t = (X, 1);` could not name its tuple's
+    /// shape.
+    globals: std::collections::HashMap<String, String>,
     /// Array bindings in the function being generated, with the length and the
     /// storage class that the C type string cannot express. Cleared with
     /// `variables` at every function boundary.
@@ -306,6 +314,7 @@ impl CodeGenerator {
             output: String::with_capacity(initial_capacity),
             functions: std::collections::HashMap::new(),
             variables: std::collections::HashMap::new(),
+            globals: std::collections::HashMap::new(),
             array_bindings: std::collections::HashMap::new(),
             mutable_params: std::collections::HashMap::new(),
             imported_modules: std::collections::HashMap::new(),
@@ -1063,9 +1072,9 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4226`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4354`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
-    /// (`src/ownership/borrow_checker.rs:613-615`). So `fn f(xs: &[i64; 3])` could
+    /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
     /// the callee's mutable binding, where it is legitimate. Measured, before
     /// this check: the caller's `v[0]` came back 99 through both a shared and a
@@ -1347,7 +1356,7 @@ impl CodeGenerator {
 
         // AN OWNED EMPTY STRING. `src/builtins.rs` declares seven builtins
         // `ReturnMode::Owned`, and the ownership pass derives its signatures from
-        // that table (src/ownership/borrow_checker.rs:121). Four of them —
+        // that table (src/ownership/borrow_checker.rs:127). Four of them —
         // string_substring, file_read_all, file_read_line, read_file_to_string —
         // had REACHABLE branches returning the literal `""`, which is static
         // storage the builtin did not allocate. The declaration was false against
@@ -2113,6 +2122,12 @@ impl CodeGenerator {
             self.output.push_str(&constructors);
         }
 
+        // Top-level `const` and `static` items (N3-09, N3-10), BEFORE every
+        // function and in source order among themselves. A body may read an
+        // item written below it — order independence is the language's rule —
+        // so no position inside the function loop would do.
+        self.generate_global_items(program)?;
+
         // Forward-declare every user function before any body is emitted, so that
         // a call to a function defined later in the file (and mutual recursion,
         // which no ordering can satisfy) compiles under C99.
@@ -2209,6 +2224,9 @@ impl CodeGenerator {
                 }
                 Item::Macro(_) => {
                     // Macros are expanded before codegen, skip here
+                }
+                Item::Global(_) => {
+                    // Emitted before the prototypes; see `generate_global_items`.
                 }
             }
         }
@@ -2771,6 +2789,79 @@ impl CodeGenerator {
         true
     }
 
+    /// Emit the C definition of every top-level `const` and `static` (N3-09,
+    /// N3-10), and record their C types for the rest of code generation.
+    ///
+    /// THE STORAGE CLASS IS THE WHOLE DIFFERENCE:
+    ///   `const X: i64 = 5;`      ->  `static const long long X = 5;`
+    ///   `static Y: i64 = 10;`    ->  `static long long Y = 10;`
+    ///   `static mut C: i64 = 0;` ->  `static long long C = 0;`
+    ///
+    /// `static` on all three is INTERNAL LINKAGE, not the item's own `static`
+    /// keyword: the emitted C is one translation unit, and a file-scope name
+    /// with external linkage can collide with a libc symbol the program never
+    /// mentions (`index`, `time`, `link` are all plausible Palladium item
+    /// names). The `const` qualifier is what refuses a write in C as well as in
+    /// Palladium, so a code-generation bug that emitted an assignment to a
+    /// `const` item would be a gcc error rather than a silent store.
+    ///
+    /// NOT `#define`. A macro is not scoped, is not typed, and would rewrite
+    /// any later use of that spelling anywhere in the file — including inside
+    /// an unrelated struct field name — so a `const` item would change the
+    /// meaning of code that never read it.
+    fn generate_global_items(&mut self, program: &Program) -> Result<()> {
+        let globals: Vec<&crate::ast::GlobalDef> = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Global(global) => Some(global),
+                _ => None,
+            })
+            .collect();
+        if globals.is_empty() {
+            return Ok(());
+        }
+
+        self.output
+            .push_str("// Top-level const and static items\n");
+        for global in globals {
+            let c_type = self.type_to_c(&global.ty);
+            let qualifier = match global.kind {
+                crate::ast::GlobalKind::Const => "static const ",
+                crate::ast::GlobalKind::Static { .. } => "static ",
+            };
+            let mut definition = String::new();
+            definition.push_str(qualifier);
+            definition.push_str(&c_type);
+            definition.push(' ');
+            definition.push_str(&global.name);
+            definition.push_str(" = ");
+            self.globals.insert(global.name.clone(), c_type);
+
+            // The initialiser is a constant expression by the parser's rule, so
+            // it is generated through the ordinary expression path with an empty
+            // hoist channel: nothing here can hoist, and if that ever stopped
+            // being true the statements would have nowhere to go — which is why
+            // this asserts rather than assumes.
+            let outer = std::mem::take(&mut self.output);
+            let hoists_before = self.pending_hoists.len();
+            self.generate_expression(&global.value)?;
+            let value = std::mem::replace(&mut self.output, outer);
+            if self.pending_hoists.len() != hoists_before {
+                return Err(CompileError::Generic(format!(
+                    "the initialiser of `{}` needs statements to run before it, \
+                     and a top-level item has nowhere to run them",
+                    global.name
+                )));
+            }
+            definition.push_str(&value);
+            definition.push_str(";\n");
+            self.output.push_str(&definition);
+        }
+        self.output.push('\n');
+        Ok(())
+    }
+
     /// Emit a C forward declaration for every user-defined function.
     ///
     /// Placed after all type definitions and before the first function body, so
@@ -3125,6 +3216,12 @@ impl CodeGenerator {
         // Clear mutable_params from previous function and populate with current function's params
         self.mutable_params.clear();
         self.variables.clear(); // Clear variables from previous function
+        // ...and the top-level items come straight back: they are in scope in
+        // every body, which is the one thing this map's per-function lifetime
+        // cannot express on its own.
+        for (name, c_type) in &self.globals {
+            self.variables.insert(name.clone(), c_type.clone());
+        }
         self.array_bindings.clear();
         // BOTH spellings of the unit type, which is the whole point: `None` and
         // `Some(Type::Unit)` are one return type and must generate one shape.

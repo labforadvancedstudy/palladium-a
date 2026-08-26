@@ -104,8 +104,8 @@ tests/compiler_comprehensive_test.rs	test_loop_keyword	paid	-	-
 tests/compiler_comprehensive_test.rs	test_match_on_integer_literal	paid	-	-
 tests/compiler_comprehensive_test.rs	test_missing_return_is_an_error	paid	-	-
 tests/compiler_comprehensive_test.rs	test_struct_with_methods	owed	M4	Output missing 'rect.area()' for source:
-tests/compiler_comprehensive_test.rs	test_top_level_const	owed	M2	Error: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
-tests/compiler_comprehensive_test.rs	test_top_level_static	owed	M2	Error: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
+tests/compiler_comprehensive_test.rs	test_top_level_const	paid	-	-
+tests/compiler_comprehensive_test.rs	test_top_level_static	paid	-	-
 tests/compiler_comprehensive_test.rs	test_trait_declaration_emits_code	owed	M4	Output missing '// Trait:' for source:
 tests/compiler_comprehensive_test.rs	test_type_alias_emits_typedef	owed	M4	Output missing 'typedef long long Int;' for source:
 tests/d3b_tail_if.rs	a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future	owed	M4	error: use of undeclared identifier 'f_Future'

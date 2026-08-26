@@ -1,0 +1,72 @@
+// Test 03: TOP-LEVEL `static` ITEMS (N3-10).
+//
+// A `static` is one ADDRESS with a name. That is the whole difference from a
+// `const`, and it is only observable when the storage is written: this fixture
+// increments a counter from one function and reads it from another, so a
+// lowering that inlined the initialiser at each use — the shape a `#define` or
+// a folded constant would give — prints the initial value here instead of the
+// accumulated one and fails the transcript.
+//
+// `mut` IS REQUIRED FOR THAT WRITE. A `static` without it is read-only, for the
+// same reason a `let` without it is: this language spells "I intend to assign
+// to this" one way, and a top-level item is not an exception to it. The
+// refusal is pinned by tests/reject/static_assign_without_mut.pd.
+
+static mut COUNTER: i64 = 0;
+static mut TOTAL: i64 = 0;
+static mut FLAG: bool = false;
+
+// Read-only statics. These behave exactly like a `const` at every use; the
+// difference is that the C definition is not `const`-qualified, so the
+// distinction is one the emitted code carries and this program cannot see.
+static START: i64 = 41;
+static STEP: i64 = 1;
+
+fn bump() {
+    COUNTER = COUNTER + STEP;
+}
+
+fn add_to_total(n: i64) {
+    TOTAL = TOTAL + n;
+}
+
+fn raise_flag() {
+    FLAG = true;
+}
+
+// Reads the same storage the two functions above wrote, without receiving it as
+// an argument. This is the identity claim.
+fn report() -> i64 {
+    COUNTER + TOTAL
+}
+
+fn main() {
+    print_int(COUNTER);
+    bump();
+    bump();
+    bump();
+    print_int(COUNTER);
+
+    add_to_total(10);
+    add_to_total(20);
+    print_int(TOTAL);
+
+    print_int(report());
+
+    if FLAG {
+        print("unreachable before raise_flag");
+    }
+    raise_flag();
+    if FLAG {
+        print("flag raised");
+    }
+
+    // A read-only `static`, used where a `const` would be.
+    print_int(START + STEP);
+
+    // Writing from `main` reaches the same storage the helpers write.
+    COUNTER = COUNTER + 100;
+    print_int(report());
+
+    print("static_items_ok");
+}

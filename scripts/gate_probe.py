@@ -786,13 +786,22 @@ def classify_blocker(path: str, text: str) -> str:
     # "Unexpected character '^'" can no longer be produced by any input and a
     # rule for it would be dead code that reads as live coverage.
     #
-    # CONST_ITEM is the blocker it was masking, and the comment above CALLED IT:
-    # "`pub const PI: f64 = 3.14159...;` fails for `pub const`". Keyed on the
-    # source line and not on the diagnostic, because the diagnostic for a
-    # top-level item this parser does not know is the same generic sentence for
-    # every such item and would name none of them.
-    if re.match(r"^\s*(pub\s+)?(const|static)\s", src):
-        return "CONST_ITEM"
+    # CONST_ITEM is RETIRED at N3-09/N3-10, and it is the first of these to
+    # retire for a PARSER change rather than a lexer one. Top-level `const` and
+    # `static` items now parse, so the rule below could only fire on an item
+    # this parser accepts -- which is to say never, and a rule that cannot fire
+    # reads as live coverage. Its file, stdlib/std/math.pd, moves to the blocker
+    # it was masking: `e >>= 1;` at line 50.
+    #
+    # SHIFT_ASSIGN is keyed on the DIAGNOSTIC and not on the source line,
+    # unlike its predecessor. `>>=` is not one token -- the lexer produces `>`
+    # then `>=` -- so the parser reports "Expected expression, but found '>='"
+    # from the position after the first `>`, and that sentence names the
+    # construct precisely. Matching the source line would need a regex for a
+    # compound assignment, which `>=` inside an ordinary comparison would also
+    # satisfy.
+    if "found '>='" in first or "found '<='" in first:
+        return "SHIFT_ASSIGN"
     return "OTHER"
 
 

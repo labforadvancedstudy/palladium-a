@@ -122,6 +122,14 @@ fn main() {
 /// A C keyword in every position the emitted C spells out: struct tag, struct
 /// field, function name, parameter name, local name, call site, field access
 /// and a struct literal's field designator.
+///
+/// THE LOCAL USED TO BE NAMED `static`, and N3-10 took that spelling away: a C
+/// keyword can only be tested in identifier position while it is NOT also a
+/// Palladium keyword, and `static` now introduces a top-level item, so
+/// `let static: i64 = x;` is a parse error before any C is emitted. `goto`
+/// replaces it and is the better witness anyway — code generation emits real
+/// `goto` labels for a guarded `match`, so a local of that name is a spelling
+/// the output already contains for its own reasons.
 #[test]
 fn a_c_keyword_in_every_identifier_position_links_and_runs() {
     let out = compile_and_run(
@@ -132,8 +140,8 @@ struct register {
 }
 
 fn double(x: i64) -> i64 {
-    let static: i64 = x;
-    return static * 2;
+    let goto: i64 = x;
+    return goto * 2;
 }
 
 fn extern(union: i64) -> i64 {

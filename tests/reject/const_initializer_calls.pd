@@ -1,0 +1,20 @@
+// NEGATIVE TEST -- a top-level initialiser may not call a function (N3-09).
+//
+// The item becomes a C file-scope definition, and C requires a file-scope
+// initialiser to be a constant expression. Nothing runs before `main` here:
+// there is no static-initialisation phase, no `.init_array` entry generated,
+// and no ordering rule that would say which item's call ran first.
+//
+// Refused BY NAME in the parser (src/parser/mod.rs, `validate_global_initializer`)
+// rather than left to the C compiler, whose "initializer element is not
+// constant" is a diagnostic about generated code and names nothing the author
+// wrote.
+fn side_length() -> i64 {
+    return 4;
+}
+
+const AREA: i64 = side_length() * side_length();
+
+fn main() {
+    print_int(AREA);
+}

@@ -29,6 +29,40 @@ pub enum Item {
     Impl(ImplBlock),
     TypeAlias(TypeAlias),
     Macro(MacroDef),
+    /// A top-level `const` or `static` (N3-09, N3-10).
+    ///
+    /// ONE NODE FOR BOTH, because everything that distinguishes them is a
+    /// two-field answer — the C storage class and whether the name may be
+    /// assigned — and nothing else about parsing, name resolution or type
+    /// checking differs. Two `Item` variants would have duplicated every
+    /// exhaustive `match item` in the compiler to say the same thing twice.
+    Global(GlobalDef),
+}
+
+/// Which top-level storage a `GlobalDef` declares (N3-09, N3-10).
+#[derive(Debug, Clone, PartialEq)]
+pub enum GlobalKind {
+    /// `const NAME: T = value;` — one value, never assignable.
+    Const,
+    /// `static NAME: T = value;` — one address. `mut` is what makes the
+    /// address observable: without it the name is read-only, like a `let`
+    /// without `mut`, which is the rule this language already applies to every
+    /// other binding.
+    Static { is_mut: bool },
+}
+
+/// A top-level `const` or `static` item (N3-09, N3-10).
+#[derive(Debug, Clone)]
+pub struct GlobalDef {
+    pub visibility: Visibility,
+    pub kind: GlobalKind,
+    pub name: String,
+    pub ty: Type,
+    /// The initialiser. MANDATORY: `const X: i64;` declares a name with no
+    /// value, which C would happily zero-initialise, and a language whose
+    /// `let` has no uninitialised form should not grow one at the top level.
+    pub value: Expr,
+    pub span: Span,
 }
 
 /// Visibility modifier
@@ -931,6 +965,14 @@ impl std::fmt::Display for Item {
             Item::Impl(impl_block) => write!(f, "{}", impl_block),
             Item::TypeAlias(type_alias) => write!(f, "{}", type_alias),
             Item::Macro(macro_def) => write!(f, "{}", macro_def),
+            Item::Global(global) => {
+                let keyword = match &global.kind {
+                    GlobalKind::Const => "const".to_string(),
+                    GlobalKind::Static { is_mut: true } => "static mut".to_string(),
+                    GlobalKind::Static { is_mut: false } => "static".to_string(),
+                };
+                write!(f, "{} {}: {} = …;", keyword, global.name, global.ty)
+            }
         }
     }
 }

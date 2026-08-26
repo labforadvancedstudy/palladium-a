@@ -388,8 +388,8 @@ Implementation status is the annex's job
 
 <sub>**Non-normative, and the status marks were false.** Three items were marked complete — basic
 trait definitions, simple implementations, method resolution. Measured at `abeb665`: traits parse
-(`src/parser/mod.rs:1465`) and then emit nothing. Codegen ignores `Item::Trait`
-(`src/codegen/mod.rs:2185-2188`), the type checker skips trait bodies (`src/typeck/mod.rs:2198-2201`), and a
+(`src/parser/mod.rs:1476`) and then emit nothing. Codegen ignores `Item::Trait`
+(`src/codegen/mod.rs:2200-2203`), the type checker skips trait bodies (`src/typeck/mod.rs:2307-2310`), and a
 trait method declared with a `self` receiver is a parse error. **Nothing in this list is done.** The
 ordering is kept because the sequencing is still a design argument; the marks are removed because
 they were claims, and false ones.</sub>
