@@ -1,0 +1,19 @@
+// NEGATIVE TEST -- a top-level item and a type alias may not share a name
+// (N3-09).
+//
+// The alias branch of the one-namespace rule. A `type` alias is resolved by the
+// type checker and emits nothing today, so this collision would NOT reach gcc
+// -- which is exactly why it is worth refusing here rather than leaving to the
+// C compiler: the rule is the LANGUAGE'S, and a name that means a type in one
+// line and a value in the next is ambiguous whatever the backend does with it.
+//
+// The sibling directions are pinned by tests/reject/const_collides_with_function.pd
+// (which carries the reasoning for the whole rule), function_collides_with_const.pd
+// and const_collides_with_enum.pd.
+const Meters: i64 = 100;
+
+type Meters = i64;
+
+fn main() {
+    print_int(Meters);
+}

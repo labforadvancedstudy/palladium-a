@@ -1,0 +1,21 @@
+// NEGATIVE TEST -- an `@` binding may not take a top-level item's name
+// (N3-09, N3-10, N6-08).
+//
+// The fifth binder position, and the one the prose in
+// tests/reject/for_binder_shadows_item.pd used to omit while claiming a count.
+// `whole @ inner` binds `whole` to the matched value, so it is the same fresh
+// binder as a bare pattern name with an extra sub-pattern attached -- and it
+// reaches `refuse_global_shadow` through its own arm of
+// `bind_pattern_variables`, not through the `Pattern::Ident` one.
+//
+// Without the refusal the arm binds a new `LIMIT` over the item, and every read
+// of `LIMIT` inside the arm silently means the matched value instead.
+const LIMIT: i64 = 10;
+
+fn main() {
+    let r = match 3 {
+        LIMIT @ 0..=5 => LIMIT,
+        _ => 0,
+    };
+    print_int(r);
+}

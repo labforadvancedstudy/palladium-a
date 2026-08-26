@@ -10,4 +10,14 @@
 enabled
 200
 ratio is 0.5
+4611686018427387904
+5
+0
+128
+2147483648
+1000000000000
+15
+9
+&& short-circuits
+|| short-circuits
 const_items_ok

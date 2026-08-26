@@ -37,6 +37,55 @@ const DISABLED: bool = false;
 
 const RATIO: f64 = 0.5;
 
+// ---------------------------------------------------------------------------
+// THE INITIALISER EVALUATOR'S CONTRACT, IN ONE TABLE.
+//
+// The initialiser rule used to be SYNTACTIC -- "a literal, or operators over
+// literals" -- which `1 / 0` satisfies. It is EVALUATED now, over exactly the
+// same closed list of forms, so a shape whose VALUE does not exist is refused by
+// name instead of being handed to the C compiler. Nothing new became writable.
+//
+//   ACCEPTED, and pinned below                REFUSED, one fixture each
+//   ------------------------------------      -------------------------------
+//   literals, unary -, ~, !                   1 / 0    const_divide_by_zero
+//   + - * / % over i64, in range              1 % 0    const_remainder_by_zero
+//   << >> with count 0..=63                   MAX + 1  const_overflows_i64
+//   << whose VALUE fits i64                   1 << 64  const_shift_out_of_range
+//   & | ^ and the six comparisons             1 << 63  (value overflow, same row)
+//   && and || , SHORT-CIRCUITING              -1 << 1  (negative left operand)
+//   f64 arithmetic and comparison             1.0/0.0  (division by zero)
+//
+// THE REFUSALS STAY IN SEPARATE FILES and that is not an oversight: a `reject`
+// row pins ONE diagnostic, so a merged fixture could only ever prove the first
+// refusal it hit. The accept side merges here, which is the half a single
+// program can carry, and this table is what a future change to the evaluator
+// should be read against.
+//
+// EVERY VALUE BELOW IS ALSO A CHECK ON THE EMITTED C. The evaluator computes
+// the answer and does NOT feed it to code generation -- C re-computes the same
+// expression -- so a disagreement between the two shows up here as a wrong
+// number. That is why the wide values matter: a C integer literal small enough
+// to fit takes type `int`, so before every literal carried `LL` these printed
+// 32-bit artefacts (`1 << 62` printed -2147483648) while the evaluator had the
+// right answer and discarded it.
+const SHIFTED: i64 = 1 << 62;
+const SHIFT_BY_ZERO: i64 = 5 << 0;
+const ZERO_SHIFTED_FAR: i64 = 0 << 63;
+const SHIFTED_BACK: i64 = 1024 >> 3;
+const PAST_INT_MAX: i64 = 2147483647 + 1;
+const WIDE_PRODUCT: i64 = 1000000 * 1000000;
+const MASKED: i64 = 255 & 15;
+const COMBINED: i64 = 8 | 1;
+
+// `&&` and `||` SHORT-CIRCUIT, which is a statement about the EVALUATOR and not
+// only about the language: while it was eager, `false && (1 / 0 == 0)` was
+// refused for a division the program never performs — stricter than the same
+// expression written in a function body, which runs, skips the right side and
+// yields `false`. A constant folder is not allowed to reject what the code it
+// replaces would have executed.
+const SHORT_CIRCUIT_AND: bool = false && (1 / 0 == 0);
+const SHORT_CIRCUIT_OR: bool = true || (1 / 0 == 0);
+
 // Every function sees the same names; there is no import, no parameter and no
 // local involved in any of these reads.
 fn scaled(n: i64) -> i64 {
@@ -81,6 +130,25 @@ fn main() {
         if RATIO < 0.51 {
             print("ratio is 0.5");
         }
+    }
+
+    // The evaluator's contract, printed. Each of these is also the emitted C
+    // agreeing with the value the evaluator computed.
+    print_int(SHIFTED);
+    print_int(SHIFT_BY_ZERO);
+    print_int(ZERO_SHIFTED_FAR);
+    print_int(SHIFTED_BACK);
+    print_int(PAST_INT_MAX);
+    print_int(WIDE_PRODUCT);
+    print_int(MASKED);
+    print_int(COMBINED);
+    if SHORT_CIRCUIT_AND {
+        print("unreachable: && did not short-circuit");
+    } else {
+        print("&& short-circuits");
+    }
+    if SHORT_CIRCUIT_OR {
+        print("|| short-circuits");
     }
 
     print("const_items_ok");

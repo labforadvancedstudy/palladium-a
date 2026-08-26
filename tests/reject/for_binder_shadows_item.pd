@@ -6,11 +6,13 @@
 // so the item is invisible inside the loop and the body reads 0, 1, 2 instead.
 // Measured before this refusal: printed 0 1 2 with no diagnostic.
 //
-// The three binder positions -- `let`, a parameter, a pattern, and a `for`
-// header -- are now asked the same question by one function
-// (`refuse_global_shadow` in src/typeck/mod.rs). It had TWO call sites and the
-// other two positions were silent, which is why the rule looked implemented
-// while half of it was not.
+// FIVE BINDER POSITIONS ask the same question through one function
+// (`refuse_global_shadow` in src/typeck/mod.rs): a `let`, a parameter, a
+// pattern binder, an `@` binding, and this `for` header. It had TWO call sites
+// -- the sentence here used to say "three" while listing four and omitting the
+// `@` form, which is its own small lesson about counting in prose -- and the
+// three binder positions it never saw were all silent, which is why the rule
+// looked implemented while most of it was not.
 const LIMIT: i64 = 10;
 
 fn main() {

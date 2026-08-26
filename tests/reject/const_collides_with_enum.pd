@@ -1,0 +1,20 @@
+// NEGATIVE TEST -- a top-level item and an enum may not share a name (N3-09).
+//
+// An enum emits `typedef struct <Name> { … } <Name>;` at C file scope, and the
+// item emits `static const long long <Name> = …;` into the same scope. Two
+// definitions of one identifier, in two different kinds -- the same shape gcc
+// reports as "redefinition of 'X' as different kind of symbol" for the function
+// case, and the reason the namespace rule covers types and not only functions.
+//
+// Refused before any C exists, in both orders, by the walk that runs over every
+// item's name ahead of the first pass.
+const Colour: i64 = 1;
+
+enum Colour {
+    Red,
+    Green,
+}
+
+fn main() {
+    print_int(Colour);
+}

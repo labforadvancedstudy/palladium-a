@@ -10,6 +10,21 @@
 // Refused in both orders, because the first pass walks items in source order
 // and either declaration can come first: the function-first direction is pinned
 // by tests/reject/function_collides_with_const.pd.
+//
+// WHY THE RULE COVERS TYPES TOO, and not only functions. A struct and an enum
+// each emit `typedef struct <Name> { … } <Name>;` (src/codegen/mod.rs:2704 for
+// structs, and generate_enum for enums), so the NAME becomes a C typedef at
+// file scope -- the same scope the item's `static const long long <Name>`
+// lands in. Six directions exist and all six are refused before gcc sees
+// anything: item-vs-function and function-vs-item here and in the sibling,
+// item-vs-alias in tests/reject/const_collides_with_type_alias.pd,
+// item-vs-enum in tests/reject/const_collides_with_enum.pd, and the struct
+// direction, which the same `refuse_global_collision` walk covers.
+//
+// WHAT IS NOT REFUSED, measured, because a namespace rule that over-reaches is
+// as wrong as one that under-reaches: a LOCAL `let` may still take a function's
+// name (nothing collides -- the local is inside a C function body), and an enum
+// variant in a pattern is not a binder at all.
 const f: i64 = 1;
 
 fn f() -> i64 {

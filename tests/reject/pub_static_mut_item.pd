@@ -1,0 +1,13 @@
+// NEGATIVE TEST -- `pub` on a `static mut` is not implemented either (N3-10).
+//
+// The third spelling of the visibility refusal, after pub_const_item.pd and
+// pub_static_item.pd. `static mut` is the one form emitted WITHOUT the C
+// `const` qualifier, so it travels a different line of `generate_global_items`
+// than the other two; a rule stated once in prose and pinned once in a fixture
+// would leave that line untested.
+pub static mut COUNTER: i64 = 0;
+
+fn main() {
+    COUNTER = 1;
+    print_int(COUNTER);
+}

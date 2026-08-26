@@ -1072,7 +1072,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4624`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4967`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -4944,13 +4944,29 @@ impl CodeGenerator {
     /// repair: `match 5 { -9223372036854775808..=10 => 1, _ => 0 }` printed 0.
     ///
     /// `(-9223372036854775807LL - 1)` is the spelling C guarantees — the operand
-    /// fits, the subtraction is exact, and the type is `long long`. Every other
-    /// `i64` prints as itself, so no other emission moves.
+    /// fits, the subtraction is exact, and the type is `long long`.
+    ///
+    /// EVERY OTHER LITERAL CARRIES `LL` TOO, AND THAT SUFFIX IS A BUG FIX RATHER
+    /// THAN A STYLE. A C integer literal small enough to fit takes type `int`,
+    /// so the ARITHMETIC AROUND IT is 32-bit however wide the destination is —
+    /// and this language has one integer width, `i64`. Measured before the
+    /// suffix, every one silent, compiled, linked, exit 0:
+    ///   `const BIG: i64 = 1 << 62;`            printed -2147483648
+    ///   `const BIG: i64 = 2147483647 + 1;`     printed -2147483648
+    ///   `const BIG: i64 = 1000000 * 1000000;`  printed -727379968
+    ///   `let x: i64 = 1 << 62;`                printed 8261746944
+    /// The last one is the reason the fix belongs HERE and not in the constant
+    /// evaluator: the same class was already live in ordinary function bodies,
+    /// where no evaluator runs. One emission point, both classes.
+    ///
+    /// `1LL << 62` is the same VALUE as `1 << 62` would be if C had computed it
+    /// in 64 bits, so no correct program's output moves — verified by running
+    /// the whole conformance corpus and diffing every transcript.
     fn c_i64_literal(value: i64) -> String {
         if value == i64::MIN {
             "(-9223372036854775807LL - 1)".to_string()
         } else {
-            value.to_string()
+            format!("{}LL", value)
         }
     }
 
@@ -6363,8 +6379,11 @@ mod tests {
         assert!(codegen.compile(&ast).is_ok());
 
         // Check generated code contains expected elements
-        assert!(codegen.output.contains("int x = 42;"));
-        assert!(codegen.output.contains("long long y = 100;"));
+        // `LL` ON EVERY INTEGER LITERAL is the repair for C computing the
+        // arithmetic around a small literal in 32 bits (see `c_i64_literal`),
+        // so these assertions moved with the emission rather than around it.
+        assert!(codegen.output.contains("int x = 42LL;"));
+        assert!(codegen.output.contains("long long y = 100LL;"));
         assert!(codegen.output.contains("__pd_print_int(x)"));
     }
 
@@ -6522,7 +6541,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert!(c.contains("struct N n = N_A__new(5);"), "{}", c);
+        assert!(c.contains("struct N n = N_A__new(5LL);"), "{}", c);
     }
 
     #[test]
@@ -6685,7 +6704,7 @@ mod tests {
         assert!(c.contains("long long read(const long long xs[3])"), "{}", c);
         assert!(c.contains("void write(long long xs[3])"), "{}", c);
         // The body indexes the pointer directly - `(*xs)[0]` would not compile.
-        assert!(c.contains("xs[0] = 9;"), "{}", c);
+        assert!(c.contains("xs[0LL] = 9LL;"), "{}", c);
         // `&values` must decay: `&(values)` is a `long long (*)[3]`, a
         // different pointer type from the parameter's `long long*`.
         assert!(c.contains("write(values)"), "{}", c);
@@ -7051,7 +7070,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert!(c.contains("__pd_print_int(arr[0])"), "{}", c);
+        assert!(c.contains("__pd_print_int(arr[0LL])"), "{}", c);
     }
 
     // `generate_block` restored the array bindings but not `variables`, from

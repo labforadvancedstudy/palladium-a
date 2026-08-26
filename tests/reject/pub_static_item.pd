@@ -1,0 +1,17 @@
+// NEGATIVE TEST -- `pub` on a top-level `static` is not implemented (N3-10).
+//
+// The `static` branch of the refusal that tests/reject/pub_const_item.pd pins
+// for `const`. Both are the same missing machinery -- nothing exports a
+// top-level item and nothing emits a definition for an imported one -- and both
+// are pinned because the diagnostic names the KEYWORD the author wrote, so a
+// reader who hits one should find their own spelling in the corpus.
+//
+// The `static mut` spelling is pinned separately by
+// tests/reject/pub_static_mut_item.pd: `mut` changes which C storage class is
+// emitted, so a lowering could plausibly treat the two differently and this way
+// neither can go quiet.
+pub static LIMIT: i64 = 10;
+
+fn main() {
+    print_int(LIMIT);
+}

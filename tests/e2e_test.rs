@@ -4,7 +4,7 @@
 // compilation they had just asserted succeeded. They were looking in
 // `target/build/`, which only ever holds the linked *executable*
 // (`src/driver/mod.rs:274`); the generated C goes to `build_output/`
-// (`src/codegen/mod.rs:6296-6307`). The path was the whole bug.
+// (`src/codegen/mod.rs:6312-6323`). The path was the whole bug.
 //
 // The file stem is unique per run because `build_output/<stem>.c` is a global
 // name and other test binaries compile programs of their own — see
@@ -192,7 +192,7 @@ fn main() {
 
     let c_content = fs::read_to_string(&c_file).unwrap();
     assert!(
-        c_content.contains("long long arr[5] = {1, 2, 3, 4, 5}"),
+        c_content.contains("long long arr[5] = {1LL, 2LL, 3LL, 4LL, 5LL}"),
         "C file doesn't contain the array"
     );
 }

@@ -10,14 +10,32 @@ fn compile_and_check(name: &str, pd_code: &str, expected_output: &str) {
     // Write Palladium code to file
     fs::write(&pd_file, pd_code).expect("Failed to write test file");
 
-    // Use the 'run' command which compiles and executes
-    let run_output = Command::new("cargo")
-        .args(["run", "--bin", "pdc", "--", "run", &pd_file])
+    // THE BINARY, NOT A NESTED `cargo run`. This used to shell out to
+    // `cargo run --bin pdc -- run <file>` from inside a test that cargo is
+    // already running, so a second cargo holding the build lock — which
+    // `make gates` produces, since its requirements-runner control invokes
+    // `make m2-exit` for real twice and that runs the suite — left this child
+    // with nothing on stdout. The harness reads ONLY stdout, so the cause
+    // (cargo's lock message, on stderr) was invisible and eight of these
+    // fourteen tests failed as `left: ""` against a correct compiler. Measured:
+    // green standalone and under a plain `cargo test --release`, red inside
+    // `make gates`.
+    //
+    // `CARGO_BIN_EXE_pdc` is the path cargo already built for this test, which
+    // is what every other integration test in this suite uses.
+    let run_output = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .args(["run", &pd_file])
         .output()
-        .expect("Failed to run palladiumc");
+        .expect("Failed to run pdc");
 
-    // Extract the actual program output (between the dashed lines)
-    let full_output = String::from_utf8_lossy(&run_output.stdout);
+    // Extract the actual program output (between the dashed lines). STDERR IS
+    // INCLUDED: a compiler that refuses the program says so there, and the
+    // assertion message is the only place a reader sees why.
+    let full_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
     let lines: Vec<&str> = full_output.lines().collect();
 
     // Find the output between the dashed lines

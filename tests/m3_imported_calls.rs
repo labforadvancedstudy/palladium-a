@@ -1217,7 +1217,7 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// `filter_module_info` (`src/resolver/mod.rs:105-118`) narrows the `exports`
 /// set and leaves `ast` complete — and `.exports` is read nowhere but its own
 /// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consumer
-/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1473-1473`,
+/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1502-1502`,
 /// `src/codegen/mod.rs:1776-1776`, `src/codegen/mod.rs:1699-1699`,
 /// `src/codegen/mod.rs:2009-2009`, `src/codegen/mod.rs:2933-2933`, and the borrow checker's
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
@@ -1315,13 +1315,13 @@ fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
 }
 
 /// A qualified call cannot be written. `src/parser/mod.rs:4392-4433` turns any
-/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:4454-4458`
+/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:4527-4531`
 /// then reports `Undefined enum type: lib2`. The same holds for an alias
 /// (`import lib2 as m;` → `Undefined enum type: m`), which makes `alias`
 /// unusable too. `register_imported_functions` registers `module::name` for
 /// parity with the type checker, but nothing can currently reach it.
 #[test]
-#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:4392-4433 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:4454-4458 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:4392-4433 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:4527-4531 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
 fn test_a_qualified_call_reaches_the_imported_function() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1362,8 +1362,8 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// An imported name can shadow a built-in in the checkers but never in codegen,
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
-/// (`src/codegen/mod.rs:5542-5544`), while the type checker
-/// (`src/typeck/mod.rs:1587-1587`) and `register_imported_functions` both insert
+/// (`src/codegen/mod.rs:5558-5560`), while the type checker
+/// (`src/typeck/mod.rs:1616-1616`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
 /// With a matching signature the imported definition is merely silent dead code.
@@ -1372,7 +1372,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1587-1587 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:5542-5544 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1616-1616 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:5558-5560 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],
@@ -1573,9 +1573,9 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// Auditing codegen for what else could put the hash seed into the output
 /// turned up a second, independent source: monomorphized generic
 /// instantiations. `TypeChecker::get_instantiations` builds its `Vec` by
-/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:6012-6012`), which is a
+/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:6085-6085`), which is a
 /// `HashMap`, and `get_struct_instantiations` does the same
-/// (`src/typeck/mod.rs:6074-6074`). Codegen then emits in that Vec's order
+/// (`src/typeck/mod.rs:6147-6147`). Codegen then emits in that Vec's order
 /// (`src/codegen/mod.rs:1959-1959`, `src/codegen/mod.rs:2140-2140`).
 ///
 /// This program imports NOTHING, which is how the two sources were told apart:
@@ -1596,7 +1596,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// `(name, type_args)`.
 ///
 /// NOT COVERED by any test: the sibling sort in `get_struct_instantiations`
-/// (`src/typeck/mod.rs:6074-6074`). Generic *structs* cannot be compiled at all right
+/// (`src/typeck/mod.rs:6147-6147`). Generic *structs* cannot be compiled at all right
 /// now — `struct Box<T> { v: T }` lowers to `void*` and gcc rejects
 /// "initializing 'void *' with an expression of incompatible type
 /// 'struct Box_alpha_i64'" — so there is no program whose output that ordering
@@ -2285,4 +2285,54 @@ fn test_a_public_imported_cycle_is_still_refused() {
         output
     );
     assert_eq!(stdout.as_deref(), Some("x\n"), "compiler said:\n{}", output);
+}
+
+/// N3-09/N3-10 — A TOP-LEVEL ITEM IN AN IMPORTED MODULE IS REFUSED BY NAME.
+///
+/// THE MEASUREMENT THIS REPLACES. `const` and `static` items are registered by
+/// the type checker's FIRST PASS over the program being compiled, and the
+/// import path does not run that pass — it registers imported functions,
+/// structs, enums and aliases from `ModuleInfo` and skipped globals entirely.
+/// So the module's own body-check (the third pass, which exists precisely so an
+/// imported body is not accepted unchecked) reached a name nothing had defined:
+///
+///     lib.pd:  const LIMIT: i64 = 10;
+///              pub fn cap() -> i64 { return LIMIT; }
+///     main.pd: import lib;  fn main() { print_int(cap()); }
+///
+/// failed the IMPORTER'S compile with `Undefined variable or function: 'LIMIT'`
+/// — a name out of a file the author of the failing program may never have
+/// opened, with no mention of the construct that is missing, and identical
+/// whether or not the item said `pub`.
+///
+/// A REJECT FIXTURE CANNOT HOLD THIS. `scripts/conformance.sh` compiles one
+/// `.pd` per row; the defect needs a second module on the search path, so the
+/// evidence lives here, in the suite that already has the two-file harness.
+#[test]
+fn a_top_level_item_in_an_imported_module_is_refused_by_name() {
+    for decl in [
+        "const LIMIT: i64 = 10;",
+        "pub const LIMIT: i64 = 10;",
+        "static mut LIMIT: i64 = 10;",
+    ] {
+        let lib = format!("{}\n\npub fn cap() -> i64 {{\n    return LIMIT;\n}}\n", decl);
+        let (compiled, output, _) = compile_and_run(
+            &[("lib.pd", lib.as_str())],
+            "import lib;\n\nfn main() { print_int(cap()); }\n",
+        );
+        assert!(!compiled, "`{}` in a module must be refused:\n{}", decl, output);
+        assert!(
+            output.contains("the imported module `lib` declares the top-level item `LIMIT`"),
+            "the refusal must name the MODULE and the ITEM, not the symptom, for `{}`:\n{}",
+            decl,
+            output
+        );
+        // The old failure, which must not be what a reader sees any more.
+        assert!(
+            !output.contains("Undefined variable or function: 'LIMIT'"),
+            "`{}` still fails at the use site rather than at the import:\n{}",
+            decl,
+            output
+        );
+    }
 }

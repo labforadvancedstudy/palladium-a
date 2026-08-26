@@ -1097,7 +1097,7 @@ fn the_two_spellings_of_the_unit_return_type_generate_the_same_shape() {
             c
         );
         assert!(
-            c.contains("    __pd_print_int(7);"),
+            c.contains("    __pd_print_int(7LL);"),
             "`{}` must still EVALUATE the tail expression — it is there for its \
              effect:\n{}",
             what,
@@ -1110,7 +1110,7 @@ fn the_two_spellings_of_the_unit_return_type_generate_the_same_shape() {
     // bare `return;` after the expression. That is inert C and it is the price
     // of keeping the type-checker diagnostic in the third case below.
     assert!(
-        annotated.contains("    __pd_print_int(7);\n    return;\n"),
+        annotated.contains("    __pd_print_int(7LL);\n    return;\n"),
         "the annotated form should evaluate then return nothing:\n{}",
         annotated
     );
@@ -1147,7 +1147,7 @@ fn the_two_spellings_of_the_unit_return_type_generate_the_same_shape() {
             c
         );
         assert!(
-            c.contains("    __pd_print_int(7);\n    return 0;\n"),
+            c.contains("    __pd_print_int(7LL);\n    return 0;\n"),
             "`{}` must evaluate the tail and return 0 from C main:\n{}",
             what,
             c
@@ -1175,7 +1175,7 @@ fn the_two_spellings_of_the_unit_return_type_generate_the_same_shape() {
     )
     .expect("a non-unit return type must compile");
     assert!(
-        valued.contains("return (n + 1);"),
+        valued.contains("return (n + 1LL);"),
         "a non-unit tail must still be lowered to a value-bearing return:\n{}",
         valued
     );
@@ -1806,7 +1806,7 @@ fn selective_import_excludes_a_symbol_from_the_consumers() {
 /// THE SCOPE OF THIS ROW ALSO COVERS DECLARATION IDENTITY, and it is bounded
 /// here rather than fixed. Imported generics are stored by BARE NAME
 /// (`TypeChecker.generic_functions`), and the deferred-refusal lists that
-/// src/typeck/mod.rs:2754-2775 filters carry `(name, span)` and nothing else.
+/// src/typeck/mod.rs:2827-2848 filters carry `(name, span)` and nothing else.
 /// So with two same-named imported generic `async fn`s, the refusal is raised
 /// off whichever declaration was RECORDED and the body that would have been
 /// emitted is whichever won a `HashMap`: THE REFUSAL MAY NAME A DECLARATION
@@ -1888,8 +1888,8 @@ fn two_modules_exporting_one_name_are_deterministic() {
 ///
 /// THE SHAPE. Two imported modules both export a generic `async fn agen<T>`.
 /// Only `a.pd`'s returns a value, so only `a.pd`'s is recorded in
-/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:1506-1517), and the
-/// refusal is raised for it at src/typeck/mod.rs:2714-2720 once the call site
+/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:1512-1523), and the
+/// refusal is raised for it at src/typeck/mod.rs:2787-2793 once the call site
 /// has instantiated the name. But `generic_functions` is keyed by BARE NAME and
 /// `set_imported_modules` iterates a `HashMap`, so WHICH module's body that key
 /// holds — and therefore which body `get_instantiations` would have handed to

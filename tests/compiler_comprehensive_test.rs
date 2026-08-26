@@ -38,6 +38,15 @@ fn compile_source(source: &str) -> Result<String, CompileError> {
 }
 
 /// Compile and verify the C output contains every expected pattern.
+/// EVERY INTEGER LITERAL IN AN EXPECTED PATTERN CARRIES `LL`, and that is the
+/// emission moving rather than the assertions being loosened. A C integer
+/// literal small enough to fit takes type `int`, so the arithmetic AROUND it is
+/// 32-bit however wide the destination is — measured, `let x: i64 = 1 << 62;`
+/// printed 8261746944 and `const BIG: i64 = 1000000 * 1000000;` printed
+/// -727379968, both compiling and exiting 0. `CodeGenerator::c_i64_literal`
+/// suffixes every one of them now. No transcript in the conformance corpus
+/// moved, which is the check that says these patterns changed spelling and not
+/// meaning.
 fn compile_and_verify(source: &str, expected_patterns: &[&str]) {
     let result = compile_source(source);
     assert!(
@@ -88,7 +97,7 @@ fn test_all_keywords() {
     let test_cases = vec![
         // Core keywords
         ("fn main() { }", vec!["int main("]),
-        ("fn main() { let x = 5; }", vec!["long long x = 5;"]),
+        ("fn main() { let x = 5; }", vec!["long long x = 5LL;"]),
         ("fn main() { if true { } }", vec!["if (1)"]),
         ("fn main() { if true { } else { } }", vec!["if (1)", "else"]),
         ("fn main() { while true { } }", vec!["while (1)"]),
@@ -98,7 +107,7 @@ fn test_all_keywords() {
         ),
         (
             "fn foo() -> int { return 42; }\nfn main() { }",
-            vec!["long long foo()", "return 42;"],
+            vec!["long long foo()", "return 42LL;"],
         ),
         (
             "struct Point { x: int, y: int }\nfn main() { }",
@@ -110,7 +119,7 @@ fn test_all_keywords() {
         ),
         // Advanced keywords
         ("pub fn main() { }", vec!["int main("]),
-        ("fn main() { let mut z = 0; }", vec!["long long z = 0;"]),
+        ("fn main() { let mut z = 0; }", vec!["long long z = 0LL;"]),
         (
             "fn main() { let t = true; let f = false; }",
             vec!["int t = 1;", "int f = 0;"],
@@ -135,7 +144,7 @@ fn test_all_keywords() {
 fn test_match_on_integer_literal() {
     compile_and_verify(
         "fn main() { match 1 { 1 => {}, _ => {} } }",
-        &["_match_expr == 1"],
+        &["_match_expr == 1LL"],
     );
 }
 
@@ -154,7 +163,7 @@ fn test_top_level_const() {
     // collide with a libc symbol the program never mentions.
     compile_and_verify(
         "const X: int = 5;\nfn main() { }",
-        &["const long long X = 5;"],
+        &["const long long X = 5LL;"],
     );
 }
 
@@ -165,7 +174,7 @@ fn test_top_level_static() {
     // emitted without the C `const` qualifier.
     compile_and_verify(
         "static mut Y: int = 10;\nfn main() { }",
-        &["static long long Y = 10;"],
+        &["static long long Y = 10LL;"],
     );
     // AND THE READ-ONLY FORM CARRIES THE QUALIFIER, which is the half the XFAIL
     // never asked for. A `static` without `mut` may not be assigned in this
@@ -173,7 +182,7 @@ fn test_top_level_static() {
     // generation bug that stored to one is a C error rather than a silent write.
     compile_and_verify(
         "static Y: int = 10;\nfn main() { }",
-        &["static const long long Y = 10;"],
+        &["static const long long Y = 10LL;"],
     );
 }
 
@@ -197,7 +206,7 @@ fn test_loop_keyword() {
 
 #[test]
 fn test_as_cast() {
-    compile_and_verify("fn main() { let x = 5 as int; }", &["(long long)5"]);
+    compile_and_verify("fn main() { let x = 5 as int; }", &["(long long)5LL"]);
 }
 
 #[test]
@@ -289,11 +298,11 @@ fn test_compound_assignment_operators() {
     // `/=` at all, whatever the lowering did. 3 is an identity for none of the
     // five.
     for (op, expected) in [
-        ("+=", "x = (x + 3);"),
-        ("-=", "x = (x - 3);"),
-        ("*=", "x = (x * 3);"),
-        ("/=", "x = (x / 3);"),
-        ("%=", "x = (x % 3);"),
+        ("+=", "x = (x + 3LL);"),
+        ("-=", "x = (x - 3LL);"),
+        ("*=", "x = (x * 3LL);"),
+        ("/=", "x = (x / 3LL);"),
+        ("%=", "x = (x % 3LL);"),
     ] {
         compile_and_verify(
             &format!("fn main() {{ let mut x = 6; x {} 3; }}", op),
@@ -359,7 +368,7 @@ fn test_control_flow() {
                     i = i + 1;
                 }
             }",
-            vec!["while ((i < 10))", "i = (i + 1);"],
+            vec!["while ((i < 10LL))", "i = (i + 1LL);"],
         ),
         // For loops
         (
@@ -403,7 +412,7 @@ fn test_functions() {
         ),
         (
             "fn get_value() -> int { 42 }\nfn main() { }",
-            vec!["long long get_value()", "return 42;"],
+            vec!["long long get_value()", "return 42LL;"],
         ),
         // Function calls. Upstream this case used `double`, which collides with
         // the C keyword and emits `long long double(long long x)` — not valid C.
@@ -414,7 +423,7 @@ fn test_functions() {
         (
             "fn triple(x: int) -> int { x * 3 }
              fn main() { let y = triple(21); }",
-            vec!["long long triple(long long x)", "long long y = triple(21);"],
+            vec!["long long triple(long long x)", "long long y = triple(21LL);"],
         ),
         // Recursive functions
         (
@@ -425,8 +434,8 @@ fn test_functions() {
              fn main() { }",
             vec![
                 "long long factorial(long long n)",
-                "factorial((n - 1))",
-                "return (n * factorial((n - 1)));",
+                "factorial((n - 1LL))",
+                "return (n * factorial((n - 1LL)));",
             ],
         ),
     ];
@@ -480,7 +489,7 @@ fn test_arrays() {
         // Array declaration
         (
             "fn main() { let arr = [1, 2, 3, 4, 5]; }",
-            vec!["long long arr[5] =", "{1, 2, 3, 4, 5}"],
+            vec!["long long arr[5] =", "{1LL, 2LL, 3LL, 4LL, 5LL}"],
         ),
         // Array access
         (
@@ -488,7 +497,7 @@ fn test_arrays() {
                 let arr = [10, 20, 30];
                 let x = arr[1];
             }",
-            vec!["arr[1]"],
+            vec!["arr[1LL]"],
         ),
         // Array in loops
         (
@@ -681,7 +690,7 @@ fn test_complex_programs() {
             print_int(result);
         }
         "#,
-        &["long long fib(long long n)", "fib((n - 1))", "fib((n - 2))"],
+        &["long long fib(long long n)", "fib((n - 1LL))", "fib((n - 2LL))"],
     );
 
     // Bubble sort. `let temp: i64` is required, not decoration: indexing an

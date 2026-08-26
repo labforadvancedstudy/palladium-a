@@ -1137,6 +1137,11 @@ pub struct TypeChecker {
     unsafe_depth: usize,
     /// Current impl type (for resolving Self types)
     current_impl_type: Option<String>,
+    /// Every top-level `const` or `static` found in an IMPORTED module, with
+    /// the module it came from. Recorded here and raised by `check`, because
+    /// `set_imported_modules` has no fallible signature — the same shape the
+    /// async deferrals above use, and for the same reason.
+    deferred_imported_globals: Vec<(String, String)>,
     /// The top-level `const` and `static` names (N3-09, N3-10), with the span
     /// of the declaration.
     ///
@@ -1198,6 +1203,7 @@ impl TypeChecker {
             unsafe_depth: 0,
             current_impl_type: None,
             global_items: HashMap::new(),
+            deferred_imported_globals: Vec::new(),
         }
     }
 
@@ -1218,8 +1224,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1587-1588`, `src/typeck/mod.rs:1590-1592`,
-    /// `src/typeck/mod.rs:1687-1688`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1593-1594`, `src/typeck/mod.rs:1596-1598`,
+    /// `src/typeck/mod.rs:1716-1717`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -1801,16 +1807,28 @@ impl TypeChecker {
                     crate::ast::Item::Macro(_) => {
                         // Macros are handled during expansion phase, skip here
                     }
-                    crate::ast::Item::Global(_) => {
-                        // NOT registered from an import, deliberately. Code
+                    crate::ast::Item::Global(global) => {
+                        // NOT REGISTERED, AND NO LONGER SILENT ABOUT IT. Code
                         // generation emits a top-level item only for the program
-                        // being compiled, so registering an imported `pub const`
-                        // here would type a name no C definition backs and move
-                        // the failure to the linker. A `const` in a module is
-                        // therefore invisible to importers, and the diagnostic at
-                        // a use site is "undefined variable" rather than a link
-                        // error. Making it visible is cross-module code
-                        // generation (N11), not an N3-09 lowering.
+                        // being compiled, so registering an imported `const`
+                        // here would type a name that no C definition backs and
+                        // move the failure to the linker.
+                        //
+                        // Leaving it unregistered was the first half of the fix
+                        // and the second half was missing: the module's OWN
+                        // functions are type-checked here (the third pass exists
+                        // precisely so that an imported body is not accepted
+                        // unchecked), and they read their own items. Measured:
+                        // a module with `const LIMIT: i64 = 10;` and
+                        // `pub fn cap() -> i64 { return LIMIT; }` fails the
+                        // IMPORTER'S compile with "Undefined variable or
+                        // function: 'LIMIT'" — a name from a file the author of
+                        // the failing program may never have opened, and the
+                        // same message whether or not the item said `pub`.
+                        //
+                        // Recorded and raised by name instead.
+                        self.deferred_imported_globals
+                            .push((module_name.clone(), global.name.clone()));
                     }
                 }
             }
@@ -2002,6 +2020,21 @@ impl TypeChecker {
                 left, op, right, ..
             } => {
                 let l = self.const_eval(left, name)?;
+                // `&&` AND `||` SHORT-CIRCUIT HERE BECAUSE THEY SHORT-CIRCUIT AT
+                // RUNTIME, and an evaluator that disagrees with the language it
+                // evaluates is worse than no evaluator. Measured when this was
+                // eager: `const B: bool = false && (1 / 0 == 0);` was refused
+                // for a division the program never performs — while the same
+                // expression in a function body runs, skips the right side and
+                // yields `false`. The constant folder is not allowed to have
+                // stricter semantics than the code it replaces.
+                if let ConstScalar::Bool(a) = l {
+                    match op {
+                        BinOp::And if !a => return Ok(ConstScalar::Bool(false)),
+                        BinOp::Or if a => return Ok(ConstScalar::Bool(true)),
+                        _ => {}
+                    }
+                }
                 let r = self.const_eval(right, name)?;
                 match (l, r) {
                     (ConstScalar::Int(a), ConstScalar::Int(b)) => Self::const_int_op(*op, a, b)
@@ -2057,10 +2090,32 @@ impl TypeChecker {
                     b
                 ))
             }
-            BinOp::Shl => ConstScalar::Int(
-                a.checked_shl(b as u32)
-                    .ok_or_else(|| overflow("<<"))?,
-            ),
+            // `checked_shl` ONLY CHECKS THE COUNT. It answers Some for
+            // `1 << 63` — the shift is performed and the VALUE that comes out,
+            // i64::MIN, is not `1` scaled by 2^63 at all. Measured before this:
+            // `const B: i64 = 1 << 63;` was accepted, and (before the `LL`
+            // suffix) printed -2147483648. The test is the round trip: a shift
+            // that fits is undone by shifting back.
+            //
+            // A NEGATIVE LEFT OPERAND IS REFUSED OUTRIGHT, because C leaves
+            // `-1 << 1` undefined however small the result is — there is no
+            // answer to agree with. `>>` of a negative is only
+            // implementation-defined, and every compiler this targets arithmetic
+            // -shifts it, which is what Rust does here too, so that one is
+            // allowed.
+            BinOp::Shl if a < 0 => {
+                return Err(format!(
+                    "shifting the negative value {} left, which C leaves undefined",
+                    a
+                ))
+            }
+            BinOp::Shl => {
+                let shifted = a.checked_shl(b as u32).ok_or_else(|| overflow("<<"))?;
+                if (shifted >> b) != a {
+                    return Err(format!("{} << {} overflows i64", a, b));
+                }
+                ConstScalar::Int(shifted)
+            }
             BinOp::Shr => ConstScalar::Int(a.checked_shr(b as u32).ok_or_else(|| overflow(">>"))?),
             BinOp::BitAnd => ConstScalar::Int(a & b),
             BinOp::BitOr => ConstScalar::Int(a | b),
@@ -2185,6 +2240,24 @@ impl TypeChecker {
             if !crate::ast::local_definition_shadows_import(program, "main") {
                 return Err(CompileError::async_main_unimplemented(span));
             }
+        }
+
+        // A TOP-LEVEL ITEM IN AN IMPORTED MODULE (N3-09, N3-10). Raised here
+        // rather than at registration for the same reason the async deferrals
+        // are: `set_imported_modules` cannot fail. Sorted before reporting, so
+        // WHICH module is named does not depend on `HashMap` order.
+        if !self.deferred_imported_globals.is_empty() {
+            let mut offenders = self.deferred_imported_globals.clone();
+            offenders.sort();
+            let (module, item) = &offenders[0];
+            return Err(CompileError::Generic(format!(
+                "the imported module `{}` declares the top-level item `{}`, and a top-level \
+                 `const` or `static` in a module is not implemented: nothing emits a definition \
+                 for one, so the module's own functions cannot read it and an importer cannot \
+                 either. Make it a zero-argument function, or move the item into the program \
+                 that uses it (N11 owns cross-module items)",
+                module, item
+            )));
         }
 
         // WHICH NAMES ARE ENUMS, BEFORE ANY TYPE IS CONVERTED.
@@ -2652,7 +2725,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:2942-2944`), and walking an imported
+        // return (`src/typeck/mod.rs:3015-3017`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -5981,7 +6054,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6146-6210`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6162-6226`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
