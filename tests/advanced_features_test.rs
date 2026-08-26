@@ -337,7 +337,7 @@ fn test_unsafe_operations() {
 }
 
 #[test]
-#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:170 defines only `macro name!(pattern) block`, so `macro_rules! vec { … }` is not an item (owned by M5, tooling)"]
+#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:170 defines only `macro name!(pattern) block`, so `macro_rules! vec { … }` is not an item (owned by M5, tooling). N3-14 REFUSES IT BY NAME as of the macro round, so this row's declared diagnostic is now that refusal — and the row is a debt the language has decided not to pay: see tests/reject/macro_rules.pd. Retiring it is the owner's call, not this test's"]
 fn test_macros() {
     let source = r#"
     macro_rules! vec {
@@ -374,7 +374,7 @@ fn test_macros() {
 }
 
 #[test]
-#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:162 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1726-1735) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
+#[ignore = "XFAIL: const generic parameters on an `impl` block — grammar.ebnf:162 admits `const N: T` and `fn`/`struct`/`enum` do parse it, but `parse_impl`'s parameter loop (src/parser/mod.rs:1745-1754) has no `const` arm and reports 'Expected type parameter name, but found const' (owned by M4, 'Generics that work')"]
 fn test_const_generics() {
     let source = r#"
     struct Array<T, const N: int> {

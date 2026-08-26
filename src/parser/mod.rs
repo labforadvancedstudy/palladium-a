@@ -225,7 +225,7 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///   `src/parser/mod.rs:339-371`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1169-1193`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1188-1212`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -1014,6 +1014,25 @@ impl Parser {
                 let mut global = self.parse_global()?;
                 global.visibility = visibility;
                 Ok(Item::Global(global))
+            }
+            // N3-14. `macro_rules! name { … }` is not this language's macro
+            // syntax, and it used to fall through to "Expected function,
+            // struct, enum, trait, type, impl, or macro declaration" — which
+            // names seven things a reader coming from Rust would read as "no
+            // macros here", when the truth is the opposite: there IS a macro
+            // system and there is exactly ONE, so `macro_rules!` is refused
+            // because the language HAS a macro form rather than because it
+            // lacks one.
+            Token::Identifier(name)
+                if name == "macro_rules" && self.check_at(1, &Token::Not) =>
+            {
+                Err(CompileError::SyntaxError {
+                    message: "`macro_rules!` is not a declaration in this language: there is ONE \
+                              macro system and no procedural/declarative split. Write \
+                              `macro name!(params) { body }`"
+                        .to_string(),
+                    span: self.current_span(),
+                })
             }
             _ => {
                 if is_async {
@@ -2098,16 +2117,16 @@ impl Parser {
             match &token {
                 Token::LeftBrace => {
                     brace_depth += 1;
-                    body.push(self.token_to_ast_token(token));
+                    body.push(self.token_to_ast_token(token)?);
                 }
                 Token::RightBrace => {
                     brace_depth -= 1;
                     if brace_depth > 0 {
-                        body.push(self.token_to_ast_token(token));
+                        body.push(self.token_to_ast_token(token)?);
                     }
                 }
                 _ => {
-                    body.push(self.token_to_ast_token(token));
+                    body.push(self.token_to_ast_token(token)?);
                 }
             }
         }
@@ -2128,17 +2147,70 @@ impl Parser {
     }
 
     /// Convert lexer token to AST token for macro body
-    fn token_to_ast_token(&self, token: Token) -> crate::ast::Token {
+    /// One lexer token as the AST token a macro body or argument list stores.
+    ///
+    /// EVERY REFUSAL HERE REPLACES A LOSS. The `_` arm used to be
+    /// `AstToken::Ident(format!("{:?}", token))`, so a token this table did not
+    /// list became an IDENTIFIER SPELLED LIKE ITS RUST DEBUG NAME: `==` in a
+    /// macro body reached the type checker as `EqEq` and was reported as
+    /// "Undefined variable or function: 'EqEq'", and `let` came back as `Let`.
+    /// Neither names anything the author wrote. Measured, both, before this.
+    ///
+    /// THE LITERAL REFUSALS ARE THE SERIOUS HALF, because that class was
+    /// SILENT. `AstToken::Literal` is a `String` and carries no kind, and the
+    /// reverse conversion in `src/macros/mod.rs` guesses with `parse::<i64>()`
+    /// — so a non-integer literal came back as a `Token::String`. Measured at
+    /// e8eb1a9, all three compiling and running:
+    ///   `macro pi!() { 3.5 }`   -> `print(pi!())` printed `3.5` as a STRING
+    ///   `macro yes!() { true }` -> `print(yes!())` printed `true`, a String
+    ///   `macro s!() { "hi" }`   -> `print(s!())` printed NOTHING, because the
+    ///                              stored text keeps its quotes, is re-quoted
+    ///                              on the way out, and re-lexes as `""` `hi` `""`
+    /// A wrong value that compiles is the one outcome a refusal must replace.
+    fn token_to_ast_token(&self, token: Token) -> Result<crate::ast::Token> {
         use crate::ast::Token as AstToken;
 
-        match token {
+        let refuse = |what: &str, why: &str| -> Result<crate::ast::Token> {
+            Err(CompileError::SyntaxError {
+                message: format!(
+                    "{} may not appear in a macro body or in a macro argument: {}",
+                    what, why
+                ),
+                span: self.current_span(),
+            })
+        };
+
+        Ok(match token {
             Token::Identifier(s) => AstToken::Ident(s),
-            Token::String(s) => AstToken::Literal(format!("\"{}\"", s)),
             Token::Integer(n) => AstToken::Literal(n.to_string()),
-            Token::Float(x) => AstToken::Literal(format!("{:?}", x)),
-            Token::Char(c) => AstToken::Literal(format!("'{}'", c.escape_debug())),
-            Token::True => AstToken::Literal("true".to_string()),
-            Token::False => AstToken::Literal("false".to_string()),
+            Token::String(_) => {
+                return refuse(
+                    "a string literal",
+                    "the token stream stores a literal as text with no kind, so it comes back \
+                     re-quoted and re-lexes as two empty strings around a bare identifier",
+                )
+            }
+            Token::Float(_) => {
+                return refuse(
+                    "a float literal",
+                    "the token stream stores a literal as text with no kind, so it comes back \
+                     as a string and `3.5` expands to the four characters, not the number",
+                )
+            }
+            Token::Char(_) => {
+                return refuse(
+                    "a character literal",
+                    "the token stream stores a literal as text with no kind, so it comes back \
+                     as a string",
+                )
+            }
+            Token::True | Token::False => {
+                return refuse(
+                    "a boolean literal",
+                    "the token stream stores a literal as text with no kind, so `true` comes \
+                     back as the string \"true\"",
+                )
+            }
             Token::LeftParen => AstToken::Punct('('),
             Token::RightParen => AstToken::Punct(')'),
             Token::LeftBrace => AstToken::Punct('{'),
@@ -2154,8 +2226,52 @@ impl Parser {
             Token::Slash => AstToken::Punct('/'),
             Token::Not => AstToken::Punct('!'),
             Token::Eq => AstToken::Punct('='),
-            _ => AstToken::Ident(format!("{:?}", token)), // Fallback for other tokens
-        }
+            // THE REVERSE TABLE IN `src/macros/mod.rs` ALREADY ACCEPTED THESE
+            // EIGHT, and this one did not list them, so each was lost on the way
+            // IN and could never be lost on the way back. `$` is the one that
+            // matters: a macro parameter is substituted by
+            // `substitute_template` on seeing `Token::Dollar` followed by a
+            // name, and `$x` in a body degraded to the identifier `Dollar`, so
+            // NO PARAMETER OF ANY MACRO HAS EVER BEEN SUBSTITUTED. Completing
+            // the table is not a redesign of the macro system; it is the row
+            // that was missing from it.
+            Token::Percent => AstToken::Punct('%'),
+            Token::Lt => AstToken::Punct('<'),
+            Token::Gt => AstToken::Punct('>'),
+            Token::Ampersand => AstToken::Punct('&'),
+            Token::Pipe => AstToken::Punct('|'),
+            Token::Question => AstToken::Punct('?'),
+            Token::Dollar => AstToken::Punct('$'),
+            Token::Colon => AstToken::Punct(':'),
+            // A MULTI-CHARACTER OPERATOR HAS NO REPRESENTATION HERE.
+            // `AstToken::Punct` is ONE `char`, so `==`, `<=`, `&&`, `->`, `::`
+            // and `=>` cannot be stored, and storing them as two puncts would
+            // be a different program: `= =` is not `==`. Refused by name.
+            Token::EqEq
+            | Token::Ne
+            | Token::Le
+            | Token::Ge
+            | Token::AndAnd
+            | Token::OrOr
+            | Token::Arrow
+            | Token::FatArrow
+            | Token::DoubleColon
+            | Token::DotDot => {
+                return refuse(
+                    &format!("the operator {}", token),
+                    "a macro body stores one character per punctuation token, so a \
+                     two-character operator cannot be written down; put it in a function and \
+                     call that",
+                )
+            }
+            other => {
+                return refuse(
+                    &format!("{}", other),
+                    "the macro token stream can carry identifiers, integer literals and \
+                     single-character punctuation, and nothing else",
+                )
+            }
+        })
     }
 
     /// Parse a block of statements that may have an implicit return
@@ -4428,16 +4544,16 @@ impl Parser {
                             match &token {
                                 Token::LeftParen => {
                                     paren_depth += 1;
-                                    args.push(self.token_to_ast_token(token));
+                                    args.push(self.token_to_ast_token(token)?);
                                 }
                                 Token::RightParen => {
                                     paren_depth -= 1;
                                     if paren_depth > 0 {
-                                        args.push(self.token_to_ast_token(token));
+                                        args.push(self.token_to_ast_token(token)?);
                                     }
                                 }
                                 _ => {
-                                    args.push(self.token_to_ast_token(token));
+                                    args.push(self.token_to_ast_token(token)?);
                                 }
                             }
                         }

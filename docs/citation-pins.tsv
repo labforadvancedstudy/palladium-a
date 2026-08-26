@@ -19,7 +19,7 @@ bootstrap/v2_full_compiler/ast.pd	83-83	docs/contributing/MILESTONES.md	f7f1ef90
 bootstrap/v2_full_compiler/ast.pd	83-83	src/lexer/token.rs	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
 docs/contributing/MILESTONES.md	839-839	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
-docs/contributing/MILESTONES.md	873-879	tests/m3_imported_calls.rs	388e7bbd3652	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... e-manifest.txt:121`, cross-file imports) and the vacuous `12_modules_imports`.
+docs/contributing/MILESTONES.md	873-879	tests/m3_imported_calls.rs	7473e1ee090f	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... e-manifest.txt:122`, cross-file imports) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	117-119	src/codegen/mod.rs	a2f7869a25a1	3. **Struct and array parameters that are written are declared `mut`.** A `mu ... : `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` STRUCT parameter
@@ -285,53 +285,53 @@ src/ownership/mod.rs	450-454	docs/reference/features/feature-index.toml	5d7e60bc
 src/ownership/mod.rs	71-71	docs/reference/features/core-language/implicit-lifetimes.md	58cffd430bf7	pub scope: u32,
 src/ownership/mod.rs	95-95	docs/reference/features/core-language/implicit-lifetimes.md	a067fdd308d7	current_scope: u32,
 src/package/lockfile.rs	341-341	docs/reference/features/feature-index.toml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),
-src/parser/mod.rs	1169-1193	src/parser/mod.rs	26d633234fee	// A UNIT FUNCTION KEEPS THE PLAIN EXPRESSION STATEMENT, and "unit" means //  ... eturn` // this lowering creates; a bare expression statement of the wrong type
-src/parser/mod.rs	1226-1255	docs/contributing/MILESTONES.md	90379d62266f	body_tail.span().unwrap_or(start_span), )); } else if returns_a_value(return_ ... a condition is not // modelled. Everything it does model is receipted from the
-src/parser/mod.rs	1270-1270	docs/specification/language-spec.md	14f606075384	self.type_params_in_scope.clear();
-src/parser/mod.rs	1276-1276	docs/reference/features/core-language/implicit-lifetimes.md	3691b2469f5b	lifetime_params,
-src/parser/mod.rs	1276-1276	docs/reference/features/feature-index.toml	3691b2469f5b	lifetime_params,
-src/parser/mod.rs	1276-1276	docs/specification/language-spec.md	3691b2469f5b	lifetime_params,
-src/parser/mod.rs	1286-1286	docs/reference/features/async-system/async-as-effect.md	b697937c2e71	start_span.column,
-src/parser/mod.rs	1286-1286	docs/specification/language-spec.md	b697937c2e71	start_span.column,
-src/parser/mod.rs	1288-1288	docs/internals/ARCHITECTURE.md	3497d410c0eb	effects: None, // Effects will be inferred during analysis
-src/parser/mod.rs	1288-1288	docs/reference/features/feature-index.toml	3497d410c0eb	effects: None, // Effects will be inferred during analysis
-src/parser/mod.rs	1476-1476	docs/design/trait_system_design.md	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
-src/parser/mod.rs	1476-1476	docs/reference/features/feature-index.toml	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
-src/parser/mod.rs	1476-1476	docs/specification/language-spec.md	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
+src/parser/mod.rs	1188-1212	src/parser/mod.rs	26d633234fee	// A UNIT FUNCTION KEEPS THE PLAIN EXPRESSION STATEMENT, and "unit" means //  ... eturn` // this lowering creates; a bare expression statement of the wrong type
+src/parser/mod.rs	1245-1274	docs/contributing/MILESTONES.md	90379d62266f	body_tail.span().unwrap_or(start_span), )); } else if returns_a_value(return_ ... a condition is not // modelled. Everything it does model is receipted from the
+src/parser/mod.rs	1289-1289	docs/specification/language-spec.md	14f606075384	self.type_params_in_scope.clear();
+src/parser/mod.rs	1295-1295	docs/reference/features/core-language/implicit-lifetimes.md	3691b2469f5b	lifetime_params,
+src/parser/mod.rs	1295-1295	docs/reference/features/feature-index.toml	3691b2469f5b	lifetime_params,
+src/parser/mod.rs	1295-1295	docs/specification/language-spec.md	3691b2469f5b	lifetime_params,
+src/parser/mod.rs	1305-1305	docs/reference/features/async-system/async-as-effect.md	b697937c2e71	start_span.column,
+src/parser/mod.rs	1305-1305	docs/specification/language-spec.md	b697937c2e71	start_span.column,
+src/parser/mod.rs	1307-1307	docs/internals/ARCHITECTURE.md	3497d410c0eb	effects: None, // Effects will be inferred during analysis
+src/parser/mod.rs	1307-1307	docs/reference/features/feature-index.toml	3497d410c0eb	effects: None, // Effects will be inferred during analysis
+src/parser/mod.rs	1495-1495	docs/design/trait_system_design.md	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
+src/parser/mod.rs	1495-1495	docs/reference/features/feature-index.toml	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
+src/parser/mod.rs	1495-1495	docs/specification/language-spec.md	201ccd97bbaa	fn parse_trait(&mut self) -> Result<TraitDef> {
 src/parser/mod.rs	155-155	docs/reference/features/feature-index.toml	426b2575fd91	fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 src/parser/mod.rs	155-203	src/parser/mod.rs	01759be2acc4	fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool { match ta ... p(arm_tails.iter()) .all(|(arm, t)| returns_on_every_path(&arm.body, t)) } } }
-src/parser/mod.rs	1599-1600	docs/reference/features/feature-index.toml	0490cc2c625d	// Parse parameters self.consume(Token::LeftParen, "Expected '(' after method name")?;
-src/parser/mod.rs	1599-1600	docs/specification/language-spec.md	0490cc2c625d	// Parse parameters self.consume(Token::LeftParen, "Expected '(' after method name")?;
-src/parser/mod.rs	1726-1735	tests/advanced_e2e_test.rs	5378a7586d95	lifetime_params.push(lifetime_name); } else { let param_name = match self.adv ... er name".to_string(), found: token.to_string(), span: self.current_span(), });
-src/parser/mod.rs	1726-1735	tests/advanced_features_test.rs	5378a7586d95	lifetime_params.push(lifetime_name); } else { let param_name = match self.adv ... er name".to_string(), found: token.to_string(), span: self.current_span(), });
-src/parser/mod.rs	1767-1773	docs/specification/language-spec.md	50e8492a734c	while !self.check(&Token::RightBrace) && !self.is_at_end() { // For now, only ... thod".to_string(), found: self.peek()?.to_string(), span: self.current_span(),
-src/parser/mod.rs	2155-2155	docs/reference/features/feature-index.toml	a5ed0a1a429c	Token::Not => AstToken::Punct('!'),
-src/parser/mod.rs	2155-2155	docs/specification/language-spec.md	a5ed0a1a429c	Token::Not => AstToken::Punct('!'),
-src/parser/mod.rs	2182-2184	docs/reference/features/feature-index.toml	63c500336476	while !self.check(&Token::RightBrace) && !self.is_at_end() { if self.check(&Token::If) { let (stmt, if_tail) = self.parse_if_with_tail()?;
-src/parser/mod.rs	2182-2184	docs/specification/language-spec.md	63c500336476	while !self.check(&Token::RightBrace) && !self.is_at_end() { if self.check(&Token::If) { let (stmt, if_tail) = self.parse_if_with_tail()?;
-src/parser/mod.rs	2243-2243	docs/specification/language-spec.md	efe2f78c7527	pub fn parse_statement(&mut self) -> Result<Stmt> {
-src/parser/mod.rs	2252-2252	docs/reference/features/feature-index.toml	95a088b7314e	Token::Continue => self.parse_continue(),
-src/parser/mod.rs	2278-2280	docs/specification/language-spec.md	400cbfe63e08	let compound_op = match self.peek() { Ok(Token::PlusEq) => Some(BinOp::Add), Ok(Token::MinusEq) => Some(BinOp::Sub),
-src/parser/mod.rs	2371-2371	docs/specification/language-spec.md	cfbbcd16e936	fn parse_let(&mut self) -> Result<Stmt> {
-src/parser/mod.rs	2679-2679	tests/compiler_comprehensive_test.rs	9f1ac93f2019	let mut body = Vec::new();
-src/parser/mod.rs	2771-2771	docs/specification/language-spec.md	962d0ea6f0d8	fn parse_loop(&mut self) -> Result<Stmt> {
+src/parser/mod.rs	1618-1619	docs/reference/features/feature-index.toml	0490cc2c625d	// Parse parameters self.consume(Token::LeftParen, "Expected '(' after method name")?;
+src/parser/mod.rs	1618-1619	docs/specification/language-spec.md	0490cc2c625d	// Parse parameters self.consume(Token::LeftParen, "Expected '(' after method name")?;
+src/parser/mod.rs	1745-1754	tests/advanced_e2e_test.rs	5378a7586d95	lifetime_params.push(lifetime_name); } else { let param_name = match self.adv ... er name".to_string(), found: token.to_string(), span: self.current_span(), });
+src/parser/mod.rs	1745-1754	tests/advanced_features_test.rs	5378a7586d95	lifetime_params.push(lifetime_name); } else { let param_name = match self.adv ... er name".to_string(), found: token.to_string(), span: self.current_span(), });
+src/parser/mod.rs	1786-1792	docs/specification/language-spec.md	50e8492a734c	while !self.check(&Token::RightBrace) && !self.is_at_end() { // For now, only ... thod".to_string(), found: self.peek()?.to_string(), span: self.current_span(),
+src/parser/mod.rs	2227-2227	docs/reference/features/feature-index.toml	a5ed0a1a429c	Token::Not => AstToken::Punct('!'),
+src/parser/mod.rs	2227-2227	docs/specification/language-spec.md	a5ed0a1a429c	Token::Not => AstToken::Punct('!'),
+src/parser/mod.rs	2298-2300	docs/reference/features/feature-index.toml	63c500336476	while !self.check(&Token::RightBrace) && !self.is_at_end() { if self.check(&Token::If) { let (stmt, if_tail) = self.parse_if_with_tail()?;
+src/parser/mod.rs	2298-2300	docs/specification/language-spec.md	63c500336476	while !self.check(&Token::RightBrace) && !self.is_at_end() { if self.check(&Token::If) { let (stmt, if_tail) = self.parse_if_with_tail()?;
+src/parser/mod.rs	2359-2359	docs/specification/language-spec.md	efe2f78c7527	pub fn parse_statement(&mut self) -> Result<Stmt> {
+src/parser/mod.rs	2368-2368	docs/reference/features/feature-index.toml	95a088b7314e	Token::Continue => self.parse_continue(),
+src/parser/mod.rs	2394-2396	docs/specification/language-spec.md	400cbfe63e08	let compound_op = match self.peek() { Ok(Token::PlusEq) => Some(BinOp::Add), Ok(Token::MinusEq) => Some(BinOp::Sub),
+src/parser/mod.rs	2487-2487	docs/specification/language-spec.md	cfbbcd16e936	fn parse_let(&mut self) -> Result<Stmt> {
 src/parser/mod.rs	278-280	src/parser/mod.rs	16f6021b9506	fn already_terminates(stmts: &[Stmt]) -> bool { stmts.iter().any(stmt_terminates) }
+src/parser/mod.rs	2795-2795	tests/compiler_comprehensive_test.rs	9f1ac93f2019	let mut body = Vec::new();
 src/parser/mod.rs	283-311	src/parser/mod.rs	c48f7e6bd1ed	fn stmt_terminates(stmt: &Stmt) -> bool { match stmt { Stmt::Return(_) => tru ... es(eb), Stmt::Unsafe { body, .. } => already_terminates(body), _ => false, } }
+src/parser/mod.rs	2887-2887	docs/specification/language-spec.md	962d0ea6f0d8	fn parse_loop(&mut self) -> Result<Stmt> {
 src/parser/mod.rs	339-371	src/parser/mod.rs	89ae800a1504	fn contains_escaping_break(stmts: &[Stmt]) -> bool { for stmt in stmts { if s ... , not to ours. Stmt::While { .. } | Stmt::For { .. } => false, _ => false, } }
-src/parser/mod.rs	3543-3544	docs/specification/language-spec.md	52c91b86e5de	fn parse_cast(&mut self) -> Result<Expr> { let mut expr = self.parse_unary()?;
-src/parser/mod.rs	3631-3631	docs/specification/language-spec.md	fa26e8a76ee4	let right = self.parse_cast()?;
-src/parser/mod.rs	3684-3711	docs/specification/bootstrap-subset.md	3e33002c19c5	self.advance()?; mutable = true; } // Parse the inner type let inner = self.p ... Type::F32, "f64" => Type::F64, "bool" => Type::Bool, "String" => Type::String,
-src/parser/mod.rs	3692-3699	docs/specification/language-spec.md	8065803a78cd	lifetime, mutable, inner: Box::new(inner), }) } (Token::Identifier(name), _)  ...  it's a type parameter in scope if self.type_params_in_scope.contains(&name) {
-src/parser/mod.rs	3703-3703	docs/specification/language-spec.md	10349ab0a0a0	let base_type = match name.as_str() {
-src/parser/mod.rs	3703-3711	docs/specification/bootstrap-subset.md	dac86854e96b	let base_type = match name.as_str() { "i32" => Type::I32, "i64" | "int" => Ty ... Type::F32, "f64" => Type::F64, "bool" => Type::Bool, "String" => Type::String,
-src/parser/mod.rs	3706-3707	docs/specification/bootstrap-subset.md	7b63a47f6073	"u32" => Type::U32, "u64" => Type::U64,
-src/parser/mod.rs	3732-3742	docs/reference/features/feature-index.toml	6a82fd150f5e	// If it's an identifier, it could be a const param match &ty { Type::Custom( ...  params args.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), )));
-src/parser/mod.rs	3732-3742	docs/specification/language-spec.md	6a82fd150f5e	// If it's an identifier, it could be a const param match &ty { Type::Custom( ...  params args.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), )));
-src/parser/mod.rs	3855-3867	docs/specification/language-spec.md	916b3c869108	// to `parse_if`, and `parse_block_with_implicit_return` routes it to // `par ... Match) { return self.parse_match_expression(); } if self.check(&Token::Loop) {
-src/parser/mod.rs	3857-3858	docs/reference/features/feature-index.toml	6a86569d6dc0	if self.check(&Token::If) { return self.parse_if_expression();
-src/parser/mod.rs	4170-4178	src/typeck/mod.rs	5e053ccaef88	let end_span = self.consume(Token::Await, "Expected 'await'")?; expr = Expr:: ... Span::new( start_span.start, end_span.end, start_span.line, start_span.column,
-src/parser/mod.rs	4276-4317	tests/m3_imported_calls.rs	f4512157a7a3	} }; } Ok(Token::DoubleColon) => { // Handle enum constructor: EnumName::Vari ... enum constructor expression expr = Expr::EnumConstructor { enum_name, variant,
-src/parser/mod.rs	4401-4409	src/typeck/mod.rs	7ec8d5a46538	let (_, end_span) = self.advance()?; // consume '?' expr = Expr::Question { e ... Span::new( start_span.start, end_span.end, start_span.line, start_span.column,
+src/parser/mod.rs	3659-3660	docs/specification/language-spec.md	52c91b86e5de	fn parse_cast(&mut self) -> Result<Expr> { let mut expr = self.parse_unary()?;
+src/parser/mod.rs	3747-3747	docs/specification/language-spec.md	fa26e8a76ee4	let right = self.parse_cast()?;
+src/parser/mod.rs	3800-3827	docs/specification/bootstrap-subset.md	3e33002c19c5	self.advance()?; mutable = true; } // Parse the inner type let inner = self.p ... Type::F32, "f64" => Type::F64, "bool" => Type::Bool, "String" => Type::String,
+src/parser/mod.rs	3808-3815	docs/specification/language-spec.md	8065803a78cd	lifetime, mutable, inner: Box::new(inner), }) } (Token::Identifier(name), _)  ...  it's a type parameter in scope if self.type_params_in_scope.contains(&name) {
+src/parser/mod.rs	3819-3819	docs/specification/language-spec.md	10349ab0a0a0	let base_type = match name.as_str() {
+src/parser/mod.rs	3819-3827	docs/specification/bootstrap-subset.md	dac86854e96b	let base_type = match name.as_str() { "i32" => Type::I32, "i64" | "int" => Ty ... Type::F32, "f64" => Type::F64, "bool" => Type::Bool, "String" => Type::String,
+src/parser/mod.rs	3822-3823	docs/specification/bootstrap-subset.md	7b63a47f6073	"u32" => Type::U32, "u64" => Type::U64,
+src/parser/mod.rs	3848-3858	docs/reference/features/feature-index.toml	6a82fd150f5e	// If it's an identifier, it could be a const param match &ty { Type::Custom( ...  params args.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), )));
+src/parser/mod.rs	3848-3858	docs/specification/language-spec.md	6a82fd150f5e	// If it's an identifier, it could be a const param match &ty { Type::Custom( ...  params args.push(GenericArg::Const(ConstValue::ConstParam( name.clone(), )));
+src/parser/mod.rs	3971-3983	docs/specification/language-spec.md	916b3c869108	// to `parse_if`, and `parse_block_with_implicit_return` routes it to // `par ... Match) { return self.parse_match_expression(); } if self.check(&Token::Loop) {
+src/parser/mod.rs	3973-3974	docs/reference/features/feature-index.toml	6a86569d6dc0	if self.check(&Token::If) { return self.parse_if_expression();
+src/parser/mod.rs	4286-4294	src/typeck/mod.rs	5e053ccaef88	let end_span = self.consume(Token::Await, "Expected 'await'")?; expr = Expr:: ... Span::new( start_span.start, end_span.end, start_span.line, start_span.column,
+src/parser/mod.rs	4392-4433	tests/m3_imported_calls.rs	f4512157a7a3	} }; } Ok(Token::DoubleColon) => { // Handle enum constructor: EnumName::Vari ... enum constructor expression expr = Expr::EnumConstructor { enum_name, variant,
+src/parser/mod.rs	4517-4525	src/typeck/mod.rs	7ec8d5a46538	let (_, end_span) = self.advance()?; // consume '?' expr = Expr::Question { e ... Span::new( start_span.start, end_span.end, start_span.line, start_span.column,
 src/parser/mod.rs	456-456	docs/specification/bootstrap-subset.md	6edd925b7892	fn lower_tail_to_return(stmts: &mut [Stmt], tail: &BlockTail) {
 src/parser/mod.rs	516-516	docs/reference/features/core-language/implicit-lifetimes.md	941171fa2fb0	let mut lifetime_params = Vec::new();
 src/parser/mod.rs	538-540	docs/reference/features/feature-index.toml	a90547973646	} else if self.check(&Token::Const) { // It's a const parameter self.advance()?; // consume 'const'
@@ -405,9 +405,9 @@ src/typeck/mod.rs	714-718	docs/reference/features/core-language/implicit-lifetim
 src/typeck/mod.rs	714-718	docs/reference/features/feature-index.toml	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	714-718	docs/specification/language-spec.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
-tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	50de9e69cc16	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:170 defines only `macro name ... n) block`, so `macro_rules! vec { … }` is not an item (owned by M5, tooling)"]
+tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	2f5262a34cc8	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:170 defines only `macro name ... ests/reject/macro_rules.pd. Retiring it is the owner's call, not this test's"]
 tests/compiler_comprehensive_test.rs	616-616	docs/contributing/MILESTONES.md	33e1b803ccb2	fn test_missing_return_is_an_error() {
-tests/conformance-manifest.txt	121-121	docs/contributing/MILESTONES.md	be3ef13e1247	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
+tests/conformance-manifest.txt	122-122	docs/contributing/MILESTONES.md	be3ef13e1247	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
 tests/e2e_test.rs	277-277	docs/contributing/MILESTONES.md	da9d5556e31e	fn test_c_keyword_identifier_still_links() {
 tests/e2e_test.rs	322-322	docs/contributing/MILESTONES.md	42427853e62c	fn test_tail_if_function_emits_a_return() {
 tests/m3_imported_calls.rs	1219-1223	docs/contributing/citation-and-predicate-debt.md	ec1a6fef4c0b	/// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consu ... / `register_imported_functions`. So `import lib2::{helper};` imports the whole

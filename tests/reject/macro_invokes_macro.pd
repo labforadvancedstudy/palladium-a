@@ -1,0 +1,19 @@
+// NEGATIVE TEST -- a macro body may not invoke another macro (N3-12).
+//
+// Expansion is a SINGLE PASS over the program (`expand_program` in
+// src/macros/mod.rs walks the items once), so an invocation that an expansion
+// PRODUCES is never expanded. It survived into the type checker, which
+// reported "Unexpected macro invocation in type checking - macros should be
+// expanded before this phase" -- an internal assertion about a compiler phase,
+// raised at the call site, naming nothing the author can act on.
+//
+// Refused at the definition instead, and the message says what to do. The real
+// repair is expanding to a FIXED POINT, which is a change to the expansion
+// driver rather than to this check; until that exists, this is the honest
+// boundary of "one pattern-based macro system".
+macro double!(x) { $x * 2 }
+macro quadruple!(x) { double!(double!($x)) }
+
+fn main() {
+    print_int(quadruple!(3));
+}

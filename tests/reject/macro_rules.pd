@@ -1,0 +1,24 @@
+// NEGATIVE TEST -- `macro_rules!` is refused BY NAME (N3-14).
+//
+// The requirement is not "macro_rules! is unimplemented". It is that there is
+// no declarative/procedural SPLIT: this language has one macro system, so a
+// second one is refused because the first exists rather than because nothing
+// does.
+//
+// WHAT THE DIAGNOSTIC USED TO BE: `macro_rules!` fell through the item parser
+// to "Expected function, struct, enum, trait, type, impl, or macro declaration"
+// -- seven nouns, one of which is `macro`, which a reader arriving from Rust
+// reads as "macros are not supported here". Exactly backwards.
+//
+// The same refusal answers the invocation spelling `macro_rules!(...)`, which
+// used to be "Unknown macro 'macro_rules'" -- a sentence that reads as a typo
+// in the NAME when the problem is the SYSTEM (src/macros/mod.rs, `unknown_macro`).
+macro_rules! square {
+    ($x:expr) => {
+        $x * $x
+    };
+}
+
+fn main() {
+    print_int(square!(4));
+}

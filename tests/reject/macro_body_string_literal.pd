@@ -1,0 +1,25 @@
+// NEGATIVE TEST -- a macro body may not contain a string literal (N3-12).
+//
+// THIS REFUSAL REPLACES A SILENT WRONG EXPANSION, which is the only reason it
+// exists. A macro body is stored as `ast::Token`s, and `AstToken::Literal` is a
+// `String` that carries no KIND, so the reverse conversion in src/macros/mod.rs
+// guesses with `parse::<i64>()`. A string literal therefore came back as a
+// `Token::String` whose CONTENT still had its quotes, `tokens_to_string` quoted
+// it again, and the re-lex produced `""` `hi` `""`.
+//
+// Measured at e8eb1a9, compiling and running with no diagnostic at all:
+//     macro s!() { "hi" }
+//     fn main() { print(s!()); }
+// printed an EMPTY LINE. The string the author wrote reached the output as
+// nothing.
+//
+// The cost of the refusal is named rather than hidden: `println!(e)` takes a
+// string in every use anybody would write, so this makes that builtin
+// unusable. It already was -- measured at e8eb1a9, `println!("x")` failed with
+// "expected ')', found identifier 'x'", which is the same defect one layer
+// later and with no explanation attached.
+macro shout!() { "HEY" }
+
+fn main() {
+    print(shout!());
+}

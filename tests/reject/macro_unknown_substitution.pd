@@ -1,0 +1,13 @@
+// NEGATIVE TEST -- `$name` must name a parameter of the macro (N3-12).
+//
+// Substitution leaves an unmatched `$` where it stands, so the expansion
+// reached the parser as source text containing a dollar sign and was reported
+// as "expected expression, found '$'" -- at the CALL site, about a character
+// the caller never wrote. Measured at e8eb1a9 after the `$` path was repaired.
+//
+// Refused at the definition, naming the parameters the macro actually has.
+macro one!(a) { $b }
+
+fn main() {
+    print_int(one!(1));
+}

@@ -244,6 +244,89 @@ impl MacroExpander {
         // Convert AST tokens to lexer tokens
         let template_tokens = self.convert_ast_tokens_to_lexer_tokens(&macro_def.body)?;
 
+        // TWO REFUSALS OVER THE TEMPLATE, both replacing a diagnostic that
+        // named an internal phase or a stray character rather than a rule.
+        for (i, token) in template_tokens.iter().enumerate() {
+            match token {
+                // `$` FOLLOWED BY A NAME THAT IS NOT A PARAMETER. Substitution
+                // leaves an unmatched `$` in place, so the expansion reached the
+                // parser as source text containing a dollar sign and was
+                // reported as "expected expression, found '$'" — at the CALL
+                // site, about a character the caller never wrote.
+                Token::Dollar => {
+                    let name = match template_tokens.get(i + 1) {
+                        Some(Token::Identifier(name)) => name.clone(),
+                        _ => {
+                            return Err(CompileError::Generic(format!(
+                                "macro `{}` has a `$` that is not followed by a parameter name",
+                                macro_def.name
+                            )))
+                        }
+                    };
+                    if !macro_def.params.contains(&name) {
+                        return Err(CompileError::Generic(format!(
+                            "macro `{}` substitutes `${}`, which is not one of its parameters ({})",
+                            macro_def.name,
+                            name,
+                            if macro_def.params.is_empty() {
+                                "it takes none".to_string()
+                            } else {
+                                macro_def.params.join(", ")
+                            }
+                        )));
+                    }
+                }
+                // A MACRO BODY THAT INVOKES ANOTHER MACRO. Expansion is a
+                // single pass over the program (`expand_program` walks items
+                // once), so an invocation PRODUCED by an expansion is never
+                // expanded: it reached the type checker, which reported
+                // "Unexpected macro invocation in type checking - macros should
+                // be expanded before this phase" — an internal assertion, at
+                // the call site, naming a phase rather than a rule. Refused
+                // where the body is written. Expansion to a fixed point is the
+                // real repair and it is a change to the driver, not to this
+                // check.
+                // A PARAMETER NAME WRITTEN WITHOUT ITS `$`. Substitution keys
+                // on `$name`, so a bare `x` in the body of `macro double!(x)`
+                // is not the parameter at all — it is a free identifier that
+                // resolves at the CALL SITE. Measured at e8eb1a9 and again
+                // after the `$` repair, with `macro double!(x) { x * 2 }`:
+                //     fn main() { let x = 3; print_int(double!(21)); }
+                // printed 6. The argument was discarded and the caller's own
+                // `x` was multiplied instead, with no diagnostic anywhere.
+                Token::Identifier(name)
+                    if macro_def.params.contains(name)
+                        && !matches!(template_tokens.get(i.wrapping_sub(1)), Some(Token::Dollar))
+                        && i > 0 =>
+                {
+                    return Err(CompileError::Generic(format!(
+                        "macro `{}` writes `{}` in its body, which is the name of a parameter \
+                         but is not a substitution: write `${}`. A bare name resolves where the \
+                         macro is CALLED, so this silently reads the caller's own `{}`",
+                        macro_def.name, name, name, name
+                    )));
+                }
+                // The same name at the very start of a body cannot have a `$`
+                // before it, so it is the same defect with a cheaper test.
+                Token::Identifier(name) if i == 0 && macro_def.params.contains(name) => {
+                    return Err(CompileError::Generic(format!(
+                        "macro `{}` writes `{}` in its body, which is the name of a parameter \
+                         but is not a substitution: write `${}`",
+                        macro_def.name, name, name
+                    )));
+                }
+                Token::Identifier(callee) if matches!(template_tokens.get(i + 1), Some(Token::Not)) => {
+                    return Err(CompileError::Generic(format!(
+                        "macro `{}` invokes the macro `{}` in its body, and expansion is a \
+                         single pass: an invocation produced by an expansion is never expanded. \
+                         Inline it, or call a function",
+                        macro_def.name, callee
+                    )));
+                }
+                _ => {}
+            }
+        }
+
         self.macros.insert(
             macro_def.name.clone(),
             ParsedMacro {
@@ -444,7 +527,7 @@ impl MacroExpander {
             let parsed_macro = self
                 .macros
                 .get(name)
-                .ok_or_else(|| CompileError::Generic(format!("Unknown macro '{}'", name)))?
+                .ok_or_else(|| unknown_macro(name))?
                 .clone();
 
             // Convert AST tokens to lexer tokens
@@ -476,7 +559,7 @@ impl MacroExpander {
                 let parsed_macro = self
                     .macros
                     .get(name)
-                    .ok_or_else(|| CompileError::Generic(format!("Unknown macro '{}'", name)))?
+                    .ok_or_else(|| unknown_macro(name))?
                     .clone();
 
                 // Convert AST tokens to lexer tokens
@@ -627,4 +710,21 @@ impl Default for MacroExpander {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The diagnostic for an invocation of a macro nothing defines.
+///
+/// `macro_rules!` GETS ITS OWN SENTENCE (N3-14), in the invocation position as
+/// well as the item position where the parser refuses it. "Unknown macro
+/// 'macro_rules'" reads as "you spelled the name wrong"; the truth is that the
+/// name is a different macro SYSTEM, and this language has exactly one.
+fn unknown_macro(name: &str) -> CompileError {
+    if name == "macro_rules" {
+        return CompileError::Generic(
+            "`macro_rules!` is not this language's macro syntax: there is ONE macro system and \
+             no procedural/declarative split. Write `macro name!(params) { body }`"
+                .to_string(),
+        );
+    }
+    CompileError::Generic(format!("Unknown macro '{}'", name))
 }

@@ -379,6 +379,25 @@ pub fn substitute_template(template: &[Token], context: &MatchContext) -> Result
                 if let Token::Identifier(name) = &template[i + 1] {
                     // Substitute capture
                     if let Some(capture) = context.get_capture(name) {
+                        // EVERY CAPTURE IS PARENTHESISED, and the parentheses
+                        // are the difference between substituting an EXPRESSION
+                        // and splicing TEXT. Measured before this, with
+                        // `macro double!(x) { $x * 2 }`:
+                        //     double!(1 + 1)  printed 3   (`1 + 1 * 2`)
+                        //     double!(2 + 3)  printed 8   (`2 + 3 * 2`)
+                        // Both compiled, linked, ran and exited 0 with a wrong
+                        // number, which is the failure mode a macro system is
+                        // most often criticised for and the one this repository
+                        // refuses to ship silently.
+                        //
+                        // SOUND FOR EVERY CAPTURE THIS SYSTEM HAS, and that is
+                        // why it can be unconditional: `register_macro` gives
+                        // every parameter `CaptureKind::Expr`, so a capture is
+                        // an expression, and an expression in parentheses is
+                        // the same expression in every position one can appear
+                        // in. A capture kind that was a type, a pattern or a
+                        // statement would need this decision re-taken.
+                        result.push(Token::LeftParen);
                         match capture {
                             CaptureValue::Single(tokens) => {
                                 result.extend(tokens.clone());
@@ -390,6 +409,7 @@ pub fn substitute_template(template: &[Token], context: &MatchContext) -> Result
                                 }
                             }
                         }
+                        result.push(Token::RightParen);
                         i += 2; // Skip $ and name
                         continue;
                     }

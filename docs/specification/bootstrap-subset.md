@@ -84,9 +84,9 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 - Generic types in struct fields — error at `src/codegen/mod.rs:2739-2742`.
 - Reference types in struct fields — error at `src/codegen/mod.rs:2746-2746`.
 - Returning an array from a function — error at `src/codegen/mod.rs:3055-3059`.
-- `char`, `str`, `u8`, `usize` — no such primitives; `src/parser/mod.rs:3703-3711` is the whole
+- `char`, `str`, `u8`, `usize` — no such primitives; `src/parser/mod.rs:3819-3827` is the whole
   set the type parser recognises. `f32`/`f64` were in this bullet and no longer belong: M2 added
-  them (`src/parser/mod.rs:3706-3707`, requirement N4-02), so they stay out of PBS-1 by CHOICE,
+  them (`src/parser/mod.rs:3822-3823`, requirement N4-02), so they stay out of PBS-1 by CHOICE,
   which is a different reason from every other entry in this list.
 - Trait bounds (`<T: Display>`) — a parse error; `parse_generic_params` accepts bare names only.
 - `Option<T>` / `Result<T,E>` as built-ins — they do not exist. Declaring your own does not
@@ -96,7 +96,7 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 
 **Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
 parsing misclassifies any all-uppercase name as a *const* generic argument
-(`src/parser/mod.rs:3684-3711`), so `Foo<T>` does not mean what it looks like.
+(`src/parser/mod.rs:3800-3827`), so `Foo<T>` does not mean what it looks like.
 
 ## 3.1 Additional PBS-1 rules (measured, not stylistic)
 

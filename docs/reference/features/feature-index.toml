@@ -126,13 +126,13 @@ description = "Lifetimes inferred; no 'a parameter lists. Explicit ref<'a> T onl
 spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/parser/mod.rs:1276 lifetime_params, populated by the parser",
+  "src: src/parser/mod.rs:1295 lifetime_params, populated by the parser",
   "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> exit 0, 90 lines -- and some are REAL readers, not only test fixtures: src/typeck/mod.rs clones the list into its own records and src/codegen/mod.rs branches on `lifetime_params.is_empty()` before emitting a type. Five of the 90 are the recursive-layout analysis in src/typeck/mod.rs, which skips a generic definition on the SAME predicate code generation uses, so that it never refuses a declaration nothing emits. Two of the 90 are prose in the shared shadowing predicate in src/ast/mod.rs, recording that its test is the type-parameter list and NOT this field",
   "conformance: tests/regression/lifetimes_uninferred.pd run",
   "src: tests/regression/lifetimes_uninferred.pd:26-29 \"fn dangling() -> &i64\" returning \"return &x;\", a reference to a local that dies at the closing brace",
   "conformance: tests/reject/uncalled_body_is_checked.pd reject",
   "src: tests/reject/uncalled_body_is_checked.pd:21-24 \"fn bad()\" is called by nothing and still refused, which is what makes the fixture above a statement about lifetimes",
-  "gate: make conformance -> reject=63 verified=79 -- the pair above is in the corpus those numbers count",
+  "gate: make conformance -> reject=69 verified=80 -- the pair above is in the corpus those numbers count",
   "src: src/ownership/borrow_checker.rs:793-796 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
   "src: src/ownership/mod.rs:25-33 \"pub enum Lifetime\" -- the four variants a lifetime can be, none of which carries a relation to another",
   "src: src/ownership/mod.rs:101-126 \"constraints: Vec<LifetimeConstraint>\" at :101 and \"pub struct LifetimeConstraint\" at :124 with its longer/shorter pair -- the only type in the module that RELATES two lifetimes",
@@ -190,7 +190,7 @@ description = "Restricted unsafe with side-channel protection; forbidden in #![t
 spec = "../../specification/language-spec.md#n12-memory-model"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:2252 Token::Unsafe => self.parse_unsafe()",
+  "src: src/parser/mod.rs:2368 Token::Unsafe => self.parse_unsafe()",
   "src: src/driver/mod.rs:189 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/11_unsafe_blocks.pd vacuous",
@@ -213,7 +213,7 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/codegen/mod.rs:2741-2741 'Generic types in structs not yet supported'",
-  "src: src/parser/mod.rs:3732-3742 all-uppercase name inside <...> reclassified as a const argument",
+  "src: src/parser/mod.rs:3848-3858 all-uppercase name inside <...> reclassified as a const argument",
   "conformance: tests/reject/generic_bound.pd reject",
   "conformance: tests/08_generics_basic.pd vacuous",
 ]
@@ -224,10 +224,10 @@ description = "Trait definitions, impls, bounds on generics, associated types."
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/parser/mod.rs:1476 fn parse_trait — traits do parse",
+  "src: src/parser/mod.rs:1495 fn parse_trait — traits do parse",
   "src: src/codegen/mod.rs:2200-2203 Item::Trait(_) => emits nothing",
   "src: src/typeck/mod.rs:2307-2309 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
-  "src: src/parser/mod.rs:1599-1600 trait-method parameter loop, which has no self_param branch",
+  "src: src/parser/mod.rs:1618-1619 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd vacuous",
 ]
 note = "Design detail: ../../design/trait_system_design.md"
@@ -282,8 +282,8 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
   "conformance: tests/04_control_flow_if.pd run",
-  "src: src/parser/mod.rs:2182-2184 the else arm tests for a following if and recurses, so else-if chains parse (N5-06)",
-  "src: src/parser/mod.rs:3857-3858 return self.parse_if_expression() -- `if` is read at the primary level, so it is an expression (N5-03)",
+  "src: src/parser/mod.rs:2298-2300 the else arm tests for a following if and recurses, so else-if chains parse (N5-06)",
+  "src: src/parser/mod.rs:3973-3974 return self.parse_if_expression() -- `if` is read at the primary level, so it is an expression (N5-03)",
 ]
 
 [core_language.functions.function_definitions]
@@ -368,7 +368,7 @@ spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
   "src: src/lexer/token.rs:325 #[token(\"async\")] — one of the two things the definition removes",
-  "src: src/parser/mod.rs:1288 effects: None, // Effects will be inferred during analysis",
+  "src: src/parser/mod.rs:1307 effects: None, // Effects will be inferred during analysis",
   "src: src/driver/mod.rs:59 the analyser's result is println!ed by the driver and feeds no later phase",
   "src: src/effects/mod.rs:318 'If function is unknown, we conservatively assume it's pure' — the unsound direction",
   "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> exit 0, 8 lines -- 1 in src/driver/mod.rs (the analyser is run) and 7 in src/builtins.rs (each builtin declares an effect set, and the analyser's own unit tests live there); no phase after the driver reads the result",
@@ -462,7 +462,7 @@ implementation = "partial"
 evidence = [
   "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
   "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
-  "src: src/parser/mod.rs:2155 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
+  "src: src/parser/mod.rs:2227 unlisted tokens degrade into AstToken::Ident(format!(\"{:?}\", token))",
   "conformance: tests/reject/macro_invocation_bracket.pd reject",
 ]
 note = "The registered builtins are reachable through exactly one call shape. `vec![...]`, the spelling every Rust program uses and the one the vec! builtin was written for, does not parse -- the macro parser requires a parenthesis after the name. So `partial` here means four macros exist and one common way of calling them does not."
@@ -498,7 +498,7 @@ description = "C code generation; the backend the compiler actually ships."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "implemented"
 evidence = [
-  "gate: make conformance -> fixtures=151 evaluated=151 verified=79 vacuous=6 xfail=1 reject=63 skip=2 failures=0",
+  "gate: make conformance -> fixtures=158 evaluated=158 verified=80 vacuous=6 xfail=1 reject=69 skip=2 failures=0",
   "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\" -- the C backend is the one a Palladium compiler is built with",
 ]
 
@@ -530,7 +530,7 @@ spec = "../../specification/language-spec.md"
 implementation = "implemented"
 evidence = [
   "gate: cargo build --release -> \"[optimized] target(s)\" -- the compiler builds, and target/release/pdc is what every other gate here runs",
-  "gate: make conformance -> fixtures=151 evaluated=151 verified=79 vacuous=6 xfail=1 reject=63 skip=2 failures=0",
+  "gate: make conformance -> fixtures=158 evaluated=158 verified=80 vacuous=6 xfail=1 reject=69 skip=2 failures=0",
 ]
 
 [tooling.compiler.bootstrapping]

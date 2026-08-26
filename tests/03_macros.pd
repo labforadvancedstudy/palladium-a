@@ -1,0 +1,125 @@
+// Test 03: THE MACRO SYSTEM, AT ITS MEASURED WIDTH (N3-12).
+//
+// This fixture is the working subset and nothing else. Everything a macro can
+// do here was measured on this compiler; everything it cannot do is refused by
+// name in tests/reject/macro_*.pd. There is exactly ONE macro system — `macro
+// name!(params) { body }` — and `macro_rules!` is refused as a different one
+// (N3-14, tests/reject/macro_rules.pd).
+//
+// WHAT A MACRO IS HERE: a token template. The body is stored as tokens at
+// definition, a parameter is substituted where the body writes `$name`, and the
+// result is re-parsed at the call site. That is the pattern-based half of the
+// row, and until this round NOTHING exercised it: `$` was not in the parser's
+// token table (`token_to_ast_token`), so `$x` was stored as the identifier
+// `Dollar` followed by `x` and no parameter of any macro had ever been
+// substituted. One missing table row, and the whole parameter half of the
+// system was dead.
+//
+// WHY THE PRECEDENCE CASES BELOW ARE THE MOST IMPORTANT LINES IN THIS FILE:
+// substitution used to splice the argument's tokens in bare, so with
+// `macro double!(x) { $x * 2 }`, `double!(1 + 1)` expanded to `1 + 1 * 2` and
+// printed 3. It compiled, linked, ran and exited 0 with a wrong number. Every
+// capture is parenthesised now, and `double!(1 + 1)` is pinned at 4 here so
+// that a regression to token-splicing fails this transcript instead of
+// producing arithmetic nobody checks.
+
+// --- zero parameters: the body is a token template with no holes ---
+
+macro five!() { 5 }
+macro sum_of_literals!() { 2 + 3 }
+macro grouped!() { (2 + 3) * 2 }
+macro below_zero!() { -7 }
+
+// A macro may be used ABOVE its definition: definitions are collected in one
+// pass over the program before any invocation is expanded.
+fn uses_a_macro_defined_below() -> i64 {
+    later!()
+}
+
+macro later!() { 11 }
+
+// A body may call a function. The call is ordinary code once expanded, so the
+// function it names is resolved at the call site like any other name.
+fn helper(n: i64) -> i64 {
+    return n + 1;
+}
+
+macro call_helper!() { helper(41) }
+
+// --- parameters, substituted through `$name` ---
+
+macro double!(x) { $x * 2 }
+macro square!(x) { $x * $x }
+macro sub!(a, b) { $a - $b }
+macro bump!(v) { helper($v) }
+
+// --- statement bodies ---
+//
+// A body whose tokens are STATEMENTS expands in statement position. The shape
+// that does NOT work is an EXPRESSION body invoked as a statement (`five!();`),
+// which fails with "Unexpected end of file" — the expansion is re-parsed as a
+// statement list and an expression with no `;` is not one. Reported as a gap
+// rather than pinned here, because it is a parse-shape mismatch and not a
+// refusal anybody wrote.
+
+fn side_effect() {
+    print("side effect");
+}
+
+macro run_side_effect!() { side_effect(); }
+
+fn main() {
+    // Zero-parameter macros in value position.
+    print_int(five!());
+    print_int(sum_of_literals!());
+    print_int(grouped!());
+    print_int(below_zero!());
+    print_int(uses_a_macro_defined_below());
+    print_int(call_helper!());
+
+    // Two macros in one expression.
+    print_int(five!() + five!());
+
+    // Parameters. The first two are the substitution working at all; the rest
+    // are the shapes that used to be wrong or impossible.
+    print_int(double!(21));
+    print_int(sub!(50, 8));
+
+    // A parameter used twice expands twice.
+    print_int(square!(7));
+
+    // THE PRECEDENCE PINS. Read the comment at the top of this file before
+    // changing either number.
+    print_int(double!(1 + 1));
+    print_int(double!(2 + 3));
+    print_int(double!(0 - 3));
+
+    // An argument that is a variable, and one that is a call.
+    let n = 5;
+    print_int(double!(n));
+    print_int(bump!(41));
+
+    // A macro invocation is an expression, so it goes wherever one goes.
+    if five!() > 0 {
+        print("if condition");
+    }
+    let mut i = 0;
+    while i < grouped!() {
+        i = i + 1;
+    }
+    print_int(i);
+
+    // Statement position, with a statement body.
+    run_side_effect!();
+
+    // The one builtin macro that works: `vec!(e)` builds a ONE-ELEMENT ARRAY,
+    // not a growable vector. The name is misleading and the behaviour is
+    // measured. `println!`, `assert!` and `dbg!` are NOT here: each is refused
+    // or broken today, which tests/reject/ records.
+    let v = vec!(7);
+    print_int(v[0]);
+    let w = vec!(1 + 2);
+    print_int(w[0]);
+
+    print("macros_ok");
+}

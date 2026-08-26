@@ -1,0 +1,24 @@
+// NEGATIVE TEST -- a macro body may not contain a two-character operator (N3-12).
+//
+// `AstToken::Punct` holds ONE `char`, so `==` has no representation in a stored
+// macro body. It is not a matter of listing it: storing it as two puncts would
+// change the program, because `= =` is not `==`.
+//
+// WHAT IT USED TO DO: the parser's token table ended in
+// `_ => AstToken::Ident(format!("{:?}", token))`, so `==` became an IDENTIFIER
+// NAMED `EqEq` and the failure surfaced three phases later as
+// "Undefined variable or function: 'EqEq'" -- a name the author never wrote,
+// pointing at no line they can fix. Measured at e8eb1a9 on this exact body, and
+// on `assert!(1 == 1)`, which fails the same way for the same reason and is why
+// the `assert!` builtin cannot be used with the comparison it exists for.
+//
+// The same refusal covers `!=`, `<=`, `>=`, `&&`, `||`, `->`, `::`, `=>` and
+// `..`. Single-character operators are fine: `<`, `>`, `+`, `%`, `&` and the
+// rest round-trip, and tests/03_macros.pd uses several.
+macro is_five!(n) { $n == 5 }
+
+fn main() {
+    if is_five!(5) {
+        print("five");
+    }
+}

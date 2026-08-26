@@ -1,0 +1,26 @@
+// NEGATIVE TEST -- a macro body must write `$x`, not `x` (N3-12).
+//
+// THIS ONE IS THE HYGIENE DEFECT WEARING A DIFFERENT HAT, and it is why the
+// refusal is worth its weight. Substitution keys on `$name`. A bare `x` in the
+// body of `macro double!(x)` is therefore NOT the parameter: it is a free
+// identifier, and expansion is textual, so it resolves against whatever the
+// CALL SITE has in scope.
+//
+// Measured, compiling and running with no diagnostic:
+//     macro double!(x) { x * 2 }
+//     fn main() { let x = 3; print_int(double!(21)); }
+// printed 6. The argument 21 was discarded and the caller's own `x` was
+// doubled. With no `x` at the call site the same program failed with
+// "Undefined variable or function: 'x'", so whether this defect is loud or
+// silent depended on a variable name in a different file.
+//
+// Refused where the BODY is written, which is the line that is wrong. What is
+// NOT refused, and cannot be while expansion is textual, is a body reading a
+// caller name that is not a parameter -- that is N3-13, and it is measured and
+// reported rather than defended.
+macro double!(x) { x * 2 }
+
+fn main() {
+    let x = 3;
+    print_int(double!(21));
+}
