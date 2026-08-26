@@ -476,6 +476,31 @@ elif w == "pin-relocate-update":   # --update may record over an unapplied move
     # that looks untouched. That is the docstring's laundering, reached through the new
     # mechanism instead of around it.
     t = t.replace("        if pending:", "        if False:", 1)
+elif w == "pin-repin":         # --update may re-snapshot a cited range whose content changed
+    # The SAME-KEY half. `pending` declines when the old text is nowhere else, so without
+    # this the generator records a different piece of content under an untouched key and
+    # prints MOVED beside a zero exit -- a report, and a report is read once.
+    t = t.replace("        repinned, renumbered = changed, []",
+                  "        repinned, renumbered = [], []", 1)
+elif w == "pin-repin-renumber":    # a citation may be renumbered away from its own content
+    # The half `pending` cannot see AT ALL, because the pin key contains the line numbers:
+    # move the DOCUMENT first and the old key is dropped while a new one is added, so
+    # `changed` is empty and nothing compares the two. Eleven citations went through this
+    # door in one commit.
+    t = t.replace("            renumbered.append((k, old[k], hits[0], sorted(added_now[(p, d)])))",
+                  "            pass", 1)
+elif w == "pin-repin-flag":        # --allow-repin is inert, so the refusal has no door
+    # A gate with no way through is deleted the first time a legitimate re-pin arrives, and
+    # a legitimate re-pin is common. The flag is where the reading is ASSERTED; making it
+    # inert removes the record, not the strictness.
+    t = t.replace('        allow_repin = "--allow-repin" in sys.argv',
+                  "        allow_repin = False", 1)
+elif w == "pin-repin-benign":      # the guard turns absolute and refuses a CORRECT repair
+    # The skip that recognises a renumbering ONTO the lines the content actually moved to.
+    # Without it the everyday relocation the docstring prescribes needs --allow-repin, the
+    # flag gets typed reflexively, and it stops meaning that anything was read.
+    t = t.replace('            if f"{ns}-{ne}" in added_now[(p, d)]:',
+                  "            if False:", 1)
 elif w == "gate-kv-compare":   # key=value results are not compared at all
     t = t.replace("    for k, v in kv:", "    for k, v in []:", 1)
 elif w == "gate-substring":    # key=value by containment instead of by value
@@ -588,6 +613,10 @@ pin-relocate-unique|scripts/check_doc_evidence.py
 pin-relocate-width|scripts/check_doc_evidence.py
 pin-relocate-zero|scripts/check_doc_evidence.py
 pin-relocate-update|scripts/check_doc_evidence.py
+pin-repin|scripts/check_doc_evidence.py
+pin-repin-renumber|scripts/check_doc_evidence.py
+pin-repin-flag|scripts/check_doc_evidence.py
+pin-repin-benign|scripts/check_doc_evidence.py
 gate-substring|scripts/check_doc_evidence.py
 gate-kv-compare|scripts/check_doc_evidence.py
 gate-argv-grammar|scripts/gate-receipts.sh

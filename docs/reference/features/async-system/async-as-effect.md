@@ -302,7 +302,7 @@ no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 **7. `.await` is refused, and the lowering that used to be here is deleted.**
 Codegen for an await expression returns `await_unimplemented` at the construct's own span
 (`src/codegen/mod.rs:6003-6007`), and the type checker refuses it before that
-(`src/typeck/mod.rs:5010-5010`). `?` is the same shape: refused in codegen
+(`src/typeck/mod.rs:4740-4740`). `?` is the same shape: refused in codegen
 (`src/codegen/mod.rs:5991-5995`) and in the type checker (`src/typeck/mod.rs:4733-4733`).
 
 *Historical, and the reason those refusals exist — this paragraph described it in the present

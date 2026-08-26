@@ -44,7 +44,7 @@ such thing. Verified 2026-08-23 by reading each line:
 | C1 | `src/codegen/mod.rs:1776` | a comment about unrecognised constant values | yes |
 | C2 | `src/codegen/mod.rs:1699` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
 | C3 | `src/codegen/mod.rs:2009` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
-| — | `src/typeck/mod.rs:1616` | the private-import registration comment | no |
+| — | `src/typeck/mod.rs:1593` | the private-import registration comment | no |
 | — | `src/codegen/mod.rs:2176` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
 
 All three were **pre-existing on `main`** before the recursive-data-types work,
@@ -57,6 +57,36 @@ They belong to the `XFAIL` on `test_selective_import_does_not_import_the_rest`,
 owned by **M4 (cross-file module imports)**. Re-derive them when that row is paid:
 the walk they should name is the one M4 will rewrite, so re-deriving them now
 would just have to be done again.
+
+## Open: two more of the same class, found while repairing a re-snapshot
+
+Found 2026-08-26 while repairing eleven pins that `f8b5ff1` had re-snapshotted onto
+unrelated lines. Both rows below were ALREADY WRONG at `f8b5ff1^`, so neither was
+caused by that commit or by its repair; both were relocated BY CONTENT, which is
+what the amendment above says preserves a wrongness exactly.
+
+| # | Cites | What is actually there | Wrong? |
+|---|---|---|---|
+| C4 | `src/typeck/mod.rs:1693-1694` | `fields .iter()`, the walk over an enum variant's named fields — not an insert of any kind | yes |
+| C5 | the `src/typeck/mod.rs:1593` row of the C1–C3 table above | `self.functions.insert(func.name.clone(), func_type.clone());` — an insert, not "the private-import registration comment" as that row's third column says | the ROW's description is; the citation is not |
+
+C4 is cited from the doc comment in `src/typeck/mod.rs` beginning "Set imported
+modules for type checking", whose sentence reads "Every insert below is under the
+BARE name as well as the qualified one" and then names three ranges. The first two
+are inserts. The third is a field iteration, and was one before `f8b5ff1` moved it
+too — the relocation is arithmetic and the citation is still wrong, which is this
+file's whole thesis stated a fourth time.
+
+C5 is a defect in THIS FILE rather than in the compiler: the citation is right and
+the sentence describing it is not. It is recorded rather than quietly corrected
+because the third column is what a reader checks the citation AGAINST, so a silent
+edit would erase the evidence that the two ever disagreed — and a table that
+adjudicates citations is exactly the wrong place to demonstrate that a description
+can be rewritten without anybody knowing.
+
+Neither is re-derivable without deciding what the sentence SHOULD name, which is a
+reading and not an arithmetic. C4 belongs with the C1–C3 rows to **M4 (cross-file
+module imports)**: the insert sites its sentence is about are the ones M4 rewrites.
 
 ## Open: a second, stale definition of the AST
 

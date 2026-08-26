@@ -138,3 +138,7 @@ a pin whose content CHANGED is NOT relocated onto a coincidence of ANOTHER WIDTH
 a pin whose content appears TWICE is refused as AMBIGUOUS, naming both	kill	pin-relocate-unique
 a pin whose content is GONE fails; there is nothing to relocate to	kill	pin-relocate-zero
 --update refuses to record over an unapplied RELOCATION, and writes nothing	kill	pin-relocate-update
+--update refuses to RE-PIN a cited range whose content changed, and writes nothing	kill	pin-repin
+--update refuses a citation RENUMBERED away from its own content, and writes nothing	kill	pin-repin-renumber
+--allow-repin records the same run: the refusal is a gate, not a wall	kill	pin-repin-flag
+a citation renumbered ONTO its content is recorded with no flag at all	kill	pin-repin-benign

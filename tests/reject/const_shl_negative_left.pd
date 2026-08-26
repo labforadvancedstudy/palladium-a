@@ -1,0 +1,22 @@
+// NEGATIVE TEST -- a negative LEFT operand of `<<` has no value (N3-09).
+//
+// The count is 3 and the result would fit, so neither the count bound that owns
+// tests/reject/const_shift_out_of_range.pd nor the round-trip check that owns
+// tests/reject/const_shl_value_overflow.pd is what refuses this: C leaves
+// `-1 << 3` undefined however small the answer is, so there is nothing for this
+// compiler to compute that the C compiler is obliged to agree with. Refused
+// outright, naming the value.
+//
+// `>>` of a negative is only IMPLEMENTATION-defined -- every target this
+// compiler emits for arithmetic-shifts it, which is what Rust does here too --
+// so that direction stays ACCEPTED, and no fixture pins it: the accept side
+// pinned in tests/03_const_items.pd shifts non-negative values only.
+//
+// The left operand is written `(0 - 1)` so the negative value is produced by
+// the evaluator rather than by the literal. Measured: `-1 << 3` is refused with
+// the same diagnostic, so the guard is on the VALUE and not on the spelling.
+const X: i64 = (0 - 1) << 3;
+
+fn main() {
+    print_int(X);
+}

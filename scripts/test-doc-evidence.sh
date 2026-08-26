@@ -1390,6 +1390,142 @@ pin_check
 pin_case "a BLANK-EDGED pin relocates onto ONE trimmed span, not an AMBIGUOUS pair" 1 \
   "RELOCATED" "$PROBE_DIR/target.rs:2-3 -> $PROBE_DIR/target.rs:4-4"
 
+echo
+echo "== --update may not RE-SNAPSHOT a citation that already had content =="
+
+# CASES 43-46. THE SECOND DOOR INTO THE LAUNDERING MACHINE, and it was walked through.
+#
+# CASE 41 closes the door where the KEY SURVIVES: the document still names the old lines,
+# the content moved, and `--update` would fingerprint whatever moved in. It says nothing
+# about the door where the DOCUMENT MOVES FIRST. Rewrite `foo.rs:100` to `foo.rs:120`, THEN
+# run `--update`, and the old key is DROPPED while a new one is ADDED -- so `changed` is
+# empty, `pending` is empty, and the generator records whatever sits at 120 under a key
+# nobody can compare to anything. That is not hypothetical: `f8b5ff1` did it to ELEVEN
+# citations in this repository on 2026-08-26, the gate was green by construction afterwards
+# because the pins matched the wrong lines BY CONSTRUCTION, and the only thing that caught
+# it was a reviewer reading the TSV diff. NON-SEMANTIC did not fire either -- every one of
+# the wrong lines carried real code.
+#
+# So `--update` refuses to record a DIFFERENT piece of content under a citation that
+# already had one, in both spellings, unless `--allow-repin` says a reading was made:
+#   43  RE-PINNED   same key, content edited inside the cited range.
+#   44  RENUMBERED  key changed because the DOCUMENT chose new numbers, while the pinned
+#                   content is still in the file, uniquely, at lines it does not name.
+#   45  the flag    the same run, accepted, so the refusal is a GATE and not a WALL. A
+#                   refusal with no way through is one people delete.
+#   46  the SKIP    a citation renumbered ONTO the lines its content actually moved to is
+#                   the ordinary repair, and it must go through with no flag at all. Split
+#                   from 44 because it dies to a different mutation: 44 dies when the
+#                   renumbering half stops being collected, 46 dies when the skip that
+#                   recognises a CORRECT repair is removed and the guard turns absolute.
+#
+# All four use a SOLO pin file, for CASE 41's reason: with the tracked pins copied in, any
+# re-pin anywhere in the repository would also refuse and the case would pass without the
+# probe having caused anything.
+
+pin_update() {   # pin_update <flag-or-empty>  -> RC, OUT, and WROTE=yes|no
+  local before after
+  before=$(shasum -a 256 < "$TMP/pins.tsv")
+  # shellcheck disable=SC2086
+  OUT=$(python3 scripts/check_doc_evidence.py --update --pins "$TMP/pins.tsv" \
+          --allow "$TMP/allow.txt" $1 2>&1)
+  RC=$?
+  after=$(shasum -a 256 < "$TMP/pins.tsv")
+  if [ "$before" != "$after" ]; then WROTE=yes; else WROTE=no; fi
+}
+
+pin_solo() {     # pin_solo <cited-line>  -- probe.md cites it, and the pin file holds it alone
+  printf 'Calls take a per-call lifetime (`%s/target.rs:%s`).\n' \
+    "$PROBE_DIR" "$1" > "$PROBE_DIR/probe.md"
+  printf '# solo pin file for scripts/test-doc-evidence.sh\n' > "$TMP/pins.tsv"
+  pin_row "$1" >> "$TMP/pins.tsv"
+}
+
+# CASE 43. RE-PINNED. The document is untouched and the CITED LINE ITSELF is rewritten, so
+# the key survives with a different fingerprint and the old text is nowhere else in the file
+# -- which is what makes `pending` decline it and leaves this the only thing standing
+# between the generator and a silent re-snapshot. Recording it would be a READING ("the
+# citation still names the code its prose is about") performed by a generator.
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+pin_solo 2
+cat > "$T" <<'EOF'
+fn head() {}
+let scratch = self.output_dir.join("scratch");
+fn tail() {}
+EOF
+pin_update ""
+[ "$WROTE" = no ] || { RC=0; OUT="$OUT"$'\n(the pin file was rewritten)'; }
+pin_case "--update refuses to RE-PIN a cited range whose content changed, and writes nothing" 1 \
+  "REFUSED" "Nothing was written" "re-pinned  $PROBE_DIR/target.rs:2-2"
+
+# CASE 44. RENUMBERED. Nothing in the source moved; the DOCUMENT was rewritten to name a
+# different line. The old key is dropped, a new one is added, and neither is a MOVED -- the
+# exact shape `f8b5ff1` used. The destination is printed BECAUSE the content is still
+# findable: this is a repair someone can apply, not a judgement they have to make.
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+pin_solo 2
+printf 'Calls take a per-call lifetime (`%s/target.rs:3`).\n' "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+pin_update ""
+[ "$WROTE" = no ] || { RC=0; OUT="$OUT"$'\n(the pin file was rewritten)'; }
+pin_case "--update refuses a citation RENUMBERED away from its own content, and writes nothing" 1 \
+  "REFUSED" "Nothing was written" "renumbered $PROBE_DIR/target.rs:2-2" \
+  "the document now names 3-3, and this pin's content is at 2-2" \
+  "3-3 would be pinned as: fn tail() {}"
+
+# CASE 45. AND THE WAY THROUGH. Same tree, same run, one flag -- and it records. A gate with
+# no door is a gate somebody deletes the next time a legitimate re-pin comes along, and a
+# legitimate re-pin is COMMON (editing a line inside a cited range is one). What the flag
+# buys is not permission but a RECORD: it is a thing a reviewer can see in a command line
+# and ask about, which "the generator quietly recorded it" is not.
+#
+# THE STATE IS REBUILT RATHER THAN INHERITED FROM CASE 44, and that is not tidiness. Reusing
+# 44's tree makes this case depend on 44 having REFUSED: revert the renumbering half and 44
+# writes the pins, so this run finds nothing left to record and fails -- measured, and it
+# named `--allow-repin` while dying of something else entirely. That is the WRONG-CONTROL
+# shape scripts/test-doc-evidence-coverage.sh exists to refuse, reached from inside a probe.
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+pin_solo 2
+printf 'Calls take a per-call lifetime (`%s/target.rs:3`).\n' "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+pin_update "--allow-repin"
+[ "$WROTE" = yes ] || { RC=1; OUT="$OUT"$'\n(the pin file was NOT rewritten)'; }
+pin_case "--allow-repin records the same run: the refusal is a gate, not a wall" 0 "updated:"
+
+# CASE 46. THE SKIP, and it is the half that keeps this from being over-strict. Here the
+# SOURCE shifted and the document was corrected to match, so the new numbers ARE where the
+# content went -- the ordinary relocation this whole file prescribes (docstring step 2).
+# It must go through with NO flag: if the everyday repair needed `--allow-repin`, the flag
+# would be typed reflexively and would stop meaning anything, which is how a gate becomes
+# a habit instead of a check.
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+pin_solo 2
+cat > "$T" <<'EOF'
+// LC_ALL=C is set here so gcc's diagnostics are stable
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+printf 'Calls take a per-call lifetime (`%s/target.rs:3`).\n' "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+pin_update ""
+[ "$WROTE" = yes ] || { RC=1; OUT="$OUT"$'\n(the pin file was NOT rewritten)'; }
+pin_case "a citation renumbered ONTO its content is recorded with no flag at all" 0 \
+  "+ new pin  $PROBE_DIR/target.rs:3-3"
+
 rm -rf "$PROBE_DIR"
 
 echo "== the blank-target floor tests a PROPERTY, not a list of examples =="

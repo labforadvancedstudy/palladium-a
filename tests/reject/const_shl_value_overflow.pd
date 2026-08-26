@@ -1,0 +1,18 @@
+// NEGATIVE TEST -- the shift COUNT is in range and the VALUE still has no
+// answer (N3-09).
+//
+// 63 is a legal amount for an i64, so the count check that owns
+// tests/reject/const_shift_out_of_range.pd never fires here, and `checked_shl`
+// answers Some: it only checks the count. What comes out is i64::MIN, which is
+// not `1` scaled by 2^63 -- the number overflowed on the way. Measured before
+// the guard: this was accepted and printed -2147483648.
+//
+// The test is the ROUND TRIP -- a shift that fits is undone by shifting back --
+// so refusal names the operands rather than the bound. `1 << 62` fits, is
+// evaluated here and emitted for C to evaluate again, and is pinned in
+// tests/03_const_items.pd.
+const X: i64 = 1 << 63;
+
+fn main() {
+    print_int(X);
+}

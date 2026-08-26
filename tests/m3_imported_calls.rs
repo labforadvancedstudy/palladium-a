@@ -771,10 +771,10 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 //
 // THE OWNER IS M4, AND IT WAS M3 UNTIL THIS BRANCH MERGED `d2d5bd4`. That merge
 // restructured the milestones and split modules out into their own
-// (`docs/contributing/MILESTONES.md:988-994`, "M4 — Modules", which claims the
+// (`docs/contributing/MILESTONES.md:992-998`, "M4 — Modules", which claims the
 // module rows explicitly: "plus the corpus's one `xfail` … cross-file imports
 // — and the vacuous `12_modules_imports`"). M3 is now traits and generics
-// (`docs/contributing/MILESTONES.md:954`), which is not what these rows are
+// (`docs/contributing/MILESTONES.md:958`), which is not what these rows are
 // about.
 //
 // BOTH CITATIONS ABOVE WERE WRONG BEFORE THEY WERE MOVED, and are corrected
@@ -1217,7 +1217,7 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// `filter_module_info` (`src/resolver/mod.rs:105-118`) narrows the `exports`
 /// set and leaves `ast` complete — and `.exports` is read nowhere but its own
 /// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consumer
-/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1502-1502`,
+/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1479-1479`,
 /// `src/codegen/mod.rs:1776-1776`, `src/codegen/mod.rs:1699-1699`,
 /// `src/codegen/mod.rs:2009-2009`, `src/codegen/mod.rs:2933-2933`, and the borrow checker's
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
@@ -1363,7 +1363,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
 /// (`src/codegen/mod.rs:5558-5560`), while the type checker
-/// (`src/typeck/mod.rs:1616-1616`) and `register_imported_functions` both insert
+/// (`src/typeck/mod.rs:1593-1593`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
 /// With a matching signature the imported definition is merely silent dead code.
@@ -1372,7 +1372,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1616-1616 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:5558-5560 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1593-1593 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:5558-5560 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],

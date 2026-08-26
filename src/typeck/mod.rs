@@ -1225,7 +1225,7 @@ impl TypeChecker {
     ///
     /// Every insert below is under the BARE name as well as the qualified one
     /// (`src/typeck/mod.rs:1593-1594`, `src/typeck/mod.rs:1596-1598`,
-    /// `src/typeck/mod.rs:1716-1717`), and the map is last-writer-wins. So when two
+    /// `src/typeck/mod.rs:1693-1694`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's

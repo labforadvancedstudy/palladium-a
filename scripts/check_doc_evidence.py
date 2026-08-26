@@ -1906,6 +1906,84 @@ def main() -> int:
                   "citation to the lines above — the content is\nproved identical by hash, "
                   "so this is a renumbering and not a judgement — then re-run --update.")
             return 1
+        # A RE-SNAPSHOT IS NOT A RECORD OF A CHANGE, and until this existed `--update` could
+        # not tell the two apart. `pending` above catches the one shape where the KEY survives
+        # and the old content is still findable. Both halves of that are load-bearing, and both
+        # were walked around on 2026-08-26 by commit f8b5ff1: the citing documents were
+        # RENUMBERED first — a citation naming line 1161 of the type checker was rewritten to
+        # name line 1189 — so every old key was DROPPED and a new one ADDED, while `changed`
+        # was empty and `pending` was empty,
+        # and `--update` fingerprinted whatever now sat at the new lines. Eleven citations came
+        # to rest on `generic_structs: HashMap::new(),`, `a.0.cmp(&b.0)` and a guard comment,
+        # the gate went green by construction, and the only thing that caught it was a reviewer
+        # reading the TSV diff. NON-SEMANTIC did not fire either: the wrong lines all carried
+        # real code.
+        #
+        # So the two shapes are named together, because they are one question — DOES THIS RUN
+        # RECORD A DIFFERENT PIECE OF CONTENT UNDER A CITATION THAT ALREADY HAD ONE? —
+        # and the key is the wrong place to ask it:
+        #
+        #   RE-PINNED   same key, different fingerprint, and no unique relocation (so `pending`
+        #               declined it). The content at the cited lines changed. That may be
+        #               right, but it is a READING, and this file's whole thesis is that a
+        #               reading is not a thing a generator may perform silently.
+        #   RENUMBERED  the key changed because the DOCUMENT changed its line numbers, while
+        #               the pinned content is still in the file, uniquely, at lines the
+        #               document does NOT now name. That is a citation moved AWAY from its own
+        #               content — the f8b5ff1 shape — and the destination is printed, so the
+        #               repair is a renumbering rather than a search.
+        #
+        # `--allow-repin` is the deliberate step. It is not a way to skip the reading; it is
+        # where the reading is asserted, and it belongs in a commit message beside which
+        # citations were re-read and why. A legitimate re-pin is common — editing a line INSIDE
+        # a cited range is one — and it is exactly as common as the laundering, which is why
+        # the flag records a decision instead of the generator guessing there was one.
+        allow_repin = "--allow-repin" in sys.argv
+        repinned, renumbered = changed, []
+        # The spans this run would NEWLY pin, per (cited file, citing document). Not every
+        # span the document names: a document citing one file twenty times would print
+        # twenty numbers, nineteen of them untouched by this run, and a report that wide is
+        # one nobody finishes reading. The ADDED spans are the renumbering itself.
+        added_now: dict = {}
+        for p, s, d in added:
+            added_now.setdefault((p, d), set()).add(s)
+        for k in removed:
+            p, s, d = k
+            # A citation DELETED outright drops its key too, and its content is usually still
+            # in the file. That is not a renumbering and there is nothing to repair, so the
+            # shape is narrowed to a document that gave the same FILE new line numbers in
+            # this same run: only then has it chosen numbers, and only then can they be wrong.
+            if (p, d) not in added_now:
+                continue
+            hits = relocation_hits(p, s, old[k][0])
+            if len(hits) != 1:
+                continue
+            ns, ne, _ = hits[0]
+            if f"{ns}-{ne}" in added_now[(p, d)]:
+                continue        # the new numbers ARE where the content went: a correct repair
+            renumbered.append((k, old[k], hits[0], sorted(added_now[(p, d)])))
+        if (repinned or renumbered) and not allow_repin:
+            print(f"REFUSED: {len(repinned)} citation(s) would be RE-PINNED to different "
+                  f"content and {len(renumbered)} RENUMBERED away from theirs. "
+                  f"Nothing was written.")
+            for (p, s, d), (_, was_x), (_, now_x) in repinned:
+                print(f"  re-pinned  {p}:{s}  (cited by {d})")
+                print(f"      was: {was_x}")
+                print(f"      now: {now_x}")
+            for (p, s, d), (_, was_x), (ns, ne, body), fresh in renumbered:
+                print(f"  renumbered {p}:{s}  (cited by {d})")
+                print(f"      the document now names {', '.join(fresh)}, and this pin's "
+                      f"content is at {ns}-{ne}")
+                print(f"      pinned at {s}: {was_x}")
+                print(f"      that text is at {ns}-{ne}: {excerpt(body)}")
+                for f_s in fresh:
+                    print(f"      {f_s} would be pinned as: {new[(p, f_s, d)][1]}")
+            print("\nRead each pair. If the citation still names the code its prose is about, "
+                  "re-run with\n--allow-repin and say in the commit message which readings you "
+                  "made. If it does not,\nthe CITING DOCUMENT is what changes — for a "
+                  "renumbering the destination is printed above,\nand the content is proved "
+                  "identical by hash, so that repair is arithmetic and not judgement.")
+            return 1
         PINS.write_text(
             "# GENERATED by scripts/check-doc-evidence.sh --update. Do not edit by hand.\n"
             "# A fingerprint proves a cited range has not moved. It CANNOT prove the range\n"

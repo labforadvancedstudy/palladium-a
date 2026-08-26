@@ -687,7 +687,7 @@ Items (`src/parser/mod.rs:937`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`
 [N11](#n11-modules)'s file-based modules exist only as far as `import` reaches.
 
 **implemented — top-level `const` and `static`** (N3-09, N3-10), parsed by
-`src/parser/mod.rs:1910`, registered by `src/typeck/mod.rs:2218` and emitted by
+`src/parser/mod.rs:1910`, registered by `src/typeck/mod.rs:1851` and emitted by
 `src/codegen/mod.rs:2812`. Both take a MANDATORY type and a MANDATORY initialiser:
 
 ```ebnf
@@ -1112,7 +1112,7 @@ syntactic trap is worth stating: a `match` arm that is a block must not be follo
 and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4733-4733`, `.await` at
-`src/typeck/mod.rs:5010-5010`) and again by code generation (`?` at `src/codegen/mod.rs:5991-5995`,
+`src/typeck/mod.rs:4740-4740`) and again by code generation (`?` at `src/codegen/mod.rs:5991-5995`,
 `.await` at `src/codegen/mod.rs:6003-6007`), which is callable on its own.
 
 What they used to do:
@@ -1319,7 +1319,7 @@ One divergence remains, and two are closed:
 ([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
-checker derives its signature table from it (`src/typeck/mod.rs:1189-1189`) and so does the borrow
+checker derives its signature table from it (`src/typeck/mod.rs:1166-1166`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
 (`src/codegen/mod.rs:5558-5558`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:1507-1507`, corrected from line 251–575 of the pre-cleanup revision).
@@ -1630,8 +1630,12 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-patterns`
 (2026-08-26):
 
-**verified 80 · untranscribed 0 · vacuous 6 · xfail 1 · reject 87 · skip 2 · failures 0**, over 176
-fixtures. (Issue #42's first unit added `tests/03_const_items.pd` and `tests/03_static_items.pd`
+**verified 80 · untranscribed 0 · vacuous 6 · xfail 1 · reject 89 · skip 2 · failures 0**, over 178
+fixtures. (The round-3 review of `feat/m2-items` added the two `reject`s that pin the `<<`
+branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
+legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined
+however small the result — so reverting either guard alone now fails a fixture of its own.
+Issue #42's first unit added `tests/03_const_items.pd` and `tests/03_static_items.pd`
 for N3-09/N3-10 with five refusals beside them, `tests/reject/missing_return.pd` for N3-03, and
 turned `tests/02_types_enums.pd` from a `vacuous` row — seven `print` calls announcing that enums
 were unimplemented — into a `run` fixture that constructs and destructures a unit, a tuple and a
