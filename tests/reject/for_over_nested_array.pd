@@ -1,0 +1,28 @@
+// NEGATIVE TEST -- `for row in grid` over a nested array is refused (N4-10).
+//
+// Every other nested-array position compiles now (tests/02_types_nested_arrays.pd);
+// this one cannot, and the reason is that its loop variable would be an ARRAY.
+// C has no `long long row[2] = g[_i];` -- an array is not copyable by
+// assignment -- so there are exactly two things codegen could emit, and both
+// are wrong in a different way:
+//
+//   * drop the inner dimension and declare `long long row = g[_i];`, which is
+//     what this loop used to do. gcc: "incompatible pointer to integer
+//     conversion initializing 'long long' with an expression of type
+//     'long long[2]'", followed by "subscripted value is not an array" on the
+//     body's `row[0]`. Three diagnostics about generated code, for four lines
+//     of source.
+//   * bind a pointer, `long long *row = g[_i];`, which compiles and RUNS --
+//     and makes `row` alias the grid, so `row[0] = 1` reaches the original.
+//     `for row in g` says `row` is a value; silently making it a view is the
+//     worse of the two, because nothing fails.
+//
+// So it is refused by name, and the diagnostic hands over the loop that does
+// work: index the rows. Iterating a FLAT array is unaffected and stays pinned
+// by tests/04_control_flow_for.pd.
+fn main() {
+    let grid: [[i64; 2]; 2] = [[1, 2], [3, 4]];
+    for row in grid {
+        print_int(row[0]);
+    }
+}

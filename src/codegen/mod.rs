@@ -942,6 +942,76 @@ impl CodeGenerator {
         format!("{}[{}]{}", base, size, inner_dims)
     }
 
+    /// The shape of a (possibly nested) array type: the element type at the
+    /// bottom, and every dimension in C DECLARATOR order — outermost first.
+    /// `[[i64; 2]; 3]` -> (`i64`, `[3, 2]`).
+    ///
+    /// THE ONE DERIVATION for every position that declares an array — locals,
+    /// parameters, struct fields — because C puts the brackets after the
+    /// identifier and a type STRING cannot be spliced there. `type_to_c` built
+    /// `long long[2]` for the element and each declaration site then wrote it
+    /// in front of the name, producing `long long[2] grid[3]`: C the author
+    /// never wrote, refused by gcc with "brackets are not allowed here; to
+    /// declare an array, place the brackets after the identifier". The AST
+    /// nests outside-in and C reads left-to-right from the identifier, so
+    /// walking down and appending is the order C wants, unreversed.
+    fn array_shape(ty: &Type) -> (&Type, Vec<&ArraySize>) {
+        let mut dims = Vec::new();
+        let mut current = ty;
+        while let Type::Array(elem_type, size) = current {
+            dims.push(size);
+            current = elem_type.as_ref();
+        }
+        (current, dims)
+    }
+
+    /// One declared dimension as a C declaration prints it.
+    ///
+    /// A const generic prints as its own name, which is not in scope in the
+    /// generated C — kept because that is what this pass has always emitted
+    /// here, and it reaches gcc as "use of undeclared identifier" rather than
+    /// as a wrong number. Positions that cannot afford that (a parameter, an
+    /// inner dimension) ask `array_len_of_size` instead and refuse.
+    fn c_array_size(size: &ArraySize) -> String {
+        match size {
+            ArraySize::Literal(n) => n.to_string(),
+            ArraySize::ConstParam(name) => name.clone(),
+            ArraySize::Expr(_) => "0".to_string(), // TODO: evaluate expression
+        }
+    }
+
+    /// The bracket suffix of a declarator whose dimensions must ALL be
+    /// numbers: `[[i64; 2]; 3]` -> `"[3][2]"`.
+    ///
+    /// Every dimension after the first is part of the element type in C — it
+    /// decides the stride of `g[i]` — so a length this pass cannot resolve has
+    /// no honest spelling there. `[0]` is a wrong stride, and the const
+    /// generic's own name is not declared in the generated C. The `what` is
+    /// how the refusal names the thing being declared, e.g. "the local `grid`".
+    fn inner_dims_for_declarator(inner: &[&ArraySize], what: &str) -> Result<String> {
+        let mut suffix = String::new();
+        for size in inner {
+            match Self::array_len_of_size(size) {
+                ArrayLen::Proven(n) => suffix.push_str(&format!("[{}]", n)),
+                ArrayLen::Unproven(spelling) => {
+                    return Err(CompileError::CodegenError {
+                        message: format!(
+                            "cannot declare {}: the inner array length is written as `{}`, \
+                             which this compiler does not resolve (const generic array \
+                             lengths are dropped - see \
+                             docs/specification/language-spec.md §5). Only the OUTERMOST \
+                             length of a nested array may be left open, because every \
+                             inner one is what makes a row a row. Give the inner array a \
+                             literal length, e.g. `[[i64; 4]; 3]`.",
+                            what, spelling
+                        ),
+                    })
+                }
+            }
+        }
+        Ok(suffix)
+    }
+
     /// Split an inferred C type into its base type and its array dimensions:
     /// `"long long[3][2]"` -> `("long long", "[3][2]")`.
     fn split_array_dims(c_type: &str) -> (String, String) {
@@ -2251,13 +2321,22 @@ impl CodeGenerator {
             Type::Bool => "int".to_string(),
             Type::String => "const char*".to_string(),
             Type::Unit => "void".to_string(),
-            Type::Array(elem_type, size) => {
-                let size_str = match size {
-                    ArraySize::Literal(n) => n.to_string(),
-                    ArraySize::ConstParam(name) => name.clone(),
-                    ArraySize::Expr(_) => "0".to_string(), // TODO: evaluate expression
-                };
-                format!("{}[{}]", self.type_to_c(elem_type), size_str)
+            // N4-10. The dimensions come out in DECLARATOR order — outermost
+            // first — because that is the order every reader of this string
+            // already assumes (`split_array_dims`, `array_of`, and the index
+            // rule in `try_infer_expr_type_in`, which drops the FIRST bracket
+            // to type `xs[i]`). Composing on the way back up the recursion,
+            // `format!("{}[{}]", type_to_c(elem), size)`, printed
+            // `[[i64; 2]; 3]` inside-out as `long long[2][3]`, so a reader that
+            // dropped the first bracket called a row of length 2 a
+            // `long long[3]`.
+            Type::Array(_, _) => {
+                let (base, dims) = Self::array_shape(ty);
+                let mut c_type = self.type_to_c(base);
+                for size in dims {
+                    c_type.push_str(&format!("[{}]", Self::c_array_size(size)));
+                }
+                c_type
             }
             Type::Custom(name) => {
                 // First check if it's a type alias
@@ -2716,16 +2795,26 @@ impl CodeGenerator {
                 Type::F32 => "float",
                 Type::Bool => "int",
                 Type::String => "const char*",
-                Type::Array(elem_type, size) => {
-                    // For arrays in structs, we need to handle them specially
-                    let elem_c_type = self.type_to_c(elem_type.as_ref());
-                    let size_str = match size {
-                        ArraySize::Literal(n) => n.to_string(),
-                        ArraySize::ConstParam(name) => name.clone(),
-                        ArraySize::Expr(_) => "0".to_string(), // TODO: evaluate expression
-                    };
-                    self.output
-                        .push_str(&format!("{} {}[{}];\n", elem_c_type, field_name, size_str));
+                // A field is a declarator too (N4-10): the brackets go after the
+                // field name, outermost first, and a nested array field has
+                // more than one. Emitting the element's TYPE string put them in
+                // front of the name — `long long[2] cells[2];` — which gcc
+                // refuses inside a struct for the same reason it refuses it for
+                // a local.
+                Type::Array(_, _) => {
+                    let (base, dims) = Self::array_shape(field_type);
+                    let (outer, inner) = dims.split_first().expect("Array has a dimension");
+                    let inner_suffix = Self::inner_dims_for_declarator(
+                        inner,
+                        &format!("the field `{}` of `{}`", field_name, struct_def.name),
+                    )?;
+                    self.output.push_str(&format!(
+                        "{} {}[{}]{};\n",
+                        self.type_to_c(base),
+                        field_name,
+                        Self::c_array_size(outer),
+                        inner_suffix
+                    ));
                     continue;
                 }
                 Type::Unit => "void",
@@ -3008,13 +3097,25 @@ impl CodeGenerator {
     /// `const char* const xs[N]` (the slot cannot be reassigned) and not
     /// `const char* xs[N]` (only the characters are read-only, `xs[i] = other`
     /// still compiles).
+    ///
+    /// N4-10, THE NESTED CASE, AND WHY IT IS SPELLED THIS WAY. A parameter of
+    /// type `[[i64; 2]; 3]` is written `long long g[3][2]`, which C reads as
+    /// `long long (*g)[2]` — a pointer to a row of 2, exactly the decay of the
+    /// caller's object. The alternative spellings were both worse: `long long**`
+    /// is a different data layout (an array of pointers) and would read garbage,
+    /// and writing the pointer form by hand buys nothing the array form does not
+    /// already give, while losing the documented outer length that
+    /// `for x in g` and the call site read. So the existing convention — keep
+    /// the brackets, let C decay them — goes one level deeper unchanged, and
+    /// `g[i][j]` in the body is the same subscript it is on a local.
     fn array_param_declarator(
         elem_type: &Type,
         size: &ArraySize,
         param_name: &str,
         is_const: bool,
     ) -> Result<String> {
-        let elem_c_type = match elem_type {
+        let (base_elem, inner_dims) = Self::array_shape(elem_type);
+        let elem_c_type = match base_elem {
             Type::I32 => "int",
             Type::I64 => "long long",
             Type::U32 => "unsigned int",
@@ -3030,10 +3131,17 @@ impl CodeGenerator {
             _ => {
                 return Err(CompileError::Generic(format!(
                     "Unsupported array element type in function parameter: {:?}",
-                    elem_type
+                    base_elem
                 )))
             }
         };
+        // The inner dimensions of a nested array parameter are part of the
+        // element type C computes strides from, so they may not be left open
+        // the way the outermost one below may.
+        let inner_suffix = Self::inner_dims_for_declarator(
+            &inner_dims,
+            &format!("the parameter `{}`", param_name),
+        )?;
         // A trailing `*` means the qualifier belongs after it: `const char*
         // const`, not `const const char*`.
         let elem_decl = match (is_const, elem_c_type.ends_with('*')) {
@@ -3050,7 +3158,10 @@ impl CodeGenerator {
             ArrayLen::Proven(n) => n.to_string(),
             ArrayLen::Unproven(_) => String::new(),
         };
-        Ok(format!("{} {}[{}]", elem_decl, param_name, size_str))
+        Ok(format!(
+            "{} {}[{}]{}",
+            elem_decl, param_name, size_str, inner_suffix
+        ))
     }
 
     /// Build the C signature line for a function, without a trailing `{` or `;`.
@@ -3522,13 +3633,27 @@ impl CodeGenerator {
                 // bracket suffix of the declarator, e.g. "[3]".
                 let (c_type, array_dims) = match ty {
                     Some(t) => match t {
-                        Type::Array(elem_type, size) => {
-                            let size_val = match size {
-                                ArraySize::Literal(n) => *n,
-                                ArraySize::ConstParam(_) => 0, // TODO: resolve const param
-                                ArraySize::Expr(_) => 0,       // TODO: evaluate expression
+                        // N4-10. Every dimension goes after the NAME, outermost
+                        // first, and a nested one has more than one. The
+                        // outermost keeps the length rule this position always
+                        // had (an unresolved length declares `[0]`); the inner
+                        // ones cannot, because an inner length is the stride of
+                        // a row rather than a count of them.
+                        Type::Array(_, _) => {
+                            let (base, dims) = Self::array_shape(t);
+                            let (outer, inner) = dims.split_first().expect("Array has a dimension");
+                            let outer_val = match Self::array_len_of_size(outer) {
+                                ArrayLen::Proven(n) => n,
+                                ArrayLen::Unproven(_) => 0, // TODO: resolve const param
                             };
-                            (self.type_to_c(elem_type), format!("[{}]", size_val))
+                            let suffix = Self::inner_dims_for_declarator(
+                                inner,
+                                &format!("the local `{}`", name),
+                            )?;
+                            (
+                                self.type_to_c(base),
+                                format!("[{}]{}", outer_val, suffix),
+                            )
                         }
                         _ => (self.type_to_c(t), String::new()),
                     },
@@ -3974,7 +4099,41 @@ impl CodeGenerator {
                         //   visit one element and stop without saying anything;
                         // - `sizeof` survives only where it is actually
                         //   correct: a local array object, whose size C knows.
-                        let (elem_type, _) = Self::split_array_dims(&self.infer_expr_type(iter));
+                        let iter_type = self.infer_expr_type(iter);
+                        let (elem_type, dims) = Self::split_array_dims(&iter_type);
+                        // N4-10. THE ELEMENT OF A NESTED ARRAY IS A ROW, AND C
+                        // CANNOT COPY ONE INTO A LOOP VARIABLE: there is no
+                        // `long long row[2] = g[_i];` in C. The two ways to
+                        // emit something anyway are both wrong — dropping the
+                        // inner dimension declares `long long row = g[_i];`,
+                        // which gcc refuses as an int/pointer conversion, and
+                        // binding a pointer would make `row` ALIAS the grid, so
+                        // a write through it reaches the original. `for row in
+                        // g` says row is a value. Refused by name instead.
+                        if dims.matches('[').count() > 1 {
+                            let name = match iter {
+                                Expr::Ident(name) => name.as_str(),
+                                _ => "<expression>",
+                            };
+                            let row_dims = &dims[dims[1..].find('[').map(|i| i + 1).unwrap_or(0)..];
+                            return Err(CompileError::CodegenError {
+                                message: format!(
+                                    "cannot iterate `{}`: each step would bind a whole row \
+                                     (`{}{}`), and a row is an array, which C cannot copy \
+                                     into a loop variable. Loop over the indices and read \
+                                     the rows through them: \
+                                     `for i in 0..{} {{ let v = {}[i][0]; }}`.",
+                                    name,
+                                    elem_type,
+                                    row_dims,
+                                    match self.array_len_of_expr(iter) {
+                                        Some(ArrayLen::Proven(n)) => n.to_string(),
+                                        _ => "<len>".to_string(),
+                                    },
+                                    name
+                                ),
+                            });
+                        }
                         let len = self.array_len_of_expr(iter);
                         let storage = match iter {
                             Expr::Ident(name) => self.array_bindings.get(name).map(|b| b.storage),

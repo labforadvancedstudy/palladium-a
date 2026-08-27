@@ -1,0 +1,91 @@
+// Test 02: Type System - Nested arrays (N4-10)
+// `[[T; M]; N]` as a local, as a parameter, as a struct field, and three deep.
+//
+// Every position here is a C DECLARATOR position, and that is what this fixture
+// pins: the brackets belong after the NAME, outermost first — `long long
+// grid[3][2]`. Composing them into the type instead produced `long long[2]
+// grid[3]`, which gcc refuses outright ("brackets are not allowed here"), so
+// every line below was an accepted program that died in the backend.
+//
+// A row is `g[i]` and an element is `g[i][j]`; both are read and written here,
+// and a row is passed to a function that takes the element type.
+
+struct Board {
+    cells: [[i64; 2]; 2],
+}
+
+fn pick(g: [[i64; 2]; 3]) -> i64 {
+    return g[1][0];
+}
+
+fn bump(g: &mut [[i64; 2]; 3]) {
+    g[2][1] = g[2][1] + 100;
+}
+
+fn row_sum(r: [i64; 2]) -> i64 {
+    return r[0] + r[1];
+}
+
+fn deep(c: [[[i64; 2]; 2]; 2]) -> i64 {
+    return c[1][0][1];
+}
+
+fn main() {
+    // A nested array local, read at both indices.
+    let grid: [[i64; 2]; 3] = [[1, 2], [3, 4], [5, 6]];
+    print("Local:");
+    print_int(grid[0][0]);
+    print_int(grid[1][0]);
+    print_int(grid[2][1]);
+
+    // Writing one element leaves the rest of the grid alone.
+    let mut counts: [[i64; 3]; 2] = [[0, 0, 0], [0, 0, 0]];
+    counts[0][2] = 7;
+    counts[1][0] = 9;
+    print("\nWritten:");
+    print_int(counts[0][2]);
+    print_int(counts[1][0]);
+    print_int(counts[0][0]);
+
+    // No annotation: the shape comes from the literal.
+    let inferred = [[10, 20], [30, 40]];
+    print("\nInferred:");
+    print_int(inferred[1][0]);
+
+    // A repeat of a repeat.
+    let zeros = [[0; 3]; 2];
+    print("\nRepeat:");
+    print_int(zeros[1][2]);
+
+    // Parameters. C decays `[[i64; 2]; 3]` to `long long (*)[2]`, so the callee
+    // reads the caller's object, and `&mut` writes through to it.
+    print("\nParameter:");
+    print_int(pick(grid));
+    let mut writable: [[i64; 2]; 3] = [[1, 2], [3, 4], [5, 6]];
+    bump(&mut writable);
+    print_int(writable[2][1]);
+
+    // A ROW has the element type, so it passes to a `[i64; 2]` parameter.
+    print("\nRow:");
+    print_int(row_sum(grid[2]));
+
+    // Three levels.
+    let cube: [[[i64; 2]; 2]; 2] = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]];
+    print("\nThree deep:");
+    print_int(cube[0][1][1]);
+    print_int(deep(cube));
+
+    // A struct field is a declarator too.
+    let mut board: Board = Board { cells: [[1, 2], [3, 4]] };
+    board.cells[1][0] = 30;
+    print("\nStruct field:");
+    print_int(board.cells[0][1]);
+    print_int(board.cells[1][0]);
+
+    // Strings nest the same way: the element slot is a pointer, and the
+    // dimensions still go after the name.
+    let names: [[String; 2]; 2] = [["ada", "grace"], ["alan", "john"]];
+    print("\nStrings:");
+    print(names[0][1]);
+    print(names[1][0]);
+}

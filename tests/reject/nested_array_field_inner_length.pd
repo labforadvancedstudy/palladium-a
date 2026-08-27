@@ -1,0 +1,21 @@
+// NEGATIVE TEST -- a nested array struct FIELD whose inner length is a const
+// generic is refused (N4-10).
+//
+// The sibling of tests/reject/nested_array_param_inner_length.pd, one
+// declaration position over, and it needs its own fixture because the two
+// positions build their declarators in two different places: a parameter in
+// `array_param_declarator`, a field in `generate_struct`. The reason is the
+// same and it is C's: every dimension after the first decides a stride, so a
+// length this compiler cannot resolve has no honest spelling there.
+//
+// Unlike the parameter, a field is not merely uncallable -- there is no
+// program at all that can name this struct's shape, because the length does
+// not exist. It is refused at the declaration rather than at some later use,
+// which is where a reader can still see the `N` they wrote.
+struct Board {
+    cells: [[i64; N]; 2],
+}
+
+fn main() {
+    print_int(1);
+}
