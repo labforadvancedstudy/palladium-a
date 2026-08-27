@@ -480,14 +480,14 @@ elif w == "pin-repin":         # --update may re-snapshot a cited range whose co
     # The SAME-KEY half. `pending` declines when the old text is nowhere else, so without
     # this the generator records a different piece of content under an untouched key and
     # prints MOVED beside a zero exit -- a report, and a report is read once.
-    t = t.replace("        repinned, renumbered = changed, []",
-                  "        repinned, renumbered = [], []", 1)
+    t = t.replace("        repinned, renumbered, replaced = changed, [], []",
+                  "        repinned, renumbered, replaced = [], [], []", 1)
 elif w == "pin-repin-renumber":    # a citation may be renumbered away from its own content
     # The half `pending` cannot see AT ALL, because the pin key contains the line numbers:
     # move the DOCUMENT first and the old key is dropped while a new one is added, so
     # `changed` is empty and nothing compares the two. Eleven citations went through this
     # door in one commit.
-    t = t.replace("            renumbered.append((k, old[k], hits[0], sorted(added_now[(p, d)])))",
+    t = t.replace("            renumbered.append((k, old[k], hits[0], fresh))",
                   "            pass", 1)
 elif w == "pin-repin-flag":        # --allow-repin is inert, so the refusal has no door
     # A gate with no way through is deleted the first time a legitimate re-pin arrives, and
@@ -495,6 +495,19 @@ elif w == "pin-repin-flag":        # --allow-repin is inert, so the refusal has 
     # inert removes the record, not the strictness.
     t = t.replace('        allow_repin = "--allow-repin" in sys.argv',
                   "        allow_repin = False", 1)
+elif w == "pin-repin-zero-hit":     # renumbered AND rewritten in one run falls through
+    # The COMPOUND laundering. The key changes, so `changed` is empty and the same-key half
+    # never sees it; the old text is gone, so the relocation search offers nothing. Before
+    # the third verdict existed this reached PINS.write_text through a bare `continue` --
+    # a guard for the cases somebody thought of, found by round 4 of external review.
+    t = t.replace("                replaced.append((k, old[k], [], fresh))",
+                  "                pass", 1)
+elif w == "pin-repin-multi-hit":   # a non-unique move is recorded instead of refused
+    # The CHECK refuses to choose between two copies of a pinned range -- that is its
+    # AMBIGUOUS verdict. Without this the GENERATOR chose none and recorded anyway, which
+    # is the same decision made silently one layer down.
+    t = t.replace("                replaced.append((k, old[k], hits, fresh))",
+                  "                pass", 1)
 elif w == "pin-repin-benign":      # the guard turns absolute and refuses a CORRECT repair
     # The skip that recognises a renumbering ONTO the lines the content actually moved to.
     # Without it the everyday relocation the docstring prescribes needs --allow-repin, the
@@ -617,6 +630,8 @@ pin-repin|scripts/check_doc_evidence.py
 pin-repin-renumber|scripts/check_doc_evidence.py
 pin-repin-flag|scripts/check_doc_evidence.py
 pin-repin-benign|scripts/check_doc_evidence.py
+pin-repin-zero-hit|scripts/check_doc_evidence.py
+pin-repin-multi-hit|scripts/check_doc_evidence.py
 gate-substring|scripts/check_doc_evidence.py
 gate-kv-compare|scripts/check_doc_evidence.py
 gate-argv-grammar|scripts/gate-receipts.sh

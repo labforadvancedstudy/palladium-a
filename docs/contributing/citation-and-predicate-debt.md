@@ -88,6 +88,41 @@ Neither is re-derivable without deciding what the sentence SHOULD name, which is
 reading and not an arithmetic. C4 belongs with the C1–C3 rows to **M4 (cross-file
 module imports)**: the insert sites its sentence is about are the ones M4 rewrites.
 
+## Open: the re-pin guard cannot see a citation MERGED onto an existing one
+
+Not a wrong citation — a **declared hole in a gate**, recorded here because the
+alternative is that it lives in one reviewer's memory. Raised by round 4 of external
+review of the `--allow-repin` guard, 2026-08-26.
+
+| # | Shape | Verdict today |
+|---|---|---|
+| G1 | A document that cites a file at two places rewrites the first citation to name the second's lines, merging two claims onto one range. At the pin level that is a removal with NO addition — the destination key already existed — so `--update` reads it as an outright deletion and records it silently, although the dropped pin's content is still uniquely in the file and nothing now names it. | recorded, not refused |
+
+**Why it is open, and why that is a decision rather than an omission.** A merge and an
+ordinary deletion produce a byte-identical pin diff: one key removed, none added, the
+content still findable. Refusing the merge therefore refuses every ordinary deletion of a
+citation whose target still exists, and documents do that legitimately. Measured on this
+corpus, **291 of 420 pins** sit in a (file, document) pair that has a second pin *and* have
+uniquely locatable content — so two thirds of every citation deletion would come back
+refused, and a flag that has to be typed for two thirds of ordinary edits stops recording
+that anybody read anything.
+
+**What would close it, and why it is not reachable from here.** The one real discriminator
+is the document's TEXTUAL citation count for that file: a merge preserves it — one citation
+stops naming its own lines and starts naming another's — while a deletion lowers it. `docs/citation-pins.tsv` is a SET of keys and stores no
+counts, so the *before* number does not exist in any input `--update` reads. Recovering it
+means reading git, which would make the generator non-hermetic for this one shape. Closing
+G1 therefore starts with a schema change to the pin file, not with a cleverer predicate —
+which is the shape this repository has three times decided to refuse (see the find-expression
+grammar in `scripts/check_doc_evidence.py`, narrowed after three rounds of clever fixes).
+
+**What is NOT open.** The harm a merge does — two claims resting on one range — is owned by
+`collect_enumeration_repeats`, whose 240-character window was itself set by measurement after
+the broad rule flagged 41 groups that were every one legitimate. And the scope decision is
+mechanically pinned: `scripts/test-doc-evidence.sh` carries a `guard`-role control asserting
+that a dropped citation IS recorded, so widening the guard turns that control red and forces
+this row to be answered rather than quietly outgrown.
+
 ## Open: a second, stale definition of the AST
 
 | # | Artifact | Problem |

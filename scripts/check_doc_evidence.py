@@ -1932,6 +1932,36 @@ def main() -> int:
         #               document does NOT now name. That is a citation moved AWAY from its own
         #               content — the f8b5ff1 shape — and the destination is printed, so the
         #               repair is a renumbering rather than a search.
+        #   REPLACED /  the document renumbered AND the old content is at ZERO or SEVERAL
+        #   AMBIGUOUS   places, so there is no destination to hand anyone. Round 4 of external
+        #               review found this falling THROUGH: the first version of this loop read
+        #               `if len(hits) != 1: continue`, which is the compound laundering —
+        #               renumber the citation and edit the pinned line in the SAME run — and a
+        #               non-unique move, both walking straight past the guard to
+        #               PINS.write_text. A guard whose unhandled cases fall through to the
+        #               write is a guard for the cases somebody thought of.
+        #
+        # OUT OF SCOPE, DELIBERATELY AND WITH A NUMBER: a citation MERGED onto a span the same
+        # document already cites (`foo.rs:10` rewritten to `foo.rs:20` where `20` was already
+        # pinned) produces a removal with NO addition, so the `added_now` test below reads it
+        # as an outright deletion and records it — while the content of `10` is still uniquely
+        # in the file and the document no longer names it. Raised by round 4 of review, and
+        # left open on purpose:
+        #   * a MERGE and an ORDINARY DELETION are byte-identical in the pin diff (one key
+        #     removed, none added, content still findable), so refusing one refuses both, and
+        #     documents do legitimately drop citations whose targets still exist;
+        #   * measured on this corpus, 291 of 420 pins sit in a (file, document) pair with a
+        #     second pin and have uniquely locatable content — deleting any one of them would
+        #     be refused, which is the habituation that makes a flag stop meaning anything;
+        #   * the one real discriminator, the document's TEXTUAL citation count for that file
+        #     (a merge preserves it, a deletion lowers it), needs a BEFORE number the pin file
+        #     structurally cannot supply: it is a set of keys and stores no counts, so
+        #     recovering it means reading git and making this generator non-hermetic.
+        # The harm — two claims resting on one range — is owned above by
+        # `collect_enumeration_repeats`, whose window was itself narrowed by measurement, and it
+        # is recorded as debt in
+        # docs/contributing/citation-and-predicate-debt.md, and pinned as a `guard` control in
+        # scripts/test-doc-evidence.sh so widening the scope cannot happen quietly.
         #
         # `--allow-repin` is the deliberate step. It is not a way to skip the reading; it is
         # where the reading is asserted, and it belongs in a commit message beside which
@@ -1939,7 +1969,7 @@ def main() -> int:
         # a cited range is one — and it is exactly as common as the laundering, which is why
         # the flag records a decision instead of the generator guessing there was one.
         allow_repin = "--allow-repin" in sys.argv
-        repinned, renumbered = changed, []
+        repinned, renumbered, replaced = changed, [], []
         # The spans this run would NEWLY pin, per (cited file, citing document). Not every
         # span the document names: a document citing one file twenty times would print
         # twenty numbers, nineteen of them untouched by this run, and a report that wide is
@@ -1955,17 +1985,36 @@ def main() -> int:
             # this same run: only then has it chosen numbers, and only then can they be wrong.
             if (p, d) not in added_now:
                 continue
+            # A PIN THAT NEVER HELD CONTENT HAS NONE TO REPLACE. MISSING-FILE and
+            # OUT-OF-RANGE are sentinels rather than digests, so nothing can hash to them and
+            # all three verdicts below are unanswerable for such a row — flagging one would
+            # accuse a document of laundering a fingerprint that was never taken.
+            # (NON-SEMANTIC never reaches the pin file: the refusal above returns first.)
+            if not PIN_FINGERPRINT.match(old[k][0] or ""):
+                continue
+            fresh = sorted(added_now[(p, d)])
             hits = relocation_hits(p, s, old[k][0])
-            if len(hits) != 1:
+            # ZERO. The document renumbered AND the pinned text is gone from the file: the
+            # compound move, where each half alone is handled and the pair used to be
+            # handled by neither. Nothing can be printed as a destination, so nothing is —
+            # and that is exactly why it may not be recorded silently.
+            if not hits:
+                replaced.append((k, old[k], [], fresh))
+                continue
+            # SEVERAL. The text is still there and no longer identifies a place. Picking the
+            # first is how a citation lands on the wrong copy, which the check's own
+            # AMBIGUOUS verdict refuses to do; the generator does not get to do it either.
+            if len(hits) > 1:
+                replaced.append((k, old[k], hits, fresh))
                 continue
             ns, ne, _ = hits[0]
             if f"{ns}-{ne}" in added_now[(p, d)]:
                 continue        # the new numbers ARE where the content went: a correct repair
-            renumbered.append((k, old[k], hits[0], sorted(added_now[(p, d)])))
-        if (repinned or renumbered) and not allow_repin:
+            renumbered.append((k, old[k], hits[0], fresh))
+        if (repinned or renumbered or replaced) and not allow_repin:
             print(f"REFUSED: {len(repinned)} citation(s) would be RE-PINNED to different "
-                  f"content and {len(renumbered)} RENUMBERED away from theirs. "
-                  f"Nothing was written.")
+                  f"content, {len(renumbered)} RENUMBERED away from theirs, and "
+                  f"{len(replaced)} REPLACED or AMBIGUOUS. Nothing was written.")
             for (p, s, d), (_, was_x), (_, now_x) in repinned:
                 print(f"  re-pinned  {p}:{s}  (cited by {d})")
                 print(f"      was: {was_x}")
@@ -1978,11 +2027,33 @@ def main() -> int:
                 print(f"      that text is at {ns}-{ne}: {excerpt(body)}")
                 for f_s in fresh:
                     print(f"      {f_s} would be pinned as: {new[(p, f_s, d)][1]}")
+            for (p, s, d), (_, was_x), hits, fresh in replaced:
+                where = ("nowhere in the file" if not hits else
+                         "at " + ", ".join(f"{a}-{b}" for a, b, _ in hits))
+                print(f"  replaced   {p}:{s}  (cited by {d})")
+                print(f"      the document now names {', '.join(fresh)}, and this pin's "
+                      f"content is {where}")
+                print(f"      pinned at {s}: {was_x}")
+                for a, b, body in hits:
+                    print(f"      candidate {a}-{b}: {excerpt(body)}")
+                for f_s in fresh:
+                    n_fp, n_x = new[(p, f_s, d)]
+                    print(f"      {f_s} would be pinned as: {n_x or n_fp}")
             print("\nRead each pair. If the citation still names the code its prose is about, "
                   "re-run with\n--allow-repin and say in the commit message which readings you "
                   "made. If it does not,\nthe CITING DOCUMENT is what changes — for a "
                   "renumbering the destination is printed above,\nand the content is proved "
                   "identical by hash, so that repair is arithmetic and not judgement.")
+            if replaced:
+                print("\nA REPLACED/AMBIGUOUS row carries LESS than that, and the wording is "
+                      "deliberate. With the\nold content at zero or several places there is no "
+                      "destination to hand you, so NOTHING HERE\nPROVES THE DROPPED CITATION "
+                      "AND THE ADDED ONE ARE THE SAME CITATION: an unrelated deletion\nand an "
+                      "unrelated addition, in one document, naming one file, in one run, land "
+                      "here too, and\nso does a citation whose target was renumbered and "
+                      "rewritten together. This run cannot tell\nthose apart — which is the "
+                      "reason it refuses rather than reporting. Read the rows, then\neither "
+                      "correct the citation or re-run with --allow-repin.")
             return 1
         PINS.write_text(
             "# GENERATED by scripts/check-doc-evidence.sh --update. Do not edit by hand.\n"

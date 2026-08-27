@@ -1526,6 +1526,142 @@ pin_update ""
 pin_case "a citation renumbered ONTO its content is recorded with no flag at all" 0 \
   "+ new pin  $PROBE_DIR/target.rs:3-3"
 
+# CASES 47-49. THE CASES THE GUARD DID NOT HANDLE, WHICH IS TO SAY THE ONES IT LET THROUGH.
+#
+# The renumbering loop CASES 44-46 exercise read `if len(hits) != 1: continue`, and round 4
+# of external review asked what happens on the other two counts. The answer was: `continue`,
+# then the loop ends, then `PINS.write_text` -- a silent re-pin, arrived at through the guard
+# written to stop exactly that. Both counts are reachable and neither is exotic:
+#
+#   ZERO      the document was renumbered AND the pinned line was rewritten IN THE SAME RUN.
+#             Each half alone is caught (44 and 43); the COMPOUND was caught by neither,
+#             because the key changes (so `changed` is empty) and the old text is gone (so
+#             the relocation search has nothing to offer).
+#   SEVERAL   the pinned text is still there and no longer identifies a place. The CHECK
+#             refuses to choose between copies -- that is its AMBIGUOUS verdict, CASE 39 --
+#             and the generator was choosing none and recording anyway.
+#
+# A guard whose unhandled counts fall through TO THE WRITE is a guard for the cases somebody
+# thought of. These three pin the other two counts and the way out of them.
+#
+# WHAT THE THIRD VERDICT DOES NOT CLAIM, and the probe does not assert it either: with the
+# old content at zero or several places, nothing proves the dropped citation and the added
+# one are THE SAME CITATION. An unrelated deletion and an unrelated addition in one document
+# naming one file land here too. That is a reason to refuse, not a reason to label -- and the
+# refusal text says so in those words.
+
+# CASE 47. ZERO. Renumbered and rewritten together, which is the compound the two earlier
+# halves each miss on their own.
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+pin_solo 2
+cat > "$T" <<'EOF'
+fn head() {}
+let scratch = self.output_dir.join("scratch");
+fn tail() {}
+EOF
+printf 'Calls take a per-call lifetime (`%s/target.rs:3`).\n' "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+pin_update ""
+[ "$WROTE" = no ] || { RC=0; OUT="$OUT"$'\n(the pin file was rewritten)'; }
+pin_case "--update refuses a citation RENUMBERED whose content is GONE, and writes nothing" 1 \
+  "REFUSED" "Nothing was written" "replaced   $PROBE_DIR/target.rs:2-2" \
+  "the document now names 3-3, and this pin's content is nowhere in the file" \
+  "THE SAME CITATION"
+
+# CASE 48. AND THE WAY OUT OF IT. The third verdict has to be reachable by decision as well
+# as by accident, or the first person to meet a real compound edit deletes the guard. State
+# rebuilt rather than inherited from CASE 47, for CASE 45's reason: inheriting would make
+# this die whenever 47 stops refusing, under a name that says nothing about the flag.
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+pin_solo 2
+cat > "$T" <<'EOF'
+fn head() {}
+let scratch = self.output_dir.join("scratch");
+fn tail() {}
+EOF
+printf 'Calls take a per-call lifetime (`%s/target.rs:3`).\n' "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+pin_update "--allow-repin"
+[ "$WROTE" = yes ] || { RC=1; OUT="$OUT"$'\n(the pin file was NOT rewritten)'; }
+pin_case "--allow-repin records a REPLACED citation too, so the third verdict has a door" 0 \
+  "updated:"
+
+# CASE 49. SEVERAL. The pinned text is duplicated and the citation renumbered, so the search
+# answers with two places and no destination. Both candidates are NAMED -- a verdict the
+# author can act on is one that says what the choice is between, and choosing for them is
+# precisely what CASE 39 refuses on the check side.
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+pin_solo 2
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+let build_dir = self.output_dir.join("build");
+EOF
+printf 'Calls take a per-call lifetime (`%s/target.rs:3`).\n' "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+pin_update ""
+[ "$WROTE" = no ] || { RC=0; OUT="$OUT"$'\n(the pin file was rewritten)'; }
+pin_case "--update refuses a RENUMBERED citation whose content is no longer unique, naming both" 1 \
+  "REFUSED" "Nothing was written" "replaced   $PROBE_DIR/target.rs:2-2" \
+  "this pin's content is at 2-2, 4-4" "candidate 2-2:" "candidate 4-4:"
+
+# CASE 50. THE SCOPE, PINNED AS A CONTROL RATHER THAN LEFT AS AN ACCIDENT. A `guard` row:
+# nothing is supposed to kill it, and if a later change to the guard DOES, that change has
+# widened the scope and owes the argument below a new answer.
+#
+# THE SHAPE. A document citing `foo.rs:10` and `foo.rs:20` rewrites the first to `:20`,
+# merging two claims onto one range. At the PIN LEVEL that is a removal with NO addition --
+# `20-20` was already there -- so `(p, d) not in added_now` treats it as an outright deletion
+# and records it, even though the content of `10-10` is still uniquely in the file and the
+# document no longer names it. Round 4 of external review raised it; this case is what keeps
+# the answer from being silent.
+#
+# WHY IT IS OUT OF SCOPE AND NOT MERELY UNIMPLEMENTED -- three reasons, one of them measured:
+#
+#   1. A MERGE AND AN ORDINARY DELETION ARE BYTE-IDENTICAL IN THE PIN DIFF. Both are "one key
+#      removed, none added, content still findable". This case is spelled as the DELETION for
+#      exactly that reason: refusing the merge means refusing this, and documents legitimately
+#      drop citations whose targets still exist.
+#   2. MEASURED, ON THIS CORPUS: 291 of 420 pins (69%) sit in a (file, document) pair with a
+#      second pin AND have uniquely locatable content, so deleting any ONE of them would be
+#      refused. A guard that fires on two thirds of every ordinary deletion is a guard whose
+#      flag gets typed reflexively -- the habituation CASE 46 exists to prevent.
+#   3. THE ONE REAL DISCRIMINATOR IS STRUCTURALLY UNAVAILABLE HERE. A merge preserves the
+#      document's TEXTUAL citation count for that file (`:10` became `:20`) while a deletion
+#      lowers it. The pin file is a SET of keys and stores no counts, so the "before" number
+#      does not exist in any input `--update` reads; recovering it would mean reading git,
+#      which would make the generator non-hermetic for one shape.
+#
+# The harm the merge does -- two claims resting on one range -- is real and is owned by a
+# DIFFERENT check: `collect_enumeration_repeats`, whose window was itself narrowed by
+# measurement after the broad rule flagged 41 groups that were all legitimate. Recorded as
+# debt in docs/contributing/citation-and-predicate-debt.md rather than absorbed.
+cat > "$T" <<'EOF'
+fn head() {}
+let build_dir = self.output_dir.join("build");
+fn tail() {}
+EOF
+printf 'Calls take a per-call lifetime (`%s/target.rs:2`).\nAnd it ends here (`%s/target.rs:3`).\n' \
+  "$PROBE_DIR" "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+printf '# solo pin file for scripts/test-doc-evidence.sh\n' > "$TMP/pins.tsv"
+pin_row 2 >> "$TMP/pins.tsv"
+pin_row 3 >> "$TMP/pins.tsv"
+printf 'And it ends here (`%s/target.rs:3`).\n' "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+pin_update ""
+[ "$WROTE" = yes ] || { RC=1; OUT="$OUT"$'\n(the pin file was NOT rewritten)'; }
+pin_case "a citation DROPPED while the document still cites the file is recorded, not refused" 0 \
+  "- dropped  $PROBE_DIR/target.rs:2-2"
+
 rm -rf "$PROBE_DIR"
 
 echo "== the blank-target floor tests a PROPERTY, not a list of examples =="

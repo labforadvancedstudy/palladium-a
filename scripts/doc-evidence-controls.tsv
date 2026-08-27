@@ -142,3 +142,7 @@ a pin whose content is GONE fails; there is nothing to relocate to	kill	pin-relo
 --update refuses a citation RENUMBERED away from its own content, and writes nothing	kill	pin-repin-renumber
 --allow-repin records the same run: the refusal is a gate, not a wall	kill	pin-repin-flag
 a citation renumbered ONTO its content is recorded with no flag at all	kill	pin-repin-benign
+--update refuses a citation RENUMBERED whose content is GONE, and writes nothing	kill	pin-repin-zero-hit
+--allow-repin records a REPLACED citation too, so the third verdict has a door	kill	pin-repin-flag
+--update refuses a RENUMBERED citation whose content is no longer unique, naming both	kill	pin-repin-multi-hit
+a citation DROPPED while the document still cites the file is recorded, not refused	guard	the merge/deletion shape is OUT OF SCOPE by measurement -- 291 of 420 pins would have an ordinary deletion refused; widening the guard must change this row and the debt ledger together
