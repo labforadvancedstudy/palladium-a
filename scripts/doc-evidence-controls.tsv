@@ -145,4 +145,4 @@ a citation renumbered ONTO its content is recorded with no flag at all	kill	pin-
 --update refuses a citation RENUMBERED whose content is GONE, and writes nothing	kill	pin-repin-zero-hit
 --allow-repin records a REPLACED citation too, so the third verdict has a door	kill	pin-repin-flag
 --update refuses a RENUMBERED citation whose content is no longer unique, naming both	kill	pin-repin-multi-hit
-a citation DROPPED while the document still cites the file is recorded, not refused	guard	the merge/deletion shape is OUT OF SCOPE by measurement -- 291 of 420 pins would have an ordinary deletion refused; widening the guard must change this row and the debt ledger together
+a citation DROPPED while the document still cites the file is recorded, not refused	guard	the merge/deletion shape is UNADOPTED, not unreachable: an after-state discriminator exists (a merge leaves a duplicate) and its false-refusal surface measures 124 of 420 pins, 29.5%, 2026-08-27 -- against 291 of 420 for the pin-level predicate. Adopting it makes this row a kill; widening the guard must change this row and the debt ledger together

@@ -1946,17 +1946,31 @@ def main() -> int:
         # pinned) produces a removal with NO addition, so the `added_now` test below reads it
         # as an outright deletion and records it — while the content of `10` is still uniquely
         # in the file and the document no longer names it. Raised by round 4 of review, and
-        # left open on purpose:
+        # UNADOPTED, and that is a different word from unreachable — see below:
         #   * a MERGE and an ORDINARY DELETION are byte-identical in the pin diff (one key
         #     removed, none added, content still findable), so refusing one refuses both, and
         #     documents do legitimately drop citations whose targets still exist;
-        #   * measured on this corpus, 291 of 420 pins sit in a (file, document) pair with a
-        #     second pin and have uniquely locatable content — deleting any one of them would
-        #     be refused, which is the habituation that makes a flag stop meaning anything;
-        #   * the one real discriminator, the document's TEXTUAL citation count for that file
-        #     (a merge preserves it, a deletion lowers it), needs a BEFORE number the pin file
-        #     structurally cannot supply: it is a set of keys and stores no counts, so
-        #     recovering it means reading git and making this generator non-hermetic.
+        #   * so the pin-level predicate is far too wide: 291 of 420 pins sit in a (file,
+        #     document) pair with a second pin AND have uniquely locatable content, which means
+        #     DELETING ANY ONE OF THOSE 291 WOULD BE REFUSED. That is an ELIGIBILITY count over
+        #     the corpus, not a rate at which anyone deletes anything — what it measures is how
+        #     much of the corpus the predicate would put behind the flag;
+        #   * A DISCRIMINATOR DOES EXIST, IN INPUTS THIS FUNCTION ALREADY READS. An earlier
+        #     version of this comment said the opposite — that closing the shape needed a
+        #     BEFORE count the pin file cannot supply, so it started with a schema change or
+        #     with git. The BEFORE count is indeed absent, but the conclusion did not follow:
+        #     `collect_citations` reads the raw documents and discards MULTIPLICITY only at its
+        #     last line (`return sorted(set(out))`), so an AFTER-state proxy is available
+        #     without reading anything new — a merge LEAVES A DUPLICATE, and the duplicate is
+        #     visible now. Refuted by round-5 review; recorded because a false impossibility
+        #     claim is worse than the hole it was excusing.
+        #   * MEASURED on this corpus, 2026-08-27: 465 textual citations collapse to 420
+        #     distinct, and 42 (file, span, document) triples are already cited twice or more
+        #     — but the conjunct is "the document now cites SOME span of that file twice", so
+        #     the surface is every pin in such a pair: 124 of 420, 29.5%. Better than 291, and
+        #     still one deletion in three behind the flag, across 10 documents that duplicate a
+        #     citation for entirely ordinary reasons (a claim in prose restated in an `#[ignore]`
+        #     reason). That is why it is not adopted YET, not why it cannot be.
         # The harm — two claims resting on one range — is owned above by
         # `collect_enumeration_repeats`, whose window was itself narrowed by measurement, and it
         # is recorded as debt in
@@ -2026,7 +2040,10 @@ def main() -> int:
                 print(f"      pinned at {s}: {was_x}")
                 print(f"      that text is at {ns}-{ne}: {excerpt(body)}")
                 for f_s in fresh:
-                    print(f"      {f_s} would be pinned as: {new[(p, f_s, d)][1]}")
+                    n_fp, n_x = new[(p, f_s, d)]
+                    # `or n_fp`: a MISSING-FILE or OUT-OF-RANGE row has an empty excerpt, and
+                    # printing nothing at all reads as "it would pin a blank line".
+                    print(f"      {f_s} would be pinned as: {n_x or n_fp}")
             for (p, s, d), (_, was_x), hits, fresh in replaced:
                 where = ("nowhere in the file" if not hits else
                          "at " + ", ".join(f"{a}-{b}" for a, b, _ in hits))

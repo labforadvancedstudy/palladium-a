@@ -1626,33 +1626,48 @@ pin_case "--update refuses a RENUMBERED citation whose content is no longer uniq
 # document no longer names it. Round 4 of external review raised it; this case is what keeps
 # the answer from being silent.
 #
-# WHY IT IS OUT OF SCOPE AND NOT MERELY UNIMPLEMENTED -- three reasons, one of them measured:
+# WHY IT IS UNADOPTED -- three reasons, two of them measured, and the third was WRONG once:
 #
 #   1. A MERGE AND AN ORDINARY DELETION ARE BYTE-IDENTICAL IN THE PIN DIFF. Both are "one key
 #      removed, none added, content still findable". This case is spelled as the DELETION for
 #      exactly that reason: refusing the merge means refusing this, and documents legitimately
 #      drop citations whose targets still exist.
-#   2. MEASURED, ON THIS CORPUS: 291 of 420 pins (69%) sit in a (file, document) pair with a
-#      second pin AND have uniquely locatable content, so deleting any ONE of them would be
-#      refused. A guard that fires on two thirds of every ordinary deletion is a guard whose
-#      flag gets typed reflexively -- the habituation CASE 46 exists to prevent.
-#   3. THE ONE REAL DISCRIMINATOR IS STRUCTURALLY UNAVAILABLE HERE. A merge preserves the
-#      document's TEXTUAL citation count for that file (`:10` became `:20`) while a deletion
-#      lowers it. The pin file is a SET of keys and stores no counts, so the "before" number
-#      does not exist in any input `--update` reads; recovering it would mean reading git,
-#      which would make the generator non-hermetic for one shape.
+#   2. THE PIN-LEVEL PREDICATE IS FAR TOO WIDE, measured on this corpus: 291 of 420 pins sit in
+#      a (file, document) pair with a second pin AND have uniquely locatable content, so
+#      DELETING ANY ONE OF THOSE 291 WOULD BE REFUSED. That is an ELIGIBILITY count -- how much
+#      of the corpus goes behind the flag -- not a rate at which anyone deletes anything; an
+#      earlier wording said "two thirds of every deletion", which read as a frequency and was
+#      wrong to. A flag typed that often is the habituation CASE 46 exists to prevent.
+#   3. A DISCRIMINATOR DOES EXIST, AND REASON 3 USED TO DENY IT. It said the discriminator --
+#      the document's TEXTUAL citation count for that file, which a merge preserves and a
+#      deletion lowers -- needed a BEFORE number no input holds, so closing this "starts with a
+#      schema change". The BEFORE number is genuinely absent; the conclusion was not. The
+#      AFTER state is enough, because A MERGE LEAVES A DUPLICATE, and `collect_citations`
+#      discards multiplicity only at its last line (`return sorted(set(out))`) -- it is reading
+#      the raw documents already. Refuted by round-5 review; kept in the open, because a false
+#      impossibility claim retires a question instead of parking it.
+#      MEASURED 2026-08-27: 465 textual citations -> 420 distinct; 42 (file, span, document)
+#      triples cited twice or more. The conjunct asks whether the DOCUMENT duplicates SOME span
+#      of that file, so the surface is every pin in such a pair: 124 of 420, 29.5%, over 10
+#      documents. Much better than 291 and still one deletion in three behind the flag, so:
+#      unadopted at 29.5%, not unreachable. Adopting it needs its own case, its own mutation,
+#      and THIS CONTRACT REWRITTEN -- the row would stop being a `guard`.
 #
 # The harm the merge does -- two claims resting on one range -- is real and is owned by a
 # DIFFERENT check: `collect_enumeration_repeats`, whose window was itself narrowed by
 # measurement after the broad rule flagged 41 groups that were all legitimate. Recorded as
 # debt in docs/contributing/citation-and-predicate-debt.md rather than absorbed.
+#
+# The probe document is written ONCE, in its AFTER state. `pin_row` fingerprints target.rs and
+# never reads probe.md, so the two-citation BEFORE state it used to be given here was written
+# and then overwritten with nothing in between -- dead setup that read as a step.
 cat > "$T" <<'EOF'
 fn head() {}
 let build_dir = self.output_dir.join("build");
 fn tail() {}
 EOF
-printf 'Calls take a per-call lifetime (`%s/target.rs:2`).\nAnd it ends here (`%s/target.rs:3`).\n' \
-  "$PROBE_DIR" "$PROBE_DIR" > "$PROBE_DIR/probe.md"
+# BEFORE: the document cited both lines and both were pinned -- expressed by the two pin_row
+# calls, which is where that state actually lives.
 printf '# solo pin file for scripts/test-doc-evidence.sh\n' > "$TMP/pins.tsv"
 pin_row 2 >> "$TMP/pins.tsv"
 pin_row 3 >> "$TMP/pins.tsv"

@@ -92,29 +92,50 @@ module imports)**: the insert sites its sentence is about are the ones M4 rewrit
 
 Not a wrong citation — a **declared hole in a gate**, recorded here because the
 alternative is that it lives in one reviewer's memory. Raised by round 4 of external
-review of the `--allow-repin` guard, 2026-08-26.
+review of the `--allow-repin` guard, 2026-08-26; its *justification* was refuted and
+rewritten by round 5, 2026-08-27, which is the more important half of this row.
 
 | # | Shape | Verdict today |
 |---|---|---|
-| G1 | A document that cites a file at two places rewrites the first citation to name the second's lines, merging two claims onto one range. At the pin level that is a removal with NO addition — the destination key already existed — so `--update` reads it as an outright deletion and records it silently, although the dropped pin's content is still uniquely in the file and nothing now names it. | recorded, not refused |
+| G1 | A document that cites a file at two places rewrites the first citation to name the second's lines, merging two claims onto one range. At the pin level that is a removal with NO addition — the destination key already existed — so `--update` reads it as an outright deletion and records it silently, although the dropped pin's content is still uniquely in the file and nothing now names it. | recorded, not refused — **UNADOPTED, false-refusal surface 29.5% (124 of 420 pins), measured 2026-08-27** |
 
 **Why it is open, and why that is a decision rather than an omission.** A merge and an
 ordinary deletion produce a byte-identical pin diff: one key removed, none added, the
 content still findable. Refusing the merge therefore refuses every ordinary deletion of a
 citation whose target still exists, and documents do that legitimately. Measured on this
 corpus, **291 of 420 pins** sit in a (file, document) pair that has a second pin *and* have
-uniquely locatable content — so two thirds of every citation deletion would come back
-refused, and a flag that has to be typed for two thirds of ordinary edits stops recording
-that anybody read anything.
+uniquely locatable content, which means **deleting any one of those 291 would be refused**.
+That figure is deletion ELIGIBILITY — how much of the corpus the predicate puts behind the
+flag — and not a rate at which anybody deletes anything; the earlier wording ("two thirds of
+every citation deletion") read as a frequency and was wrong to.
 
-**What would close it, and why it is not reachable from here.** The one real discriminator
-is the document's TEXTUAL citation count for that file: a merge preserves it — one citation
-stops naming its own lines and starts naming another's — while a deletion lowers it. `docs/citation-pins.tsv` is a SET of keys and stores no
-counts, so the *before* number does not exist in any input `--update` reads. Recovering it
-means reading git, which would make the generator non-hermetic for this one shape. Closing
-G1 therefore starts with a schema change to the pin file, not with a cleverer predicate —
-which is the shape this repository has three times decided to refuse (see the find-expression
-grammar in `scripts/check_doc_evidence.py`, narrowed after three rounds of clever fixes).
+**A DISCRIMINATOR DOES EXIST, and the previous version of this row denied it.** It said the
+only discriminator was the document's TEXTUAL citation count for that file, that the *before*
+number is absent from every input `--update` reads, and therefore that closing G1 "starts
+with a schema change to the pin file". The middle clause is true and the conclusion is not.
+`collect_citations` in `scripts/check_doc_evidence.py` reads the raw documents and discards
+multiplicity only at its last line, `return sorted(set(out))` — so an AFTER-STATE proxy is
+available with no new input and no git: **a merge leaves a duplicate**, and the duplicate is
+visible in the tree as it stands. The candidate predicate is
+
+> removal with no addition **∧** the removed key's content still uniquely locatable **∧**
+> the document now textually cites some span of that file two or more times.
+
+Recorded prominently because an impossibility claim that turns out to be false is worse than
+the hole it was excusing: it retires the question instead of parking it.
+
+**Measured, 2026-08-27, and why it is still UNADOPTED.** 465 textual citations collapse to
+420 distinct pins; 42 `(file, span, document)` triples are already cited twice or more. But
+the third conjunct asks whether the *document* duplicates **some** span of that file, so the
+false-refusal surface is every pin in such a pair: **124 of 420 = 29.5%**, spread over 10
+documents. (The narrower 42/420 = 10% figure counts the duplicated triples themselves, which
+is not what the conjunct tests — a removed pin is by definition no longer cited, so it can
+never be the duplicate.) 29.5% is a large improvement on 291/420 and is still one deletion in
+three behind the flag, in documents that duplicate citations for entirely ordinary reasons —
+`tests/m3_imported_calls.rs` alone holds 14, a claim made in prose and restated in an
+`#[ignore]` reason. So the choice is a live trade with a number on it, not a closed door:
+adopt when the surface is narrowed further (a tighter third conjunct, or the *before* count
+recorded in the pin file), and re-measure before adopting.
 
 **What is NOT open.** The harm a merge does — two claims resting on one range — is owned by
 `collect_enumeration_repeats`, whose 240-character window was itself set by measurement after
