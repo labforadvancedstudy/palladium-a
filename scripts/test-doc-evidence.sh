@@ -1646,7 +1646,9 @@ pin_case "--update refuses a RENUMBERED citation whose content is no longer uniq
 #      discards multiplicity only at its last line (`return sorted(set(out))`) -- it is reading
 #      the raw documents already. Refuted by round-5 review; kept in the open, because a false
 #      impossibility claim retires a question instead of parking it.
-#      MEASURED 2026-08-27: 465 textual citations -> 420 distinct; 42 (file, span, document)
+#      MEASURED 2026-08-27 BY `scripts/measure-g1-surface.py`, which regenerates every figure
+#      in this reason (and the per-document breakdown it does not repeat) from the corpus:
+#      465 textual citations -> 420 distinct; 42 (file, span, document)
 #      triples cited twice or more; 124 pins sit in a pair holding a duplicate. 124 IS AN
 #      UPPER BOUND AND WAS SHIPPED AS THE SURFACE, which is the same overcount this reason
 #      corrected one round earlier, one step further along: a removal event takes ALL textual
