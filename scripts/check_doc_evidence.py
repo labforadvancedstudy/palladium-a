@@ -1965,12 +1965,18 @@ def main() -> int:
         #     visible now. Refuted by round-5 review; recorded because a false impossibility
         #     claim is worse than the hole it was excusing.
         #   * MEASURED on this corpus, 2026-08-27: 465 textual citations collapse to 420
-        #     distinct, and 42 (file, span, document) triples are already cited twice or more
-        #     — but the conjunct is "the document now cites SOME span of that file twice", so
-        #     the surface is every pin in such a pair: 124 of 420, 29.5%. Better than 291, and
-        #     still one deletion in three behind the flag, across 10 documents that duplicate a
-        #     citation for entirely ordinary reasons (a claim in prose restated in an `#[ignore]`
-        #     reason). That is why it is not adopted YET, not why it cannot be.
+        #     distinct, and 42 (file, span, document) triples are already cited twice or more.
+        #     124 pins sit in a pair that holds a duplicate, and that is an UPPER BOUND, not
+        #     the surface — an earlier version of this comment shipped it as the surface. A
+        #     removal event takes ALL textual occurrences of one pin, so the after-state has
+        #     to be simulated per candidate, and two groups drop out: −22 pins that are the
+        #     SOLE duplicated triple of their pair (removing one destroys the only witness
+        #     conjunct 3 could have had — the same "cannot be its own duplicate" reasoning,
+        #     applied one step further), and −12 whose content is not uniquely locatable, so
+        #     conjunct 2 is false. SURFACE = 90 of 420, 21.4%, over 7 documents. Stated as
+        #     ELIGIBILITY and not as a rate: DELETING ANY ONE OF THOSE 90 WOULD BE REFUSED.
+        #     How often anyone deletes a citation is not measured here and no number in this
+        #     comment is about it. That is why it is not adopted YET, not why it cannot be.
         # The harm — two claims resting on one range — is owned above by
         # `collect_enumeration_repeats`, whose window was itself narrowed by measurement, and it
         # is recorded as debt in

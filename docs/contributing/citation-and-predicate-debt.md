@@ -97,7 +97,7 @@ rewritten by round 5, 2026-08-27, which is the more important half of this row.
 
 | # | Shape | Verdict today |
 |---|---|---|
-| G1 | A document that cites a file at two places rewrites the first citation to name the second's lines, merging two claims onto one range. At the pin level that is a removal with NO addition — the destination key already existed — so `--update` reads it as an outright deletion and records it silently, although the dropped pin's content is still uniquely in the file and nothing now names it. | recorded, not refused — **UNADOPTED, false-refusal surface 29.5% (124 of 420 pins), measured 2026-08-27** |
+| G1 | A document that cites a file at two places rewrites the first citation to name the second's lines, merging two claims onto one range. At the pin level that is a removal with NO addition — the destination key already existed — so `--update` reads it as an outright deletion and records it silently, although the dropped pin's content is still uniquely in the file and nothing now names it. | recorded, not refused — **UNADOPTED, false-refusal surface 90 of 420 pins = 21.4%, measured 2026-08-27** (124 is the pair-level upper bound: −22 sole-duplicate, −12 non-unique) |
 
 **Why it is open, and why that is a decision rather than an omission.** A merge and an
 ordinary deletion produce a byte-identical pin diff: one key removed, none added, the
@@ -125,17 +125,35 @@ Recorded prominently because an impossibility claim that turns out to be false i
 the hole it was excusing: it retires the question instead of parking it.
 
 **Measured, 2026-08-27, and why it is still UNADOPTED.** 465 textual citations collapse to
-420 distinct pins; 42 `(file, span, document)` triples are already cited twice or more. But
-the third conjunct asks whether the *document* duplicates **some** span of that file, so the
-false-refusal surface is every pin in such a pair: **124 of 420 = 29.5%**, spread over 10
-documents. (The narrower 42/420 = 10% figure counts the duplicated triples themselves, which
-is not what the conjunct tests — a removed pin is by definition no longer cited, so it can
-never be the duplicate.) 29.5% is a large improvement on 291/420 and is still one deletion in
-three behind the flag, in documents that duplicate citations for entirely ordinary reasons —
-`tests/m3_imported_calls.rs` alone holds 14, a claim made in prose and restated in an
-`#[ignore]` reason. So the choice is a live trade with a number on it, not a closed door:
-adopt when the surface is narrowed further (a tighter third conjunct, or the *before* count
-recorded in the pin file), and re-measure before adopting.
+420 distinct pins; 42 `(file, span, document)` triples are already cited twice or more; 124
+pins sit in a `(file, document)` pair that holds a duplicate.
+
+**124 is the UPPER BOUND, not the surface, and this row shipped it as the surface for one
+round.** That is the same overcount it had just corrected in someone else's number, one step
+further along. A removal event takes **all** textual occurrences of a pin, so the after-state
+has to be simulated per candidate rather than read off the current tree. Doing that, two
+groups drop out:
+
+| | dropped | why |
+|---|---|---|
+| conjunct 3 fails | **22** | the pin is the SOLE duplicated triple of its pair, so removing it destroys the only witness the conjunct could have had — a pin cannot be its own duplicate, and here it cannot be its pair's either |
+| conjunct 2 fails | **12** | the pinned content is not uniquely locatable, so `relocation_hits` does not answer 1 |
+| fail both | 0 | — |
+
+22 + 12 + 90 = 124, so the **false-refusal surface is 90 of 420 = 21.4%**, spread over 7
+documents (the "10 documents" in the previous version described the 124-set).
+`tests/m3_imported_calls.rs` holds 26 of the 90 and `docs/specification/language-spec.md` 34.
+The narrower 42/420 figure a reviewer first proposed counts the duplicated triples themselves,
+which is not what the conjunct tests either.
+
+**Read every one of these as ELIGIBILITY, never as a frequency.** *Deleting any one of those
+90 citations would be refused* — that is the whole claim. How often anybody actually deletes a
+citation is not measured here, and no number in this row is about it; an earlier phrasing
+("one deletion in three") read as a rate and was wrong to.
+
+So the choice is a live trade with a number on it, not a closed door: adopt when the surface
+is narrowed further (a tighter third conjunct, or the *before* count recorded in the pin
+file), and re-measure before adopting — 21.4% is measured on today's corpus and moves with it.
 
 **What is NOT open.** The harm a merge does — two claims resting on one range — is owned by
 `collect_enumeration_repeats`, whose 240-character window was itself set by measurement after

@@ -1647,11 +1647,18 @@ pin_case "--update refuses a RENUMBERED citation whose content is no longer uniq
 #      the raw documents already. Refuted by round-5 review; kept in the open, because a false
 #      impossibility claim retires a question instead of parking it.
 #      MEASURED 2026-08-27: 465 textual citations -> 420 distinct; 42 (file, span, document)
-#      triples cited twice or more. The conjunct asks whether the DOCUMENT duplicates SOME span
-#      of that file, so the surface is every pin in such a pair: 124 of 420, 29.5%, over 10
-#      documents. Much better than 291 and still one deletion in three behind the flag, so:
-#      unadopted at 29.5%, not unreachable. Adopting it needs its own case, its own mutation,
-#      and THIS CONTRACT REWRITTEN -- the row would stop being a `guard`.
+#      triples cited twice or more; 124 pins sit in a pair holding a duplicate. 124 IS AN
+#      UPPER BOUND AND WAS SHIPPED AS THE SURFACE, which is the same overcount this reason
+#      corrected one round earlier, one step further along: a removal event takes ALL textual
+#      occurrences of a pin, so the after-state must be simulated PER CANDIDATE. Two groups
+#      then drop out -- 22 pins that are the SOLE duplicated triple of their pair (removing
+#      one destroys the only witness conjunct 3 could have had) and 12 whose content is not
+#      uniquely locatable (conjunct 2 false); 0 fail both, 22 + 12 + 90 = 124. SURFACE = 90
+#      of 420, 21.4%, over 7 documents. Read as ELIGIBILITY, never as a rate: DELETING ANY
+#      ONE OF THOSE 90 WOULD BE REFUSED. How often a citation is actually deleted is not
+#      measured anywhere here. So: unadopted at 21.4%, not unreachable. Adopting it needs its
+#      own case, its own mutation, and THIS CONTRACT REWRITTEN -- the row stops being a
+#      `guard`.
 #
 # The harm the merge does -- two claims resting on one range -- is real and is owned by a
 # DIFFERENT check: `collect_enumeration_repeats`, whose window was itself narrowed by
