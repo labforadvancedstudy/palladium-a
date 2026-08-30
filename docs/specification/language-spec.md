@@ -783,8 +783,8 @@ and `local_type_shadows_import` decides the rest.*
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1495`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2334-2337`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2635-2636`, corrected
-from `src/typeck/mod.rs:3041-3041`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2334-2337`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2707-2708`, corrected
+from `src/typeck/mod.rs:3113-3113`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1618-1619`, corrected from line 863–897 of the pre-cleanup revision).
 
@@ -929,7 +929,7 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
-rejected outright by the type checker (`src/typeck/mod.rs:4733-4733`) and again by code generation
+rejected outright by the type checker (`src/typeck/mod.rs:4805-4805`) and again by code generation
 (`src/codegen/mod.rs:6361-6365`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
@@ -1026,7 +1026,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:5837-5841`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
+  (`src/typeck/mod.rs:5909-5913`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
@@ -1038,7 +1038,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3778`) and code generation (`src/codegen/mod.rs:5847-5850`)
+both the type checker (`src/typeck/mod.rs:3850`) and code generation (`src/codegen/mod.rs:5847-5850`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once,
 and its position among the arguments is the one the source wrote: being the first argument, it is
@@ -1124,8 +1124,8 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4733-4733`, `.await` at
-`src/typeck/mod.rs:4740-4740`) and again by code generation (`?` at `src/codegen/mod.rs:6361-6365`,
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4805-4805`, `.await` at
+`src/typeck/mod.rs:4812-4812`) and again by code generation (`?` at `src/codegen/mod.rs:6361-6365`,
 `.await` at `src/codegen/mod.rs:6373-6377`), which is callable on its own.
 
 What they used to do:
@@ -1268,7 +1268,7 @@ struct patterns, `ref`/`mut` bindings, field shorthand (`Move { x, y }`), `..` r
 **Exhaustiveness holds for every scrutinee type** (N6-10). An enum must cover its variants; a
 `bool` is covered by `true` and `false` together; every other type needs an arm that matches every
 value — `_`, a binding, `name @ <irrefutable>`, an `a | b` with an irrefutable alternative, or a
-tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5025`). NO INTERVAL
+tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5097`). NO INTERVAL
 ARITHMETIC IS PROMISED: `0..=59` beside `60..=<i64 max>` beside `<i64 min>..=-1` covers every
 integer and is still refused, and the diagnostic says why rather than leaving the reader to infer
 it. A guarded arm counts toward nothing — whether it is taken is not decidable from the pattern.
@@ -1650,7 +1650,7 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-types-semantics`
 (2026-08-31):
 
-**verified 82 · untranscribed 0 · vacuous 6 · xfail 1 · reject 92 · skip 2 · failures 0**, over 183
+**verified 82 · untranscribed 0 · vacuous 6 · xfail 1 · reject 95 · skip 2 · failures 0**, over 186
 fixtures. (The round-3 review of `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined

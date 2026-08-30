@@ -1,0 +1,27 @@
+// NEGATIVE TEST -- a TYPE may not take a built-in's name either (N14-02), and
+// this fixture exists because the REASON is a different one.
+//
+// Nothing breaks in the emitted C here, and that was measured, not assumed:
+// `struct print_state { n: i64 }` renamed to `print_int` compiled, linked, ran
+// and printed `ok`. A built-in mangles to `__pd_print_int` and a struct emits
+// `struct print_int`, so C has two names and no collision. The C compiler has
+// no objection to make.
+//
+// It is refused on the LANGUAGE's rule instead: one namespace for top-level
+// names, the same rule that already refuses `const Meters` beside
+// `type Meters` (tests/reject/const_collides_with_type_alias.pd) with no C
+// collision either. A reader who meets `print_int` in this program cannot tell
+// whether it is the built-in or the struct without checking the registry.
+//
+// So the diagnostic must not claim a collision that does not exist, and the
+// fingerprint below is on the DECISION sentence rather than the headline --
+// the headline is shared with the function and local positions, and a fixture
+// pinned to it would stay green if this carve-out silently became a
+// C-collision claim.
+struct print_int {
+    n: i64,
+}
+
+fn main() {
+    print("ok");
+}

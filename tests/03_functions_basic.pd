@@ -49,6 +49,21 @@ fn factorial(n: i64) -> i64 {
     return n * factorial(n - 1);
 }
 
+// N14-02'S OVER-REFUSAL CONTROL. A program may not define or shadow a BUILT-IN
+// name (tests/reject/shadow_builtin.pd and its two siblings), and the check
+// that enforces it asks `crate::builtins::is_builtin`, which is an equality on
+// the whole name. These three CONTAIN a built-in's name without being one, and
+// they compile, link and run. Without this, the refusal could be widened to a
+// prefix or a substring test and every reject fixture would stay green.
+fn print_int_of(n: i64) -> i64 {
+    print_int(n);
+    return n;
+}
+
+fn printer(n: i64) -> i64 {
+    return n + 1;
+}
+
 fn main() {
     // Call function with no params
     greet();
@@ -91,4 +106,14 @@ fn main() {
     // Recursive function
     print("\nFactorial of 5:");
     print_int(factorial(5));  // 120
+
+    // Near-miss built-in names, at every position the N14-02 check guards: two
+    // top-level functions, a local, and a loop variable.
+    print("\nNames that only look built-in:");
+    let print_all = 8;
+    print_int(print_int_of(print_all));  // prints 8, then 8 again
+    print_int(printer(print_all));       // 9
+    for print_index in 0..2 {
+        print_int(print_index);          // 0, 1
+    }
 }

@@ -1,0 +1,28 @@
+// NEGATIVE TEST -- a LOCAL binder may not shadow a built-in name (N14-02).
+//
+// The sharper half of the row, and the one that is not about dead code. It
+// compiled and ran before this refusal existed, printing `3` and then `1`,
+// from this emitted body:
+//
+//     long long f(long long print_int) {
+//         __pd_print_int(3LL);      // `print_int(3)` -- the BUILT-IN
+//         return print_int;         // `print_int`    -- the PARAMETER
+//     }
+//
+// One name, two meanings, in adjacent lines, decided by whether a `(` follows.
+// A local shadowing a top-level item is already refused for exactly this
+// reason (`refuse_global_shadow`); a built-in is the same question with the
+// declaration off the page, which is why it was the one that slipped through.
+//
+// The parameter position is the fixture because it is the one a reader cannot
+// even see the shadow in without knowing the registry. `let`, the loop
+// variable and a pattern binding are refused by the same check --
+// `refuse_builtin_shadow` -- and the diagnostic names which of them it was.
+fn f(print_int: i64) -> i64 {
+    print_int(3);
+    return print_int;
+}
+
+fn main() {
+    print_int(f(1));
+}

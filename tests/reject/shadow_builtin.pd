@@ -1,0 +1,32 @@
+// NEGATIVE TEST -- a program may not DEFINE a built-in name (N14-02).
+//
+// MEASURED BEFORE THIS REFUSAL EXISTED: this exact file compiled, linked, ran
+// and exited 0. It printed `7` -- and the `7` did not come from the function
+// below. The emitted C held BOTH of these:
+//
+//     long long print_int(long long x) { return x; }   // line 293
+//     ...
+//     __pd_print_int(7LL);                             // in main
+//
+// So the definition was real C that nothing could reach, and the call the
+// author wrote went to the built-in instead. Nothing in the source says which
+// of the two `print_int(7)` means; the compiler picked, and picked silently.
+//
+// A built-in cannot be replaced -- code generation maps every built-in name to
+// `__pd_<name>` from the registry (src/builtins.rs), long after the type
+// checker has forgotten there was a competing definition. So the choice is
+// between a definition that is dead by construction and a refusal, and this is
+// the refusal.
+//
+// THE OVER-REFUSAL CONTROL IS ELSEWHERE, and it has to be: this file stops at
+// the first offending line, so a near-miss name written above it would prove
+// nothing. `tests/03_functions_basic.pd` compiles and runs `print_int_of`,
+// `printer` and a local `print_all` -- names that CONTAIN a built-in's name
+// without being one.
+fn print_int(x: i64) -> i64 {
+    return x;
+}
+
+fn main() {
+    print_int(7);
+}

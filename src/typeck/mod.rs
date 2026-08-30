@@ -1889,6 +1889,14 @@ impl TypeChecker {
             )));
         }
 
+        // A BUILT-IN IS ASKED ABOUT FIRST, because `self.functions` is SEEDED
+        // with the built-in registry (see `TypeChecker::new`) — so the check
+        // below fired on `const print_int: i64 = 3;` and reported that the name
+        // "is declared as a top-level `const` and as a function", naming a
+        // function the program does not contain. The refusal was right and the
+        // reason was fiction.
+        self.refuse_builtin_definition(&global.name, &format!("a top-level `{}`", noun), false)?;
+
         // THE OTHER DIRECTION OF THE ONE-NAMESPACE RULE: a `const` written after
         // the `fn` it collides with. Both orders end in the same C, so both are
         // refused here rather than one of them being left to the linker.
@@ -1952,6 +1960,7 @@ impl TypeChecker {
     /// changed. One name, one meaning, refused at the binding rather than
     /// silently resolved at the use.
     fn refuse_global_shadow(&self, name: &str, what: &str) -> Result<()> {
+        self.refuse_builtin_shadow(name, what)?;
         match self.global_items.get(name) {
             Some(span) => Err(CompileError::Generic(format!(
                 "{} `{}` has the name of the top-level item declared at line {}: \
@@ -1960,6 +1969,68 @@ impl TypeChecker {
             ))),
             None => Ok(()),
         }
+    }
+
+    /// Refuse a top-level declaration that reuses a BUILT-IN name (N14-02).
+    ///
+    /// `global_items` holds what the program declares, and a built-in is not
+    /// declared by the program — so neither `refuse_global_collision` nor
+    /// `refuse_global_shadow` could see one, and every position below was
+    /// silently accepted. The two reasons are different and the message says
+    /// which one applies, because `callable` decides whether anything actually
+    /// breaks:
+    ///
+    /// * a FUNCTION. MEASURED on `fn print_int(x: i64) -> i64 { return x; }`
+    ///   beside `print_int(7)`: the program compiled, exit 0, and printed `7`.
+    ///   The emitted C held BOTH `long long print_int(long long x)` and, in
+    ///   `main`, `__pd_print_int(7LL)` — the built-in. The definition is
+    ///   reachable from nowhere; the call the author wrote went somewhere else.
+    /// * a TYPE or a top-level value. Nothing breaks in C — a built-in mangles
+    ///   to `__pd_<name>`, so `struct print_int` and `void __pd_print_int(…)`
+    ///   coexist, and `struct print_int { n: i64 }` compiled and ran. The
+    ///   refusal is the language's one-namespace rule, the same one that
+    ///   already refuses a `const` beside a `fn`, and the message says so
+    ///   rather than inventing a collision.
+    fn refuse_builtin_definition(&self, name: &str, what: &str, callable: bool) -> Result<()> {
+        if !crate::builtins::is_builtin(name) {
+            return Ok(());
+        }
+        let reason = if callable {
+            "every call to it resolves to the built-in, so this definition is C that \
+             nothing can reach"
+        } else {
+            "nothing collides in the emitted C — a built-in mangles to `__pd_<name>` — \
+             but this language has ONE namespace for top-level names, so a reader of \
+             the name could not tell which of the two it is"
+        };
+        Err(CompileError::Generic(format!(
+            "`{}` is a built-in, and a program may not define or shadow one: {} is \
+             declared under that name and {}. Rename it — the built-in cannot be \
+             replaced, only hidden from the reader",
+            name, what, reason
+        )))
+    }
+
+    /// Refuse a LOCAL binder that reuses a built-in name (N14-02).
+    ///
+    /// The sibling of the above, one scope in, and the sharper of the two.
+    /// MEASURED on `fn f(print_int: i64) -> i64 { print_int(3); return print_int; }`:
+    /// it compiled, ran, and emitted `__pd_print_int(3LL);` beside
+    /// `return print_int;` — one name meaning the BUILT-IN where a call is
+    /// written and the BINDING where a value is wanted, in adjacent lines, with
+    /// no diagnostic. A local shadowing a top-level item is already refused for
+    /// this reason; a built-in is the same question with the declaration off
+    /// the page.
+    fn refuse_builtin_shadow(&self, name: &str, what: &str) -> Result<()> {
+        if !crate::builtins::is_builtin(name) {
+            return Ok(());
+        }
+        Err(CompileError::Generic(format!(
+            "{} `{}` has the name of a built-in, and a local binding may not shadow \
+             one: in this scope the name would mean the binding where a value is \
+             wanted and the built-in where a call is written. Rename the binding",
+            what, name
+        )))
     }
 
     /// The value of a top-level initialiser, computed rather than assumed.
@@ -2171,7 +2242,8 @@ impl TypeChecker {
     /// one name. The distinction matters for the message, because the repair is
     /// different — a local can be renamed freely, a second top-level definition
     /// means one of the two was not meant to exist.
-    fn refuse_global_collision(&self, name: &str, what: &str) -> Result<()> {
+    fn refuse_global_collision(&self, name: &str, what: &str, callable: bool) -> Result<()> {
+        self.refuse_builtin_definition(name, what, callable)?;
         match self.global_items.get(name) {
             Some(span) => Err(CompileError::Generic(format!(
                 "`{}` is declared as {} and as the top-level item at line {}, and a program has \
@@ -2372,12 +2444,12 @@ impl TypeChecker {
             // order; `register_global` catches the other, because the first
             // pass walks items in source order and either can come first.
             match item {
-                Item::Function(func) => self.refuse_global_collision(&func.name, "a function")?,
+                Item::Function(func) => self.refuse_global_collision(&func.name, "a function", true)?,
                 Item::TypeAlias(alias) => {
-                    self.refuse_global_collision(&alias.name, "a type alias")?
+                    self.refuse_global_collision(&alias.name, "a type alias", false)?
                 }
-                Item::Struct(def) => self.refuse_global_collision(&def.name, "a struct")?,
-                Item::Enum(def) => self.refuse_global_collision(&def.name, "an enum")?,
+                Item::Struct(def) => self.refuse_global_collision(&def.name, "a struct", false)?,
+                Item::Enum(def) => self.refuse_global_collision(&def.name, "an enum", false)?,
                 _ => {}
             }
             match item {
@@ -2725,7 +2797,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3015-3017`), and walking an imported
+        // return (`src/typeck/mod.rs:3087-3089`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -6206,6 +6278,124 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
         TypeChecker::new().check(&ast)
+    }
+
+    // N14-02. EVERY POSITION THAT CAN TAKE A NAME, and the before-transcript
+    // for each is in the fixture headers under tests/reject/shadow_builtin*.pd.
+    // All eight of these compiled and ran with exit 0 before the check existed;
+    // three of them ran the WRONG THING silently (the function definition was
+    // unreachable, the local and the parameter meant the built-in at a call and
+    // the binding at a use).
+    //
+    // Kept as one table rather than eight tests because the property is
+    // "no position is missed": `refuse_builtin_definition` and
+    // `refuse_builtin_shadow` sit inside `refuse_global_collision` and
+    // `refuse_global_shadow`, so a NEW binder position that forgets to call its
+    // sibling is the regression this is watching for, and a table makes adding
+    // the row the obvious repair.
+    #[test]
+    fn a_builtin_name_is_refused_at_every_binding_position() {
+        let cases: [(&str, &str, &str); 8] = [
+            (
+                "function",
+                "fn print_int(x: i64) -> i64 { return x; }\nfn main() { print_int(7); }",
+                "a function is declared under that name",
+            ),
+            (
+                "struct",
+                "struct print_int { n: i64 }\nfn main() { print(\"ok\"); }",
+                "a struct is declared under that name",
+            ),
+            (
+                "enum",
+                "enum print_int { A }\nfn main() { print(\"ok\"); }",
+                "an enum is declared under that name",
+            ),
+            (
+                "type alias",
+                "type print_int = i64;\nfn main() { print(\"ok\"); }",
+                "a type alias is declared under that name",
+            ),
+            (
+                "const",
+                "const print_int: i64 = 3;\nfn main() { print(\"ok\"); }",
+                "a top-level `const` is declared under that name",
+            ),
+            (
+                "parameter",
+                "fn f(print_int: i64) -> i64 { return print_int; }\nfn main() { print_int(f(1)); }",
+                "the parameter `print_int` has the name of a built-in",
+            ),
+            (
+                "local",
+                "fn main() { let print_int: i64 = 5; print_int(9); }",
+                "the local `print_int` has the name of a built-in",
+            ),
+            (
+                "loop variable",
+                "fn main() { for print_int in 0..2 { print(\"x\"); } }",
+                "the loop variable `print_int` has the name of a built-in",
+            ),
+        ];
+        for (position, source, expected) in cases {
+            let err = check(source)
+                .expect_err(position)
+                .to_string();
+            assert!(
+                err.contains(expected),
+                "{} position: expected {:?} in {:?}",
+                position,
+                expected,
+                err
+            );
+        }
+    }
+
+    // THE TWO REASONS ARE DIFFERENT AND THE DIAGNOSTIC SAYS WHICH. A function
+    // under a built-in's name produces C that cannot be reached; a TYPE under
+    // one produces C that is perfectly fine (`struct print_int` beside
+    // `void __pd_print_int(...)`, measured) and is refused on the language's
+    // one-namespace rule instead. Claiming a collision for the second would be
+    // a diagnostic that does not survive being checked.
+    #[test]
+    fn the_refusal_gives_the_reason_that_actually_applies() {
+        let callable = check("fn print_int(x: i64) -> i64 { return x; }\nfn main() { print_int(7); }")
+            .unwrap_err()
+            .to_string();
+        assert!(callable.contains("C that nothing can reach"), "{}", callable);
+        assert!(!callable.contains("ONE namespace"), "{}", callable);
+
+        let type_name = check("struct print_int { n: i64 }\nfn main() { print(\"ok\"); }")
+            .unwrap_err()
+            .to_string();
+        assert!(type_name.contains("ONE namespace for top-level names"), "{}", type_name);
+        assert!(
+            type_name.contains("nothing collides in the emitted C"),
+            "{}",
+            type_name
+        );
+    }
+
+    // OVER-REFUSAL CONTROL. `is_builtin` is an equality on the whole name, and
+    // this is what says so: widen it to a prefix or a substring test and every
+    // reject fixture above stays green while this test goes red.
+    // `tests/03_functions_basic.pd` runs the same names end to end.
+    #[test]
+    fn a_name_that_merely_contains_a_builtin_name_is_accepted() {
+        assert!(check(
+            "fn print_int_of(n: i64) -> i64 { print_int(n); return n; }\n\
+             fn printer(n: i64) -> i64 { return n + 1; }\n\
+             struct print_state { n: i64 }\n\
+             type print_kind = i64;\n\
+             fn main() {\n\
+                 let print_all: i64 = 8;\n\
+                 let printing: print_kind = 1;\n\
+                 print_int(print_int_of(print_all));\n\
+                 print_int(printer(printing));\n\
+                 for print_index in 0..2 { print_int(print_index); }\n\
+             }"
+        )
+        .is_ok());
     }
 
     // D5. Both programs below used to type check, and then code generation

@@ -1749,6 +1749,51 @@ mod tests {
         BorrowChecker::new().check_program(&program)
     }
 
+    /// A LOCAL NAMED AFTER A BUILT-IN IS STILL A LOCAL, and moving it twice is
+    /// still a use-after-move. `BorrowChecker::default` preloads `functions`
+    /// from `crate::builtins`, so every built-in name is a laundering site in a
+    /// program that defines nothing of its own; measured before that hole was
+    /// closed, the compiler said "Compilation successful!" and the executable
+    /// printed `1`.
+    ///
+    /// THIS PIN MOVED HERE FROM THE END-TO-END SUITE, and the move is the
+    /// point. `tests/m3_imported_calls.rs` used to drive this program through
+    /// the whole front end; since N14-02 the type checker refuses
+    /// `let print: S` as a local shadowing a built-in, so the program stops one
+    /// pass earlier and can never reach this layer again from source.
+    ///
+    /// Leaving the assertion up there would have retired it. That matters more
+    /// than it looks: BOTH LAYERS READ THE SAME REGISTRY. N14-02 asks
+    /// `crate::builtins::is_builtin` and this checker preloads
+    /// `crate::builtins::BUILTINS`, so a regression that drops a name from the
+    /// registry removes the typeck refusal AND the laundering site's guard in
+    /// one step — the outer test would go green while the hole reopened. The
+    /// guard therefore has to be asserted where it lives, against a checker
+    /// driven WITHOUT the pass that now shields it. `borrow_check` above does
+    /// exactly that: lexer, parser, macro expander, borrow checker. No typeck.
+    #[test]
+    fn test_a_local_binding_is_not_laundered_by_a_builtin() {
+        let result = borrow_check(
+            r#"
+            struct S { v: i64 }
+            fn f() -> S {
+                let print: S = S { v: 1 };
+                let b = print;
+                return print;
+            }
+            fn main() { print_int(f().v); }
+            "#,
+        );
+        let err = result.expect_err(
+            "a moved local was accepted because a BUILT-IN of the same name exists",
+        );
+        assert!(
+            err.to_string().contains("Use of moved value"),
+            "expected the move checker's refusal, got: {}",
+            err
+        );
+    }
+
     /// REGRESSION: a borrow taken to pass an argument was never released, so the
     /// *second* function call on the same array was rejected with "Conflicting
     /// borrows". A self-hosting compiler passes its token/AST buffers to one
