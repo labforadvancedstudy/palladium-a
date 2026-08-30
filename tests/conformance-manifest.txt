@@ -71,7 +71,7 @@ tests/02_types_primitives.pd	run	-	expected	-	-
 tests/02_types_structs.pd	run	-	expected	-	-
 tests/02_types_tuples.pd	run	-	expected	-	-
 tests/02_unary_precedence.pd	run	-	expected	-	-
-tests/03_arg_evaluation_order.pd	run	-	expected	-	N13-03. C leaves argument evaluation order UNSPECIFIED, and on the host that wrote this transcript gcc happened to choose left to right -- so a fixture that only ran proved nothing before the guarantee existed. What the guarantee rests on is the emitted C (each argument read into a temporary declared in source order), pinned by test_argument_reads_are_sequenced_left_to_right in src/codegen. The decisive line here is `add2(bump(), G)`: a PURE argument reading a `static mut` an EARLIER argument wrote
+tests/03_arg_evaluation_order.pd	run	-	expected	-	N13-03. C leaves argument evaluation order UNSPECIFIED, and on the host that wrote this transcript gcc happened to choose left to right -- so a fixture that only ran proved nothing before the guarantee existed. What the guarantee rests on is the emitted C (every argument read happening at that argument's own position), pinned by test_argument_reads_are_sequenced_left_to_right in src/codegen. The decisive line here is `add2(bump(), G)`: a PURE argument reading a `static mut` an EARLIER argument wrote
 tests/03_const_items.pd	run	-	expected	-	-
 tests/03_functions_basic.pd	run	-	expected	-	-
 tests/03_macros.pd	run	-	expected	-	-

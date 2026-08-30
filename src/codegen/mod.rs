@@ -4545,8 +4545,13 @@ impl CodeGenerator {
     ///   address, not of a value.
     /// * a PURE argument whose C type this pass cannot name. There is no honest
     ///   declaration to write, and inventing `long long` is how a `String`
-    ///   becomes an integer (see `expr_c_type`) — but a pure argument's read
-    ///   time is not observable, so emitting it in place loses nothing.
+    ///   becomes an integer (see `expr_c_type`). THIS ONE IS A RESIDUAL AND NOT
+    ///   A PROOF: emitted inside the call, its read lands after every hoisted
+    ///   read, which is its source position only if it was written last. It is
+    ///   accepted rather than refused because a pure argument has no effect of
+    ///   its own to misplace — it can read stale state, never skip a write —
+    ///   and because refusing would reject programs that are fine. The
+    ///   effectful half of the same branch IS refused, below.
     ///
     /// An EFFECTFUL argument whose type cannot be named is the one case that
     /// REFUSES rather than falling back. Emitting it in place would put a call
@@ -5916,8 +5921,12 @@ impl CodeGenerator {
                 // N13-03. ARGUMENTS ARE EVALUATED LEFT TO RIGHT, and C does
                 // not evaluate them in any order the standard names — so the
                 // guarantee cannot rest on the compiler that reads this file.
-                // It is STRUCTURAL: each argument is read into a temporary,
-                // declared in source order, and the call names the temporaries.
+                // It is STRUCTURAL: every argument READ happens at that
+                // argument's own position — value arguments into temporaries
+                // declared in source order, place arguments as a pointer taken
+                // there — and the call names the temporaries. The two shapes
+                // that get no temporary, and what each rests on, are on
+                // `hoist_call_argument`.
                 //
                 // MEASURED, and the reason a pure argument is hoisted too:
                 // `static mut G = 10; add2(bump(), G)` where `bump()` writes
@@ -5926,8 +5935,8 @@ impl CodeGenerator {
                 // C required it; a gcc that reads `G` first would have printed
                 // 11. So the rule is not "sequence the effectful arguments":
                 // an effectful argument has to be ordered against the LATER
-                // PURE ones as well, and only reading every argument at its own
-                // position says that.
+                // PURE ones as well, and only reading every argument that has
+                // a read at its own position says that.
                 //
                 // It fires on calls of TWO OR MORE arguments with at least one
                 // effectful argument, because that is exactly when the order is
@@ -7689,9 +7698,20 @@ mod tests {
     // hoists and emits them INSIDE the guard it generates. This test pins that
     // composition: the inner call's argument temporaries appear after the
     // `if (__pd_val...)` line, not before it.
+    //
+    // ANCHORED PAST `int main`, AND THAT IS THE WHOLE POINT OF THE FIRST
+    // VERSION'S FAILURE. It searched the WHOLE translation unit for `if (`,
+    // which the runtime preamble contains at byte 869 (inside
+    // `__pd_alloc_string`) while `int main` does not start until byte 8564 —
+    // measured, both operators. So `guard_at < first_temp` was true of the
+    // preamble and not of the lowering, and the test would have stayed green
+    // with the temps hoisted anywhere in `main`. It now anchors on the guard
+    // this lowering actually emits (`if (__pd_val` / `if (!__pd_val`, byte
+    // 8730) inside `main`, and states the property in the form a regression
+    // breaks: NO argument temporary appears between `main` and the guard.
     #[test]
     fn test_sequenced_arguments_stay_inside_a_short_circuit_guard() {
-        for (op, guard) in [("&&", "if ("), ("||", "if (!")] {
+        for (op, guard) in [("&&", "if (__pd_val"), ("||", "if (!__pd_val")] {
             let source = format!(
                 r#"
         fn a() -> i64 {{ return 1; }}
@@ -7707,12 +7727,24 @@ mod tests {
                 op
             );
             let c = generate(&source).unwrap();
-            let guard_at = c.find(guard).unwrap_or_else(|| panic!("{}", c));
-            let first_temp = c.find("= a();").unwrap_or_else(|| panic!("{}", c));
-            let second_temp = c.find("= b();").unwrap_or_else(|| panic!("{}", c));
+            let main_at = c.find("int main").unwrap_or_else(|| panic!("{}", c));
+            let body = &c[main_at..];
+            let guard_at = body.find(guard).unwrap_or_else(|| panic!("{}", c));
+            let first_temp = body.find("= a();").unwrap_or_else(|| panic!("{}", c));
+            let second_temp = body.find("= b();").unwrap_or_else(|| panic!("{}", c));
             assert!(
                 guard_at < first_temp && first_temp < second_temp,
                 "{} lowering put the argument temps outside the guard:\n{}",
+                op,
+                c
+            );
+
+            // The displacement a regression causes, stated directly: hoisting
+            // the argument temps to the enclosing statement puts them HERE.
+            let before_guard = &body[..guard_at];
+            assert!(
+                !before_guard.contains("= a();") && !before_guard.contains("= b();"),
+                "{} lowering ran an argument temp unconditionally:\n{}",
                 op,
                 c
             );

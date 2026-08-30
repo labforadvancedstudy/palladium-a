@@ -1207,7 +1207,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:6364-6368` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:6373-6377` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
