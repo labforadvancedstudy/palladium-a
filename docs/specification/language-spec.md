@@ -688,7 +688,7 @@ Items (`src/parser/mod.rs:937`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`
 
 **implemented — top-level `const` and `static`** (N3-09, N3-10), parsed by
 `src/parser/mod.rs:1910`, registered by `src/typeck/mod.rs:1851` and emitted by
-`src/codegen/mod.rs:2812`. Both take a MANDATORY type and a MANDATORY initialiser:
+`src/codegen/mod.rs:2901`. Both take a MANDATORY type and a MANDATORY initialiser:
 
 ```ebnf
 const_item  = [ "pub" ] "const" identifier ":" type "=" expression ";" ;
@@ -761,9 +761,9 @@ enums.
 
 **partial** — field types that parse and then fail in codegen (all three corrected from v0.2,
 which was ~250 lines low):
-- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:2739-2742`)
-- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:2746-2746`)
-- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:2754-2758`)
+- generic → "Generic types in structs not yet supported" (`src/codegen/mod.rs:2828-2831`)
+- reference → "Reference types in structs not yet supported" (`src/codegen/mod.rs:2835-2835`)
+- tuple → "Tuple types in structs not yet supported" (`src/codegen/mod.rs:2843-2847`)
 
 ### A4.3 Enums
 
@@ -783,7 +783,7 @@ and `local_type_shadows_import` decides the rest.*
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1495`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2200-2203`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2635-2636`, corrected
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2270-2273`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2635-2636`, corrected
 from `src/typeck/mod.rs:3041-3041`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1618-1619`, corrected from line 863–897 of the pre-cleanup revision).
@@ -800,7 +800,7 @@ impl_block = "impl" [ generic_params ] [ type "for" ] type "{" { function } "}" 
 ```
 
 **implemented**: methods become mangled free functions `__pd_Type_method`
-(`src/codegen/mod.rs:2217-2222`, corrected THREE TIMES: from line 1861 of the pre-cleanup
+(`src/codegen/mod.rs:2287-2292`, corrected THREE TIMES: from line 1861 of the pre-cleanup
 revision; on 2026-08-23 from `1174-1180`, which was the file-I/O prelude and had nothing to do with
 method mangling — the line numbers had been tracked through an edit while the target was never
 re-read; and on 2026-08-25, when `4690ef0` inserted above it).
@@ -890,11 +890,11 @@ unrelated reason.
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
-| `[[T; M]; N]` | unimplemented | nested arrays do not work in either position. As a **local**, `type_to_c` builds `T[M][N]` as a *type* and emits `long long[2] grid[2]`, which gcc rejects ("brackets are not allowed here"); as a **parameter** the declarator refuses it by name. Separate unit |
+| `[[T; M]; N]` | implemented | works as a **local**, as a **parameter**, as a **struct field** and three deep. The dimensions are emitted after the identifier, outermost first (`long long grid[3][2]`), which is the C declarator shape — composing them into the type instead produced `long long[2] grid[3]`, which gcc refuses outright. Pinned by `tests/02_types_nested_arrays.pd`. Two refusals by name remain: `for` over a nested array, because each step would bind a whole ROW and C cannot copy an array by assignment (`tests/reject/for_over_nested_array.pd`), and an unresolved inner length in ANY declarator position (`tests/reject/nested_array_param_inner_length.pd` and its struct-field twin) |
 | `&T`, `&mut T` | partial | parses, but the typechecker is a **no-op**: `Type::Reference` maps to its inner type — "For now, treat references as the inner type / TODO: Proper reference type handling" (`src/typeck/mod.rs:714-718`, corrected from line 2470–2486 of the pre-cleanup revision). `&i64` and `i64` are indistinguishable to it. |
 | `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
 | `Name<A, B>` | partial | see below |
-| `(A, B)` | **implemented** | one C struct per SHAPE, mangled from the element C types and emitted with a constructor (`src/codegen/mod.rs:4460`); `void*` is gone. Arity two or more. A tuple in an ENUM PAYLOAD is refused by name — tuple structs are emitted after the enum definitions because an element may be an enum, and a payload of tuple type needs the reverse order |
+| `(A, B)` | **implemented** | one C struct per SHAPE, mangled from the element C types and emitted with a constructor (`src/codegen/mod.rs:4619`); `void*` is gone. Arity two or more. A tuple in an ENUM PAYLOAD is refused by name — tuple structs are emitted after the enum definitions because an element may be an enum, and a payload of tuple type needs the reverse order |
 | `f64` | **implemented** | the type of a float literal since N2-03; C `double` |
 | `f32` | partial | parses and maps to C `float`, but shares one checker type with `f64`, so nothing can observe the difference |
 | `char` | partial | `'a'` LEXES and carries the right scalar (N2-04), and its TYPE is `i64` — N4-04, still owed, moves with N14-04's `string_char_at` |
@@ -910,7 +910,7 @@ mixed-case names like `Vec<Item>` reach the type branch.
 
 **partial — const generics**: they parse, and in codegen an `ArraySize::ConstParam` is emitted
 into C verbatim as the parameter's *name* while an `ArraySize::Expr` becomes the literal `"0"`
-(`src/codegen/mod.rs:2255-2259`, corrected on 2026-08-23 from `1204-1206`, which was
+(`src/codegen/mod.rs:976-980`, corrected on 2026-08-23 from `1204-1206`, which was
 `return pd_file_flush(handle);` — a citation about const generics pointing at the file-I/O
 prelude). Neither is monomorphised. *(v0.2 said "array sizes from a const
 parameter resolve to `0`" citing `src/codegen/mod.rs:640-640`; that is the expression case, not the const-parameter
@@ -930,7 +930,7 @@ enum is compiled to. Use `match`.
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
 rejected outright by the type checker (`src/typeck/mod.rs:4733-4733`) and again by code generation
-(`src/codegen/mod.rs:5991-5995`). It used to typecheck against a `Generic{name:"Result"}` shape
+(`src/codegen/mod.rs:6150-6154`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -950,7 +950,7 @@ and then emit C for a `struct Result` layout nothing defines (see
   travels with it, which is what keeps a tail-position chain returning. *(This bullet read
   "unimplemented — after `else` the parser requires `{`" until `66dab38`.)*
 - **implemented: `loop`** (N5-07), a keyword since `src/lexer/token.rs:250`, parsed at
-  `src/parser/mod.rs:2887` and emitted as C `while (1)` (`src/codegen/mod.rs:3741`). Its `break`
+  `src/parser/mod.rs:2887` and emitted as C `while (1)` (`src/codegen/mod.rs:3866`). Its `break`
   may carry a value. *(It read "not a keyword. Use `while true`" until `f729cda`.)*
 - **implemented: compound assignment** `+= -= *= /= %=` (N5-13), DESUGARED at
   `src/parser/mod.rs:2394-2396` into `t = t op v` rather than emitted as C's own compound operator —
@@ -1038,7 +1038,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3778`) and code generation (`src/codegen/mod.rs:5520-5523`)
+both the type checker (`src/typeck/mod.rs:3778`) and code generation (`src/codegen/mod.rs:5679-5682`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once;
 its position among the arguments is C's unspecified evaluation order, which is the same residual
@@ -1106,14 +1106,14 @@ that what precedes `?` is a Result, because in those programs it is not.
 The `match` alternative is bounded, and the help says where it stops rather than leaving it to be
 discovered. Measured: dispatch works, propagation out of a helper works, payload types other than
 `i64` work — but a generic `Result<T, E>` does **not** compile, because code generation skips
-generic enum definitions (`src/codegen/mod.rs:2057-2061`, `src/codegen/mod.rs:2027-2031`, `src/codegen/mod.rs:1929-1931`) and generic enum construction
+generic enum definitions (`src/codegen/mod.rs:2127-2131`, `src/codegen/mod.rs:2097-2101`, `src/codegen/mod.rs:1999-2001`) and generic enum construction
 infers only the parameters a variant mentions, so `Result::Err(e)` yields `Result<(), E>`. One
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4733-4733`, `.await` at
-`src/typeck/mod.rs:4740-4740`) and again by code generation (`?` at `src/codegen/mod.rs:5991-5995`,
-`.await` at `src/codegen/mod.rs:6003-6007`), which is callable on its own.
+`src/typeck/mod.rs:4740-4740`) and again by code generation (`?` at `src/codegen/mod.rs:6150-6154`,
+`.await` at `src/codegen/mod.rs:6162-6166`), which is callable on its own.
 
 What they used to do:
 
@@ -1260,13 +1260,13 @@ ARITHMETIC IS PROMISED: `0..=59` beside `60..=<i64 max>` beside `<i64 min>..=-1`
 integer and is still refused, and the diagnostic says why rather than leaving the reader to infer
 it. A guarded arm counts toward nothing — whether it is taken is not decidable from the pattern.
 
-Codegen lowers `match` to an if/else-if chain (`src/codegen/mod.rs:4080-4082`,
-`src/codegen/mod.rs:4174-4179`) whose final `else` TRAPS (N6-11): it prints
+Codegen lowers `match` to an if/else-if chain (`src/codegen/mod.rs:4239-4241`,
+`src/codegen/mod.rs:4333-4338`) whose final `else` TRAPS (N6-11): it prints
 `no match arm was taken in <function> at line <n>` to stderr and calls `abort()`
-(`src/codegen/mod.rs:4201-4203`). An arm carrying a guard cannot live in that chain — the guard
+(`src/codegen/mod.rs:4360-4362`). An arm carrying a guard cannot live in that chain — the guard
 needs a statement position after the bindings it reads, and a guard that FAILS must fall through to
 the next arm — so a `match` with any guard is emitted as a sequence of `if (pattern) { … goto
-_match_endN; }` ending in the same trap before the label (`src/codegen/mod.rs:4116`). The `goto` is
+_match_endN; }` ending in the same trap before the label (`src/codegen/mod.rs:4275`). The `goto` is
 what makes the fall-through path unconditional, which is what lets `-Werror=return-type` be armed
 in the shared gcc invocation.
 
@@ -1321,8 +1321,8 @@ One divergence remains, and two are closed:
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:1166-1166`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:5558-5558`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
-every output file (`src/codegen/mod.rs:1507-1507`, corrected from line 251–575 of the pre-cleanup revision).
+(`src/codegen/mod.rs:5717-5717`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+every output file (`src/codegen/mod.rs:1577-1577`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
 became the SSOT; it is no longer the mechanism.)*
@@ -1401,7 +1401,7 @@ LSP fixtures. There is no region inference: `grep -rn 'region\|Region' src/ --in
 returns nothing.
 
 No garbage collector. Strings are allocated from a 64 KiB static arena with a malloc fallback and
-are freed at exit (`src/codegen/mod.rs:1472-1476`, corrected from line 210–245 of the pre-cleanup revision).
+are freed at exit (`src/codegen/mod.rs:1542-1546`, corrected from line 210–245 of the pre-cleanup revision).
 
 ### A9.1 `String` is a copyable handle (decision, 2026-08-21)
 
@@ -1450,13 +1450,20 @@ permission could be laundered one hop — `fn f(xs: &[i64; 3]) { mutate(xs); }` 
 would happen under the callee's `&mut` binding, where it looks legitimate.
 
 **Supported element types** for an array parameter are exactly `i32`, `i64`, `u32`, `u64`,
-`bool`, `String` and a struct/enum name. Anything else is a compile error naming the type
-("Unsupported array element type in function parameter"), not invalid C: in particular a
-**nested array parameter** (`[[T; M]; N]`) is rejected rather than emitted, and a function type
-never reaches here because §5 records that the parser refuses it ("expected type, found `fn`").
-Nested arrays do not work as locals either — see the `[[T; M]; N]` row in §5; that is a
-declarator defect in `type_to_c`, tracked separately, and it fails before any rule here
-applies.
+`bool`, `String` and a struct/enum name — that is the BASE element, which the declarator resolves
+through the nested shape. Anything else is a compile error naming the type ("Unsupported array
+element type in function parameter"), not invalid C, and a function type never reaches here
+because §5 records that the parser refuses it ("expected type, found `fn`").
+
+A **nested array parameter** (`[[T; M]; N]`) is emitted rather than refused: it is declared
+`T name[N][M]`, and C decays that to a pointer to a ROW, so the callee reads the caller's object
+and `&mut` writes through to it (`tests/02_types_nested_arrays.pd`). Every dimension after the
+outermost must be a literal. An unresolved inner length — a const generic, an expression — is
+refused naming the parameter ("cannot declare the parameter …: the inner array length is written
+as …"), because an inner length is the stride of a row: `[0]` would compute wrong addresses
+silently, and the const generic's own name is not declared in the generated C
+(`tests/reject/nested_array_param_inner_length.pd`). The outermost length may be left open, since
+C throws it away anyway.
 
 A `mut` parameter must be given something with storage. `bump(1)`, `retitle(make())` and
 `bump(a + 1)` are refused: a `mut` parameter receives a pointer to the caller's storage, and an
@@ -1627,10 +1634,10 @@ why `scripts/conformance.sh` reports `SKIP_NO_MAIN` for two files rather than fa
 
 `scripts/conformance.sh` compiles, links, and runs every `.pd` under `tests/` and `examples/`
 against `tests/conformance-manifest.txt`, a **closed inventory** declaring what each fixture is
-expected to do. Current status, re-measured on the tree integrating `feat/m2-patterns`
-(2026-08-26):
+expected to do. Current status, re-measured on the tree integrating `feat/m2-types-semantics`
+(2026-08-31):
 
-**verified 80 · untranscribed 0 · vacuous 6 · xfail 1 · reject 89 · skip 2 · failures 0**, over 178
+**verified 81 · untranscribed 0 · vacuous 6 · xfail 1 · reject 92 · skip 2 · failures 0**, over 182
 fixtures. (The round-3 review of `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined

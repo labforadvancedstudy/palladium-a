@@ -7303,22 +7303,41 @@ mod tests {
         );
     }
 
-    // The supported element types are exactly what the declarator enumerates.
-    // A nested array is rejected by name rather than emitted as invalid C, and
-    // function types do not reach here at all - the parser refuses them
-    // ("expected type, found 'fn'", language-spec.md §5).
+    // The declarator recurses through `array_shape` now, so a nested array
+    // parameter is EMITTED rather than refused: the dimensions go after the
+    // name, outermost first (N4-10, pinned end to end by
+    // tests/02_types_nested_arrays.pd).
+    //
+    // What is still refused BY NAME is an UNRESOLVED INNER length. Every
+    // dimension after the outermost is the stride C computes a row from, and a
+    // length this pass cannot resolve has no honest spelling there - `[0]`
+    // would compute wrong addresses silently
+    // (tests/reject/nested_array_param_inner_length.pd). Function types do not
+    // reach here at all - the parser refuses them ("expected type, found 'fn'",
+    // language-spec.md §5).
     #[test]
-    fn test_nested_array_parameter_is_rejected_by_name() {
-        let err = generate(
+    fn test_nested_array_parameter_declarator_and_inner_length_refusal() {
+        let c = generate(
             r#"
         fn f(g: [[i64; 2]; 3]) -> i64 { return 0; }
+        fn main() { print("ok"); }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("long long f(long long g[3][2])"), "{}", c);
+
+        let err = generate(
+            r#"
+        fn f(g: [[i64; N]; 3]) -> i64 { return g[0][0]; }
         fn main() { print("ok"); }
         "#,
         )
         .unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("Unsupported array element type in function parameter"),
+            msg.contains(
+                "cannot declare the parameter `g`: the inner array length is written as `N`"
+            ),
             "{}",
             msg
         );
