@@ -1,0 +1,21 @@
+// NEGATIVE TEST -- a `char` is not an operand of arithmetic (N4-04).
+//
+// The sibling of tests/reject/char_is_not_an_int.pd, one operator over. That
+// one pins the ARGUMENT position (`print_int('a')`); this one pins the BINARY
+// OPERATOR branch, which is a different code path and would survive the other
+// fixture being satisfied.
+//
+// MEASURED before the split: `'a' + 1` compiled and produced 98, because a char
+// literal WAS an `i64` and addition was ordinary integer addition. Nothing in
+// the source said whether 98 was meant to be a character or a number, and the
+// compiler did not have to decide -- which is the confusion the type exists to
+// end.
+//
+// The repair says which was meant. `'a' as i64 + 1` is the code point plus one,
+// an `i64`; `('a' as i64 + 1) as char` is the character after `'a'`, and the
+// cast back is CHECKED (tests/reject/char_from_non_scalar.pd), so it cannot
+// quietly produce a value that is not a Unicode scalar.
+fn main() {
+    let next: i64 = 'a' + 1;
+    print_int(next);
+}

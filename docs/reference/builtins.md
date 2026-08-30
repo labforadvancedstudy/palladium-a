@@ -75,7 +75,7 @@ The handle-based API. `file_open` returns an integer handle, or a negative value
 
 ## Notes that bite
 
-- `string_char_at` returns an **integer**, not a character type — there is no `char`.
+- `string_char_at` returns a **`char`** (N4-04/N14-04), not an `i64`. Use `as i64` for the code point; an index outside the string traps rather than answering a sentinel.
 - `file_write` returns `bool`, not a byte count.
 - `vec![x]` is a macro that expands to a **one-element array**, not a growable vector.
 - `dbg!(x)` expands to a call to `print_debug`, which is defined nowhere; it always fails.

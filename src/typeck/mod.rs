@@ -2077,9 +2077,11 @@ impl TypeChecker {
             Expr::Integer(n) => Ok(ConstScalar::Int(*n)),
             Expr::Float(f) => Ok(ConstScalar::Float(*f)),
             Expr::Bool(b) => Ok(ConstScalar::Bool(*b)),
-            // A char literal carries its scalar and its TYPE is `i64` (N4-04 is
-            // owed), so it evaluates as the integer it already is everywhere
-            // else in this compiler.
+            // A char literal's TYPE is `char` (N4-04), but a CONST INITIALISER
+            // is a different question: a top-level `const` may only have a
+            // numeric or `bool` type, so no `const` can be declared `char` and
+            // nothing can observe this scalar as anything but the integer it
+            // is folded into.
             Expr::Char(c) => Ok(ConstScalar::Int(*c as i64)),
             Expr::Unary { op, operand, .. } => {
                 let value = self.const_eval(operand, name)?;
@@ -2808,7 +2810,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3098-3100`), and walking an imported
+        // return (`src/typeck/mod.rs:3100-3102`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3782,22 +3784,21 @@ impl TypeChecker {
                     }
                 })
             }
-            // A CHAR LITERAL IS AN `Int` HERE, AND THAT IS A RECORDED DECISION
-            // RATHER THAN AN OVERSIGHT.
+            // A CHAR LITERAL IS A `Char` (N4-04), distinct from `Int`, with no
+            // implicit conversion in either direction.
             //
-            // N4-04 makes `char` a primitive TYPE and is still `owed`. It
-            // cannot land here first: N14 gives `string_char_at` the signature
-            // `(String, i64) -> char` and `char_is_digit` the signature
-            // `(char) -> bool`, and `src/builtins.rs` implements both over
-            // `i64` today (N14-04, also owed, owned by M2 alongside this). A
-            // `char` type introduced on the literal alone would make `'a'`
-            // unusable with every builtin that consumes a character — the
-            // literal would lex, type, and then have nowhere to go.
+            // It could not land alone, and did not: N14 gives `string_char_at`
+            // the return `char` and the three `char_is_*` predicates the
+            // parameter `char`, and `src/builtins.rs` implemented both over
+            // `i64` until N14-04 moved with this. A `char` type on the literal
+            // by itself would have made `'a'` unusable with every builtin that
+            // consumes a character — the literal would lex, type, and have
+            // nowhere to go — and retyped builtins with no literal to feed them
+            // would have been unreachable from source.
             //
-            // So the literal denotes its Unicode scalar as an integer, which is
-            // what every consumer in the language already speaks, and it does
-            // so with the RIGHT value (`'a'` is 97): `tests/02_types_chars.pd`
-            // asserts the bytes, not just that it compiles.
+            // The VALUE is unchanged and still asserted on:
+            // `tests/02_types_chars.pd` reads the bytes, not just that it
+            // compiles.
             Expr::Char(_) => Ok(CheckerType::Char),
             Expr::Bool(_) => Ok(CheckerType::Bool),
             Expr::Ident(name) => {
@@ -4893,28 +4894,65 @@ impl TypeChecker {
                 // `String` to `i64` in particular would be a pointer
                 // reinterpreted as a number in C: it would compile, run, and
                 // print an address.
-                // `char` JOINS THE SET (N4-04), and it has to: with no implicit
-                // conversion in either direction, `as` is the ONLY way to cross
-                // between a scalar and its code point, and `print_int(c as i64)`
-                // is the sanctioned way to print one. In C both sides are
-                // `long long`, so the cast emits nothing.
-                let castable = |t: &CheckerType| {
-                    matches!(
-                        t,
-                        CheckerType::Int
-                            | CheckerType::Float
-                            | CheckerType::Bool
-                            | CheckerType::Char
-                    )
+                // `char` JOINS THE SET (N4-04) BUT NOT THE WHOLE OF IT, and
+                // the restriction follows the same rule the paragraph above
+                // states rather than adding an exception to it. `char` pairs
+                // with `i64` ONLY, because the code-point correspondence is
+                // exactly what the type is defined by — with no implicit
+                // conversion in either direction, `as` is the only way to
+                // cross, and `print_int(c as i64)` is the sanctioned way to
+                // print one.
+                //
+                // The other pairings have no unambiguous meaning to give them.
+                // MEASURED before this restriction: `3.7 as char` compiled and
+                // produced 3, `true as char` produced 1, `'a' as bool`
+                // produced true. Is a letter truthy? Is a fraction of a
+                // character the third one? Neither question has an answer this
+                // specification gives, so they are refused by name.
+                let numeric = |t: &CheckerType| {
+                    matches!(t, CheckerType::Int | CheckerType::Float | CheckerType::Bool)
                 };
-                if !castable(&from) || !castable(&to) {
+                let legal = match (&from, &to) {
+                    (CheckerType::Char, CheckerType::Char) => true,
+                    (CheckerType::Char, t) | (t, CheckerType::Char) => {
+                        matches!(t, CheckerType::Int)
+                    }
+                    (f, t) => numeric(f) && numeric(t),
+                };
+                if !legal {
                     return Err(CompileError::TypeMismatch {
-                        expected: "a cast between the numeric primitives, `bool` and `char`, \
-                                   which is the set `as` is defined over here"
+                        expected: "a cast among the numeric primitives and `bool`, or between \
+                                   `char` and `i64` — `char` crosses only to its code point, \
+                                   because that is the only correspondence it is defined by"
                             .to_string(),
                         found: format!("a cast from {} to {}", from, to),
                         span: Some(*span),
                     });
+                }
+
+                // A LITERAL OPERAND IS KNOWN NOW, SO IT IS REFUSED NOW.
+                // `n as char` traps at run time on a value that is not a
+                // Unicode scalar (`__pd_char_from_scalar`), because in general
+                // the value only exists then. When it is written down, waiting
+                // for run time would be a diagnostic the compiler could have
+                // given and didn't — so `55296 as char` is a compile error and
+                // `tests/reject/char_from_non_scalar.pd` pins it, while the
+                // computed case stays with the trap and `tests/n4_char_traps.rs`.
+                if matches!(to, CheckerType::Char) {
+                    if let Expr::Integer(n) = expr.as_ref() {
+                        let scalar = *n;
+                        if !(0..=0x10FFFF).contains(&scalar) || (0xD800..=0xDFFF).contains(&scalar)
+                        {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "a Unicode scalar — 0 to 1114111, and not a UTF-16 \
+                                           surrogate (55296 to 57343), because a surrogate is \
+                                           half of a pair and not a character"
+                                    .to_string(),
+                                found: format!("`{} as char`", scalar),
+                                span: Some(*span),
+                            });
+                        }
+                    }
                 }
 
                 Ok(to)
@@ -6149,7 +6187,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6560-6624`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6597-6661`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -6173,7 +6211,7 @@ impl TypeChecker {
     /// This matters for the same reason the module ordering does: `make selfhost`
     /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
     /// because `bootstrap/pdc.pd` uses no generics — they are excluded from PBS-1
-    /// (`docs/specification/bootstrap-subset.md:110`).
+    /// (`docs/specification/bootstrap-subset.md:132`).
     pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
         let mut result = Vec::new();
 

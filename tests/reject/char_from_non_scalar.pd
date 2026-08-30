@@ -1,0 +1,24 @@
+// NEGATIVE TEST -- not every integer is a character (N4-04).
+//
+// `as char` is the ONLY way to build a character out of a number, so it is the
+// only place a value that is not a Unicode scalar can enter the type. A scalar
+// is 0..=0x10FFFF MINUS the UTF-16 surrogate block D800..=DFFF; 55296 is
+// U+D800, the first surrogate, and it is not a character in any encoding --
+// it is half of a UTF-16 pair.
+//
+// MEASURED before this check: `55296 as char` compiled, ran, exited 0, and
+// `string_from_char` printed an EMPTY LINE. `99999999 as char` printed a
+// garbage byte. Both silently: `__pd_string_from_char` writes `(char)c`, one
+// byte, and asks nothing about the other 56 bits. That is the silent-wrong
+// class this repo refuses to ship.
+//
+// SO THIS FIXTURE IS A `reject` FOR A REASON WORTH SAYING: the value here is a
+// LITERAL, so the refusal is the type checker's and happens at compile time.
+// A non-scalar that is only known at run time cannot be refused that way -- it
+// TRAPS instead, the way `string_char_at` traps an index with no character
+// behind it, and that half is pinned by tests/n4_char_traps.rs because a trap
+// ends the process and no fixture can observe it.
+fn main() {
+    let c: char = 55296 as char;
+    print(string_from_char(c));
+}

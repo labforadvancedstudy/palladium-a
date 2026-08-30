@@ -39,8 +39,9 @@ fn main() {
     print("[\r]");
 
     // A char literal takes the same escapes, and `'\''` is the only way to
-    // write a quote. Printed as its code point, because that is what a char
-    // literal denotes today (N4-04 is still owed).
+    // write a quote. Printed through `as i64`, because a char literal's type is
+    // `char` (N4-04) and `print_int` takes an `i64` — the cast names the code
+    // point, which is what this fixture is asserting.
     print_int('\n' as i64);
     print_int('\t' as i64);
     print_int('\r' as i64);

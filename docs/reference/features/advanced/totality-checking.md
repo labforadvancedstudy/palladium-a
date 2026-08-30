@@ -336,7 +336,7 @@ There is no recursion analysis, no measure checking, and no proof representation
 **3. One prerequisite arrived; the other did not.** Structural recursion is stated over inductive
 types with pattern matching on subterms. `match` HAS the pattern forms now (`src/ast/mod.rs:572`:
 literal, range, tuple, or- and `@` patterns, with guards), so the matching half is no longer the
-blocker. Generic types still do not survive codegen (`src/codegen/mod.rs:2921-2921`), and there is
+blocker. Generic types still do not survive codegen (`src/codegen/mod.rs:2943-2943`), and there is
 still no recursion analysis, no measure checking and no proof representation — so a totality checker
 would now have something to match on and nothing to reason with.
 

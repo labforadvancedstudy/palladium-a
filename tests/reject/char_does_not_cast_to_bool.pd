@@ -1,0 +1,24 @@
+// NEGATIVE TEST -- `char` casts only to `i64`, and only through `as` (N4-04).
+//
+// The cast set was widened to admit `char` when the type landed, and widened
+// too far: MEASURED, `'a' as bool` compiled and produced true, `3.7 as char`
+// produced 3, and `true as char` produced 1. All four pairings type-checked
+// because the check was a PREDICATE over both sides ("is each of these
+// castable?") rather than a relation over the pair.
+//
+// The rule the surrounding code already states is that `as` covers the
+// conversions with an unambiguous meaning in the target language. These have
+// none. Is a letter truthy? Which character is three-tenths of the way past
+// `\u{3}`? The specification answers neither, so they are refused by name
+// rather than guessed at -- the same reason `String as i64` is refused.
+//
+// What remains legal is `char` <-> `i64`, because the code point IS the
+// correspondence a character is defined by. tests/02_types_chars.pd round-trips
+// it in both directions.
+fn main() {
+    let c: char = 'a';
+    let b: bool = c as bool;
+    if b {
+        print("unreachable");
+    }
+}

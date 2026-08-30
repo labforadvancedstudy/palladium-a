@@ -28,7 +28,7 @@ compiler's *source* without implementing it in the bootstrap compiler's *code* i
 identifier   = (letter | '_') { letter | digit | '_' } ;
 integer      = digit { digit } ;                 (* decimal only *)
 string       = '"' { char | escape } '"' ;
-charlit      = "'" ( char | escape ) "'" ;       (* N4-04; joined PBS-1 with the type *)
+charlit      = "'" ( ascii | escape ) "'" ;      (* N4-04; ASCII only — see below *)
 escape       = '\' ( 'n' | 't' | 'r' | '0' | '"' | "'" | '\' ) ;
 comment      = "//" { char - '\n' } | "/*" { char } "*/" ;   (* NON-NESTING; see below *)
 ```
@@ -45,15 +45,37 @@ Not in PBS-1: hex/binary/octal literals, numeric separators, raw strings, `\xNN`
 escapes, string interpolation. Float literals lex in the Rust `pdc` (N2-03) but are not part of
 PBS-1 — `bootstrap/pdc.pd` neither writes nor scans them.
 
-**CHAR LITERALS JOINED PBS-1 WITH N4-04**, and they had to. `string_char_at` returns a `char`
-now and the three `char_is_*` predicates take one (N14-04), so a lexer written in this subset
-cannot hold what it scans without the type — and with the type but no literal, every comparison
-would be against a decimal code point, which is the workaround the type exists to retire. So
-`bootstrap/pdc.pd` both WRITES them (`if ch == '/'`, where it used to say `if ch == 47`) and
+**CHAR LITERALS JOINED PBS-1 WITH N4-04**, and this was a SELECTION, not a necessity.
+`string_char_at` returns a `char` now and the three `char_is_*` predicates take one (N14-04), so
+a lexer written in this subset cannot hold what it scans without the type. Given the type, the
+comparisons need a spelling, and there were two: admit char literals, or admit `as` casts and
+keep writing `ch == 47 as char`. Both would compile. Char literals were chosen because the
+decimal code point IS the workaround the type exists to retire, and because a lexer that cannot
+say `'/'` while compiling programs that do is the kind of gap that gets rediscovered. `as` casts
+remain outside PBS-1.
+
+So `bootstrap/pdc.pd` both WRITES them (`if ch == '/'`, where it used to say `if ch == 47`) and
 SCANS them: the lexer takes `'` … `'` verbatim, the way it already took `"` … `"`, and emits the
-token unchanged because a C character constant is spelled identically. The `\0` and `\'` escapes
-come with them. This is the one place the subset grew rather than shrank, and the fixed point in
-§9.1 is the receipt that it still compiles itself.
+token unchanged because a C character constant is spelled identically. This is the one place the
+subset grew rather than shrank, and the fixed point in §9.1 is the receipt that it still compiles
+itself.
+
+**PBS-1 char literals are ASCII, and the escapes are the named set** — `\n \t \r \0 \" \' \\`.
+The Rust `pdc` accepts any Unicode scalar (`'한'` is U+D55C, pinned in `tests/02_types_chars.pd`),
+and `bootstrap/pdc.pd` does not: it copies the bytes between the quotes into the emitted C, where
+a multi-byte scalar becomes a C character constant of implementation-defined value rather than
+54620. THIS DIVERGENCE IS NOT OBSERVABLE TODAY, and that is a measurement rather than a hope —
+`bootstrap/pdc.pd` contains exactly six non-ASCII bytes, all of them em-dashes inside comments,
+and comments never reach a char literal. It is recorded here for the same reason the non-nesting
+of `/* */` is recorded at the grammar above: the bootstrap scanner and the Rust one disagree, the
+disagreement is currently unreachable, and a future edit that reaches it should find the sentence
+before it finds the bug.
+
+**A malformed char literal is not diagnosed by the bootstrap scanner.** `'ab'`, `''`, an
+unterminated `'x`, or a trailing `'\` at end of file are copied through verbatim and die in `cc`
+against generated code, exactly as a malformed STRING literal already does — the scanner's job in
+PBS-1 is to find the closing delimiter, not to validate what is between. This is a pre-existing
+class that char literals join rather than create; the Rust `pdc` refuses all four at the token.
 
 **Keywords used by PBS-1**: `fn let mut if else while for in return break continue struct
 enum match true false`.
@@ -87,13 +109,13 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 **Excluded from PBS-1** (verified unsupported downstream):
 - Tuples — EXCLUDED FROM PBS-1, not from the language. Tuples are values since N4-12: one C struct
   per shape, with a constructor. What is still refused is a tuple in a STRUCT FIELD
-  (`src/codegen/mod.rs:2934-2937`) and a tuple in an ENUM PAYLOAD, both for the same reason — the
+  (`src/codegen/mod.rs:2956-2959`) and a tuple in an ENUM PAYLOAD, both for the same reason — the
   generated struct's definition would have to precede a type that may contain it, and satisfying
   both directions takes a dependency sort over generated types. `bootstrap/pdc.pd` uses neither
   tuples nor either refusal.
-- Generic types in struct fields — error at `src/codegen/mod.rs:2919-2922`.
-- Reference types in struct fields — error at `src/codegen/mod.rs:2926-2926`.
-- Returning an array from a function — error at `src/codegen/mod.rs:3266-3270`.
+- Generic types in struct fields — error at `src/codegen/mod.rs:2941-2944`.
+- Reference types in struct fields — error at `src/codegen/mod.rs:2948-2948`.
+- Returning an array from a function — error at `src/codegen/mod.rs:3288-3292`.
 - `str`, `u8`, `usize` — no such primitives; `src/parser/mod.rs:3819-3828` is the whole
   set the type parser recognises. `char` was in this bullet until N4-04 gave the language a
   distinct character type and N14-04 retyped the five character built-ins over it; PBS-1 needed
@@ -104,7 +126,7 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 - Trait bounds (`<T: Display>`) — a parse error; `parse_generic_params` accepts bare names only.
 - `Option<T>` / `Result<T,E>` as built-ins — they do not exist. Declaring your own does not
   enable `?`: nothing lowers the operator onto the representation enums are compiled to, so it
-  is rejected outright (`src/typeck/mod.rs:4816-4816`). It used to emit a C `struct Result` layout
+  is rejected outright (`src/typeck/mod.rs:4817-4817`). It used to emit a C `struct Result` layout
   that no other part of codegen ever defines.
 
 **Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
@@ -206,10 +228,10 @@ precedence.
 | Construct | Why |
 |---|---|
 | closures | no closure token path, no closure AST node (`try { }` likewise) |
-| `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:4816-4816`). It used to emit C referencing an undefined `struct Result`. |
-| `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:4823-4823`). It used to emit a `poll` member call that is never generated. |
+| `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:4817-4817`). It used to emit C referencing an undefined `struct Result`. |
+| `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:4824-4824`). It used to emit a `poll` member call that is never generated. |
 | the `&self` receiver | emits a `const T*` parameter while the call site passes the value; the C compiler refuses it |
-| empty array literal `[]` | typeck error — element type uninferrable (`src/typeck/mod.rs:4305-4305`) |
+| empty array literal `[]` | typeck error — element type uninferrable (`src/typeck/mod.rs:4306-4306`) |
 | tuple expressions, `.0` indexing | PARSE AND RUN since N4-12; excluded from PBS-1 by choice, not by the compiler. A CHAINED index needs parentheses — `(p.0).1` — because `.0.1` lexes as one float literal |
 | `dbg!` | expands to `print_debug`, which is not defined anywhere (`src/macros/mod.rs:107`) |
 
@@ -251,11 +273,11 @@ These are tracked because PBS-1 code cannot be written safely without them.
 |---|---|---|---|
 | D1 | `runtime/palladium_runtime.c` was referenced by the driver but absent from the repo, so nothing could ever link. It had never been committed: `.gitignore` carried a blanket `*.c` | `src/driver/mod.rs:286`, `.gitignore` | **fixed** — runtime written, `.gitignore` negated for `runtime/` |
 | D2 | 11 builtins registered in typeck but not in the borrow checker, so `string_len`, `string_eq`, `string_char_at`, `string_from_char`, `char_is_digit/alpha/whitespace`, `file_read_all`, `file_read_line`, `file_write` and `panic` failed with `Use of uninitialized value` | `src/ownership/borrow_checker.rs` vs `src/typeck/mod.rs:1177-1183` | **fixed** — `src/builtins.rs` is now the single table both passes derive from, with drift tests |
-| D3 | a tail expression in a value-returning function emitted no `return`, so `fn add(a,b) -> i64 { a + b }` compiled clean and returned garbage. All of `stdlib/` was affected | `src/parser/mod.rs:456`, `src/codegen/mod.rs:3691-3694` | **fixed** — lowered to `Stmt::Return` in the parser |
+| D3 | a tail expression in a value-returning function emitted no `return`, so `fn add(a,b) -> i64 { a + b }` compiled clean and returned garbage. All of `stdlib/` was affected | `src/parser/mod.rs:456`, `src/codegen/mod.rs:3713-3716` | **fixed** — lowered to `Stmt::Return` in the parser |
 | D6 | call-argument borrows were registered with `Lifetime::Named("fn")` while `exit_scope` released only `Lifetime::Scope(n)`, so every argument stayed borrowed forever; and `String`/array parameters were classified `Move` although codegen passes pointers and never frees | `src/ownership/borrow_checker.rs` `collect_function_sig_with_name` / `check_call_args`; `src/ownership/mod.rs:141-178` | **fixed** — borrows end with the call; `String` is Copy (language-spec §9.1); array params are borrows. The `Lifetime::Scope(n)` half of the description was worse than it read: that variant is constructed nowhere, so `exit_scope` released nothing of any lifetime and `borrows` grew for the whole compilation. It now releases by recorded scope depth |
 | D8 | codegen emitted no C prototypes, so calling a function defined later in the file produced C that gcc rejects — and mutual recursion was inexpressible | `src/codegen/mod.rs` | **fixed** — prototypes emitted for every user function |
 | D4 | `for` over an array *parameter* used `sizeof` on a decayed pointer, so the loop ran once for `i64` and twice for `i32` | `src/codegen/mod.rs` for-in arm | **fixed** — the bound comes from the declared length; a length codegen cannot resolve is a compile error on a parameter, not a wrong bound |
-| D5 | `?` emitted C for a `struct Result` layout codegen never defines, and `.await` emitted a call to a `poll` member no generated struct has. Neither was an error: both programs died inside gcc, against C the user never wrote. The LLVM backend was worse — its catch-all returns the constant `0` for both | the pre-fix lowerings and the LLVM catch-all are DELETED, so they are described here without a citation form (A6.4's withdrawn-claim convention): pinning a live line that no longer contains the claim is how this row came to cite a scope-snapshot comment, an array-length diagnostic and a `xor i1` emitter as evidence of them. Version control holds them | **fixed** — both rejected with "is not implemented" plus consequence and a workaround that is compiled and run by `tests/d5_unimplemented_constructs.rs` (`src/typeck/mod.rs:4816-4816`, `src/typeck/mod.rs:4823-4823`; backstop at `src/codegen/mod.rs:6389-6393`, `src/codegen/mod.rs:6401-6405`). Old lowerings deleted, not flagged off. PBS-1 still excludes both |
+| D5 | `?` emitted C for a `struct Result` layout codegen never defines, and `.await` emitted a call to a `poll` member no generated struct has. Neither was an error: both programs died inside gcc, against C the user never wrote. The LLVM backend was worse — its catch-all returns the constant `0` for both | the pre-fix lowerings and the LLVM catch-all are DELETED, so they are described here without a citation form (A6.4's withdrawn-claim convention): pinning a live line that no longer contains the claim is how this row came to cite a scope-snapshot comment, an array-length diagnostic and a `xor i1` emitter as evidence of them. Version control holds them | **fixed** — both rejected with "is not implemented" plus consequence and a workaround that is compiled and run by `tests/d5_unimplemented_constructs.rs` (`src/typeck/mod.rs:4817-4817`, `src/typeck/mod.rs:4824-4824`; backstop at `src/codegen/mod.rs:6411-6415`, `src/codegen/mod.rs:6423-6427`). Old lowerings deleted, not flagged off. PBS-1 still excludes both |
 | D7 | a `let` with no type annotation was emitted as `long long` whatever the initializer was, so references, enum values and string copies silently became integers | codegen let-inference | **fixed** — inference now covers literals, calls, struct/enum values, references, deref, field and index expressions; an initializer with no rule is a compile error naming the variable, never a guess |
 | D9 | reference-to-array parameter types (`&[T; N]`, `&mut [T; N]`) were rejected by codegen: "Unsupported type in reference parameter" | `src/codegen/mod.rs` reference-parameter arm | **fixed** — both lower to the decayed pointer C gives an array parameter, `&` const-qualifying the element slot. Writing through a shared or a bare array parameter, or passing one on to a parameter that may write, is a compile error (language-spec §9.2) |
 

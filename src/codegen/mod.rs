@@ -41,7 +41,7 @@ enum ArrayParamForm {
     /// `xs: [T; N]` - no declared intent to mutate anything.
     ByValue,
     /// `mut xs: [T; N]` - the bootstrap subset's spelling for a mutable array
-    /// parameter (docs/specification/bootstrap-subset.md:130-132).
+    /// parameter (docs/specification/bootstrap-subset.md:152-154).
     MutByValue,
     /// `xs: &[T; N]`.
     Shared,
@@ -554,10 +554,10 @@ impl CodeGenerator {
                 let base = self.try_infer_expr_type_in(expr, locals)?;
                 self.tuple_shapes.element_types(&base)?.get(*index).cloned()
             }
-            // A char literal's TYPE is i64 today (N4-04 is still owed), so it
-            // must infer as `long long` and not as C's `char`: inferring `char`
-            // here would silently narrow `let c = 'a';` to one byte while the
-            // type checker still called it i64.
+            // A char literal's TYPE is `char` (N4-04) and its CARRIER is
+            // `long long`, which is what this must answer — not C's `char`.
+            // Inferring `char` here would narrow `let c = 'a';` to one byte,
+            // and one byte cannot hold `'한'` (U+D55C).
             Expr::Char(_) => Some("long long".to_string()),
             Expr::String(_) => Some("const char*".to_string()),
             Expr::Bool(_) => Some("int".to_string()),
@@ -1208,7 +1208,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4780`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4781`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -1705,6 +1705,25 @@ impl CodeGenerator {
         self.output.push_str("}\n\n");
 
         // string_char_at
+        // N4-04. THE ONLY DOOR INTO `char` FROM A NUMBER, so it is where the
+        // domain is enforced. A Unicode scalar is 0..=0x10FFFF minus the
+        // UTF-16 surrogate range D800..=DFFF, and everything else that reached
+        // `char` used to reach `string_from_char`, which writes `(char)c` — one
+        // byte. Measured: `55296 as char` printed an empty line and
+        // `99999999 as char` printed a garbage byte, both silently.
+        self.output
+            .push_str("long long __pd_char_from_scalar(long long v) {\n");
+        self.output
+            .push_str("    if (v < 0 || v > 1114111 || (v >= 55296 && v <= 57343)) {\n");
+        self.output.push_str(
+            "        fprintf(stderr, \"palladium: %lld is not a Unicode scalar, so it is not \
+             a char\\n\", v);\n",
+        );
+        self.output.push_str("        abort();\n");
+        self.output.push_str("    }\n");
+        self.output.push_str("    return v;\n");
+        self.output.push_str("}\n\n");
+
         self.output
             .push_str("long long __pd_string_char_at(const char* str, long long index) {\n");
         self.output
@@ -2404,9 +2423,12 @@ impl CodeGenerator {
             Type::F32 => "float".to_string(),
             // N4-04. `char` is a DISTINCT TYPE and the SAME CARRIER: a C `char`
             // holds 8 bits and a scalar like U+D55C needs 21, so it rides in the
-            // `long long` it always rode in. The split is the checker's, and the
-            // emitted C is byte-identical to what an `i64` produced — which is why
-            // an `as` in either direction emits nothing at all.
+            // `long long` it always rode in. The split is the checker's, so
+            // `c as i64` is a NO-OP IDENTITY CAST — it emits the tokens
+            // `(long long)`, and converts nothing. (`n as char` is the one
+            // direction that is not free: it emits a call to
+            // `__pd_char_from_scalar`, which checks the operand is a Unicode
+            // scalar.)
             Type::Char => "long long".to_string(),
             Type::Bool => "int".to_string(),
             Type::String => "const char*".to_string(),
@@ -6420,7 +6442,22 @@ impl CodeGenerator {
                 // truthy, but not `true`, and `5 as bool as i64` would print 5
                 // instead of 1. A cast to `bool` is a comparison against zero,
                 // which is what the conversion MEANS.
-                if matches!(ty, Type::Bool) {
+                //
+                // AND A CAST TO `char` IS CHECKED. `as char` is the only way to
+                // build a character from a number, so it is the only place a
+                // value that is not a Unicode scalar can enter the type.
+                // MEASURED before this check: `55296 as char` (a UTF-16
+                // surrogate) and `99999999 as char` (past U+10FFFF) both
+                // compiled, and `string_from_char` then wrote the low byte —
+                // an empty line and a garbage byte respectively, with no
+                // diagnostic. That is the silent-wrong class, so it traps at
+                // the conversion, the way `string_char_at` traps an index with
+                // no character behind it.
+                if matches!(ty, Type::Char) {
+                    self.output.push_str("__pd_char_from_scalar(");
+                    self.generate_expression(expr)?;
+                    self.output.push(')');
+                } else if matches!(ty, Type::Bool) {
                     self.output.push_str("((");
                     self.generate_expression(expr)?;
                     self.output.push_str(") != 0)");

@@ -113,6 +113,14 @@ int __pd_string_eq(const char* s1, const char* s2) {
     return strcmp(s1, s2) == 0;
 }
 
+long long __pd_char_from_scalar(long long v) {
+    if (v < 0 || v > 1114111 || (v >= 55296 && v <= 57343)) {
+        fprintf(stderr, "palladium: %lld is not a Unicode scalar, so it is not a char\n", v);
+        abort();
+    }
+    return v;
+}
+
 long long __pd_string_char_at(const char* str, long long index) {
     if (index < 0 || index >= (long long)strlen(str)) {
         fprintf(stderr, "palladium: string_char_at index %lld is outside a string of length %lld\n", index, (long long)strlen(str));

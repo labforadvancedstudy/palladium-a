@@ -25,8 +25,19 @@
 // which is why the two rows were always one change.
 //
 // THE C CARRIER DID NOT MOVE. A char rides in `long long`, as it always did —
-// a C `char` holds 8 bits and `'한'` needs 21 — so `as` in either direction
-// emits nothing and this split costs nothing at run time.
+// a C `char` holds 8 bits and `'한'` needs 21 — so `c as i64` is a NO-OP
+// IDENTITY CAST: it emits the tokens `(long long)` and converts nothing, and
+// this half of the split costs nothing at run time.
+//
+// `n as char` is the direction that is NOT free, and deliberately so. It is the
+// only way to build a character out of a number, so it is where the domain is
+// checked: a value outside 0..=0x10FFFF, or inside the UTF-16 surrogate range
+// D800..=DFFF, is not a Unicode scalar and traps. Measured before that check
+// existed, `55296 as char` printed an empty line and `99999999 as char` printed
+// a garbage byte, because `string_from_char` writes the low byte and asks
+// nothing. The refusals are pinned by tests/reject/char_from_non_scalar.pd and
+// the classification of what may be cast at all by
+// tests/reject/char_does_not_cast_to_bool.pd.
 
 fn main() {
     // The scalar itself. `as i64` is the sanctioned way to print one: there is
