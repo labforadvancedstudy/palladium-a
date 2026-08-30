@@ -348,7 +348,7 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "unimplemented"
 evidence = [
   "src: src/typeck/mod.rs:4733-4733 the type checker refuses `?` by name, before any C exists",
-  "src: src/codegen/mod.rs:6317-6321 the code generator refuses it too, at the arm that used to lower it",
+  "src: src/codegen/mod.rs:6352-6356 the code generator refuses it too, at the arm that used to lower it",
   "conformance: tests/reject/question_mark_operator.pd reject",
 ]
 note = "No longer silent, and no longer lowered. This row used to read \"it typechecks, and the failure surfaces in gcc\", then `partial` on the grounds that the lowering was still there emitting a `struct Result` layout nothing defines. It is not there: both citations for it pointed at code that had been deleted (reference-array parameter handling and a match-field comment occupied those lines), so the two claims are retracted and stated here without a citation form, as A6.4's withdrawn claim is -- a deleted line cannot be pinned, and pinning a live line that does not contain the claim is worse than saying so."
@@ -381,7 +381,7 @@ description = "No await operator; the compiler places async boundaries."
 spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/codegen/mod.rs:6329-6333 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
+  "src: src/codegen/mod.rs:6364-6368 the Await arm now returns CompileError::await_unimplemented; the poll lowering was deleted on main in 439b241",
   "conformance: tests/reject/async_fn.pd reject",
   "conformance: tests/10_async_await.pd vacuous",
 ]

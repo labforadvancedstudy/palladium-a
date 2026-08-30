@@ -894,7 +894,7 @@ unrelated reason.
 | `&T`, `&mut T` | partial | parses, but the typechecker is a **no-op**: `Type::Reference` maps to its inner type — "For now, treat references as the inner type / TODO: Proper reference type handling" (`src/typeck/mod.rs:714-718`, corrected from line 2470–2486 of the pre-cleanup revision). `&i64` and `i64` are indistinguishable to it. |
 | `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
 | `Name<A, B>` | partial | see below |
-| `(A, B)` | **implemented** | one C struct per SHAPE, mangled from the element C types and emitted with a constructor (`src/codegen/mod.rs:4752`); `void*` is gone. Arity two or more. A tuple in an ENUM PAYLOAD is refused by name — tuple structs are emitted after the enum definitions because an element may be an enum, and a payload of tuple type needs the reverse order |
+| `(A, B)` | **implemented** | one C struct per SHAPE, mangled from the element C types and emitted with a constructor (`src/codegen/mod.rs:4782`); `void*` is gone. Arity two or more. A tuple in an ENUM PAYLOAD is refused by name — tuple structs are emitted after the enum definitions because an element may be an enum, and a payload of tuple type needs the reverse order |
 | `f64` | **implemented** | the type of a float literal since N2-03; C `double` |
 | `f32` | partial | parses and maps to C `float`, but shares one checker type with `f64`, so nothing can observe the difference |
 | `char` | partial | `'a'` LEXES and carries the right scalar (N2-04), and its TYPE is `i64` — N4-04, still owed, moves with N14-04's `string_char_at` |
@@ -930,7 +930,7 @@ enum is compiled to. Use `match`.
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
 rejected outright by the type checker (`src/typeck/mod.rs:4733-4733`) and again by code generation
-(`src/codegen/mod.rs:6317-6321`). It used to typecheck against a `Generic{name:"Result"}` shape
+(`src/codegen/mod.rs:6352-6356`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -1038,12 +1038,16 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3778`) and code generation (`src/codegen/mod.rs:5812-5815`)
+both the type checker (`src/typeck/mod.rs:3778`) and code generation (`src/codegen/mod.rs:5842-5845`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
-as a second kind of call. The receiver becomes the first argument and is evaluated exactly once;
-its position among the arguments is C's unspecified evaluation order, which is the same residual
-every multi-argument call here already has, and is why [N13](#n13-evaluation-and-arithmetic)'s
-left-to-right row (N13-03) stays owed.
+as a second kind of call. The receiver becomes the first argument and is evaluated exactly once,
+and its position among the arguments is the one the source wrote: being the first argument, it is
+read first. That is not C's doing — C leaves the order of a call's arguments unspecified — but a
+call with any effectful argument reads EVERY argument, receiver included, into a temporary
+declared in source order (see [A11](#a11-conformance) and
+[N13](#n13-evaluation-and-arithmetic)'s N13-03). `tests/03_arg_evaluation_order.pd` section 5 pins
+what that buys, and the emitted shape it rests on is pinned by
+`test_an_effectful_method_receiver_is_read_first_and_once`.
 
 **THREE THINGS WERE BROKEN, AND THIS SECTION KNEW ABOUT ONE.** It said `x.f()` was refused with
 "Indirect function calls not yet supported", which was true. It also said, twice — here and in
@@ -1112,8 +1116,8 @@ syntactic trap is worth stating: a `match` arm that is a block must not be follo
 and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4733-4733`, `.await` at
-`src/typeck/mod.rs:4740-4740`) and again by code generation (`?` at `src/codegen/mod.rs:6317-6321`,
-`.await` at `src/codegen/mod.rs:6329-6333`), which is callable on its own.
+`src/typeck/mod.rs:4740-4740`) and again by code generation (`?` at `src/codegen/mod.rs:6352-6356`,
+`.await` at `src/codegen/mod.rs:6364-6368`), which is callable on its own.
 
 What they used to do:
 
@@ -1321,7 +1325,7 @@ One divergence remains, and two are closed:
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:1166-1166`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:5850-5850`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+(`src/codegen/mod.rs:5880-5880`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:1641-1641`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`

@@ -4543,19 +4543,49 @@ impl CodeGenerator {
     /// * a by-value bare name of ARRAY type. An array argument decays to a
     ///   pointer to storage that already exists, so again the read is of an
     ///   address, not of a value.
-    /// * an argument whose C type this pass cannot name. There is no honest
+    /// * a PURE argument whose C type this pass cannot name. There is no honest
     ///   declaration to write, and inventing `long long` is how a `String`
-    ///   becomes an integer (see `expr_c_type`).
+    ///   becomes an integer (see `expr_c_type`) — but a pure argument's read
+    ///   time is not observable, so emitting it in place loses nothing.
+    ///
+    /// An EFFECTFUL argument whose type cannot be named is the one case that
+    /// REFUSES rather than falling back. Emitting it in place would put a call
+    /// back inside the C call expression, where the order is unspecified again
+    /// — and it would do so silently, in exactly the position this rule exists
+    /// to fix. No source reaches it today (`Expr::Question`,
+    /// `Expr::MacroInvocation` and `Expr::Await` are the only always-`None`
+    /// arms of `try_infer_expr_type_in`, and each is refused upstream before
+    /// codegen), so this is a fail-closed guard on a latent branch and not a
+    /// diagnostic users are expected to see.
     ///
     /// Everything else is declared and assigned here. The argument's OWN
     /// hoists — a value `if` written as an argument — are pushed first, so the
     /// order in `pending_hoists` is the order in the source.
-    fn hoist_call_argument(&mut self, arg: &Expr, needs_address: bool) -> Result<Option<String>> {
+    fn hoist_call_argument(
+        &mut self,
+        arg: &Expr,
+        needs_address: bool,
+        index: usize,
+        callee: &str,
+    ) -> Result<Option<String>> {
         if matches!(arg, Expr::Ident(_)) && needs_address {
             return Ok(None);
         }
         let Some(c_type) = self.try_infer_expr_type(arg) else {
-            return Ok(None);
+            if Self::expr_is_pure(arg) {
+                return Ok(None);
+            }
+            return Err(CompileError::CodegenError {
+                message: format!(
+                    "cannot sequence argument {} of `{}`: this {} can carry an effect, so \
+                     N13-03 requires it to be read at its own position, and its C type \
+                     cannot be named for a temporary to read it into. Leaving it inside \
+                     the call would put the order back in the C compiler's hands",
+                    index + 1,
+                    callee,
+                    Self::expr_kind_name(arg)
+                ),
+            });
         };
         let (base, dims) = Self::split_array_dims(&c_type);
         if base == "void" || base.is_empty() {
@@ -5909,6 +5939,10 @@ impl CodeGenerator {
                 // NOT IN SCOPE: struct-literal field order and binary-operator
                 // operand order are their own rows.
                 let sequenced = args.len() >= 2 && !args.iter().all(Self::expr_is_pure);
+                let callee = match func.as_ref() {
+                    Expr::Ident(name) => name.clone(),
+                    _ => "<indirect>".to_string(),
+                };
 
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
@@ -5928,7 +5962,8 @@ impl CodeGenerator {
                     };
 
                     if sequenced {
-                        if let Some(temp) = self.hoist_call_argument(arg, needs_address)? {
+                        if let Some(temp) = self.hoist_call_argument(arg, needs_address, i, &callee)?
+                        {
                             self.output.push_str(&temp);
                             continue;
                         }
@@ -7593,6 +7628,124 @@ mod tests {
         assert!(c.contains("take(__pd_val0, __pd_val1)"), "{}", c);
         assert!(c.contains("long long *__pd_val2 = grid[idx()];"), "{}", c);
         assert!(c.contains("row_sum(__pd_val2, __pd_val3)"), "{}", c);
+    }
+
+    // THE FAIL-CLOSED HALF OF N13-03, on a branch NO SOURCE REACHES TODAY.
+    //
+    // `try_infer_expr_type_in` has exactly three arms that always answer
+    // `None` — `Expr::Question`, `Expr::MacroInvocation` and `Expr::Await` —
+    // and every one of them is an effectful form. Each is refused before
+    // codegen runs, MEASURED at the source level rather than assumed:
+    //
+    //   add2(g()?, 2)        "the `?` operator is not implemented"
+    //   add2(g().await, 2)   "a `return` with a value inside an `async fn`
+    //                         is not implemented"
+    //   add2(vec!(1), 2)     "Type mismatch: expected Int, found [Int; 1]"
+    //   add2(nope(), 2)      "Undefined function: nope"
+    //
+    // So the argument is SYNTHETIC, deliberately, for the same reason
+    // `tuple_shape_tests::the_mangling_can_collide` builds its inputs by hand:
+    // the guard exists for a future spelling, and a test that could not run is
+    // worse than one that is honest about being constructed. What it pins is
+    // that the branch REFUSES instead of quietly emitting the call in place —
+    // which would put an effectful argument back inside the C call expression,
+    // in exactly the position this rule exists to fix.
+    #[test]
+    fn test_an_effectful_argument_with_no_nameable_type_is_refused() {
+        let mut codegen = CodeGenerator::new("test").unwrap();
+        let span = Span::new(0, 0, 1, 1);
+        let unnameable = Expr::Await {
+            expr: Box::new(Expr::Integer(1)),
+            span,
+        };
+        assert!(!CodeGenerator::expr_is_pure(&unnameable));
+        assert!(codegen.try_infer_expr_type(&unnameable).is_none());
+
+        let err = codegen
+            .hoist_call_argument(&unnameable, false, 1, "add2")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cannot sequence argument 2 of `add2`"), "{}", err);
+
+        // A PURE argument keeps the fallback: its read time is not observable,
+        // so emitting it in place loses nothing and refusing it would reject
+        // programs that are fine.
+        let pure = Expr::Ident("x".to_string());
+        assert!(CodeGenerator::expr_is_pure(&pure));
+        assert!(codegen.try_infer_expr_type(&pure).is_none());
+        assert_eq!(
+            codegen.hoist_call_argument(&pure, false, 0, "add2").unwrap(),
+            None
+        );
+    }
+
+    // SEQUENCING MUST NOT UNDO SHORT-CIRCUITING. `&&` does not evaluate its
+    // right operand when the left decides, and argument temporaries are
+    // statements — put them above the whole call and the right operand runs
+    // unconditionally, which is the defect the `Expr::Binary` arm was written
+    // to fix for hoisted blocks.
+    //
+    // It composes because the `&&` lowering captures the right operand's
+    // hoists and emits them INSIDE the guard it generates. This test pins that
+    // composition: the inner call's argument temporaries appear after the
+    // `if (__pd_val...)` line, not before it.
+    #[test]
+    fn test_sequenced_arguments_stay_inside_a_short_circuit_guard() {
+        for (op, guard) in [("&&", "if ("), ("||", "if (!")] {
+            let source = format!(
+                r#"
+        fn a() -> i64 {{ return 1; }}
+        fn b() -> i64 {{ return 2; }}
+        fn inner(x: i64, y: i64) -> bool {{ return x < y; }}
+        fn use2(c: bool, k: i64) -> i64 {{ if c {{ return k; }} return 0; }}
+        fn main() {{
+            let flag: bool = false;
+            let n: i64 = 7;
+            print_int(use2(flag {} inner(a(), b()), n));
+        }}
+        "#,
+                op
+            );
+            let c = generate(&source).unwrap();
+            let guard_at = c.find(guard).unwrap_or_else(|| panic!("{}", c));
+            let first_temp = c.find("= a();").unwrap_or_else(|| panic!("{}", c));
+            let second_temp = c.find("= b();").unwrap_or_else(|| panic!("{}", c));
+            assert!(
+                guard_at < first_temp && first_temp < second_temp,
+                "{} lowering put the argument temps outside the guard:\n{}",
+                op,
+                c
+            );
+        }
+    }
+
+    // A METHOD CALL'S RECEIVER IS THE FIRST ARGUMENT (N5-17 rewrites `r.f(a)`
+    // to `Type::f(r, a)`), so under N13-03 it is read at its own position like
+    // any other argument — before the arguments written after it, and exactly
+    // once. This is the shape language-spec.md §A method calls now describes.
+    #[test]
+    fn test_an_effectful_method_receiver_is_read_first_and_once() {
+        let c = generate(
+            r#"
+        static mut G: i64 = 0;
+        struct Counter { n: i64 }
+        impl Counter {
+            fn plus(self, k: i64) -> i64 { return self.n + k; }
+        }
+        fn make() -> Counter { G = 5; return Counter { n: 1 }; }
+        fn main() { print_int(make().plus(G)); }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("struct Counter __pd_val0 = make();"), "{}", c);
+        assert!(c.contains("long long __pd_val1 = G;"), "{}", c);
+        assert!(
+            c.contains("__pd_Counter_plus(__pd_val0, __pd_val1)"),
+            "{}",
+            c
+        );
+        assert_eq!(c.matches("__pd_val0 = make();").count(), 1, "{}", c);
+        assert!(!c.contains("__pd_Counter_plus(make()"), "{}", c);
     }
 
     #[test]

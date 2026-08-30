@@ -111,6 +111,19 @@ fn writes_through(mut x: i64, y: i64) -> i64 {
     return y;
 }
 
+fn bumps_g() -> bool {
+    print("bumps_g");
+    G = 50;
+    return true;
+}
+
+fn use2(c: bool, k: i64) -> i64 {
+    if c {
+        return k;
+    }
+    return 0 - k;
+}
+
 fn main() {
     // 1. Three effectful arguments. Every one of them prints.
     print("-- three arguments --");
@@ -163,4 +176,29 @@ fn main() {
     let mut xs: [i64; 3] = [10, 20, 30];
     print_int(writes_through(xs[slot()], a()));
     print_int(xs[2]);
+
+    // 10. SEQUENCING MUST NOT UNDO SHORT-CIRCUITING. Argument temporaries are
+    // statements, and a statement written above the whole call would run
+    // whether or not `&&` reached its right operand. It does not: the `&&`
+    // lowering emits the right operand's statements inside the guard it
+    // generates, so `bumps_g()` never runs here -- and `G`, the second
+    // argument, is read at its own position and finds the 0 set just above.
+    print("-- short circuit and --");
+    G = 0;
+    let no: bool = false;
+    print_int(use2(no && bumps_g(), G));
+
+    // The `||` mirror: a true left operand decides, so the right operand is
+    // again not evaluated and G is still 0. `use2(true, 0)` returns 0.
+    print("-- short circuit or --");
+    G = 0;
+    let yes: bool = true;
+    print_int(use2(yes || bumps_g(), G));
+
+    // And the control that makes the two above mean something: when the left
+    // operand does NOT decide, the right operand runs, G becomes 50, and the
+    // second argument reads 50 because it is read after it.
+    print("-- short circuit taken --");
+    G = 0;
+    print_int(use2(yes && bumps_g(), G));
 }

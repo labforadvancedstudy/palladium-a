@@ -368,7 +368,7 @@ type, and the non-exhaustive integer match N6-10 now refuses; then the round-3 r
 `feat/m2-items` added TWO `reject`s, both of them `<<` branches the count-range fixture beside
 them never covered — `1 << 63`, whose shift AMOUNT is legal and whose VALUE is not, and
 `(0 - 1) << 3`, a negative left operand C leaves undefined however small the result, so
-reverting either guard alone now fails a fixture of its own; then `feat/m2-types-semantics` added four — one `run` fixture, `tests/02_types_nested_arrays.pd` (N4-10), and three `reject`s: `for_over_nested_array.pd` and the two inner-length declarator positions, parameter and struct field, and one `run` fixture more for N13-03, `tests/03_arg_evaluation_order.pd`, which pins that call arguments are read left to right) | `make conformance` |
+reverting either guard alone now fails a fixture of its own; then `feat/m2-types-semantics` added five — two `run` fixtures, `tests/02_types_nested_arrays.pd` (N4-10) and `tests/03_arg_evaluation_order.pd` (N13-03, call arguments read left to right), and three `reject`s: `for_over_nested_array.pd` and the two inner-length declarator positions, parameter and struct field) | `make conformance` |
 | Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 420 citations fingerprinted, 29 no-compile fences pinned | `make check-docs` |
@@ -1207,7 +1207,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:6329-6333` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:6364-6368` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
