@@ -54,7 +54,7 @@ cargo build --release          # green (2026-08-21 실측, 29s)
 `target/build/` vs 드라이버의 `build_output/` 경로 불일치다. 이번 세션 회귀는 0건.
 
 **셀프호스팅 달성 (2026-08-21).** `bootstrap/pdc.pd`(~760줄, PBS-1)가 자기 소스를 컴파일하고
-stage1·stage2 출력이 바이트 동일(`9b0cf24e…`). 데모가 아니라 fixed point다.
+stage1·stage2 출력이 바이트 동일(`e8bd8cda…`). 데모가 아니라 fixed point다.
 서브셋 스펙 = `docs/specification/bootstrap-subset.md`.
 
 **고쳐진 것 (이 세션):**

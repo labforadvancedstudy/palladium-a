@@ -30,10 +30,8 @@ string_char_at_0
 97
 string_char_at_2
 99
-string_char_at_oob
--1
-string_char_at_neg
--1
+string_char_at_last
+99
 @builtin string_substring -> ell
 string_substring_mid
 hello

@@ -6,12 +6,16 @@ a
 57
 65
 90
-'a' is 97
+'a' equals 'a'
 'z' sorts after 'a'
+81
+char -> i64 -> char round trips
 string_char_at agrees with 'h'
 '7' is a digit
 'q' is alphabetic
 space is whitespace
+a scanned character classifies without a cast
+the last valid index is len - 1
 39
 92
 '

@@ -155,7 +155,7 @@ fn main() {
     // 6. A two-argument BUILT-IN. `string_char_at` is `__pd_string_char_at`,
     // the same emitter and the same rule.
     print("-- builtin --");
-    print_int(string_char_at(name_a(), a()));
+    print_int(string_char_at(name_a(), a()) as i64);
 
     // 7. Value temporaries need a C type that can be written down: a String
     // argument is a pointer and a struct argument is a struct.

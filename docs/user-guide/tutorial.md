@@ -290,8 +290,8 @@ fn main() {
         print("match");
     }
 
-    let first: i64 = string_char_at(joined, 0);
-    print_int(first);
+    let first: char = string_char_at(joined, 0);
+    print_int(first as i64);
 
     let head: String = string_substring(joined, 0, 5);
     print(head);
@@ -301,7 +301,8 @@ fn main() {
 }
 ```
 
-Character classification takes the integer returned by `string_char_at`:
+`string_char_at` returns a `char` (N4-04), and the classification predicates take one — so
+they compose with no cast. `as i64` is how you get at the code point, and how you print it:
 
 ```palladium
 fn count_digits(s: String) -> i64 {
@@ -309,7 +310,7 @@ fn count_digits(s: String) -> i64 {
     let mut i: i64 = 0;
     let len: i64 = string_len(s);
     while i < len {
-        let ch: i64 = string_char_at(s, i);
+        let ch: char = string_char_at(s, i);
         if char_is_digit(ch) {
             n = n + 1;
         }
@@ -398,7 +399,7 @@ fn split_words(mut c: Counter, text: String) {
     let len: i64 = string_len(text);
     let mut i: i64 = 0;
     while i < len {
-        let ch: i64 = string_char_at(text, i);
+        let ch: char = string_char_at(text, i);
         if char_is_whitespace(ch) {
             i = i + 1;
         } else {

@@ -37,11 +37,11 @@ byte-identical:
 ```
 $ make selfhost
 == stage0: Rust pdc compiles bootstrap/pdc.pd ==
-== stage1: pdc1 compiles bootstrap/pdc.pd ==   -> c1.c (972 lines) -> pdc2
-== stage2: pdc2 compiles bootstrap/pdc.pd ==   -> c2.c (972 lines)
+== stage1: pdc1 compiles bootstrap/pdc.pd ==   -> c1.c (993 lines) -> pdc2
+== stage2: pdc2 compiles bootstrap/pdc.pd ==   -> c2.c (993 lines)
 ✅ SELF-HOSTING ACHIEVED — fixed point reached.
-   9b0cf24e640eb689a1744ffdf589a44428ef5649  c1.c
-   9b0cf24e640eb689a1744ffdf589a44428ef5649  c2.c
+   e8bd8cdac5460a250fe40bb80e1f9e9f3be20453  c1.c
+   e8bd8cdac5460a250fe40bb80e1f9e9f3be20453  c2.c
 ```
 
 Earlier versions of this README claimed "100% bootstrap" while no Palladium-written compiler

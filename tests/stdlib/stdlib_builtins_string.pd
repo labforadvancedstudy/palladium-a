@@ -113,14 +113,25 @@ fn main() {
     expect_true("string_eq_empty", string_eq("", ""));
 
     // ---- string_char_at ----------------------------------------------------
-    // Provenance: runtime/pd_prelude.h:90 — returns the byte as (unsigned char),
-    // and -1 (not 0, not a trap) when index is outside [0, strlen).
-    // 97 = 'a', 99 = 'c' in ASCII.
-    covers_i64("string_char_at", string_char_at("abc", 0));
-    expect_i64("string_char_at_0", string_char_at("abc", 0), 97);
-    expect_i64("string_char_at_2", string_char_at("abc", 2), 99);
-    expect_i64("string_char_at_oob", string_char_at("abc", 3), -1);
-    expect_i64("string_char_at_neg", string_char_at("abc", -1), -1);
+    // N14-04: THIS BUILT-IN RETURNS A `char`. It returned an `i64` until N4-04
+    // gave the language a char type, and the two rows had to move together —
+    // a char literal that no built-in accepted would have been a type with
+    // nowhere to go.
+    //
+    // THE `-1` SENTINEL IS GONE, and its two rows here went with it. It was an
+    // integer meaning "no character", readable only by a caller who knew to
+    // look, and -1 is not a `char`. Nothing in this repo ever read it: measured
+    // across the corpus, `bootstrap/pdc.pd` guards its own bounds and no
+    // program compares a result against -1. An out-of-range index now traps at
+    // the call, the way N6-11 traps a match with no arm to take, so there is no
+    // in-language assertion to write for it — the contract this fixture pins is
+    // the IN-BOUNDS one, and the trap is pinned by
+    // `test_string_char_at_traps_instead_of_returning_a_non_char` in src/codegen.
+    covers_i64("string_char_at", string_char_at("abc", 0) as i64);
+    expect_i64("string_char_at_0", string_char_at("abc", 0) as i64, 'a' as i64);
+    expect_i64("string_char_at_2", string_char_at("abc", 2) as i64, 'c' as i64);
+    // The last valid index, which is where an off-by-one would land.
+    expect_i64("string_char_at_last", string_char_at("abc", 2) as i64, 99);
 
     // ---- string_substring --------------------------------------------------
     // Provenance: runtime/pd_prelude.h:95 — half-open [start, end); start clamps
@@ -134,10 +145,12 @@ fn main() {
 
     // ---- string_from_char --------------------------------------------------
     // Provenance: runtime/pd_prelude.h:107 — one byte plus NUL.
-    // 65 = 'A', 122 = 'z' in ASCII.
-    covers_str("string_from_char", string_from_char(65));
-    expect_str("string_from_char_A", string_from_char(65), "A");
-    expect_str("string_from_char_z", string_from_char(122), "z");
+    // N14-04: the parameter is a `char`, so the call site says which character
+    // it means instead of spelling the code point and explaining it in a
+    // comment. `'A'` is 65 and `'z'` is 122; the fixture no longer has to say so.
+    covers_str("string_from_char", string_from_char('A'));
+    expect_str("string_from_char_A", string_from_char('A'), "A");
+    expect_str("string_from_char_z", string_from_char('z'), "z");
 
     // ---- string_to_int -----------------------------------------------------
     // Provenance: runtime/pd_prelude.h:126 -> atoll. C99 7.20.1.2 specifies 0

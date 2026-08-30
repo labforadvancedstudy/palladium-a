@@ -547,6 +547,7 @@ impl LanguageServer {
             Type::F64 => "f64".to_string(),
             Type::F32 => "f32".to_string(),
             Type::Bool => "bool".to_string(),
+            Type::Char => "char".to_string(),
             Type::String => "String".to_string(),
             Type::Unit => "()".to_string(),
             Type::Custom(name) => name.clone(),

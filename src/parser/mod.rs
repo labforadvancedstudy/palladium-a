@@ -3824,6 +3824,7 @@ impl Parser {
                     "f32" => Type::F32,
                     "f64" => Type::F64,
                     "bool" => Type::Bool,
+                    "char" => Type::Char,
                     "String" => Type::String,
                     _ => Type::Custom(name.clone()),
                 };

@@ -344,6 +344,13 @@ pub enum Type {
     /// IEEE-754 binary32 — N4's `f32`, C's `float`.
     F32,
     Bool,
+    /// One Unicode scalar (N4-04). DISTINCT FROM `i64`, and the distinction is
+    /// the whole content of the row: a char literal used to type as `i64`, so
+    /// `'a' + 1` was arithmetic and `print_int('a')` was ordinary. The scalar it
+    /// carries is unchanged and so is the C carrier (`long long`, wide enough
+    /// for U+10FFFF, which a C `char` is not) — what changed is that the two
+    /// domains no longer mix without an `as`.
+    Char,
     String,
     /// Unit type (void)
     Unit,
@@ -1093,6 +1100,7 @@ impl std::fmt::Display for Type {
             Type::F64 => write!(f, "f64"),
             Type::F32 => write!(f, "f32"),
             Type::Bool => write!(f, "bool"),
+            Type::Char => write!(f, "char"),
             Type::String => write!(f, "String"),
             Type::Unit => write!(f, "()"),
             Type::Array(elem_type, size) => write!(f, "[{}; {}]", elem_type, size),

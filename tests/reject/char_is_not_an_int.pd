@@ -1,0 +1,21 @@
+// NEGATIVE TEST -- a `char` is not an `i64`, and there is no implicit widening
+// (N4-04).
+//
+// MEASURED BEFORE THE SPLIT: this file compiled, ran, exited 0 and printed 97.
+// `'a'` typed as `i64`, so `print_int('a')` was an ordinary call and nothing
+// distinguished a character from the number that carries it -- `'a' + 1` was
+// arithmetic, and a program could pass a character to anything counting.
+//
+// The direction matters. This is the CHAR -> INT half; the mirror,
+// `tests/reject/int_is_not_a_char.pd`, refuses the other. Both are needed
+// because a one-way widening is the design this row exists to reject: it would
+// leave `char` an `i64` wearing a hat, and every i64 position would still
+// accept a character silently.
+//
+// THE REPAIR IS ONE CAST, and it is the sanctioned spelling for printing a
+// character's code point: `print_int('a' as i64)`. There is no `print_char`
+// built-in and N14's normative set stays at 34, which is why the cast is the
+// answer rather than a 35th entry. `tests/02_types_chars.pd` runs it.
+fn main() {
+    print_int('a');
+}

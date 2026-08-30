@@ -1,0 +1,24 @@
+// NEGATIVE TEST -- an `i64` is not a `char` either (N4-04), and this is the
+// half that stops the type from being decorative.
+//
+// MEASURED BEFORE THE SPLIT: `char_is_digit(55)` compiled and answered true,
+// because the predicate took an `i64` and 55 is the code point of '7'. So did
+// `let c: char = 97;` -- there was no `char` for it to disagree with.
+//
+// N14-04 retyped the five character built-ins over `char`
+// (`string_char_at` returns one; `string_from_char` and the three `char_is_*`
+// predicates take one), so a bare integer no longer reaches them. That is the
+// point of moving the two rows together: a `char` type whose built-ins still
+// spoke `i64` would have left `'a'` with nowhere to go, and built-ins over
+// `char` with no literal to feed them would have been unusable.
+//
+// The repair is `97 as char`, which `tests/02_types_chars.pd` round-trips in
+// both directions. An integer that is genuinely a code point -- one computed by
+// arithmetic, as in `tests/witness/json_parser.pd`'s UTF-8 encoder -- says so
+// with that cast at the boundary.
+fn main() {
+    let c: char = 97;
+    if char_is_alpha(c) {
+        print("unreachable");
+    }
+}

@@ -41,13 +41,13 @@ fn main() {
     // A char literal takes the same escapes, and `'\''` is the only way to
     // write a quote. Printed as its code point, because that is what a char
     // literal denotes today (N4-04 is still owed).
-    print_int('\n');
-    print_int('\t');
-    print_int('\r');
-    print_int('\\');
-    print_int('\'');
-    print_int('\0');
-    print_int('"');
+    print_int('\n' as i64);
+    print_int('\t' as i64);
+    print_int('\r' as i64);
+    print_int('\\' as i64);
+    print_int('\'' as i64);
+    print_int('\0' as i64);
+    print_int('"' as i64);
 
     // An escape inside a longer string still resolves once, in place.
     print("a\tb\\tc");

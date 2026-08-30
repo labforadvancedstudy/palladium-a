@@ -65,28 +65,28 @@ fn expect_str(label: String, actual: String, expected: String) {
 fn main() {
     // ---- char_is_digit ----
     // Provenance: runtime/pd_prelude.h:114 -> isdigit. 48='0', 57='9' ASCII.
-    covers_bool("char_is_digit", char_is_digit(48));
-    expect_true("digit_0", char_is_digit(48));
-    expect_true("digit_9", char_is_digit(57));
-    expect_false("digit_a", char_is_digit(97));
-    expect_false("digit_space", char_is_digit(32));
+    covers_bool("char_is_digit", char_is_digit('0'));
+    expect_true("digit_0", char_is_digit('0'));
+    expect_true("digit_9", char_is_digit('9'));
+    expect_false("digit_a", char_is_digit('a'));
+    expect_false("digit_space", char_is_digit(' '));
 
     // ---- char_is_alpha ----
     // Provenance: runtime/pd_prelude.h:118 -> isalpha. 65='A', 122='z' ASCII.
-    covers_bool("char_is_alpha", char_is_alpha(65));
-    expect_true("alpha_A", char_is_alpha(65));
-    expect_true("alpha_z", char_is_alpha(122));
-    expect_false("alpha_0", char_is_alpha(48));
-    expect_false("alpha_space", char_is_alpha(32));
+    covers_bool("char_is_alpha", char_is_alpha('A'));
+    expect_true("alpha_A", char_is_alpha('A'));
+    expect_true("alpha_z", char_is_alpha('z'));
+    expect_false("alpha_0", char_is_alpha('0'));
+    expect_false("alpha_space", char_is_alpha(' '));
 
     // ---- char_is_whitespace ----
     // Provenance: runtime/pd_prelude.h:122 -> isspace. 32=SP, 9=TAB, 10=LF.
-    covers_bool("char_is_whitespace", char_is_whitespace(32));
-    expect_true("ws_space", char_is_whitespace(32));
-    expect_true("ws_tab", char_is_whitespace(9));
-    expect_true("ws_newline", char_is_whitespace(10));
-    expect_false("ws_a", char_is_whitespace(97));
-    expect_false("ws_0", char_is_whitespace(48));
+    covers_bool("char_is_whitespace", char_is_whitespace(' '));
+    expect_true("ws_space", char_is_whitespace(' '));
+    expect_true("ws_tab", char_is_whitespace('\t'));
+    expect_true("ws_newline", char_is_whitespace('\n'));
+    expect_false("ws_a", char_is_whitespace('a'));
+    expect_false("ws_0", char_is_whitespace('0'));
 
     // Classification driven off string_char_at, the way a real lexer would.
     expect_true("scan_digit", char_is_digit(string_char_at("7", 0)));

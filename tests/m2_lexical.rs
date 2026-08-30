@@ -402,13 +402,13 @@ fn each_escape_produces_exactly_its_character() {
     let out = compile_and_run(
         r#"
 fn main() {
-    print_int('\n');
-    print_int('\t');
-    print_int('\r');
-    print_int('\"');
-    print_int('\\');
-    print_int('\0');
-    print_int('\'');
+    print_int('\n' as i64);
+    print_int('\t' as i64);
+    print_int('\r' as i64);
+    print_int('\"' as i64);
+    print_int('\\' as i64);
+    print_int('\0' as i64);
+    print_int('\'' as i64);
 }
 "#,
         &unique_module_name("esc_each"),
@@ -469,8 +469,8 @@ fn a_nul_in_a_string_literal_is_refused() {
 #[test]
 fn a_nul_in_a_char_literal_is_still_the_value_zero() {
     let out = compile_and_run(
-        r#"fn main() { print_int('\0'); print_int('
-'); }"#,
+        r#"fn main() { print_int('\0' as i64); print_int('
+' as i64); }"#,
         &unique_module_name("esc_nul_char"),
     )
     .expect("`'\\0'` is an ordinary char literal");
@@ -535,11 +535,11 @@ fn a_char_literal_is_its_unicode_scalar() {
     let out = compile_and_run(
         r#"
 fn main() {
-    print_int('a');
-    print_int('A');
-    print_int('0');
-    print_int(' ');
-    print_int('~');
+    print_int('a' as i64);
+    print_int('A' as i64);
+    print_int('0' as i64);
+    print_int(' ' as i64);
+    print_int('~' as i64);
 }
 "#,
         &unique_module_name("chr_scalar"),
@@ -567,7 +567,7 @@ fn a_char_literal_round_trips_through_the_builtin_that_renders_one() {
 #[test]
 fn a_non_ascii_char_literal_keeps_its_scalar() {
     let out = compile_and_run(
-        "fn main() { print_int('한'); }",
+        "fn main() { print_int('한' as i64); }",
         &unique_module_name("chr_wide"),
     )
     .expect("N2-04");

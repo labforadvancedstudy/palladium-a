@@ -114,7 +114,10 @@ int __pd_string_eq(const char* s1, const char* s2) {
 }
 
 long long __pd_string_char_at(const char* str, long long index) {
-    if (index < 0 || index >= (long long)strlen(str)) return -1;
+    if (index < 0 || index >= (long long)strlen(str)) {
+        fprintf(stderr, "palladium: string_char_at index %lld is outside a string of length %lld\n", index, (long long)strlen(str));
+        abort();
+    }
     return (long long)(unsigned char)str[index];
 }
 

@@ -604,6 +604,14 @@ pub enum CheckerType {
     /// or `double`, and that IS observable.
     Float,
     Bool,
+    /// One Unicode scalar (N4-04), NOT an `i64`.
+    ///
+    /// Distinct with no implicit conversion in either direction: `'a' + 1`
+    /// and `print_int('a')` are both type errors now, and `'a' as i64` /
+    /// `97 as char` are how you cross. The carrier in C is unchanged
+    /// (`long long`), so this distinction costs nothing at run time — it is
+    /// entirely a claim about what the program meant.
+    Char,
     Array(Box<CheckerType>, ArraySizeValue),
     Function(Vec<CheckerType>, Box<CheckerType>),
     Struct(String),
@@ -632,6 +640,7 @@ fn builtin_type(ty: crate::builtins::BuiltinType) -> CheckerType {
         BuiltinType::I64 => CheckerType::Int,
         BuiltinType::Str => CheckerType::String,
         BuiltinType::Bool => CheckerType::Bool,
+        BuiltinType::Char => CheckerType::Char,
         BuiltinType::Unit => CheckerType::Unit,
     }
 }
@@ -674,6 +683,7 @@ impl From<&crate::ast::Type> for CheckerType {
             crate::ast::Type::I32 | crate::ast::Type::I64 => CheckerType::Int,
             crate::ast::Type::F32 | crate::ast::Type::F64 => CheckerType::Float,
             crate::ast::Type::Bool => CheckerType::Bool,
+            crate::ast::Type::Char => CheckerType::Char,
             crate::ast::Type::U32 | crate::ast::Type::U64 => CheckerType::Int,
             crate::ast::Type::Array(elem_type, size) => {
                 let size_value = match size {
@@ -739,6 +749,7 @@ impl std::fmt::Display for CheckerType {
             CheckerType::Int => write!(f, "Int"),
             CheckerType::Float => write!(f, "Float"),
             CheckerType::Bool => write!(f, "Bool"),
+            CheckerType::Char => write!(f, "Char"),
             CheckerType::Array(elem_type, size) => match size {
                 ArraySizeValue::Literal(n) => write!(f, "[{}; {}]", elem_type, n),
                 ArraySizeValue::ConstParam(name) => write!(f, "[{}; {}]", elem_type, name),
@@ -1224,8 +1235,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1593-1594`, `src/typeck/mod.rs:1596-1598`,
-    /// `src/typeck/mod.rs:1693-1694`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1604-1605`, `src/typeck/mod.rs:1607-1609`,
+    /// `src/typeck/mod.rs:1704-1705`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -2797,7 +2808,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3087-3089`), and walking an imported
+        // return (`src/typeck/mod.rs:3098-3100`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3787,7 +3798,7 @@ impl TypeChecker {
             // what every consumer in the language already speaks, and it does
             // so with the RIGHT value (`'a'` is 97): `tests/02_types_chars.pd`
             // asserts the bytes, not just that it compiles.
-            Expr::Char(_) => Ok(CheckerType::Int),
+            Expr::Char(_) => Ok(CheckerType::Char),
             Expr::Bool(_) => Ok(CheckerType::Bool),
             Expr::Ident(name) => {
                 // First check if it's a variable
@@ -4882,13 +4893,24 @@ impl TypeChecker {
                 // `String` to `i64` in particular would be a pointer
                 // reinterpreted as a number in C: it would compile, run, and
                 // print an address.
+                // `char` JOINS THE SET (N4-04), and it has to: with no implicit
+                // conversion in either direction, `as` is the ONLY way to cross
+                // between a scalar and its code point, and `print_int(c as i64)`
+                // is the sanctioned way to print one. In C both sides are
+                // `long long`, so the cast emits nothing.
                 let castable = |t: &CheckerType| {
-                    matches!(t, CheckerType::Int | CheckerType::Float | CheckerType::Bool)
+                    matches!(
+                        t,
+                        CheckerType::Int
+                            | CheckerType::Float
+                            | CheckerType::Bool
+                            | CheckerType::Char
+                    )
                 };
                 if !castable(&from) || !castable(&to) {
                     return Err(CompileError::TypeMismatch {
-                        expected: "a cast between the numeric primitives and `bool`, which is \
-                                   the set `as` is defined over here"
+                        expected: "a cast between the numeric primitives, `bool` and `char`, \
+                                   which is the set `as` is defined over here"
                             .to_string(),
                         found: format!("a cast from {} to {}", from, to),
                         span: Some(*span),
@@ -5954,6 +5976,7 @@ impl TypeChecker {
             CheckerType::Int => "i64".to_string(),
             CheckerType::Float => "f64".to_string(),
             CheckerType::Bool => "bool".to_string(),
+            CheckerType::Char => "char".to_string(),
             CheckerType::Array(elem, size) => {
                 format!("[{}; {}]", self.checker_type_to_string(elem), size)
             }
@@ -6126,7 +6149,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6532-6596`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6560-6624`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -6150,7 +6173,7 @@ impl TypeChecker {
     /// This matters for the same reason the module ordering does: `make selfhost`
     /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
     /// because `bootstrap/pdc.pd` uses no generics — they are excluded from PBS-1
-    /// (`docs/specification/bootstrap-subset.md:97`).
+    /// (`docs/specification/bootstrap-subset.md:110`).
     pub fn get_instantiations(&self) -> Vec<(String, Vec<String>, GenericFunction)> {
         let mut result = Vec::new();
 
@@ -6280,7 +6303,7 @@ mod tests {
         TypeChecker::new().check(&ast)
     }
 
-    // N14-02. EVERY POSITION THAT CAN TAKE A NAME, and the before-transcript
+    // N14-02. ALL TEN POSITIONS THAT CAN TAKE A NAME, and the before-transcript
     // for each is in the fixture headers under tests/reject/shadow_builtin*.pd.
     // All eight of these compiled and ran with exit 0 before the check existed;
     // three of them ran the WRONG THING silently (the function definition was
@@ -6295,7 +6318,7 @@ mod tests {
     // the row the obvious repair.
     #[test]
     fn a_builtin_name_is_refused_at_every_binding_position() {
-        let cases: [(&str, &str, &str); 8] = [
+        let cases: [(&str, &str, &str); 10] = [
             (
                 "function",
                 "fn print_int(x: i64) -> i64 { return x; }\nfn main() { print_int(7); }",
@@ -6335,6 +6358,18 @@ mod tests {
                 "loop variable",
                 "fn main() { for print_int in 0..2 { print(\"x\"); } }",
                 "the loop variable `print_int` has the name of a built-in",
+            ),
+            (
+                "pattern binding",
+                "enum E { A(i64), B }\nfn main() { let e: E = E::A(4); \
+                 match e { E::A(print_int) => { print(\"a\"); } E::B => { print(\"b\"); } } }",
+                "the pattern binding `print_int` has the name of a built-in",
+            ),
+            (
+                "`@` binding",
+                "fn main() { let n: i64 = 3; \
+                 match n { print_int @ 1..=5 => { print(\"in\"); } _ => { print(\"out\"); } } }",
+                "the `@` binding `print_int` has the name of a built-in",
             ),
         ];
         for (position, source, expected) in cases {
@@ -6527,7 +6562,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4517-4525`, `src/parser/mod.rs:4286-4294`). That is not
+    /// (`src/parser/mod.rs:4518-4526`, `src/parser/mod.rs:4287-4295`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this
@@ -6939,11 +6974,15 @@ mod tests {
         assert!(type_checker.check(&ast).is_ok());
     }
 
+    // N4-04 retyped these predicates over `char`, so `let c = 65;` no longer
+    // reaches them — that binding is an `i64`, and an integer is not a
+    // character without saying so. The literal is what changed here, not the
+    // test's subject.
     #[test]
     fn test_string_char_predicates() {
         let source = r#"
         fn main() {
-            let c = 65;
+            let c = 'A';
             let is_alpha = char_is_alpha(c);
             let is_digit = char_is_digit(c);
             let is_space = char_is_whitespace(c);

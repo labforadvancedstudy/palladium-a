@@ -536,6 +536,8 @@ fn escape_const_params(params: &mut [(String, Type)]) {
 
 fn escape_type(ty: &mut Type) {
     match ty {
+        // `char` names no identifier, so there is nothing here to escape.
+        Type::Char => {}
         Type::Custom(name) => escape_in_place(name),
         Type::Generic { name, args } => {
             escape_in_place(name);

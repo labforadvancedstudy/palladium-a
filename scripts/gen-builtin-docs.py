@@ -34,16 +34,17 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "src" / "builtins.rs"
 OUT = ROOT / "docs" / "reference" / "builtins.md"
 
-TYPE_NAMES = {"I64": "i64", "Str": "String", "Bool": "bool", "Unit": "()"}
+TYPE_NAMES = {"I64": "i64", "Str": "String", "Bool": "bool", "Char": "char", "Unit": "()"}
 
 # Prose for each section header found in the table, keyed by the Rust comment text.
 SECTION_BLURB = {
     "Output": "Writing to standard output, and aborting.",
     "String manipulation": (
-        "Strings are immutable handles into an arena. `string_char_at` returns the "
-        "byte at an index as an integer, which is what the `char_is_*` predicates take."
+        "Strings are immutable handles into an arena. `string_char_at` returns a "
+        "`char` (N14-04), which is what the `char_is_*` predicates take; an index "
+        "outside the string traps, because there is no `char` meaning 'no character'."
     ),
-    "Character classification": "Predicates over the integer a character position holds.",
+    "Character classification": "Predicates over a `char` (N4-04).",
     "Command-line arguments": (
         "C's convention: `arg_count()` counts the program name, so the first real "
         "argument is `arg_at(1)`. Out-of-range indices return an empty string, never null."

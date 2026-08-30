@@ -18,28 +18,28 @@ Writing to standard output, and aborting.
 
 ## String manipulation
 
-Strings are immutable handles into an arena. `string_char_at` returns the byte at an index as an integer, which is what the `char_is_*` predicates take.
+Strings are immutable handles into an arena. `string_char_at` returns a `char` (N14-04), which is what the `char_is_*` predicates take; an index outside the string traps, because there is no `char` meaning 'no character'.
 
 | Signature | Notes |
 |---|---|
 | `string_len(String) -> i64` | borrows its string argument |
 | `string_concat(String, String) -> String` | borrows its string argument |
 | `string_eq(String, String) -> bool` | borrows its string argument |
-| `string_char_at(String, i64) -> i64` |  |
+| `string_char_at(String, i64) -> char` |  |
 | `string_substring(String, i64, i64) -> String` |  |
-| `string_from_char(i64) -> String` |  |
+| `string_from_char(char) -> String` |  |
 | `string_to_int(String) -> i64` | borrows its string argument |
 | `int_to_string(i64) -> String` |  |
 
 ## Character classification
 
-Predicates over the integer a character position holds.
+Predicates over a `char` (N4-04).
 
 | Signature | Notes |
 |---|---|
-| `char_is_digit(i64) -> bool` |  |
-| `char_is_alpha(i64) -> bool` |  |
-| `char_is_whitespace(i64) -> bool` |  |
+| `char_is_digit(char) -> bool` |  |
+| `char_is_alpha(char) -> bool` |  |
+| `char_is_whitespace(char) -> bool` |  |
 | `arg_count() -> i64` |  |
 | `arg_at(i64) -> String` |  |
 

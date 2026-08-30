@@ -59,17 +59,17 @@ fn fail(mut c: C, msg: String) {
 // Lexer
 // ---------------------------------------------------------------------------
 
-fn is_ident_start(ch: i64) -> bool {
+fn is_ident_start(ch: char) -> bool {
     if char_is_alpha(ch) {
         return true;
     }
-    if ch == 95 {
+    if ch == '_' {
         return true;
     }
     return false;
 }
 
-fn is_ident_char(ch: i64) -> bool {
+fn is_ident_char(ch: char) -> bool {
     if is_ident_start(ch) {
         return true;
     }
@@ -91,45 +91,45 @@ fn two_char_op(src: String, i: i64, len: i64) -> String {
     if i + 1 >= len {
         return "";
     }
-    let a: i64 = string_char_at(src, i);
-    let b: i64 = string_char_at(src, i + 1);
-    if a == 61 {
-        if b == 61 {
+    let a: char = string_char_at(src, i);
+    let b: char = string_char_at(src, i + 1);
+    if a == '=' {
+        if b == '=' {
             return "==";
         }
     }
-    if a == 33 {
-        if b == 61 {
+    if a == '!' {
+        if b == '=' {
             return "!=";
         }
     }
-    if a == 60 {
-        if b == 61 {
+    if a == '<' {
+        if b == '=' {
             return "<=";
         }
     }
-    if a == 62 {
-        if b == 61 {
+    if a == '>' {
+        if b == '=' {
             return ">=";
         }
     }
-    if a == 38 {
-        if b == 38 {
+    if a == '&' {
+        if b == '&' {
             return "&&";
         }
     }
-    if a == 124 {
-        if b == 124 {
+    if a == '|' {
+        if b == '|' {
             return "||";
         }
     }
-    if a == 45 {
-        if b == 62 {
+    if a == '-' {
+        if b == '>' {
             return "->";
         }
     }
-    if a == 58 {
-        if b == 58 {
+    if a == ':' {
+        if b == ':' {
             return "::";
         }
     }
@@ -140,7 +140,7 @@ fn lex(mut c: C) {
     let len: i64 = string_len(c.src);
     let mut i: i64 = 0;
     while i < len {
-        let ch: i64 = string_char_at(c.src, i);
+        let ch: char = string_char_at(c.src, i);
 
         // whitespace
         if char_is_whitespace(ch) {
@@ -149,23 +149,23 @@ fn lex(mut c: C) {
         }
 
         // comments
-        if ch == 47 {
+        if ch == '/' {
             if i + 1 < len {
-                let n: i64 = string_char_at(c.src, i + 1);
-                if n == 47 {
+                let n: char = string_char_at(c.src, i + 1);
+                if n == '/' {
                     while i < len {
-                        if string_char_at(c.src, i) == 10 {
+                        if string_char_at(c.src, i) == '\n' {
                             break;
                         }
                         i = i + 1;
                     }
                     continue;
                 }
-                if n == 42 {
+                if n == '*' {
                     i = i + 2;
                     while i + 1 < len {
-                        if string_char_at(c.src, i) == 42 {
-                            if string_char_at(c.src, i + 1) == 47 {
+                        if string_char_at(c.src, i) == '*' {
+                            if string_char_at(c.src, i + 1) == '/' {
                                 i = i + 2;
                                 break;
                             }
@@ -207,16 +207,39 @@ fn lex(mut c: C) {
 
         // string literals, kept verbatim (quotes and escapes included) so that
         // emission is an identity transform
-        if ch == 34 {
+        if ch == '"' {
             let start: i64 = i;
             i = i + 1;
             while i < len {
-                let s: i64 = string_char_at(c.src, i);
-                if s == 92 {
+                let s: char = string_char_at(c.src, i);
+                if s == '\\' {
                     i = i + 2;
                     continue;
                 }
-                if s == 34 {
+                if s == '"' {
+                    i = i + 1;
+                    break;
+                }
+                i = i + 1;
+            }
+            push_tok(c, TK_STR(), string_substring(c.src, start, i));
+            continue;
+        }
+
+        // char literals (N2-04/N4-04), kept verbatim like string literals: a C
+        // character constant is spelled the same way for every scalar this
+        // compiler needs, so emission stays an identity transform and the
+        // `long long` a `char` rides in compares against it directly.
+        if ch == '\'' {
+            let start: i64 = i;
+            i = i + 1;
+            while i < len {
+                let q: char = string_char_at(c.src, i);
+                if q == '\\' {
+                    i = i + 2;
+                    continue;
+                }
+                if q == '\'' {
                     i = i + 1;
                     break;
                 }
@@ -334,6 +357,8 @@ fn base_ctype(t: String) -> String {
     if string_eq(t, "u32") { return "unsigned int"; }
     if string_eq(t, "u64") { return "unsigned long long"; }
     if string_eq(t, "bool") { return "int"; }
+    // N4-04: distinct type, same carrier — a C `char` is 8 bits.
+    if string_eq(t, "char") { return "long long"; }
     if string_eq(t, "String") { return "const char*"; }
     return "";
 }

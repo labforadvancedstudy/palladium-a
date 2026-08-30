@@ -88,8 +88,8 @@ fn k_object() -> i64 { return 6; }
 // "unknown escape sequence" compile error. JSON names both escapes, so these
 // two bytes -- and only these two -- are written here as decimals. Every other
 // character this parser dispatches on is written as the char literal it is.
-fn ch_backspace() -> i64 { return 8; }
-fn ch_formfeed() -> i64 { return 12; }
+fn ch_backspace() -> char { return 8 as char; }
+fn ch_formfeed() -> char { return 12 as char; }
 
 // ---------------------------------------------------------------------------
 // The document.
@@ -167,13 +167,18 @@ struct Json {
 // receiver argument.
 // ---------------------------------------------------------------------------
 
-fn js_at(mut j: Json, i: i64) -> i64 {
-    if i < 0 { return -1; }
-    if i >= j.len { return -1; }
+// N4-04: the cursor speaks `char`. Its end-of-input answer used to be -1, an
+// integer outside the char domain that only worked while a char WAS an integer.
+// NUL is the better answer and always was: `j.src` is a NUL-terminated C string,
+// so `'\0'` cannot occur inside it, and every comparison below fails against it
+// exactly as -1 did.
+fn js_at(mut j: Json, i: i64) -> char {
+    if i < 0 { return '\0'; }
+    if i >= j.len { return '\0'; }
     return string_char_at(j.src, i);
 }
 
-fn js_peek(mut j: Json) -> i64 {
+fn js_peek(mut j: Json) -> char {
     return js_at(j, j.pos);
 }
 
@@ -192,7 +197,7 @@ fn js_fail(mut j: Json, msg: String) -> i64 {
     return -1;
 }
 
-fn js_is_ws(c: i64) -> bool {
+fn js_is_ws(c: char) -> bool {
     // WORKAROUND N6-07: the arm this replaces is
     // `' ' | '\t' | '\n' | '\r' => …`. Or-patterns do not exist, and neither do
     // the literal patterns (N6-02) they would be made of, so a `match` on a
@@ -201,7 +206,7 @@ fn js_is_ws(c: i64) -> bool {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-fn js_is_digit(c: i64) -> bool {
+fn js_is_digit(c: char) -> bool {
     // WORKAROUND N6-03: the arm this replaces is `'0'..='9' => …`.
     return c >= '0' && c <= '9';
 }
@@ -252,17 +257,17 @@ fn js_append(mut j: Json, parent: i64, child: i64) {
 // Strings.
 // ---------------------------------------------------------------------------
 
-fn js_hex_digit(c: i64) -> i64 {
-    if js_is_digit(c) { return c - '0'; }
+fn js_hex_digit(c: char) -> i64 {
+    if js_is_digit(c) { return c as i64 - '0' as i64; }
     // WORKAROUND N5-06: `else if` does not exist — after `else` the parser
     // demands `{`. Every multi-way test in this file is a nested `else { if … }`
     // staircase, and this is the cheapest example of it.
     else {
         if c >= 'a' && c <= 'f' {
-            return c - 'a' + 10;
+            return c as i64 - 'a' as i64 + 10;
         } else {
             if c >= 'A' && c <= 'F' {
-                return c - 'A' + 10;
+                return c as i64 - 'A' as i64 + 10;
             } else {
                 return -1;
             }
@@ -294,35 +299,38 @@ fn js_utf8(cp: i64) -> String {
     // WORKAROUND N5-12 again: the shifts and masks of UTF-8 encoding, written
     // as division and remainder. `cp >> 6` is `cp / 64`, `cp & 63` is `cp % 64`.
     if cp < 128 {
-        return string_from_char(cp);
+        return string_from_char(cp as char);
     }
     if cp < 2048 {
-        let b1: String = string_from_char(192 + cp / 64);
-        let b2: String = string_from_char(128 + cp % 64);
+        let b1: String = string_from_char((192 + cp / 64) as char);
+        let b2: String = string_from_char((128 + cp % 64) as char);
         return string_concat(b1, b2);
     }
     if cp < 65536 {
-        let c1: String = string_from_char(224 + cp / 4096);
-        let c2: String = string_from_char(128 + cp / 64 % 64);
-        let c3: String = string_from_char(128 + cp % 64);
+        let c1: String = string_from_char((224 + cp / 4096) as char);
+        let c2: String = string_from_char((128 + cp / 64 % 64) as char);
+        let c3: String = string_from_char((128 + cp % 64) as char);
         return string_concat(string_concat(c1, c2), c3);
     }
-    let d1: String = string_from_char(240 + cp / 262144);
-    let d2: String = string_from_char(128 + cp / 4096 % 64);
-    let d3: String = string_from_char(128 + cp / 64 % 64);
-    let d4: String = string_from_char(128 + cp % 64);
+    let d1: String = string_from_char((240 + cp / 262144) as char);
+    let d2: String = string_from_char((128 + cp / 4096 % 64) as char);
+    let d3: String = string_from_char((128 + cp / 64 % 64) as char);
+    let d4: String = string_from_char((128 + cp % 64) as char);
     return string_concat(string_concat(string_concat(d1, d2), d3), d4);
 }
 
-fn js_simple_escape(e: i64) -> i64 {
-    if e == '"' { return '"'; }
-    if e == '\\' { return '\\'; }
-    if e == '/' { return '/'; }
-    if e == 'b' { return ch_backspace(); }
-    if e == 'f' { return ch_formfeed(); }
-    if e == 'n' { return '\n'; }
-    if e == 'r' { return '\r'; }
-    if e == 't' { return '\t'; }
+// Takes a `char` and answers a CODE POINT, or -1 for "not a simple escape".
+// The return stays `i64` because -1 has to be outside the char domain to mean
+// what it means, and the two callers test it with `>= 0`.
+fn js_simple_escape(e: char) -> i64 {
+    if e == '"' { return '"' as i64; }
+    if e == '\\' { return '\\' as i64; }
+    if e == '/' { return '/' as i64; }
+    if e == 'b' { return ch_backspace() as i64; }
+    if e == 'f' { return ch_formfeed() as i64; }
+    if e == 'n' { return '\n' as i64; }
+    if e == 'r' { return '\r' as i64; }
+    if e == 't' { return '\t' as i64; }
     return -1;
 }
 
@@ -374,8 +382,8 @@ fn js_string_body(mut j: Json) -> String {
     js_bump(j);
     let mut out: String = "";
     while true {
-        let c: i64 = js_peek(j);
-        if c < 0 {
+        let c: char = js_peek(j);
+        if c == '\0' {
             js_fail(j, "unterminated string");
             return "";
         }
@@ -389,15 +397,15 @@ fn js_string_body(mut j: Json) -> String {
         }
         if c == '\\' {
             js_bump(j);
-            let e: i64 = js_peek(j);
-            if e < 0 {
+            let e: char = js_peek(j);
+            if e == '\0' {
                 js_fail(j, "unterminated escape");
                 return "";
             }
             let simple: i64 = js_simple_escape(e);
             if simple >= 0 {
                 js_bump(j);
-                out = string_concat(out, string_from_char(simple));
+                out = string_concat(out, string_from_char(simple as char));
             } else {
                 if e == 'u' {
                     let decoded: String = js_unicode_escape(j);
@@ -458,11 +466,11 @@ fn js_number(mut j: Json) -> i64 {
         while js_is_digit(js_peek(j)) { js_bump(j); }
     }
 
-    let e: i64 = js_peek(j);
+    let e: char = js_peek(j);
     if e == 'e' || e == 'E' {
         integral = false;
         js_bump(j);
-        let s: i64 = js_peek(j);
+        let s: char = js_peek(j);
         if s == '+' || s == '-' { js_bump(j); }
         if !js_is_digit(js_peek(j)) {
             return js_fail(j, "expected a digit in the exponent");
@@ -505,7 +513,7 @@ fn js_array(mut j: Json) -> i64 {
         if child < 0 { return -1; }
         js_append(j, node, child);
         js_skip_ws(j);
-        let c: i64 = js_peek(j);
+        let c: char = js_peek(j);
         if c == ',' {
             js_bump(j);
             js_skip_ws(j);
@@ -547,7 +555,7 @@ fn js_object(mut j: Json) -> i64 {
         j.key[child] = name;
         js_append(j, node, child);
         js_skip_ws(j);
-        let c: i64 = js_peek(j);
+        let c: char = js_peek(j);
         if c == ',' {
             js_bump(j);
         } else {
@@ -570,7 +578,7 @@ fn js_value(mut j: Json) -> i64 {
         return js_fail(j, "nesting deeper than 24");
     }
     js_skip_ws(j);
-    let c: i64 = js_peek(j);
+    let c: char = js_peek(j);
     let mut node: i64 = -1;
 
     // WORKAROUND N5-04 + N6-02: the whole of this staircase is one `match` on a
@@ -579,7 +587,7 @@ fn js_value(mut j: Json) -> i64 {
     // position is "Expected expression, but found 'match'", and an integer arm
     // is "Expected pattern, but found integer 0". So: an `if` staircase, a
     // mutable local, and one assignment per arm.
-    if c < 0 {
+    if c == '\0' {
         node = js_fail(j, "unexpected end of input");
     } else {
         if c == 'n' {
@@ -650,7 +658,7 @@ fn js_escape_into(s: String) -> String {
     let mut out: String = "";
     let mut i: i64 = 0;
     while i < n {
-        let c: i64 = string_char_at(s, i);
+        let c: char = string_char_at(s, i);
         if c == '"' {
             out = string_concat(out, "\\\"");
         } else {

@@ -222,7 +222,7 @@ nothing else. There is no region inference of any kind: `grep -rn 'region\|Regio
 
 **4. References are not a type.** The type checker maps `Type::Reference { inner, .. }` to the
 inner type — "For now, treat references as the inner type / TODO: Proper reference type handling"
-(`src/typeck/mod.rs:714-718`). `&i64` and `i64` are indistinguishable to it, so no lifetime
+(`src/typeck/mod.rs:724-728`). `&i64` and `i64` are indistinguishable to it, so no lifetime
 relation could be inferred even if the machinery existed.
 
 **5. What exists instead is a move/initialization discipline.**

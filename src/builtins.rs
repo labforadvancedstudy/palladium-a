@@ -53,6 +53,13 @@ pub enum BuiltinType {
     Str,
     /// Boolean
     Bool,
+    /// One Unicode scalar (`char`, N4-04/N14-04).
+    ///
+    /// The registry had no way to say this, so all five character built-ins
+    /// were declared over `I64` while N14 described them over `char` — the
+    /// specification and the implementation disagreeing in the one file that
+    /// exists to stop them disagreeing.
+    Char,
     /// No value (`()`), return position only
     Unit,
 }
@@ -164,6 +171,7 @@ impl BuiltinType {
             BuiltinType::I64 => "i64",
             BuiltinType::Str => "String",
             BuiltinType::Bool => "bool",
+            BuiltinType::Char => "char",
             BuiltinType::Unit => "()",
         }
     }
@@ -190,7 +198,7 @@ impl Builtin {
 }
 
 use crate::effects::Effect;
-use BuiltinType::{Bool, I64, Str, Unit};
+use BuiltinType::{Bool, Char, I64, Str, Unit};
 use ParamMode::{Borrow, Copy as ByCopy};
 
 /// No effects: calling this built-in leaves the outside world alone.
@@ -291,7 +299,7 @@ pub const BUILTINS: &[Builtin] = &[
     Builtin {
         name: "string_char_at",
         params: &[p("s", Str, Borrow), p("index", I64, ByCopy)],
-        ret: I64,
+        ret: Char,
         ret_mode: ReturnMode::Copy,
         support: Support::Callable,
         effects: PURE,
@@ -312,7 +320,7 @@ pub const BUILTINS: &[Builtin] = &[
     },
     Builtin {
         name: "string_from_char",
-        params: &[p("c", I64, ByCopy)],
+        params: &[p("c", Char, ByCopy)],
         ret: Str,
         ret_mode: ReturnMode::Owned,
         support: Support::Callable,
@@ -340,7 +348,7 @@ pub const BUILTINS: &[Builtin] = &[
     // ---- Character classification ----
     Builtin {
         name: "char_is_digit",
-        params: &[p("c", I64, ByCopy)],
+        params: &[p("c", Char, ByCopy)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
         support: Support::Callable,
@@ -349,7 +357,7 @@ pub const BUILTINS: &[Builtin] = &[
     },
     Builtin {
         name: "char_is_alpha",
-        params: &[p("c", I64, ByCopy)],
+        params: &[p("c", Char, ByCopy)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
         support: Support::Callable,
@@ -358,7 +366,7 @@ pub const BUILTINS: &[Builtin] = &[
     },
     Builtin {
         name: "char_is_whitespace",
-        params: &[p("c", I64, ByCopy)],
+        params: &[p("c", Char, ByCopy)],
         ret: Bool,
         ret_mode: ReturnMode::Copy,
         support: Support::Callable,
@@ -1075,6 +1083,8 @@ mod tests {
                 BuiltinType::I64 => "0".to_string(),
                 BuiltinType::Str => "\"x\"".to_string(),
                 BuiltinType::Bool => "true".to_string(),
+                // N4-04: a `char` parameter needs a char literal, not a number.
+                BuiltinType::Char => "'x'".to_string(),
                 BuiltinType::Unit => unreachable!("no builtin takes a Unit parameter"),
             })
             .collect::<Vec<_>>()
@@ -1338,6 +1348,14 @@ mod tests {
                 bits: 64,
                 signed: true,
             },
+            // N4-04: a `char` is a DISTINCT TYPE with the SAME CARRIER. It rides
+            // in `long long` because a C `char` holds 8 bits and a Unicode
+            // scalar needs 21 — so its C shape is the `I64` one, and this arm
+            // saying so is what keeps the split from reaching the ABI.
+            BuiltinType::Char => CShape::Integer {
+                bits: 64,
+                signed: true,
+            },
             // Bool is `int` in the emitted C; there is no C bool in the prelude.
             BuiltinType::Bool => CShape::Integer {
                 bits: 32,
@@ -1591,7 +1609,7 @@ mod tests {
     /// _by_typeck` a loop over an empty set — a test that passes while proving
     /// nothing, which is the exact species this milestone exists to remove. It
     /// is not deleted (the machinery it guards is still live in
-    /// `src/typeck/mod.rs:3869-3877` and the moment any built-in is marked
+    /// `src/typeck/mod.rs:3880-3888` and the moment any built-in is marked
     /// unsupported the loop has work again), and it is not left to look like
     /// coverage either. This assertion is the declaration: if it ever fails,
     /// the loop below has become meaningful again and this comment is stale.

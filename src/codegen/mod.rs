@@ -41,7 +41,7 @@ enum ArrayParamForm {
     /// `xs: [T; N]` - no declared intent to mutate anything.
     ByValue,
     /// `mut xs: [T; N]` - the bootstrap subset's spelling for a mutable array
-    /// parameter (docs/specification/bootstrap-subset.md:117-119).
+    /// parameter (docs/specification/bootstrap-subset.md:130-132).
     MutByValue,
     /// `xs: &[T; N]`.
     Shared,
@@ -653,6 +653,8 @@ impl CodeGenerator {
                             crate::builtins::BuiltinType::I64 => "long long",
                             crate::builtins::BuiltinType::Str => "const char*",
                             crate::builtins::BuiltinType::Bool => "int",
+                            // N4-04: distinct type, same carrier.
+                            crate::builtins::BuiltinType::Char => "long long",
                             crate::builtins::BuiltinType::Unit => "void",
                         }
                         .to_string(),
@@ -1206,7 +1208,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4769`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4780`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -1706,7 +1708,25 @@ impl CodeGenerator {
         self.output
             .push_str("long long __pd_string_char_at(const char* str, long long index) {\n");
         self.output
-            .push_str("    if (index < 0 || index >= (long long)strlen(str)) return -1;\n");
+            // N14-04. THE `-1` SENTINEL DIED WITH THE TYPE. `string_char_at`
+            // returns a `char` now, and -1 is not one — it was an integer
+            // smuggled through an integer return, readable only by a caller who
+            // knew to look. Nothing ever did: measured across the corpus,
+            // `bootstrap/pdc.pd` guards its own bounds (`while i < len`,
+            // `if i + 1 < len`) and no program compares a result against -1 or
+            // against `< 0`.
+            //
+            // So the choice was between inventing a `char` to mean "no char"
+            // and refusing. This is the answer N6-11 gives a match with no arm
+            // to take, for the same reason and in the same shape: say what
+            // happened, then `abort()` at the site.
+            .push_str("    if (index < 0 || index >= (long long)strlen(str)) {\n");
+        self.output.push_str(
+            "        fprintf(stderr, \"palladium: string_char_at index %lld is outside a \
+             string of length %lld\\n\", index, (long long)strlen(str));\n",
+        );
+        self.output.push_str("        abort();\n");
+        self.output.push_str("    }\n");
         self.output
             .push_str("    return (long long)(unsigned char)str[index];\n");
         self.output.push_str("}\n\n");
@@ -2382,6 +2402,12 @@ impl CodeGenerator {
             Type::U64 => "unsigned long long".to_string(),
             Type::F64 => "double".to_string(),
             Type::F32 => "float".to_string(),
+            // N4-04. `char` is a DISTINCT TYPE and the SAME CARRIER: a C `char`
+            // holds 8 bits and a scalar like U+D55C needs 21, so it rides in the
+            // `long long` it always rode in. The split is the checker's, and the
+            // emitted C is byte-identical to what an `i64` produced — which is why
+            // an `as` in either direction emits nothing at all.
+            Type::Char => "long long".to_string(),
             Type::Bool => "int".to_string(),
             Type::String => "const char*".to_string(),
             Type::Unit => "void".to_string(),
@@ -2858,6 +2884,7 @@ impl CodeGenerator {
                 Type::F64 => "double",
                 Type::F32 => "float",
                 Type::Bool => "int",
+                Type::Char => "long long",
                 Type::String => "const char*",
                 // A field is a declarator too (N4-10): the brackets go after the
                 // field name, outermost first, and a nested array field has
@@ -3466,6 +3493,7 @@ impl CodeGenerator {
                 Type::String => "const char*".to_string(),
                 Type::I32 => "int".to_string(),
                 Type::I64 => "long long".to_string(),
+                Type::Char => "long long".to_string(),
                 Type::Bool => "int".to_string(),
                 Type::Custom(name) => name.clone(),
                 // Array parameters keep their dimensions, in the same encoding

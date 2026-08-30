@@ -1,51 +1,74 @@
-// Test 02: char literals (N2-04)
+// Test 02: the `char` type (N2-04 lexing, N4-04 typing)
 //
-// WHAT THIS FIXTURE CLAIMS, AND WHAT IT DOES NOT.
+// WHAT THIS FIXTURE CLAIMS.
 //
-// It claims that `'a'` LEXES as one token and denotes the RIGHT VALUE — the
-// Unicode scalar 97 — and that the value flows through the compiler to a byte
-// on stdout. Every assertion below is on the value, because a char literal
-// that lexed and produced the wrong code point would compile just as happily
-// as one that produced the right one. Before N2-04, `'a'` lexed as three
-// tokens (a lifetime tick, an identifier, a tick) and the diagnostic was
+// It claimed two things until N4-04 landed, and now it claims three. It still
+// claims that `'a'` LEXES as one token and denotes the RIGHT VALUE — the
+// Unicode scalar 97 — and that the value reaches a byte on stdout. Every
+// assertion below is on the value, because a char literal that lexed and
+// produced the wrong code point would compile just as happily as one that
+// produced the right one. Before N2-04, `'a'` lexed as three tokens (a lifetime
+// tick, an identifier, a tick) and the diagnostic was
 // `Expected expression, but found '`.
 //
-// It does NOT claim that `char` is a distinct TYPE. That is N4-04, still
-// `owed`: a char literal's type here is `i64`, which is what every builtin
-// that consumes a character already speaks — `string_from_char(i64)`,
-// `char_is_digit(i64)`, `string_char_at(...) -> i64`. N14 gives those
-// signatures a `char`, and moving them is N14-04, also still owed. The two
-// rows move together or the literal would type as something no builtin
-// accepts.
+// WHAT IS NEW: `char` IS A TYPE OF ITS OWN. It used to type as `i64`, so
+// `print_int('a')` was an ordinary call and `'a' + 1` was ordinary arithmetic —
+// the literal existed but the type did not, and nothing in the language could
+// tell a character from the number that carries it. There is no implicit
+// conversion in EITHER direction now; `as` is how you cross, in both. The
+// reject twins are tests/reject/char_is_not_an_int.pd and
+// tests/reject/int_is_not_a_char.pd.
+//
+// N14-04 moved with it, and had to: `string_char_at` returns a `char`,
+// `string_from_char` and the three `char_is_*` predicates take one. A char
+// literal that no built-in accepted would have been a type with nowhere to go,
+// which is why the two rows were always one change.
+//
+// THE C CARRIER DID NOT MOVE. A char rides in `long long`, as it always did —
+// a C `char` holds 8 bits and `'한'` needs 21 — so `as` in either direction
+// emits nothing and this split costs nothing at run time.
 
 fn main() {
-    // The scalar itself.
-    let a = 'a';
-    print_int(a);
+    // The scalar itself. `as i64` is the sanctioned way to print one: there is
+    // no `print_char` built-in and N14's normative set stays at 34.
+    let a: char = 'a';
+    print_int(a as i64);
 
     // …and the same value, rendered, so the assertion is on a byte and not
     // only on a number the compiler chose.
     print(string_from_char(a));
 
     // Boundaries of the printable ASCII range.
-    print_int(' ');
-    print_int('~');
-    print_int('0');
-    print_int('9');
-    print_int('A');
-    print_int('Z');
+    print_int(' ' as i64);
+    print_int('~' as i64);
+    print_int('0' as i64);
+    print_int('9' as i64);
+    print_int('A' as i64);
+    print_int('Z' as i64);
 
-    // A char literal is an ordinary value: it compares, it binds, it is passed.
-    if a == 97 {
-        print("'a' is 97");
+    // A char compares with a char, and the ordering is the scalar's.
+    if a == 'a' {
+        print("'a' equals 'a'");
     }
     if 'z' > 'a' {
         print("'z' sorts after 'a'");
     }
 
-    // Round trip through the two builtins that consume a character.
+    // BOTH DIRECTIONS OF THE CAST, and the round trip closes. This is the pair
+    // that says the type is distinct rather than renamed: neither line compiles
+    // without its `as`.
+    let code: i64 = 'Q' as i64;
+    print_int(code);
+    let back: char = code as char;
+    if back == 'Q' {
+        print("char -> i64 -> char round trips");
+    }
+
+    // Round trip through the built-ins that speak `char` (N14-04). No cast
+    // appears here, and that is the point of the row: the literal and the
+    // built-ins now agree on a type.
     let s = "hello";
-    let first = string_char_at(s, 0);
+    let first: char = string_char_at(s, 0);
     if first == 'h' {
         print("string_char_at agrees with 'h'");
     }
@@ -59,15 +82,33 @@ fn main() {
         print("space is whitespace");
     }
 
+    // The classification predicates compose with the accessor directly, which
+    // is the shape a lexer wants and the shape `bootstrap/pdc.pd` now uses.
+    if char_is_alpha(string_char_at("word", 0)) {
+        print("a scanned character classifies without a cast");
+    }
+
+    // THE IN-BOUNDS CONTRACT. `string_char_at` used to answer -1 outside
+    // [0, len), and -1 is not a character. There is no `char` to return for an
+    // index that has none, so the call TRAPS instead of inventing one — the
+    // answer N6-11 gives a match with no arm to take. A trap cannot be asserted
+    // from inside the language, so what this fixture pins is the contract's
+    // other side: every index below is in range, and the last valid one is
+    // `len - 1`.
+    let last: char = string_char_at(s, 4);
+    if last == 'o' {
+        print("the last valid index is len - 1");
+    }
+
     // A quote and a backslash, which need escapes to be written at all.
-    print_int('\'');
-    print_int('\\');
+    print_int('\'' as i64);
+    print_int('\\' as i64);
     print(string_from_char('\''));
 
     // A non-ASCII scalar. `'한'` is U+D55C = 54620; this is the case a C
-    // character constant could not carry, and the reason code generation
-    // emits the number.
-    print_int('한');
+    // character constant could not carry, and the reason the carrier is
+    // `long long` and code generation emits the number.
+    print_int('한' as i64);
 
     print("chars done");
 }
