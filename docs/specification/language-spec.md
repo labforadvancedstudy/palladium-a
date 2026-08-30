@@ -581,7 +581,7 @@ unusable with every builtin that consumes a character, and builtins over `char` 
 feed them would have been unreachable.
 
 `char` crosses only to `i64`, and only through `as`. `'a' as bool` and `3.7 as char` are refused
-by name (`tests/reject/char_is_not_an_int.pd` and its siblings): the code point is the one
+by name — `tests/reject/char_does_not_cast_to_bool.pd`, `tests/reject/bool_does_not_cast_to_char.pd` and `tests/reject/float_does_not_cast_to_char.pd`, one per direction because the defect they correct was symmetric: the code point is the one
 correspondence a character is defined by, and neither "is a letter truthy" nor "which character is
 three-tenths past `\u{3}`" is a question this specification answers. `97 as char` is CHECKED
 rather than trusted — a value outside 0..=0x10FFFF, or inside the UTF-16 surrogate range
@@ -905,7 +905,7 @@ unrelated reason.
 | `&T`, `&mut T` | partial | parses, but the typechecker is a **no-op**: `Type::Reference` maps to its inner type — "For now, treat references as the inner type / TODO: Proper reference type handling" (`src/typeck/mod.rs:724-728`, corrected from line 2470–2486 of the pre-cleanup revision). `&i64` and `i64` are indistinguishable to it. |
 | `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
 | `Name<A, B>` | partial | see below |
-| `(A, B)` | **implemented** | one C struct per SHAPE, mangled from the element C types and emitted with a constructor (`src/codegen/mod.rs:4837`); `void*` is gone. Arity two or more. A tuple in an ENUM PAYLOAD is refused by name — tuple structs are emitted after the enum definitions because an element may be an enum, and a payload of tuple type needs the reverse order |
+| `(A, B)` | **implemented** | one C struct per SHAPE, mangled from the element C types and emitted with a constructor (`src/codegen/mod.rs:4842`); `void*` is gone. Arity two or more. A tuple in an ENUM PAYLOAD is refused by name — tuple structs are emitted after the enum definitions because an element may be an enum, and a payload of tuple type needs the reverse order |
 | `f64` | **implemented** | the type of a float literal since N2-03; C `double` |
 | `f32` | partial | parses and maps to C `float`, but shares one checker type with `f64`, so nothing can observe the difference |
 | `char` | **implemented** | `'a'` lexes and carries the right scalar (N2-04) and its TYPE is `char`, distinct from `i64` with no implicit conversion either way (N4-04). The five character builtins speak it (N14-04). One C carrier, `long long`, because a C `char` holds 8 bits and `'한'` needs 21; `as` between `char` and `i64` is a no-op identity cast, and `as char` range-checks its operand |
@@ -941,7 +941,7 @@ enum is compiled to. Use `match`.
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
 rejected outright by the type checker (`src/typeck/mod.rs:4817-4817`) and again by code generation
-(`src/codegen/mod.rs:6411-6415`). It used to typecheck against a `Generic{name:"Result"}` shape
+(`src/codegen/mod.rs:6416-6420`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -1049,7 +1049,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3862`) and code generation (`src/codegen/mod.rs:5897-5900`)
+both the type checker (`src/typeck/mod.rs:3862`) and code generation (`src/codegen/mod.rs:5902-5905`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once,
 and its position among the arguments is the one the source wrote: being the first argument, it is
@@ -1058,13 +1058,18 @@ read first. That is not C's doing — C leaves the order of a call's arguments u
 arguments: in a call with at least one effectful argument, every argument read happens at that
 argument's own source position. A value argument, receiver included, is read into a temporary,
 and the temporaries are declared in source order; a place argument has its POINTER taken at its
-own position, which is what orders an effectful subscript. Two shapes get no temporary, and only
-the first of them is exempt by proof: an argument passed as the address of a bare name (a `mut`
-parameter) is the address of a fixed object, so there is no read to order. The other is an
-argument whose C type this backend cannot name — an EFFECTFUL one is refused outright, and a PURE
-one is emitted inside the call, where its read lands after every hoisted read rather than at its
-own position. That last case is a residual, not a guarantee; no source is known to reach it, and
-the refusal beside it is what keeps it from mattering silently.
+own position, which is what orders an effectful subscript. FOUR shapes get no temporary, and only
+the first two are exempt by proof. An argument passed as the address of a bare name (a `mut`
+parameter) is the address of a fixed object, so there is no read to order; a by-value bare name of
+ARRAY type decays to a pointer to storage that already exists, so again what is read is an address
+and not a value. The third is an argument whose C type this backend cannot name — an EFFECTFUL one
+is refused outright, and a PURE one is emitted inside the call, where its read lands after every
+hoisted read rather than at its own position. That case is a residual, not a guarantee; no source
+is known to reach it, and the refusal beside it is what keeps it from mattering silently. The
+fourth is narrower still and is recorded because it was found by counting rather than by reading:
+an argument whose inferred C type is `void` or empty is also emitted in place, which no call can
+reach today because a `void` argument has no type to pass — it is a guard on the inference, not a
+case of the rule.
 `tests/03_arg_evaluation_order.pd` section 5 pins what the rule buys for a receiver, the whole
 contract is measured in [A11](#a11-conformance), and the emitted shape it rests on is pinned by
 `test_an_effectful_method_receiver_is_read_first_and_once`.
@@ -1136,8 +1141,8 @@ syntactic trap is worth stating: a `match` arm that is a block must not be follo
 and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4817-4817`, `.await` at
-`src/typeck/mod.rs:4824-4824`) and again by code generation (`?` at `src/codegen/mod.rs:6411-6415`,
-`.await` at `src/codegen/mod.rs:6423-6427`), which is callable on its own.
+`src/typeck/mod.rs:4824-4824`) and again by code generation (`?` at `src/codegen/mod.rs:6416-6420`,
+`.await` at `src/codegen/mod.rs:6428-6432`), which is callable on its own.
 
 What they used to do:
 
@@ -1345,7 +1350,7 @@ One divergence remains, and two are closed:
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:1177-1177`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:5935-5935`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+(`src/codegen/mod.rs:5940-5940`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:1643-1643`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
@@ -1661,7 +1666,7 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-types-semantics`
 (2026-08-31):
 
-**verified 82 · untranscribed 0 · vacuous 6 · xfail 1 · reject 100 · skip 2 · failures 0**, over 191
+**verified 82 · untranscribed 0 · vacuous 6 · xfail 1 · reject 102 · skip 2 · failures 0**, over 193
 fixtures. (The round-3 review of `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined

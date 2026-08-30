@@ -244,7 +244,7 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 72 satisfied · 117 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 77 satisfied · 112 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
@@ -352,7 +352,7 @@ Measured at this revision; every row names the command that produced it.
 |---|---|---|
 | **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`e8bd8cda…`) | `make selfhost` |
-| Conformance | `verified=82 untranscribed=0 vacuous=6 xfail=1 reject=100 skip=2 failures=0` over 191 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `feat/m2-items` added FIFTEEN across two commits — three `run` fixtures (top-level `const`, top-level `static`, the macro system) plus the `02_types_enums` vacuous->run transition, and twelve `reject`s: five for the const/static rules, `missing_return.pd` for N3-03, and six for the macro system, every one of the six replacing either a SILENT wrong expansion or a diagnostic that named a compiler phase; then `1f64c32` added three
+| Conformance | `verified=82 untranscribed=0 vacuous=6 xfail=1 reject=102 skip=2 failures=0` over 193 (re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `feat/m2-items` added FIFTEEN across two commits — three `run` fixtures (top-level `const`, top-level `static`, the macro system) plus the `02_types_enums` vacuous->run transition, and twelve `reject`s: five for the const/static rules, `missing_return.pd` for N3-03, and six for the macro system, every one of the six replacing either a SILENT wrong expansion or a diagnostic that named a compiler phase; then `1f64c32` added three
 `run` fixtures for the review-round repairs and SEVEN `reject`s for the refusals those repairs
 introduced, which is the shape a fix round leaves — the negative rows outnumber the positive ones
 because most of what a review finds is a program that should never have been accepted; then review
@@ -368,7 +368,7 @@ type, and the non-exhaustive integer match N6-10 now refuses; then the round-3 r
 `feat/m2-items` added TWO `reject`s, both of them `<<` branches the count-range fixture beside
 them never covered — `1 << 63`, whose shift AMOUNT is legal and whose VALUE is not, and
 `(0 - 1) << 3`, a negative left operand C leaves undefined however small the result, so
-reverting either guard alone now fails a fixture of its own; then `feat/m2-types-semantics` added THIRTEEN, counted against the enumeration rather than from memory — the count said eight while the list held ten, twice. Two `run` fixtures: `tests/02_types_nested_arrays.pd` (N4-10) and `tests/03_arg_evaluation_order.pd` (N13-03, call arguments read left to right). Eleven `reject`s, in three groups: N4-10's three (`for_over_nested_array.pd` and the two inner-length declarator positions, parameter and struct field); N14-02's three built-in-name positions (a definition, a local binder and a type, refused for two DIFFERENT reasons and so needing three rows rather than one); and N4-04's five — one per DIRECTION of the char/i64 split, because a one-way widening would have left `char` an `i64` wearing a hat, plus the binary-operator branch, the cast-set restriction, and the non-scalar `as char`) | `make conformance` |
+reverting either guard alone now fails a fixture of its own; then `feat/m2-types-semantics` added FIFTEEN, counted against the enumeration rather than from memory — the count said eight while the list held ten, twice. Two `run` fixtures: `tests/02_types_nested_arrays.pd` (N4-10) and `tests/03_arg_evaluation_order.pd` (N13-03, call arguments read left to right). Eleven `reject`s, in three groups: N4-10's three (`for_over_nested_array.pd` and the two inner-length declarator positions, parameter and struct field); N14-02's three built-in-name positions (a definition, a local binder and a type, refused for two DIFFERENT reasons and so needing three rows rather than one); and N4-04's seven — one per DIRECTION of the char/i64 split, because a one-way widening would have left `char` an `i64` wearing a hat, plus the binary-operator branch, three cast-matrix cells (char->bool, bool->char and float->char, one per direction because the defect they correct was symmetric), and the non-scalar `as char`) | `make conformance` |
 | Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
 | Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 420 citations fingerprinted, 29 no-compile fences pinned | `make check-docs` |
@@ -376,7 +376,7 @@ reverting either guard alone now fails a fixture of its own; then `feat/m2-types
 | Declared failures | 45 `xfail` + 1 `slow`, none passing; 45 of 45 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 72 satisfied · 117 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 77 satisfied · 112 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -422,7 +422,7 @@ by the requirement manifest; this is the reading list.
 | C-keyword identifiers — `fn double` emitted `long long double(…)`. **CLOSED**: escaped on the way into code generation, `src/codegen/c_ident.rs:440`; the `#[ignore]` is gone and the debt row is `paid` | `tests/e2e_test.rs:277` | N3-01 |
 | No missing-return diagnostic — `fn f() -> int { }` compiled silently. **CLOSED**: the parser already decided "returns on every path" and now refuses when it does not, `src/parser/mod.rs:1245-1274`; the `#[ignore]` is gone and the debt row is `paid` | `tests/compiler_comprehensive_test.rs:633` | N3-03 |
 | Block comments do not nest, which N2 requires | [F10](#f10-block-comments-do-not-nest-and-nothing-said-so) | N2-08 |
-| Nested arrays work in neither locals nor parameters | [A5](../specification/language-spec.md#a5-types) | N4-10 |
+| Nested arrays work in neither locals nor parameters. **CLOSED**: locals, parameters, struct fields and three deep, with the dimensions emitted after the identifier outermost-first; two refusals by name remain (`for` over a nested array, and an unresolved inner length in any declarator position), each with a reject row | [A5](../specification/language-spec.md#a5-types) | N4-10 |
 | Filesystem builtins return `i64`/`bool` rather than `Result`, because `Result` is not built in *(the handle-representation split that made six of them uncallable is closed — M2)* | [A8](../specification/language-spec.md#a8-builtins) | N14-03 |
 | `pub` on an enum discarded; `dbg!` undefined; `println!` takes one argument; no hygiene | [A4.6](../specification/language-spec.md#a46-macros) | N3-05, N3-12, N3-13 |
 | `Foo<T>` is parsed as a *const* generic argument; const generics are not monomorphised | [A5](../specification/language-spec.md#a5-types) | N10-03, N4-21 |
@@ -544,7 +544,7 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
 
-**Owns 49 requirement rows, 8 of them still owed**, 6 declared `#[ignore]` failures (all tagged
+**Owns 49 requirement rows, 3 of them still owed**, 6 declared `#[ignore]` failures (all tagged
 M2), and **no vacuous fixture** — `tests/02_types_enums.pd` was M2's last one and item 9 turned it
 into a `run` fixture that constructs and destructures a unit, a tuple and a struct variant.
 *(It read "seventeen … (fourteen tagged M2, three
@@ -631,7 +631,10 @@ enum-owned method is unreachable by its path form. Each row carries a
      refused there by name until it wasn't.
 
    *What this item deliberately does NOT include:* **N13-03** (arguments are evaluated left to
-   right) is untouched and stays `owed`. Method calls make the receiver the first argument and
+   right) was untouched by THIS item and stayed `owed` after it. *(It landed later, in
+   `feat/m2-types-semantics`, as an obligation over every call rather than a method-call one —
+   which is exactly what the next sentence predicted. Recorded here rather than rewritten, because
+   what this item did not do is still what it did not do.)* Method calls make the receiver the first argument and
    evaluate it exactly ONCE, but their position among the arguments is C's unspecified evaluation
    order — the same residual every multi-argument call in this compiler already has. Fixing it is
    an evaluation-order obligation over every call, not a method-call one. **N3-09** and **N3-10**
@@ -806,10 +809,11 @@ enum-owned method is unreachable by its path form. Each row carries a
    to 36, and item 5 (lexical completion) from 43 to 36 with N2-03, N2-04, N2-08, N2-09, N2-10,
    N2-11 and N4-02. A green `m2-exit` before M2 is done would be the defect.
 
-   *The 8, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list —
+   *The 3, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list —
    and the list is where they belong, which is not the same question as which item names them:*
-   WT-01 (item 7); GI-08 (item 8); and **six owned by M2 without being ASSIGNED AS AN ITEM
-   DELIVERABLE** — N4-04, N4-10, N13-03, N14-02, N14-04, GI-12. That count was THIRTEEN before item
+   WT-01 (item 7); GI-08 (item 8); and **one owned by M2 without being ASSIGNED AS AN ITEM
+   DELIVERABLE** — GI-12. It was EIGHT until `feat/m2-types-semantics` closed five of them
+   (N4-04, N4-10, N13-03, N14-02, N14-04), and THIRTEEN before item
    9, and the six that left it are the record of what an item deliverable is worth: N3-05, N3-09,
    N3-10, N3-12 and N3-14 became item 9's deliverables and are `satisfied`, and N3-13 left M2
    entirely (see below). Item 3's sentence had NAMED N3-09 and N3-10 without shipping them, which
@@ -1207,7 +1211,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:6423-6427` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:6428-6432` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -1419,7 +1423,7 @@ plain sight for several rounds. Root `CLAUDE.md` requires a fact conflict to be 
 than left to coexist, and this one was not.
 
 *Resolved by measurement, not by choosing a sentence.* On the integrated tree the runner evaluates
-100 of them: `reject=100` over 191 fixtures (N4-04 added the last five: one per direction of the char/i64 split, the binary-operator branch, the cast-set restriction, and an `as char` whose operand is not a Unicode scalar; N14-02 added the three before them — defining a built-in name, shadowing one with a local binder, and taking one for a type, the third carrying a different reason from the other two. It was 92 over 183 until then, the denominator having moved alone once because N13-03's fixture is a `run` row; and 89 over 178 until `feat/m2-types-semantics` added three — the `for`-over-a-nested-array refusal and the two inner-length declarator positions; and was 87 over 176 until the round-3 review of `feat/m2-items` added two — the two `<<` branches the count-range fixture never covered, a legal AMOUNT with an illegal VALUE and a negative left operand; and was 82 over 171 until the round that followed added five more — the branches of the one-namespace and `pub` rules that the first round stated in prose and pinned in only one spelling each; and was 69 over 158 until the review round of `feat/m2-items` added THIRTEEN, which is what a review round costs when the reviewers probe rather than read: two fresh-binder shadowing shapes, both directions of a cross-kind name collision, four initialisers with no value, `pub` on an item, a macro invocation in an argument, two literal-kind losses and the macro_rules invocation spelling; and was 63 over 151 until the macro round of `feat/m2-items`
+102 of them: `reject=102` over 193 fixtures (N4-04 added the last seven: one per direction of the char/i64 split, the binary-operator branch, three cast-matrix cells, and an `as char` whose operand is not a Unicode scalar; N14-02 added the three before them — defining a built-in name, shadowing one with a local binder, and taking one for a type, the third carrying a different reason from the other two. It was 92 over 183 until then, the denominator having moved alone once because N13-03's fixture is a `run` row; and 89 over 178 until `feat/m2-types-semantics` added three — the `for`-over-a-nested-array refusal and the two inner-length declarator positions; and was 87 over 176 until the round-3 review of `feat/m2-items` added two — the two `<<` branches the count-range fixture never covered, a legal AMOUNT with an illegal VALUE and a negative left operand; and was 82 over 171 until the round that followed added five more — the branches of the one-namespace and `pub` rules that the first round stated in prose and pinned in only one spelling each; and was 69 over 158 until the review round of `feat/m2-items` added THIRTEEN, which is what a review round costs when the reviewers probe rather than read: two fresh-binder shadowing shapes, both directions of a cross-kind name collision, four initialisers with no value, `pub` on an item, a macro invocation in an argument, two literal-kind losses and the macro_rules invocation spelling; and was 63 over 151 until the macro round of `feat/m2-items`
 added six more: every one of them a refusal that replaced a SILENT wrong expansion or a diagnostic
 naming a compiler phase, which is what measuring a subsystem before writing its fixture buys; and
 was 57 over 143 until the same branch added six — the

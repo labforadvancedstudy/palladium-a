@@ -200,13 +200,13 @@ N3-15	M2	N3	Item order does not decide whether a program compiles, OVER THE BY-V
 N4-01	-	N4	i32 i64 u32 u64	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
 N4-02	M2	N4	f32 f64	fixture	tests/02_types_floats.pd	satisfied	1.0	-
 N4-03	-	N4	bool	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
-N4-04	M2	N4	char -- STAYS OWED AND MOVES WITH N14-04. A char literal LEXES and carries the right scalar (N2-04, witnessed by tests/02_types_chars.pd), but its TYPE is i64, not a distinct `char`: N14 gives string_char_at a `char` return and char_is_digit a `char` parameter, and src/builtins.rs implements both over i64. A `char` type on the literal alone would leave 'a' unusable with every builtin that consumes a character -- it would lex, type, and have nowhere to go	fixture	tests/02_types_chars.pd	owed	1.0	-
+N4-04	M2	N4	char -- a char literal LEXES and carries the right scalar (N2-04) and its TYPE is `char`, DISTINCT from i64 with no implicit conversion in either direction: print_int('a') and c == 97 are both type errors, and `as` is the only crossing. It could not land alone and did not -- N14 gives string_char_at a `char` return and the three char_is_* predicates a `char` parameter, so the literal would have had nowhere to go and the retyped builtins nothing to feed them; N14-04 moved with it. `char` pairs with i64 ONLY, and `n as char` is CHECKED: a value outside 0..=0x10FFFF or inside the UTF-16 surrogate block is refused when written down and traps when computed. One C carrier, long long, because a C char holds 8 bits and 'HAN' (U+D55C) needs 21	fixture	tests/02_types_chars.pd	satisfied	1.0	-
 N4-05	-	N4	String	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
 N4-06	-	N4	unit ()	fixture	tests/03_functions_basic.pd	satisfied	1.0	-
 N4-07	-	N4	int is an alias for i64	fixture	tests/02_types_primitives.pd	satisfied	1.0	-
 N4-08	M7	N4	str and usize are named normatively — add them or rewrite the sites	decision	D3	blocked	1.0	-
 N4-09	-	N4	Arrays [T; N] - WITNESSED FOR CONCRETE ELEMENT TYPES ONLY ([i64; 5], an inferred [i64; 3], [String; 3]). PBS-1 excludes generics, so no witness can exercise a parameterised T; the row is an instance claim, not a claim about every T	fixture	tests/02_types_arrays.pd	satisfied	1.0	-
-N4-10	M2	N4	Nested arrays [[T; M]; N], as locals and as parameters	fixture	tests/02_types_nested_arrays.pd	owed	1.0	-
+N4-10	M2	N4	Nested arrays [[T; M]; N] as locals, parameters, struct fields and three deep; dimensions emitted after the identifier, outermost first. Two refusals by name remain and are reject rows of their own: `for` over a nested array (each step would bind a whole row) and an unresolved inner length in any declarator position	fixture	tests/02_types_nested_arrays.pd	satisfied	1.0	-
 N4-11	M3	N4	Slices [T]	fixture	tests/02_types_slices.pd	owed	1.0	-
 N4-12	M2	N4	Tuples (A, B) with construction and .0 access	fixture	tests/02_types_tuples.pd	satisfied	1.0	-
 N4-13	M7	N4	References ref T / ref mut T are a distinct type to the checker	fixture	tests/05_references.pd	owed	1.0	-
@@ -333,13 +333,13 @@ N12-09	M7	N12	Whatever D4 decides, the rule is enforced in the TYPE SYSTEM	rejec
 # --- N13 Execution model -------------------------------------------------------------
 N13-01	-	N13	Execution begins at fn main	fixture	tests/03_functions_basic.pd	satisfied	1.0	-
 N13-02	-	N13	A compilation unit without main is a library	skip	tests/projects/hello_pdm/src/math.pd	satisfied	1.0	-
-N13-03	M2	N13	Arguments are evaluated left to right	fixture	tests/03_arg_evaluation_order.pd	owed	1.0	-
+N13-03	M2	N13	Arguments are evaluated left to right -- STRUCTURALLY, not by luck: C leaves the order unspecified and this host's gcc happened to agree, so the guarantee is the emitted C. In a call with any effectful argument every argument READ happens at that argument's own position; the shape is pinned by a codegen unit test	fixture	tests/03_arg_evaluation_order.pd	satisfied	1.0	-
 
 # --- N14 Builtins and the standard library ---------------------------------------------
 N14-01	M2	N14	The builtin set is exactly the 34 normative names	observable	src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set	satisfied	1.0	-
-N14-02	M2	N14	A program cannot define or shadow a builtin name	reject	tests/reject/shadow_builtin.pd	owed	1.0	-
+N14-02	M2	N14	A program cannot define or shadow a builtin name -- at all ten binding positions (fn, struct, enum, type alias, const, static, parameter, local, loop variable, pattern and @ binding), with two different reasons named by the diagnostic: a definition is C nothing can reach, a type collides in no C namespace but breaks the one-namespace rule	reject	tests/reject/shadow_builtin.pd	satisfied	1.0	-
 N14-03	M3	N14	Builtin signatures match N14 — filesystem builtins return Result	fixture	tests/stdlib/stdlib_builtins_file.pd	owed	1.0	-
-N14-04	M2	N14	string_char_at returns char	fixture	tests/stdlib/stdlib_builtins_string.pd	owed	1.0	-
+N14-04	M2	N14	string_char_at returns char -- and the fixture DISCRIMINATES: it binds the result to an annotated `char`, which an i64 return fails. The -1 out-of-range sentinel died with the type (-1 is not a char, and nothing read it); an index with no character behind it traps instead, pinned by tests/n4_char_traps.rs because a trap ends the process and no fixture can observe it	fixture	tests/stdlib/stdlib_builtins_string.pd	satisfied	1.0	-
 N14-17	M2	N14	Every normative builtin is CALLABLE — none is registered-and-refused	gate	make stdlib-gate	satisfied	1.0	-
 N14-05	M5	N14	The effect classification of every builtin is ENFORCED	reject	tests/reject/pure_calls_file_open.pd	owed	1.0	-
 N14-06	M8	N14	Every file under stdlib/ is accepted by the compiler	gate	make stdlib-gate	owed	1.0	-

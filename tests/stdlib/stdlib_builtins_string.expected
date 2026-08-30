@@ -25,6 +25,8 @@ string_eq_prefix
 false
 string_eq_empty
 true
+string_char_at_returns_char
+true
 @builtin string_char_at -> 97
 string_char_at_0
 97

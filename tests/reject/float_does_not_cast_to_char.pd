@@ -1,0 +1,22 @@
+// NEGATIVE TEST -- `f64 as char` is refused (N4-04), and the DIRECTION is the
+// point of a separate fixture.
+//
+// tests/reject/char_does_not_cast_to_bool.pd executes `char as bool`. It pins
+// one cell of the matrix, and a matrix is not a predicate: the check that this
+// row corrects was `castable(from) && castable(to)`, symmetric by construction,
+// so a repair that got one direction right could get the other wrong and stay
+// green. The refused pairs are char<->bool and char<->float, in both
+// directions, and only a fixture per direction says so.
+//
+// MEASURED before the restriction: `3.7 as char` compiled and produced 3.
+// Which character is three-tenths of the way past `\u{3}`? The specification
+// answers nothing of the kind, so the cast is refused by name rather than
+// truncating and hoping.
+//
+// `char` crosses to `i64` and back, because the code point IS the
+// correspondence a character is defined by, and the way back is range-checked
+// (tests/reject/char_from_non_scalar.pd).
+fn main() {
+    let c: char = 3.7 as char;
+    print_int(c as i64);
+}

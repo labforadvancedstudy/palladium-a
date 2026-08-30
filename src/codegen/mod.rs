@@ -4585,8 +4585,9 @@ impl CodeGenerator {
     /// Returns the temporary's name, or `None` for an argument that has no
     /// observable read time and is therefore emitted in place.
     ///
-    /// Three shapes come back `None`, and each is a claim rather than a
-    /// shortcut:
+    /// FOUR shapes come back `None` — three claims and one guard, and the
+    /// count is stated because it was wrong in language-spec.md's A6.4 for two
+    /// review rounds (it said two):
     ///
     /// * an ADDRESS-taken bare name (`mut` parameter). What the call reads is
     ///   the address of a fixed object; no earlier argument can move it.
@@ -4602,6 +4603,10 @@ impl CodeGenerator {
     ///   its own to misplace — it can read stale state, never skip a write —
     ///   and because refusing would reject programs that are fine. The
     ///   effectful half of the same branch IS refused, below.
+    /// * an argument whose inferred C type is `void` or empty. This is the
+    ///   GUARD, not a case of the rule: no call can pass a `void` argument, so
+    ///   nothing reaches it, and it exists so that a future inference returning
+    ///   `Some("void")` writes no `void __pd_valN = …;`.
     ///
     /// An EFFECTFUL argument whose type cannot be named is the one case that
     /// REFUSES rather than falling back. Emitting it in place would put a call

@@ -1,0 +1,20 @@
+// NEGATIVE TEST -- `bool as char` is refused (N4-04), the fourth cell of the
+// matrix and the last direction left unpinned.
+//
+// MEASURED before the restriction: `true as char` compiled and produced 1 --
+// U+0001, START OF HEADING, which is not what anyone writing it meant. The
+// conversion had no meaning to give it: `bool` reaches `i64` as 0 or 1 because
+// C's `int` is what a Palladium `bool` already is, but nothing makes the first
+// control character the character form of "true".
+//
+// The three siblings cover the other directions: char->bool
+// (char_does_not_cast_to_bool.pd), float->char
+// (float_does_not_cast_to_char.pd), and the legal char<->i64 pair round-trips
+// in tests/02_types_chars.pd. Between them the whole matrix is stated rather
+// than assumed, which the ORIGINAL defect needed: the check was a predicate
+// over each side and therefore symmetric, so one fixture could never have
+// caught a half-repair.
+fn main() {
+    let c: char = true as char;
+    print_int(c as i64);
+}

@@ -127,6 +127,15 @@ fn main() {
     // in-language assertion to write for it — the contract this fixture pins is
     // the IN-BOUNDS one, and the trap is pinned by
     // `test_string_char_at_traps_instead_of_returning_a_non_char` in src/codegen.
+    // THE LINE THAT DISCRIMINATES, and this fixture is the evidence N14-04's
+    // row names, so it has to carry one. `string_char_at(...) as i64` below
+    // would compile whether the return were `char` or `i64` -- `i64 as i64` is
+    // a legal cast -- so none of the assertions after it can tell the two
+    // apart. THIS binding can: annotate the result `char`, and an `i64` return
+    // is "Type mismatch: expected Char, found Int".
+    let scanned: char = string_char_at("abc", 1);
+    expect_true("string_char_at_returns_char", scanned == 'b');
+
     covers_i64("string_char_at", string_char_at("abc", 0) as i64);
     expect_i64("string_char_at_0", string_char_at("abc", 0) as i64, 'a' as i64);
     expect_i64("string_char_at_2", string_char_at("abc", 2) as i64, 'c' as i64);
