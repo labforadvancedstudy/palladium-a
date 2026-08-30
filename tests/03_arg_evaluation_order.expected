@@ -1,0 +1,39 @@
+-- three arguments --
+a
+b
+c
+7
+-- effectful then pure --
+bump
+100
+-- pure then effectful --
+bump
+1
+-- nested calls --
+a
+b
+c
+304
+-- method call --
+a
+b
+17
+-- builtin --
+name_a
+a
+100
+-- string and struct arguments --
+name_a
+name_b
+make_point
+ada
+grace
+7
+-- array argument --
+row_of
+14
+-- mut parameter --
+slot
+a
+1
+100

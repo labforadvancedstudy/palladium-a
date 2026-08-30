@@ -1057,6 +1057,70 @@ impl CodeGenerator {
         }
     }
 
+    /// Whether evaluating `expr` can be OBSERVED — N13-03's predicate.
+    ///
+    /// Written as a whitelist of the forms that provably cannot carry an
+    /// effect, so a new `Expr` variant defaults to "effectful". The failure
+    /// modes are not symmetric: calling a pure expression effectful costs one
+    /// redundant temporary, and calling an effectful one pure loses the
+    /// ordering guarantee silently.
+    ///
+    /// A CALL is the only leaf that makes this false. Nothing else in this
+    /// language writes: there are no assignment expressions, and the only
+    /// mutable state a callee can reach past its own frame is a `static mut`
+    /// (measured: `static mut G` written by one argument and read by the next,
+    /// see `test_argument_reads_are_sequenced_left_to_right`) or storage
+    /// reached through a `&mut` parameter.
+    fn expr_is_pure(expr: &Expr) -> bool {
+        match expr {
+            Expr::String(_)
+            | Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::Bool(_)
+            | Expr::Ident(_) => true,
+            Expr::Index { array, index, .. } => {
+                Self::expr_is_pure(array) && Self::expr_is_pure(index)
+            }
+            Expr::FieldAccess { object, .. } => Self::expr_is_pure(object),
+            Expr::Unary { operand, .. } => Self::expr_is_pure(operand),
+            Expr::Binary { left, right, .. } => {
+                Self::expr_is_pure(left) && Self::expr_is_pure(right)
+            }
+            Expr::Reference { expr, .. }
+            | Expr::Deref { expr, .. }
+            | Expr::TupleIndex { expr, .. } => Self::expr_is_pure(expr),
+            Expr::Cast { expr, .. } => Self::expr_is_pure(expr),
+            Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
+                elements.iter().all(Self::expr_is_pure)
+            }
+            Expr::ArrayRepeat { value, .. } => Self::expr_is_pure(value),
+            Expr::StructLiteral { fields, .. } => {
+                fields.iter().all(|(_, value)| Self::expr_is_pure(value))
+            }
+            Expr::Range { start, end, .. } => {
+                Self::expr_is_pure(start) && Self::expr_is_pure(end)
+            }
+            // Call, MacroInvocation, Await, Question, If, Loop, Match, Block,
+            // EnumConstructor. Every one of these either IS a call or can
+            // contain one, and the conservative answer costs only a temporary.
+            _ => false,
+        }
+    }
+
+    /// The declarator for a pointer named `name` to `base` with `dims`.
+    ///
+    /// `("long long", "")` -> `long long *t`; `("long long", "[2]")` ->
+    /// `long long (*t)[2]`. The parentheses are not optional: `long long *t[2]`
+    /// is an array of pointers, which is a different type and a different size.
+    fn pointer_declarator(base: &str, dims: &str, name: &str) -> String {
+        if dims.is_empty() {
+            format!("{} *{}", base, name)
+        } else {
+            format!("{} (*{}){}", base, name, dims)
+        }
+    }
+
     /// Reject a write into an array parameter that did not declare that it may
     /// be written.
     ///
@@ -4466,6 +4530,75 @@ impl CodeGenerator {
         Ok((text?, hoists))
     }
 
+    /// Read ONE call argument into a temporary, in source order (N13-03).
+    ///
+    /// Returns the temporary's name, or `None` for an argument that has no
+    /// observable read time and is therefore emitted in place.
+    ///
+    /// Three shapes come back `None`, and each is a claim rather than a
+    /// shortcut:
+    ///
+    /// * an ADDRESS-taken bare name (`mut` parameter). What the call reads is
+    ///   the address of a fixed object; no earlier argument can move it.
+    /// * a by-value bare name of ARRAY type. An array argument decays to a
+    ///   pointer to storage that already exists, so again the read is of an
+    ///   address, not of a value.
+    /// * an argument whose C type this pass cannot name. There is no honest
+    ///   declaration to write, and inventing `long long` is how a `String`
+    ///   becomes an integer (see `expr_c_type`).
+    ///
+    /// Everything else is declared and assigned here. The argument's OWN
+    /// hoists — a value `if` written as an argument — are pushed first, so the
+    /// order in `pending_hoists` is the order in the source.
+    fn hoist_call_argument(&mut self, arg: &Expr, needs_address: bool) -> Result<Option<String>> {
+        if matches!(arg, Expr::Ident(_)) && needs_address {
+            return Ok(None);
+        }
+        let Some(c_type) = self.try_infer_expr_type(arg) else {
+            return Ok(None);
+        };
+        let (base, dims) = Self::split_array_dims(&c_type);
+        if base == "void" || base.is_empty() {
+            return Ok(None);
+        }
+        if matches!(arg, Expr::Ident(_)) && !dims.is_empty() {
+            return Ok(None);
+        }
+
+        let (text, arg_hoists) = self.generate_expr_with_hoists(arg)?;
+        let temp = self.fresh_hoist_name();
+        let decl = if needs_address {
+            // `&place`: a pointer to the caller's storage, taken HERE rather
+            // than wherever C would have taken it.
+            format!(
+                "    {} = &({});
+",
+                Self::pointer_declarator(&base, &dims, &temp),
+                text
+            )
+        } else if dims.is_empty() {
+            format!("    {} {} = {};
+", base, temp, text)
+        } else {
+            // An array argument decays to a pointer to its first ELEMENT, so
+            // the outermost dimension is the one that goes away:
+            // `long long[3][2]` is passed as `long long (*)[2]`.
+            let rest = match dims.find(']') {
+                Some(i) => &dims[i + 1..],
+                None => "",
+            };
+            format!(
+                "    {} = {};
+",
+                Self::pointer_declarator(&base, rest, &temp),
+                text
+            )
+        };
+        self.pending_hoists.push_str(&arg_hoists);
+        self.pending_hoists.push_str(&decl);
+        Ok(Some(temp))
+    }
+
     /// Emit `{ stmts...; <temp> = value; }` for one branch of a value
     /// expression, and report the C type of `value`.
     ///
@@ -5750,6 +5883,33 @@ impl CodeGenerator {
                     _ => None,
                 };
 
+                // N13-03. ARGUMENTS ARE EVALUATED LEFT TO RIGHT, and C does
+                // not evaluate them in any order the standard names — so the
+                // guarantee cannot rest on the compiler that reads this file.
+                // It is STRUCTURAL: each argument is read into a temporary,
+                // declared in source order, and the call names the temporaries.
+                //
+                // MEASURED, and the reason a pure argument is hoisted too:
+                // `static mut G = 10; add2(bump(), G)` where `bump()` writes
+                // `G` printed 100 on this host — `G` read AFTER the write. That
+                // is the answer the source asks for, and nothing in the emitted
+                // C required it; a gcc that reads `G` first would have printed
+                // 11. So the rule is not "sequence the effectful arguments":
+                // an effectful argument has to be ordered against the LATER
+                // PURE ones as well, and only reading every argument at its own
+                // position says that.
+                //
+                // It fires on calls of TWO OR MORE arguments with at least one
+                // effectful argument, because that is exactly when the order is
+                // observable. A one-argument call has nothing to be ordered
+                // against — which is also what keeps `panic`'s comma-operator
+                // shape below composing, and what keeps the emitted C for the
+                // vast majority of calls byte-identical.
+                //
+                // NOT IN SCOPE: struct-literal field order and binary-operator
+                // operand order are their own rows.
+                let sequenced = args.len() >= 2 && !args.iter().all(Self::expr_is_pure);
+
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
@@ -5766,6 +5926,13 @@ impl CodeGenerator {
                     } else {
                         false
                     };
+
+                    if sequenced {
+                        if let Some(temp) = self.hoist_call_argument(arg, needs_address)? {
+                            self.output.push_str(&temp);
+                            continue;
+                        }
+                    }
 
                     if needs_address {
                         // Check if argument is already a pointer (mutable param) or array
@@ -7341,6 +7508,91 @@ mod tests {
             "{}",
             msg
         );
+    }
+
+    // N13-03. THE GUARANTEE IS THE EMITTED SHAPE, not what this host's gcc
+    // happens to do. Measured: `add3(a(), b(), c())` ran left to right here
+    // BEFORE any of this existed, so the conformance fixture
+    // (tests/03_arg_evaluation_order.pd) cannot fail on a host that agrees with
+    // us by accident. This test is the one that can: it reads the C.
+    #[test]
+    fn test_argument_reads_are_sequenced_left_to_right() {
+        let c = generate(
+            r#"
+        static mut G: i64 = 0;
+        fn bump() -> i64 { G = 99; return 1; }
+        fn add2(x: i64, y: i64) -> i64 { return x + y; }
+        fn main() { print_int(add2(bump(), G)); }
+        "#,
+        )
+        .unwrap();
+
+        // Both arguments are read, in source order, BEFORE the call.
+        let first = c.find("long long __pd_val0 = bump();").unwrap_or_else(|| panic!("{}", c));
+        let second = c.find("long long __pd_val1 = G;").unwrap_or_else(|| panic!("{}", c));
+        let call = c
+            .find("add2(__pd_val0, __pd_val1)")
+            .unwrap_or_else(|| panic!("{}", c));
+        assert!(first < second && second < call, "{}", c);
+
+        // And the effectful argument is not left inside the call, where C
+        // would have been free to run it after `G` was read.
+        assert!(!c.contains("add2(bump()"), "{}", c);
+    }
+
+    // The rule fires on the position where the order is OBSERVABLE, and not
+    // anywhere else. A one-argument call has nothing to be ordered against, so
+    // it keeps its shape - which is also what keeps `panic`'s comma-operator
+    // form composing, and what keeps this change off the emitted C of almost
+    // every call in the corpus.
+    #[test]
+    fn test_a_single_argument_and_an_all_pure_call_are_not_sequenced() {
+        let c = generate(
+            r#"
+        fn f() -> i64 { return 1; }
+        fn add2(x: i64, y: i64) -> i64 { return x + y; }
+        fn main() {
+            let n: i64 = 2;
+            print_int(f());
+            print_int(add2(n, 3));
+            if n > 100 { panic("no"); }
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("__pd_print_int(f())"), "{}", c);
+        assert!(c.contains("__pd_print_int(add2(n, 3LL))"), "{}", c);
+        assert!(c.contains("(__pd_panic(\"no\"), abort())"), "{}", c);
+        assert!(!c.contains("__pd_val"), "{}", c);
+    }
+
+    // A `mut` parameter takes the ADDRESS of the caller's storage, and an
+    // ARRAY argument decays to a pointer. Neither is a value to copy, so both
+    // are hoisted as POINTERS - which is what sequences an effectful
+    // subscript, the one shape that could otherwise smuggle a call past the
+    // rule (measured before the fix: `take(&xs[idx()], eff())`, one C
+    // expression, order unspecified).
+    #[test]
+    fn test_place_arguments_are_sequenced_as_pointers() {
+        let c = generate(
+            r#"
+        fn idx() -> i64 { return 1; }
+        fn eff() -> i64 { return 2; }
+        fn take(mut x: i64, y: i64) -> i64 { x = 1; return y; }
+        fn row_sum(r: [i64; 2], k: i64) -> i64 { return r[0] + k; }
+        fn main() {
+            let mut xs: [i64; 3] = [10, 20, 30];
+            let grid: [[i64; 2]; 3] = [[1, 2], [3, 4], [5, 6]];
+            print_int(take(xs[idx()], eff()));
+            print_int(row_sum(grid[idx()], eff()));
+        }
+        "#,
+        )
+        .unwrap();
+        assert!(c.contains("long long *__pd_val0 = &(xs[idx()]);"), "{}", c);
+        assert!(c.contains("take(__pd_val0, __pd_val1)"), "{}", c);
+        assert!(c.contains("long long *__pd_val2 = grid[idx()];"), "{}", c);
+        assert!(c.contains("row_sum(__pd_val2, __pd_val3)"), "{}", c);
     }
 
     #[test]

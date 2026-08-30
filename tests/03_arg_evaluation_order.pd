@@ -1,0 +1,166 @@
+// Test 03: Functions - Arguments are evaluated left to right (N13-03)
+//
+// C DOES NOT PROMISE THIS. The order in which a C call evaluates its arguments
+// is unspecified, and the two compilers this backend targets disagree in
+// principle even where they agree in practice -- on the host that wrote this
+// transcript, gcc happened to run them left to right, so a fixture that only
+// RAN would have passed before the guarantee existed. What makes the guarantee
+// real is the emitted C: every argument of a call that can observe the order is
+// read into its own temporary, declared in source order, and the call names the
+// temporaries. The SHAPE is pinned by
+// `test_argument_reads_are_sequenced_left_to_right` in src/codegen; this
+// fixture pins what that shape buys, which is the observable order.
+//
+// The decisive case is not three calls in a row -- it is a call beside a PURE
+// argument that reads what the call wrote (`add2(bump(), G)` below). Sequencing
+// only the effectful arguments would leave `G` to be read whenever C liked.
+//
+// OUT OF SCOPE, and deliberately not asserted here: the order of struct-literal
+// FIELDS, and the order of a binary operator's OPERANDS (`f() + g()`). Those are
+// their own requirements; N13-03 is about call arguments.
+
+static mut G: i64 = 0;
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Acc {
+    n: i64,
+}
+
+impl Acc {
+    fn combine(self, p: i64, q: i64) -> i64 {
+        return self.n + p * 10 + q;
+    }
+}
+
+fn a() -> i64 {
+    print("a");
+    return 1;
+}
+
+fn b() -> i64 {
+    print("b");
+    return 2;
+}
+
+fn c() -> i64 {
+    print("c");
+    return 4;
+}
+
+fn add3(x: i64, y: i64, z: i64) -> i64 {
+    return x + y + z;
+}
+
+fn add2(x: i64, y: i64) -> i64 {
+    return x + y;
+}
+
+fn mul_add(x: i64, y: i64) -> i64 {
+    return x * 100 + y;
+}
+
+// Writes the global that a LATER argument reads.
+fn bump() -> i64 {
+    G = 99;
+    print("bump");
+    return 1;
+}
+
+fn name_a() -> String {
+    print("name_a");
+    return "ada";
+}
+
+fn name_b() -> String {
+    print("name_b");
+    return "grace";
+}
+
+fn make_point() -> Point {
+    print("make_point");
+    return Point { x: 3, y: 4 };
+}
+
+fn describe(first: String, second: String, p: Point) -> i64 {
+    print(first);
+    print(second);
+    return p.x + p.y;
+}
+
+fn row_of() -> i64 {
+    print("row_of");
+    G = 7;
+    return 1;
+}
+
+fn row_sum(r: [i64; 2], k: i64) -> i64 {
+    return r[0] + r[1] + k;
+}
+
+fn slot() -> i64 {
+    print("slot");
+    return 2;
+}
+
+fn writes_through(mut x: i64, y: i64) -> i64 {
+    x = 100;
+    return y;
+}
+
+fn main() {
+    // 1. Three effectful arguments. Every one of them prints.
+    print("-- three arguments --");
+    print_int(add3(a(), b(), c()));
+
+    // 2. THE DECISIVE CASE. `bump()` writes G; `G` is a PURE argument written
+    // to the right of it, so it must be read after the write: 1 + 99 = 100.
+    print("-- effectful then pure --");
+    G = 0;
+    print_int(add2(bump(), G));
+
+    // 3. A pure argument to the LEFT is read before the write: G is still 0,
+    // so this is 0 + 1 = 1, not 99 + 1.
+    print("-- pure then effectful --");
+    G = 0;
+    print_int(add2(G, bump()));
+
+    // 4. Nested calls as arguments. The inner call's own arguments run first,
+    // then the inner call, then the outer call's next argument.
+    print("-- nested calls --");
+    print_int(mul_add(add2(a(), b()), c()));
+
+    // 5. Method-call arguments. `acc.combine(p, q)` is the same call emitter
+    // with the receiver in front, so the receiver is read first.
+    print("-- method call --");
+    let acc = Acc { n: 5 };
+    print_int(acc.combine(a(), b()));
+
+    // 6. A two-argument BUILT-IN. `string_char_at` is `__pd_string_char_at`,
+    // the same emitter and the same rule.
+    print("-- builtin --");
+    print_int(string_char_at(name_a(), a()));
+
+    // 7. Value temporaries need a C type that can be written down: a String
+    // argument is a pointer and a struct argument is a struct.
+    print("-- string and struct arguments --");
+    print_int(describe(name_a(), name_b(), make_point()));
+
+    // 8. An ARRAY argument decays to a pointer, and the pointer is taken at
+    // the argument's own position -- so an effectful INDEX is sequenced too.
+    print("-- array argument --");
+    G = 0;
+    let grid: [[i64; 2]; 3] = [[1, 2], [3, 4], [5, 6]];
+    print_int(row_sum(grid[row_of()], G));
+
+    // 9. A `mut` parameter receives the ADDRESS of the caller's storage, and
+    // that address is taken at the argument's own position for the same
+    // reason. `slot()` runs before `a()`.
+    print("-- mut parameter --");
+    let mut xs: [i64; 3] = [10, 20, 30];
+    print_int(writes_through(xs[slot()], a()));
+    print_int(xs[2]);
+}
