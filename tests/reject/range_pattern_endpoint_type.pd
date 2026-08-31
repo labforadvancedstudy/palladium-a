@@ -1,14 +1,17 @@
-// NEGATIVE TEST — a range pattern's endpoints are integers (N6-03).
+// NEGATIVE TEST — a range pattern's endpoints are an ORDERED literal kind (N6-03),
+// and a string is not one.
 //
 // The normative production spells an endpoint `expression`, which no pattern
-// position in this compiler can evaluate; what a range needs is an ORDER, and
-// the only ordered literal this language has today is the integer. `char` is the
-// obvious second one and waits on N4-04, which owes `char` as a type at all —
-// so a `char` endpoint cannot be checked against a scrutinee type that does not
-// exist.
+// position in this compiler can evaluate; what a range needs is an ORDER.
 //
-// Refused with the offending end named, rather than lowered into a C comparison
-// between string pointers, which compares addresses and would answer.
+// THERE ARE TWO ORDERED KINDS NOW, NOT ONE. This file's comment used to say the
+// integer was "the only ordered literal this language has today" and that `char`
+// "waits on N4-04, which owes `char` as a type at all". N4-04 is `satisfied` and
+// a char literal is a pattern as of the char-pattern round, so `'a'..='z'` is
+// legal and witnessed by tests/06_char_patterns.pd. What is refused here is
+// unchanged and for an unchanged reason: a STRING range would need an ordering
+// this language has never defined, and lowering it would compare address values
+// in C, which answers without meaning anything.
 fn main() {
     let v = match 4 {
         "a".."z" => 1,

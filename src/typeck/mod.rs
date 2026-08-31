@@ -5648,21 +5648,43 @@ impl TypeChecker {
                 Ok(())
             }
             // N6-03. Three questions, all answerable here and nowhere later:
-            // the endpoints must be integers, the scrutinee must be an integer
-            // too, and the interval must be able to contain something.
+            // the endpoints must be an ORDERED literal kind and BOTH THE SAME
+            // one, the scrutinee's type must be that kind, and the interval must
+            // be able to contain something.
             //
-            // AN EMPTY RANGE IS REFUSED RATHER THAN COMPILED. `5..=1` and `3..3`
-            // can never match, so the arm they head is dead the moment it is
-            // written — and a reader who wrote one meant a different pair of
-            // numbers. Emitting `x >= 5 && x <= 1` and letting the arm never fire
-            // is how a typo becomes a silent behaviour change.
+            // TWO ORDERED KINDS NOW, NOT ONE. This rule read "the endpoints must
+            // be integers", and refused `char` with "(`char` endpoints wait on
+            // N4-04, which owes `char` as a type at all)". N4-04 is `satisfied`:
+            // `char` is a type, and a char literal is a pattern as of this
+            // change, so the refusal outlived its reason. `char` is ordered by
+            // CODE POINT, which is the only order the language defines for it,
+            // and that is exactly what a range needs. `String` and `bool` stay
+            // refused: `bool` has two values and wants no interval, and a string
+            // range would be an ordering this language has never defined.
+            //
+            // MIXED ENDPOINTS ARE REFUSED BY NAME. `'a'..=9` has one end of each
+            // kind, and there is no comparison between a scalar and an integer
+            // here that is not a coercion N4-04 exists to forbid.
+            //
+            // AN EMPTY RANGE IS REFUSED RATHER THAN COMPILED. `5..=1`, `3..3` and
+            // now `'z'..='a'` can never match, so the arm they head is dead the
+            // moment it is written — and a reader who wrote one meant a different
+            // pair. Emitting `x >= 5 && x <= 1` and letting the arm never fire is
+            // how a typo becomes a silent behaviour change.
             Pattern::Range { lo, hi, inclusive } => {
+                // Code point for a `char`, value for an `i64`: the endpoint's
+                // ORDER, paired with the type a scrutinee must have to be
+                // compared against it.
+                let ordered = |literal: &PatternLiteral| match literal {
+                    PatternLiteral::Int(v) => Some((*v, CheckerType::Int)),
+                    PatternLiteral::Char(c) => Some((*c as i64, CheckerType::Char)),
+                    PatternLiteral::Str(_) | PatternLiteral::Bool(_) => None,
+                };
                 for (literal, which) in [(lo, "low"), (hi, "high")] {
-                    if !matches!(literal, PatternLiteral::Int(_)) {
+                    if ordered(literal).is_none() {
                         return Err(CompileError::TypeMismatch {
-                            expected: "the endpoints of a range pattern to be integer literals \
-                                       (`char` endpoints wait on N4-04, which owes `char` as a \
-                                       type at all)"
+                            expected: "the endpoints of a range pattern to be integer or `char` \
+                                       literals, the two literal kinds this language orders"
                                 .to_string(),
                             found: format!(
                                 "the {} end `{}`",
@@ -5673,26 +5695,44 @@ impl TypeChecker {
                         });
                     }
                 }
-                if *expected_type != CheckerType::Int {
+                let (low, low_type) = ordered(lo).expect("checked just above");
+                let (high, high_type) = ordered(hi).expect("checked just above");
+                if low_type != high_type {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "both endpoints of a range pattern to be the same kind of \
+                                   literal"
+                            .to_string(),
+                        found: format!(
+                            "`{}`, whose low end is {} and whose high end is {} — there is no \
+                             order between them that is not a conversion `char` does not have",
+                            pattern, low_type, high_type
+                        ),
+                        span: None,
+                    });
+                }
+                if *expected_type != low_type {
                     return Err(CompileError::TypeMismatch {
                         expected: format!(
                             "a pattern of type {}, which is what this `match` is on",
                             expected_type
                         ),
-                        found: "a range pattern, which matches integers".to_string(),
+                        found: format!("a range pattern, which matches {}", low_type),
                         span: None,
                     });
                 }
-                let (PatternLiteral::Int(low), PatternLiteral::Int(high)) = (lo, hi) else {
-                    unreachable!("both endpoints were just checked to be integers");
-                };
                 let empty = if *inclusive { low > high } else { low >= high };
                 if empty {
+                    let unit = if low_type == CheckerType::Char {
+                        "code point"
+                    } else {
+                        "integer"
+                    };
                     return Err(CompileError::TypeMismatch {
                         expected: "a range pattern that can match something".to_string(),
                         found: format!(
-                            "`{}`, which is empty — no integer is both >= {} and {} {}",
+                            "`{}`, which is empty — no {} is both >= {} and {} {}",
                             pattern,
+                            unit,
                             low,
                             if *inclusive { "<=" } else { "<" },
                             high
@@ -5710,6 +5750,9 @@ impl TypeChecker {
                     PatternLiteral::Int(v) => (CheckerType::Int, v.to_string()),
                     PatternLiteral::Str(v) => (CheckerType::String, format!("{:?}", v)),
                     PatternLiteral::Bool(v) => (CheckerType::Bool, v.to_string()),
+                    PatternLiteral::Char(v) => {
+                        (CheckerType::Char, format!("'{}'", v.escape_debug()))
+                    }
                 };
                 if literal_type == *expected_type {
                     Ok(())
@@ -6391,7 +6434,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6708-6772`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6719-6783`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -6816,7 +6859,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4541-4549`, `src/parser/mod.rs:4310-4318`). That is not
+    /// (`src/parser/mod.rs:4552-4560`, `src/parser/mod.rs:4321-4329`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

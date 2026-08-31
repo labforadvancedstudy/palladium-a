@@ -3126,6 +3126,10 @@ impl Parser {
                 self.advance()?;
                 PatternLiteral::Bool(false)
             }
+            Token::Char(value) => {
+                self.advance()?;
+                PatternLiteral::Char(value)
+            }
             found => {
                 return Err(CompileError::UnexpectedToken {
                     expected: "a literal for the high end of this range pattern (open-ended \
@@ -3197,6 +3201,13 @@ impl Parser {
             Token::False => {
                 self.advance()?;
                 self.maybe_range(PatternLiteral::Bool(false))
+            }
+            // N4-04's `char`, in pattern position. Through `maybe_range` like
+            // every other literal: `'a'` is a pattern and `'a'..='z'` is one
+            // too, and routing it here is what makes the second free.
+            Token::Char(value) => {
+                self.advance()?;
+                self.maybe_range(PatternLiteral::Char(value))
             }
             // N6-05. A tuple pattern. The same arity rule as the VALUE side:
             // `(p)` is grouping, and grouping is not a pattern form, so it is

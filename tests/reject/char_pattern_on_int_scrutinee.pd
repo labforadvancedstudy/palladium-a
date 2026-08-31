@@ -1,0 +1,16 @@
+// NEGATIVE TEST — a literal pattern is an EQUALITY TEST, so its type is the
+// scrutinee's (N6-02), and `char` is not `i64` (N4-04).
+//
+// This is the pattern-position half of N4-04's no-implicit-conversion rule. In
+// C both sides are a `long long` and the comparison would compile and answer, so
+// nothing downstream would object: `match n { 'a' => … }` on an `i64` would
+// silently test `n == 97`. The type checker is the only place this can be caught,
+// which is why the row exists.
+fn main() {
+    let n: i64 = 5;
+    let v = match n {
+        'a' => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

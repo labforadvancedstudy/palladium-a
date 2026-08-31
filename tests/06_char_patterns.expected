@@ -1,0 +1,13 @@
+a range over code points:
+1
+2
+an or-pattern of two char literals:
+3
+3
+a bare char literal, and the wildcard behind it:
+4
+0
+a binding over a char range, read back as its code point:
+107
+and a char match in VALUE position:
+10

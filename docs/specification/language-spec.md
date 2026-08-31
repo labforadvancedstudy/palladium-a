@@ -896,8 +896,8 @@ unrelated reason.
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3842`, corrected from line 2038 of the pre-cleanup revision) |
-| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3831-3838` (corrected from line 2037–2043 of the pre-cleanup revision) |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3853`, corrected from line 2038 of the pre-cleanup revision) |
+| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3842-3849` (corrected from line 2037–2043 of the pre-cleanup revision) |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
@@ -915,7 +915,7 @@ unrelated reason.
 | `<T: Bound>`, `where` | unimplemented | `parse_generic_params` accepts bare names only; the `:` is a parse error |
 
 **partial — generic argument bug**: inside `<…>`, any identifier whose characters are all
-uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:3872-3882`,
+uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:3883-3893`,
 corrected from line 2054–2079 of the pre-cleanup revision). So `Foo<T>` yields a const-generic `T`, not a type argument. Only
 mixed-case names like `Vec<Item>` reach the type branch.
 
@@ -941,7 +941,7 @@ enum is compiled to. Use `match`.
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
 rejected outright by the type checker (`src/typeck/mod.rs:4976-4976`) and again by code generation
-(`src/codegen/mod.rs:6522-6526`). It used to typecheck against a `Generic{name:"Result"}` shape
+(`src/codegen/mod.rs:6533-6537`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -1046,7 +1046,7 @@ implemented: literals, identifiers, struct literals, array literals `[a,b,c]` an
 indexing, field access, calls, enum construction, unary `- ! & *`, binary operators.
 
 - **implemented: `if`, `match`, blocks and `loop` are EXPRESSIONS** (N5-03/04/05/07). All four are
-  read at the primary level (`src/parser/mod.rs:3995-4007`) and each reuses the statement parser it
+  read at the primary level (`src/parser/mod.rs:4006-4018`) and each reuses the statement parser it
   already had, reinterpreting the statements-plus-tail it returns as statements-plus-value. C has
   no expression with a block in it, so they lower by HOISTING: a temporary, a statement-form
   computation that assigns it, and a use of the name. GNU statement-expressions would say it in one
@@ -1062,7 +1062,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   `(p.0).1`, because `.0.1` lexes as one float literal (`[0-9]+\.[0-9]+`) and `p.0.10` and `p.0.1`
   both round-trip to 0.1, so the second index cannot be recovered without guessing.
 - **implemented: `as` casts** (N5-15), parsed between multiplication and unary
-  (`src/parser/mod.rs:3682-3683`) so `10 / 4.0 as i64` is `10 / (4.0 as i64)`, and chainable. THE LEGAL
+  (`src/parser/mod.rs:3693-3694`) so `10 / 4.0 as i64` is `10 / (4.0 as i64)`, and chainable. THE LEGAL
   SET IS NARROW BECAUSE THIS DOCUMENT DOES NOT SAY WHAT IT IS: N5 names `as` casts and the grammar
   gives the form, neither says which conversions are meant, so conversions among the numeric
   primitives and `bool` are implemented and every other cast is refused by name. A cast to `bool`
@@ -1075,19 +1075,19 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:6173-6177`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
+  (`src/typeck/mod.rs:6216-6220`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
 the right side could not, and `a * -b` did not parse. It now parses both sides through the cast
-level, which is `parse_unary` plus the `as` suffix (`src/parser/mod.rs:3770-3770`). Every other level of
+level, which is `parse_unary` plus the `as` suffix (`src/parser/mod.rs:3781-3781`). Every other level of
 the ladder was already symmetric, which is why this was the only expression that failed.
 [N5](#n5-statements-and-expressions) requires `a * -b`; `ef74eba` delivered it.
 
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:4001`) and code generation (`src/codegen/mod.rs:5965-5968`)
+both the type checker (`src/typeck/mod.rs:4001`) and code generation (`src/codegen/mod.rs:5976-5979`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once,
 and its position among the arguments is the one the source wrote: being the first argument, it is
@@ -1179,8 +1179,8 @@ syntactic trap is worth stating: a `match` arm that is a block must not be follo
 and propagation needs block arms because `return` is not an expression.
 
 The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4976-4976`, `.await` at
-`src/typeck/mod.rs:4983-4983`) and again by code generation (`?` at `src/codegen/mod.rs:6522-6526`,
-`.await` at `src/codegen/mod.rs:6534-6538`), which is callable on its own.
+`src/typeck/mod.rs:4983-4983`) and again by code generation (`?` at `src/codegen/mod.rs:6533-6537`,
+`.await` at `src/codegen/mod.rs:6545-6549`), which is callable on its own.
 
 What they used to do:
 
@@ -1340,9 +1340,12 @@ carry `reject` fixtures of their own:
   write — without it the phrase could equally describe a language that leaves `y` holding garbage.
 
 **Two named SUBSETS of N6 and one rule this implementation OWNS, each pinned by a `reject` fixture
-rather than left to a reader.** The subsets: a range's endpoints are integer literals where the
-normative production says `expression` — nothing in pattern position can be evaluated — and both
-ends are required; and a tuple pattern takes two or more elements, because `(p)` is grouping. The
+rather than left to a reader.** The subsets: a range's endpoints are integer or `char` literals
+where the normative production says `expression` — nothing in pattern position can be evaluated —
+both ends are required, and both must be the SAME kind, since ordering a scalar against an integer
+would need the conversion N4-04 forbids (`tests/reject/range_pattern_mixed_endpoints.pd`); `char`
+is ordered by code point, and a string endpoint stays refused because this language defines no
+order on strings; and a tuple pattern takes two or more elements, because `(p)` is grouping. The
 owned rule: an EMPTY range (`5..=1`, `3..3`) is refused, which N6 does not ask for. An arm that can
 never be taken is a transposition far more often than a deliberate no-op, and the alternative is a
 silently dead arm; if the owner prefers the spec's literal reading, that is the rule to delete. An
@@ -1422,7 +1425,7 @@ One divergence remains, and two are closed:
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
 checker derives its signature table from it (`src/typeck/mod.rs:1211-1211`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:6003-6003`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+(`src/codegen/mod.rs:6014-6014`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:1659-1659`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
@@ -1738,7 +1741,7 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-xfail-six`
 (2026-08-31):
 
-**verified 84 · untranscribed 0 · vacuous 6 · xfail 6 · reject 119 · skip 2 · failures 0**, over 217
+**verified 85 · untranscribed 0 · vacuous 6 · xfail 6 · reject 122 · skip 2 · failures 0**, over 221
 fixtures. (The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
 fixture in which a method taking a reference receiver links at all, and four `reject`s for the
 writes through a receiver the type checker refuses — through `&self`, through a by-value
@@ -1748,7 +1751,8 @@ method each invoking a `&mut self` method on `self`. A further review round adde
 more, for a reference parameter handed a temporary. su3 added three: a chained
 receiver, and the two halves of the `let` production — the mandatory initialiser and the
 absence of `let` patterns — which had been stated here and never executed. Its review round added five
-`xfail`s, one per distinct type-alias resolution failure, all owned by M3. The round-3 review of
+`xfail`s, one per distinct type-alias resolution failure, all owned by M3. The char-pattern round
+added four more: char literals became patterns, with three `reject`s for the boundaries. The round-3 review of
 `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined

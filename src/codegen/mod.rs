@@ -5356,6 +5356,13 @@ impl CodeGenerator {
             Pattern::Literal(PatternLiteral::Str(value)) => {
                 format!("__pd_string_eq({}, \"{}\")", subject, c_string_body(value))
             }
+            // N4-04's representation, not a C character constant: `char` is a
+            // `long long` holding the Unicode scalar, so the test is numeric.
+            // `c_char_constant` is the one place that spells one, and it carries
+            // the source spelling in a trailing comment for a reader of the C.
+            Pattern::Literal(PatternLiteral::Char(value)) => {
+                format!("{} == {}", subject, c_char_constant(*value))
+            }
             // N6-03. Two comparisons on the same subject. Parenthesised because
             // this string is pasted into larger conditions — an `&&` inside an
             // `||` alternative, or beside an enum tag test.
@@ -5363,6 +5370,10 @@ impl CodeGenerator {
                 let bound = |literal: &PatternLiteral| match literal {
                     PatternLiteral::Int(value) => Self::c_i64_literal(*value),
                     PatternLiteral::Bool(value) => (if *value { 1 } else { 0 }).to_string(),
+                    // Ordered by code point, which is the same `long long` the
+                    // equality arm above compares — so a char range is the very
+                    // same two comparisons an integer range is.
+                    PatternLiteral::Char(value) => c_char_constant(*value),
                     // Refused by the type checker before this point; a range of
                     // strings has no `>=` in C either.
                     PatternLiteral::Str(value) => format!("\"{}\"", c_string_body(value)),

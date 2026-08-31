@@ -1,0 +1,17 @@
+// NEGATIVE TEST — an empty range is refused, and a char range is ordered by CODE
+// POINT like every other (N6-03, and the empty-range rule this implementation
+// owns rather than N6).
+//
+// `'z'..='a'` reads as a range and is a transposition: no code point is both
+// >= 122 and <= 97. Refused for exactly the reason `5..=1` is — an arm that can
+// never be taken is a typo far more often than a deliberate no-op — and the
+// diagnostic says `code point` rather than `integer` so the reader is told which
+// order was applied.
+fn main() {
+    let c: char = 'a';
+    let v = match c {
+        'z'..='a' => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

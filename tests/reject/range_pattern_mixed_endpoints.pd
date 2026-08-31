@@ -1,0 +1,20 @@
+// NEGATIVE TEST — both endpoints of a range pattern are the same kind of literal.
+//
+// `char` joined the integer as an ordered literal kind when char patterns landed,
+// which creates a shape that could not exist while there was only one: a range
+// with ONE END OF EACH KIND. It is refused by name rather than compared, because
+// the only way to order a scalar against an integer is the implicit conversion
+// N4-04 exists to forbid — `char` is DISTINCT from `i64` in both directions, so
+// `'a'..=9` has no meaning to fall back on.
+//
+// A SEPARATE FIXTURE from the string-endpoint one: that refuses a kind this
+// language does not order at all, this refuses two kinds it orders separately,
+// and the two diagnostics come from different branches of the same rule.
+fn main() {
+    let c: char = 'a';
+    let v = match c {
+        'a'..=9 => 1,
+        _ => 0,
+    };
+    print_int(v);
+}

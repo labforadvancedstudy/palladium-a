@@ -475,16 +475,27 @@ match_arm      = pattern [ "if" expression ] "=>" ( block | expression ) [ ',' ]
 # a binder from. There is no grouping form for patterns, so `n @ (1 | 2)` is
 # unwritable rather than silently reinterpreted.
 #
-# A range's endpoints are INTEGER LITERALS, which is a SUBSET of the normative
-# production: Part B spells an endpoint `expression`, and nothing in pattern
-# position can be evaluated — there is no constant folder a pattern may call, and
-# a pattern is matched, not computed. The subset is named here for the same
-# reason the arity-2 tuple rule is, and pinned by
-# `tests/reject/range_pattern_endpoint_type.pd`. `char` endpoints wait on a
-# CHAR PATTERN, which is a different gap from the type: N4-04 landed and `char`
-# is a type now, but a char literal is still not a pattern -- `'a' =>` is
-# "expected pattern, found char 'a'", because the pattern parser has arms for
-# integer and string literals only. Measured, and pre-existing to N4-04.
+# A range's endpoints are INTEGER OR `char` LITERALS, which is a SUBSET of the
+# normative production: Part B spells an endpoint `expression`, and nothing in
+# pattern position can be evaluated — there is no constant folder a pattern may
+# call, and a pattern is matched, not computed. The subset is named here for the
+# same reason the arity-2 tuple rule is, and pinned by
+# `tests/reject/range_pattern_endpoint_type.pd`, which refuses a STRING endpoint:
+# a string range would need an ordering this language has never defined.
+#
+# `char` IS THE SECOND ORDERED LITERAL, ordered by CODE POINT, which is the only
+# order this language defines for it. This paragraph used to say `char` endpoints
+# "wait on a CHAR PATTERN", because N4-04 had made `char` a type while a char
+# literal was still not a pattern — `'a' =>` was "Expected pattern, but found
+# char 'a'", measured. That gap is closed: `'a'`, `'0'..='9'` and `' ' | '\t'`
+# are patterns, witnessed by `tests/06_char_patterns.pd`.
+#
+# BOTH ENDS MUST BE THE SAME KIND. `'a'..=9` has one end of each ordered kind and
+# is refused by name (`tests/reject/range_pattern_mixed_endpoints.pd`): ordering a
+# scalar against an integer needs exactly the implicit conversion N4-04 forbids in
+# both directions. The scrutinee's type must be that kind too, so a char pattern
+# against an `i64` is refused (`tests/reject/char_pattern_on_int_scrutinee.pd`) —
+# in C both sides are a `long long`, so nothing downstream would have objected.
 #
 # Both ends are required: `1..` and `..5` are named nowhere in Part B and are
 # refused by name (two separate parser branches, one fixture each).

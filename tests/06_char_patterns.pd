@@ -1,0 +1,56 @@
+// Test 06: CHAR LITERALS ARE PATTERNS (N6-02's literal set, N6-03's ranges).
+//
+// N4-04 made `char` a real type — distinct from `i64`, no implicit conversion —
+// but a char literal was still not a PATTERN: `'a' =>` was "Expected pattern, but
+// found char 'a'", measured, because the pattern parser had arms for integer,
+// string and bool literals only. Every byte dispatcher had to be written as a
+// chain of `if c as i64 == 97` instead, which is the workaround the WT-01 census
+// found in its fifth UNOWNED row.
+//
+// WHY THE READS ARE SEPARATE CALLS. `classify` is called once per input and its
+// answer printed, so each line of the transcript is one arm firing. A single call
+// returning a summary would let one wrong arm hide behind another's answer.
+//
+// The three refusals that bound this surface are `reject` fixtures, because a run
+// fixture cannot witness a refusal:
+//   tests/reject/range_pattern_mixed_endpoints.pd   `'a'..=9`
+//   tests/reject/char_pattern_on_int_scrutinee.pd   `'a'` against an `i64`
+//   tests/reject/char_range_pattern_empty.pd        `'z'..='a'`
+
+fn classify(c: char) -> i64 {
+    match c {
+        '0'..='9' => { return 1; }
+        'a'..='z' => { return 2; }
+        ' ' | '\t' => { return 3; }
+        '!' => { return 4; }
+        _ => { return 0; }
+    }
+}
+
+fn main() {
+    print("a range over code points:");
+    print_int(classify('7'));
+    print_int(classify('q'));
+
+    print("an or-pattern of two char literals:");
+    print_int(classify(' '));
+    print_int(classify('\t'));
+
+    print("a bare char literal, and the wildcard behind it:");
+    print_int(classify('!'));
+    print_int(classify('Z'));
+
+    print("a binding over a char range, read back as its code point:");
+    let c: char = 'k';
+    match c {
+        d @ 'a'..='z' => { print_int(d as i64); }
+        _ => { print_int(0); }
+    }
+
+    print("and a char match in VALUE position:");
+    let v: i64 = match c {
+        'a'..='z' => { 10 }
+        _ => { 20 }
+    };
+    print_int(v);
+}

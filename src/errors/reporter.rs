@@ -267,7 +267,7 @@ impl DiagnosticBuilder {
 /// Clamp a byte offset to a valid `char` boundary at or before `idx`.
 ///
 /// Spans reaching this reporter are not trustworthy. Many are `Span::dummy()`,
-/// `Expr::span()` returns a dummy for every literal (`src/ast/mod.rs:913-920`),
+/// `Expr::span()` returns a dummy for every literal (`src/ast/mod.rs:927-934`),
 /// and `Suggestion` carries a *file* offset in `end` that the fix renderer
 /// indexes a single line with. Slicing on those numbers panicked: a macro
 /// diagnostic was measured aborting the compiler with `end byte index 15 is

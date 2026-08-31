@@ -626,18 +626,32 @@ pub enum Pattern {
 
 /// The literals a pattern may be, and no others.
 ///
-/// A CLOSED THREE-VARIANT ENUM RATHER THAN AN `Expr`. Reusing `Expr` here would
-/// put every expression form into pattern position and leave each consumer to
-/// re-refuse `match x { f() => … }` on its own; it would also cost `Pattern` its
+/// A CLOSED ENUM RATHER THAN AN `Expr`. Reusing `Expr` here would put every
+/// expression form into pattern position and leave each consumer to re-refuse
+/// `match x { f() => … }` on its own; it would also cost `Pattern` its
 /// `Eq`/`Hash`, which the exhaustiveness checker's `PatternKind` derives, because
-/// `Expr` carries an `f64`. N6-02 names exactly three literal kinds and this is
-/// exactly those three. A float pattern is deliberately absent: equality on
-/// `f64` is not the relation a reader assumes a pattern means.
+/// `Expr` carries an `f64`. A float pattern is deliberately absent for the same
+/// reason spelled the other way: equality on `f64` is not the relation a reader
+/// assumes a pattern means.
+///
+/// FOUR VARIANTS, AND N6-02 NAMES THREE OF THEM. This doc comment used to argue
+/// the enum was closed BECAUSE "N6-02 names exactly three literal kinds and this
+/// is exactly those three" — a justification that would have made `Char` look
+/// like a violation rather than an addition. N6-02 (`satisfied`) demands integer,
+/// string and bool patterns and still gets them; `Char` is owed by nothing in
+/// N6, and arrives because N4-04 made `char` a real type and WT-01's byte
+/// dispatcher cannot be written without matching on one. The closure argument is
+/// the `Expr` one above, which is about what a pattern IS; the variant list is a
+/// consequence of which literal types exist, and `char` became one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PatternLiteral {
     Int(i64),
     Str(String),
     Bool(bool),
+    /// N4-04's `char`, as a pattern. `char` is `Eq + Hash`, so the derives above
+    /// are unaffected — which is why this variant costs the exhaustiveness
+    /// checker nothing.
+    Char(char),
 }
 
 /// Pattern data for enum variants
@@ -1629,6 +1643,9 @@ impl std::fmt::Display for Pattern {
             Pattern::Literal(PatternLiteral::Int(v)) => write!(f, "{}", v),
             Pattern::Literal(PatternLiteral::Str(v)) => write!(f, "{:?}", v),
             Pattern::Literal(PatternLiteral::Bool(v)) => write!(f, "{}", v),
+            // The SOURCE SPELLING, escaped: this Display feeds diagnostics, and a
+            // reader who wrote `'\t'` must not be shown a raw tab in an error.
+            Pattern::Literal(PatternLiteral::Char(v)) => write!(f, "'{}'", v.escape_debug()),
             Pattern::Wildcard => write!(f, "_"),
             Pattern::Ident(name) => write!(f, "{}", name),
             Pattern::EnumPattern {
