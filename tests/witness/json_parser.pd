@@ -2,21 +2,20 @@
 // WT-01 — witness 2: a JSON parser (RFC 8259).
 //
 // THIS FILE DOES NOT SATISFY WT-01. WT-01 asks for a JSON parser written with
-// NO WORKAROUNDS. This one runs, and it is built out of nine of them. Every one
-// is marked `// WORKAROUND <row>:` at the point of use — nine such comments
-// below this header, nine distinct workarounds, one per comment, because the
-// site that used to be marked twice is gone. A tenth comment is marked
-// `// WORKAROUND DISCHARGED` and is not one of them: it records the constant
-// workaround that N3-09/N3-10 removed, so that the count's history stays
-// readable at the site it changed. Five more sites carry a shorter
-// `// <row> DISCHARGED` note for the same reason. `<row>` is the requirement id
-// that owns the missing construct, or the word UNOWNED, which means the
-// construct that would remove the workaround is declared by NOTHING in
-// docs/contributing/1.0-requirements.tsv. SEVEN of the nine are now UNOWNED,
-// over five distinct gaps, and those are the ones a roadmap reading of N5/N6
-// cannot see. Exactly one of the nine — the arena — is owned outright.
+// NO WORKAROUNDS. This one runs, and it is built out of six of them. Every one
+// is marked `// WORKAROUND <row>:` at the point of use — six such comments
+// below this header, six distinct workarounds, one per comment. A seventh
+// comment is marked `// WORKAROUND DISCHARGED` and is not one of them: it
+// records the constant workaround that N3-09/N3-10 removed, so that the count's
+// history stays readable at the site it changed. Eight more sites carry a
+// shorter `// <row> DISCHARGED` note for the same reason. `<row>` is the
+// requirement id that owns the missing construct, or the word UNOWNED, which
+// means the construct that would remove the workaround is declared by NOTHING in
+// docs/contributing/1.0-requirements.tsv. FOUR of the six are now UNOWNED, over
+// four distinct gaps, and those are the ones a roadmap reading of N5/N6 cannot
+// see. Exactly one of the six — the arena — is owned outright.
 //
-// The count has moved six times, and every move is a fact about the compiler
+// The count has moved seven times, and every move is a fact about the compiler
 // rather than a rewording here. `cfa7e7f` gave recursive types a layout and a
 // diagnostic, closing one UNOWNED workaround. Two more closed when the claims
 // under them were re-measured against the compiler that is actually here:
@@ -36,8 +35,8 @@
 // The fifth and sixth moves are the ones where the missing construct ARRIVED
 // rather than a claim being re-measured. The fifth: M2 item 9 landed top-level
 // `const` and `static`, the two zero-arg constant functions became `const`
-// items, and the count fell fourteen -> thirteen. The sixth is this round, and
-// it is the largest single move the file has taken: N5-06, N5-07, N5-12 and
+// items, and the count fell fourteen -> thirteen. The sixth was the round
+// before this one, and it is the largest single move the file has taken: N5-06, N5-07, N5-12 and
 // N5-13 are all `satisfied`, and all four were measured to be so HERE, in this
 // program, not in a fixture — so the workarounds were APPLIED AWAY rather than
 // re-labelled. Chained `else` replaced seven `else { if … }` staircases
@@ -50,17 +49,25 @@
 // tests/witness/json_parser.expected did not change by one byte, which is the
 // point: a discharge that moved the output would be a rewrite, not a discharge.
 //
-// The same round re-measured four more markers and found three of their tags
+// That round also re-measured four more markers and found three of their tags
 // wrong in the SAME direction — the row named was `satisfied`, and the thing
 // actually missing was owned by nobody. `match` as an expression (N5-04),
 // literal patterns (N6-02), range patterns (N6-03) and or-patterns (N6-07) all
 // work over `i64` scrutinees, measured. This parser matches on `char`, and a
-// char literal is not a pattern: `'n' => …` is "Expected pattern, but found
-// char 'n'", because `parse_pattern_primary` (src/parser/mod.rs:3156-3190) has
-// arms for integer, string and bool literals and none for `Token::Char`, and
-// N6-02's own words are "Literal patterns (integer, string, bool)". One gap,
-// three sites, no owner — the fifth UNOWNED finding, already recorded at
-// docs/specification/grammar.ebnf:375-379. The fourth re-measurement went the
+// char literal was not a pattern: `'n' => …` was "Expected pattern, but found
+// char 'n'". One gap, three sites, no owner — the fifth UNOWNED finding.
+//
+// THE SEVENTH MOVE CLOSED THAT GAP, and it is the second time a construct
+// ARRIVED for this file rather than a claim being re-measured. A char literal is
+// a pattern now, and a char range orders by code point, so all three sites were
+// APPLIED: `js_is_ws` is the or-pattern `' ' | '\t' | '\n' | '\r'`, `js_is_digit`
+// is the range `'0'..='9'`, and the `js_value` dispatch — the deepest staircase
+// in the file, nine branches with a mutable local and one assignment per arm —
+// is a `match` EXPRESSION whose value is the node. The count fell nine -> six,
+// the UNOWNED count seven -> four, and the transcript did not change by one
+// byte. The construct is still owned by NOTHING in the requirements manifest,
+// which is parked as issue #46: the gap closed, its ownership question did not.
+// The fourth re-measurement went the
 // other way and closed nothing: method call syntax (N5-17) works now, so the
 // cursor marker was re-tagged to what actually blocks it, a receiver that can
 // be written through and called more than once.
@@ -68,8 +75,9 @@
 // The shape this file would have if nothing were missing is written out in
 // tests/witness/json_parser.no-workarounds.md, beside a per-workaround diff, so
 // that when the remaining rows land the claim "the workarounds are gone" can be
-// CHECKED rather than re-derived. Items 3, 4 and 9 have landed; WT-01 stays
-// `owed` because nine workarounds remain, seven of them UNOWNED.
+// CHECKED rather than re-derived. Items 3, 4 and 9 have landed, and so have the
+// char patterns; WT-01 stays `owed` because six workarounds remain, four of
+// them UNOWNED.
 //
 // What it does: parses one JSON document into a flat arena, re-serialises it
 // canonically, answers structural queries against it, and refuses fifteen
@@ -241,27 +249,27 @@ fn js_fail(mut j: Json, msg: String) -> i64 {
 }
 
 fn js_is_ws(c: char) -> bool {
-    // WORKAROUND UNOWNED (char pattern): the arm this replaces is
-    // `' ' | '\t' | '\n' | '\r' => …`. Or-patterns EXIST — `32 | 9 => …` over an
-    // `i64` scrutinee compiles and prints — so N6-07 is not the blocker and the
-    // tag that used to sit here was wrong. What is missing is a char literal in
-    // PATTERN position: `' ' | '\t' => …` is "Expected pattern, but found char
-    // ' '". `src/parser/mod.rs:3156-3190` gives `parse_pattern_primary` arms for
-    // integer, string and bool literals and none for `Token::Char`, and N6-02's
-    // own words are "Literal patterns (integer, string, bool)" — so nothing in
-    // docs/contributing/1.0-requirements.tsv owns the char case. That one gap is
-    // why a `match` on a byte cannot dispatch at all here, and it is boolean
-    // helpers and `if` all the way down in this file.
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    // UNOWNED (char pattern) DISCHARGED: a char literal is a pattern now, so this
+    // is the or-pattern the workaround described — `' ' | '\t' | '\n' | '\r'` —
+    // rather than four `==` tests joined by `||`. The gap was never N6-07:
+    // or-patterns already worked over an `i64`, and what was missing was the char
+    // in pattern position, which is owned by nothing in
+    // docs/contributing/1.0-requirements.tsv and is parked as issue #46.
+    return match c {
+        ' ' | '\t' | '\n' | '\r' => { true }
+        _ => { false }
+    };
 }
 
 fn js_is_digit(c: char) -> bool {
-    // WORKAROUND UNOWNED (char pattern): the arm this replaces is
-    // `'0'..='9' => …`. Range patterns EXIST — `48..=57 => …` over an `i64`
-    // compiles and prints — so N6-03 is not the blocker either; `'0'..='9' => …`
-    // is "Expected pattern, but found char '0'", the same unowned gap as the
-    // one above, and docs/specification/grammar.ebnf:375-379 already records it.
-    return c >= '0' && c <= '9';
+    // UNOWNED (char pattern) DISCHARGED: the range arm the workaround described,
+    // `'0'..='9'`, ordered by code point. N6-03 was never the blocker — `48..=57`
+    // over an `i64` already compiled — and the same char-in-pattern gap closed
+    // both this and `js_is_ws` above.
+    return match c {
+        '0'..='9' => { true }
+        _ => { false }
+    };
 }
 
 fn js_skip_ws(mut j: Json) {
@@ -623,48 +631,47 @@ fn js_value(mut j: Json) -> i64 {
     }
     js_skip_ws(j);
     let c: char = js_peek(j);
-    let mut node: i64 = -1;
 
-    // N5-06 DISCHARGED: the chained form exists, so this staircase — the
-    // deepest in the file, nine branches — is one `if`, seven chained arms and
-    // one `else` at a single indent. It used to be eight nested `else` blocks
-    // with the last branch eight levels deep, and so were the six shallower
-    // staircases elsewhere in the file. Checkable two ways:
-    // `grep -cE '^[[:space:]]*\} else if ' tests/witness/json_parser.pd` is 19,
+    // N5-06 DISCHARGED: the chained form exists, so the staircases in this file
+    // are one `if`, chained arms and one `else` at a single indent, rather than
+    // nested `else` blocks descending a level per branch. Checkable two ways:
+    // `grep -cE '^[[:space:]]*\} else if ' tests/witness/json_parser.pd` is 12,
     // and no `else` block in this file opens with an `if` as its first
-    // statement, which is the shape the workaround had.
+    // statement, which is the shape the workaround had. It was 19 until the
+    // dispatch below became a `match`, which is where seven of those arms were.
     //
-    // WORKAROUND UNOWNED (char pattern): the whole of this staircase is one
-    // `match` on a byte in any language with literal patterns, and `match` here
-    // is an EXPRESSION whose value is the node. BOTH rows this marker used to
-    // name are `satisfied` and measure so: `let v: i64 = match c { 1 => 10, _ =>
-    // 20 };` compiles and prints 10 (N5-04), and an integer arm IS a pattern
-    // (N6-02). The scrutinee here is a `char`, and `'n' => …` is "Expected
-    // pattern, but found char 'n'" — the same unowned gap as `js_is_ws`. So: an
-    // `if` staircase, a mutable local, and one assignment per arm.
-    if c == '\0' {
-        node = js_fail(j, "unexpected end of input");
-    } else if c == 'n' {
-        node = js_literal(j, "null", k_null());
-    } else if c == 't' {
-        node = js_literal(j, "true", k_true());
-    } else if c == 'f' {
-        node = js_literal(j, "false", k_false());
-    } else if c == '"' {
-        let decoded: String = js_string_body(j);
-        if j.ok {
-            node = js_alloc(j, k_string());
-            if node >= 0 { j.text[node] = decoded; }
+    // UNOWNED (char pattern) DISCHARGED: this was the deepest staircase in the
+    // file — nine branches, a mutable local and one assignment per arm — because
+    // the byte it dispatches on is a `char` and `'n' => …` was "Expected pattern,
+    // but found char 'n'". It is now the `match` the workaround described, as an
+    // EXPRESSION whose value IS the node, so the local is no longer mutable and
+    // no arm assigns. Neither N5-04 nor N6-02 was ever the blocker; both are
+    // `satisfied` and always measured so. The `'-' | '0'..='9'` arm is the one
+    // place the two ordered literal kinds meet a literal in one pattern.
+    let node: i64 = match c {
+        '\0' => { js_fail(j, "unexpected end of input") }
+        'n' => { js_literal(j, "null", k_null()) }
+        't' => { js_literal(j, "true", k_true()) }
+        'f' => { js_literal(j, "false", k_false()) }
+        '"' => {
+            // The one arm that is not a single call: the decode has to happen
+            // before the node exists, and a failed decode leaves -1. The local
+            // is scoped to this arm rather than to the whole dispatch.
+            let decoded: String = js_string_body(j);
+            let mut n: i64 = -1;
+            if j.ok {
+                n = js_alloc(j, k_string());
+                if n >= 0 { j.text[n] = decoded; }
+            }
+            n
         }
-    } else if c == '[' {
-        node = js_array(j);
-    } else if c == '{' {
-        node = js_object(j);
-    } else if c == '-' || js_is_digit(c) {
-        node = js_number(j);
-    } else {
-        node = js_fail(j, "unexpected character");
-    }
+        '[' => { js_array(j) }
+        '{' => { js_object(j) }
+        '-' | '0'..='9' => { js_number(j) }
+        // Exhaustiveness requires it, and it is where the `else` went: `char` is
+        // not enumerable, so a dispatch over one is never complete without it.
+        _ => { js_fail(j, "unexpected character") }
+    };
 
     j.depth -= 1;
     return node;

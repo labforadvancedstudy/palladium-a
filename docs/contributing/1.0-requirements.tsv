@@ -362,7 +362,7 @@ TH-03	M9	N9	bootstrap/pdc.pd declares at least one ref / ref mut parameter	gate	
 TH-04	M9	N8	bootstrap/pdc.pd carries at least one #[total] the compiler DISCHARGES	gate	make thesis-exit	owed	thesis	-
 TH-05	M9	N7	A file-IO function's inferred effect propagates to its caller and passes the gate	gate	make thesis-exit	owed	thesis	-
 TH-06	M9	N1	The second witness meets the same three conditions, so one program's shape is not the language	gate	make thesis-exit	owed	thesis	-
-WT-01	M2	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus	fixture	tests/witness/json_parser.pd	owed	1.0	-
+WT-01	M2	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus. THE FIXTURE EXISTS AND RUNS (tests/witness/json_parser.pd, class=run, transcript pinned); the row is owed on the words NO WORKAROUNDS, and the count is derivable rather than asserted: `grep -cE '^[[:space:]]*// WORKAROUND ' tests/witness/json_parser.pd` is 7, of which 6 are live workarounds and 1 is a discharge record, and `grep -cE '^[[:space:]]*// WORKAROUND UNOWNED' tests/witness/json_parser.pd` is 4. Six distinct workarounds, one per live comment; exactly one (the arena) is owned outright. The char-pattern gap that used to account for three of them is closed and APPLIED, and the construct it now leans on is owned by no row here (issue #46). See tests/witness/json_parser.no-workarounds.md	fixture	tests/witness/json_parser.pd	owed	1.0	-
 WT-02	M9	N1	Witness 2 is rewritten in the differentiated dialect and still runs	fixture	tests/witness/json_parser.pd	owed	thesis	-
 
 # --- C FFI. The one feature-list-only item kept in 1.0: the backend already emits C, and a
