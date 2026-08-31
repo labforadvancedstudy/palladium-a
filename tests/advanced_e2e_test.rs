@@ -582,45 +582,99 @@ fn test_const_generics_arrays() {
     }
 }
 
+/// COMPLEX TYPE ALIASES. RE-DERIVED WITHIN THE SPECIFICATION.
+///
+/// THE OLD BODY DEMANDED SYNTAX THIS LANGUAGE DELIBERATELY DOES NOT HAVE, so the row
+/// could never be paid as written -- the N2-10 shape, where the kind is UNSATISFIABLE
+/// rather than unmet. It asked for two constructs, both refused BY DESIGN by one
+/// comment on one production in docs/specification/grammar.ebnf:230-231:
+///
+///   let_stmt = "let" [ "mut" ] identifier [ ':' type ] '=' expression ';' ;
+///   "The initializer is mandatory, and the binding is a bare identifier --
+///    `let` patterns do not exist."
+///
+///   1. `let mut graph: Graph;`              -- no initialiser.
+///   2. `let (from, to, weight) = graph[i];` -- a destructuring `let`.
+///
+/// Rewriting a fixture to match the implementation is how a suite stops measuring
+/// anything, so the two refusals were not merely dropped: each is now executed by its
+/// own `reject` fixture, `tests/reject/let_needs_an_initializer.pd` and
+/// `tests/reject/let_does_not_destructure.pd`. They were normative and UNWITNESSED
+/// before this -- the claim rested on that comment alone.
+///
+/// THE SUBJECT IS UNCHANGED, and it is the alias system rather than the graph.
+/// Exercised here: an alias to a primitive (`NodeId`), an ALIAS OF AN ALIAS
+/// (`Weight = NodeId`), an alias to a TUPLE type (`Edge`) read with `.0`/`.1`/`.2` --
+/// the in-spec spelling of what the old body destructured -- and an alias to a STRUCT
+/// (`Graph = GraphData`), across parameter, return, field and `let`-annotation
+/// positions. The old assertions' values (0, 1, 10, 2, 20, 3, 30) all still appear,
+/// and the transcript is now compared EXACTLY rather than by `contains`, which could
+/// not tell "1" from "10".
+///
+/// NOT COVERED, AND NOT CLAIMED: an alias whose right-hand side is an ARRAY type, and
+/// an alias NESTED inside a compound type. Both are measured broken today and neither
+/// is a spec refusal, so neither belongs in a passing fixture; they are reported as
+/// their own unit rather than quietly pinned here.
 #[test]
-#[ignore = "XFAIL: AN UNINITIALISED `let`. The tuple half of this row is paid (N4-12): `(from, to, weight)` constructs, tuple types lower to a struct per shape, and `.0` reads an element — measured. What stops this fixture now is `let mut graph: Graph;` with no initialiser, which the parser refuses with \"Expected '=' after variable name\"; behind that sits `let (from, to, weight) = graph[i];`, a DESTRUCTURING `let`, which grammar.ebnf:231 says this language does not have (`let` patterns do not exist) (owned by M2, surface syntax)"]
 fn test_type_aliases_complex() {
     let source = r#"
-    type NodeId = int;
-    type Weight = int;
-    type Graph = [(NodeId, NodeId, Weight); 100];
-    type Path = [NodeId; 50];
-    
-    fn add_edge(graph: &mut Graph, edge_count: &mut int, from: NodeId, to: NodeId, weight: Weight) {
-        graph[*edge_count] = (from, to, weight);
-        *edge_count = *edge_count + 1;
+    type NodeId = i64;
+    type Weight = NodeId;
+    type Edge = (i64, i64, i64);
+
+    struct GraphData {
+        count: NodeId,
+        total: Weight,
     }
-    
-    fn main() {
-        let mut graph: Graph;
-        let mut edge_count = 0;
-        
-        add_edge(&mut graph, &mut edge_count, 0, 1, 10);
-        add_edge(&mut graph, &mut edge_count, 1, 2, 20);
-        add_edge(&mut graph, &mut edge_count, 2, 3, 30);
-        
-        for i in 0..edge_count {
-            let (from, to, weight) = graph[i];
-            print(from);
-            print(to);
-            print(weight);
+
+    type Graph = GraphData;
+
+    fn heavier(a: Weight, b: Weight) -> Weight {
+        if a > b {
+            return a;
         }
+        return b;
+    }
+
+    fn record(g: &mut GraphData, w: Weight) {
+        g.count = g.count + 1;
+        g.total = g.total + w;
+    }
+
+    fn labelled(n: NodeId) -> NodeId {
+        return n + 100;
+    }
+
+    fn main() {
+        let e0: Edge = (0, 1, 10);
+        let e1: Edge = (1, 2, 20);
+        let e2: Edge = (2, 3, 30);
+
+        let mut g: Graph = GraphData { count: 0, total: 0 };
+        record(&mut g, e0.2);
+        record(&mut g, e1.2);
+        record(&mut g, e2.2);
+
+        print_int(e0.0); print_int(e0.1); print_int(e0.2);
+        print_int(e1.0); print_int(e1.1); print_int(e1.2);
+        print_int(e2.0); print_int(e2.1); print_int(e2.2);
+        print_int(g.count);
+        print_int(g.total);
+        print_int(heavier(e0.2, e2.2));
+        print_int(labelled(e1.0));
     }
     "#;
-    
+
     let result = compile_and_run(source);
     assert!(result.is_ok(), "{:?}", result);
     let output = result.unwrap();
-    assert!(output.contains("0"));
-    assert!(output.contains("1"));
-    assert!(output.contains("10"));
-    assert!(output.contains("2"));
-    assert!(output.contains("20"));
-    assert!(output.contains("3"));
-    assert!(output.contains("30"));
+
+    // The three edges, then the struct the aliases are read into, then the two
+    // alias-typed functions. Exact, because `contains("1")` is satisfied by "10" too.
+    let expected = "0\n1\n10\n1\n2\n20\n2\n3\n30\n3\n60\n30\n101\n";
+    assert_eq!(
+        output, expected,
+        "the alias program did not produce its transcript.\ngot:\n{}",
+        output
+    );
 }

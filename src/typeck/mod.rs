@@ -5491,7 +5491,7 @@ impl TypeChecker {
         // linked and ran, and the CALLER observed 42. The emitted C is
         // `void __pd_C_covert(const struct C* self) { __pd_C_bump(self); }` against
         // `void __pd_C_bump(struct C* self)`, so the only complaint anywhere is cc's
-        // discard-qualifiers warning -- which src/linker.rs:231 tags NON-FATAL because
+        // discard-qualifiers warning -- which src/linker.rs:223 tags NON-FATAL because
         // the emitted prelude fires it in 108/108 compiles. The backstop is structurally
         // blind to this, which is why the rule has to be stated here.
         //

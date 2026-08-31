@@ -1,0 +1,39 @@
+// THE RECEIVER IS WHAT THE PLACE CHAIN IS ROOTED IN, not what its last link is.
+//
+// `self.d.bump()` from a `&self` method is a write through a shared borrow just as
+// `self.bump()` is: `self.d` is reached THROUGH the shared receiver, so a `&mut self`
+// method on it would modify the caller's object. The rule walks the chain to its base
+// (`expr_base_is_self` in src/typeck/mod.rs, shared with the assignment rule) rather
+// than testing for a bare `self`, which is why one more field hop does not evade it.
+//
+// The diagnostic names the CALLEE's owner, `D::bump`, not `C` — the method being
+// called is the thing that cannot be called here.
+struct D {
+    n: i64,
+}
+
+struct C {
+    d: D,
+}
+
+impl D {
+    fn bump(&mut self) {
+        self.n = self.n + 1;
+    }
+}
+
+impl C {
+    fn covert(&self) {
+        self.d.bump();
+    }
+
+    fn get(&self) -> i64 {
+        return self.d.n;
+    }
+}
+
+fn main() {
+    let mut c = C { d: D { n: 41 } };
+    c.covert();
+    print_int(c.get());
+}

@@ -1738,14 +1738,16 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-xfail-six`
 (2026-08-31):
 
-**verified 84 · untranscribed 0 · vacuous 6 · xfail 1 · reject 116 · skip 2 · failures 0**, over 209
+**verified 84 · untranscribed 0 · vacuous 6 · xfail 1 · reject 119 · skip 2 · failures 0**, over 212
 fixtures. (The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
 fixture in which a method taking a reference receiver links at all, and four `reject`s for the
 writes through a receiver the type checker refuses — through `&self`, through a by-value
 `self`, `self` as an assignment target and `*self` as a place. Its review round added
 two more for the same rule reached through a CALL: a `&self` and a by-value-`self`
 method each invoking a `&mut self` method on `self`. A further review round added one
-more, for a reference parameter handed a temporary. The round-3 review of
+more, for a reference parameter handed a temporary. su3 added three: a chained
+receiver, and the two halves of the `let` production — the mandatory initialiser and the
+absence of `let` patterns — which had been stated here and never executed. The round-3 review of
 `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined

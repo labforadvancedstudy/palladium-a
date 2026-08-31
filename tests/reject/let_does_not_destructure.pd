@@ -1,0 +1,21 @@
+// `let` BINDS ONE BARE IDENTIFIER. THERE ARE NO `let` PATTERNS.
+//
+// Same production, same comment, other half:
+//   let_stmt = "let" [ "mut" ] identifier [ ':' type ] '=' expression ';' ;
+//   "the binding is a bare identifier — `let` patterns do not exist."
+//
+// A tuple is read with `.0`/`.1`, which this language does have and which
+// tests/04_tuples.pd and the type-alias e2e test execute. `match` is where
+// patterns live; `let` is not a pattern position.
+//
+// SEPARATE FILE FROM let_needs_an_initializer.pd deliberately: the two halves are
+// refused by DIFFERENT branches of the parser and produce different diagnostics
+// (one wanted `=`, this one wanted a variable name), so one fixture pinning both
+// would stay green if either half regressed. Discovered the same way, from the
+// same `#[ignore]`, which demanded `let (from, to, weight) = graph[i];`.
+fn main() {
+    let e: (i64, i64) = (1, 2);
+    let (a, b) = e;
+    print_int(a);
+    print_int(b);
+}

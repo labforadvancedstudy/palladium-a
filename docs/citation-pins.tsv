@@ -26,6 +26,7 @@ docs/specification/bootstrap-subset.md	132-132	src/typeck/mod.rs	22b89ce977e8	**
 docs/specification/bootstrap-subset.md	132-132	tests/m3_imported_calls.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
 docs/specification/bootstrap-subset.md	152-154	src/codegen/mod.rs	a2f7869a25a1	3. **Struct and array parameters that are written are declared `mut`.** A `mu ... : `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` STRUCT parameter
 docs/specification/grammar.ebnf	145-145	docs/reference/features/async-system/async-as-effect.md	d4cfe0aa8434	function = [ "pub" ] [ "async" ] "fn" identifier [ generic_params ]
+docs/specification/grammar.ebnf	230-231	tests/advanced_e2e_test.rs	879485fc5b9e	# The initializer is mandatory, and the binding is a bare identifier — # `let` patterns do not exist.
 docs/specification/grammar.ebnf	234-234	src/parser/mod.rs	4afa88eb2002	assign_stmt = place '=' expression ';' ;
 docs/specification/grammar.ebnf	308-308	tests/integration_test.rs	7d31dda4ec9c	block = '{' { statement } [ expression ] '}' ;
 docs/specification/grammar.ebnf	352-352	docs/reference/features/async-system/async-as-effect.md	adf6911b8a98	| ".await" } ;
@@ -47,7 +48,6 @@ grammar.ebnf	191-191	docs/contributing/MILESTONES.md	16519002b7db	generic_params
 grammar.ebnf	192-192	docs/reference/features/core-language/implicit-lifetimes.md	862cabb5d5a1	generic_param = "'" identifier (* lifetime *)
 grammar.ebnf	208-208	docs/reference/features/core-language/implicit-lifetimes.md	27eae3e7e3c5	reference = '&' [ "'" identifier ] [ "mut" ] type ;
 grammar.ebnf	218-218	tests/advanced_e2e_test.rs	ffb46d3c94de	# Still absent: str, u8, usize. No function types, slices, `dyn` or `impl`
-grammar.ebnf	231-231	tests/advanced_e2e_test.rs	083b523f5192	# `let` patterns do not exist.
 grammar.ebnf	343-343	tests/advanced_features_test.rs	29f8979a04b0	cast = unary { "as" type } ; (* N5-15 *)
 grammar.ebnf	346-349	tests/advanced_e2e_test.rs	cf5233f435fd	postfix = primary { '[' expression ']' | '(' [ arguments ] ')' | '.' identifier | "::" identifier [ '(' [ arguments ] ')'
 grammar.ebnf	361-361	tests/advanced_features_test.rs	4cceee868e13	field_init_list = field_init { ',' field_init } [ ',' ] ;
@@ -237,7 +237,7 @@ src/lexer/token.rs	325-325	docs/reference/features/feature-index.toml	4ef16b8da5
 src/lib.rs	43-46	tests/version_matches_cargo_toml.rs	019c46c96750	// A FOURTH SPELLING OF THE VERSION USED TO LIVE HERE, AND IT WAS DELETED. // ... at!( // "Alan von Palladium Compiler v", env!("CARGO_PKG_VERSION"), "-alpha");
 src/lib.rs	5-5	docs/contributing/MILESTONES.md	edf3e84c20a2	pub mod async_runtime;
 src/lib.rs	5-5	docs/reference/features/feature-index.toml	edf3e84c20a2	pub mod async_runtime;
-src/linker.rs	231-231	src/typeck/mod.rs	fe102ea900aa	on arrival for every program.",
+src/linker.rs	223-223	src/typeck/mod.rs	6428d5b31c2b	"-Wincompatible-pointer-types-discards-qualifiers",
 src/linker.rs	77-93	tests/d3b_tail_if.rs	e0c57f0823c8	let mut cmd = Command::new("gcc"); cmd.arg(opt.flag()) // N6-11 ARMED THIS. A ... -I") .arg(&runtime_dir) .arg(c_file) .arg(&runtime_c) .arg("-o") .arg(output);
 src/macros/expander.rs	372-372	docs/specification/language-spec.md	c32b83e66d7b	pub fn substitute_template(template: &[Token], context: &MatchContext) -> Result<Vec<Token>> {
 src/macros/expander.rs	400-400	docs/reference/features/feature-index.toml	6f85ed4f92dc	result.push(Token::LeftParen);

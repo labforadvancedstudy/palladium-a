@@ -1,0 +1,21 @@
+// A `let` WITHOUT AN INITIALISER IS NOT A DECLARATION IN THIS LANGUAGE.
+//
+// grammar.ebnf states it as a property of the production rather than as advice:
+//   let_stmt = "let" [ "mut" ] identifier [ ':' type ] '=' expression ';' ;
+// with the comment "The initializer is mandatory, and the binding is a bare
+// identifier — `let` patterns do not exist."
+//
+// WHY THIS FIXTURE EXISTS NOW. The rule was normative and unwitnessed: nothing in
+// the corpus executed it, so "the spec refuses this" rested on a sentence. It was
+// discovered from the other side — `tests/advanced_e2e_test.rs::
+// test_type_aliases_complex` was `#[ignore]`d for a decade of commits demanding
+// exactly this syntax (`let mut graph: Graph;`), which made the row UNSATISFIABLE
+// rather than unmet. A spec claim that no fixture executes can be violated by a
+// parser change and by a test that assumes the opposite, and neither would go red.
+//
+// The refusal is the PARSER's, and it names the token it wanted.
+fn main() {
+    let mut n: i64;
+    n = 1;
+    print_int(n);
+}

@@ -228,7 +228,20 @@ pub const NON_FATAL_DIAGNOSTIC_TAGS: &[(&str, &str)] = &[
          a real defect in the prelude and it is owned by the C backend \
          (src/codegen/mod.rs emits that text, runtime/pd_prelude.h holds the \
          same body). Escalating it before it is fixed would make this gate red \
-         on arrival for every program.",
+         on arrival for every program. \
+         \
+         WHAT THIS TOLERANCE ONCE HID. The clause above says the qualifier is \
+         dropped on a pointer that is never written through. That is true of \
+         the PRELUDE producer it names and was false of a second one: a `&self` \
+         method calling a `&mut self` method on `self` emitted `const struct \
+         C*` into a `struct C*` parameter and the callee wrote through it, so \
+         a shipped program mutated an object its own signature promised not \
+         to. This warning was the only diagnostic anywhere on that path, and \
+         it is non-fatal here, so nothing could catch it. The rule now lives \
+         where it belongs -- the receiver check in src/typeck/mod.rs, pinned \
+         by tests/reject/call_mut_method_through_shared_receiver.pd -- and \
+         this entry records that its blast radius has included a semantic bug \
+         and not only cosmetic noise.",
     ),
     (
         "-Wparentheses-equality",
