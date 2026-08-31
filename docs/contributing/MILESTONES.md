@@ -827,8 +827,8 @@ enum-owned method is unreachable by its path form. Each row carries a
    **OPEN QUESTION, RAISED BY su4 AND NOT ANSWERED HERE: inventory TWO does the opposite, and it
    is now live.** The paragraph above settles the empty filter for inventory four, which refuses
    it. Inventory two does not: measured on this branch, once su4 retagged M2's last four debt rows
-   the Rust debt reader printed `TEST_XFAIL_FORBID_OWNER=M2 -> 0 of 45 still-failing XFAIL(s) owed
-   to M2` and returned CLEAR, with no abstention and no name for one. So the same situation — a
+   the Rust debt reader (`TEST_XFAIL_FORBID_OWNER=M2`) reported ZERO of its forty-five
+   still-failing XFAILs owed to M2 and returned CLEAR, with no abstention and no name for one. So the same situation — a
    milestone-scoped filter that matches nothing — is refused by one inventory and cleared by the
    other, and `m2-exit` folds both without noticing. There is a real distinction that may justify
    it: the requirements TSV's rows are PERMANENT, so a milestone owning none of them means the
