@@ -2,23 +2,22 @@
 // WT-01 — witness 2: a JSON parser (RFC 8259).
 //
 // THIS FILE DOES NOT SATISFY WT-01. WT-01 asks for a JSON parser written with
-// NO WORKAROUNDS. This one runs, and it is built out of thirteen of them. Every
-// one is marked `// WORKAROUND <row>:` at the point of use — fourteen such
-// comments below this header, thirteen distinct workarounds, because N5-12 is
-// worked around at two separate sites. A fifteenth comment is marked
+// NO WORKAROUNDS. This one runs, and it is built out of nine of them. Every one
+// is marked `// WORKAROUND <row>:` at the point of use — nine such comments
+// below this header, nine distinct workarounds, one per comment, because the
+// site that used to be marked twice is gone. A tenth comment is marked
 // `// WORKAROUND DISCHARGED` and is not one of them: it records the constant
 // workaround that N3-09/N3-10 removed, so that the count's history stays
-// readable at the site it changed. `<row>` is the requirement id that owns
-// the missing construct, or the word UNOWNED, which means the construct that
-// would remove the workaround is declared by NOTHING in
-// docs/contributing/1.0-requirements.tsv. Four of the fourteen are UNOWNED, and
-// those are the ones a roadmap reading of N5/N6 cannot see.
+// readable at the site it changed. Five more sites carry a shorter
+// `// <row> DISCHARGED` note for the same reason. `<row>` is the requirement id
+// that owns the missing construct, or the word UNOWNED, which means the
+// construct that would remove the workaround is declared by NOTHING in
+// docs/contributing/1.0-requirements.tsv. SEVEN of the nine are now UNOWNED,
+// over five distinct gaps, and those are the ones a roadmap reading of N5/N6
+// cannot see. Exactly one of the nine — the arena — is owned outright.
 //
-// The count has moved five times, and every move is a fact about the compiler
-// rather than a rewording here. The fifth is the only one where the missing
-// construct ARRIVED rather than a claim being re-measured: M2 item 9 landed
-// top-level `const` and `static`, the two zero-arg constant functions became
-// `const` items, and the count fell fourteen -> thirteen. `cfa7e7f` gave recursive types a layout and a
+// The count has moved six times, and every move is a fact about the compiler
+// rather than a rewording here. `cfa7e7f` gave recursive types a layout and a
 // diagnostic, closing one UNOWNED workaround. Two more closed when the claims
 // under them were re-measured against the compiler that is actually here:
 // char literals lex (N2-04, `satisfied`), so twenty-nine of the thirty-one
@@ -34,11 +33,43 @@
 // cannot be printed. No row owns either direction, so re-tagging it UNOWNED
 // raised that count from three to four.
 //
+// The fifth and sixth moves are the ones where the missing construct ARRIVED
+// rather than a claim being re-measured. The fifth: M2 item 9 landed top-level
+// `const` and `static`, the two zero-arg constant functions became `const`
+// items, and the count fell fourteen -> thirteen. The sixth is this round, and
+// it is the largest single move the file has taken: N5-06, N5-07, N5-12 and
+// N5-13 are all `satisfied`, and all four were measured to be so HERE, in this
+// program, not in a fixture — so the workarounds were APPLIED AWAY rather than
+// re-labelled. Chained `else` replaced seven `else { if … }` staircases
+// carrying nineteen arms between them, the deepest nine branches and eight
+// levels deep; `loop` replaced four `while true`; `<<`, `|`, `>>` and `&`
+// replaced the multiply/divide/modulo arithmetic at both the hex-digit and the
+// UTF-8 site, which is what removed the duplicate marker; and `+=`/`-=`
+// replaced ten read-modify-write statements.
+// The count fell thirteen -> nine and the transcript
+// tests/witness/json_parser.expected did not change by one byte, which is the
+// point: a discharge that moved the output would be a rewrite, not a discharge.
+//
+// The same round re-measured four more markers and found three of their tags
+// wrong in the SAME direction — the row named was `satisfied`, and the thing
+// actually missing was owned by nobody. `match` as an expression (N5-04),
+// literal patterns (N6-02), range patterns (N6-03) and or-patterns (N6-07) all
+// work over `i64` scrutinees, measured. This parser matches on `char`, and a
+// char literal is not a pattern: `'n' => …` is "Expected pattern, but found
+// char 'n'", because `parse_pattern_primary` (src/parser/mod.rs:3156-3190) has
+// arms for integer, string and bool literals and none for `Token::Char`, and
+// N6-02's own words are "Literal patterns (integer, string, bool)". One gap,
+// three sites, no owner — the fifth UNOWNED finding, already recorded at
+// docs/specification/grammar.ebnf:375-379. The fourth re-measurement went the
+// other way and closed nothing: method call syntax (N5-17) works now, so the
+// cursor marker was re-tagged to what actually blocks it, a receiver that can
+// be written through and called more than once.
+//
 // The shape this file would have if nothing were missing is written out in
 // tests/witness/json_parser.no-workarounds.md, beside a per-workaround diff, so
 // that when the remaining rows land the claim "the workarounds are gone" can be
 // CHECKED rather than re-derived. Items 3, 4 and 9 have landed; WT-01 stays
-// `owed` because thirteen workarounds remain, four of them UNOWNED.
+// `owed` because nine workarounds remain, seven of them UNOWNED.
 //
 // What it does: parses one JSON document into a flat arena, re-serialises it
 // canonically, answers structural queries against it, and refuses fifteen
@@ -162,9 +193,18 @@ struct Json {
 //     forwarding, so `&Json` is unusable here. No row owns the `&` spelling at
 //     all: N4-13/N9-01/N9-02 name `ref T`/`ref mut T` and are owned by M7.
 //
-// WORKAROUND N5-17: method call syntax `j.peek()` is "Indirect function calls
-// not yet supported", so all of this is free functions with an explicit
-// receiver argument.
+// WORKAROUND N9-02 + N10-06: method call syntax is NOT the blocker any more.
+// N5-17 is `satisfied` and measures so: `impl P { fn get(self) -> i64 }` with
+// `p.get()` compiles, links and prints. Two other things stop the cursor from
+// being a method. A `self` receiver is a MOVE — calling `p.get()` twice is
+// `Use of moved value: p`, and recursive descent calls the cursor thousands of
+// times. And no method can WRITE its receiver: `self.n = self.n + 1;` does not
+// parse (`Expected ';' (Expected ';' after expression), but found '='`), and
+// `ref mut self` is `Expected ':' after parameter name, but found 'mut'`.
+// N9-02 owns `ref mut T` as a type and N10-06 owns a receiver that parses,
+// both `owed`; neither names an inherent-impl `ref mut self`, so the exact
+// spelling this needs is adjacent to owned work rather than owned by it.
+// So all of this is free functions with an explicit receiver argument.
 // ---------------------------------------------------------------------------
 
 // N4-04: the cursor speaks `char`. Its end-of-input answer used to be -1, an
@@ -183,9 +223,9 @@ fn js_peek(mut j: Json) -> char {
 }
 
 fn js_bump(mut j: Json) {
-    // WORKAROUND N5-13: no compound assignment. `j.pos += 1;` is
-    // "Expected expression, but found '='".
-    j.pos = j.pos + 1;
+    // N5-13 DISCHARGED: `+=` exists, so the cursor advance is one statement
+    // instead of a name written twice.
+    j.pos += 1;
 }
 
 fn js_fail(mut j: Json, msg: String) -> i64 {
@@ -198,23 +238,36 @@ fn js_fail(mut j: Json, msg: String) -> i64 {
 }
 
 fn js_is_ws(c: char) -> bool {
-    // WORKAROUND N6-07: the arm this replaces is
-    // `' ' | '\t' | '\n' | '\r' => …`. Or-patterns do not exist, and neither do
-    // the literal patterns (N6-02) they would be made of, so a `match` on a
-    // byte cannot dispatch at all — it is boolean helpers and `if` all the way
-    // down in this file.
+    // WORKAROUND UNOWNED (char pattern): the arm this replaces is
+    // `' ' | '\t' | '\n' | '\r' => …`. Or-patterns EXIST — `32 | 9 => …` over an
+    // `i64` scrutinee compiles and prints — so N6-07 is not the blocker and the
+    // tag that used to sit here was wrong. What is missing is a char literal in
+    // PATTERN position: `' ' | '\t' => …` is "Expected pattern, but found char
+    // ' '". `src/parser/mod.rs:3156-3190` gives `parse_pattern_primary` arms for
+    // integer, string and bool literals and none for `Token::Char`, and N6-02's
+    // own words are "Literal patterns (integer, string, bool)" — so nothing in
+    // docs/contributing/1.0-requirements.tsv owns the char case. That one gap is
+    // why a `match` on a byte cannot dispatch at all here, and it is boolean
+    // helpers and `if` all the way down in this file.
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
 fn js_is_digit(c: char) -> bool {
-    // WORKAROUND N6-03: the arm this replaces is `'0'..='9' => …`.
+    // WORKAROUND UNOWNED (char pattern): the arm this replaces is
+    // `'0'..='9' => …`. Range patterns EXIST — `48..=57 => …` over an `i64`
+    // compiles and prints — so N6-03 is not the blocker either; `'0'..='9' => …`
+    // is "Expected pattern, but found char '0'", the same unowned gap as the
+    // one above, and docs/specification/grammar.ebnf:375-379 already records it.
     return c >= '0' && c <= '9';
 }
 
 fn js_skip_ws(mut j: Json) {
-    // WORKAROUND N5-07: `loop { … }` is not a keyword — `loop` lexes as an
-    // identifier, so `loop {` is "Expected ';' after expression, but found '{'".
-    while true {
+    // N5-07 DISCHARGED: `loop` is a keyword, so the four unconditional loops in
+    // this file say so instead of testing a constant. They read `while true {`;
+    // `loop {` was `Expected ';' after expression, but found '{'`, because
+    // `loop` lexed as an identifier. `grep -cE '^[[:space:]]*loop \{'` is 4 and
+    // `grep -cE '^[[:space:]]*while true \{'` is 0.
+    loop {
         if js_is_ws(js_peek(j)) {
             js_bump(j);
         } else {
@@ -232,7 +285,7 @@ fn js_alloc(mut j: Json, kind: i64) -> i64 {
         return js_fail(j, "document has more than 192 nodes");
     }
     let i: i64 = j.count;
-    j.count = j.count + 1;
+    j.count += 1;
     j.kind[i] = kind;
     j.num[i] = 0;
     j.exact[i] = 0;
@@ -258,20 +311,14 @@ fn js_append(mut j: Json, parent: i64, child: i64) {
 // ---------------------------------------------------------------------------
 
 fn js_hex_digit(c: char) -> i64 {
-    if js_is_digit(c) { return c as i64 - '0' as i64; }
-    // WORKAROUND N5-06: `else if` does not exist — after `else` the parser
-    // demands `{`. Every multi-way test in this file is a nested `else { if … }`
-    // staircase, and this is the cheapest example of it.
-    else {
-        if c >= 'a' && c <= 'f' {
-            return c as i64 - 'a' as i64 + 10;
-        } else {
-            if c >= 'A' && c <= 'F' {
-                return c as i64 - 'A' as i64 + 10;
-            } else {
-                return -1;
-            }
-        }
+    if js_is_digit(c) {
+        return c as i64 - '0' as i64;
+    } else if c >= 'a' && c <= 'f' {
+        return c as i64 - 'a' as i64 + 10;
+    } else if c >= 'A' && c <= 'F' {
+        return c as i64 - 'A' as i64 + 10;
+    } else {
+        return -1;
     }
 }
 
@@ -283,39 +330,41 @@ fn js_hex4(mut j: Json) -> i64 {
         if d < 0 {
             return js_fail(j, "\\u needs four hexadecimal digits");
         }
-        // WORKAROUND N5-12: this is `(v << 4) | d`. `<<` is "Expected
-        // expression, but found '<'"; `|` and `&` end the enclosing expression;
-        // `^` is not even a character the lexer knows: "Unexpected character
-        // '^'". Multiplication and addition compute the same value here only
-        // because the operands are known to be in range.
-        v = v * 16 + d;
+        // N5-12 DISCHARGED: `<<` and `|` are operators now, so the hex
+        // accumulator is written as the shift and or it always was. It read
+        // `v = v * 16 + d;` with a note that multiplication and addition
+        // compute the same value here only because the operands are known to
+        // be in range -- true, and an argument the reader had to check.
+        v = (v << 4) | d;
         js_bump(j);
-        k = k + 1;
+        k += 1;
     }
     return v;
 }
 
 fn js_utf8(cp: i64) -> String {
-    // WORKAROUND N5-12 again: the shifts and masks of UTF-8 encoding, written
-    // as division and remainder. `cp >> 6` is `cp / 64`, `cp & 63` is `cp % 64`.
+    // N5-12 DISCHARGED here too: UTF-8 is defined in shifts and masks, and it
+    // is written in them now. It read `cp / 64` for `cp >> 6` and `cp % 64` for
+    // `cp & 63` -- equal for the non-negative `cp` this function is given, and
+    // one more invariant the reader had to carry.
     if cp < 128 {
         return string_from_char(cp as char);
     }
     if cp < 2048 {
-        let b1: String = string_from_char((192 + cp / 64) as char);
-        let b2: String = string_from_char((128 + cp % 64) as char);
+        let b1: String = string_from_char((192 | (cp >> 6)) as char);
+        let b2: String = string_from_char((128 | (cp & 63)) as char);
         return string_concat(b1, b2);
     }
     if cp < 65536 {
-        let c1: String = string_from_char((224 + cp / 4096) as char);
-        let c2: String = string_from_char((128 + cp / 64 % 64) as char);
-        let c3: String = string_from_char((128 + cp % 64) as char);
+        let c1: String = string_from_char((224 | (cp >> 12)) as char);
+        let c2: String = string_from_char((128 | ((cp >> 6) & 63)) as char);
+        let c3: String = string_from_char((128 | (cp & 63)) as char);
         return string_concat(string_concat(c1, c2), c3);
     }
-    let d1: String = string_from_char((240 + cp / 262144) as char);
-    let d2: String = string_from_char((128 + cp / 4096 % 64) as char);
-    let d3: String = string_from_char((128 + cp / 64 % 64) as char);
-    let d4: String = string_from_char((128 + cp % 64) as char);
+    let d1: String = string_from_char((240 | (cp >> 18)) as char);
+    let d2: String = string_from_char((128 | ((cp >> 12) & 63)) as char);
+    let d3: String = string_from_char((128 | ((cp >> 6) & 63)) as char);
+    let d4: String = string_from_char((128 | (cp & 63)) as char);
     return string_concat(string_concat(string_concat(d1, d2), d3), d4);
 }
 
@@ -381,7 +430,7 @@ fn js_string_body(mut j: Json) -> String {
     // Precondition: the cursor sits on the opening quote.
     js_bump(j);
     let mut out: String = "";
-    while true {
+    loop {
         let c: char = js_peek(j);
         if c == '\0' {
             js_fail(j, "unterminated string");
@@ -406,15 +455,13 @@ fn js_string_body(mut j: Json) -> String {
             if simple >= 0 {
                 js_bump(j);
                 out = string_concat(out, string_from_char(simple as char));
+            } else if e == 'u' {
+                let decoded: String = js_unicode_escape(j);
+                if !j.ok { return ""; }
+                out = string_concat(out, decoded);
             } else {
-                if e == 'u' {
-                    let decoded: String = js_unicode_escape(j);
-                    if !j.ok { return ""; }
-                    out = string_concat(out, decoded);
-                } else {
-                    js_fail(j, "unknown escape");
-                    return "";
-                }
+                js_fail(j, "unknown escape");
+                return "";
             }
         } else {
             js_bump(j);
@@ -435,7 +482,7 @@ fn js_literal(mut j: Json, word: String, kind: i64) -> i64 {
         if js_at(j, j.pos + i) != string_char_at(word, i) {
             return js_fail(j, string_concat("expected ", word));
         }
-        i = i + 1;
+        i += 1;
     }
     j.pos = j.pos + n;
     return js_alloc(j, kind);
@@ -449,12 +496,10 @@ fn js_number(mut j: Json) -> i64 {
 
     if js_peek(j) == '0' {
         js_bump(j);
+    } else if js_is_digit(js_peek(j)) {
+        while js_is_digit(js_peek(j)) { js_bump(j); }
     } else {
-        if js_is_digit(js_peek(j)) {
-            while js_is_digit(js_peek(j)) { js_bump(j); }
-        } else {
-            return js_fail(j, "expected a digit");
-        }
+        return js_fail(j, "expected a digit");
     }
 
     if js_peek(j) == '.' {
@@ -508,7 +553,7 @@ fn js_array(mut j: Json) -> i64 {
         js_bump(j);
         return node;
     }
-    while true {
+    loop {
         let child: i64 = js_value(j);
         if child < 0 { return -1; }
         js_append(j, node, child);
@@ -517,13 +562,11 @@ fn js_array(mut j: Json) -> i64 {
         if c == ',' {
             js_bump(j);
             js_skip_ws(j);
+        } else if c == ']' {
+            js_bump(j);
+            return node;
         } else {
-            if c == ']' {
-                js_bump(j);
-                return node;
-            } else {
-                return js_fail(j, "expected ',' or ']'");
-            }
+            return js_fail(j, "expected ',' or ']'");
         }
     }
     return -1;
@@ -538,7 +581,7 @@ fn js_object(mut j: Json) -> i64 {
         js_bump(j);
         return node;
     }
-    while true {
+    loop {
         js_skip_ws(j);
         if js_peek(j) != '"' {
             return js_fail(j, "expected a member name");
@@ -558,13 +601,11 @@ fn js_object(mut j: Json) -> i64 {
         let c: char = js_peek(j);
         if c == ',' {
             js_bump(j);
+        } else if c == '}' {
+            js_bump(j);
+            return node;
         } else {
-            if c == '}' {
-                js_bump(j);
-                return node;
-            } else {
-                return js_fail(j, "expected ',' or '}'");
-            }
+            return js_fail(j, "expected ',' or '}'");
         }
     }
     return -1;
@@ -572,60 +613,57 @@ fn js_object(mut j: Json) -> i64 {
 
 fn js_value(mut j: Json) -> i64 {
     if !j.ok { return -1; }
-    j.depth = j.depth + 1;
+    j.depth += 1;
     if j.depth > MAX_DEPTH {
-        j.depth = j.depth - 1;
+        j.depth -= 1;
         return js_fail(j, "nesting deeper than 24");
     }
     js_skip_ws(j);
     let c: char = js_peek(j);
     let mut node: i64 = -1;
 
-    // WORKAROUND N5-04 + N6-02: the whole of this staircase is one `match` on a
-    // byte in any language with literal patterns, and `match` here is an
-    // EXPRESSION whose value is the node. Neither exists: `match` in expression
-    // position is "Expected expression, but found 'match'", and an integer arm
-    // is "Expected pattern, but found integer 0". So: an `if` staircase, a
-    // mutable local, and one assignment per arm.
+    // N5-06 DISCHARGED: the chained form exists, so this staircase — the
+    // deepest in the file, nine branches — is one `if`, seven chained arms and
+    // one `else` at a single indent. It used to be eight nested `else` blocks
+    // with the last branch eight levels deep, and so were the six shallower
+    // staircases elsewhere in the file. Checkable two ways:
+    // `grep -cE '^[[:space:]]*\} else if ' tests/witness/json_parser.pd` is 19,
+    // and no `else` block in this file opens with an `if` as its first
+    // statement, which is the shape the workaround had.
+    //
+    // WORKAROUND UNOWNED (char pattern): the whole of this staircase is one
+    // `match` on a byte in any language with literal patterns, and `match` here
+    // is an EXPRESSION whose value is the node. BOTH rows this marker used to
+    // name are `satisfied` and measure so: `let v: i64 = match c { 1 => 10, _ =>
+    // 20 };` compiles and prints 10 (N5-04), and an integer arm IS a pattern
+    // (N6-02). The scrutinee here is a `char`, and `'n' => …` is "Expected
+    // pattern, but found char 'n'" — the same unowned gap as `js_is_ws`. So: an
+    // `if` staircase, a mutable local, and one assignment per arm.
     if c == '\0' {
         node = js_fail(j, "unexpected end of input");
-    } else {
-        if c == 'n' {
-            node = js_literal(j, "null", k_null());
-        } else {
-            if c == 't' {
-                node = js_literal(j, "true", k_true());
-            } else {
-                if c == 'f' {
-                    node = js_literal(j, "false", k_false());
-                } else {
-                    if c == '"' {
-                        let decoded: String = js_string_body(j);
-                        if j.ok {
-                            node = js_alloc(j, k_string());
-                            if node >= 0 { j.text[node] = decoded; }
-                        }
-                    } else {
-                        if c == '[' {
-                            node = js_array(j);
-                        } else {
-                            if c == '{' {
-                                node = js_object(j);
-                            } else {
-                                if c == '-' || js_is_digit(c) {
-                                    node = js_number(j);
-                                } else {
-                                    node = js_fail(j, "unexpected character");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    } else if c == 'n' {
+        node = js_literal(j, "null", k_null());
+    } else if c == 't' {
+        node = js_literal(j, "true", k_true());
+    } else if c == 'f' {
+        node = js_literal(j, "false", k_false());
+    } else if c == '"' {
+        let decoded: String = js_string_body(j);
+        if j.ok {
+            node = js_alloc(j, k_string());
+            if node >= 0 { j.text[node] = decoded; }
         }
+    } else if c == '[' {
+        node = js_array(j);
+    } else if c == '{' {
+        node = js_object(j);
+    } else if c == '-' || js_is_digit(c) {
+        node = js_number(j);
+    } else {
+        node = js_fail(j, "unexpected character");
     }
 
-    j.depth = j.depth - 1;
+    j.depth -= 1;
     return node;
 }
 
@@ -661,34 +699,22 @@ fn js_escape_into(s: String) -> String {
         let c: char = string_char_at(s, i);
         if c == '"' {
             out = string_concat(out, "\\\"");
+        } else if c == '\\' {
+            out = string_concat(out, "\\\\");
+        } else if c == '\n' {
+            out = string_concat(out, "\\n");
+        } else if c == '\r' {
+            out = string_concat(out, "\\r");
+        } else if c == '\t' {
+            out = string_concat(out, "\\t");
+        } else if c == ch_backspace() {
+            out = string_concat(out, "\\b");
+        } else if c == ch_formfeed() {
+            out = string_concat(out, "\\f");
         } else {
-            if c == '\\' {
-                out = string_concat(out, "\\\\");
-            } else {
-                if c == '\n' {
-                    out = string_concat(out, "\\n");
-                } else {
-                    if c == '\r' {
-                        out = string_concat(out, "\\r");
-                    } else {
-                        if c == '\t' {
-                            out = string_concat(out, "\\t");
-                        } else {
-                            if c == ch_backspace() {
-                                out = string_concat(out, "\\b");
-                            } else {
-                                if c == ch_formfeed() {
-                                    out = string_concat(out, "\\f");
-                                } else {
-                                    out = string_concat(out, string_from_char(c));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            out = string_concat(out, string_from_char(c));
         }
-        i = i + 1;
+        i += 1;
     }
     return out;
 }
@@ -749,7 +775,7 @@ fn js_element(mut j: Json, node: i64, index: i64) -> i64 {
     let mut i: i64 = 0;
     while child >= 0 {
         if i == index { return child; }
-        i = i + 1;
+        i += 1;
         child = j.next[child];
     }
     return -1;
@@ -759,7 +785,7 @@ fn js_length(mut j: Json, node: i64) -> i64 {
     let mut child: i64 = j.first[node];
     let mut n: i64 = 0;
     while child >= 0 {
-        n = n + 1;
+        n += 1;
         child = j.next[child];
     }
     return n;
