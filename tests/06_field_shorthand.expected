@@ -1,0 +1,17 @@
+Names decide the binding, not the position:
+307
+42
+0
+Shorthand mixes with the explicit form, in either order:
+25
+8
+15
+A guard reads the shorthand's bindings:
+1
+2
+3
+4
+5
+6
+A shorthand binding may go unused:
+99

@@ -78,7 +78,7 @@ tests/advanced_e2e_test.rs	test_generic_pair	owed	M4	Compilation failed: Undefin
 tests/advanced_e2e_test.rs	test_higher_order_functions	owed	M4	Compilation failed: Unexpected token: expected type, found 'fn'
 tests/advanced_e2e_test.rs	test_iterator_trait	owed	M4	Compilation failed: Unexpected token: expected 'fn' (Expected 'fn' for trait method), found 'type'
 tests/advanced_e2e_test.rs	test_option_enum	owed	M2	constructs a variant of a GENERIC enum, and generic enums are not implemented
-tests/advanced_e2e_test.rs	test_pattern_matching_guards	owed	M2	Compilation failed: Unexpected token: expected ':' (Expected ':' after field name in pattern), found ','
+tests/advanced_e2e_test.rs	test_pattern_matching_guards	paid	-	-
 tests/advanced_e2e_test.rs	test_result_error_handling	owed	M4	constructs a variant of a GENERIC enum, and generic enums are not implemented
 tests/advanced_e2e_test.rs	test_trait_implementation	owed	M4	Compilation failed: Unexpected token: expected parameter name, found '&'
 tests/advanced_e2e_test.rs	test_type_aliases_complex	owed	M2	Expected '=' (Expected '=' after variable name), but found ';'

@@ -93,6 +93,7 @@ tests/04_ranges.pd	run	-	expected	-	-
 tests/05_borrowing_references.pd	run	-	expected	-	-
 tests/05_ownership_basic.pd	run	-	expected	-	-
 tests/06_at_patterns.pd	run	-	expected	-	-
+tests/06_field_shorthand.pd	run	-	expected	-	-
 tests/06_guards.pd	run	-	expected	-	-
 tests/06_literal_patterns.pd	run	-	expected	-	-
 tests/06_match_expression.pd	run	-	expected	-	-
@@ -221,6 +222,8 @@ tests/reject/tuple_index_chained.pd	reject	compile	a CHAINED tuple index has to 
 tests/reject/tuple_index_leading_zero.pd	reject	compile	a tuple index written without leading zeros	-	N4-12. The lexer erases the spelling but not the SPAN, so an index with leading zeros covers more source than its value has digits. `p.01` compiled silently as `.1`
 tests/reject/tuple_one_element.pd	reject	compile	a tuple to have at least two elements	-	N4-12. `(e)` is grouping, so a one-element tuple would be `(e,)`, a meaning decided by a comma. The normative production permits it; refusing it is a documented subset, not a contradiction
 tests/reject/tuple_pattern_one_element.pd	reject	compile	a tuple pattern to have at least two elements	-	N6-05. The mirror of the value rule, plus a second reason: there is no grouping form for PATTERNS, so accepting `(p)` would give the parentheses two meanings decided by counting commas
+tests/reject/field_shorthand_needs_a_struct_variant.pd	reject	compile	Pattern structure doesn't match variant M::Pair	-	N6 field shorthand, the INNER boundary: the brace form belongs to STRUCT variants, and `M::Pair` is a tuple variant. MEASURED, and not where the grammar suggests: the refusal is the TYPE CHECKER's, because the parser accepts `path "::" identifier '{' ... '}'` for any path -- it does not yet know what the path names. The explicit spelling `M::Pair { x: a, y: b }` is refused identically, which is the point: shorthand adds no reach
+tests/reject/brace_pattern_needs_a_variant_path.pd	reject	compile	Expected pattern, but found '{'	-	N6 field shorthand, the OUTER boundary. `{ x }` is not a shorthand-shaped pattern that happens to be unsupported -- a `{` may begin pattern content only inside `path "::" identifier`, so it is not a pattern at all and the parser stops at the brace. Pinned because the desugaring makes a bare name inside braces mean `bind this field`, and a reader could reasonably ask whether a brace anywhere now opens a binding list
 tests/reject/unknown_attribute.pd	reject	compile	unknown attribute `frobnicate`	-	N2-11 itself: an attribute the compiler does not implement is a compile error and the diagnostic names it. Lexing `#[...]` and ignoring it would recreate the class M1 removed -- a source that requests a property and a binary without it
 tests/reject/unknown_escape.pd	reject	compile	unknown escape sequence `\q` in a literal	-	N2-09's negative half. `"\\q"` used to produce the two characters `\` and `q` with no diagnostic; the escape set is closed and the message lists it
 tests/reject/unterminated_block_comment.pd	reject	compile	unterminated block comment: `/*` is never closed	-	N2-08's negative half. Only distinguishable once comments NEST: under the old regex the same file lexed as a closed comment plus live source and failed at the trailing `*/` with `Expected expression, but found '/'`

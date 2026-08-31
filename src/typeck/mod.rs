@@ -6612,7 +6612,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4518-4526`, `src/parser/mod.rs:4287-4295`). That is not
+    /// (`src/parser/mod.rs:4531-4539`, `src/parser/mod.rs:4300-4308`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

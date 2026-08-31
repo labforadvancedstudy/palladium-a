@@ -33,11 +33,27 @@ fn compile_and_run(source: &str) -> Result<String, String> {
     let driver = Driver::new();
     match driver.compile_file(&source_path) {
         Ok(c_output_path) => {
+            // THE RUNTIME TRANSLATION UNIT IS PART OF THE LINK, and leaving it
+            // out was invisible for as long as it was: every test in this file
+            // was `#[ignore]`d, so this `cc` had never once been asked to
+            // produce a binary. The emitted C calls `pd_create_dir`,
+            // `pd_read_file_to_string` and eight more file builtins through the
+            // prelude's wrappers whether or not the program uses them, so a
+            // `fn main() { print("hi"); }` fails to link here exactly as this
+            // fixture did — measured, and not a property of the program under
+            // test. `runtime_c()` rather than a literal path because that is the
+            // one place that answers "where is my runtime?" (src/runtime_paths.rs),
+            // and a hardcoded `runtime/palladium_runtime.c` would make this
+            // harness cwd-dependent for the reason that module exists to fix.
+            let runtime_c = palladium::runtime_paths::runtime_c()
+                .map_err(|e| format!("Failed to locate the Palladium runtime: {}", e))?;
+
             // Compile C to executable
             let cc_output = Command::new("cc")
                 .arg("-o")
                 .arg(&exe_path)
                 .arg(&c_output_path)
+                .arg(&runtime_c)
                 .output()
                 .map_err(|e| format!("Failed to run cc: {}", e))?;
             
@@ -456,7 +472,6 @@ fn test_effects_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: FIELD SHORTHAND IN A STRUCT-VARIANT PATTERN. The guards half of this row is paid (N6-09): `Message::Move { x: x, y: y } if x > 0 && y > 0` compiles and runs, measured. What is left is the shorthand — `{ x, y }` — for which the pattern parser reports \"expected ':' after field name in pattern\", so every arm in this fixture stops there (owned by M2, item 4)"]
 fn test_pattern_matching_guards() {
     let source = r#"
     enum Message {

@@ -1,0 +1,25 @@
+// NEGATIVE TEST — the brace form, and therefore field shorthand, belongs to
+// STRUCT variants only (N6).
+//
+// `Pair` is a TUPLE variant. Writing it with braces asks for a field named `x`
+// on a variant whose fields are positional, and the refusal comes from the TYPE
+// CHECKER rather than the parser: the parser accepts `path "::" identifier '{'
+// … '}'` for any path, because it does not yet know what `M::Pair` is. Recorded
+// here rather than assumed, because "the parser only parses shorthand in
+// struct-variant position" is the obvious reading of the grammar and it is not
+// where the boundary is actually enforced.
+//
+// The shorthand is not what is being refused — `M::Pair { x: a, y: b }` is
+// refused identically. That is the point: shorthand adds no reach.
+enum M {
+    Pair(i64, i64),
+    Quit,
+}
+
+fn main() {
+    let v = match M::Pair(1, 2) {
+        M::Pair { x, y } => x + y,
+        M::Quit => 0,
+    };
+    print_int(v);
+}

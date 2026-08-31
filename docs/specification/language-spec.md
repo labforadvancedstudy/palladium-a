@@ -896,8 +896,8 @@ unrelated reason.
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3819`, corrected from line 2038 of the pre-cleanup revision) |
-| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3808-3815` (corrected from line 2037–2043 of the pre-cleanup revision) |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3832`, corrected from line 2038 of the pre-cleanup revision) |
+| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3821-3828` (corrected from line 2037–2043 of the pre-cleanup revision) |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
@@ -915,7 +915,7 @@ unrelated reason.
 | `<T: Bound>`, `where` | unimplemented | `parse_generic_params` accepts bare names only; the `:` is a parse error |
 
 **partial — generic argument bug**: inside `<…>`, any identifier whose characters are all
-uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:3849-3859`,
+uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:3862-3872`,
 corrected from line 2054–2079 of the pre-cleanup revision). So `Foo<T>` yields a const-generic `T`, not a type argument. Only
 mixed-case names like `Vec<Item>` reach the type branch.
 
@@ -1008,7 +1008,7 @@ implemented: literals, identifiers, struct literals, array literals `[a,b,c]` an
 indexing, field access, calls, enum construction, unary `- ! & *`, binary operators.
 
 - **implemented: `if`, `match`, blocks and `loop` are EXPRESSIONS** (N5-03/04/05/07). All four are
-  read at the primary level (`src/parser/mod.rs:3972-3984`) and each reuses the statement parser it
+  read at the primary level (`src/parser/mod.rs:3985-3997`) and each reuses the statement parser it
   already had, reinterpreting the statements-plus-tail it returns as statements-plus-value. C has
   no expression with a block in it, so they lower by HOISTING: a temporary, a statement-form
   computation that assigns it, and a use of the name. GNU statement-expressions would say it in one
@@ -1024,7 +1024,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   `(p.0).1`, because `.0.1` lexes as one float literal (`[0-9]+\.[0-9]+`) and `p.0.10` and `p.0.1`
   both round-trip to 0.1, so the second index cannot be recovered without guessing.
 - **implemented: `as` casts** (N5-15), parsed between multiplication and unary
-  (`src/parser/mod.rs:3659-3660`) so `10 / 4.0 as i64` is `10 / (4.0 as i64)`, and chainable. THE LEGAL
+  (`src/parser/mod.rs:3672-3673`) so `10 / 4.0 as i64` is `10 / (4.0 as i64)`, and chainable. THE LEGAL
   SET IS NARROW BECAUSE THIS DOCUMENT DOES NOT SAY WHAT IT IS: N5 names `as` casts and the grammar
   gives the form, neither says which conversions are meant, so conversions among the numeric
   primitives and `bool` are implemented and every other cast is refused by name. A cast to `bool`
@@ -1042,7 +1042,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
 the right side could not, and `a * -b` did not parse. It now parses both sides through the cast
-level, which is `parse_unary` plus the `as` suffix (`src/parser/mod.rs:3747-3747`). Every other level of
+level, which is `parse_unary` plus the `as` suffix (`src/parser/mod.rs:3760-3760`). Every other level of
 the ladder was already symmetric, which is why this was the only expression that failed.
 [N5](#n5-statements-and-expressions) requires `a * -b`; `ef74eba` delivered it.
 
@@ -1258,12 +1258,17 @@ pattern_primary = "_"
         | literal ( ".." | "..=" ) literal
         | "(" pattern "," pattern { "," pattern } ")"
         | path "::" identifier [ "(" pattern { "," pattern } ")"
-                               | "{" identifier ":" pattern { "," … } "}" ] ;
+                               | "{" identifier [ ":" pattern ] { "," … } "}" ] ;
 ```
 
 **implemented**: literal patterns (`1 =>`, `"s" =>`, `true =>`, and `-1 =>`, whose minus the pattern
 parser reads as part of the literal) — N6-02; range patterns `lo..hi` and `lo..=hi` — N6-03; tuple
-patterns — N6-05; or-patterns `A | B` — N6-07; `@` bindings — N6-08; arm guards `if cond` — N6-09.
+patterns — N6-05; or-patterns `A | B` — N6-07; `@` bindings — N6-08; arm guards `if cond` — N6-09;
+and FIELD SHORTHAND in a struct-variant pattern — `Move { x, y }` for `Move { x: x, y: y }`, where
+the field name is the binder. The shorthand is desugared at the point of parse, so the two
+spellings are the same `PatternData::Struct` value and no later pass distinguishes them
+(`tests/m2_pattern_field_shorthand.rs` asserts the equality of the two parses); it reaches only
+that position, which `tests/reject/field_shorthand_outside_struct_variant.pd` pins.
 A guard is checked inside the arm's own scope, after its bindings, so `Num(n) if n > 5` can read
 `n`.
 
@@ -1279,7 +1284,7 @@ alternative would have to bind the same names at the same types for it to mean a
 arm is emitted as one `||` condition with no per-alternative site to assign from.
 
 **unimplemented**: slice patterns (N6-06, owned by M3 — there is no slice type yet), non-enum
-struct patterns, `ref`/`mut` bindings, field shorthand (`Move { x, y }`), `..` rest.
+struct patterns, `ref`/`mut` bindings, `..` rest.
 
 **Exhaustiveness holds for every scrutinee type** (N6-10). An enum must cover its variants; a
 `bool` is covered by `true` and `false` together; every other type needs an arm that matches every
@@ -1666,7 +1671,7 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-types-semantics`
 (2026-08-31):
 
-**verified 82 · untranscribed 0 · vacuous 6 · xfail 1 · reject 103 · skip 2 · failures 0**, over 194
+**verified 83 · untranscribed 0 · vacuous 6 · xfail 1 · reject 105 · skip 2 · failures 0**, over 197
 fixtures. (The round-3 review of `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined

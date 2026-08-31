@@ -132,7 +132,7 @@ evidence = [
   "src: tests/regression/lifetimes_uninferred.pd:26-29 \"fn dangling() -> &i64\" returning \"return &x;\", a reference to a local that dies at the closing brace",
   "conformance: tests/reject/uncalled_body_is_checked.pd reject",
   "src: tests/reject/uncalled_body_is_checked.pd:21-24 \"fn bad()\" is called by nothing and still refused, which is what makes the fixture above a statement about lifetimes",
-  "gate: make conformance -> reject=103 verified=82 -- the pair above is in the corpus those numbers count",
+  "gate: make conformance -> reject=105 verified=83 -- the pair above is in the corpus those numbers count",
   "src: src/ownership/borrow_checker.rs:793-796 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
   "src: src/ownership/mod.rs:25-33 \"pub enum Lifetime\" -- the four variants a lifetime can be, none of which carries a relation to another",
   "src: src/ownership/mod.rs:101-126 \"constraints: Vec<LifetimeConstraint>\" at :101 and \"pub struct LifetimeConstraint\" at :124 with its longer/shorter pair -- the only type in the module that RELATES two lifetimes",
@@ -213,7 +213,7 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/codegen/mod.rs:2943-2943 'Generic types in structs not yet supported'",
-  "src: src/parser/mod.rs:3849-3859 all-uppercase name inside <...> reclassified as a const argument",
+  "src: src/parser/mod.rs:3862-3872 all-uppercase name inside <...> reclassified as a const argument",
   "conformance: tests/reject/generic_bound.pd reject",
   "conformance: tests/08_generics_basic.pd vacuous",
 ]
@@ -283,7 +283,7 @@ implementation = "partial"
 evidence = [
   "conformance: tests/04_control_flow_if.pd run",
   "src: src/parser/mod.rs:2298-2300 the else arm tests for a following if and recurses, so else-if chains parse (N5-06)",
-  "src: src/parser/mod.rs:3974-3975 return self.parse_if_expression() -- `if` is read at the primary level, so it is an expression (N5-03)",
+  "src: src/parser/mod.rs:3987-3988 return self.parse_if_expression() -- `if` is read at the primary level, so it is an expression (N5-03)",
 ]
 
 [core_language.functions.function_definitions]
@@ -501,7 +501,7 @@ description = "C code generation; the backend the compiler actually ships."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "implemented"
 evidence = [
-  "gate: make conformance -> fixtures=194 evaluated=194 verified=82 vacuous=6 xfail=1 reject=103 skip=2 failures=0",
+  "gate: make conformance -> fixtures=197 evaluated=197 verified=83 vacuous=6 xfail=1 reject=105 skip=2 failures=0",
   "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\" -- the C backend is the one a Palladium compiler is built with",
 ]
 
@@ -533,7 +533,7 @@ spec = "../../specification/language-spec.md"
 implementation = "implemented"
 evidence = [
   "gate: cargo build --release -> \"[optimized] target(s)\" -- the compiler builds, and target/release/pdc is what every other gate here runs",
-  "gate: make conformance -> fixtures=194 evaluated=194 verified=82 vacuous=6 xfail=1 reject=103 skip=2 failures=0",
+  "gate: make conformance -> fixtures=197 evaluated=197 verified=83 vacuous=6 xfail=1 reject=105 skip=2 failures=0",
 ]
 
 [tooling.compiler.bootstrapping]

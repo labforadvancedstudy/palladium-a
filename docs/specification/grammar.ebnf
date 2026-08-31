@@ -355,11 +355,22 @@ pattern_primary = '_'
                | literal ( '..' | '..=' ) literal            (* N6-03 *)
                | '(' pattern ',' pattern { ',' pattern } ')' (* N6-05 *)
                | path "::" identifier [ '(' pattern { ',' pattern } ')'
-                                      | '{' identifier ':' pattern
-                                            { ',' identifier ':' pattern } '}' ] ;
+                                      | '{' identifier [ ':' pattern ]
+                                            { ',' identifier [ ':' pattern ] } '}' ] ;
 
 match_arm      = pattern [ "if" expression ] "=>" ( block | expression ) [ ',' ] ;  (* N6-09 *)
 
+# THE COLON IS OPTIONAL IN A STRUCT-VARIANT FIELD, and omitting it is FIELD
+# SHORTHAND (N6): bare `x` means `x: x` — the field name IS the binder. It is a
+# pure surface form. `src/parser/mod.rs` desugars it at the point of parse, so
+# `Move { x, y }` and `Move { x: x, y: y }` are not merely equivalent but the
+# SAME `PatternData::Struct` value, and nothing downstream of the parser knows
+# there are two spellings. The shorthand reaches ONLY this position: there is no
+# brace pattern outside `path "::" identifier`, so `{ x }` on its own is
+# "expected pattern, found '{'", and a tuple variant written with braces is
+# refused by the type checker as a variant/pattern shape mismatch. Both are
+# pinned by tests/reject/field_shorthand_outside_struct_variant.pd.
+#
 # `|` binds LOOSER than `@`, so `n @ 1 | 2` is `(n @ 1) | 2` — which is then
 # refused, because an ALTERNATIVE MAY NOT BIND (N6-07): every alternative would
 # have to bind the same names at the same types, which is not checked yet, and

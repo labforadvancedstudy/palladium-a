@@ -116,12 +116,12 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 - Generic types in struct fields — error at `src/codegen/mod.rs:2941-2944`.
 - Reference types in struct fields — error at `src/codegen/mod.rs:2948-2948`.
 - Returning an array from a function — error at `src/codegen/mod.rs:3288-3292`.
-- `str`, `u8`, `usize` — no such primitives; `src/parser/mod.rs:3819-3828` is the whole
+- `str`, `u8`, `usize` — no such primitives; `src/parser/mod.rs:3832-3841` is the whole
   set the type parser recognises. `char` was in this bullet until N4-04 gave the language a
   distinct character type and N14-04 retyped the five character built-ins over it; PBS-1 needed
   it the same day, because `bootstrap/pdc.pd`'s lexer holds what `string_char_at` returns.
   `f32`/`f64` were in this bullet and no longer belong: M2 added
-  them (`src/parser/mod.rs:3822-3823`, requirement N4-02), so they stay out of PBS-1 by CHOICE,
+  them (`src/parser/mod.rs:3835-3836`, requirement N4-02), so they stay out of PBS-1 by CHOICE,
   which is a different reason from every other entry in this list.
 - Trait bounds (`<T: Display>`) — a parse error; `parse_generic_params` accepts bare names only.
 - `Option<T>` / `Result<T,E>` as built-ins — they do not exist. Declaring your own does not
@@ -131,7 +131,7 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 
 **Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
 parsing misclassifies any all-uppercase name as a *const* generic argument
-(`src/parser/mod.rs:3800-3828`), so `Foo<T>` does not mean what it looks like.
+(`src/parser/mod.rs:3813-3841`), so `Foo<T>` does not mean what it looks like.
 
 ## 3.1 Additional PBS-1 rules (measured, not stylistic)
 

@@ -3282,8 +3282,21 @@ impl Parser {
                                 }
                             };
 
-                            self.consume(Token::Colon, "Expected ':' after field name in pattern")?;
-                            let field_pattern = self.parse_pattern()?;
+                            // N6 FIELD SHORTHAND. `{ x }` means `{ x: x }` — the
+                            // field name IS the binder. The desugaring is TOTAL and
+                            // happens here, so nothing downstream carries a
+                            // shorthand-shaped node: exhaustiveness, the type checker
+                            // and code generation all see the explicit form and did
+                            // not have to learn a second spelling. `Pattern` holds no
+                            // span, so the two forms are not merely equivalent but
+                            // the SAME value — `assert_eq!` on the two parses is the
+                            // control, in tests/m2_pattern_field_shorthand.rs.
+                            let field_pattern = if self.check(&Token::Colon) {
+                                self.advance()?; // consume ':'
+                                self.parse_pattern()?
+                            } else {
+                                Pattern::Ident(field_name.clone())
+                            };
 
                             fields.push((field_name, field_pattern));
 

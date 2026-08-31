@@ -1,0 +1,17 @@
+// NEGATIVE TEST — there is no brace pattern outside a variant path (N6).
+//
+// Field shorthand is a spelling INSIDE `path "::" identifier '{' … '}'`, and
+// that is the only production in which a `{` may begin pattern content. A bare
+// `{ x }` is therefore not a shorthand-shaped pattern that happens to be
+// unsupported; it is not a pattern at all, and the parser says so at the brace.
+//
+// Pinned because the desugaring makes `x` inside braces mean "bind x", and a
+// reader could reasonably ask whether a brace anywhere now opens a binding
+// list. It does not.
+fn main() {
+    let v = match 4 {
+        { x } => x,
+        _ => 0,
+    };
+    print_int(v);
+}

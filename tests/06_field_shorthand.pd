@@ -1,0 +1,98 @@
+// Test 06: FIELD SHORTHAND in a struct-variant pattern (requirement N6).
+//
+// `Move { x, y }` is `Move { x: x, y: y }` — the field name IS the binder. The
+// parser desugars it at the point of parse, so the two spellings produce the
+// SAME `PatternData::Struct` value and nothing after the parser has a second
+// case to learn. `tests/m2_pattern_field_shorthand.rs` asserts that equality on
+// the parse trees; this fixture is the behavioural half.
+//
+// WHAT IS ACTUALLY WORTH TESTING HERE, given the desugaring is total:
+//
+//   * that the shorthand binds the FIELD and not the position. The two are
+//     indistinguishable while the pattern lists fields in declaration order, so
+//     `Move { y, x }` below is written in the WRONG order on purpose and prints
+//     a value that is only correct if the names decided the binding.
+//   * that shorthand and the explicit form MIX inside one pattern, in either
+//     order, because a desugaring that only fired when every field was bare
+//     would pass a fixture that used one form at a time.
+//   * that a guard reads the shorthand's bindings. The guard runs in the arm's
+//     own scope, after its bindings (N6-09), and the shorthand binding has to be
+//     in that scope like any other.
+//   * that a bound name may go UNUSED. `Ident` patterns bind unconditionally, so
+//     an unused shorthand field must not become an error or a warning that some
+//     later gate reads as one.
+
+enum Shape {
+    Rect { w: i64, h: i64 },
+    Square { side: i64 },
+    Dot,
+}
+
+// Declaration order is `w` then `h`. This reads them BACKWARDS.
+fn area_named_backwards(s: Shape) -> i64 {
+    match s {
+        Shape::Rect { h, w } => { return w * 100 + h; }
+        Shape::Square { side } => { return side; }
+        Shape::Dot => { return 0; }
+    }
+}
+
+// Shorthand and explicit in one pattern, both orders.
+fn mixed(s: Shape) -> i64 {
+    match s {
+        Shape::Rect { w, h: height } => { return w + height; }
+        Shape::Square { side: n } => { return n; }
+        Shape::Dot => { return 0; }
+    }
+}
+
+fn mixed_other_way(s: Shape) -> i64 {
+    match s {
+        Shape::Rect { w: width, h } => { return width - h; }
+        _ => { return 0; }
+    }
+}
+
+// A guard reading two shorthand bindings, with a second unguarded arm for the
+// same variant so the guard is what chooses.
+fn quadrant(s: Shape) -> i64 {
+    match s {
+        Shape::Rect { w, h } if w > 0 && h > 0 => { return 1; }
+        Shape::Rect { w, h } if w > 0 => { return 2; }
+        Shape::Rect { w, h } => { return 3; }
+        Shape::Square { side } if side > 10 => { return 4; }
+        Shape::Square { side } => { return 5; }
+        Shape::Dot => { return 6; }
+    }
+}
+
+// `h` is bound and never read.
+fn width_only(s: Shape) -> i64 {
+    match s {
+        Shape::Rect { w, h } => { return w; }
+        _ => { return 0; }
+    }
+}
+
+fn main() {
+    print("Names decide the binding, not the position:");
+    print_int(area_named_backwards(Shape::Rect { w: 3, h: 7 }));
+    print_int(area_named_backwards(Shape::Square { side: 42 }));
+    print_int(area_named_backwards(Shape::Dot));
+
+    print("Shorthand mixes with the explicit form, in either order:");
+    print_int(mixed(Shape::Rect { w: 20, h: 5 }));
+    print_int(mixed(Shape::Square { side: 8 }));
+    print_int(mixed_other_way(Shape::Rect { w: 20, h: 5 }));
+
+    print("A guard reads the shorthand's bindings:");
+    print_int(quadrant(Shape::Rect { w: 1, h: 1 }));
+    print_int(quadrant(Shape::Rect { w: 1, h: -1 }));
+    print_int(quadrant(Shape::Rect { w: -1, h: -1 }));
+    print_int(quadrant(Shape::Square { side: 11 }));
+    print_int(quadrant(Shape::Square { side: 2 }));
+    print_int(quadrant(Shape::Dot));
+
+    print("A shorthand binding may go unused:");
+    print_int(width_only(Shape::Rect { w: 99, h: 1 }));
+}
