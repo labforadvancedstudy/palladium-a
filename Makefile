@@ -268,7 +268,7 @@ test-conformance-runner: build ## Prove the conformance gate still goes RED when
 
 # M1's exit criterion, as a command.
 #
-# THERE ARE THREE INVENTORIES IN THIS REPO, AND THIS USED TO READ ONE.
+# THERE ARE FOUR INVENTORIES IN THIS REPO, AND THIS USED TO READ ONE.
 #   tests/conformance-manifest.txt          owns .pd fixtures (`owner` column)
 #   tests/rust-debt-manifest.txt            owns Rust tests, cross-checked
 #                                           against #[ignore = "… (owned by M<n>)"]
@@ -288,26 +288,41 @@ test-conformance-runner: build ## Prove the conformance gate still goes RED when
 # still fails is red in this step. Without it, `paid` would be a way to retire a
 # failing test by editing one word.
 #
-# All three run even when an earlier one is red: stopping at the first failure
+# AND INVENTORY FOUR IS HERE NOW (GI-08). `docs/contributing/1.0-requirements.tsv`
+# is the inventory that enumerates what is OWED rather than what has been
+# observed to break; the other three are registers of DECLARED failures, so a
+# requirement nobody has started on leaves all three clean. GI-08 is one
+# sentence — "Every milestone exit reads BOTH debt inventories and this
+# manifest" — and this target did not, which is why the row said `owed`.
+#
+# IT WAS LEFT OUT FOR A MEASURED REASON AND THE REASON DID NOT SURVIVE. The
+# manifest has ZERO rows owned by M1 (`awk -F'\t' '$$2=="M1"'` prints nothing),
+# so `REQ_MILESTONE=M1 python3 scripts/requirements.py` abstains — exit 2,
+# NO_VERDICT — and appending it with `|| rc=1` would have reddened a legitimately
+# green target for a reason that says nothing about M1. That is an argument
+# against `|| rc=1`, not against reading the inventory: "do not consult it" and
+# "consult it and know what its abstention means" are different answers, and only
+# the second can tell that abstention apart from an unreadable manifest, which
+# exits 2 as well. scripts/m1-exit.sh maps the two shapes apart by the sentence
+# each one prints, tolerates the first with the sentence REPRINTED, and fails
+# closed on everything else. Both shapes were probed before the mapping was
+# written, and its self-test regenerates them live.
+#
+# THE AGGREGATION MOVED INTO A SCRIPT FOR THE REASON m2-exit's DID. This recipe
+# was `|| rc=1` per inventory, which is two-valued, and Make folds every nonzero
+# recipe status to 2 on the way out; the comment below m2-exit used to record
+# that collapse as a live residual belonging to whoever owns M1's ledger. The
+# mapping above needs a state that means "would not measure", and folding it onto
+# OWED would report an abstention as a measurement. So m1-exit now carries the
+# same three values, the same lattice and the same `<M>_EXIT_RESULT` last line as
+# scripts/m2-exit.sh. Widening, not breaking: 0 still means the same thing and
+# every previous 1 is still nonzero.
+#
+# All four run even when an earlier one is red: stopping at the first failure
 # reports part of the debt and costs a round trip to discover the rest.
 .PHONY: m1-exit
 m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1
-	@rc=0; \
-	echo "$(YELLOW)== inventory one of three: .pd fixtures (tests/conformance-manifest.txt) ==$(NC)"; \
-	CONFORMANCE_FORBID_OWNER=M1 bash scripts/conformance.sh tests examples || rc=1; \
-	echo; \
-	echo "$(YELLOW)== inventory two of three: Rust debt (tests/rust-debt-manifest.txt + #[ignore] reasons) ==$(NC)"; \
-	TEST_XFAIL_FORBID_OWNER=M1 python3 scripts/test-xfail.py || rc=1; \
-	echo; \
-	echo "$(YELLOW)== inventory three of three: the ordinary Rust suite (nothing here is allowed to fail) ==$(NC)"; \
-	$(CARGO) test --release --no-fail-fast || rc=1; \
-	echo; \
-	if [ $$rc -eq 0 ]; then \
-	  echo "$(GREEN)✓ M1 exit criterion met — nothing in any inventory is owed to M1$(NC)"; \
-	else \
-	  echo "$(RED)✗ M1 is NOT finished — see the OWED_TO_M1 / failure line(s) above$(NC)"; \
-	fi; \
-	exit $$rc
+	@bash scripts/m1-exit.sh
 
 # M2's exit criterion, as a command — GI-08. THIS TARGET DID NOT EXIST, and
 # docs/contributing/MILESTONES.md named it as M2's Exit line, so the milestone
@@ -321,7 +336,7 @@ m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1
 # IT IS RED TODAY AND THAT IS THE CORRECT STATE. A green `m2-exit` on a branch
 # that has not done M2 would be the defect, not the achievement.
 #
-# FOUR INVENTORIES, WHICH IS ONE MORE THAN `m1-exit`. The first three are
+# FOUR INVENTORIES, THE SAME FOUR `m1-exit` READS. The first three are
 # m1-exit's, character for character, with the owner changed:
 #   tests/conformance-manifest.txt          owns .pd fixtures (`owner` column)
 #   tests/rust-debt-manifest.txt            owns Rust tests, cross-checked
@@ -335,12 +350,15 @@ m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1
 # GI-08 is one sentence — "Every milestone exit reads BOTH debt inventories and
 # this manifest". Inventory four is that clause.
 #
-# `m1-exit` DOES NOT GET INVENTORY FOUR, and this is not an oversight: the
-# manifest has ZERO rows owned by M1 (measured: `awk -F'\t' '$$2=="M1"'` prints
-# nothing), so the requirement gate would abstain — NO_VERDICT, nonzero — and
-# turn a target that is legitimately green RED for a reason that says nothing
-# about M1. The absence of M1 rows is itself worth knowing and is recorded here
-# rather than fixed by retagging rows into a shipped milestone.
+# `m1-exit` GETS INVENTORY FOUR TOO, as of GI-08, and the reason it did not for
+# a while is worth keeping: the manifest has ZERO rows owned by M1 (measured:
+# `awk -F'\t' '$$2=="M1"'` prints nothing), so the requirement gate abstains —
+# NO_VERDICT, nonzero — and a `|| rc=1` aggregation would have turned a target
+# that is legitimately green RED for a reason that says nothing about M1. The
+# absence of M1 rows is still worth knowing and is still not fixed by retagging
+# rows into a shipped milestone; what changed is that `scripts/m1-exit.sh` now
+# tells that abstention apart from the other exit-2 shapes and prints the
+# sentence it tolerates. See the block above `m1-exit`.
 #
 # All four run even when an earlier one is red, for m1-exit's reason: stopping
 # at the first failure reports part of the debt and costs a round trip to
@@ -354,12 +372,15 @@ m1-exit: build ## M1's exit criterion: nothing in ANY inventory still owed to M1
 # WRONG. scripts/m2-exit.sh keeps the three states and prints the verdict on its
 # last line as `M2_EXIT_RESULT <code> <name>`, which survives Make.
 #
-# `m1-exit` HAS THE SAME AMBIGUITY AND IS DELIBERATELY NOT CHANGED HERE. It also
-# collapses to 2 when red, so "M1 owes rows" and "an inventory would not measure"
-# are one number there too. It is 0 today, so the ambiguity is dormant rather
-# than misreporting, and giving M1's shipped exit criterion a new contract is a
-# decision about M1's ledger that belongs to whoever owns it — not a silent
-# side-effect of building M2's. Recorded, not fixed.
+# `m1-exit` HAD THE SAME AMBIGUITY AND NO LONGER DOES. It used to collapse to 2
+# when red as well, so "M1 owes rows" and "an inventory would not measure" were
+# one number there too; that was recorded here as dormant-not-misreporting and
+# left to whoever owns M1's ledger, because giving a shipped exit criterion a new
+# contract should not be a side-effect of building M2's. GI-08 is that decision,
+# taken on purpose: scripts/m1-exit.sh carries the same three values, the same
+# lattice and the same `<M>_EXIT_RESULT` last line as this file. The two targets
+# now differ only in their owner and in one mapping M1 needs and M2 does not —
+# the tolerated zero-row abstention, which M2 cannot reach because it owns rows.
 .PHONY: m2-exit
 m2-exit: build ## M2's exit criterion: nothing in ANY inventory still owed to M2
 	@bash scripts/m2-exit.sh

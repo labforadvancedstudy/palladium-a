@@ -244,7 +244,7 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 77 satisfied · 112 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 78 satisfied · 111 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
@@ -376,7 +376,7 @@ reverting either guard alone now fails a fixture of its own; then `feat/m2-types
 | Declared failures | 45 `xfail` + 1 `slow`, none passing; 45 of 45 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 77 satisfied · 112 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 78 satisfied · 111 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -544,7 +544,7 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
 
-**Owns 49 requirement rows, 3 of them still owed**, 6 declared `#[ignore]` failures (all tagged
+**Owns 49 requirement rows, 2 of them still owed**, 6 declared `#[ignore]` failures (all tagged
 M2), and **no vacuous fixture** — `tests/02_types_enums.pd` was M2's last one and item 9 turned it
 into a `run` fixture that constructs and destructures a unit, a tuple and a struct variant.
 *(It read "seventeen … (fourteen tagged M2, three
@@ -776,17 +776,20 @@ enum-owned method is unreachable by its path form. Each row carries a
    than quietly dropped.)*
 7. **Witness 1** (WT-01): a JSON parser written with no workarounds, added to the corpus. It becomes
    the thesis gate's second witness at M9.
-8. **Gate integrity** (GI-06, GI-08, GI-09). **GI-06 and GI-09 CLOSED; GI-08 STILL OWED, and the
-   residual is stated below rather than glossed.**
-   GI-06: `make gates` (`Makefile:553`) runs `test-honest` (`Makefile:385-390`), so a non-ignored
+8. **Gate integrity** (GI-06, GI-08, GI-09). **ALL THREE CLOSED.** GI-08 was the last, and it was
+   the one whose residual this item used to state rather than gloss; that residual is quoted below
+   with what closed it, because a closure with no trace of what it closed is not checkable.
+   GI-06: `make gates` (`Makefile:574`) runs `test-honest` (`Makefile:406-411`), so a non-ignored
    compiler regression can no longer coexist with a green gate.
-   **`make m2-exit` now exists** (`Makefile:312-365`), and before this it did not: the Exit line
+   **`make m2-exit` now exists** (`Makefile:327-386`), and before this it did not: the Exit line
    below named a target that `grep "^m2-exit:" Makefile` could not find, so M2 had no exit
    criterion at all. That is exactly how v0.3.0 shipped under M1's name while `make m1-exit` was
-   RED. It reads **four** inventories — `m1-exit`'s three with the owner changed to M2, plus
+   RED. It reads **four** inventories — the three debt registers with the owner changed to M2, plus
    `docs/contributing/1.0-requirements.tsv` through `scripts/requirements.py`. The fourth is what
    closes the hole in the other three: all three are registers of *declared failures*, so a
-   requirement nobody has started on leaves every one of them clean.
+   requirement nobody has started on leaves every one of them clean. *(This sentence read
+   "`m1-exit`'s three" for as long as `m1-exit` had three. It reads four now as well — GI-08, below
+   — so the two targets differ in owner and not in reach.)*
    **GI-09 is CLOSED: `make test-requirements-runner`** plants a row for the milestone under test
    and requires the runner to go RED for it, refuses a filter with no subject, and **runs
    `make m2-exit`**, requiring each of the four inventories to have produced output that matches a
@@ -795,24 +798,51 @@ enum-owned method is unreachable by its path form. Each row carries a
    proves a recipe names a command, never that the command ran, which is the whole finding it was
    written to fix.)* It is in `gates`; `m2-exit` is not, for
    `thesis-exit`'s reason: a target that is RED by design can never be in that list.
-   **GI-08 stays `owed`, and the residual is one sentence: `make m1-exit` does not read inventory
-   four.** GI-08 says *every* milestone exit reads both debt inventories **and this manifest**, and
-   one of the two that exist does not. That is deliberate rather than forgotten — the requirement
-   manifest has **zero** rows owned by M1, so adding the inventory there would make the gate
-   abstain (NO_VERDICT, nonzero) and turn a legitimately green target RED for a reason that says
-   nothing about M1. Closing GI-08 means deciding what a milestone with no rows means, which is a
-   question rather than a line of Make. Its own row's evidence, `make m2-exit`, also cannot exit 0
-   until items 1–7 land, so the row is measured by neither thing today.
-   **`m2-exit` is RED and that is the correct state.** It reports 8 rows `OWED_TO_M2`, down from
+   **GI-08 is CLOSED: `make m1-exit` reads inventory four now** (`scripts/m1-exit.sh`), so both of
+   the two milestone exits that exist read all four. *(The residual this item carried for several
+   rounds, kept verbatim because it is the thing that closed: "`make m1-exit` does not read
+   inventory four. GI-08 says every milestone exit reads both debt inventories AND this manifest,
+   and one of the two that exist does not. That is deliberate rather than forgotten — the
+   requirement manifest has zero rows owned by M1, so adding the inventory there would make the
+   gate abstain (NO_VERDICT, nonzero) and turn a legitimately green target RED for a reason that
+   says nothing about M1. Closing GI-08 means deciding what a milestone with no rows means, which
+   is a question rather than a line of Make.")*
+   **The question was already answered by the reader's own vocabulary, and the residual had asked
+   the wrong one.** `scripts/requirements.py:499` prints, for a zero-row filter, "no row of
+   docs/contributing/1.0-requirements.tsv is owned by M1. A filter whose subject matches nothing
+   clears everything, so this is refused rather than reported as 'nothing owed'" — an abstention
+   with a NAME. So the decision was never "what does a milestone with no rows mean"; it was
+   "should m1-exit read an inventory whose abstention it can identify", and the answer is yes.
+   **The wiring, which is the whole of the change:** rc=1 (OWED) reddens `m1-exit`; rc=2 carrying
+   that sentence **for M1** does not, and the sentence is REPRINTED under a heading saying what was
+   done with it; rc=2 of any **other** shape fails closed. There are three such shapes and only one
+   is tolerable — the other two are an unreadable manifest (`scripts/requirements.py:207`, printed
+   on stderr as "cannot read …") and "every M1 row is `satisfied`, but the steps listed above did
+   not run" (`scripts/requirements.py:515`), which is an abstention about EVIDENCE and would be the M1 defect again in a
+   new inventory. **A tolerance is a hole unless its edges are tested**, so
+   `scripts/m1-exit.sh --self-test` regenerates all three shapes LIVE from that reader rather than
+   pasting its sentences, and adds the two controls that matter: an rc=1 run whose text happens to
+   contain the tolerated sentence is still OWED, and another milestone's abstention is not M1's.
+   Each of those controls was proved able to fail by mutating the classifier.
+   **The row's evidence column moved from `make m2-exit` to `make test-requirements-runner`**, and
+   that is a correction rather than a convenience: `m2-exit` is RED by design until M2 lands, so it
+   can never witness a `satisfied` row, and it says nothing about `m1-exit` either way. The runner
+   RUNS BOTH targets and requires each of the four inventories, per target, to have left evidence
+   of its own invocation.
+   **`m1-exit`'s contract widened from two values to three** at the same time and for the same
+   reason `m2-exit`'s did: the mapping needs a state meaning "would not measure", and folding it
+   onto OWED would report an abstention as a measurement. 0 still means what it meant and every
+   previous 1 is still nonzero, so no consumer that reads zero-or-not is made worse.
+   **`m2-exit` is RED and that is the correct state.** It reports 2 rows `OWED_TO_M2`, down from
    25 — item 9's seven N3 rows moved to `satisfied` on `feat/m2-items`, after item 4's eight N6
    rows plus N4-12 had taken the figure from 34 to 25, item 3's eleven N5 rows had taken it from 47
    to 36, and item 5 (lexical completion) from 43 to 36 with N2-03, N2-04, N2-08, N2-09, N2-10,
    N2-11 and N4-02. A green `m2-exit` before M2 is done would be the defect.
 
-   *The 3, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list —
+   *The 2, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list —
    and the list is where they belong, which is not the same question as which item names them:*
-   WT-01 (item 7); GI-08 (item 8); and **one owned by M2 without being ASSIGNED AS AN ITEM
-   DELIVERABLE** — GI-12. It was EIGHT until `feat/m2-types-semantics` closed five of them
+   WT-01 (item 7); and **one owned by M2 without being ASSIGNED AS AN ITEM DELIVERABLE** — GI-12.
+   It was THREE until GI-08 closed, and EIGHT until `feat/m2-types-semantics` closed five of them
    (N4-04, N4-10, N13-03, N14-02, N14-04), and THIRTEEN before item
    9, and the six that left it are the record of what an item deliverable is worth: N3-05, N3-09,
    N3-10, N3-12 and N3-14 became item 9's deliverables and are `satisfied`, and N3-13 left M2
@@ -827,10 +857,14 @@ enum-owned method is unreachable by its path form. Each row carries a
    rather than re-invented. *(The first version aggregated with `|| rc=1` inside the recipe.
    Measured: `REQ_MILESTONE=M2 python3 scripts/requirements.py` exited **1 (OWED)** while
    `make m2-exit` exited **2**, which in this repository's own vocabulary says NO_VERDICT. Not
-   lossy — wrong: a measurement reported as an abstention. `m1-exit` collapses the same way and is
-   deliberately NOT changed here; it is 0 today so the ambiguity is dormant, and giving a shipped
-   milestone's exit criterion a new contract is a decision about M1's ledger, not a side-effect of
-   building M2's.)*
+   lossy — wrong: a measurement reported as an abstention. `m1-exit` collapsed the same way, and
+   this parenthetical used to end "deliberately NOT changed here; it is 0 today so the ambiguity is
+   dormant, and giving a shipped milestone's exit criterion a new contract is a decision about M1's
+   ledger, not a side-effect of building M2's." GI-08 is that decision, taken on purpose rather
+   than as a side-effect: `scripts/m1-exit.sh` carries the same three values, the same lattice and
+   the same `<M>_EXIT_RESULT` last line, and the two targets now differ only in their owner and in
+   the one mapping M1 needs and M2 cannot reach — the tolerated zero-row abstention, which M2 does
+   not get because M2 owns rows.)*
    **What it does NOT yet do**: steps 3 and 4 of the specification below — resolve each evidence
    locator and *run* it, and reconcile the Rust debt inventory by `req:` id. Both are named in the
    output of every run, and a milestone whose rows are all `satisfied` therefore exits **2
@@ -951,7 +985,7 @@ enum-owned method is unreachable by its path form. Each row carries a
      one-element array. `A4.6` in the specification claimed `println!` and `assert!` were
      implemented; that claim was false when it was written and is corrected.
 
-**Exit**: `make m2-exit` (`Makefile:312-365`) — four inventories. **The condition is not "items
+**Exit**: `make m2-exit` (`Makefile:327-386`) — four inventories. **The condition is not "items
 1–9 land"**, and saying so was a category error this line carried for three rounds: the gate reads
 the MANIFEST, so it goes green when no row owned by M2 is `owed` or `blocked` — all 49 of them —
 and six of the eight still outstanding are named by no item at all. Even then it exits **2
@@ -1388,8 +1422,10 @@ self-test case pins that behaviour — it fails when N2-08 lands, forcing the tw
 
 `make m1-exit` exits 0 at `2ef170f`. **There** it was `CONFORMANCE_FORBID_OWNER=M1` over
 `tests/conformance-manifest.txt` and nothing else, and no row there is owned by M1. On the
-integrated tree it reads three inventories (`Makefile:294-295`) and exits **2**; that change
-arrived with `fix/d3b-tail-if` and is what the closing paragraph of this finding now records. The second owner inventory — the `(owned by M<n>)` tag every `#[ignore]` reason carries and
+integrated tree it read three inventories and exited **2**; that change arrived with
+`fix/d3b-tail-if` and is what the closing paragraph of this finding now records. It reads **four**
+today (`Makefile:324-325`, which now names `scripts/m1-exit.sh` rather than inlining the
+aggregation): GI-08 added the requirement manifest, and the reading is still 0. The second owner inventory — the `(owned by M<n>)` tag every `#[ignore]` reason carries and
 `scripts/test-xfail.py:186` parses — had three M1 rows, all red. All three are now closed:
 
 | Row | What was broken, and what closed it |

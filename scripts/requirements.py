@@ -389,6 +389,13 @@ def ledger_claims(rows):
          (disp["thesis"], scored)),
         ("evaluated rows, stated in the opening section",
          r"\(1 of (\d+) evaluated rows would pass\)", (scored,)),
+        # ADDED AFTER IT DRIFTED. This sentence is a count over this manifest and
+        # was not governed, so it went on saying 8 while the manifest held 3 and
+        # then 2 — the exact class the docstring above says the governed set is
+        # supposed to be the whole of. Found while closing GI-08; the number it
+        # states is `m2-exit`'s own OWED_TO_M2 line count, which is owed_by(M2).
+        ("M2's outstanding row count, stated in item 8",
+         r"It reports (\d+) rows `OWED_TO_M2`", (owed_by("M2"),)),
     ]
     # Per-milestone ownership, every milestone that states one. These were never
     # governed and three of them were already wrong.

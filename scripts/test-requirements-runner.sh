@@ -16,11 +16,26 @@
 #      not; a milestone with nothing owed must NOT come back green, because the
 #      steps that would resolve its evidence do not exist yet.
 #
-#   2. THE TARGET, BY ITS EFFECTS. `make m2-exit` must still READ all four
-#      inventories, and must publish a verdict the Make layer cannot destroy.
-#      Deleting one line of that recipe is invisible to every other gate in the
-#      repo — the deleted inventory simply stops being consulted and everything
-#      stays green.
+#   2. THE TARGETS, BY THEIR EFFECTS. `make m2-exit` AND `make m1-exit` must each
+#      READ all four inventories, and must publish a verdict the Make layer
+#      cannot destroy. Deleting one line of either recipe is invisible to every
+#      other gate in the repo — the deleted inventory simply stops being
+#      consulted and everything stays green.
+#
+#      `m1-exit` USED TO BE PINNED HERE THE OTHER WAY. Two assertions said it was
+#      "untouched and still filtered to M1" and that it "does NOT read inventory
+#      four, and that is deliberate", both by `make -n | grep` — which is the
+#      rung this file's own header calls a gate that cannot fail. GI-08 says
+#      EVERY milestone exit reads the requirement manifest, so those two
+#      assertions were pinning the defect. They are replaced by an effect run and
+#      by controls over the one mapping M1 needs: the requirement inventory owns
+#      no M1 row, so it abstains, and m1-exit tolerates THAT abstention and no
+#      other. A tolerance is a hole unless its edges are tested, so the edges are
+#      the tests: an unreadable manifest exits 2 as well and must NOT be
+#      tolerated; a measured debt must not be masked by the tolerated sentence
+#      appearing in the output; and the sentence itself must be PRINTED, because
+#      an abstention tolerated in silence is indistinguishable from an inventory
+#      that was never consulted.
 #
 #      THIS HALF USED TO BE `make -n | grep <command text>`, WHICH WAS THE `@true`
 #      RUNG THIS REPOSITORY HAS ALREADY CLIMBED ONCE. A recipe of
@@ -430,17 +445,152 @@ OUT=$M2OUT
 expect_out "inventory one of four" && expect_out "inventory two of four" \
   && expect_out "inventory three of four" && expect_out "inventory four of four" && ok
 
-# --- the shape assertions that remain, and what they are for ---------------
-start "target: m1-exit is untouched and still filtered to M1"
+# ---------------------------------------------------------------------------
+# GI-08's other half — `make m1-exit` reads inventory four too, and knows what
+# that inventory's abstention means.
+# ---------------------------------------------------------------------------
+start "target: make m1-exit runs the aggregator rather than inline per-inventory folding"
 dry m1-exit
-expect_rc 0 && expect_out "CONFORMANCE_FORBID_OWNER=M1" && ok
+expect_rc 0 && expect_out "scripts/m1-exit.sh" && ok
 
-# m1-exit deliberately does NOT get inventory four: the requirement manifest has
-# no M1 rows, so the gate would abstain and turn a legitimately green target RED
-# for a reason that says nothing about M1. Pinned so that "add it there too"
-# is a decision somebody makes on purpose.
-start "target: m1-exit does NOT read inventory four, and that is deliberate"
-reject_out "REQ_MILESTONE" && ok
+# THE MAPPING, BY ITS OWN CONTROLS. `scripts/requirements.py` has THREE exit-2
+# shapes and m1-exit tolerates exactly one of them. The script's --self-test
+# regenerates all three LIVE from that reader rather than pasting its sentences,
+# so a reworded diagnostic breaks this test instead of silently un-tolerating the
+# real run. Each control below is asserted by name; each was proved able to fail
+# by mutating the classifier (fail-open on every rc=2, key on text instead of exit
+# code, drop the milestone from the marker) — the three mutants trip three
+# different lines of this block.
+start "mapping: m1-exit's lattice and exit-2 classifier self-test passes"
+OUT=$(cd "$REPO" && bash scripts/m1-exit.sh --self-test 2>&1); RC=$?
+expect_rc 0 && expect_out "m1-exit self-test:" && ok
+
+start "mapping: the zero-row abstention for M1 is the shape that IS tolerated"
+expect_out "live zero-row abstention for M1 (rc=2) -> TOLERATED" && ok
+
+start "mapping: an unreadable manifest is exit 2 as well and is NOT tolerated"
+expect_out "live unreadable manifest (rc=2) -> NO_VERDICT" && ok
+
+start "mapping: all-satisfied-but-unresolved is exit 2 as well and is NOT tolerated"
+expect_out "live all-satisfied, evidence unresolved (rc=2) -> NO_VERDICT" && ok
+
+start "mapping: the tolerance cannot mask a MEASURED debt"
+expect_out "rc=1 carrying the tolerated sentence is still OWED -> OWED" && ok
+
+start "mapping: the tolerated sentence names M1, so M2's abstention is not M1's"
+expect_out "another milestone's abstention is NOT tolerated -> NO_VERDICT" && ok
+
+# THE PRODUCER HALF of the same control. Above proves m1-exit would not swallow
+# an OWED; this proves the reader would PRODUCE one if a row were owed to M1. The
+# real manifest has no M1 row — that absence is the whole reason the mapping
+# exists — so the row is planted, and the target's own run below is what shows
+# the unplanted reader is the one m1-exit consults.
+start "planted: a row owed to M1 turns inventory four RED and names it"
+M=$(plant m1owed 'X-01|M1|N5|a planted M1 requirement|fixture|tests/planted.pd|owed|1.0|-')
+run_case "$M" M1
+expect_rc 1 && expect_out "OWED_TO_M1 X-01" && expect_out "a planted M1 requirement" && ok
+
+# --- m1-exit BY ITS EFFECTS, on the same standard as m2-exit above ----------
+# The second heavy run of this file. It is here rather than replaced by
+# `make -n` because GI-08's claim is that EVERY milestone exit READS the
+# requirement manifest, and a `make -n` grep cannot distinguish a recipe that
+# reads it from a recipe that prints the words. Same marker/filesystem method as
+# the m2 block: two of the four inventories WRITE while they work.
+M1MARKER=$TMPROOT/before-m1-exit
+touch "$M1MARKER"
+sleep 1                          # 1s filesystem timestamp granularity
+
+echo "  .. running \`make m1-exit\` for real (the second expensive part) .."
+M1OUT=$(cd "$REPO" && make m1-exit 2>"$TMPROOT/m1.err"); M1RC=$?
+m1_fs_conformance=$(find "$REPO/build_output" -newer "$M1MARKER" -name 'cf_*' 2>/dev/null | wc -l | tr -d ' ')
+m1_fs_cargo=$(find "$REPO/target/build" -newer "$M1MARKER" -type f 2>/dev/null | wc -l | tr -d ' ')
+m1_fs_xfail=$(find "$XFAIL_RECEIPT" -newer "$M1MARKER" 2>/dev/null | wc -l | tr -d ' ')
+M1ERR=$(cat "$TMPROOT/m1.err")
+M1FILE=$TMPROOT/m1out.txt
+printf '%s\n' "$M1OUT" | sed 's/\x1b\[[0-9;]*m//g' > "$M1FILE"
+M1LAST=$(printf '%s\n' "$M1OUT" | tail -1)
+
+# M1 owns no requirement row, and that absence is recomputed here rather than
+# assumed: it is the premise of the whole tolerance, so if a row is ever tagged
+# M1 this file must stop agreeing with the mapping instead of silently tolerating
+# a real debt.
+want_m1=$(awk -F'\t' 'NF==9 && $2=="M1"' "$REQ_TSV" | wc -l | tr -d ' ')
+
+start "premise: the requirement manifest still owns NO row for M1"
+OUT="rows with milestone M1: $want_m1"
+if [ "$want_m1" -eq 0 ]; then ok
+else bad "M1 now owns $want_m1 row(s) — the tolerated abstention no longer applies"; fi
+
+start "verdict: make m1-exit publishes a machine-readable verdict on its LAST stdout line"
+case "$M1LAST" in M1_EXIT_RESULT\ *) ok ;; *) OUT=$M1OUT; bad "last stdout line was '$M1LAST'" ;; esac
+
+start "verdict: it is CLEAR (0) — M1 is finished and reading a fourth inventory did not change that"
+case "$M1LAST" in "M1_EXIT_RESULT 0 CLEAR") ok ;; *) OUT=$M1OUT; bad "verdict line was '$M1LAST'" ;; esac
+
+start "verdict: the line is on STDOUT, never on stderr"
+case "$M1ERR" in *M1_EXIT_RESULT*) OUT=$M1ERR; bad "the verdict line leaked to stderr" ;; *) ok ;; esac
+
+start "verdict: make m1-exit itself exits 0"
+OUT="make m1-exit exited $M1RC"
+if [ "$M1RC" -eq 0 ]; then ok; else bad "expected 0, got $M1RC"; fi
+
+start "effect: m1-exit's inventory one RAN — it COMPILED fixtures, which an echo cannot do"
+OUT="build_output/cf_* artefacts written during the run: $m1_fs_conformance"
+if [ "$m1_fs_conformance" -ge 40 ]; then ok
+else bad "the conformance runner writes ~55 cf_* artefacts; $m1_fs_conformance appeared"; fi
+
+start "effect: m1-exit's inventory one is the conformance manifest's own class counts"
+OUT=$M1OUT
+expect_out "inventory one of four" \
+  && expect_out "verified=$want_run untranscribed=0 vacuous=$want_vacuous xfail=$want_cxfail reject=$want_reject skip=$want_skip failures=0" \
+  && ok
+
+start "effect: m1-exit's inventory two RAN — it left a run receipt this run"
+OUT="receipt newer than the m1 marker: $m1_fs_xfail ($XFAIL_RECEIPT)"
+if [ "$m1_fs_xfail" -eq 1 ]; then ok
+else bad "no run receipt was written during the m1-exit run"; fi
+
+start "effect: m1-exit's inventory two RAN — its debt counts are the debt manifest's own"
+if grep -qF "debt inventory (tests/rust-debt-manifest.txt): owed=$want_debt_owed paid=$want_debt_paid" "$M1FILE"; then ok
+else bad "no line reporting owed=$want_debt_owed paid=$want_debt_paid"; fi
+
+start "effect: m1-exit's inventory three RAN — the suite COMPILED its own fixtures"
+OUT="target/build files written during the run: $m1_fs_cargo"
+if [ "$m1_fs_cargo" -ge 5 ]; then ok
+else bad "the Rust suite compiles fixtures into target/build; $m1_fs_cargo were written"; fi
+
+start "effect: m1-exit's inventory three RAN — and it is the whole suite, not one binary"
+m1_pass=$(sed -n 's/^test result: ok\. \([0-9]*\) passed.*/\1/p' "$M1FILE" | awk '{s+=$1} END {print s+0}')
+m1_bins=$(grep -c "^test result: " "$M1FILE")
+OUT="$m1_pass passes over $m1_bins binaries"
+if [ "$m1_pass" -ge 500 ] && [ "$m1_bins" -ge 20 ]; then ok
+else bad "expected 500+ passes over 20+ binaries, got $m1_pass over $m1_bins"; fi
+
+# --- THE ROW THIS UNIT EXISTS FOR ------------------------------------------
+start "GI-08: m1-exit RAN inventory four — its row count equals this file's own count of the manifest"
+if grep -qF "requirement inventory (docs/contributing/1.0-requirements.tsv): $want_rows row(s)" "$M1FILE"; then ok
+else bad "no line reporting $want_rows rows — inventory four did not run, or is not reading the manifest"; fi
+
+start "GI-08: it ran the reader with REQ_MILESTONE=M1, not some other owner"
+if grep -qF "REQ_MILESTONE=M1 -> 0 of $want_m1 row(s)" "$M1FILE"; then ok
+else bad "no line reporting the M1 filter over $want_m1 owned row(s)"; fi
+
+start "GI-08: all four inventories ran under m1-exit"
+OUT=$M1OUT
+expect_out "inventory one of four" && expect_out "inventory two of four" \
+  && expect_out "inventory three of four" && expect_out "inventory four of four" && ok
+
+# THE TOLERANCE IS ONLY DEFENSIBLE WHILE ITS SENTENCE IS IN THE TRANSCRIPT. An
+# abstention that is tolerated in silence is indistinguishable from an inventory
+# that was never consulted, which is the defect GI-08 closes. So the reader's own
+# sentence and the target's statement of what it did with it are both required.
+start "GI-08: inventory four's abstention sentence is PRINTED, not swallowed"
+if grep -qE "^NO_VERDICT: no row of .* is owned by M1\." "$M1FILE"; then ok
+else bad "the tolerated abstention was not quoted in the transcript"; fi
+
+start "GI-08: and the target SAYS it tolerated it, rather than passing over it"
+OUT=$M1OUT
+expect_out "inventory four ABSTAINED, and this exit tolerates that abstention" && ok
 
 start "target: the self-test itself is on the certifying path (make gates)"
 dry gates
