@@ -171,6 +171,10 @@ CMD_BUILD_ARTIFACT_ROOTS = {"target", "build_output"}   # compared case-folded
 CMD_OPERATORS = {";", "&", "&&", "||", "<", ">", ">>", "<<", "(", ")"}
 
 CONF_CLASSES = ("run", "untranscribed", "vacuous", "xfail", "reject", "skip")
+# The manifest's column count, named because conformance_counts() recounts the file and a
+# row of the wrong width is not a fixture declaration. scripts/conformance.sh owns the
+# refusal; this reader only declines to count what it cannot read.
+MANIFEST_COLUMNS = 6
 # The verdict vocabulary is the MANIFEST's class vocabulary, and the row is looked up
 # there. It used to be PASS|COMPILE_FAIL|LINK_FAIL|RUN_FAIL|SKIP_NO_MAIN, checked against
 # nothing but the fixture's existence — so six rows read `PASS (placeholder: only prints
@@ -1311,6 +1315,119 @@ def load_manifest():
     return rows
 
 
+# --- the conformance-summary governor -------------------------------------------------
+#
+# WHY THIS EXISTS. `make conformance` prints a summary — verified/vacuous/xfail/reject/
+# skip over N fixtures — and three PROSE sites quote it. Nothing checked them. Adding two
+# fixtures therefore meant hand-editing three sentences, and three consecutive review
+# rounds did exactly that; one of them invalidated a sentence written in the same round,
+# because the fixture count moved again before the round ended. That is the class
+# `report_ledger` in scripts/requirements.py already closes for MILESTONES' counts over
+# the requirement manifest, and this is the same mechanism over the conformance manifest.
+#
+# THE TRUTH IS RECOUNTED FROM THE MANIFEST, NOT READ OFF A GATE RUN. A governor that
+# needed `make conformance` to have run could not run on a fresh checkout, and would be
+# checking the prose against a receipt rather than against the inventory the receipt is
+# itself derived from. `tests/conformance-manifest.txt` is a CLOSED inventory: every
+# fixture has a row and a declared class, so every number in that summary except two is a
+# property of the file.
+#
+# THE TWO EXCEPTIONS ARE RESULTS, and are handled by stating the invariant rather than by
+# pretending the manifest knows them. `failures` and `untranscribed` are outcomes of
+# running the corpus; on a green tree both are 0, and `verified` is then exactly the
+# number of `run` rows. So this governor holds the prose to `failures=0`,
+# `untranscribed=0` and `verified == run rows` — which is not an assumption about the
+# tree, it is the same statement as "conformance is green", and a tree where it is false
+# fails `make conformance` before it reaches here.
+#
+# WHAT THIS DOES **NOT** GOVERN, so that nothing is checked twice. The three
+# `gate: make conformance -> ...` strings in docs/reference/features/feature-index.toml
+# carry key=value tokens and are validated by scripts/gate-receipts.sh against the real
+# run — measured: planting `reject=999` there fails that gate with
+# "the run printed reject=109". Governing them here as well would mean two gates to
+# update per change, which is worse than one. The split is therefore:
+#     feature-index.toml `gate:` strings  ->  make gate-receipts (against a real run)
+#     the three prose sites below         ->  here (against the manifest)
+
+
+def conformance_counts():
+    """Recount tests/conformance-manifest.txt -> {class: n, "total": n}, or None.
+
+    Its own arithmetic rather than `load_manifest`'s, on purpose: that helper returns a
+    dict keyed by path, so two rows naming one fixture would count once. A governor that
+    silently absorbs a duplicate is not counting the file.
+    """
+    if not MANIFEST.exists():
+        return None
+    counts = {c: 0 for c in CONF_CLASSES}
+    total = 0
+    for line in MANIFEST.read_text(encoding="utf-8").split("\n"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) != MANIFEST_COLUMNS:
+            continue
+        total += 1
+        cls = cols[1].strip()
+        if cls in counts:
+            counts[cls] += 1
+    counts["total"] = total
+    return counts
+
+
+def conformance_claims(c):
+    """-> [(label, path, regex, expected-tuple)] — every prose site quoting the summary.
+
+    Each regex must match EXACTLY ONCE. A regex that stops matching is a FAILURE and never
+    a skip, for `ledger_claims`' reason: the sentence being rewritten is precisely when the
+    number inside it stops being checked.
+    """
+    full = (c["run"], 0, c["vacuous"], c["xfail"], c["reject"], c["skip"], 0, c["total"])
+    return [
+        ("MILESTONES.md — the Conformance row of the status table",
+         "docs/contributing/MILESTONES.md",
+         r"`verified=(\d+) untranscribed=(\d+) vacuous=(\d+) xfail=(\d+) reject=(\d+) "
+         r"skip=(\d+) failures=(\d+)` over (\d+)",
+         full),
+        ("MILESTONES.md — the reject-over-fixtures sentence",
+         "docs/contributing/MILESTONES.md",
+         r"(\d+) of them: `reject=(\d+)` over (\d+) fixtures",
+         (c["reject"], c["reject"], c["total"])),
+        ("language-spec.md — the conformance status paragraph",
+         "docs/specification/language-spec.md",
+         r"\*\*verified (\d+) · untranscribed (\d+) · vacuous (\d+) · xfail (\d+) · "
+         r"reject (\d+) · skip (\d+) · failures (\d+)\*\*, over\n?\s*(\d+)",
+         full),
+    ]
+
+
+def check_conformance_counts():
+    """-> (problems, checked, counts). Names the SITE and prints have-vs-want."""
+    c = conformance_counts()
+    if c is None:
+        return ([f"cannot read {MANIFEST} — the conformance counts quoted in prose "
+                 f"cannot be checked, and an unchecked count is how `over 194 fixtures` "
+                 f"survived three corpus changes"], 0, None)
+    problems, checked = [], 0
+    for label, path, pattern, want in conformance_claims(c):
+        text = (ROOT / path).read_text(encoding="utf-8")
+        found = re.findall(pattern, text)
+        if len(found) != 1:
+            problems.append(
+                f"{label}: the sentence this is checked in matched {len(found)} times, "
+                f"not once (/{pattern}/). A rewritten sentence is when the number inside "
+                f"it stops being checked, so this is a failure and not a skip.")
+            continue
+        got = tuple(int(g) for g in found[0])
+        checked += 1
+        if got != want:
+            problems.append(
+                f"{label}: {path} states {got}, the manifest has {want} "
+                f"(recounted from {MANIFEST.name})")
+    return (problems, checked, c)
+
+
+
 # --- feature-index parsing: one parser, from the standard library ---------------------
 
 def load_rows():
@@ -2265,6 +2382,8 @@ def main() -> int:
                     f"citations agree with the pin they were rewritten to.")
 
     problems, nrows, how, counts = check_index(receipts)
+    conf_problems, conf_checked, conf_counts = check_conformance_counts()
+    fail.extend(conf_problems)
     fail.extend(problems)
 
     print("=" * 62)
@@ -2288,6 +2407,20 @@ def main() -> int:
                  f"{counts['gate']}, NONE validated -- run `make gate-receipts`")
     print(f"evidence items: cmd={counts['cmd']} (all EXECUTED, none skipped) "
           f"src={counts['src']} conformance={counts['conformance']} gate={gate_note}")
+    # The denominator IS the finding here too: for as long as this said nothing, three
+    # prose sites quoting the conformance summary were checked by nobody, and each corpus
+    # change meant editing them by hand. `feature-index.toml`'s `gate:` strings are NOT
+    # counted here -- they are gate-receipts', validated against a real run.
+    if conf_counts is None:
+        conf_note = "the manifest could not be read"
+    else:
+        conf_note = (f"{conf_checked}/{len(conformance_claims(conf_counts))} prose site(s) "
+                     f"agree with {MANIFEST.name} recounted "
+                     f"(total={conf_counts['total']} run={conf_counts['run']} "
+                     f"reject={conf_counts['reject']} vacuous={conf_counts['vacuous']} "
+                     f"xfail={conf_counts['xfail']} skip={conf_counts['skip']}); "
+                     f"the feature index's `gate:` strings are `make gate-receipts`'")
+    print(f"conformance-count claims: {conf_note}")
     print("=" * 62)
     report_relocations(relocated)
     if fail:

@@ -383,7 +383,10 @@ match_arm      = pattern [ "if" expression ] "=>" ( block | expression ) [ ',' ]
 #     "Pattern structure doesn't match variant M::Pair". The explicit spelling
 #     `M::Pair { x: a, y: b }` is refused identically, which is the point:
 #     shorthand adds no reach.
-#     Pinned by tests/reject/field_shorthand_needs_a_struct_variant.pd.
+#     Pinned by tests/reject/field_shorthand_needs_a_struct_variant.pd, and the
+#     parity half — the same refusal for the explicit spelling, which is a claim
+#     about a SECOND rejection and so needs a fixture of its own — by
+#     tests/reject/tuple_variant_braces_explicit.pd.
 #
 # THE FIELD SEQUENCE IS OPTIONAL AND MAY END IN A COMMA, spelled with the same
 # brackets `struct_decl` (line 157) and `struct_literal` (line 310) use for the

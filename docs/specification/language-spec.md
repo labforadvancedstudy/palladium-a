@@ -1278,7 +1278,9 @@ passes.** A bare `{ x }` is the PARSER's: a `{` may begin pattern content only i
 variant written with braces is the TYPE CHECKER's: the parser ACCEPTS `M::Pair { x, y }`, because
 at that point it does not know what the path names, and the refusal is `Pattern structure doesn't
 match variant M::Pair` (`tests/reject/field_shorthand_needs_a_struct_variant.pd`). The explicit
-spelling `M::Pair { x: a, y: b }` is refused identically — shorthand adds no reach.
+spelling `M::Pair { x: a, y: b }` is refused identically — shorthand adds no reach — which is a
+claim about a SECOND rejection and therefore carries its own fixture,
+`tests/reject/tuple_variant_braces_explicit.pd`.
 
 **The field list is a checked SUBSET, not the whole set**, which predates the shorthand and is
 identical for the explicit form. Three claims, each citing what can actually witness it — a `run`
