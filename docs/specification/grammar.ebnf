@@ -215,7 +215,7 @@ generic        = identifier '<' type { ',' type } '>' ;
 # accepted them, [N4](language-spec.md#n4-types) listed them, and Part B below
 # listed them as normative-but-unparsed. Three places said one thing and the
 # parser said another.
-# Still absent: char, str, u8, usize. No function types, slices, `dyn` or `impl`
+# Still absent: str, u8, usize. No function types, slices, `dyn` or `impl`
 # trait. Tuples parse but lower to void* and cannot be constructed.
 # Option and Result are NOT built in; they are ordinary user enums.
 
@@ -474,8 +474,10 @@ effect_decl     = "effect" identifier "{" field { "," field } "}" ;
 # built-ins over it.
 slice_type      = "[" type "]" ;
 fn_type         = "fn" "(" [ type { "," type } ] ")" [ "->" type ] ;
-# Primitives absent from the implemented table: char str u8 usize
-# (f32 and f64 are implemented; see N2-03/N4-02.)
+# Primitives absent from the implemented table: str u8 usize
+# (f32 and f64 are implemented, see N2-03/N4-02; `char` was in this list until
+# N4-04 made it a distinct type and N14-04 retyped the five character built-ins
+# over it, and it is now a type name the parser recognises.)
 
 # ---- Generics and traits (spec N10) ------------------------------------------
 # Part A accepts only bare names inside <...>, and reclassifies an all-uppercase

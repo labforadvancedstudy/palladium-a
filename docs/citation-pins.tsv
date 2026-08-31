@@ -48,7 +48,7 @@ grammar.ebnf	181-181	tests/advanced_features_test.rs	ee25302436e0	macro_def = "m
 grammar.ebnf	191-191	docs/contributing/MILESTONES.md	16519002b7db	generic_params = '<' generic_param { ',' generic_param } '>' ;
 grammar.ebnf	192-192	docs/reference/features/core-language/implicit-lifetimes.md	862cabb5d5a1	generic_param = "'" identifier (* lifetime *)
 grammar.ebnf	208-208	docs/reference/features/core-language/implicit-lifetimes.md	27eae3e7e3c5	reference = '&' [ "'" identifier ] [ "mut" ] type ;
-grammar.ebnf	218-218	tests/advanced_e2e_test.rs	fd20a60a96e2	# Still absent: char, str, u8, usize. No function types, slices, `dyn` or `impl`
+grammar.ebnf	218-218	tests/advanced_e2e_test.rs	ffb46d3c94de	# Still absent: str, u8, usize. No function types, slices, `dyn` or `impl`
 grammar.ebnf	231-231	tests/advanced_e2e_test.rs	083b523f5192	# `let` patterns do not exist.
 grammar.ebnf	294-294	tests/advanced_features_test.rs	29f8979a04b0	cast = unary { "as" type } ; (* N5-15 *)
 grammar.ebnf	297-300	tests/advanced_e2e_test.rs	cf5233f435fd	postfix = primary { '[' expression ']' | '(' [ arguments ] ')' | '.' identifier | "::" identifier [ '(' [ arguments ] ')'

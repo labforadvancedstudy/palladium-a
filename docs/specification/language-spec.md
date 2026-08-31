@@ -581,7 +581,7 @@ unusable with every builtin that consumes a character, and builtins over `char` 
 feed them would have been unreachable.
 
 `char` crosses only to `i64`, and only through `as`. `'a' as bool` and `3.7 as char` are refused
-by name — `tests/reject/char_does_not_cast_to_bool.pd`, `tests/reject/bool_does_not_cast_to_char.pd` and `tests/reject/float_does_not_cast_to_char.pd`, one per direction because the defect they correct was symmetric: the code point is the one
+by name — four forbidden cells with a fixture each, one per DIRECTION because the defect they correct was symmetric: `tests/reject/char_does_not_cast_to_bool.pd`, `tests/reject/bool_does_not_cast_to_char.pd`, `tests/reject/float_does_not_cast_to_char.pd` and `tests/reject/char_does_not_cast_to_float.pd`. The code point is the one
 correspondence a character is defined by, and neither "is a letter truthy" nor "which character is
 three-tenths past `\u{3}`" is a question this specification answers. `97 as char` is CHECKED
 rather than trusted — a value outside 0..=0x10FFFF, or inside the UTF-16 surrogate range
@@ -1666,7 +1666,7 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-types-semantics`
 (2026-08-31):
 
-**verified 82 · untranscribed 0 · vacuous 6 · xfail 1 · reject 102 · skip 2 · failures 0**, over 193
+**verified 82 · untranscribed 0 · vacuous 6 · xfail 1 · reject 103 · skip 2 · failures 0**, over 194
 fixtures. (The round-3 review of `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined

@@ -1,0 +1,26 @@
+// NEGATIVE TEST -- `char as f64` is refused (N4-04), and it is the FOURTH and
+// last forbidden direction.
+//
+// The matrix has four forbidden cells and now four fixtures, one each:
+//   char -> bool    tests/reject/char_does_not_cast_to_bool.pd
+//   bool -> char    tests/reject/bool_does_not_cast_to_char.pd
+//   float -> char   tests/reject/float_does_not_cast_to_char.pd
+//   char -> f64     this file
+//
+// One per direction, because the defect they correct was SYMMETRIC: the check
+// was `castable(from) && castable(to)`, a predicate over each side, so it could
+// not tell a pair apart from its reverse and a half-repair would have stayed
+// green under any single fixture. Until this file existed the claim that "the
+// whole matrix" was pinned was false by one cell -- the three siblings covered
+// three directions and a comment claimed four.
+//
+// MEASURED before the restriction: `'a' as f64` compiled and produced 97.0.
+// The number is not wrong, which is the problem: it is the code point wearing a
+// mantissa, and nothing about a character makes it a measurement. `'a' as i64`
+// is how you ask for the code point, and `as f64` from there is a numeric
+// conversion that says what it is doing.
+fn main() {
+    let c: char = 'a';
+    let x: f64 = c as f64;
+    print_int(x as i64);
+}

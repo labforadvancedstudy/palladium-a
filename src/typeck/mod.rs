@@ -6341,7 +6341,14 @@ mod tests {
         TypeChecker::new().check(&ast)
     }
 
-    // N14-02. ALL TEN POSITIONS THAT CAN TAKE A NAME, and the before-transcript
+    // N14-02. ALL ELEVEN POSITIONS THAT CAN TAKE A NAME, and the count is
+    // MEASURED rather than remembered: it is the number of distinct `what`
+    // slots handed to `refuse_builtin_definition` and `refuse_builtin_shadow`
+    // — six definitions (`const` and `static` share one call site but are two
+    // nouns, plus fn, type alias, struct, enum) and five binders (parameter,
+    // local, loop variable, `@` binding, pattern binding). It read TEN for two
+    // rounds because this table was missing `static`, which is exactly the
+    // failure the table exists to catch. The before-transcript
     // for each is in the fixture headers under tests/reject/shadow_builtin*.pd.
     // All eight of these compiled and ran with exit 0 before the check existed;
     // three of them ran the WRONG THING silently (the function definition was
@@ -6356,7 +6363,7 @@ mod tests {
     // the row the obvious repair.
     #[test]
     fn a_builtin_name_is_refused_at_every_binding_position() {
-        let cases: [(&str, &str, &str); 10] = [
+        let cases: [(&str, &str, &str); 11] = [
             (
                 "function",
                 "fn print_int(x: i64) -> i64 { return x; }\nfn main() { print_int(7); }",
@@ -6381,6 +6388,11 @@ mod tests {
                 "const",
                 "const print_int: i64 = 3;\nfn main() { print(\"ok\"); }",
                 "a top-level `const` is declared under that name",
+            ),
+            (
+                "static",
+                "static print_int: i64 = 3;\nfn main() { print(\"ok\"); }",
+                "a top-level `static` is declared under that name",
             ),
             (
                 "parameter",

@@ -7,13 +7,14 @@
 // C's `int` is what a Palladium `bool` already is, but nothing makes the first
 // control character the character form of "true".
 //
-// The three siblings cover the other directions: char->bool
-// (char_does_not_cast_to_bool.pd), float->char
-// (float_does_not_cast_to_char.pd), and the legal char<->i64 pair round-trips
-// in tests/02_types_chars.pd. Between them the whole matrix is stated rather
-// than assumed, which the ORIGINAL defect needed: the check was a predicate
-// over each side and therefore symmetric, so one fixture could never have
-// caught a half-repair.
+// The three siblings cover the other forbidden directions: char->bool
+// (char_does_not_cast_to_bool.pd), float->char (float_does_not_cast_to_char.pd)
+// and char->f64 (char_does_not_cast_to_float.pd); the legal char<->i64 pair
+// round-trips in tests/02_types_chars.pd. FOUR forbidden cells, four fixtures,
+// one per direction -- which the ORIGINAL defect needed: the check was a
+// predicate over each side and therefore symmetric, so one fixture could never
+// have caught a half-repair. That claim was itself wrong by a cell until
+// char_does_not_cast_to_float.pd was written.
 fn main() {
     let c: char = true as char;
     print_int(c as i64);
