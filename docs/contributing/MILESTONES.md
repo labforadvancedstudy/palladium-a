@@ -1583,9 +1583,10 @@ Five rules this file is held to:
    becomes `run` with a transcript, in the same commit.
 
 Every `file:line` here is fingerprinted by `make check-doc-evidence`, and so are the CONFORMANCE
-COUNTS this file quotes. `check_conformance_counts` (`scripts/check_doc_evidence.py:1404-1427`)
-recounts `tests/conformance-manifest.txt` — a closed inventory, so every class count is a property
-of the file — and holds the Conformance row of the status table and the reject-over-fixtures
+COUNTS this file quotes. `check_conformance_counts` (`scripts/check_doc_evidence.py:1450-1488`)
+recounts `tests/conformance-manifest.txt` FAIL-CLOSED — a wrong-width row, a duplicate path or an
+unrecognised class is a named problem and never a silent skip, because a governor that may run on a
+tree where `make conformance` never has cannot delegate the validity of its own input — and holds the Conformance row of the status table and the reject-over-fixtures
 sentence to it, naming the site and printing have-vs-want on drift. It was added because three
 consecutive review rounds hand-re-derived those two sentences plus the one in `language-spec.md`
 after the corpus moved, and one of those rounds invalidated a sentence written inside it. The

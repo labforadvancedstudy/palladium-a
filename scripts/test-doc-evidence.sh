@@ -1746,6 +1746,62 @@ expect_class substantive "return b.v;"  "a real statement is substantive"
 expect_class substantive "42"           "a bare number is substantive: a claim can be about a value"
 expect_class substantive "안녕"          "a non-ASCII prose line is substantive: the word-character test is Unicode-aware"
 
+# == the conformance-count governor's negative controls =======================
+#
+# The governor holds three PROSE sites to a recount of tests/conformance-manifest.txt.
+# Its failure modes were established once, by hand, in a review report — and a failure
+# mode nobody re-runs stops existing the moment someone edits the recount. So they are
+# planted hermetically (each control builds its own manifest and its own two documents in
+# a temp tree, reading nothing from this repository) and asserted here.
+#
+# RED-then-green measured against two mutants of the recount, both of which this suite
+# catches: restoring the three silent skips fails 4 of the 9 controls with "expected RED,
+# got GREEN"; hardcoding `untranscribed` back to 0 in the expected tuple fails 1 with
+# "expected GREEN, got RED".
+echo
+echo "== the conformance-count governor goes red on a drifted count and a broken inventory =="
+COUNTS_OUT=$(python3 scripts/check_doc_evidence.py --self-test-counts 2>&1); COUNTS_RC=$?
+counts_case() {
+  if printf '%s\n' "$COUNTS_OUT" | grep -qF -- "$1"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$2"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$2"
+    printf '         (the controls did not report: %s)\n' "$1"
+    printf '%s\n' "$COUNTS_OUT" | sed 's/^/         | /' | head -14
+    fail=$((fail+1))
+  fi
+}
+
+if [ "$COUNTS_RC" -ne 0 ]; then
+  printf '  %sFAIL%s the conformance-count controls did not pass (exit %s)\n' \
+    "$RED" "$NC" "$COUNTS_RC"
+  printf '%s\n' "$COUNTS_OUT" | sed 's/^/         | /' | head -20
+  fail=$((fail+1))
+else
+  pass=$((pass+1))
+  printf '  %sok%s   the conformance-count controls pass as a suite\n' "$GREEN" "$NC"
+fi
+
+# The fatal green control first: nothing below means anything if a truthful tree is red.
+counts_case "a well-formed inventory whose prose states the truth is GREEN -> green" \
+  "a truthful, well-formed tree is GREEN (the fatal green control)"
+counts_case "an \`untranscribed\` row does NOT false-RED a truthful tree -> green" \
+  "an \`untranscribed\` row does not false-RED: it is a manifest CLASS, not a hardcoded 0"
+counts_case "a wrong-width row is NAMED, not skipped -> red" \
+  "a wrong-width manifest row is NAMED with its line, not silently skipped"
+counts_case "a duplicate path is NAMED, with the line it first appeared on -> red" \
+  "a duplicate fixture path is NAMED, with the line it first appeared on"
+counts_case "an unrecognised class is NAMED, not dropped from the tally -> red" \
+  "an unrecognised class is NAMED, not dropped out of the tally"
+counts_case "an unaccounted inventory suppresses the comparison, and says so -> red" \
+  "an unaccounted inventory suppresses the count comparison, and says so"
+counts_case "a stale count is RED and NAMES THE SITE, with have-vs-want -> red" \
+  "a stale count is red, names the SITE, and prints have-vs-want"
+counts_case "a stale count names EVERY site that states it, not just the first -> red" \
+  "a stale count names EVERY site that states it, not just the first"
+counts_case "a REWRITTEN sentence is a failure and never a skip -> red" \
+  "a REWRITTEN sentence is a failure and never a skip"
+
 echo
 echo "=============================================="
 if [ "$fail" -eq 0 ]; then

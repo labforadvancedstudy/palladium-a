@@ -1350,29 +1350,65 @@ def load_manifest():
 #     the three prose sites below         ->  here (against the manifest)
 
 
-def conformance_counts():
-    """Recount tests/conformance-manifest.txt -> {class: n, "total": n}, or None.
+def conformance_counts(manifest=None):
+    """Recount the conformance manifest -> (counts, problems).
 
-    Its own arithmetic rather than `load_manifest`'s, on purpose: that helper returns a
-    dict keyed by path, so two rows naming one fixture would count once. A governor that
-    silently absorbs a duplicate is not counting the file.
+    `counts` is {class: n} plus "total"; `problems` names every row this reader could not
+    account for. THE RECOUNT IS FAIL-CLOSED, and that is a correction: the first version
+    did `if len(cols) != MANIFEST_COLUMNS: continue`, dropped unknown classes out of the
+    class tally, and never looked for duplicate paths — three silent skips, each of which
+    would have made the totals it publishes quietly wrong.
+
+    WHY THIS DUPLICATES scripts/conformance.sh, DECLARED RATHER THAN ACCIDENTAL.
+    `conformance.sh` already refuses all three shapes fail-closed — a wrong-width row at
+    its `merr` for "expected 6 tab-separated non-empty columns", a repeat at "duplicate
+    entry for '<path>'", and an unknown class through its own case analysis. It owns the
+    RUN: nothing executes the corpus without going through it. This reader owns a
+    different question — "do the counts quoted in prose match the inventory" — and it must
+    answer on a tree where conformance has never been run, which is the whole reason its
+    truth source is the manifest and not a gate receipt. A checker that is allowed to run
+    standalone cannot delegate the validity of its own input to a gate that may not have
+    run. So both check, on purpose; if they ever disagree about what a valid row is, that
+    disagreement is itself the finding.
+
+    Its own arithmetic rather than `load_manifest`'s, for the same reason: that helper
+    returns a dict keyed by path, so two rows naming one fixture would count once. A
+    governor that silently absorbs a duplicate is not counting the file.
     """
-    if not MANIFEST.exists():
-        return None
+    path = MANIFEST if manifest is None else Path(manifest)
+    if not path.exists():
+        return None, [f"cannot read {path} — the conformance counts quoted in prose "
+                      f"cannot be checked, and an unchecked count is how `over 194 "
+                      f"fixtures` survived three corpus changes"]
     counts = {c: 0 for c in CONF_CLASSES}
-    total = 0
-    for line in MANIFEST.read_text(encoding="utf-8").split("\n"):
+    problems, seen, total = [], {}, 0
+    name = path.name
+    for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         cols = line.split("\t")
         if len(cols) != MANIFEST_COLUMNS:
+            problems.append(
+                f"{name}:{n}: expected {MANIFEST_COLUMNS} tab-separated columns, got "
+                f"{len(cols)}: {line[:60]}")
             continue
         total += 1
-        cls = cols[1].strip()
-        if cls in counts:
-            counts[cls] += 1
+        fixture, cls = cols[0].strip(), cols[1].strip()
+        if fixture in seen:
+            problems.append(
+                f"{name}:{n}: duplicate entry for {fixture!r} (first declared at line "
+                f"{seen[fixture]})")
+        else:
+            seen[fixture] = n
+        if cls not in counts:
+            problems.append(
+                f"{name}:{n}: class {cls!r} is not one of "
+                f"{' | '.join(CONF_CLASSES)} — an unrecognised class would drop out of "
+                f"every count this file publishes")
+            continue
+        counts[cls] += 1
     counts["total"] = total
-    return counts
+    return counts, problems
 
 
 def conformance_claims(c):
@@ -1381,8 +1417,18 @@ def conformance_claims(c):
     Each regex must match EXACTLY ONCE. A regex that stops matching is a FAILURE and never
     a skip, for `ledger_claims`' reason: the sentence being rewritten is precisely when the
     number inside it stops being checked.
+
+    THE ASYMMETRY IN THE TUPLE IS DELIBERATE. `untranscribed` is a MANIFEST CLASS
+    (scripts/conformance.sh's format comment lists it beside run/vacuous/xfail/reject/skip),
+    so it is recounted like the others; hardcoding it to 0 — which the first version did —
+    would have false-REDded a legitimate tree the moment one row was declared
+    `untranscribed`. `failures` is NOT a class: it is a run result the manifest cannot
+    know, so it stays a literal 0. Holding the prose to `failures=0` is not an assumption
+    about the tree, it is the same statement as "conformance is green", and a tree where
+    it is false fails `make conformance` before it reaches this gate.
     """
-    full = (c["run"], 0, c["vacuous"], c["xfail"], c["reject"], c["skip"], 0, c["total"])
+    full = (c["run"], c["untranscribed"], c["vacuous"], c["xfail"], c["reject"], c["skip"],
+            0, c["total"])
     return [
         ("MILESTONES.md — the Conformance row of the status table",
          "docs/contributing/MILESTONES.md",
@@ -1401,16 +1447,31 @@ def conformance_claims(c):
     ]
 
 
-def check_conformance_counts():
-    """-> (problems, checked, counts). Names the SITE and prints have-vs-want."""
-    c = conformance_counts()
+def check_conformance_counts(manifest=None, root=None):
+    """-> (problems, checked, counts). Names the SITE and prints have-vs-want.
+
+    `manifest`/`root` exist for the negative controls in --self-test-counts, which plant a
+    malformed inventory and a drifted document. They are ARGUMENTS and never environment
+    variables, for scripts/requirements.py's reason: an exported variable could redirect
+    the real gate at a file of the caller's choosing and no assertion about the Makefile
+    would see it.
+    """
+    base = ROOT if root is None else Path(root)
+    c, problems = conformance_counts(manifest)
     if c is None:
-        return ([f"cannot read {MANIFEST} — the conformance counts quoted in prose "
-                 f"cannot be checked, and an unchecked count is how `over 194 fixtures` "
-                 f"survived three corpus changes"], 0, None)
-    problems, checked = [], 0
-    for label, path, pattern, want in conformance_claims(c):
-        text = (ROOT / path).read_text(encoding="utf-8")
+        return (problems, 0, None)
+    if problems:
+        # The counts over a file this reader could not fully account for are not evidence
+        # of anything, so the comparison is not attempted and says so rather than
+        # reporting a mismatch that is really an inventory defect.
+        problems.append(
+            "the conformance-count claims were NOT compared: the inventory above did not "
+            "recount cleanly, and a total taken over rows this reader could not account "
+            "for is not a number to hold prose to")
+        return (problems, 0, c)
+    checked = 0
+    for label, rel, pattern, want in conformance_claims(c):
+        text = (base / rel).read_text(encoding="utf-8")
         found = re.findall(pattern, text)
         if len(found) != 1:
             problems.append(
@@ -1422,10 +1483,157 @@ def check_conformance_counts():
         checked += 1
         if got != want:
             problems.append(
-                f"{label}: {path} states {got}, the manifest has {want} "
+                f"{label}: {rel} states {got}, the manifest has {want} "
                 f"(recounted from {MANIFEST.name})")
     return (problems, checked, c)
 
+
+
+# --- negative controls for the conformance-count governor ------------------------------
+#
+# WHY THESE ARE HERE AND NOT ONLY IN A TRANSCRIPT. The governor's failure modes were
+# established once, by hand, in a review report. A failure mode nobody re-runs is a
+# failure mode that stops existing the moment someone edits the recount — which is the
+# same argument this file makes about every `cmd:` item it executes. So the shapes are
+# planted here, hermetically, and scripts/test-doc-evidence.sh asserts on them.
+#
+# HERMETIC: every control builds its own manifest and its own two documents in a
+# temporary tree. Nothing reads the repository, so these cannot go green because the real
+# tree happens to be well-formed, and cannot go red because it happens not to be.
+
+_CLAIM_MILESTONES = """# planted by --self-test-counts
+
+| Conformance | `verified={run} untranscribed={untr} vacuous={vac} xfail={xf} reject={rej} skip={skip} failures=0` over {total} (planted) |
+
+{rej} of them: `reject={rej}` over {total} fixtures (planted).
+"""
+
+_CLAIM_SPEC = """# planted by --self-test-counts
+
+**verified {run} · untranscribed {untr} · vacuous {vac} · xfail {xf} · reject {rej} · skip {skip} · failures 0**, over {total}
+fixtures.
+"""
+
+
+def _plant_counts_tree(tmp, rows, claim=None, rewrite=False):
+    """Write a manifest and the two claim documents. -> (manifest_path, root)
+
+    `rows` are raw manifest lines (already tab-joined). `claim` overrides the numbers the
+    documents state; None means "state the truth", so a control only fails for the one
+    thing it is probing. `rewrite` rephrases one sentence WITHOUT changing its number,
+    which is the shape that would defeat a governor whose missing match were a skip.
+    """
+    root = Path(tmp)
+    (root / "docs" / "contributing").mkdir(parents=True, exist_ok=True)
+    (root / "docs" / "specification").mkdir(parents=True, exist_ok=True)
+    man = root / "conformance-manifest.txt"
+    man.write_text("# planted\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    counts, _ = conformance_counts(man)
+    said = dict(run=counts["run"], untr=counts["untranscribed"], vac=counts["vacuous"],
+                xf=counts["xfail"], rej=counts["reject"], skip=counts["skip"],
+                total=counts["total"])
+    if claim:
+        said.update(claim)
+    milestones = _CLAIM_MILESTONES.format(**said)
+    if rewrite:
+        milestones = milestones.replace(
+            "of them: `reject={rej}` over {total} fixtures".format(**said),
+            "of them: reject is {rej} across {total} fixtures".format(**said))
+    (root / "docs" / "contributing" / "MILESTONES.md").write_text(
+        milestones, encoding="utf-8")
+    (root / "docs" / "specification" / "language-spec.md").write_text(
+        _CLAIM_SPEC.format(**said), encoding="utf-8")
+    return man, root
+
+
+def _row(path, cls):
+    return "\t".join([path, cls, "-", "expected", "-", "-"])
+
+
+def self_test_counts():
+    """Drive the governor over planted inventories and documents. -> exit status."""
+    import tempfile
+
+    good = [_row("tests/a.pd", "run"), _row("tests/b.pd", "reject"),
+            _row("tests/c.pd", "vacuous")]
+    checks, fails = [], 0
+
+    def case(label, rows, claim, want_green, *must_contain, rewrite=False):
+        nonlocal fails
+        with tempfile.TemporaryDirectory() as tmp:
+            man, root = _plant_counts_tree(tmp, rows, claim, rewrite)
+            problems, checked, _ = check_conformance_counts(manifest=man, root=root)
+        green = not problems
+        blob = " | ".join(problems)
+        bad = []
+        if green != want_green:
+            bad.append(f"expected {'GREEN' if want_green else 'RED'}, got "
+                       f"{'GREEN' if green else 'RED'}")
+        for want in must_contain:
+            if want not in blob:
+                bad.append(f"message lacks {want!r}")
+        if bad:
+            fails += 1
+            checks.append(f"  FAIL counts-control: {label}\n         " +
+                          "\n         ".join(bad) +
+                          ("\n         | " + blob[:400] if blob else ""))
+        else:
+            checks.append(f"  counts-control: {label} -> "
+                          f"{'green' if green else 'red'}"
+                          + ("" if green else f" ({problems[0][:96]})"))
+
+    # THE FATAL GREEN CONTROL. Nothing below is worth anything until a well-formed
+    # inventory whose documents state the truth passes.
+    case("a well-formed inventory whose prose states the truth is GREEN",
+         good, None, True)
+
+    # FIX-2's regression control. `untranscribed` is a manifest CLASS, and the first
+    # version hardcoded it to 0 in the expected tuple, so one legitimate row of it would
+    # have false-REDded a valid tree.
+    case("an `untranscribed` row does NOT false-RED a truthful tree",
+         good + [_row("tests/d.pd", "untranscribed")], None, True)
+
+    # FIX-1's three shapes, each a silent skip in the first version.
+    case("a wrong-width row is NAMED, not skipped",
+         good + ["tests/broken.pd\trun\t-"], None, False,
+         "expected 6 tab-separated columns, got 3",
+         "conformance-manifest.txt:5:")
+    case("a duplicate path is NAMED, with the line it first appeared on",
+         good + [_row("tests/a.pd", "reject")], None, False,
+         "duplicate entry for 'tests/a.pd'", "first declared at line 2")
+    case("an unrecognised class is NAMED, not dropped from the tally",
+         good + [_row("tests/e.pd", "sortof")], None, False,
+         "class 'sortof' is not one of", "an unrecognised class would drop out")
+    case("an unaccounted inventory suppresses the comparison, and says so",
+         good + ["tests/broken.pd\trun\t-"], None, False,
+         "were NOT compared")
+
+    # The claim-site shapes.
+    case("a stale count is RED and NAMES THE SITE, with have-vs-want",
+         good, {"total": 199}, False,
+         "MILESTONES.md — the Conformance row of the status table",
+         "docs/contributing/MILESTONES.md states", "the manifest has")
+    # A number that appears in more than one document must be reported at EVERY site
+    # that states it, not just the first: fixing one and shipping is how the other two
+    # drifted apart in the first place.
+    case("a stale count names EVERY site that states it, not just the first",
+         good, {"rej": 999}, False,
+         "MILESTONES.md — the Conformance row of the status table",
+         "MILESTONES.md — the reject-over-fixtures sentence",
+         "language-spec.md — the conformance status paragraph")
+    case("a REWRITTEN sentence is a failure and never a skip",
+         good, None, False, "matched 0 times, not once",
+         "stops being checked", rewrite=True)
+
+    for line in checks:
+        print(line)
+    if fails:
+        print(f"conformance-count controls FAILED: {fails} of {len(checks)}")
+        return 1
+    print(f"conformance-count controls: {len(checks)} green (the fatal green control, the "
+          f"`untranscribed` regression, three fail-closed recount shapes plus the "
+          f"suppressed comparison, and three claim-site shapes)")
+    return 0
 
 
 # --- feature-index parsing: one parser, from the standard library ---------------------
@@ -1949,6 +2157,9 @@ def main() -> int:
         if rerr:
             print(f"FAIL:\n  {rerr}")
             return 1
+
+    if "--self-test-counts" in sys.argv:
+        return self_test_counts()
 
     if "--index-only" in sys.argv:
         problems, nrows, how, counts = check_index(receipts)

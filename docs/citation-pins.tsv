@@ -57,7 +57,7 @@ grammar.ebnf	339-339	tests/advanced_e2e_test.rs	899444284395	# There are no clos
 grammar.ebnf	339-339	tests/advanced_features_test.rs	899444284395	# There are no closures. TUPLE EXPRESSIONS AND `.0` INDEXING EXIST (N4-12) —
 grammar.ebnf	92-93	docs/reference/features/core-language/implicit-lifetimes.md	8191cd9d5f2e	# `mod`, `use`, `where`, `dyn`, `move`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
 runtime/palladium_runtime.c	470-470	src/builtins.rs	28f6c8c7868d	buf = (char *)malloc(cap);
-scripts/check_doc_evidence.py	1404-1427	docs/contributing/MILESTONES.md	dfe7c7981799	def check_conformance_counts(): """-> (problems, checked, counts). Names the  ... as {want} " f"(recounted from {MANIFEST.name})") return (problems, checked, c)
+scripts/check_doc_evidence.py	1450-1488	docs/contributing/MILESTONES.md	022003063875	def check_conformance_counts(manifest=None, root=None): """-> (problems, chec ... as {want} " f"(recounted from {MANIFEST.name})") return (problems, checked, c)
 scripts/check_doc_evidence.py	331-333	docs/contributing/claude-md-coverage.md	a4f02106e0cf	for doc in (sorted(ROOT.glob("*.md")) + sorted(ROOT.glob("docs/**/*.md")) + s ... l")) + sorted(ROOT.glob("src/**/*.rs")) + sorted(ROOT.glob("tests/**/*.rs"))):
 scripts/conformance.sh	204-211	docs/contributing/MILESTONES.md	e383a707f766	grep_status() { local mode=$1 pat=$2 file=$3 case "$mode" in E) grep -qE -- " ... " 2>/dev/null ;; F) grep -qF -- "$pat" "$file" 2>/dev/null ;; esac return $? }
 scripts/conformance.sh	270-270	docs/reference/features/feature-index.toml	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
