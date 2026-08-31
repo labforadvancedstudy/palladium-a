@@ -1,4 +1,14 @@
-// Test 06: CHAR LITERALS ARE PATTERNS (N6-02's literal set, N6-03's ranges).
+// Test 06: CHAR LITERALS ARE PATTERNS.
+//
+// NOT OWNED BY N6-02 OR N6-03, AND THIS HEADER USED TO SAY THEY WERE. It read
+// "(N6-02's literal set, N6-03's ranges)", which decides an ownership question
+// that is open: N6-02 demands "Literal patterns (integer, string, bool)" and
+// N6-03 demands ranges, both are `satisfied`, and NEITHER asks for `char`. The
+// normative text of both is unchanged by this fixture. A char pattern stands
+// BESIDE N6-02's three literal kinds rather than inside them, and arrives
+// because N4-04 made `char` a type and WT-01's byte dispatcher cannot be written
+// without matching on one. Which row should own it is parked as issue #46, for
+// the owner to decide.
 //
 // N4-04 made `char` a real type — distinct from `i64`, no implicit conversion —
 // but a char literal was still not a PATTERN: `'a' =>` was "Expected pattern, but

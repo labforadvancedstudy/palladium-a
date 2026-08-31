@@ -1,4 +1,12 @@
-//! Char literals as PATTERNS (N6-02's literal set, N6-03's ranges), end to end.
+//! Char literals as PATTERNS, end to end.
+//!
+//! NOT OWNED BY N6-02 OR N6-03. This header used to read "(N6-02's literal set,
+//! N6-03's ranges)", which settles an open question by parenthesis: both rows are
+//! `satisfied`, N6-02 demands integer, string and bool patterns and N6-03 demands
+//! ranges, and neither asks for `char`. Their normative text is unchanged here. A
+//! char pattern is an EXTENSION STANDING BESIDE that literal set, owed by nothing
+//! in N6 and reached for because N4-04 made `char` a type; the ownership question
+//! is parked as issue #46.
 //!
 //! WHY THIS FILE EXISTS BESIDE `tests/06_char_patterns.pd`. The conformance
 //! fixture pins the transcript; these tests pin the two things a transcript
@@ -240,5 +248,100 @@ fn a_char_match_without_a_wildcard_is_non_exhaustive() {
         e.contains("Non-exhaustive"),
         "a char match with one arm was accepted: {}",
         e
+    );
+}
+
+/// The same answer for a char RANGE, which is a different arm of
+/// `to_pattern_kind` from the literal above: `'a'..='z'` covers 26 code points
+/// out of 1_112_064 and is no more exhaustive than one. Pinned separately
+/// because the literal test would stay green if only the range path regressed.
+#[test]
+fn a_char_range_without_a_wildcard_is_non_exhaustive() {
+    let e = refusal(
+        "fn main() { let c: char = 'a'; match c { 'a'..='z' => { print(\"x\"); } } }",
+        &unique_module_name("charpat_exh_range"),
+    );
+    assert!(
+        e.contains("Non-exhaustive"),
+        "a char match whose only arm is a range was accepted: {}",
+        e
+    );
+}
+
+/// THE C THIS EMITS IS COMMENTED, AND A COMMENT CAN BE ESCAPED FROM.
+///
+/// `c_char_constant` writes the scalar followed by `/* 'x' */`, so every char
+/// pattern puts SOURCE TEXT inside a C comment. Three characters could end that
+/// comment or the line early if they arrived raw: `*` and `/` because `*/`
+/// closes a comment, and a newline because it would leave the rest of the
+/// generated expression on its own line. `'` and `\` matter for the same reason
+/// one step out — they are what the escape machinery itself is written in.
+///
+/// The emitter escapes via `char::escape_debug`, and this test is the proof that
+/// the property survives: every one of the five reaches the C as a comparison
+/// against its scalar, with the comment intact and balanced.
+#[test]
+fn characters_that_could_close_a_c_comment_do_not() {
+    const SOURCE: &str = r#"
+fn k(c: char) -> i64 {
+    match c {
+        '\n' => { return 1; }
+        '\\' => { return 2; }
+        '\'' => { return 3; }
+        '*' => { return 4; }
+        '/' => { return 5; }
+        '\t'..='\r' => { return 6; }
+        _ => { return 0; }
+    }
+}
+fn main() {
+    print_int(k('\n'));
+    print_int(k('\\'));
+    print_int(k('\''));
+    print_int(k('*'));
+    print_int(k('/'));
+    print_int(k('\r'));
+    print_int(k('x'));
+}
+"#;
+    // It RUNS, and every arm answers for itself.
+    let out = run(SOURCE, &unique_module_name("charpat_inject_run"));
+    assert_eq!(
+        out, "1\n2\n3\n4\n5\n6\n0\n",
+        "an arm holding a comment-hostile character did not fire as written"
+    );
+
+    let c = emitted_c(SOURCE, &unique_module_name("charpat_inject_c"));
+    for needle in [
+        "== 10 /* '\\n' */",
+        "== 92 /* '\\\\' */",
+        "== 39 /* '\\'' */",
+        "== 42 /* '*' */",
+        "== 47 /* '/' */",
+        ">= 9 /* '\\t' */",
+    ] {
+        assert!(
+            c.contains(needle),
+            "expected {:?} in the emitted C, and it is not there:\n{}",
+            needle,
+            c
+        );
+    }
+
+    // A RAW NEWLINE would satisfy `contains("== 10 /* '")` while splitting the
+    // expression across lines, so the assertion above is not enough on its own:
+    // no comment may contain one.
+    for line in c.lines() {
+        assert!(
+            !(line.contains("/*") && !line.contains("*/")),
+            "a comment was left open at end of line, which is how a raw newline \
+             inside one would look:\n{}",
+            line
+        );
+    }
+    assert_eq!(
+        c.matches("/*").count(),
+        c.matches("*/").count(),
+        "the generated C's comments are unbalanced, so one of them closed early"
     );
 }
