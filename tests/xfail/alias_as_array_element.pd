@@ -1,0 +1,13 @@
+// XFAIL (M3). An alias used as an ARRAY ELEMENT type is not resolved for equality.
+//
+// MEASURED: `Type mismatch: expected [Edge; 2], found [(Int, Int, Int); 2]`. Same
+// unexpanded-component cause as the tuple-annotation row, reached through the array
+// constructor instead of the tuple one, and refused by a different comparison -- so a
+// repair to tuple components alone would leave this one red, which is the whole
+// reason it is its own row rather than a second example under that one.
+type Edge = (i64, i64, i64);
+
+fn main() {
+    let g: [Edge; 2] = [(1, 2, 30), (3, 4, 50)];
+    print_int(g[0].2);
+}

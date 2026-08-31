@@ -1,0 +1,20 @@
+// XFAIL (M3). A tuple alias behind a REFERENCE is not resolved before `.N`.
+//
+// MEASURED: `Type mismatch: expected a tuple, which is what `.0` reads an element of,
+// found Edge`. The alias survives into the element-access rule with its own name --
+// the diagnostic says `found Edge`, not `found (i64, i64, i64)`.
+//
+// A DISTINCT PATH from the annotation mismatch beside it, and it needs its own row:
+// the same alias `Edge` works in a `let` annotation on a local (measured -- it is
+// what tests/advanced_e2e_test.rs::test_type_aliases_complex executes) and fails
+// here, so what differs is the reference parameter, not the alias.
+type Edge = (i64, i64, i64);
+
+fn weight_of(e: &Edge) -> i64 {
+    return e.2;
+}
+
+fn main() {
+    let e: Edge = (1, 2, 30);
+    print_int(weight_of(&e));
+}

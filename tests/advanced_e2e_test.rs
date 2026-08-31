@@ -611,10 +611,27 @@ fn test_const_generics_arrays() {
 /// and the transcript is now compared EXACTLY rather than by `contains`, which could
 /// not tell "1" from "10".
 ///
-/// NOT COVERED, AND NOT CLAIMED: an alias whose right-hand side is an ARRAY type, and
-/// an alias NESTED inside a compound type. Both are measured broken today and neither
-/// is a spec refusal, so neither belongs in a passing fixture; they are reported as
-/// their own unit rather than quietly pinned here.
+/// NOT COVERED, AND NOT CLAIMED. Probing this subject found SEVEN distinct alias
+/// failures, each with its own diagnostic, and none of them a spec refusal. An
+/// exclusion that names no rows is disclosure rather than inventory, so every one is
+/// an EXECUTABLE row somewhere a gate reads, and this list is the index:
+///
+///   tests/xfail/alias_array_param_index.pd          indexing an array alias through
+///                                                   a parameter
+///   tests/xfail/alias_nested_in_tuple_annotation.pd an alias as a TUPLE COMPONENT
+///   tests/xfail/alias_as_array_element.pd           an alias as an ARRAY ELEMENT
+///   tests/xfail/alias_tuple_behind_reference.pd     a tuple alias behind `&`
+///   tests/xfail/alias_struct_behind_reference.pd    a struct alias behind `&`
+///        — five `xfail` rows in tests/conformance-manifest.txt, all owned by M3.
+///
+///   test_type_alias_to_array_lowers_to_valid_c
+///   test_alias_typed_params_lower_to_valid_c_across_a_tuple_return
+///        — the two below, in tests/rust-debt-manifest.txt instead, because in both
+///          the front end ACCEPTS and gcc refuses the emitted C, and
+///          scripts/conformance.sh refuses to let any manifest column declare that.
+///
+/// The five and the two are separated by that rule and not by severity: the two are
+/// the more dangerous half.
 #[test]
 fn test_type_aliases_complex() {
     let source = r#"
@@ -677,4 +694,64 @@ fn test_type_aliases_complex() {
         "the alias program did not produce its transcript.\ngot:\n{}",
         output
     );
+}
+
+/// THE TWO ALIAS DEFECTS THE .pd INVENTORY IS NOT ALLOWED TO HOLD.
+///
+/// The other five shapes the su3 probe found are `xfail` rows in
+/// tests/conformance-manifest.txt, under tests/xfail/. These two are not, and the
+/// reason is structural rather than editorial: in both, the FRONT END ACCEPTS the
+/// program and gcc then refuses the C this compiler emitted. scripts/conformance.sh
+/// refuses that outcome whatever the manifest says --
+///
+///   "pdc accepted this source and then gcc refused the C it emitted. That is a
+///    defect in this compiler, not a property of the fixture, and no manifest column
+///    may declare it: there is no valid Palladium program whose emitted C is allowed
+///    not to compile."
+///
+/// -- and `stage: link` is rejected by the row validator for the same reason. So the
+/// .pd corpus cannot carry them, and leaving them in a commit message is what the
+/// review round rejected. They live here instead, in the OTHER closed inventory:
+/// tests/rust-debt-manifest.txt reconciles these rows by scripts/test-xfail.py, which
+/// holds each to the diagnostic its `#[ignore]` names.
+///
+/// Both assert the SUCCESS they should have: when the lowering is fixed, they pass and
+/// the rows transition to `paid`. Neither pins the current broken output.
+#[test]
+#[ignore = "XFAIL: A TYPE ALIAS TO AN ARRAY MIS-PLACES THE C DECLARATOR. `type Row = [i64; 4]; let r: Row = [...]` emits `long long[4] r = {...}` instead of `long long r[4] = {...}`, so gcc refuses it with \"brackets are not allowed here; to declare an array, place the brackets after the identifier\". The front end approves the program, which makes this the forbidden class rather than a fixture property (owned by M3, alias resolution in the C-name path)"]
+fn test_type_alias_to_array_lowers_to_valid_c() {
+    let source = r#"
+    type Row = [i64; 4];
+
+    fn main() {
+        let r: Row = [5, 6, 7, 8];
+        print_int(r[2]);
+    }
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "{:?}", result);
+    assert_eq!(result.unwrap(), "7\n");
+}
+
+/// The same family, one boundary out: the alias NAME reaches C as if it were a C type.
+#[test]
+#[ignore = "XFAIL: AN ALIAS-TYPED PARAMETER LEAKS ITS ALIAS NAME INTO THE SYNTHESISED TUPLE STRUCT. `fn pair(a: NodeId, b: NodeId) -> (i64, i64)` emits `typedef struct { NodeId f0; NodeId f1; } __pd_tuple2_NodeId_NodeId;` — the tuple struct is named and typed from the UNRESOLVED alias, so gcc reports \"unknown type name 'NodeId'\" four times. Constructing the same tuple in a LOCAL works (measured, both annotated and inferred), so the defect is the function boundary, not tuple construction (owned by M3, alias resolution in the C-name path)"]
+fn test_alias_typed_params_lower_to_valid_c_across_a_tuple_return() {
+    let source = r#"
+    type NodeId = i64;
+
+    fn pair(a: NodeId, b: NodeId) -> (i64, i64) {
+        return (a, b);
+    }
+
+    fn main() {
+        let p = pair(7, 8);
+        print_int(p.0 + p.1);
+    }
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "{:?}", result);
+    assert_eq!(result.unwrap(), "15\n");
 }

@@ -1,0 +1,23 @@
+// XFAIL (M3). A STRUCT alias behind a reference parameter is not resolved to the
+// struct it names.
+//
+// MEASURED: `Unknown struct type: Graph` -- and `Graph` is not unknown, it is
+// `type Graph = GraphData` two lines up. The same alias in a `let` annotation
+// resolves and works, so this is the reference-parameter path again, on the struct
+// side rather than the tuple side. Kept separate from the tuple spelling because the
+// diagnostics come from different rules and one could be repaired without the other.
+struct GraphData {
+    count: i64,
+}
+
+type Graph = GraphData;
+
+fn bump(g: &mut Graph) {
+    g.count = g.count + 1;
+}
+
+fn main() {
+    let mut g: Graph = GraphData { count: 41 };
+    bump(&mut g);
+    print_int(g.count);
+}

@@ -82,6 +82,8 @@ tests/advanced_e2e_test.rs	test_pattern_matching_guards	paid	-	-
 tests/advanced_e2e_test.rs	test_result_error_handling	owed	M4	constructs a variant of a GENERIC enum, and generic enums are not implemented
 tests/advanced_e2e_test.rs	test_trait_implementation	owed	M4	Compilation failed: Unexpected token: expected parameter name, found '&'
 tests/advanced_e2e_test.rs	test_type_aliases_complex	paid	-	-
+tests/advanced_e2e_test.rs	test_type_alias_to_array_lowers_to_valid_c	owed	M3	brackets are not allowed here
+tests/advanced_e2e_test.rs	test_alias_typed_params_lower_to_valid_c_across_a_tuple_return	owed	M3	unknown type name 'NodeId'
 tests/advanced_features_test.rs	test_async_await_basic	owed	unscheduled	Compilation failed: a `return` with a value inside an `async fn` is not implemented
 tests/advanced_features_test.rs	test_async_await_multiple	owed	unscheduled	Compilation failed: a `return` with a value inside an `async fn` is not implemented
 tests/advanced_features_test.rs	test_closures	owed	M4	Compilation failed: Unexpected token: expected expression, found '|'

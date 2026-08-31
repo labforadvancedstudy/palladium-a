@@ -501,7 +501,7 @@ description = "C code generation; the backend the compiler actually ships."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "implemented"
 evidence = [
-  "gate: make conformance -> fixtures=212 evaluated=212 verified=84 vacuous=6 xfail=1 reject=119 skip=2 failures=0",
+  "gate: make conformance -> fixtures=217 evaluated=217 verified=84 vacuous=6 xfail=6 reject=119 skip=2 failures=0",
   "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\" -- the C backend is the one a Palladium compiler is built with",
 ]
 
@@ -533,7 +533,7 @@ spec = "../../specification/language-spec.md"
 implementation = "implemented"
 evidence = [
   "gate: cargo build --release -> \"[optimized] target(s)\" -- the compiler builds, and target/release/pdc is what every other gate here runs",
-  "gate: make conformance -> fixtures=212 evaluated=212 verified=84 vacuous=6 xfail=1 reject=119 skip=2 failures=0",
+  "gate: make conformance -> fixtures=217 evaluated=217 verified=84 vacuous=6 xfail=6 reject=119 skip=2 failures=0",
 ]
 
 [tooling.compiler.bootstrapping]

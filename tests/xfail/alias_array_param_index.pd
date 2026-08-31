@@ -1,0 +1,23 @@
+// XFAIL (M3). An alias whose right-hand side is an ARRAY type is not resolved when
+// the aliased name is indexed through a parameter.
+//
+// MEASURED: `Cannot index into non-array type: Row`. The type checker has the alias
+// table -- `type Row = [i64; 4]` is registered -- but the indexing rule asks whether
+// the operand's type IS an array rather than whether it RESOLVES to one, so the alias
+// reaches the check unexpanded and is refused for not being the thing it names.
+//
+// WRONG BUT CLOSED. Nothing is emitted and no C compiler is consulted: the program is
+// refused by this compiler, with this compiler's own words. That is what makes it
+// declarable here at all -- the sibling defect in the same family emits C that gcc
+// then rejects, which no manifest column may declare (see the note on this row's
+// group in tests/rust-debt-manifest.txt).
+type Row = [i64; 4];
+
+fn third(r: &Row) -> i64 {
+    return r[2];
+}
+
+fn main() {
+    let r: [i64; 4] = [5, 6, 7, 8];
+    print_int(third(&r));
+}

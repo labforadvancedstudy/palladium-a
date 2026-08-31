@@ -1,0 +1,19 @@
+// XFAIL (M3). An alias NESTED inside a compound type is not resolved for type
+// equality, so a tuple annotated with alias components rejects its own literal.
+//
+// MEASURED: `Type mismatch: expected (NodeId, NodeId, Int), found (Int, Int, Int)`.
+// The diagnostic prints the disagreement exactly: the ANNOTATION keeps `NodeId`
+// unexpanded while the LITERAL is typed structurally, and the comparison is made
+// between the two spellings rather than between their normal forms. A top-level
+// alias (`let n: NodeId = 7`) resolves and works; only components do not.
+//
+// THE SAME MISSING MACHINERY AS M3'S: a structural normaliser that expands aliases
+// before comparing. Generic instantiation needs exactly that function, which is why
+// this row is owned by M3 rather than left unscheduled.
+type NodeId = i64;
+type Edge = (NodeId, NodeId, i64);
+
+fn main() {
+    let e: Edge = (1, 2, 30);
+    print_int(e.2);
+}
