@@ -244,12 +244,18 @@ if [ "${1-}" = "--self-test" ]; then
   # THE EXIT-CODE CONTROLS. Every stated contract — this header, the Makefile
   # block above `m1-exit`, MILESTONES item 8 — says "rc=2 AND the sentence". The
   # first version of `classify_four` handled 0 and 1 and then applied the pattern
-  # to EVERY other code, so rc=3 (the compiler's own gcc-failure code), and 126,
-  # 127, 130 and 139 — could-not-execute, not-found, SIGKILL, SIGSEGV — were all
-  # tolerated whenever the text happened to carry the sentence. A python3 that
-  # dies on a signal after printing is not an abstention; it is an inventory that
-  # did not finish, which is the one thing fail-closed exists for.
-  for badrc in 3 126 127 130 139; do
+  # to EVERY other code, so every code below was tolerated whenever the text
+  # happened to carry the sentence:
+  #     3    the compiler's own gcc-failure code
+  #     126  found but could not be executed
+  #     127  not found
+  #     130  128+2, SIGINT      — the reader was interrupted
+  #     137  128+9, SIGKILL     — uncatchable, so it can ONLY ever be observed
+  #                               here as a child's status, never handled
+  #     139  128+11, SIGSEGV
+  # A python3 that dies on a signal after printing is not an abstention; it is an
+  # inventory that did not finish, which is the one thing fail-closed exists for.
+  for badrc in 3 126 127 130 137 139; do
     check "rc=$badrc carrying the genuine tolerated sentence is NOT tolerated" \
       NO_VERDICT "$badrc" "$T/zero.out"
   done
@@ -310,7 +316,20 @@ four_out=$(mktemp) || exit 2
 # Installed AT CREATION and not only at the `rm` below: every path out of this
 # script between here and there — a signal, a `set -u` trip, an `exit` added
 # later — would otherwise leave the file behind.
-trap 'rm -f "$four_out"' EXIT INT TERM
+#
+# THE SIGNAL HANDLERS RE-RAISE, AND THAT IS THE POINT. One `trap … EXIT INT TERM`
+# would have handled all three, but a non-terminating INT/TERM handler RESUMES
+# the script: bash runs the handler and then carries on at the next statement. A
+# run cancelled inside the window between the classification above and the `trap -`
+# release below would therefore have gone on to print a verdict for a run the
+# operator had already stopped. So INT and TERM clean up, disarm themselves, and
+# kill this shell with the same signal — re-raised rather than turned into a
+# hardcoded `exit`, so the caller sees a genuine signal death and not a status
+# this script invented. The EXIT trap still fires on the way out and `rm -f` is
+# idempotent, so the file is removed exactly once either way.
+trap 'rm -f "$four_out"' EXIT
+trap 'rm -f "$four_out"; trap - INT;  kill -s INT  "$$"' INT
+trap 'rm -f "$four_out"; trap - TERM; kill -s TERM "$$"' TERM
 REQ_MILESTONE=$MILESTONE python3 scripts/requirements.py > "$four_out"
 four_rc=$?
 cat "$four_out"
