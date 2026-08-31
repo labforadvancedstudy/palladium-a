@@ -14,6 +14,26 @@ use exhaustiveness::{EnumInfo, ExhaustivenessChecker, VariantInfo};
 mod trait_resolution;
 use trait_resolution::TraitResolver;
 
+/// How a method declared its receiver. `self` is a place base now, and these are the
+/// three answers to "may this method write through it".
+///
+///   `&mut self`  MutRef   -- writes propagate to the caller; the only writable form.
+///   `&self`      Shared   -- a shared borrow. Writing lowered to `self->n = v` against
+///                            `const struct C*`, which gcc refused: a front-end refusal
+///                            replaces that, because this language's rules are not C's
+///                            to enforce.
+///   `self`       ByValue  -- a COPY, and not a `mut` binding (there is no `mut self`
+///                            form). Writing it mutated the copy, so the caller observed
+///                            nothing: it compiled, it ran, and it did not do what it
+///                            said. Refused for the ordinary reason a non-`mut` binding
+///                            cannot be assigned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfReceiver {
+    ByValue,
+    Shared,
+    MutRef,
+}
+
 /// Which enum payload slots must be stored behind a pointer, and which type
 /// declarations have no layout at all.
 ///
@@ -1148,6 +1168,13 @@ pub struct TypeChecker {
     unsafe_depth: usize,
     /// Current impl type (for resolving Self types)
     current_impl_type: Option<String>,
+    /// The receiver form of the method being checked, if any.
+    ///
+    /// `None` outside a method or in an associated function. Needed because `self`
+    /// became a PLACE BASE in this round: `self.n = v` now parses, and whether it may
+    /// be WRITTEN is a property of how the receiver was declared, which nothing
+    /// downstream of the signature otherwise knows.
+    current_self_receiver: Option<SelfReceiver>,
     /// Every top-level `const` or `static` found in an IMPORTED module, with
     /// the module it came from. Recorded here and raised by `check`, because
     /// `set_imported_modules` has no fallible signature — the same shape the
@@ -1213,6 +1240,7 @@ impl TypeChecker {
             error_helper: TypeErrorHelper::new(),
             unsafe_depth: 0,
             current_impl_type: None,
+            current_self_receiver: None,
             global_items: HashMap::new(),
             deferred_imported_globals: Vec::new(),
         }
@@ -1235,8 +1263,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1604-1605`, `src/typeck/mod.rs:1607-1609`,
-    /// `src/typeck/mod.rs:1704-1705`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1632-1633`, `src/typeck/mod.rs:1635-1637`,
+    /// `src/typeck/mod.rs:1732-1733`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -2757,16 +2785,16 @@ impl TypeChecker {
                     // the same function, so the signature that is checked is
                     // the signature that was registered.
                     for method in &impl_block.methods_with_self_resolved() {
-                        // A `mut` PARAMETER ON A METHOD EMITS C THAT THIS
-                        // COMPILER'S OWN CALL PATH CANNOT CALL. A `mut`
-                        // parameter is lowered to a POINTER at the definition,
-                        // and the method call path passes by value, because it
-                        // resolves through `impl_methods` and the address-taking
-                        // decision reads `functions` — which never holds a
-                        // `Type::method`. gcc then refuses C the front end had
-                        // approved, which is the one outcome no fixture may
-                        // declare. Refused here, by name, until the call path
-                        // carries parameter modes for methods too.
+                        // A `mut` PARAMETER ON A METHOD IS REFUSED, and this is now
+                        // CONSERVATIVE rather than forced. The rationale here used
+                        // to be that the call path resolves through `impl_methods`
+                        // while the address-taking decision reads `functions`,
+                        // which never holds a `Type::method`, so the definition
+                        // took a pointer and every call passed a value. su2 closed
+                        // exactly that: methods register their params, and the
+                        // call side takes an address for pointer parameters. The
+                        // refusal is kept because nothing witnesses `mut` params on
+                        // methods end to end, and lifting it is its own row.
                         if let Some(param) = method.params.iter().find(|p| p.mutable) {
                             return Err(CompileError::Generic(format!(
                                 "`{}::{}` takes `mut {}`, and `mut` parameters on methods are \
@@ -2776,7 +2804,21 @@ impl TypeChecker {
                                 impl_block.for_type, method.name, param.name
                             )));
                         }
-                        self.check_function(method)?;
+                        // The receiver form, for the write rule below. Read off the
+                        // signature rather than guessed: the parser records `self` as a
+                        // param named "self" whose TYPE carries the form.
+                        self.current_self_receiver = method
+                            .params
+                            .iter()
+                            .find(|prm| prm.name == "self")
+                            .map(|prm| match &prm.ty {
+                                Type::Reference { mutable: true, .. } => SelfReceiver::MutRef,
+                                Type::Reference { .. } => SelfReceiver::Shared,
+                                _ => SelfReceiver::ByValue,
+                            });
+                        let checked = self.check_function(method);
+                        self.current_self_receiver = None;
+                        checked?;
                     }
 
                     // Clear current impl type
@@ -2810,7 +2852,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3100-3102`), and walking an imported
+        // return (`src/typeck/mod.rs:3142-3144`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3177,6 +3219,28 @@ impl TypeChecker {
     }
 
     /// Type check a statement
+    /// Does this assignment target bottom out in `self`?
+    ///
+    /// `self.n`, `self.d[i]`, `self.a.b[0]` -- the write rule is about the RECEIVER, so
+    /// the question is what the place chain is rooted in, not what its last link is.
+    fn assign_target_base_is_self(target: &AssignTarget) -> bool {
+        fn base(e: &Expr) -> bool {
+            match e {
+                Expr::Ident(n) => n == "self",
+                Expr::FieldAccess { object, .. } => base(object),
+                Expr::Index { array, .. } => base(array),
+                Expr::Deref { expr, .. } => base(expr),
+                _ => false,
+            }
+        }
+        match target {
+            AssignTarget::Ident(n) => n == "self",
+            AssignTarget::FieldAccess { object, .. } => base(object),
+            AssignTarget::Index { array, .. } => base(array),
+            AssignTarget::Deref { expr } => base(expr),
+        }
+    }
+
     fn check_statement(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
             Stmt::Expr(expr) => {
@@ -3239,6 +3303,49 @@ impl TypeChecker {
                 Ok(())
             }
             Stmt::Assign { target, value, .. } => {
+                // WRITING THROUGH `self` IS A PROPERTY OF THE RECEIVER, and this is the
+                // only place that knows both. `self` became a place base this round, so
+                // `self.n = v`, `self.d[i] = v` and their chains now parse; whether they
+                // MEAN anything depends on how the method took its receiver, and the two
+                // wrong answers both used to escape the front end:
+                //   `&self`  lowered to `self->n = v` against `const struct C*`, and gcc
+                //            refused C this compiler had just approved.
+                //   `self`   mutated a COPY. It compiled, it ran, and the caller observed
+                //            nothing -- the silent-wrong-result class, not a diagnostic.
+                // Both are refused here by name. `&mut self` is the writable form.
+                if self.current_self_receiver.is_some() {
+                    // THE RECEIVER BINDING ITSELF IS NOT REASSIGNABLE, whatever form it
+                    // took. `self = C { .. }` used to reach the stock immutable-binding
+                    // message, which advises `let mut self = ...` -- a spelling the parser
+                    // refuses, so the reader was sent to write something impossible.
+                    if matches!(target, AssignTarget::Ident(n) if n == "self") {
+                        return Err(CompileError::Generic(
+                            "cannot assign to `self`: the receiver binding is not reassignable. \
+                             Assign to its fields (`self.f = v`, which needs `&mut self`), or \
+                             return a new value"
+                                .to_string(),
+                        ));
+                    }
+                }
+                if let Some(recv) = self.current_self_receiver {
+                    if recv != SelfReceiver::MutRef && Self::assign_target_base_is_self(target) {
+                        let detail = match recv {
+                            SelfReceiver::Shared => {
+                                "`&self` is a SHARED borrow of the receiver. Take `&mut self` if \
+                                 this method is meant to modify it"
+                            }
+                            _ => {
+                                "a by-value `self` receiver is a COPY, and not a `mut` binding, so \
+                                 the caller would not observe the write. Take `&mut self` if this \
+                                 method is meant to modify the receiver, or return the new value"
+                            }
+                        };
+                        return Err(CompileError::Generic(format!(
+                            "cannot assign through `self`: {}",
+                            detail
+                        )));
+                    }
+                }
                 match target {
                     AssignTarget::Ident(name) => {
                         // Look up the variable and clone necessary info
@@ -4788,6 +4895,26 @@ impl TypeChecker {
                 Ok(inner_type)
             }
             Expr::Deref { expr, .. } => {
+                // `*self` IS NOT A SECOND LEVEL OF INDIRECTION. Code generation already
+                // dereferences a reference receiver on every field access, so a written
+                // `*self` emitted `(*((*self))).n` -- two dereferences of one pointer --
+                // and gcc refused it: "indirection requires pointer operand ('struct C'
+                // invalid)". The front end had approved it, which is the one outcome no
+                // program may reach. Refused here rather than given a meaning, because the
+                // meaning it would need is a second reference this language cannot spell.
+                if self.current_self_receiver.is_some() {
+                    if let Expr::Ident(n) = expr.as_ref() {
+                        if n == "self" {
+                            return Err(CompileError::Generic(
+                                "`*self` is not a place: the receiver is already a reference and \
+                                 its fields are reached with `self.f`. Writing `*self` asked for a \
+                                 second dereference, which reached gcc as an indirection on a \
+                                 non-pointer"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
                 // Type check the expression being dereferenced
                 let expr_type = self.check_expression(expr)?;
 
@@ -6187,7 +6314,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6602-6666`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6664-6728`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -6612,7 +6739,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4531-4539`, `src/parser/mod.rs:4300-4308`). That is not
+    /// (`src/parser/mod.rs:4541-4549`, `src/parser/mod.rs:4310-4318`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

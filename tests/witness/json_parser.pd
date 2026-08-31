@@ -193,18 +193,21 @@ struct Json {
 //     forwarding, so `&Json` is unusable here. No row owns the `&` spelling at
 //     all: N4-13/N9-01/N9-02 name `ref T`/`ref mut T` and are owned by M7.
 //
-// WORKAROUND N9-02 + N10-06: method call syntax is NOT the blocker any more.
-// N5-17 is `satisfied` and measures so: `impl P { fn get(self) -> i64 }` with
-// `p.get()` compiles, links and prints. Two other things stop the cursor from
-// being a method. A `self` receiver is a MOVE — calling `p.get()` twice is
-// `Use of moved value: p`, and recursive descent calls the cursor thousands of
-// times. And no method can WRITE its receiver: `self.n = self.n + 1;` does not
-// parse (`Expected ';' (Expected ';' after expression), but found '='`), and
-// `ref mut self` is `Expected ':' after parameter name, but found 'mut'`.
-// N9-02 owns `ref mut T` as a type and N10-06 owns a receiver that parses,
-// both `owed`; neither names an inherent-impl `ref mut self`, so the exact
-// spelling this needs is adjacent to owned work rather than owned by it.
-// So all of this is free functions with an explicit receiver argument.
+// WORKAROUND UNAPPLIED (su2 removed the blocker; the rewrite is owed):
+// EVERYTHING THIS MARKER USED TO NAME AS MISSING NOW EXISTS. The sentence here
+// read that a `self` receiver is a MOVE, that no method can write its receiver,
+// and that `ref mut self` does not parse. The last is still true and was always
+// the wrong thing to check: the spelling this language has is `&mut self`, not
+// `ref mut self`, and su2 measured that `&self` and `&mut self` both parse, both
+// borrow-check, and — once the call site stopped passing the receiver by value
+// against a pointer parameter — both LINK. Measured now: `p.get()` twice on one
+// binding is fine (a shared borrow is not a move), and `&mut self` writing
+// `self.n += 1` is observed by the caller. tests/04_self_place.pd is the witness.
+// So this is no longer a workaround for something missing. It is a workaround
+// this file has not yet SHED: turning the cursor back into methods is a rewrite
+// of every call in the parser, which is its own unit. Left standing and named
+// honestly rather than counted as closed, because the count is what makes this
+// census worth reading.
 // ---------------------------------------------------------------------------
 
 // N4-04: the cursor speaks `char`. Its end-of-input answer used to be -1, an

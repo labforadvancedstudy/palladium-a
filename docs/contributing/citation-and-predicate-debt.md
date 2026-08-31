@@ -41,11 +41,11 @@ such thing. Verified 2026-08-23 by reading each line:
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C1 | `src/codegen/mod.rs:1949` | a comment about unrecognised constant values | yes |
-| C2 | `src/codegen/mod.rs:1872` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
-| C3 | `src/codegen/mod.rs:2182` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
-| — | `src/typeck/mod.rs:1604` | the private-import registration comment | no |
-| — | `src/codegen/mod.rs:2349` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
+| C1 | `src/codegen/mod.rs:1965` | a comment about unrecognised constant values | yes |
+| C2 | `src/codegen/mod.rs:1888` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
+| C3 | `src/codegen/mod.rs:2206` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
+| — | `src/typeck/mod.rs:1632` | the private-import registration comment | no |
+| — | `src/codegen/mod.rs:2373` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
 
 All three were **pre-existing on `main`** before the recursive-data-types work,
 and all three have since been relocated MECHANICALLY three times — by a `difflib`
@@ -67,8 +67,8 @@ what the amendment above says preserves a wrongness exactly.
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C4 | `src/typeck/mod.rs:1704-1705` | `fields .iter()`, the walk over an enum variant's named fields — not an insert of any kind | yes |
-| C5 | the `src/typeck/mod.rs:1604` row of the C1–C3 table above | `self.functions.insert(func.name.clone(), func_type.clone());` — an insert, not "the private-import registration comment" as that row's third column says | the ROW's description is; the citation is not |
+| C4 | `src/typeck/mod.rs:1732-1733` | `fields .iter()`, the walk over an enum variant's named fields — not an insert of any kind | yes |
+| C5 | the `src/typeck/mod.rs:1632` row of the C1–C3 table above | `self.functions.insert(func.name.clone(), func_type.clone());` — an insert, not "the private-import registration comment" as that row's third column says | the ROW's description is; the citation is not |
 
 C4 is cited from the doc comment in `src/typeck/mod.rs` beginning "Set imported
 modules for type checking", whose sentence reads "Every insert below is under the

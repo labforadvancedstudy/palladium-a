@@ -3,7 +3,7 @@
 //! # Why every test needs its own module name
 //!
 //! The code generator always writes to `build_output/<module-stem>.c`
-//! (`src/codegen/mod.rs:6752-6763`), where the stem comes from the *virtual*
+//! (`src/codegen/mod.rs:6814-6825`), where the stem comes from the *virtual*
 //! filename handed to the driver — not from the source file's real location.
 //!
 //! *(That citation named a range in the BINARY OPERATOR emitter until

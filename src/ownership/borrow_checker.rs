@@ -194,7 +194,7 @@ impl BorrowChecker {
     /// imported function can be checked at all.
     ///
     /// Takes exactly what `TypeChecker::set_imported_modules` takes
-    /// (`src/typeck/mod.rs:1429-1429`), because the driver has one resolver result and
+    /// (`src/typeck/mod.rs:1457-1457`), because the driver has one resolver result and
     /// two passes that need it; a second shape here would be a second thing to
     /// keep in sync. Registration itself is deferred to `check_program`, which is
     /// where the ordering against local definitions is decided.
@@ -234,7 +234,7 @@ impl BorrowChecker {
     ///
     /// Public-only, and imports-before-locals, for the same reasons as functions
     /// below; the type checker registers imported layouts under exactly the same
-    /// filter (`src/typeck/mod.rs:1609-1610`), so the two passes agree on which
+    /// filter (`src/typeck/mod.rs:1637-1638`), so the two passes agree on which
     /// `P` is meant.
     ///
     /// THE REMAINING WINDOW USED TO BE UNREACHABLE, AND IS NOW REACHABLE — the
@@ -247,7 +247,7 @@ impl BorrowChecker {
     /// and it was true.
     ///
     /// It stopped being true on 2026-08-23. The emission walk now asks
-    /// `crate::ast::local_type_shadows_import` (`src/codegen/mod.rs:2185-2213`)
+    /// `crate::ast::local_type_shadows_import` (`src/codegen/mod.rs:2209-2237`)
     /// and skips the imported definition, because the same window in the TYPE
     /// CHECKER was producing `Type mismatch: expected Color, found Color` for an
     /// ordinary program — a local `struct Color` over an imported `pub enum
@@ -296,7 +296,7 @@ impl BorrowChecker {
                         // function bodies, one item kind across.
                         //
                         // Its reason was that codegen emits only NON-generic
-                        // imported structs (`src/codegen/mod.rs:2189-2194`), so a
+                        // imported structs (`src/codegen/mod.rs:2213-2218`), so a
                         // generic `P<T>` would be "a layout for a type this
                         // compilation never produces". Structs have a
                         // monomorphization path too
@@ -429,8 +429,8 @@ impl BorrowChecker {
         //
         // ONLY `Item::Function` IS WALKED, and an imported `impl` method is not a
         // gap in that. Codegen's imported walk matches `Item::Struct` and
-        // `Item::Enum` (`src/codegen/mod.rs:2185-2213`) and, separately,
-        // `Item::Function` (`src/codegen/mod.rs:2345-2346`) — there is no `Item::Impl`
+        // `Item::Enum` (`src/codegen/mod.rs:2209-2237`) and, separately,
+        // `Item::Function` (`src/codegen/mod.rs:2369-2370`) — there is no `Item::Impl`
         // arm anywhere in it. So an imported impl method is not merely uncallable:
         // IT DOES NOT EXIST IN THE OUTPUT. Measured — a module exporting
         // `pub struct P { a: i64 }` with `impl P { fn get(self) -> i64 { … } }`
@@ -472,7 +472,7 @@ impl BorrowChecker {
                     // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
                     // "produces no C, because the codegen guard is the same
                     // predicate". That is true of the DIRECT imported-emission path
-                    // (`src/codegen/mod.rs:2346-2349`, public and non-generic) and
+                    // (`src/codegen/mod.rs:2370-2373`, public and non-generic) and
                     // false of MONOMORPHIZATION, which is a different path and emits
                     // `name__T` from the same template. Measured on the guard:
                     //

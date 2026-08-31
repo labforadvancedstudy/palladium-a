@@ -1,0 +1,27 @@
+// NEGATIVE TEST — `*self` is not a place, and not an expression either.
+//
+// The place production admits `'*' identifier`, and `self` is not an identifier —
+// but the interesting half is that `*self` was already reachable in EXPRESSION
+// position and already broken there.
+//
+// MEASURED BEFORE THE REFUSAL EXISTED: `(*self).n` passed the lexer, the parser,
+// the type checker, the borrow checker and code generation, and emitted
+// `(*((*self))).n` — two dereferences of one pointer — which gcc refused with
+// "indirection requires pointer operand ('struct C' invalid)". Code generation
+// already dereferences a reference receiver on every field access, so a written
+// `*self` asks for a second level of indirection that the language cannot spell.
+// Refused rather than given a meaning.
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn f(&self) -> i64 {
+        return (*self).n;
+    }
+}
+
+fn main() {
+    let c: C = C { n: 7 };
+    print_int(c.f());
+}

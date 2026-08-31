@@ -2368,7 +2368,17 @@ impl Parser {
             Token::Continue => self.parse_continue(),
             Token::Match => self.parse_match(),
             Token::Unsafe => self.parse_unsafe(),
-            Token::Identifier(_) | Token::Star => {
+            // `Token::SelfParam` IS A PLACE BASE. The normative production reads
+            // `place = identifier | place '[' expression ']' | place '.' identifier
+            // | '*' identifier`, and `self` is a KEYWORD rather than an identifier, so
+            // `self.n = 1;` never reached the assignment arm at all: it fell to the
+            // expression-statement arm below, which parsed `self.n` and then demanded a
+            // `;`, reporting "Expected ';' after expression, but found '='". Nothing
+            // downstream needed teaching -- `self` already parses to `Expr::Ident("self")`,
+            // so the target conversion below turns `self.n` into the same
+            // `AssignTarget::FieldAccess` that `c.n` produces, and indexing and chains
+            // come with it.
+            Token::Identifier(_) | Token::Star | Token::SelfParam => {
                 // Could be assignment or expression statement
                 // Parse the left-hand side as an expression first
                 let checkpoint = self.current;

@@ -62,9 +62,13 @@ impl Counter {
     }
 }
 
-// EVERY RECEIVER HERE IS TAKEN BY VALUE, so every call MOVES it. That is not
-// incidental to the fixture: `&self` is unimplemented, so `self` is the only
-// receiver there is, and since the borrow checker learned to read method-call
+// EVERY RECEIVER HERE IS TAKEN BY VALUE, so every call MOVES it. That was once
+// forced — this comment used to say `&self` is unimplemented and `self` is the
+// only receiver there is, which su2 made false: `&self` and `&mut self` parse,
+// borrow-check and link, and tests/04_self_place.pd witnesses a write through
+// `&mut self` that the caller observes. What is left here is a DELIBERATE
+// by-value fixture: the move semantics of a by-value receiver are worth pinning
+// on their own, and since the borrow checker learned to read method-call
 // signatures a binding cannot be handed to two of them. Each call therefore
 // gets its own binding — which is what a reader porting Rust-shaped code has to
 // do too, and what this fixture would have hidden if it had been written before

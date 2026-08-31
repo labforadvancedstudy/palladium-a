@@ -1,0 +1,27 @@
+// NEGATIVE TEST — a by-value `self` is a COPY, and writing it is refused.
+//
+// This is the ORDINARY immutability rule rather than a new one, and that is the
+// whole argument for refusing it. There is no `mut self` receiver form — `fn f(mut
+// self)` is "Expected parameter name, but found 'self'" — so a by-value `self` is a
+// binding that was never declared mutable, exactly like `let c` versus `let mut c`.
+//
+// MEASURED BEFORE THE REFUSAL EXISTED: this COMPILED, LINKED AND RAN. The write
+// landed on the callee's copy, the caller observed nothing, and the program did not
+// do what it said. That is the silent-wrong-result class this repository exists to
+// refuse, and it is worse than a diagnostic, so the surface is refused rather than
+// left parseable.
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn bump(self) -> i64 {
+        self.n = self.n + 1;
+        return self.n;
+    }
+}
+
+fn main() {
+    let c: C = C { n: 1 };
+    print_int(c.bump());
+}

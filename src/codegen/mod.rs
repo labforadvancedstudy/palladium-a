@@ -196,6 +196,14 @@ pub struct CodeGenerator {
     /// (`Type::method`). Kept out of `functions` so that only type inference
     /// sees them and argument passing is unaffected.
     impl_methods: std::collections::HashMap<String, Option<Type>>,
+    /// `Type::method` -> its declared parameters, RECEIVER INCLUDED.
+    ///
+    /// `impl_methods` above carries return types only, and `functions` never held
+    /// methods at all, so a call site rewritten to `C::get(c)` resolved NO parameter
+    /// list and every argument was emitted by value. For `self` that is right; for
+    /// `&self` and `&mut self`, which lower to pointers, it emitted `__pd_C_get(c)`
+    /// against `const struct C*` and gcc refused the call the front end had approved.
+    impl_method_params: std::collections::HashMap<String, Vec<Param>>,
     /// Map from original generic struct name to list of instantiations
     /// e.g., "Box" -> [("i64", "Box_i64"), ("bool", "Box_bool")]
     generic_struct_instantiation_map: std::collections::HashMap<String, Vec<(Vec<String>, String)>>,
@@ -324,6 +332,7 @@ impl CodeGenerator {
             enums: std::collections::HashMap::new(),
             structs: std::collections::HashMap::new(),
             impl_methods: std::collections::HashMap::new(),
+            impl_method_params: std::collections::HashMap::new(),
             generic_struct_instantiation_map: std::collections::HashMap::new(),
             async_functions: std::collections::HashSet::new(),
             defined_structs: std::collections::HashSet::new(),
@@ -889,6 +898,7 @@ impl CodeGenerator {
     /// field of the generator (the imported-module list) is borrowed.
     fn collect_impl_method_types(
         impl_methods: &mut std::collections::HashMap<String, Option<Type>>,
+        impl_method_params: &mut std::collections::HashMap<String, Vec<Param>>,
         impl_block: &ImplBlock,
     ) {
         if !impl_block.type_params.is_empty() {
@@ -909,6 +919,12 @@ impl CodeGenerator {
             impl_methods.insert(
                 format!("{}::{}", for_type, method.name),
                 method.return_type.clone(),
+            );
+            // The PARAMS as declared, so the call site can ask the same question the
+            // declaration answers: is this parameter a pointer?
+            impl_method_params.insert(
+                format!("{}::{}", for_type, method.name),
+                method.params.clone(),
             );
         }
     }
@@ -1208,7 +1224,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4781`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4888`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -2105,7 +2121,11 @@ impl CodeGenerator {
                         }
                     }
                     Item::Impl(impl_block) => {
-                        Self::collect_impl_method_types(&mut self.impl_methods, impl_block);
+                        Self::collect_impl_method_types(
+                        &mut self.impl_methods,
+                        &mut self.impl_method_params,
+                        impl_block,
+                    );
                     }
                     Item::Macro(_) => {
                         // Macros are expanded before codegen, skip here
@@ -2141,7 +2161,11 @@ impl CodeGenerator {
                     }
                 }
                 Item::Impl(impl_block) => {
-                    Self::collect_impl_method_types(&mut self.impl_methods, impl_block);
+                    Self::collect_impl_method_types(
+                        &mut self.impl_methods,
+                        &mut self.impl_method_params,
+                        impl_block,
+                    );
                 }
                 Item::Macro(_) => {
                     // Macros are expanded before codegen, skip here
@@ -4496,6 +4520,31 @@ impl CodeGenerator {
     /// Rewrite `object.field(args)` into `TypeOfObject::field(object, args)`
     /// (N5-17).
     ///
+    /// Does a REFERENCE parameter need `&` at the call site?
+    ///
+    /// Only references reach here; `mut` parameters are decided by their own flag. Two
+    /// carve-outs, both measured rather than assumed:
+    ///
+    ///   * AN ARRAY REFERENT DECAYS. `fn write(xs: &mut [i64; 3])` is emitted as
+    ///     `long long xs[3]`, i.e. `long long*`, and `&values` is `long long (*)[3]` -- a
+    ///     DIFFERENT pointer type. `test_array_reference_parameters_compile_to_pointers`
+    ///     pins `write(values)` for exactly this reason, and taking the address broke it.
+    ///   * AN ARGUMENT THAT ALREADY PRODUCES AN ADDRESS. `write(&mut values)` has written
+    ///     the `&` in the source; adding another would take the address of a reference.
+    ///
+    /// Everything else -- a `&self`/`&mut self` receiver, a `&Struct` parameter handed a
+    /// place -- is a value where a pointer is wanted, and gets the `&` the declaration
+    /// side has always expected.
+    fn reference_param_needs_address(ty: &Type, arg: &Expr) -> bool {
+        let Type::Reference { inner, .. } = ty else {
+            return false;
+        };
+        if matches!(inner.as_ref(), Type::Array(_, _)) {
+            return false;
+        }
+        !matches!(arg, Expr::Reference { .. })
+    }
+
     /// The receiver becomes the first argument and appears EXACTLY ONCE, so a
     /// receiver with a side effect happens once however the call is written.
     /// Its position among the arguments is C's business: C does not specify
@@ -5969,7 +6018,16 @@ impl CodeGenerator {
 
                 // Get function signature to check parameter mutability
                 let func_params = match func.as_ref() {
-                    Expr::Ident(name) => self.functions.get(name).map(|(params, _)| params.clone()),
+                    // `impl_method_params` is consulted when `functions` misses, because a
+                    // method call has already been rewritten to `Type::method(recv, ..)` by
+                    // `method_call_as_path_call`, and methods were never registered in
+                    // `functions`. Without this the receiver of every `&self`/`&mut self`
+                    // method was emitted by value against a pointer parameter.
+                    Expr::Ident(name) => self
+                        .functions
+                        .get(name)
+                        .map(|(params, _)| params.clone())
+                        .or_else(|| self.impl_method_params.get(name).cloned()),
                     _ => None,
                 };
 
@@ -6013,14 +6071,18 @@ impl CodeGenerator {
                         self.output.push_str(", ");
                     }
 
-                    // Check if this parameter is mutable
+                    // Does this parameter arrive as a POINTER? The declaration side
+                    // already answers exactly this question, with exactly this predicate
+                    // (`is_pointer` where parameters are emitted), and the call side used
+                    // to ask a narrower one (`param.mutable` alone). A `&self`/`&mut self`
+                    // receiver is recorded by the parser as `mutable: false` with a
+                    // `Type::Reference` type, so it fell through the gap: declared
+                    // `const struct C* self`, called `__pd_C_get(c)`. The two sides now ask
+                    // one question, which is the only way they cannot disagree again.
                     let needs_address = if let Some(params) = &func_params {
-                        if i < params.len() && params[i].mutable {
-                            // Need to pass address for mutable parameters
-                            true
-                        } else {
-                            false
-                        }
+                        i < params.len()
+                            && (params[i].mutable
+                                || Self::reference_param_needs_address(&params[i].ty, arg))
                     } else {
                         false
                     };

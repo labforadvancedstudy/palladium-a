@@ -1,0 +1,26 @@
+// NEGATIVE TEST — `&self` is a SHARED borrow, and a write through it is refused.
+//
+// `self` became a place base in su2, so `self.n = 9;` parses now. Whether it MEANS
+// anything is a property of how the method took its receiver, and this one took a
+// shared reference.
+//
+// MEASURED BEFORE THE REFUSAL EXISTED: this compiled all the way through the front
+// end and emitted `self->n = 9LL;` against a `const struct C*` parameter, which gcc
+// refused — "cannot assign to variable 'self' with const-qualified type". A rule of
+// this language enforced by the C compiler is a rule stated in the wrong place: the
+// programmer never wrote that C and cannot act on a complaint about it.
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn bad(&self) {
+        self.n = 9;
+    }
+}
+
+fn main() {
+    let mut c: C = C { n: 1 };
+    c.bad();
+    print_int(c.n);
+}

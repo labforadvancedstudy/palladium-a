@@ -186,12 +186,21 @@ them was hiding the same missing thing.
    is `satisfied` and is careful to say it is an instance claim over `[i64; N]` and `[String; N]`;
    the general case is therefore owned by nobody, and it is the reason this parser stores kinds as
    integers instead of as the enum it declares in a comment.
-2. **A `&T` parameter cannot be forwarded.** `fn a(p: &P) -> i64 { return b(p); }` emits
-   `b((*p))` — a dereference into a pointer parameter — silently, and gcc catches it. Recursive
-   descent is nothing *but* forwarding, so the entire shared-borrow spelling is unusable in the one
-   program shape WT-01 asks for. N9-01/N9-02/N4-13 name `ref T`/`ref mut T` and are owned by M7;
-   **no row owns the `&` spelling that the compiler actually implements**, so this defect is
-   invisible to every inventory. **How this one has to be probed is itself a finding.** A probe that
+2. **A `&T` parameter cannot be forwarded — CLOSED by su2**, and it closed for a reason worth
+   recording rather than a fix aimed at it. As written it read: `fn a(p: &P) -> i64 { return b(p); }`
+   emits `b((*p))` — a dereference into a pointer parameter — silently, and gcc catches it; recursive
+   descent is nothing *but* forwarding, so the entire shared-borrow spelling was unusable in the one
+   program shape WT-01 asks for; and **no row owned the `&` spelling that the compiler actually
+   implements**, so the defect was invisible to every inventory. su2 went after a different symptom —
+   a `&self` receiver that could not link — and found ONE cause under both: the call site decided
+   whether to take an address from `param.mutable` alone, while the declaration side had always used
+   `param.mutable || matches!(ty, Type::Reference { .. })`. Unifying the two predicates fixed the
+   receiver and the forwarding case together. Measured after: that exact program compiles, links,
+   runs and prints `4`, and `tests/linker_diagnostics.rs::forwarding_a_shared_reference_compiles_links_and_runs`
+   is now its witness — the same program that was the subject of a REFUSAL test there before.
+   **This does not make the row owned.** Nothing in `docs/contributing/1.0-requirements.tsv` names
+   the `&` spelling still, so the finding's point stands: the inventory could not see this, and did
+   not see it being fixed either. **How this one has to be probed is itself a finding.** A probe that
    stops at `pdc compile` reports this case as COMPILING, because the front end approves it and the
    defect is in the C that comes out; only `pdc run` reaches gcc and returns rc=3 with
    `passing 'const struct P' to parameter of incompatible type 'const struct P *'`. An earlier pass

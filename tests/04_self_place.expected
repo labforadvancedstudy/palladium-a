@@ -1,0 +1,14 @@
+a shared receiver reads, and the method links at all:
+1
+a field write through `&mut self`, seen by the CALLER:
+42
+compound assignment through `self`, both directions:
+50
+30
+an INDEXED write through `self`:
+99
+and a compound write to an indexed place:
+199
+the other slots are untouched:
+0
+0

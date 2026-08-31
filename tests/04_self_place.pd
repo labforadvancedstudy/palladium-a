@@ -1,0 +1,90 @@
+// Test 04: `self` IS A PLACE (N5-13 compound assignment, and the place production).
+//
+// The normative production reads `place = identifier | place '[' expression ']'
+// | place '.' identifier | '*' identifier`, and `self` is a KEYWORD rather than an
+// identifier — so `self.n = v;` never reached the assignment path at all and was
+// reported as "Expected ';' after expression, but found '='".
+//
+// TWO THINGS HAD TO BE TRUE AT ONCE, and neither was witnessable alone. The
+// surface had to parse; and a write through it had to be OBSERVABLE BY THE CALLER,
+// which needs a receiver that is a pointer. `&mut self` parsed and borrow-checked
+// already, but every call site passed the receiver BY VALUE against a pointer
+// parameter, so a `&self` method could not even link. Both are fixed together
+// here, and this fixture is the propagation half.
+//
+// WHY EVERY READ BELOW IS A SEPARATE CALL. A method that mutates and then returns
+// its own answer proves nothing: a by-value receiver mutating a COPY would print
+// exactly the same numbers. The caller re-reads through a fresh `&self` call after
+// the mutating call has returned, so the value printed is the caller's, not the
+// callee's view of a copy.
+//
+// The three refusals that bound this surface are `reject` fixtures, because a run
+// fixture cannot witness a refusal:
+//   tests/reject/self_write_through_shared_receiver.pd   `&self` is shared
+//   tests/reject/self_write_through_by_value_receiver.pd a copy is not a `mut` binding
+//   tests/reject/self_is_not_reassignable.pd             `self = v`
+//   tests/reject/deref_self_is_not_a_place.pd            `*self`
+
+struct Counter {
+    n: i64,
+    slots: [i64; 4],
+}
+
+impl Counter {
+    fn get(&self) -> i64 {
+        return self.n;
+    }
+
+    fn at(&self, i: i64) -> i64 {
+        return self.slots[i];
+    }
+
+    fn set(&mut self, v: i64) {
+        self.n = v;
+    }
+
+    fn add(&mut self, v: i64) {
+        self.n += v;
+    }
+
+    fn take(&mut self, v: i64) {
+        self.n -= v;
+    }
+
+    fn put(&mut self, i: i64, v: i64) {
+        self.slots[i] = v;
+    }
+
+    fn bump_slot(&mut self, i: i64) {
+        self.slots[i] += 100;
+    }
+}
+
+fn main() {
+    let mut c: Counter = Counter { n: 1, slots: [0, 0, 0, 0] };
+
+    print("a shared receiver reads, and the method links at all:");
+    print_int(c.get());
+
+    print("a field write through `&mut self`, seen by the CALLER:");
+    c.set(42);
+    print_int(c.get());
+
+    print("compound assignment through `self`, both directions:");
+    c.add(8);
+    print_int(c.get());
+    c.take(20);
+    print_int(c.get());
+
+    print("an INDEXED write through `self`:");
+    c.put(2, 99);
+    print_int(c.at(2));
+
+    print("and a compound write to an indexed place:");
+    c.bump_slot(2);
+    print_int(c.at(2));
+
+    print("the other slots are untouched:");
+    print_int(c.at(0));
+    print_int(c.at(3));
+}

@@ -1,0 +1,25 @@
+// NEGATIVE TEST — the receiver BINDING is not reassignable, whatever form it took.
+//
+// `self.f = v` is a write to a field; `self = v` is a rebinding of the receiver
+// itself, and this language has no surface for that.
+//
+// THE OLD DIAGNOSTIC WAS THE REASON THIS ROW EXISTS. Before su2 this reached the
+// stock immutable-binding message: "Cannot assign to immutable variable 'self'. To
+// make it mutable, declare it with 'let mut self = ...'" — advice the parser
+// refuses, so a reader who followed it was sent to write something impossible. A
+// diagnostic that names a fix the compiler will not accept is worse than none.
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn reset(&mut self) {
+        self = C { n: 0 };
+    }
+}
+
+fn main() {
+    let mut c: C = C { n: 1 };
+    c.reset();
+    print_int(c.n);
+}

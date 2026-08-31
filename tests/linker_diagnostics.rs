@@ -181,19 +181,81 @@ fn pdc_compile_with_env(source: &str, stem: &str, env: &[(&str, &str)]) -> PdcRu
 // 1. the refusal
 // ---------------------------------------------------------------------------
 
-/// The C that segfaults is refused, and the refusal names the compiler.
+/// THE PROGRAM THIS FILE WAS BUILT AROUND NOW WORKS, and that is the assertion.
 ///
-/// Asserts on the BINARY as well as the exit code: reporting an error while
-/// leaving a runnable miscompile on disk is the same defect one step later —
-/// the next `./build_output/x` would run exactly what pdc just refused to ship.
+/// It used to be the subject of a refusal: `outer` forwarding its `&String`
+/// parameter to `inner` emitted `inner((*s))` — a dereference into a pointer
+/// parameter — and gcc caught it, so pdc refused rather than ship C it had
+/// mis-generated. su2 fixed the cause. The call site decided whether to take an
+/// address from `param.mutable` alone, while the DECLARATION side had always used
+/// `param.mutable || matches!(ty, Type::Reference { .. })`; the two now ask one
+/// question, and a reference parameter is forwarded as the pointer it already is.
+///
+/// The strongest form of the transform: the exact program that was the refusal's
+/// subject is now the fix's witness. It compiles, it links, it runs, and it prints
+/// the length of "abcd". Anything less — asserting only that pdc exits 0 — would
+/// pass on a compiler that emitted nothing at all.
 #[test]
-fn the_type_confusion_is_now_refused() {
+fn forwarding_a_shared_reference_compiles_links_and_runs() {
     let run = pdc_compile(TYPE_CONFUSING_SOURCE, "linkdiag_confusion");
 
     assert!(
+        run.ok,
+        "forwarding a `&T` parameter is refused again; su2's call-site predicate \
+         has regressed.\n{}",
+        run.log
+    );
+    assert!(
+        !run.log.contains("internal compiler error"),
+        "pdc still reports its own codegen as ill-typed for this program.\n{}",
+        run.log
+    );
+    assert!(
+        run.binary.exists(),
+        "pdc reported success but left no executable at {}",
+        run.binary.display()
+    );
+
+    let out = Command::new(&run.binary).output().expect("run the binary");
+    assert!(
+        out.status.success(),
+        "the binary pdc produced did not run cleanly\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "4",
+        "the forwarded reference did not survive to the callee: `string_len` \
+         answered about the wrong thing"
+    );
+}
+
+/// THE REFUSAL MECHANISM ITSELF, which outlived the defect that first exposed it.
+///
+/// The test above used to carry these assertions, resting on a real codegen bug
+/// as its subject. That is a bad place for a mechanism pin: the day the bug is
+/// fixed — today — the pin goes with it, and the machinery that turns "gcc found
+/// our C ill-typed" into a Palladium-level refusal loses its only end-to-end
+/// witness. So the subject is now a SHIM. `gcc` here exits 0 and prints exactly
+/// the diagnostic shape the real one printed, which keeps the pin independent of
+/// whether any current program can still provoke it.
+#[test]
+#[cfg(unix)]
+fn ill_typed_c_is_refused_and_names_the_compiler() {
+    let dir = TempDir::new().expect("tempdir");
+    let path = shim_path(
+        dir.path(),
+        &format!(
+            "{}echo \"$c:1:1: warning: passing argument 1 of 'f' from incompatible \
+             pointer type [-Wincompatible-pointer-types]\" >&2\nexit 0\n",
+            SHIM_FIND_TU
+        ),
+    );
+    let run = pdc_compile_with_path(TRIVIAL_SOURCE, "linkdiag_illtyped", Some(Path::new(&path)));
+
+    assert!(
         !run.ok,
-        "pdc accepted a program whose emitted C confuses pointer types; the \
-         binary it produced segfaults.\n{}",
+        "gcc reported our C ill-typed and pdc shipped it anyway.\n{}",
         run.log
     );
     assert!(
@@ -347,56 +409,53 @@ fn gcc_giving_up_is_unchanged() {
 /// gcc EXITED 0 on the C that pdc refuses.
 ///
 /// This is the control that separates the fix from the bug, and from the other
-/// plausible fix. If the refusal came from `-Werror=...` on the command line,
-/// or from any reading of the exit status, gcc's status here would be nonzero
-/// and this test would fail. It asserts three things about ONE compile:
-/// gcc succeeded, gcc still said something, and pdc refused anyway.
+/// plausible fix. If the refusal came from `-Werror=...` on the command line, or
+/// from any reading of the exit status, a gcc that exits 0 would be accepted and
+/// this test would fail. It asserts two things about ONE compile: gcc SUCCEEDED,
+/// and pdc refused anyway.
+///
+/// THE SUBJECT IS A SHIM, and used to be a real program whose C provoked an
+/// exit-0 warning. That subject was the `&T` forwarding defect, which su2 fixed —
+/// so the control had to be re-based or lost. A shim is the better base anyway:
+/// the property being pinned is "the reader looks at stderr, not at `$?`", and a
+/// gcc that exits 0 while printing a fatal diagnostic states that property
+/// directly instead of depending on some current program still provoking one.
 #[test]
+#[cfg(unix)]
 fn the_refusal_reads_stderr_not_status() {
-    let run = pdc_compile(TYPE_CONFUSING_SOURCE, "linkdiag_exit0");
-    assert!(
-        run.c_file.exists(),
-        "codegen produced no C, so there is nothing to ask gcc about\n{}",
-        run.log
+    let dir = TempDir::new().expect("tempdir");
+    let stderr_line = "warning: passing argument 1 of 'f' from incompatible pointer type \
+                       [-Wincompatible-pointer-types]"
+        .to_string();
+    let path = shim_path(
+        dir.path(),
+        &format!("{}echo \"$c:1:1: {}\" >&2\nexit 0\n", SHIM_FIND_TU, &stderr_line),
     );
+    let run = pdc_compile_with_path(TRIVIAL_SOURCE, "linkdiag_exit0", Some(Path::new(&path)));
 
-    let runtime_dir = palladium::runtime_paths::runtime_dir().expect("runtime dir");
-    let out = Command::new("gcc")
-        .arg("-c")
-        .arg(&run.c_file)
-        .arg("-o")
-        .arg(
-            TempDir::new()
-                .expect("tempdir")
-                .keep()
-                .join("linkdiag_exit0.o"),
-        )
-        .arg("-I")
-        .arg(&runtime_dir)
-        .output()
-        .expect("run gcc");
-
-    assert!(
-        out.status.success(),
-        "gcc did NOT exit 0 on this C, so this control proves nothing about \
-         reading stderr. Either the toolchain now errors on the tag (gcc 14+ \
-         does) or a -Werror flag was added; in both cases the stderr path needs \
-         a different exit-0 witness.\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let fatal = linker::fatal_diagnostics(&stderr, &run.c_file);
-    assert!(
-        !fatal.is_empty(),
-        "gcc exited 0 and said nothing this change can act on:\n{}",
-        stderr
-    );
+    // The shim exits 0 BY CONSTRUCTION, which is the whole point: there is no
+    // nonzero status anywhere for an implementation to have keyed on.
     assert!(
         !run.ok,
         "gcc exited 0 with a fatal diagnostic in stderr and pdc accepted the \
          program anyway — the status is still the only thing being read.\n{}",
         run.log
+    );
+    assert_eq!(
+        run.code,
+        Some(EXIT_BACKEND_ILL_TYPED),
+        "a diagnostic read out of a successful gcc must still be classified as \
+         ill-typed C, not as a rejection.\n{}",
+        run.log
+    );
+
+    // And the classifier itself agrees, on the same text, in isolation.
+    let captured = format!("{}:1:1: {}\n", run.c_file.display(), stderr_line);
+    let fatal = linker::fatal_diagnostics(&captured, &run.c_file);
+    assert!(
+        !fatal.is_empty(),
+        "`fatal_diagnostics` no longer treats an exit-0 incompatible-pointer \
+         warning as fatal, so the end-to-end refusal above rests on nothing"
     );
 }
 
@@ -836,17 +895,35 @@ fn every_gcc_invocation_goes_through_link() {
 ///
 /// Measured on this branch before the migration: `pdc compile B3.pd` refused
 /// (exit 4, no binary) while `pdc run B3.pd` built it, ran it, printed
-/// `Program exited with code: -1`, and exited 0. Two adjacent commands,
-/// opposite verdicts, and the one that actually executed the miscompiled
-/// binary was the one reporting success.
+/// `Program exited with code: -1`, and exited 0. Two adjacent commands, opposite
+/// verdicts, and the one that actually executed the miscompiled binary was the
+/// one reporting success.
+///
+/// RE-BASED ONTO A SHIM for the reason its neighbours were: the source that used
+/// to disagree was the `&T` forwarding defect, and su2 fixed it, so a program
+/// that is still refused is needed to state the invariant at all. The invariant
+/// is about the two COMMANDS agreeing, not about any particular defect, and a
+/// shimmed gcc makes that independent of what the compiler currently gets wrong.
 #[test]
+#[cfg(unix)]
 fn pdc_run_agrees_with_pdc_compile() {
     let dir = TempDir::new().expect("tempdir");
-    let src = dir.path().join("linkdiag_runagree.pd");
-    fs::write(&src, TYPE_CONFUSING_SOURCE).expect("write source");
+    let path = shim_path(
+        dir.path(),
+        &format!(
+            "{}echo \"$c:1:1: warning: passing argument 1 of 'f' from incompatible \
+             pointer type [-Wincompatible-pointer-types]\" >&2\nexit 0\n",
+            SHIM_FIND_TU
+        ),
+    );
 
+    let compiled = pdc_compile_with_path(TRIVIAL_SOURCE, "linkdiag_runagree", Some(Path::new(&path)));
+
+    let src = dir.path().join("linkdiag_runagree.pd");
+    fs::write(&src, TRIVIAL_SOURCE).expect("write source");
     let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
         .current_dir(repo_root())
+        .env("PATH", &path)
         .arg("run")
         .arg(&src)
         .output()
@@ -864,8 +941,17 @@ fn pdc_run_agrees_with_pdc_compile() {
     );
     assert_eq!(
         out.status.code(),
+        compiled.code,
+        "`pdc run` and `pdc compile` disagree about the same source: run={:?} \
+         compile={:?}\n{}",
+        out.status.code(),
+        compiled.code,
+        log
+    );
+    assert_eq!(
+        out.status.code(),
         Some(EXIT_BACKEND_ILL_TYPED),
-        "`pdc run` and `pdc compile` disagree about the same source\n{}",
+        "the agreed verdict is not the ill-typed-C one\n{}",
         log
     );
     assert!(!log.contains("Program completed successfully"), "{}", log);
