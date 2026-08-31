@@ -1,0 +1,34 @@
+// NEGATIVE TEST — the PARITY half of tests/reject/pattern_unknown_field.pd (N6).
+//
+// That fixture refuses `P::At { z }`; this one refuses `P::At { z: n }`, the
+// same mistake written out in full. Both exist because su1's central claim is
+// that FIELD SHORTHAND ADDS NO REACH — it is a spelling, not a new way to get
+// past the type checker — and a claim of the form "the explicit form is refused
+// identically" is a claim about a SECOND rejection. One fixture cannot carry it.
+//
+// WHY THIS IS A FIXTURE RATHER THAN A SENTENCE. The tempting cheap grounding is
+// the desugaring: shorthand is rewritten to the explicit form at parse, so the
+// two must behave alike. That argument does not reach this pair. `{ z }`
+// desugars to `{ z: z }`, and the spelling under test here is `{ z: n }` — a
+// DIFFERENT pattern, because the bound name differs. The desugaring proves
+// `{ z }` ≡ `{ z: z }` and nothing about `{ z: n }`.
+//
+// The general reason parity holds is real and worth stating, but it is a fact
+// about the type checker rather than about the parser: the unknown-field lookup
+// consults only the field NAME, and the pattern under that name is not read
+// until after the decision is made. So every spelling of the value side is
+// refused alike. That reasoning is what this fixture MEASURES instead of
+// asserting — it is executed by `make conformance` on every run, so it cannot
+// quietly stop being true the way an un-executed sentence can.
+enum P {
+    At { x: i64, y: i64 },
+    Quit,
+}
+
+fn main() {
+    let v = match P::At { x: 1, y: 2 } {
+        P::At { z: n } => n,
+        P::Quit => 0,
+    };
+    print_int(v);
+}

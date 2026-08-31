@@ -1698,7 +1698,7 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-types-semantics`
 (2026-08-31):
 
-**verified 83 · untranscribed 0 · vacuous 6 · xfail 1 · reject 107 · skip 2 · failures 0**, over 199
+**verified 83 · untranscribed 0 · vacuous 6 · xfail 1 · reject 109 · skip 2 · failures 0**, over 201
 fixtures. (The round-3 review of `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined

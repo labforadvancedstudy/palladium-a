@@ -1,0 +1,28 @@
+// NEGATIVE TEST — the PARITY half of
+// tests/reject/field_shorthand_needs_a_struct_variant.pd (N6).
+//
+// That fixture refuses `M::Pair { x, y }` on a TUPLE variant; this one refuses
+// `M::Pair { x: a, y: b }`, the same mistake written out in full. The pair is
+// what licenses the sentence "shorthand adds no reach" at this boundary: the
+// brace form is refused on a tuple variant however it is spelled, so the
+// shorthand did not create the error and removing the shorthand would not
+// remove it.
+//
+// The refusal is the TYPE CHECKER's, not the parser's — the parser accepts
+// `path "::" identifier '{' … '}'` for any path, because at that point it does
+// not know what the path names. The decision is made on the SHAPES alone (a
+// braced pattern against a positional variant); the field list is never
+// examined, which is why the two spellings cannot diverge. Measured here rather
+// than argued, for the reason its sibling states.
+enum M {
+    Pair(i64, i64),
+    Quit,
+}
+
+fn main() {
+    let v = match M::Pair(1, 2) {
+        M::Pair { x: a, y: b } => a + b,
+        M::Quit => 0,
+    };
+    print_int(v);
+}

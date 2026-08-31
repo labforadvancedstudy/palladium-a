@@ -9,8 +9,11 @@
 // struct-variant position" is the obvious reading of the grammar and it is not
 // where the boundary is actually enforced.
 //
-// The shorthand is not what is being refused — `M::Pair { x: a, y: b }` is
-// refused identically. That is the point: shorthand adds no reach.
+// The shorthand is not what is being refused: `M::Pair { x: a, y: b }` is
+// refused identically — MEASURED, by tests/reject/tuple_variant_braces_explicit.pd,
+// because "the explicit form is refused identically" is a claim about a SECOND
+// rejection and no single fixture can hold two. That is the point: shorthand
+// adds no reach.
 enum M {
     Pair(i64, i64),
     Quit,

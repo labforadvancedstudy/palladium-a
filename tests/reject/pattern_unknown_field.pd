@@ -11,8 +11,12 @@
 // `P::At { }` matches), wrongness is not. Both halves have to be pinned or
 // "subset" is indistinguishable from "unchecked".
 //
-// The shorthand is not what is refused — `P::At { z: n }` is refused
-// identically. Shorthand adds no reach here either.
+// The shorthand is not what is refused: `P::At { z: n }`, the same mistake
+// written out in full, is refused identically — MEASURED, by
+// tests/reject/pattern_unknown_field_explicit.pd, which exists because that is a
+// claim about a SECOND rejection and this fixture cannot carry it. Note the
+// desugaring does not settle it either: `{ z }` desugars to `{ z: z }`, not to
+// `{ z: n }`. Shorthand adds no reach here.
 enum P {
     At { x: i64, y: i64 },
     Quit,
