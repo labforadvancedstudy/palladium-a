@@ -124,10 +124,17 @@ fold() {
 }
 
 # The one rc=2 shape this target tolerates, as the sentence that identifies it.
-# ANCHORED at the start of a line and NAMING THE MILESTONE: `report()` writes
-# `no row of <manifest> is owned by <milestone>.`, so an abstention about some
-# other milestone cannot satisfy it.
-TOLERATED_RE="^NO_VERDICT: no row of .* is owned by ${MILESTONE}\."
+#
+# ANCHORED AT BOTH ENDS, over the WHOLE sentence, and NAMING THE MILESTONE. The
+# first version anchored only the start and stopped at the period after the
+# milestone, which made it a PREFIX test: probed, `NO_VERDICT: no row of X is
+# owned by M1. parsing then failed` matched it, and so did the genuine sentence
+# with anything at all appended. A prefix of the right line is not the right
+# line. `report()` (scripts/requirements.py:499) writes the whole thing as ONE
+# line — the period after the milestone is mid-sentence, not the end of it — so
+# the tail anchor has to sit after `'nothing owed'.` and nowhere earlier. Only
+# `.*` for the manifest path is left free, because that path is an argument.
+TOLERATED_RE="^NO_VERDICT: no row of .* is owned by ${MILESTONE}\. A filter whose subject matches nothing clears everything, so this is refused rather than reported as 'nothing owed'\.$"
 
 # classify_four <rc> <stdout-file> — echoes CLEAR|OWED|TOLERATED|NO_VERDICT.
 #
@@ -135,10 +142,17 @@ TOLERATED_RE="^NO_VERDICT: no row of .* is owned by ${MILESTONE}\."
 # come from `main()` print their explanation on STDERR, and the tolerable one
 # comes from `report()` on STDOUT. Reading a merged stream would let a stderr
 # line be tested for a stdout contract.
+# THE EXIT CODE IS AN ALLOW-LIST, NOT A FALL-THROUGH. Every stated contract says
+# "rc=2 AND the sentence"; the first version said 0, 1, and then applied the
+# pattern to everything else, so rc=3 / 126 / 127 / 130 / 139 carrying the
+# sentence were all TOLERATED. `python3` can exit on a signal after it has
+# already printed, and a process that did not finish is not an abstention.
 classify_four() {
   case "$1" in
     0) echo CLEAR; return ;;
     1) echo OWED;  return ;;      # a MEASUREMENT. Never tolerated, whatever the text says.
+    2) ;;                         # the ONLY code from which TOLERATED is reachable
+    *) echo NO_VERDICT; return ;; # any other code, whatever the text says
   esac
   if grep -qE "$TOLERATED_RE" "$2"; then echo TOLERATED; else echo NO_VERDICT; fi
 }
@@ -227,14 +241,43 @@ if [ "${1-}" = "--self-test" ]; then
   sed "s/is owned by ${MILESTONE}\./is owned by M2./" "$T/zero.out" > "$T/other.out"
   check "another milestone's abstention is NOT tolerated" NO_VERDICT 2 "$T/other.out"
 
+  # THE EXIT-CODE CONTROLS. Every stated contract — this header, the Makefile
+  # block above `m1-exit`, MILESTONES item 8 — says "rc=2 AND the sentence". The
+  # first version of `classify_four` handled 0 and 1 and then applied the pattern
+  # to EVERY other code, so rc=3 (the compiler's own gcc-failure code), and 126,
+  # 127, 130 and 139 — could-not-execute, not-found, SIGKILL, SIGSEGV — were all
+  # tolerated whenever the text happened to carry the sentence. A python3 that
+  # dies on a signal after printing is not an abstention; it is an inventory that
+  # did not finish, which is the one thing fail-closed exists for.
+  for badrc in 3 126 127 130 139; do
+    check "rc=$badrc carrying the genuine tolerated sentence is NOT tolerated" \
+      NO_VERDICT "$badrc" "$T/zero.out"
+  done
+
+  # THE TAIL-ANCHOR CONTROLS. The pattern must match the WHOLE sentence and not a
+  # prefix of a line, or any line that merely begins the right way is tolerated.
+  # Both near-misses below were probed against the unanchored pattern and both
+  # matched it.
+  printf 'NO_VERDICT: no row of %s is owned by %s. parsing then failed\n' \
+    "docs/contributing/1.0-requirements.tsv" "$MILESTONE" > "$T/truncated.out"
+  check "a truncated sentence with other text after it is NOT tolerated" \
+    NO_VERDICT 2 "$T/truncated.out"
+
+  sed "s/reported as 'nothing owed'\./reported as 'nothing owed'. and then it died/" \
+    "$T/zero.out" > "$T/tail.out"
+  check "the genuine sentence with text appended after it is NOT tolerated" \
+    NO_VERDICT 2 "$T/tail.out"
+
   check "rc=0 is CLEAR" CLEAR 0 "$T/zero.out"
 
   if [ "$fails" -eq 0 ]; then
     echo "m1-exit self-test: $runs checks green (the aggregation lattice over all"
     echo "  81 four-inventory combinations, plus order independence; and the"
     echo "  inventory-four mapping over every rc=2 shape scripts/requirements.py"
-    echo "  can produce, three of them generated live, plus the two controls that"
-    echo "  keep the tolerance from masking a debt or another milestone)"
+    echo "  can produce, three of them generated live, plus the controls on both"
+    echo "  edges of the tolerance: it cannot mask a debt, cannot read another"
+    echo "  milestone's abstention as M1's, is unreachable from any exit code but"
+    echo "  2, and matches the WHOLE sentence rather than a prefix of its line)"
     exit 0
   fi
   echo "m1-exit self-test FAILED: $fails of $runs"
@@ -264,6 +307,10 @@ echo
 # manifest in the repository and nothing else.
 printf "${YELLOW}== inventory four of four: requirements (docs/contributing/1.0-requirements.tsv) ==${NC}\n"
 four_out=$(mktemp) || exit 2
+# Installed AT CREATION and not only at the `rm` below: every path out of this
+# script between here and there — a signal, a `set -u` trip, an `exit` added
+# later — would otherwise leave the file behind.
+trap 'rm -f "$four_out"' EXIT INT TERM
 REQ_MILESTONE=$MILESTONE python3 scripts/requirements.py > "$four_out"
 four_rc=$?
 cat "$four_out"
@@ -285,6 +332,7 @@ case "$(classify_four "$four_rc" "$four_out")" in
   *) fold $NO_VERDICT ;;
 esac
 rm -f "$four_out"
+trap - EXIT INT TERM
 echo
 
 case $verdict in

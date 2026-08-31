@@ -480,6 +480,24 @@ expect_out "rc=1 carrying the tolerated sentence is still OWED -> OWED" && ok
 start "mapping: the tolerated sentence names M1, so M2's abstention is not M1's"
 expect_out "another milestone's abstention is NOT tolerated -> NO_VERDICT" && ok
 
+# BOTH EDGES OF THE TOLERANCE, found by review after the first version shipped.
+# The classifier handled rc 0 and 1 and then applied the pattern to EVERY other
+# code, so a python3 killed by a signal AFTER it had printed the sentence was
+# read as an abstention; and the pattern was anchored only at the start and
+# stopped at the period after the milestone, which made it a prefix test that
+# `NO_VERDICT: no row of X is owned by M1. parsing then failed` satisfied. Both
+# were reproduced against the unfixed classifier before the fix: seven checks
+# RED, exactly these two families.
+start "mapping: the tolerance is unreachable from any exit code but 2"
+expect_out "rc=3 carrying the genuine tolerated sentence is NOT tolerated -> NO_VERDICT" \
+  && expect_out "rc=139 carrying the genuine tolerated sentence is NOT tolerated -> NO_VERDICT" \
+  && ok
+
+start "mapping: the pattern matches the WHOLE sentence, not a prefix of its line"
+expect_out "a truncated sentence with other text after it is NOT tolerated -> NO_VERDICT" \
+  && expect_out "the genuine sentence with text appended after it is NOT tolerated -> NO_VERDICT" \
+  && ok
+
 # THE PRODUCER HALF of the same control. Above proves m1-exit would not swallow
 # an OWED; this proves the reader would PRODUCE one if a row were owed to M1. The
 # real manifest has no M1 row — that absence is the whole reason the mapping

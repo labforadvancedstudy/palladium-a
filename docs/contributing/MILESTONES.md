@@ -879,7 +879,7 @@ enum-owned method is unreachable by its path form. Each row carries a
    *(GI-06's paragraph previously read "GI-06 adds it and is STILL OWED, a one-word change nobody
    has made", and was correct on `main` when it was written. `fix/d3b-tail-if` made the change while
    closing an unrelated hole: `version-source-gate` needed a path to the umbrella, and the same
-   reasoning — a target reachable only from `m1-exit`, which is RED by design, is never evidence
+   reasoning — a target reachable only from `m1-exit`, which was RED at the time, was no evidence
    that anything passed — applied to `test-honest`, which was measured green before it was added. The
    `gates:` citation has now been relocated TWICE during integration, each time because two branches
    grew the list independently and the conflict was resolved as a union. Both relocations were

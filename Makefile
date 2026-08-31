@@ -501,9 +501,9 @@ version-source-gate: ## Require that no source file states this compiler's versi
 # `test-xfail` BELONGS IN THIS LIST, and its absence was this round's own defect.
 # It is the check that every #[ignore]d row still fails FOR THE REASON IT
 # DECLARES — the headline mechanism of the last two rounds — and until now it was
-# reachable only by naming its own target or through `m1-exit`, which is RED by
-# design and therefore never evidence that anything passed. A check that the
-# certifying path does not run is a document.
+# reachable only by naming its own target or through `m1-exit` — which was RED
+# when this was written, and so was no evidence that anything passed. A check
+# that the certifying path does not run is a document.
 #
 # COST, MEASURED BY RUNNING IT BOTH WAYS BACK TO BACK rather than by subtracting
 # a standalone timing: `make gates` 1m43s without this entry, 1m47s with it — 4s,

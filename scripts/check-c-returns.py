@@ -98,7 +98,7 @@ starts emitting a shape this reader does not model:
     this reader on the same inputs the parser's own termination analysis just
     decided, so parser/checker disagreement, and any new emitted shape,
     surface as a test failure rather than as a claim in this comment. It runs
-    inside `make test-honest` and inside `make m1-exit` (inventory 3 of 3).
+    inside `make test-honest` and inside `make m1-exit` (inventory 3 of 4).
   * `make test-gate-probe` fault-injects the shapes themselves
     (scripts/test-gate-probe.sh, "Net A coverage must be CLOSED"), so deleting
     a refusal turns that gate red unless its probe is deleted in the same
