@@ -355,8 +355,9 @@ pattern_primary = '_'
                | literal ( '..' | '..=' ) literal            (* N6-03 *)
                | '(' pattern ',' pattern { ',' pattern } ')' (* N6-05 *)
                | path "::" identifier [ '(' pattern { ',' pattern } ')'
-                                      | '{' identifier [ ':' pattern ]
-                                            { ',' identifier [ ':' pattern ] } '}' ] ;
+                                      | '{' [ identifier [ ':' pattern ]
+                                              { ',' identifier [ ':' pattern ] }
+                                              [ ',' ] ] '}' ] ;
 
 match_arm      = pattern [ "if" expression ] "=>" ( block | expression ) [ ',' ] ;  (* N6-09 *)
 
@@ -384,18 +385,36 @@ match_arm      = pattern [ "if" expression ] "=>" ( block | expression ) [ ',' ]
 #     shorthand adds no reach.
 #     Pinned by tests/reject/field_shorthand_needs_a_struct_variant.pd.
 #
+# THE FIELD SEQUENCE IS OPTIONAL AND MAY END IN A COMMA, spelled with the same
+# brackets `struct_decl` (line 157) and `struct_literal` (line 310) use for the
+# same shape. Both forms are what the parser accepts, measured: `P::At { }` binds
+# nothing and matches every `At`, and `P::At { x, y, }` is the trailing-comma
+# form. Neither is a new rule — the field loop runs `while` the next token is not
+# `}`, so an empty list never enters it and a comma before `}` ends it — but the
+# production said `identifier` at least once, which the parser had never
+# required.
+#
 # THE FIELD LIST IS A CHECKED SUBSET AND NOT THE WHOLE SET. This predates the
 # shorthand and the explicit form behaves identically; it is recorded here
-# because the shorthand is what makes a reader look at the list. A field the
-# variant does NOT have is refused — "Unknown field z in P::At" — but a field the
-# pattern OMITS is simply not bound: `P::At { x }` matches every `At` of a
-# two-field variant and leaves `y` undefined in the arm (reading it is
-# "Undefined variable: 'y'"), and `P::At { }` matches with no bindings at all
-# while still covering the variant for exhaustiveness. THERE IS NO `..` FORM —
-# omission is spelled by leaving the field out. Said explicitly because a reader
-# arriving from a language whose field list must be exhaustive or end in `..`
-# will infer a refusal that does not happen.
-# Witnessed by tests/06_field_shorthand.pd.
+# because the shorthand is what makes a reader look at the list. Three claims,
+# and each cites what can actually witness it — a `run` fixture witnesses what
+# the compiler ACCEPTS and can never witness a refusal, which is why the two
+# refusals below have `reject` fixtures of their own:
+#   * TOLERATED — a field the pattern OMITS is simply not bound. `P::At { x }`
+#     matches every `At` of a two-field variant, and `P::At { }` matches with no
+#     bindings at all while still covering the variant for exhaustiveness.
+#     THERE IS NO `..` FORM: omission is spelled by leaving the field out. Said
+#     explicitly because a reader arriving from a language whose field list must
+#     be exhaustive or end in `..` will infer a refusal that does not happen.
+#     Witnessed by tests/06_field_shorthand.pd.
+#   * REFUSED — a field the variant does NOT have: "Unknown field z in P::At".
+#     Pinned by tests/reject/pattern_unknown_field.pd.
+#   * REFUSED — reading an omitted field in the arm body. The omission is silent
+#     at the PATTERN and not in the BODY: `y` was never introduced, and naming it
+#     is "Undefined variable: 'y'". This is what makes "silently unbound" safe to
+#     write — without it the phrase could equally describe a language that leaves
+#     `y` holding garbage.
+#     Pinned by tests/reject/pattern_omitted_field_is_unbound.pd.
 #
 # `|` binds LOOSER than `@`, so `n @ 1 | 2` is `(n @ 1) | 2` — which is then
 # refused, because an ALTERNATIVE MAY NOT BIND (N6-07): every alternative would

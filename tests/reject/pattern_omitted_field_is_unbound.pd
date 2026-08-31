@@ -1,0 +1,26 @@
+// NEGATIVE TEST — a field the pattern omits is NOT BOUND in the arm (N6).
+//
+// The other half of the subset rule, and the half a reader is most likely to get
+// wrong: `P::At { x }` matches every `At` without complaint, so the omission is
+// silent AT THE PATTERN. It is not silent in the BODY — `y` was never
+// introduced, and naming it is an ordinary undefined-variable error.
+//
+// This is the claim that makes "silently unbound" safe to write in the
+// specification. Without it, "the omitted field is not bound" could equally
+// describe a language that leaves `y` holding garbage, which is what a reader
+// coming from C would assume and what the wording is there to deny.
+//
+// A `reject` fixture rather than a line in tests/06_field_shorthand.pd for the
+// repo's standing reason: a positive fixture cannot witness a refusal.
+enum P {
+    At { x: i64, y: i64 },
+    Quit,
+}
+
+fn main() {
+    let v = match P::At { x: 1, y: 2 } {
+        P::At { x } => x + y,
+        P::Quit => 0,
+    };
+    print_int(v);
+}

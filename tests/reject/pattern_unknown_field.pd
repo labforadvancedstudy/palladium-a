@@ -1,0 +1,27 @@
+// NEGATIVE TEST — a struct-variant pattern may OMIT a field, but it may not
+// INVENT one (N6).
+//
+// The pair to tests/06_field_shorthand.pd, and the reason that fixture cannot
+// carry this claim: a run fixture witnesses what the compiler ACCEPTS. "An
+// unknown field is refused" is a statement about a rejection, and only a
+// `reject` row can hold it.
+//
+// The field list is therefore a checked SUBSET of the variant's fields, not a
+// free list of names: incompleteness is tolerated (`P::At { x }` matches, and
+// `P::At { }` matches), wrongness is not. Both halves have to be pinned or
+// "subset" is indistinguishable from "unchecked".
+//
+// The shorthand is not what is refused — `P::At { z: n }` is refused
+// identically. Shorthand adds no reach here either.
+enum P {
+    At { x: i64, y: i64 },
+    Quit,
+}
+
+fn main() {
+    let v = match P::At { x: 1, y: 2 } {
+        P::At { z } => z,
+        P::Quit => 0,
+    };
+    print_int(v);
+}

@@ -65,8 +65,8 @@ scripts/conformance.sh	869-869	docs/contributing/MILESTONES.md	259d2060c249	if s
 scripts/conformance.sh	870-870	docs/contributing/MILESTONES.md	480853608aa1	grep_status F "$fp" "$TMPROOT/diag"; fp_match=$?
 scripts/conformance.sh	920-925	docs/contributing/MILESTONES.md	d16adaff9f82	elif [ "$stage_act" != "run" ] && [ "$fp_match" -gt 1 ]; then printf '%-52s % ... not with the declared diagnostic; expected fingerprint '$fp', actual: $detail"
 scripts/requirements.py	207-207	docs/contributing/MILESTONES.md	63417ff80f2a	raise ManifestError("cannot read %s: %s" % (path, exc))
-scripts/requirements.py	499-499	docs/contributing/MILESTONES.md	8c40111146b4	w(" %s\n" % e)
-scripts/requirements.py	515-515	docs/contributing/MILESTONES.md	712d3a44fb2d	for r in owed:
+scripts/requirements.py	506-506	docs/contributing/MILESTONES.md	9e6a84a57a77	w("\nNO_VERDICT: no row of %s is owned by %s. A filter whose subject "
+scripts/requirements.py	522-522	docs/contributing/MILESTONES.md	19094761412e	w("\nNO_VERDICT: every %s row is `satisfied`, but the steps listed above "
 scripts/stdlib-gate.sh	379-379	tests/d3b_tail_if.rs	42b7c4cd2314	known_violation:*)
 scripts/stdlib-gate.sh	379-381	tests/d3b_tail_if.rs	b6524cd3b834	known_violation:*) known_n=$((known_n+1)) want_fns=${cverdict#known_violation:}
 scripts/stdlib-gate.sh	389-391	tests/d3b_tail_if.rs	eb48c8400ce4	if [ "$cc_rc" -eq 0 ]; then note "XPASS: $drv is recorded known_violation:$wa ...  compiler defect is fixed; promote it to 'clean' in $DRIVER_MANIFEST" continue

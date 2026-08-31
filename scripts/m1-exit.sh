@@ -27,8 +27,8 @@
 #
 # Same exit code, different facts. The first says the inventory RAN and has
 # nothing of M1's to own; the second says the inventory could not be read at all.
-# `scripts/requirements.py:499` prints the first from `report()`; `:207` raises
-# the ManifestError that `:788-791` prints as the second, and `:515` prints a
+# `scripts/requirements.py:506` prints the first from `report()`; `:207` raises
+# the ManifestError that `:795-798` prints as the second, and `:522` prints a
 # third ("every M1 row is `satisfied`, but the steps listed above did not run"),
 # which is an abstention about EVIDENCE and is not tolerable either.
 #
@@ -130,7 +130,7 @@ fold() {
 # milestone, which made it a PREFIX test: probed, `NO_VERDICT: no row of X is
 # owned by M1. parsing then failed` matched it, and so did the genuine sentence
 # with anything at all appended. A prefix of the right line is not the right
-# line. `report()` (scripts/requirements.py:499) writes the whole thing as ONE
+# line. `report()` (scripts/requirements.py:506) writes the whole thing as ONE
 # line — the period after the milestone is mid-sentence, not the end of it — so
 # the tail anchor has to sit after `'nothing owed'.` and nowhere earlier. Only
 # `.*` for the manifest path is left free, because that path is an argument.

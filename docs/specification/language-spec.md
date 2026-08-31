@@ -1258,7 +1258,7 @@ pattern_primary = "_"
         | literal ( ".." | "..=" ) literal
         | "(" pattern "," pattern { "," pattern } ")"
         | path "::" identifier [ "(" pattern { "," pattern } ")"
-                               | "{" identifier [ ":" pattern ] { "," … } "}" ] ;
+                               | "{" [ identifier [ ":" pattern ] { "," … } [ "," ] ] "}" ] ;
 ```
 
 **implemented**: literal patterns (`1 =>`, `"s" =>`, `true =>`, and `-1 =>`, whose minus the pattern
@@ -1281,13 +1281,23 @@ match variant M::Pair` (`tests/reject/field_shorthand_needs_a_struct_variant.pd`
 spelling `M::Pair { x: a, y: b }` is refused identically — shorthand adds no reach.
 
 **The field list is a checked SUBSET, not the whole set**, which predates the shorthand and is
-identical for the explicit form. A field the variant does not have is refused (`Unknown field z in
-P::At`); a field the pattern OMITS is simply not bound. `P::At { x }` matches every `At` of a
-two-field variant and leaves `y` undefined in the arm — reading it is `Undefined variable: 'y'` —
-and `P::At { }` matches with no bindings at all while still covering the variant for
-exhaustiveness. **There is no `..` form**; omission is spelled by leaving the field out. Stated
-because a reader arriving from a language whose field list must be exhaustive or end in `..` will
-infer a refusal that does not happen. Witnessed by `tests/06_field_shorthand.pd`.
+identical for the explicit form. Three claims, each citing what can actually witness it — a `run`
+fixture witnesses what the compiler ACCEPTS and can never witness a refusal, so the two refusals
+carry `reject` fixtures of their own:
+
+- **Tolerated.** A field the pattern OMITS is simply not bound: `P::At { x }` matches every `At` of
+  a two-field variant, and `P::At { }` matches with no bindings at all while still covering the
+  variant for exhaustiveness. The field sequence is optional and may end in a comma, which the
+  production above now spells. **There is no `..` form**; omission is spelled by leaving the field
+  out. Stated because a reader arriving from a language whose field list must be exhaustive or end
+  in `..` will infer a refusal that does not happen. Witnessed by `tests/06_field_shorthand.pd`.
+- **Refused** — a field the variant does not have: `Unknown field z in P::At`, pinned by
+  `tests/reject/pattern_unknown_field.pd`. Incompleteness is tolerated, wrongness is not; without
+  this half, "subset" would be indistinguishable from "unchecked".
+- **Refused** — reading an omitted field in the arm body. The omission is silent at the PATTERN and
+  not in the BODY: `y` was never introduced, and naming it is `Undefined variable: 'y'`, pinned by
+  `tests/reject/pattern_omitted_field_is_unbound.pd`. This is what makes "silently unbound" safe to
+  write — without it the phrase could equally describe a language that leaves `y` holding garbage.
 
 **Two named SUBSETS of N6 and one rule this implementation OWNS, each pinned by a `reject` fixture
 rather than left to a reader.** The subsets: a range's endpoints are integer literals where the
@@ -1688,7 +1698,7 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-types-semantics`
 (2026-08-31):
 
-**verified 83 · untranscribed 0 · vacuous 6 · xfail 1 · reject 105 · skip 2 · failures 0**, over 197
+**verified 83 · untranscribed 0 · vacuous 6 · xfail 1 · reject 107 · skip 2 · failures 0**, over 199
 fixtures. (The round-3 review of `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined
