@@ -12,3 +12,15 @@ and a compound write to an indexed place:
 the other slots are untouched:
 0
 0
+a `&mut self` method may call a `&mut self` method on `self`:
+32
+and a `&self` method may call a `&self` method on `self`:
+231
+a `let` from `self` copies: the local sees the write,
+9
+and the CALLER still sees the original:
+32
+a `&self` receiver passes onward as a pointer, not as its address:
+32
+and a by-value receiver READS ordinarily (this one moves `c`, so it is last):
+231

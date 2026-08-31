@@ -260,6 +260,25 @@ place          = identifier | "self" | place '[' expression ']'
 #   `self = v`   the receiver BINDING is not reassignable in any form.
 #                tests/reject/self_is_not_reassignable.pd
 #
+# A `let` FROM `self` COPIES THE POINTEE and creates no alias, so writes to that
+# binding are ORDINARY LOCAL MUTATION and are not receiver-governed:
+# `let mut a = self; a.n = 9;` is emitted as `C a = (*self); a.n = 9LL;` and the
+# caller's object is untouched. The asymmetry with the by-value receiver above is
+# deliberate and named: both are writes the caller never sees, but `self`'s form is
+# a promise the SIGNATURE makes to every caller, while `a` is a local the programmer
+# declared `mut` on the spot. Refusing this would be refusing `let`, not a receiver.
+# Witnessed by tests/04_self_place.pd.
+#
+# THE RULE IS ABOUT WRITES, NOT ABOUT ASSIGNMENTS, so it covers the CALL path too:
+# calling a method that declares `&mut self` ON `self` reaches the same fields, and
+# is refused wherever a direct write would be -- from a `&self` receiver and from a
+# by-value one alike. Stated separately because it is not derivable from the
+# production above: `self.bump()` is a call expression, not a `place`.
+#   from `&self`   tests/reject/call_mut_method_through_shared_receiver.pd
+#   from `self`    tests/reject/call_mut_method_through_by_value_receiver.pd
+# Both directions the rule still ALLOWS -- `&mut self` calling `&mut self`, and
+# `&self` calling `&self` -- are executed by tests/04_self_place.pd.
+#
 # `*self` IS NOT A PLACE and not an expression either: a reference receiver is
 # already dereferenced on every field access, so `*self` asked for a second level
 # of indirection and reached gcc as an indirection on a non-pointer.

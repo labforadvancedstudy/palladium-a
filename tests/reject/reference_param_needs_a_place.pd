@@ -1,0 +1,32 @@
+// A REFERENCE PARAMETER TAKES THE ADDRESS OF ITS ARGUMENT, so the argument must have
+// storage. A call's RESULT does not.
+//
+// MEASURED before this refusal existed, and it PRE-DATES the receiver-lowering round
+// that now owns the site: this file passed the whole front end — lexer, parser, type
+// checker, borrow checker, effects — and then died inside gcc with
+//   error: cannot take the address of an rvalue of type 'struct C'
+// because code generation had emitted `__pd_sink(&(__pd_make()))`. Front-end approval
+// plus a C-compiler rejection is the one class this compiler does not ship: it states a
+// rule of this language in a compiler that has never heard of it.
+//
+// NOT REPAIRED BY MATERIALISING A TEMPORARY. The argument-hoisting path emits
+// `T* t = &(expr);`, which takes the address of the same rvalue one line earlier, and a
+// one-argument call is never hoisted at all. `T t = expr; sink(&t);` would be new
+// lowering rather than something that falls out of what is there, so this is refused by
+// name and the programmer writes the local — which is also the only spelling that says
+// how long the referent lives.
+struct C {
+    n: i64,
+}
+
+fn make() -> C {
+    return C { n: 7 };
+}
+
+fn sink(c: &C) -> i64 {
+    return c.n;
+}
+
+fn main() {
+    print_int(sink(make()));
+}

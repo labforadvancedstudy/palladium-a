@@ -1175,6 +1175,13 @@ pub struct TypeChecker {
     /// be WRITTEN is a property of how the receiver was declared, which nothing
     /// downstream of the signature otherwise knows.
     current_self_receiver: Option<SelfReceiver>,
+    /// The receiver form of every method, by qualified name, filled in the FIRST pass.
+    ///
+    /// `current_self_receiver` says how the CALLER declared its own receiver; this says
+    /// how the CALLEE declared its. The write rule needs both, and it needs the callee's
+    /// before that callee's body is walked -- a method may call one declared after it, so
+    /// reading the form off the method being checked would make the rule order-dependent.
+    impl_method_receiver: HashMap<String, SelfReceiver>,
     /// Every top-level `const` or `static` found in an IMPORTED module, with
     /// the module it came from. Recorded here and raised by `check`, because
     /// `set_imported_modules` has no fallible signature — the same shape the
@@ -1241,6 +1248,7 @@ impl TypeChecker {
             unsafe_depth: 0,
             current_impl_type: None,
             current_self_receiver: None,
+            impl_method_receiver: HashMap::new(),
             global_items: HashMap::new(),
             deferred_imported_globals: Vec::new(),
         }
@@ -1263,8 +1271,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1632-1633`, `src/typeck/mod.rs:1635-1637`,
-    /// `src/typeck/mod.rs:1732-1733`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1640-1641`, `src/typeck/mod.rs:1643-1645`,
+    /// `src/typeck/mod.rs:1740-1741`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -2693,6 +2701,14 @@ impl TypeChecker {
                             format!("{}::{}", impl_block.for_type, method.name)
                         };
 
+                        // The receiver form, recorded for EVERY method before any body is
+                        // walked. Generic ones too: they are refused at the call site for a
+                        // different reason, and a map with holes in it is a map whose misses
+                        // cannot be told apart from "this method takes no `self`".
+                        if let Some(recv) = Self::self_receiver_of(method) {
+                            self.impl_method_receiver.insert(method_name.clone(), recv);
+                        }
+
                         if !method.type_params.is_empty() {
                             // Generic method - store for later instantiation
                             let generic_func = GenericFunction {
@@ -2804,18 +2820,8 @@ impl TypeChecker {
                                 impl_block.for_type, method.name, param.name
                             )));
                         }
-                        // The receiver form, for the write rule below. Read off the
-                        // signature rather than guessed: the parser records `self` as a
-                        // param named "self" whose TYPE carries the form.
-                        self.current_self_receiver = method
-                            .params
-                            .iter()
-                            .find(|prm| prm.name == "self")
-                            .map(|prm| match &prm.ty {
-                                Type::Reference { mutable: true, .. } => SelfReceiver::MutRef,
-                                Type::Reference { .. } => SelfReceiver::Shared,
-                                _ => SelfReceiver::ByValue,
-                            });
+                        // The receiver form, for the write rule below.
+                        self.current_self_receiver = Self::self_receiver_of(method);
                         let checked = self.check_function(method);
                         self.current_self_receiver = None;
                         checked?;
@@ -2852,7 +2858,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3142-3144`), and walking an imported
+        // return (`src/typeck/mod.rs:3148-3150`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3224,21 +3230,47 @@ impl TypeChecker {
     /// `self.n`, `self.d[i]`, `self.a.b[0]` -- the write rule is about the RECEIVER, so
     /// the question is what the place chain is rooted in, not what its last link is.
     fn assign_target_base_is_self(target: &AssignTarget) -> bool {
-        fn base(e: &Expr) -> bool {
-            match e {
-                Expr::Ident(n) => n == "self",
-                Expr::FieldAccess { object, .. } => base(object),
-                Expr::Index { array, .. } => base(array),
-                Expr::Deref { expr, .. } => base(expr),
-                _ => false,
-            }
-        }
         match target {
             AssignTarget::Ident(n) => n == "self",
-            AssignTarget::FieldAccess { object, .. } => base(object),
-            AssignTarget::Index { array, .. } => base(array),
-            AssignTarget::Deref { expr } => base(expr),
+            AssignTarget::FieldAccess { object, .. } => Self::expr_base_is_self(object),
+            AssignTarget::Index { array, .. } => Self::expr_base_is_self(array),
+            AssignTarget::Deref { expr } => Self::expr_base_is_self(expr),
         }
+    }
+
+    /// Does this expression bottom out in `self`?
+    ///
+    /// Shared with the CALL rule, which asks the same question of a method call's
+    /// receiver: `self.bump()`, `self.inner.bump()`, `self.d[i].bump()`. Two copies of
+    /// this walker would be two answers to "is this the receiver", and the call rule and
+    /// the write rule are the same rule about the same object.
+    fn expr_base_is_self(e: &Expr) -> bool {
+        match e {
+            Expr::Ident(n) => n == "self",
+            Expr::FieldAccess { object, .. } => Self::expr_base_is_self(object),
+            Expr::Index { array, .. } => Self::expr_base_is_self(array),
+            Expr::Deref { expr, .. } => Self::expr_base_is_self(expr),
+            _ => false,
+        }
+    }
+
+    /// Which receiver form does this signature declare?
+    ///
+    /// THE ONE DEFINITION, because it is read in two places that must not drift: the
+    /// first pass records every method's form for the call rule, and the second pass
+    /// records the form of the method it is about to walk for the write rule. Read off
+    /// the signature rather than guessed -- the parser records `self` as a param named
+    /// "self" whose TYPE carries the form.
+    fn self_receiver_of(method: &Function) -> Option<SelfReceiver> {
+        method
+            .params
+            .iter()
+            .find(|prm| prm.name == "self")
+            .map(|prm| match &prm.ty {
+                Type::Reference { mutable: true, .. } => SelfReceiver::MutRef,
+                Type::Reference { .. } => SelfReceiver::Shared,
+                _ => SelfReceiver::ByValue,
+            })
     }
 
     fn check_statement(&mut self, stmt: &Stmt) -> Result<()> {
@@ -5448,6 +5480,51 @@ impl TypeChecker {
             )));
         }
 
+        // CALLING A MUTATING METHOD THROUGH A NON-MUTATING RECEIVER IS A WRITE.
+        //
+        // The write rule above guards `Stmt::Assign`, so it sees `self.n = v` and nothing
+        // else. `self.bump()` reaches the same field through a callee that declares
+        // `&mut self`, and the guarantee the caller's own receiver form states -- that
+        // this method does not modify the receiver -- was one call away from vacuous.
+        //
+        // MEASURED before this refusal: `fn covert(&self) { self.bump(); }` compiled,
+        // linked and ran, and the CALLER observed 42. The emitted C is
+        // `void __pd_C_covert(const struct C* self) { __pd_C_bump(self); }` against
+        // `void __pd_C_bump(struct C* self)`, so the only complaint anywhere is cc's
+        // discard-qualifiers warning -- which src/linker.rs:231 tags NON-FATAL because
+        // the emitted prelude fires it in 108/108 compiles. The backstop is structurally
+        // blind to this, which is why the rule has to be stated here.
+        //
+        // BOTH non-mutating forms are refused, by the same predicate as the write rule
+        // (`!= MutRef`), because the by-value path launders the same guarantee with even
+        // less to catch it: `fn take(self) { self.bump(); }` emits
+        // `__pd_C_bump(&self)` against the COPY -- no `const` anywhere, so not even a
+        // warning -- and it printed 42 from a mutation the caller never saw.
+        if let Some(caller_recv) = self.current_self_receiver {
+            if caller_recv != SelfReceiver::MutRef
+                && self.impl_method_receiver.get(&qualified) == Some(&SelfReceiver::MutRef)
+                && Self::expr_base_is_self(object)
+            {
+                let detail = match caller_recv {
+                    SelfReceiver::Shared => {
+                        "`&self` is a SHARED borrow of the receiver, and the callee takes \
+                         `&mut self`. Take `&mut self` here if this method is meant to \
+                         modify the receiver"
+                    }
+                    _ => {
+                        "a by-value `self` receiver is a COPY, and the callee takes \
+                         `&mut self`, so it would modify that copy and the caller would not \
+                         observe it. Take `&mut self` here if this method is meant to modify \
+                         the receiver, or return the new value"
+                    }
+                };
+                return Err(CompileError::Generic(format!(
+                    "cannot call `{}::{}` through `self`: {}",
+                    owner, field, detail
+                )));
+            }
+        }
+
         let mut call_args = Vec::with_capacity(args.len() + 1);
         call_args.push(object.clone());
         call_args.extend(args.iter().cloned());
@@ -6314,7 +6391,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6664-6728`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6708-6772`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that

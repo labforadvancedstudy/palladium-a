@@ -194,7 +194,7 @@ impl BorrowChecker {
     /// imported function can be checked at all.
     ///
     /// Takes exactly what `TypeChecker::set_imported_modules` takes
-    /// (`src/typeck/mod.rs:1457-1457`), because the driver has one resolver result and
+    /// (`src/typeck/mod.rs:1465-1465`), because the driver has one resolver result and
     /// two passes that need it; a second shape here would be a second thing to
     /// keep in sync. Registration itself is deferred to `check_program`, which is
     /// where the ordering against local definitions is decided.
@@ -234,7 +234,7 @@ impl BorrowChecker {
     ///
     /// Public-only, and imports-before-locals, for the same reasons as functions
     /// below; the type checker registers imported layouts under exactly the same
-    /// filter (`src/typeck/mod.rs:1637-1638`), so the two passes agree on which
+    /// filter (`src/typeck/mod.rs:1645-1646`), so the two passes agree on which
     /// `P` is meant.
     ///
     /// THE REMAINING WINDOW USED TO BE UNREACHABLE, AND IS NOW REACHABLE — the

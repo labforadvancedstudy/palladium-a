@@ -1,0 +1,30 @@
+// A by-value `self` method calling a `&mut self` method ON `self` mutates the COPY,
+// and is refused for the same reason the direct write is.
+//
+// THE SIBLING FILE IS NOT THIS FILE. There the receiver is `const` and cc at least
+// says something; here `self` IS the copy, so `&self` is an ordinary `struct C*`,
+// the C is perfectly well typed and NOTHING in the toolchain objects at any level.
+//
+// MEASURED before this refusal existed: `fn take(self) -> i64 { self.bump(); return
+// self.n; }` compiled, linked, ran, exited 0 and printed 42 — the copy's value, from
+// a mutation `main`'s object never saw. That is the class su2 already refused for
+// `self.n = v` under a by-value receiver; the call path laundered it.
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn bump(&mut self) {
+        self.n = self.n + 1;
+    }
+
+    fn take(self) -> i64 {
+        self.bump();
+        return self.n;
+    }
+}
+
+fn main() {
+    let c = C { n: 41 };
+    print_int(c.take());
+}

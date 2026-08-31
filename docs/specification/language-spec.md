@@ -698,7 +698,7 @@ Items (`src/parser/mod.rs:937`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`
 [N11](#n11-modules)'s file-based modules exist only as far as `import` reaches.
 
 **implemented — top-level `const` and `static`** (N3-09, N3-10), parsed by
-`src/parser/mod.rs:1910`, registered by `src/typeck/mod.rs:1890` and emitted by
+`src/parser/mod.rs:1910`, registered by `src/typeck/mod.rs:1898` and emitted by
 `src/codegen/mod.rs:3038`. Both take a MANDATORY type and a MANDATORY initialiser:
 
 ```ebnf
@@ -794,8 +794,8 @@ and `local_type_shadows_import` decides the rest.*
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1495`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2397-2400`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2748-2749`, corrected
-from `src/typeck/mod.rs:3168-3168`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2397-2400`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2764-2765`, corrected
+from `src/typeck/mod.rs:3174-3174`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1618-1619`, corrected from line 863–897 of the pre-cleanup revision).
 
@@ -905,7 +905,7 @@ unrelated reason.
 | `&T`, `&mut T` | partial | parses, but the typechecker is a **no-op**: `Type::Reference` maps to its inner type — "For now, treat references as the inner type / TODO: Proper reference type handling" (`src/typeck/mod.rs:744-748`, corrected from line 2470–2486 of the pre-cleanup revision). `&i64` and `i64` are indistinguishable to it. |
 | `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
 | `Name<A, B>` | partial | see below |
-| `(A, B)` | **implemented** | one C struct per SHAPE, mangled from the element C types and emitted with a constructor (`src/codegen/mod.rs:4891`); `void*` is gone. Arity two or more. A tuple in an ENUM PAYLOAD is refused by name — tuple structs are emitted after the enum definitions because an element may be an enum, and a payload of tuple type needs the reverse order |
+| `(A, B)` | **implemented** | one C struct per SHAPE, mangled from the element C types and emitted with a constructor (`src/codegen/mod.rs:4905`); `void*` is gone. Arity two or more. A tuple in an ENUM PAYLOAD is refused by name — tuple structs are emitted after the enum definitions because an element may be an enum, and a payload of tuple type needs the reverse order |
 | `f64` | **implemented** | the type of a float literal since N2-03; C `double` |
 | `f32` | partial | parses and maps to C `float`, but shares one checker type with `f64`, so nothing can observe the difference |
 | `char` | **implemented** | `'a'` lexes and carries the right scalar (N2-04) and its TYPE is `char`, distinct from `i64` with no implicit conversion either way (N4-04). The five character builtins speak it (N14-04). One C carrier, `long long`, because a C `char` holds 8 bits and `'한'` needs 21; `as` between `char` and `i64` is a no-op identity cast, and `as char` range-checks its operand |
@@ -940,8 +940,8 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
-rejected outright by the type checker (`src/typeck/mod.rs:4944-4944`) and again by code generation
-(`src/codegen/mod.rs:6478-6482`). It used to typecheck against a `Generic{name:"Result"}` shape
+rejected outright by the type checker (`src/typeck/mod.rs:4976-4976`) and again by code generation
+(`src/codegen/mod.rs:6522-6526`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
 
@@ -998,6 +998,21 @@ and then emit C for a `struct Result` layout nothing defines (see
     observed nothing. `tests/reject/self_write_through_by_value_receiver.pd`.
   - `self = v` — the receiver binding is not reassignable in any form.
     `tests/reject/self_is_not_reassignable.pd`.
+  - A `let` **from** `self` COPIES the pointee and creates no alias, so writes to that binding
+    are ordinary local mutation and are **not** receiver-governed: `let mut a = self; a.n = 9;`
+    lowers to `C a = (*self); a.n = 9LL;` and the caller's object is untouched. The asymmetry
+    with the by-value receiver above is deliberate — both are writes the caller never sees, but
+    `self`'s form is a promise the *signature* makes to every caller, while `a` is a local the
+    programmer declared `mut` on the spot. Refusing it would be refusing `let`. Witnessed by
+    `tests/04_self_place.pd`.
+  - **The rule is about WRITES, not about assignments**, so it covers the CALL path: invoking a
+    method that declares `&mut self` ON `self` reaches the same fields and is refused wherever a
+    direct write would be — from a `&self` receiver
+    (`tests/reject/call_mut_method_through_shared_receiver.pd`) and from a by-value one
+    (`tests/reject/call_mut_method_through_by_value_receiver.pd`). Stated separately because it
+    does not follow from the `place` production: `self.bump()` is a call, not a place. Both
+    directions still ALLOWED — `&mut self` calling `&mut self`, and `&self` calling `&self` — are
+    executed by `tests/04_self_place.pd`.
   - `*self` is **not a place** and not an expression either: a reference receiver is already
     dereferenced on every field access, so `*self` asked for a second indirection and reached gcc
     as an indirection on a non-pointer. `tests/reject/deref_self_is_not_a_place.pd`.
@@ -1060,7 +1075,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:6096-6100`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
+  (`src/typeck/mod.rs:6173-6177`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
@@ -1072,7 +1087,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:3969`) and code generation (`src/codegen/mod.rs:5951-5954`)
+both the type checker (`src/typeck/mod.rs:4001`) and code generation (`src/codegen/mod.rs:5965-5968`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once,
 and its position among the arguments is the one the source wrote: being the first argument, it is
@@ -1163,9 +1178,9 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4944-4944`, `.await` at
-`src/typeck/mod.rs:4951-4951`) and again by code generation (`?` at `src/codegen/mod.rs:6478-6482`,
-`.await` at `src/codegen/mod.rs:6490-6494`), which is callable on its own.
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4976-4976`, `.await` at
+`src/typeck/mod.rs:4983-4983`) and again by code generation (`?` at `src/codegen/mod.rs:6522-6526`,
+`.await` at `src/codegen/mod.rs:6534-6538`), which is callable on its own.
 
 What they used to do:
 
@@ -1341,7 +1356,7 @@ struct patterns, `ref`/`mut` bindings, `..` rest.
 **Exhaustiveness holds for every scrutinee type** (N6-10). An enum must cover its variants; a
 `bool` is covered by `true` and `false` together; every other type needs an arm that matches every
 value — `_`, a binding, `name @ <irrefutable>`, an `a | b` with an irrefutable alternative, or a
-tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5284`). NO INTERVAL
+tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5316`). NO INTERVAL
 ARITHMETIC IS PROMISED: `0..=59` beside `60..=<i64 max>` beside `<i64 min>..=-1` covers every
 integer and is still refused, and the diagnostic says why rather than leaving the reader to infer
 it. A guarded arm counts toward nothing — whether it is taken is not decidable from the pattern.
@@ -1405,9 +1420,9 @@ One divergence remains, and two are closed:
 ([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
-checker derives its signature table from it (`src/typeck/mod.rs:1204-1204`) and so does the borrow
+checker derives its signature table from it (`src/typeck/mod.rs:1211-1211`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
-(`src/codegen/mod.rs:5989-5989`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
+(`src/codegen/mod.rs:6003-6003`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:1659-1659`, corrected from line 251–575 of the pre-cleanup revision).
 
 *(v0.2 described this as "two tables that must agree". That was true before `src/builtins.rs`
@@ -1723,11 +1738,14 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-xfail-six`
 (2026-08-31):
 
-**verified 84 · untranscribed 0 · vacuous 6 · xfail 1 · reject 113 · skip 2 · failures 0**, over 206
+**verified 84 · untranscribed 0 · vacuous 6 · xfail 1 · reject 116 · skip 2 · failures 0**, over 209
 fixtures. (The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
 fixture in which a method taking a reference receiver links at all, and four `reject`s for the
 writes through a receiver the type checker refuses — through `&self`, through a by-value
-`self`, `self` as an assignment target and `*self` as a place. The round-3 review of
+`self`, `self` as an assignment target and `*self` as a place. Its review round added
+two more for the same rule reached through a CALL: a `&self` and a by-value-`self`
+method each invoking a `&mut self` method on `self`. A further review round added one
+more, for a reference parameter handed a temporary. The round-3 review of
 `feat/m2-items` added the two `reject`s that pin the `<<`
 branches the count-range fixture beside them never covered: `1 << 63`, whose shift AMOUNT is
 legal and whose VALUE is not, and `(0 - 1) << 3`, a negative left operand C leaves undefined

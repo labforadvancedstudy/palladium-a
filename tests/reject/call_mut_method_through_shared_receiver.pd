@@ -1,0 +1,36 @@
+// A `&self` method calling a `&mut self` method ON `self` is a write through a
+// shared borrow, and it is refused BY NAME.
+//
+// The write rule that su2 shipped guards assignment, so it saw `self.n = v` and
+// nothing else. This file reaches the same field through one more hop.
+//
+// MEASURED before this refusal existed: it compiled, linked, ran, exited 0, and
+// `main` printed 42 — the CALLER observed a mutation made through `&self`. The
+// emitted C was `void __pd_C_covert(const struct C* self) { __pd_C_bump(self); }`
+// against `void __pd_C_bump(struct C* self)`, so the only complaint anywhere in
+// the toolchain was cc's discard-qualifiers warning — which src/linker.rs tags
+// NON-FATAL because the emitted prelude fires it in 108/108 compiles. A rule with
+// a backstop that cannot fire is a rule stated in prose only.
+struct C {
+    n: i64,
+}
+
+impl C {
+    fn bump(&mut self) {
+        self.n = self.n + 1;
+    }
+
+    fn covert(&self) {
+        self.bump();
+    }
+
+    fn get(&self) -> i64 {
+        return self.n;
+    }
+}
+
+fn main() {
+    let mut c = C { n: 41 };
+    c.covert();
+    print_int(c.get());
+}

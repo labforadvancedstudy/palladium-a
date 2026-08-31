@@ -44,15 +44,28 @@
 //! reverting the defence turns that control RED and leaves the others green.
 //!
 //! REFUSAL AND ACCEPTANCE
-//!   `the_type_confusion_is_now_refused`     B3 produces no binary.
+//!   `forwarding_a_shared_reference_compiles_links_and_runs`
+//!                                           the REAL toolchain, on real emitted
+//!                                           C, run to a value.
+//!   `a_fatal_backend_diagnostic_refuses_and_blames_the_compiler`
+//!                                           the classifier, on a SHIM.
 //!   `an_ordinary_program_still_runs`        the accept side, run to a number.
 //!   `ill_typed_c_in_the_runtime_is_refused_and_says_whose_it_is`
 //!                                           ownership changes the sentence,
 //!                                           never the verdict.
 //!
+//! WHAT THE SHIM TESTS DO AND DO NOT SAY. Every control tagged SHIM below feeds
+//! `pdc` a canned stderr from a fake `gcc`. It therefore pins the READER — the
+//! classification of a diagnostic, the exit code, the attribution, the wording —
+//! and it says NOTHING about whether this compiler still emits C that would
+//! provoke one. It cannot: the shim prints its line whatever the C says. The only
+//! claims here about real generated C are the two run-to-a-value controls above,
+//! which use the real toolchain.
+//!
 //! WHAT gcc DID, AS OPPOSED TO THAT IT FAILED
 //!   `gcc_giving_up_is_unchanged`            the nonzero path, verbatim.
-//!   `the_refusal_reads_stderr_not_status`   gcc EXITED 0 on the refused C.
+//!   `the_refusal_reads_stderr_not_status`   SHIM: a gcc that EXITS 0 while
+//!                                           printing a fatal diagnostic.
 //!   `a_killed_gcc_is_not_a_rejection`       case 2 is not case 1.
 //!   `a_missing_gcc_is_not_a_rejection`      the other half of case 2.
 //!   `a_gcc_that_says_no_is_still_a_rejection`  the negative control for both.
@@ -84,8 +97,11 @@
 //!   `pdc_run_agrees_with_pdc_compile`
 //!   `pdc_run_propagates_a_failing_child`
 //!
-//! NOT IN SCOPE: the `&T` forwarding defect that makes codegen emit that C. B3
-//! failing to compile is the intended outcome of this change, not a regression.
+//! THE DEFECT THAT FIRST EXPOSED ALL THIS IS GONE. `&T` forwarding emitted a value
+//! where a pointer was declared, and B3 could not compile; that is fixed, and
+//! `forwarding_a_shared_reference_compiles_links_and_runs` now runs it to a value.
+//! The mechanism controls outlived their subject, which is why they moved to shims:
+//! a pin whose only witness is a live bug dies the day the bug is fixed.
 
 use palladium::linker::{
     self, LinkError, OptLevel, EXIT_BACKEND_ILL_TYPED, EXIT_BACKEND_REJECT, EXIT_GCC_UNEXPLAINED,
@@ -230,18 +246,24 @@ fn forwarding_a_shared_reference_compiles_links_and_runs() {
     );
 }
 
-/// THE REFUSAL MECHANISM ITSELF, which outlived the defect that first exposed it.
+/// SHIM. THE CLASSIFIER, NOT THE EMITTER.
 ///
 /// The test above used to carry these assertions, resting on a real codegen bug
 /// as its subject. That is a bad place for a mechanism pin: the day the bug is
-/// fixed — today — the pin goes with it, and the machinery that turns "gcc found
-/// our C ill-typed" into a Palladium-level refusal loses its only end-to-end
-/// witness. So the subject is now a SHIM. `gcc` here exits 0 and prints exactly
-/// the diagnostic shape the real one printed, which keeps the pin independent of
-/// whether any current program can still provoke it.
+/// fixed — it now is — the pin goes with it, and the machinery that turns a fatal
+/// backend diagnostic into a Palladium-level refusal loses its only end-to-end
+/// witness. So the subject is a SHIM that exits 0 and prints the diagnostic shape
+/// the real gcc printed.
+///
+/// WHAT THIS DOES NOT SAY, and what its old name `ill_typed_c_is_refused_and_
+/// names_the_compiler` did say: nothing here shows that this compiler emits
+/// ill-typed C. The shim prints its line regardless of what was compiled, so the
+/// property pinned is the READING — refuse, blame the compiler rather than the
+/// programmer, quote the diagnostic, leave no binary, and exit a code a gate can
+/// tell apart from a gcc that rejected the C.
 #[test]
 #[cfg(unix)]
-fn ill_typed_c_is_refused_and_names_the_compiler() {
+fn a_fatal_backend_diagnostic_refuses_and_blames_the_compiler() {
     let dir = TempDir::new().expect("tempdir");
     let path = shim_path(
         dir.path(),
@@ -255,7 +277,8 @@ fn ill_typed_c_is_refused_and_names_the_compiler() {
 
     assert!(
         !run.ok,
-        "gcc reported our C ill-typed and pdc shipped it anyway.\n{}",
+        "the backend reported a fatal diagnostic and pdc shipped the program \
+         anyway.\n{}",
         run.log
     );
     assert!(
@@ -266,7 +289,7 @@ fn ill_typed_c_is_refused_and_names_the_compiler() {
     );
     assert!(
         run.log.contains("-Wincompatible-pointer-types"),
-        "the refusal does not carry the gcc diagnostic it rests on.\n{}",
+        "the refusal does not carry the backend diagnostic it rests on.\n{}",
         run.log
     );
     assert!(
@@ -437,7 +460,7 @@ fn the_refusal_reads_stderr_not_status() {
     // nonzero status anywhere for an implementation to have keyed on.
     assert!(
         !run.ok,
-        "gcc exited 0 with a fatal diagnostic in stderr and pdc accepted the \
+        "the shim exited 0 with a fatal diagnostic in stderr and pdc accepted the \
          program anyway — the status is still the only thing being read.\n{}",
         run.log
     );

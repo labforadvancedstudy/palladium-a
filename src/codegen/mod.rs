@@ -1224,7 +1224,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4888`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4920`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -4535,6 +4535,20 @@ impl CodeGenerator {
     /// Everything else -- a `&self`/`&mut self` receiver, a `&Struct` parameter handed a
     /// place -- is a value where a pointer is wanted, and gets the `&` the declaration
     /// side has always expected.
+    /// Can `&` be written in front of this expression in C?
+    ///
+    /// A PLACE HAS STORAGE; A TEMPORARY DOES NOT. C says so by refusing `&` on an rvalue,
+    /// and this is the same question asked one compiler earlier, so the answer arrives as
+    /// a Palladium diagnostic instead of a line of generated C the programmer never wrote.
+    /// `Expr::Reference` is absent deliberately: it never reaches here, because
+    /// `reference_param_needs_address` has already declined to add a second `&`.
+    fn expr_is_addressable(arg: &Expr) -> bool {
+        matches!(
+            arg,
+            Expr::Ident(_) | Expr::FieldAccess { .. } | Expr::Index { .. } | Expr::Deref { .. }
+        )
+    }
+
     fn reference_param_needs_address(ty: &Type, arg: &Expr) -> bool {
         let Type::Reference { inner, .. } = ty else {
             return false;
@@ -6071,14 +6085,19 @@ impl CodeGenerator {
                         self.output.push_str(", ");
                     }
 
-                    // Does this parameter arrive as a POINTER? The declaration side
-                    // already answers exactly this question, with exactly this predicate
-                    // (`is_pointer` where parameters are emitted), and the call side used
-                    // to ask a narrower one (`param.mutable` alone). A `&self`/`&mut self`
+                    // Does this parameter arrive as a POINTER? The call side used to ask a
+                    // NARROWER question than the declaration side: `param.mutable` alone,
+                    // while parameters are emitted by `is_pointer`. A `&self`/`&mut self`
                     // receiver is recorded by the parser as `mutable: false` with a
                     // `Type::Reference` type, so it fell through the gap: declared
-                    // `const struct C* self`, called `__pd_C_get(c)`. The two sides now ask
-                    // one question, which is the only way they cannot disagree again.
+                    // `const struct C* self`, called `__pd_C_get(c)`.
+                    //
+                    // NOT THE SAME FUNCTION AS THE DECLARATION SIDE'S, and the difference is
+                    // load-bearing rather than incidental: `is_pointer` is a question about a
+                    // TYPE, and this one is also about the ARGUMENT -- an array referent and
+                    // an argument that already produces an address both want the `&` left
+                    // off. The claim here is the weaker and true one: the two sides now agree
+                    // about which parameters are pointers, having disagreed before.
                     let needs_address = if let Some(params) = &func_params {
                         i < params.len()
                             && (params[i].mutable
@@ -6086,6 +6105,31 @@ impl CodeGenerator {
                     } else {
                         false
                     };
+
+                    // TAKING THE ADDRESS OF A TEMPORARY IS NOT C, AND THIS IS WHERE IT WAS
+                    // EMITTED. `sink(make())` against `fn sink(c: &C)` passed the whole front
+                    // end and died in gcc with `cannot take the address of an rvalue of type
+                    // 'struct C'` -- front-end approval plus a C-compiler rejection, which is
+                    // the one class this compiler does not ship.
+                    //
+                    // NOT FIXED BY HOISTING. The hoist path below emits `T* t = &(expr);`, so
+                    // it takes the address of the same rvalue one line earlier; and a single
+                    // argument is never `sequenced` anyway. Materialising `T t = expr;` and
+                    // passing `&t` would be new lowering rather than something that falls out
+                    // of what is here, so the refusal is by NAME and the temp is not built.
+                    if needs_address && !Self::expr_is_addressable(arg) {
+                        return Err(CompileError::CodegenError {
+                            message: format!(
+                                "cannot pass a temporary as argument {} of `{}`: the parameter \
+                                 is a reference, so the call site takes its address, and this \
+                                 {} has no storage to point at. Bind it to a local first and \
+                                 pass that",
+                                i + 1,
+                                callee,
+                                Self::expr_kind_name(arg)
+                            ),
+                        });
+                    }
 
                     if sequenced {
                         if let Some(temp) = self.hoist_call_argument(arg, needs_address, i, &callee)?

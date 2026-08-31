@@ -24,6 +24,21 @@
 //   tests/reject/self_write_through_by_value_receiver.pd a copy is not a `mut` binding
 //   tests/reject/self_is_not_reassignable.pd             `self = v`
 //   tests/reject/deref_self_is_not_a_place.pd            `*self`
+//   tests/reject/call_mut_method_through_shared_receiver.pd    the CALL path, `&self`
+//   tests/reject/call_mut_method_through_by_value_receiver.pd  the CALL path, by-value
+//
+// The last two are why the bottom of this fixture exists. A write reaches a field
+// through a CALL as surely as through an assignment, so the two directions the rule
+// must still ALLOW are executed here: a `&mut self` method calling a `&mut self`
+// method on `self` (the mutation context propagates), and a `&self` method calling
+// a `&self` method on `self`.
+
+// A free function taking `&Counter`, so the fixture can pin that a `&self` receiver
+// is PASSED ONWARD unchanged: `self` is already a pointer, and the call site must not
+// take its address again. Emitted as `feed(self)`, not `feed(&self)`.
+fn feed(c: &Counter) -> i64 {
+    return c.n;
+}
 
 struct Counter {
     n: i64,
@@ -58,6 +73,46 @@ impl Counter {
     fn bump_slot(&mut self, i: i64) {
         self.slots[i] += 100;
     }
+
+    // `&mut self` calling `&mut self` on `self`: the mutation context propagates.
+    fn bump_twice(&mut self) {
+        self.add(1);
+        self.add(1);
+    }
+
+    // `&self` calling `&self` on `self`: no write anywhere, so nothing to refuse.
+    fn sum_two(&self) -> i64 {
+        return self.get() + self.at(2);
+    }
+
+    // A `let` FROM `self` COPIES THE POINTEE. `a` is a fresh `Counter`, not an
+    // alias, so writing it is ordinary mutation of a `mut` local and the caller's
+    // object is untouched. Emitted as `Counter a = (*self); a.n = 9LL;`.
+    //
+    // Pinned BECAUSE IT LOOKS LIKE THE REFUSED CASE. A by-value `self` receiver is
+    // also a copy whose writes the caller never sees, and that IS refused -- the
+    // difference is which binding the language governs. `self` is the receiver, and
+    // its form is a promise the signature makes to every caller; `a` is a local the
+    // programmer declared `mut` on the spot. Refusing this one would be refusing
+    // `let`, not refusing a receiver.
+    fn writes_a_copy_of_self(&self) -> i64 {
+        let mut a = self;
+        a.n = 9;
+        return a.n;
+    }
+
+    // POSITIVE CONTROLS for the write guard above. Neither of these is a write, and
+    // widening the guard until it refuses them would break consuming methods without
+    // any fixture noticing.
+    fn hand_off(&self) -> i64 {
+        return feed(self);
+    }
+
+    // A by-value receiver READ. Only writing a copy is refused; reading one is how a
+    // consuming method is written, and it must stay ordinary.
+    fn consume(self) -> i64 {
+        return self.n + self.slots[2];
+    }
 }
 
 fn main() {
@@ -87,4 +142,22 @@ fn main() {
     print("the other slots are untouched:");
     print_int(c.at(0));
     print_int(c.at(3));
+
+    print("a `&mut self` method may call a `&mut self` method on `self`:");
+    c.bump_twice();
+    print_int(c.get());
+
+    print("and a `&self` method may call a `&self` method on `self`:");
+    print_int(c.sum_two());
+
+    print("a `let` from `self` copies: the local sees the write,");
+    print_int(c.writes_a_copy_of_self());
+    print("and the CALLER still sees the original:");
+    print_int(c.get());
+
+    print("a `&self` receiver passes onward as a pointer, not as its address:");
+    print_int(c.hand_off());
+
+    print("and a by-value receiver READS ordinarily (this one moves `c`, so it is last):");
+    print_int(c.consume());
 }
