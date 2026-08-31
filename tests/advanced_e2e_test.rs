@@ -195,7 +195,7 @@ fn test_trait_implementation() {
 }
 
 #[test]
-#[ignore = "XFAIL: a generic enum variant does not infer the enum's type argument — `Option::None` in a function returning `Option<int>` is checked as bare `Option`, so this fixture dies at 'Type mismatch: expected Option<Int>, found Option' before it reaches the method-call syntax (`x.f()`, grammar.ebnf:346-349) it was written for. Both are owed; this is the one that fires (owned by M2, item 1)"]
+#[ignore = "XFAIL: A GENERIC ENUM HAS NO REPRESENTATION. `Option::None` in a function returning `Option<int>` is refused with 'constructs a variant of a GENERIC enum, and generic enums are not implemented: code generation emits no type, no tag and no constructor for one'. RE-MEASURED IN su4, AND THE OLD REASON HERE WAS STALE: it said the fixture died at 'Type mismatch: expected Option<Int>, found Option', which the macro-era diagnostic replaced — column 5 had been updated and this prose had not. OWNER M2 -> M3: the fixture is `Option<T>` with an `impl<T>` method surface (`x.f()`, grammar.ebnf:346-349), which is M3 item 3 verbatim, '`Option<T>` and `Result<T, E>` as generic types with methods' (N4-16); the blocker under it is M3 item 1, 'Generics that work'. M2 owns no requirement row that would pay this (owned by M3, item 3)"]
 fn test_option_enum() {
     let source = r#"
     enum Option<T> {

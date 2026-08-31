@@ -166,7 +166,7 @@ fn test_trait_system() {
 }
 
 #[test]
-#[ignore = "XFAIL: GENERICS. The `self`-as-a-place half of this row is PAID (su2): `self.data[self.len] = item` parses, and a write through `&mut self` is observed by the caller (tests/04_self_place.pd). What stops this fixture now is `struct Vec<T>` -- a generic struct with a generic `impl` -- which is reported as `Undefined enum type: Vec`, because a path like `Vec::new` is resolved as an enum constructor before anything looks for a generic struct (owned by M2 for now; the milestone question is su4's)"]
+#[ignore = "XFAIL: GENERICS. The `self`-as-a-place half of this row is PAID (su2): `self.data[self.len] = item` parses, and a write through `&mut self` is observed by the caller (tests/04_self_place.pd). What stops this fixture now is `struct Vec<T>` -- a generic struct with a generic `impl` -- which is reported as `Undefined enum type: Vec`, because a path like `Vec::new` is resolved as an enum constructor before anything looks for a generic struct OWNER M2 -> M3 (su4): `struct Vec<T>` with a generic `impl` is M3 item 1, whose text names this defect verbatim — 'generic struct fields are rejected in codegen'. The `self`-as-a-place half that M2 did own is paid, so nothing owed here is M2's any more (owned by M3, item 1)"]
 fn test_generic_collections() {
     let source = r#"
     struct Vec<T> {
@@ -277,7 +277,7 @@ fn test_closures() {
 }
 
 #[test]
-#[ignore = "XFAIL: METHODS ON A PRIMITIVE. `x.f()` itself works now (N5-17), so the blanket 'Indirect function calls not yet supported' is gone; this fixture calls `x.len()` on a String, and a String can carry no `impl` block, so there is no `len` to find. What is owed is a method surface for the primitives — N14 gives the string operations as free builtins (`string_len`), not as methods (owned by M2, item 1)"]
+#[ignore = "XFAIL: METHODS ON A PRIMITIVE. `x.f()` itself works now (N5-17), so the blanket 'Indirect function calls not yet supported' is gone; this fixture calls `x.len()` on a String, and a String can carry no `impl` block, so there is no `len` to find. What is owed is a method surface for the primitives — N14 gives the string operations as free builtins (`string_len`), not as methods. TWO LAYERS, AND THIS ROW IS HONEST ABOUT BOTH: what the fixture DIES of today is that primitive method surface, and what the fixture is ABOUT is its own subject line — `struct Ref<'a, T>` and `fn longest<'a>`, i.e. lifetime annotations on a real reference type. OWNER M2 -> M4: M2 owns no requirement row for either layer, and the reference-typing work is the capability table's C1, which the owner column cannot spell (scripts/test-xfail.py accepts M1..M9 or `unscheduled` only). M4 is where this file already puts C1 work — see the neighbouring test_unsafe_operations row, `*mut int`, tagged M4 with the same 'A real reference type' rationale — so this follows the inventory's own precedent rather than inventing a spelling. See su4's report for the tension between that precedent and MILESTONES' current M4 (Modules) (owned by M4, 'A real reference type')"]
 fn test_lifetime_annotations() {
     let source = r#"
     struct Ref<'a, T> {
@@ -408,7 +408,7 @@ fn test_const_generics() {
 }
 
 #[test]
-#[ignore = "XFAIL: inline `mod` blocks — grammar.ebnf:115-116 lists no module item, so `mod math { … }` is not an item (owned by M2, surface syntax)"]
+#[ignore = "XFAIL: INLINE `mod` BLOCKS. The item production lists no module item (docs/specification/grammar.ebnf:128-130), so `mod math { … }` is not an item and the parser stops at 'Expected function, struct, enum, trait, type, impl, or macro declaration'. OWNER M2 -> M4, and NOT `unscheduled`: M4 — Modules owns this verbatim, 'A `mod` item, file-based nesting, enforced visibility (N11-02 is a `reject` row: a private item imported must be an error, or visibility is decoration), and all four import forms'. Every construct in the fixture maps onto one of M4's rows — `mod math` and `pub mod advanced` to the `mod` item and its nesting (N3-11, 'Module items'), `pub fn add` to N11-02, and `use math::{add, multiply}` to the selective import form N11-04. NOT IMPLEMENTED IS NOT UNOWNED: the grammar not having it today is why the row is owed, not evidence that nobody owes it. (Its previous citation, grammar.ebnf:115-116, had drifted onto a section banner — `# ===== / # Program` — which supports no claim about items but is fingerprint-stable, so the pin stayed green; repointed here.) (owned by M4, 'A `mod` item')"]
 fn test_module_system() {
     let source = r#"
     mod math {

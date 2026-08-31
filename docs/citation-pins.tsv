@@ -18,13 +18,14 @@ bootstrap/pdc.pd	874-878	docs/specification/bootstrap-subset.md	7bde5af5d8d1	if 
 bootstrap/v2_full_compiler/ast.pd	83-83	docs/contributing/MILESTONES.md	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/ast.pd	83-83	src/lexer/token.rs	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
-docs/contributing/MILESTONES.md	1030-1036	tests/m3_imported_calls.rs	7ca29577bad2	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ... e-manifest.txt:126`, cross-file imports) and the vacuous `12_modules_imports`.
-docs/contributing/MILESTONES.md	996-996	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
+docs/contributing/MILESTONES.md	1021-1021	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
+docs/contributing/MILESTONES.md	1060-1067	tests/m3_imported_calls.rs	47d1630f5f90	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ...  are su3's type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	132-132	src/typeck/mod.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
 docs/specification/bootstrap-subset.md	132-132	tests/m3_imported_calls.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
 docs/specification/bootstrap-subset.md	152-154	src/codegen/mod.rs	a2f7869a25a1	3. **Struct and array parameters that are written are declared `mut`.** A `mu ... : `fn bump(mut s: S)` → `void bump(struct S* s)`. A non-`mut` STRUCT parameter
+docs/specification/grammar.ebnf	128-130	tests/advanced_features_test.rs	96a3742c5e5c	item = function | struct_def | enum_def | trait_def | impl_block | type_alias | macro_def | const_item | static_item ;
 docs/specification/grammar.ebnf	145-145	docs/reference/features/async-system/async-as-effect.md	d4cfe0aa8434	function = [ "pub" ] [ "async" ] "fn" identifier [ generic_params ]
 docs/specification/grammar.ebnf	230-231	tests/advanced_e2e_test.rs	879485fc5b9e	# The initializer is mandatory, and the binding is a bare identifier — # `let` patterns do not exist.
 docs/specification/grammar.ebnf	234-234	src/parser/mod.rs	4afa88eb2002	assign_stmt = place '=' expression ';' ;

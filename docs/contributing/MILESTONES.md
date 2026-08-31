@@ -544,8 +544,8 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
 
-**Owns 49 requirement rows, 2 of them still owed**, 6 declared `#[ignore]` failures (all tagged
-M2), and **no vacuous fixture** — `tests/02_types_enums.pd` was M2's last one and item 9 turned it
+**Owns 49 requirement rows, 2 of them still owed**, **no** `#[ignore]` row still tagged M2, and
+**no vacuous fixture** — `tests/02_types_enums.pd` was M2's last one and item 9 turned it
 into a `run` fixture that constructs and destructures a unit, a tuple and a struct variant.
 *(It read "seventeen … (fourteen tagged M2, three
 tagged M1)" in DIGITS-FREE WORDS, which is exactly why it went stale unnoticed: the prose-figure
@@ -553,7 +553,18 @@ gates scan for `N` and `N of M`, and a number spelled out is invisible to them. 
 `awk -F'\t' '$3=="owed"{print $4}' tests/rust-debt-manifest.txt | sort | uniq -c` — M2 6, M4 33,
 unscheduled 5, M5 1, and **M1 zero**: the three M1 rows were paid, and the sentence had gone on
 counting them. M2 fell 9 -> 6 and `unscheduled` 6 -> 5 across items 3, 9 and the round between
-them, each by PAYING a row rather than by retagging one.)* *(It read "45
+them, each by PAYING a row rather than by retagging one.)* *(It read "6 … (all tagged M2)" until
+su4, and that figure had gone stale twice over: su3 PAID `test_type_aliases_complex`, and su4
+RETAGGED three rows whose subjects M2 owns no requirement row for — `test_option_enum` and
+`test_generic_collections` to M3, `test_lifetime_annotations` to M4. Unlike the 9 -> 6 move above,
+this one IS retagging and says so: nothing was implemented, the debt moved to the milestone whose
+contract names it. Re-measure with the same command; it now reads M2 1, M3 4, M4 34, M5 1,
+unscheduled 5. `test_module_system` followed a round later, to M4 rather than to `unscheduled` as
+first proposed: M4 owns "A `mod` item" verbatim, so the row had an owner all along. That takes M2's
+debt rows to **zero** — M3 4, M4 35, M5 1, unscheduled 5, and no M2 line — and M2's remaining debt is
+entirely in the requirements TSV (WT-01, GI-12); M2 no longer appears in that tally at all. NONE of these four was paid; all four were
+retagged, and the distinction matters: a milestone whose debt reaches zero by retagging has
+finished nothing, it has only stopped being the wrong address.)* *(It read "45
 rows" while GI-06 was `owed`; GI-06, GI-09 and N14-01 are now `satisfied`, and 46 was the count of
 rows OWNED, not of rows outstanding — the two were being used interchangeably. That parenthetical
 is historical: it records a confusion at the commit that had it, and 46 is not today's number.
@@ -813,6 +824,20 @@ enum-owned method is unreachable by its path form. Each row carries a
    clears everything, so this is refused rather than reported as 'nothing owed'" — an abstention
    with a NAME. So the decision was never "what does a milestone with no rows mean"; it was
    "should m1-exit read an inventory whose abstention it can identify", and the answer is yes.
+   **OPEN QUESTION, RAISED BY su4 AND NOT ANSWERED HERE: inventory TWO does the opposite, and it
+   is now live.** The paragraph above settles the empty filter for inventory four, which refuses
+   it. Inventory two does not: measured on this branch, once su4 retagged M2's last four debt rows
+   the Rust debt reader printed `TEST_XFAIL_FORBID_OWNER=M2 -> 0 of 45 still-failing XFAIL(s) owed
+   to M2` and returned CLEAR, with no abstention and no name for one. So the same situation — a
+   milestone-scoped filter that matches nothing — is refused by one inventory and cleared by the
+   other, and `m2-exit` folds both without noticing. There is a real distinction that may justify
+   it: the requirements TSV's rows are PERMANENT, so a milestone owning none of them means the
+   filter is wrong, while debt rows are MEANT to reach zero, and zero is the success condition
+   rather than a mis-aimed query. Whether that difference is enough — or whether inventory two
+   should also name its empty case, so that "M2 owes no debt row" and "M2 was never spelled the
+   way this filter spells it" stop being one output — is a question for its own row, not something
+   to decide in a retagging round. Nothing was changed in `scripts/test-xfail.py` for it.
+
    **The wiring, which is the whole of the change:** rc=1 (OWED) reddens `m1-exit`; rc=2 carrying
    that sentence **for M1** does not, and the sentence is REPRINTED under a heading saying what was
    done with it; rc=2 of any **other** shape fails closed. There are three such shapes and only one
@@ -1002,7 +1027,12 @@ bound exists you must say what the effect of a bounded method is. And the thesis
 bootstrap compiler that can grow: 991 lines, no abstraction.
 
 **Owns 24 requirement rows** and the 18 `#[ignore]` rows tagged M4 in the old numbering, plus the
-vacuous `07_traits_basic` and `08_generics_basic`.
+vacuous `07_traits_basic` and `08_generics_basic`, plus — tagged M3 *literally*, in the current
+numbering — the five `xfail` type-alias rows added by su3 and the two `#[ignore]` rows su4 moved
+here (`test_option_enum`, `test_generic_collections`). THE OWNER COLUMN THEREFORE SPELLS THIS
+MILESTONE TWO WAYS, `M4` for the old-numbering rows and `M3` for the new ones, which is a
+reconciliation this file has not done and su4 did not attempt: it is 34 rows tagged M4 against a
+sentence that claims 18 of them.
 
 1. **Generics that work** (N10-01…N10-05, N4-15, N4-21). Inside `<…>` any all-uppercase name is
    reclassified as a *const* generic argument, so `Foo<T>` does not mean what it looks like; generic
@@ -1032,8 +1062,9 @@ show.
 **Waits on**: C0. Split out of the old combined milestone because it has a distinct consumer: this
 is where both the bootstrap compiler and the standard library become multi-file.
 
-**Owns 8 requirement rows** — N3-11 and N11-01…N11-07 — plus the corpus's one `xfail`
-(`tests/conformance-manifest.txt:126`, cross-file imports) and the vacuous `12_modules_imports`.
+**Owns 8 requirement rows** — N3-11 and N11-01…N11-07 — plus the one `xfail` of the corpus's six that
+M4 owns (`tests/conformance-manifest.txt:126`, cross-file imports; the other five are su3's
+type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
 
 A `mod` item, file-based nesting, **enforced** visibility (N11-02 is a `reject` row: a private item
 imported must be an error, or visibility is decoration), and all four import forms.
