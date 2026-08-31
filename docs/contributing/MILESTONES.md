@@ -555,16 +555,19 @@ unscheduled 5, M5 1, and **M1 zero**: the three M1 rows were paid, and the sente
 counting them. M2 fell 9 -> 6 and `unscheduled` 6 -> 5 across items 3, 9 and the round between
 them, each by PAYING a row rather than by retagging one.)* *(It read "6 … (all tagged M2)" until
 su4, and that figure had gone stale twice over: su3 PAID `test_type_aliases_complex`, and su4
-RETAGGED three rows whose subjects M2 owns no requirement row for — `test_option_enum` and
-`test_generic_collections` to M3, `test_lifetime_annotations` to M4. Unlike the 9 -> 6 move above,
-this one IS retagging and says so: nothing was implemented, the debt moved to the milestone whose
-contract names it. Re-measure with the same command; it now reads M2 1, M3 4, M4 34, M5 1,
-unscheduled 5. `test_module_system` followed a round later, to M4 rather than to `unscheduled` as
-first proposed: M4 owns "A `mod` item" verbatim, so the row had an owner all along. That takes M2's
-debt rows to **zero** — M3 4, M4 35, M5 1, unscheduled 5, and no M2 line — and M2's remaining debt is
-entirely in the requirements TSV (WT-01, GI-12); M2 no longer appears in that tally at all. NONE of these four was paid; all four were
-retagged, and the distinction matters: a milestone whose debt reaches zero by retagging has
-finished nothing, it has only stopped being the wrong address.)* *(It read "45
+RETAGGED the four rows whose subjects M2 owns no requirement row for — `test_option_enum` and
+`test_generic_collections` to M3, `test_lifetime_annotations` to M7, and `test_module_system` to
+M4. Unlike the 9 -> 6 move above, this one IS retagging and says so: nothing was implemented, the
+debt moved to the milestone whose contract names it. TWO of the four were MIS-ADDRESSED FIRST and
+corrected in review, which is the part worth keeping: `test_module_system` was proposed for
+`unscheduled` until M4 turned out to own "A `mod` item" verbatim, and `test_lifetime_annotations`
+was written to M4 on a stale sibling's precedent until the milestone table turned out to spell its
+contract, C1, as M7. Only the final tally is quoted here, because an intermediate one recorded
+inline is just the next stale figure: re-measure with the same command and it reads M3 4, M4 34,
+M5 1, M7 1, unscheduled 5, and no M2 line at all — M2's remaining debt is entirely in the
+requirements TSV (WT-01, GI-12). NONE of the four was paid; all four were retagged, and the
+distinction matters: a milestone whose debt reaches zero by retagging has finished nothing, it has
+only stopped being the wrong address.)* *(It read "45
 rows" while GI-06 was `owed`; GI-06, GI-09 and N14-01 are now `satisfied`, and 46 was the count of
 rows OWNED, not of rows outstanding — the two were being used interchangeably. That parenthetical
 is historical: it records a confusion at the commit that had it, and 46 is not today's number.
@@ -819,7 +822,7 @@ enum-owned method is unreachable by its path form. Each row carries a
    says nothing about M1. Closing GI-08 means deciding what a milestone with no rows means, which
    is a question rather than a line of Make.")*
    **The question was already answered by the reader's own vocabulary, and the residual had asked
-   the wrong one.** `scripts/requirements.py:512` prints, for a zero-row filter, "no row of
+   the wrong one.** `scripts/requirements.py:515` prints, for a zero-row filter, "no row of
    docs/contributing/1.0-requirements.tsv is owned by M1. A filter whose subject matches nothing
    clears everything, so this is refused rather than reported as 'nothing owed'" — an abstention
    with a NAME. So the decision was never "what does a milestone with no rows mean"; it was
@@ -844,7 +847,7 @@ enum-owned method is unreachable by its path form. Each row carries a
    done with it; rc=2 of any **other** shape fails closed. There are three such shapes and only one
    is tolerable — the other two are an unreadable manifest (`scripts/requirements.py:207`, printed
    on stderr as "cannot read …") and "every M1 row is `satisfied`, but the steps listed above did
-   not run" (`scripts/requirements.py:528`), which is an abstention about EVIDENCE and would be the M1 defect again in a
+   not run" (`scripts/requirements.py:531`), which is an abstention about EVIDENCE and would be the M1 defect again in a
    new inventory. **A tolerance is a hole unless its edges are tested**, so
    `scripts/m1-exit.sh --self-test` regenerates all three shapes LIVE from that reader rather than
    pasting its sentences, and adds the two controls that matter: an rc=1 run whose text happens to
@@ -1031,18 +1034,20 @@ bootstrap compiler that can grow: 991 lines, no abstraction.
 `M3` *literally*, in the current numbering — the `xfail` type-alias rows added by su3 and the
 `#[ignore]` rows su4 moved here (`test_option_enum`, `test_generic_collections`).
 
-**THE `M4` TAG IN `tests/rust-debt-manifest.txt` DENOTES TWO DIFFERENT CONTRACTS, AND THIS
-SENTENCE USED TO QUOTE A COUNT OF ONE OF THEM.** It read "the 18 `#[ignore]` rows tagged M4 in the
+**THE `M4` TAG IN `tests/rust-debt-manifest.txt` IS SEMANTICALLY OVERLOADED, AND THIS SENTENCE
+USED TO QUOTE A COUNT OF ONE OF ITS MEANINGS.** It read "the 18 `#[ignore]` rows tagged M4 in the
 old numbering" long after that stopped describing the file: the tag was applied under the old
 numbering, where M4 meant what M3 means now, and it has since also been applied under the current
 one, where M4 means Modules. So the column no longer says which milestone a row belongs to, and no
-count of it can be right for both readings at once — which is why this paragraph now names the
-MECHANISM instead of a figure. **Each row's own `(owned by M4, '<contract>')` clause is the real
-address**; the tag beside it is the stale part. Read that clause and the rows separate cleanly:
-those naming `Generics that work`, `Traits with real dispatch`, `Abstraction`, monomorphization,
-`?`-against-a-real-`Result` and the type model are M3's; those naming `A `mod` item` or cross-file
-module imports are M4's as M4 is numbered today; and one, `test_unsafe_operations`, names
-`A real reference type`, which is **C1** and therefore **M7**'s.
+count of it can be right across those readings at once — which is why this paragraph now names the
+MECHANISM instead of a figure, and why it states no figure of its own either. **Each row's own
+`(owned by M4, '<contract>')` clause is the real address**; the tag beside it is the stale part.
+Read that clause and the rows separate: those naming `Generics that work`,
+`Traits with real dispatch`, `Abstraction`, monomorphization, `?`-against-a-real-`Result` and the
+type model are M3's; those naming `A `mod` item` or cross-file module imports are M4's as M4 is
+numbered today; and `test_unsafe_operations` names `A real reference type`, which is **C1** and
+therefore **M7**'s — as does `test_struct_with_methods`, which names it alongside traits and so
+belongs to no single destination until someone reads it.
 
 **The reconciliation is OPEN and deliberately not done here.** It has to be row by row, because
 only the contract clause distinguishes them, and doing it inside a retagging round would bury a

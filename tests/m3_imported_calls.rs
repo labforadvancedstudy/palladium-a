@@ -797,10 +797,10 @@ fn test_a_generic_struct_referenced_by_its_bare_name_is_emitted() {
 //
 // THE OWNER IS M4, AND IT WAS M3 UNTIL THIS BRANCH MERGED `d2d5bd4`. That merge
 // restructured the milestones and split modules out into their own
-// (`docs/contributing/MILESTONES.md:1080-1087`, "M4 — Modules", which claims the
+// (`docs/contributing/MILESTONES.md:1085-1092`, "M4 — Modules", which claims the
 // module rows explicitly: "plus the corpus's one `xfail` … cross-file imports
 // — and the vacuous `12_modules_imports`"). M3 is now traits and generics
-// (`docs/contributing/MILESTONES.md:1022`), which is not what these rows are
+// (`docs/contributing/MILESTONES.md:1025`), which is not what these rows are
 // about.
 //
 // BOTH CITATIONS ABOVE WERE WRONG BEFORE THEY WERE MOVED, and are corrected
