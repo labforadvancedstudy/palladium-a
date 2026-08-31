@@ -819,7 +819,7 @@ enum-owned method is unreachable by its path form. Each row carries a
    says nothing about M1. Closing GI-08 means deciding what a milestone with no rows means, which
    is a question rather than a line of Make.")*
    **The question was already answered by the reader's own vocabulary, and the residual had asked
-   the wrong one.** `scripts/requirements.py:506` prints, for a zero-row filter, "no row of
+   the wrong one.** `scripts/requirements.py:512` prints, for a zero-row filter, "no row of
    docs/contributing/1.0-requirements.tsv is owned by M1. A filter whose subject matches nothing
    clears everything, so this is refused rather than reported as 'nothing owed'" — an abstention
    with a NAME. So the decision was never "what does a milestone with no rows mean"; it was
@@ -827,8 +827,8 @@ enum-owned method is unreachable by its path form. Each row carries a
    **OPEN QUESTION, RAISED BY su4 AND NOT ANSWERED HERE: inventory TWO does the opposite, and it
    is now live.** The paragraph above settles the empty filter for inventory four, which refuses
    it. Inventory two does not: measured on this branch, once su4 retagged M2's last four debt rows
-   the Rust debt reader (`TEST_XFAIL_FORBID_OWNER=M2`) reported ZERO of its forty-five
-   still-failing XFAILs owed to M2 and returned CLEAR, with no abstention and no name for one. So the same situation — a
+   the Rust debt reader (`TEST_XFAIL_FORBID_OWNER=M2`) reported no still-failing XFAIL owed to
+   M2 and returned CLEAR, with no abstention and no name for one. So the same situation — a
    milestone-scoped filter that matches nothing — is refused by one inventory and cleared by the
    other, and `m2-exit` folds both without noticing. There is a real distinction that may justify
    it: the requirements TSV's rows are PERMANENT, so a milestone owning none of them means the
@@ -836,14 +836,15 @@ enum-owned method is unreachable by its path form. Each row carries a
    rather than a mis-aimed query. Whether that difference is enough — or whether inventory two
    should also name its empty case, so that "M2 owes no debt row" and "M2 was never spelled the
    way this filter spells it" stop being one output — is a question for its own row, not something
-   to decide in a retagging round. Nothing was changed in `scripts/test-xfail.py` for it.
+   to decide in a retagging round; tracked as issue #45. Nothing was changed in
+   `scripts/test-xfail.py` for it.
 
    **The wiring, which is the whole of the change:** rc=1 (OWED) reddens `m1-exit`; rc=2 carrying
    that sentence **for M1** does not, and the sentence is REPRINTED under a heading saying what was
    done with it; rc=2 of any **other** shape fails closed. There are three such shapes and only one
    is tolerable — the other two are an unreadable manifest (`scripts/requirements.py:207`, printed
    on stderr as "cannot read …") and "every M1 row is `satisfied`, but the steps listed above did
-   not run" (`scripts/requirements.py:522`), which is an abstention about EVIDENCE and would be the M1 defect again in a
+   not run" (`scripts/requirements.py:528`), which is an abstention about EVIDENCE and would be the M1 defect again in a
    new inventory. **A tolerance is a hole unless its edges are tested**, so
    `scripts/m1-exit.sh --self-test` regenerates all three shapes LIVE from that reader rather than
    pasting its sentences, and adds the two controls that matter: an rc=1 run whose text happens to
@@ -1026,13 +1027,32 @@ in order not to be **designed twice** — the effect system is a typing judgment
 bound exists you must say what the effect of a bounded method is. And the thesis requires a
 bootstrap compiler that can grow: 991 lines, no abstraction.
 
-**Owns 24 requirement rows** and the 18 `#[ignore]` rows tagged M4 in the old numbering, plus the
-vacuous `07_traits_basic` and `08_generics_basic`, plus — tagged M3 *literally*, in the current
-numbering — the five `xfail` type-alias rows added by su3 and the two `#[ignore]` rows su4 moved
-here (`test_option_enum`, `test_generic_collections`). THE OWNER COLUMN THEREFORE SPELLS THIS
-MILESTONE TWO WAYS, `M4` for the old-numbering rows and `M3` for the new ones, which is a
-reconciliation this file has not done and su4 did not attempt: it is 34 rows tagged M4 against a
-sentence that claims 18 of them.
+**Owns 24 requirement rows**, the vacuous `07_traits_basic` and `08_generics_basic`, and — tagged
+`M3` *literally*, in the current numbering — the `xfail` type-alias rows added by su3 and the
+`#[ignore]` rows su4 moved here (`test_option_enum`, `test_generic_collections`).
+
+**THE `M4` TAG IN `tests/rust-debt-manifest.txt` DENOTES TWO DIFFERENT CONTRACTS, AND THIS
+SENTENCE USED TO QUOTE A COUNT OF ONE OF THEM.** It read "the 18 `#[ignore]` rows tagged M4 in the
+old numbering" long after that stopped describing the file: the tag was applied under the old
+numbering, where M4 meant what M3 means now, and it has since also been applied under the current
+one, where M4 means Modules. So the column no longer says which milestone a row belongs to, and no
+count of it can be right for both readings at once — which is why this paragraph now names the
+MECHANISM instead of a figure. **Each row's own `(owned by M4, '<contract>')` clause is the real
+address**; the tag beside it is the stale part. Read that clause and the rows separate cleanly:
+those naming `Generics that work`, `Traits with real dispatch`, `Abstraction`, monomorphization,
+`?`-against-a-real-`Result` and the type model are M3's; those naming `A `mod` item` or cross-file
+module imports are M4's as M4 is numbered today; and one, `test_unsafe_operations`, names
+`A real reference type`, which is **C1** and therefore **M7**'s.
+
+**The reconciliation is OPEN and deliberately not done here.** It has to be row by row, because
+only the contract clause distinguishes them, and doing it inside a retagging round would bury a
+milestone-boundary decision in a bookkeeping commit. su4 retagged only rows it had re-measured and
+argued individually, and left every inherited `M4` tag untouched. To see the split as it stands,
+read the clauses:
+
+```
+awk -F'\t' '$3=="owed" && $4=="M4"{print $2}' tests/rust-debt-manifest.txt
+```
 
 1. **Generics that work** (N10-01…N10-05, N4-15, N4-21). Inside `<…>` any all-uppercase name is
    reclassified as a *const* generic argument, so `Foo<T>` does not mean what it looks like; generic

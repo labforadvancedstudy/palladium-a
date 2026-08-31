@@ -92,7 +92,7 @@ tests/advanced_features_test.rs	test_effects_system	owed	unscheduled	Compilation
 tests/advanced_features_test.rs	test_error_handling_sugar	owed	M4	constructs a variant of a GENERIC enum, and generic enums are not implemented
 tests/advanced_features_test.rs	test_generic_collections	owed	M3	Compilation failed: Undefined enum type: Vec
 tests/advanced_features_test.rs	test_iterator_protocol	owed	M4	Compilation failed: Unexpected token: expected 'fn' (Expected 'fn' for trait method), found 'type'
-tests/advanced_features_test.rs	test_lifetime_annotations	owed	M4	Compilation failed: `x` has no method `len`: only a struct or an enum can have an `impl` block
+tests/advanced_features_test.rs	test_lifetime_annotations	owed	M7	Compilation failed: `x` has no method `len`: only a struct or an enum can have an `impl` block
 tests/advanced_features_test.rs	test_macros	owed	M5	Compilation failed: Syntax error: `macro_rules!` is not a declaration in this language
 tests/advanced_features_test.rs	test_module_system	owed	M4	Compilation failed: Syntax error: Expected function, struct, enum, trait, type, impl, or macro declaration
 tests/advanced_features_test.rs	test_pattern_matching_advanced	owed	M4	constructs a variant of a GENERIC enum, and generic enums are not implemented

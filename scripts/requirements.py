@@ -401,7 +401,13 @@ def ledger_claims(rows):
     # governed and three of them were already wrong.
     for m, pattern in (
         ("M2", r"\*\*Owns (\d+) requirement rows, (\d+) of them still owed\*\*"),
-        ("M3", r"\*\*Owns (\d+) requirement rows\*\* and the 18 `#\[ignore\]` rows"),
+        # RE-ANCHORED: this pattern used to end `and the 18 `#[ignore]` rows`, which
+        # made the gate depend on a figure that had gone false — the M4 tag denotes
+        # two contracts now, so no count of it is right — and therefore held the
+        # falsehood in place: removing it from the prose broke this regex, and a
+        # regex that stops matching is a FAILURE here, never a skip. Anchored on the
+        # two vacuous fixtures instead, which are named rather than counted.
+        ("M3", r"\*\*Owns (\d+) requirement rows\*\*, the vacuous `07_traits_basic`"),
         ("M4", r"\*\*Owns (\d+) requirement rows\*\* — N3-11 and N11-01"),
         ("M5", r"\*\*Owns (\d+) requirement rows\*\*, the five `#\[ignore\]` rows"),
         ("M6", r"\*\*Owns (\d+) requirement rows\.\*\* It owns no `#\[ignore\]` row"),
