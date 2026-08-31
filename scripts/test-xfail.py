@@ -716,7 +716,7 @@ def reconcile(listed, obs, index, forbid_owner=None, state=None):
 #           two now disagrees with the other instead of silently moving a debt.
 #     paid  the test must exist and must NOT be ignored any more. Whether it
 #           PASSES is the ordinary suite's job — which is why `make m1-exit`
-#           now runs it (inventory 3 of 3). A row that says paid over a test
+#           now runs it (inventory 3 of 4). A row that says paid over a test
 #           that still fails is red there, not green here.
 #
 # WHAT DELETING BUYS YOU: nothing. Delete the row and the test is an undeclared

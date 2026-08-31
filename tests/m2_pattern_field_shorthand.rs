@@ -14,7 +14,7 @@
 //! `tests/reject/field_shorthand_needs_a_struct_variant.pd` and
 //! `tests/reject/brace_pattern_needs_a_variant_path.pd`.
 
-use palladium::ast::{Item, Pattern, PatternData, Stmt};
+use palladium::ast::{Item, Pattern, PatternData, PatternLiteral, Stmt};
 use palladium::lexer::Lexer;
 use palladium::parser::Parser;
 
@@ -112,15 +112,19 @@ fn field_order_is_the_names_and_not_the_positions() {
 #[test]
 fn the_explicit_form_is_untouched_by_the_shorthand_arm() {
     // The control on the change itself: an explicit field whose pattern is NOT a
-    // bare identifier still parses as that pattern. A desugaring that fired on
-    // the wrong branch would turn this into `Ident("x")`.
+    // bare identifier still parses as THAT pattern. Asserted by VALUE and not as
+    // `assert_ne!(…, Ident("x"))`, which a parser that corrupted `x: 1` into any
+    // other shape at all would still satisfy — the negative form pins nothing
+    // about what the field actually holds.
     let arms = arm_patterns(&program("M::Move { x: 1, y: _ }"));
     match &arms[0] {
         Pattern::EnumPattern {
             data: Some(PatternData::Struct(fields)),
             ..
         } => {
-            assert_ne!(fields[0].1, Pattern::Ident("x".to_string()));
+            assert_eq!(fields[0].0, "x");
+            assert_eq!(fields[0].1, Pattern::Literal(PatternLiteral::Int(1)));
+            assert_eq!(fields[1].0, "y");
             assert_eq!(fields[1].1, Pattern::Wildcard);
         }
         other => panic!("expected a struct-variant pattern, got {:?}", other),

@@ -29,7 +29,7 @@
 #          disagrees with the other instead of silently moving a debt.
 #   paid   the test must exist and must NOT be #[ignore]d any more. Whether it
 #          PASSES is the ordinary suite's job — which is why `make m1-exit` runs
-#          the ordinary suite as inventory 3 of 3. A `paid` row over a test that
+#          the ordinary suite as inventory 3 of 4. A `paid` row over a test that
 #          still fails is red there, not green here.
 #
 # WHY COLUMN 5 EXISTS: AN XFAIL IS AN EXISTENCE CHECK ON A FAILURE, AND ANY

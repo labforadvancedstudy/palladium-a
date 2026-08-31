@@ -15,3 +15,11 @@ A guard reads the shorthand's bindings:
 6
 A shorthand binding may go unused:
 99
+An omitted field is simply not bound, in either spelling:
+11
+11
+22
+The zero-field form matches, binds nothing, and covers the variant:
+1
+2
+3

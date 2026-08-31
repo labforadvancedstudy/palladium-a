@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """THE THIRD OWNER INVENTORY: docs/contributing/1.0-requirements.tsv, as a command.
 
-WHY THIS FILE EXISTS (GI-08). `make m1-exit` reads three inventories — .pd
+WHY THIS FILE EXISTS (GI-08). `make m1-exit` read three inventories — .pd
 fixtures, the Rust debt manifest, and the ordinary Rust suite — and every one of
 them is a register of *declared failures*. That is a real check and it is not a
 milestone's exit criterion, because a declared failure is a PROXY: it exists only
 where somebody already wrote a red test. A requirement nobody has started on
 produces no xfail row, no `#[ignore]`, and no failing test, so all three
-inventories are clean about it and the milestone looks finished.
+inventories are clean about it and the milestone looked finished.
 
 The requirement manifest is the inventory that does not have that hole: it
 enumerates what the milestone OWES rather than what has already been observed to

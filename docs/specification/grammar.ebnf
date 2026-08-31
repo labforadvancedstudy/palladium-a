@@ -365,11 +365,37 @@ match_arm      = pattern [ "if" expression ] "=>" ( block | expression ) [ ',' ]
 # pure surface form. `src/parser/mod.rs` desugars it at the point of parse, so
 # `Move { x, y }` and `Move { x: x, y: y }` are not merely equivalent but the
 # SAME `PatternData::Struct` value, and nothing downstream of the parser knows
-# there are two spellings. The shorthand reaches ONLY this position: there is no
-# brace pattern outside `path "::" identifier`, so `{ x }` on its own is
-# "expected pattern, found '{'", and a tuple variant written with braces is
-# refused by the type checker as a variant/pattern shape mismatch. Both are
-# pinned by tests/reject/field_shorthand_outside_struct_variant.pd.
+# there are two spellings.
+#
+# THE SHORTHAND REACHES ONLY THIS POSITION, and its two boundaries are refused by
+# DIFFERENT PASSES. Worth stating, because the production above reads as though
+# both were the parser's:
+#   * NO VARIANT PATH — the PARSER's boundary. A `{` may begin pattern content
+#     only inside `path "::" identifier`, so `{ x }` on its own is not a
+#     shorthand-shaped pattern that happens to be unsupported; it is not a
+#     pattern at all, and the parser stops at the brace with
+#     "Expected pattern, but found '{'".
+#     Pinned by tests/reject/brace_pattern_needs_a_variant_path.pd.
+#   * A TUPLE VARIANT WRITTEN WITH BRACES — the TYPE CHECKER's boundary. The
+#     parser ACCEPTS `M::Pair { x, y }`, because at that point it does not know
+#     what the path names; the refusal is
+#     "Pattern structure doesn't match variant M::Pair". The explicit spelling
+#     `M::Pair { x: a, y: b }` is refused identically, which is the point:
+#     shorthand adds no reach.
+#     Pinned by tests/reject/field_shorthand_needs_a_struct_variant.pd.
+#
+# THE FIELD LIST IS A CHECKED SUBSET AND NOT THE WHOLE SET. This predates the
+# shorthand and the explicit form behaves identically; it is recorded here
+# because the shorthand is what makes a reader look at the list. A field the
+# variant does NOT have is refused — "Unknown field z in P::At" — but a field the
+# pattern OMITS is simply not bound: `P::At { x }` matches every `At` of a
+# two-field variant and leaves `y` undefined in the arm (reading it is
+# "Undefined variable: 'y'"), and `P::At { }` matches with no bindings at all
+# while still covering the variant for exhaustiveness. THERE IS NO `..` FORM —
+# omission is spelled by leaving the field out. Said explicitly because a reader
+# arriving from a language whose field list must be exhaustive or end in `..`
+# will infer a refusal that does not happen.
+# Witnessed by tests/06_field_shorthand.pd.
 #
 # `|` binds LOOSER than `@`, so `n @ 1 | 2` is `(n @ 1) | 2` — which is then
 # refused, because an ALTERNATIVE MAY NOT BIND (N6-07): every alternative would

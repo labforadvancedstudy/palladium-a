@@ -1267,10 +1267,27 @@ patterns — N6-05; or-patterns `A | B` — N6-07; `@` bindings — N6-08; arm g
 and FIELD SHORTHAND in a struct-variant pattern — `Move { x, y }` for `Move { x: x, y: y }`, where
 the field name is the binder. The shorthand is desugared at the point of parse, so the two
 spellings are the same `PatternData::Struct` value and no later pass distinguishes them
-(`tests/m2_pattern_field_shorthand.rs` asserts the equality of the two parses); it reaches only
-that position, which `tests/reject/field_shorthand_outside_struct_variant.pd` pins.
+(`tests/m2_pattern_field_shorthand.rs` asserts the equality of the two parses).
 A guard is checked inside the arm's own scope, after its bindings, so `Num(n) if n > 5` can read
 `n`.
+
+**The shorthand reaches only that position, and its two boundaries are refused by DIFFERENT
+passes.** A bare `{ x }` is the PARSER's: a `{` may begin pattern content only inside
+`path "::" identifier`, so it is not a pattern at all and the parser stops at the brace with
+`Expected pattern, but found '{'` (`tests/reject/brace_pattern_needs_a_variant_path.pd`). A TUPLE
+variant written with braces is the TYPE CHECKER's: the parser ACCEPTS `M::Pair { x, y }`, because
+at that point it does not know what the path names, and the refusal is `Pattern structure doesn't
+match variant M::Pair` (`tests/reject/field_shorthand_needs_a_struct_variant.pd`). The explicit
+spelling `M::Pair { x: a, y: b }` is refused identically — shorthand adds no reach.
+
+**The field list is a checked SUBSET, not the whole set**, which predates the shorthand and is
+identical for the explicit form. A field the variant does not have is refused (`Unknown field z in
+P::At`); a field the pattern OMITS is simply not bound. `P::At { x }` matches every `At` of a
+two-field variant and leaves `y` undefined in the arm — reading it is `Undefined variable: 'y'` —
+and `P::At { }` matches with no bindings at all while still covering the variant for
+exhaustiveness. **There is no `..` form**; omission is spelled by leaving the field out. Stated
+because a reader arriving from a language whose field list must be exhaustive or end in `..` will
+infer a refusal that does not happen. Witnessed by `tests/06_field_shorthand.pd`.
 
 **Two named SUBSETS of N6 and one rule this implementation OWNS, each pinned by a `reject` fixture
 rather than left to a reader.** The subsets: a range's endpoints are integer literals where the

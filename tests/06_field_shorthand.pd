@@ -74,6 +74,50 @@ fn width_only(s: Shape) -> i64 {
     }
 }
 
+// THE FIELD LIST IS A SUBSET, NOT THE WHOLE SET. This is not a property of the
+// shorthand — the explicit form below behaves identically — but the shorthand is
+// what makes a reader look at the list, so the CURRENT behaviour is pinned here
+// rather than left to be discovered. A field the pattern omits is not bound; the
+// arm simply cannot name it. THERE IS NO `..` FORM: omission is spelled by
+// leaving the field out, so a reader arriving from a language where the list
+// must be exhaustive or end in `..` would otherwise expect a refusal that does
+// not happen.
+fn partial_shorthand(s: Shape) -> i64 {
+    match s {
+        Shape::Rect { w } => { return w; }
+        _ => { return 0; }
+    }
+}
+
+// The same omission written explicitly. Same answer — the subset rule is the
+// pattern's, not the shorthand's.
+fn partial_explicit(s: Shape) -> i64 {
+    match s {
+        Shape::Rect { w: only } => { return only; }
+        _ => { return 0; }
+    }
+}
+
+// Omitting the FIRST field rather than the last, to show the list is keyed by
+// name and not truncated positionally.
+fn partial_second_field(s: Shape) -> i64 {
+    match s {
+        Shape::Rect { h } => { return h; }
+        _ => { return 0; }
+    }
+}
+
+// The zero-field form. `Rect { }` matches every `Rect` and binds nothing, and it
+// still COVERS the variant for exhaustiveness — the arms below are the whole
+// enum, with no wildcard.
+fn zero_fields(s: Shape) -> i64 {
+    match s {
+        Shape::Rect { } => { return 1; }
+        Shape::Square { } => { return 2; }
+        Shape::Dot => { return 3; }
+    }
+}
+
 fn main() {
     print("Names decide the binding, not the position:");
     print_int(area_named_backwards(Shape::Rect { w: 3, h: 7 }));
@@ -95,4 +139,14 @@ fn main() {
 
     print("A shorthand binding may go unused:");
     print_int(width_only(Shape::Rect { w: 99, h: 1 }));
+
+    print("An omitted field is simply not bound, in either spelling:");
+    print_int(partial_shorthand(Shape::Rect { w: 11, h: 22 }));
+    print_int(partial_explicit(Shape::Rect { w: 11, h: 22 }));
+    print_int(partial_second_field(Shape::Rect { w: 11, h: 22 }));
+
+    print("The zero-field form matches, binds nothing, and covers the variant:");
+    print_int(zero_fields(Shape::Rect { w: 1, h: 2 }));
+    print_int(zero_fields(Shape::Square { side: 3 }));
+    print_int(zero_fields(Shape::Dot));
 }
