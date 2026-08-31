@@ -1754,10 +1754,12 @@ expect_class substantive "안녕"          "a non-ASCII prose line is substantiv
 # planted hermetically (each control builds its own manifest and its own two documents in
 # a temp tree, reading nothing from this repository) and asserted here.
 #
-# RED-then-green measured against two mutants of the recount, both of which this suite
-# catches: restoring the three silent skips fails 4 of the 9 controls with "expected RED,
-# got GREEN"; hardcoding `untranscribed` back to 0 in the expected tuple fails 1 with
-# "expected GREEN, got RED".
+# RED-then-green measured against three mutants of the recount, each caught here:
+# restoring the original silent skips fails 4 of the 10 controls with "expected RED, got
+# GREEN"; hardcoding `untranscribed` back to 0 in the expected tuple fails 1 with
+# "expected GREEN, got RED"; and checking row WIDTH without checking that every column is
+# non-empty fails 1 with "expected RED, got GREEN" -- that last one was a real hole, in
+# which `\t\trun\t-\t-\t-` counted as a fixture.
 echo
 echo "== the conformance-count governor goes red on a drifted count and a broken inventory =="
 COUNTS_OUT=$(python3 scripts/check_doc_evidence.py --self-test-counts 2>&1); COUNTS_RC=$?
@@ -1793,6 +1795,8 @@ counts_case "a duplicate path is NAMED, with the line it first appeared on -> re
   "a duplicate fixture path is NAMED, with the line it first appeared on"
 counts_case "an unrecognised class is NAMED, not dropped from the tally -> red" \
   "an unrecognised class is NAMED, not dropped out of the tally"
+counts_case "a 6-column row with an EMPTY column is NAMED, not counted -> red" \
+  "a 6-column row with an EMPTY column is NAMED: width is not the whole contract"
 counts_case "an unaccounted inventory suppresses the comparison, and says so -> red" \
   "an unaccounted inventory suppresses the count comparison, and says so"
 counts_case "a stale count is RED and NAMES THE SITE, with have-vs-want -> red" \

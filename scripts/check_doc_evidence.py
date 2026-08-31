@@ -1392,6 +1392,18 @@ def conformance_counts(manifest=None):
                 f"{name}:{n}: expected {MANIFEST_COLUMNS} tab-separated columns, got "
                 f"{len(cols)}: {line[:60]}")
             continue
+        # WIDTH IS NOT THE WHOLE CONTRACT. The manifest's declared format is
+        # "6 TAB-separated columns, every column non-empty, `-` = N/A", and a row can be
+        # exactly six columns wide with any of them blank — `\t\trun\t-\t-\t-` names no
+        # fixture at all. Counting it was a measured hole: the recount returned
+        # {'run': 2, 'total': 2} with no problems over two such rows. The message is
+        # scripts/conformance.sh:367's, word for word, so the two gates say the same thing
+        # about the same row rather than describing it two ways.
+        if any(not c.strip() for c in cols):
+            problems.append(
+                f"{name}:{n}: expected {MANIFEST_COLUMNS} tab-separated non-empty columns "
+                f"(use '-' for N/A), got: {line[:60]}")
+            continue
         total += 1
         fixture, cls = cols[0].strip(), cols[1].strip()
         if fixture in seen:
@@ -1604,6 +1616,14 @@ def self_test_counts():
     case("an unrecognised class is NAMED, not dropped from the tally",
          good + [_row("tests/e.pd", "sortof")], None, False,
          "class 'sortof' is not one of", "an unrecognised class would drop out")
+    # WIDTH ALONE WAS NOT THE CONTRACT, and the first fail-closed recount checked only
+    # width: a row six columns wide with a BLANK one passed, so `\t\trun\t-\t-\t-` was
+    # counted as a fixture. Measured before this control existed: two such rows recounted
+    # to {'run': 2, 'total': 2} with no problems reported.
+    case("a 6-column row with an EMPTY column is NAMED, not counted",
+         good + ["\t".join(["", "run", "-", "-", "-", "note"])], None, False,
+         "expected 6 tab-separated non-empty columns (use '-' for N/A)",
+         "conformance-manifest.txt:5:", "were NOT compared")
     case("an unaccounted inventory suppresses the comparison, and says so",
          good + ["tests/broken.pd\trun\t-"], None, False,
          "were NOT compared")
@@ -1631,8 +1651,9 @@ def self_test_counts():
         print(f"conformance-count controls FAILED: {fails} of {len(checks)}")
         return 1
     print(f"conformance-count controls: {len(checks)} green (the fatal green control, the "
-          f"`untranscribed` regression, three fail-closed recount shapes plus the "
-          f"suppressed comparison, and three claim-site shapes)")
+          f"`untranscribed` regression, four fail-closed recount shapes — wrong width, an "
+          f"empty column, a duplicate path, an unrecognised class — plus the suppressed "
+          f"comparison, and three claim-site shapes)")
     return 0
 
 
