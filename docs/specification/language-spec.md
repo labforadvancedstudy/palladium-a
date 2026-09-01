@@ -896,8 +896,8 @@ unrelated reason.
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3892`, corrected from line 2038 of the pre-cleanup revision) |
-| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3881-3888` (corrected from line 2037–2043 of the pre-cleanup revision) |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3894`, corrected from line 2038 of the pre-cleanup revision) |
+| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3893-3901` (corrected from line 2037–2043 of the pre-cleanup revision) |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
