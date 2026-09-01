@@ -193,10 +193,11 @@ pub enum DiagnosticCode {
     /// receiver form — a `&self` shared borrow, or a by-value `self` copy the
     /// caller would never observe — which is the parameter of one rule, and is
     /// why the three witnesses share this code. The locked map carried the
-    /// by-value spelling as a second number; it named this same single `Err`,
-    /// was never minted here and never emitted, so it is dropped rather than
-    /// tombstoned — a tombstone is the promise owed to a number that was once
-    /// live. `ReceiverWriteThroughNeedsMutSelf` is the neighbour and guards
+    /// by-value spelling as PD0064; it named this same single `Err`, so su3
+    /// merged it here and RETIRED 64 to `TOMBSTONES` rather than dropping it.
+    /// It was never emitted, and that is not the test: the su0 six were never
+    /// emitted either, and a number the map allocated is a number a reader can
+    /// cite. `ReceiverWriteThroughNeedsMutSelf` is the neighbour and guards
     /// `Stmt::Assign`; this rule guards the CALL that reaches the same field
     /// through a callee, which that predicate cannot see.
     MutMethodCallNeedsAMutReceiver,
@@ -611,10 +612,17 @@ impl DiagnosticCode {
     /// The numbers that are RETIRED and must never be allocated again, with the
     /// condition each one named before its merge.
     ///
-    /// These six came out of the su0 map review: each was folded into a
-    /// surviving code because the two were one rule seen from two positions.
-    /// D7 forbids re-pointing them, and forbids closing the holes by
-    /// renumbering the survivors.
+    /// Six came out of the su0 map review and the seventh out of su3's
+    /// attachment: each was folded into a surviving code because the two were
+    /// one rule seen from two positions. D7 forbids re-pointing them, and
+    /// forbids closing the holes by renumbering the survivors.
+    ///
+    /// WHAT MAKES A NUMBER OWE A TOMBSTONE is ALLOCATION IN THE MAP, not first
+    /// emission. None of these seven was ever emitted by this compiler — the
+    /// su0 six were retired before su1 wired anything, and 64 was retired by
+    /// the slice that would have minted it. Retiring on first emission instead
+    /// would leave every map-allocated number that a slice merges free for
+    /// reuse, and the map is a durable artifact that other readers cite.
     pub const TOMBSTONES: &'static [(u16, &'static str)] = &[
         (
             25,
@@ -623,6 +631,10 @@ impl DiagnosticCode {
         (47, "argument type, const-generic callee spelling"),
         (51, "`macro_rules!`, invocation position spelling"),
         (61, "receiver write-through, `&self` detail spelling"),
+        (
+            64,
+            "mut-method call through a non-mut receiver, by-value caller spelling",
+        ),
         (65, "loop/break value agreement, break-side spelling"),
         (
             73,
@@ -873,6 +885,14 @@ mod tests {
     /// code, and then the two agree about something false.
     #[test]
     fn no_active_code_reuses_a_tombstoned_number() {
+        // The count is asserted for the reason `every_code_is_in_all` asserts
+        // its own: a tombstone is permanent, so ADDING one has to be an edit a
+        // reviewer sees rather than a line that slid in with a merge.
+        assert_eq!(
+            DiagnosticCode::TOMBSTONES.len(),
+            7,
+            "a number was retired (or revived) without this literal being updated"
+        );
         let retired: HashSet<u16> = DiagnosticCode::TOMBSTONES.iter().map(|(n, _)| *n).collect();
         for c in DiagnosticCode::ALL {
             assert!(
