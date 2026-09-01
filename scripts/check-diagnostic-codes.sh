@@ -103,6 +103,57 @@ final_exit_code() {
   else printf '0\n'; fi
 }
 
+# THE ONLY WAY OUT once measuring has begun.
+#
+# A rule that lives in one function and a terminal that does not call it is not a
+# rule, it is a comment. This gate had exactly that: the corpus fold's NO_VERDICT
+# arm ran its own `exit 2`, so a registry check that had ALREADY found a real
+# defect was buried the moment an unrelated conformance run failed to reach a
+# verdict — the gate would report "could not measure" while holding a measured
+# RED it had printed four lines earlier. Two harness bails did the same thing.
+# So every post-measurement terminal is this function, and the priority rule is
+# stated in exactly one place.
+#
+# WHAT IS DELIBERATELY NOT ROUTED HERE: the preconditions above (no compiler, no
+# registry, no manifest, no temp dir, a refused environment override). Those fire
+# BEFORE any measurement exists, so there is no verdict to outrank and `exit 2`
+# is the whole truth about the run.
+finish() {
+  echo
+  [ "$unrun" -eq 0 ] || printf '%s%d control(s) NOT RUN, named above%s\n' "$YELLOW" "$unrun" "$NC"
+  case "$(final_exit_code "$fails" "$abstained")" in
+    0) printf '%s✓ diagnostic codes: every check green%s\n' "$GREEN" "$NC"
+       exit 0 ;;
+    1) printf '%s✗ diagnostic codes: %d check(s) RED%s' "$RED" "$fails" "$NC"
+       [ "$abstained" -eq 0 ] \
+         && printf '\n' \
+         || printf '%s (and %d abstention(s), reported but outranked)%s\n' "$YELLOW" "$abstained" "$NC"
+       exit 1 ;;
+    2) printf '%s? diagnostic codes: nothing was found wrong, and %d check(s) could not be\n' "$YELLOW" "$abstained"
+       printf '  made. This is not a pass — the gate has not been shown to hold.%s\n' "$NC"
+       exit 2 ;;
+  esac
+}
+
+# The corpus verdict, ROUTED rather than acted on inline, so the whole-gate
+# control-flow mutants below can walk this exact arm with a planted prior RED.
+#   $1 = verdict, $2 = conformance's exit status, $3 = its summary, $4 = its log
+apply_conformance_verdict() {
+  case "$1" in
+    GREEN)
+      ok "conformance green — $3"
+      [ -r "$4" ] && ok "$(grep -m1 '^diagnostic-codes' "$4")" ;;
+    RED)
+      bad "conformance exited $2 — $3" ;;
+    NO_VERDICT)
+      # An ABSTENTION, counted, not a terminal. The corpus could not be measured,
+      # which says nothing about anything this gate measured for itself.
+      absta "conformance exited $2${3:+ — $3} — the corpus verdict could not be measured"
+      echo "note: exit 2 is not a pass and not a failure. If some check above found" >&2
+      echo "      a real defect, that outranks this and the gate exits 1." >&2 ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # The checks, as FUNCTIONS OVER (registry, manifest), so the mutants below can
 # re-run exactly the code that certifies the live pair. A self-test that
@@ -397,7 +448,10 @@ done <<<"$out"
 # ---------------------------------------------------------------------------
 echo
 echo "planted mutants (parser + registry + manifest):"
-M="$TMPROOT/mutants"; mkdir -p "$M" || exit 2
+# `finish`, not `exit 2`: by here the registry, inventory, pin and witness checks
+# have all run and may be holding a measured RED.
+M="$TMPROOT/mutants"
+mkdir -p "$M" || { absta "could not create a directory to plant mutants in"; finish; }
 
 expect_state() {             # name, capture-file, expected state, [expected code]
   local name=$1 cap=$2 want=$3 wantcode=${4:-}
@@ -521,7 +575,8 @@ fi
 # planted on a blank line mutates nothing while looking like it did.
 mkman() { awk -F'\t' 'NF==6 && $1 !~ /^#/' "$MANIFEST" | head -3 >"$M/man.txt"; }
 mkman
-[ "$(wc -l <"$M/man.txt" | tr -d ' ')" -eq 3 ] || { echo "error: could not slice 3 manifest rows" >&2; exit 2; }
+[ "$(wc -l <"$M/man.txt" | tr -d ' ')" -eq 3 ] \
+  || { absta "could not slice 3 manifest rows to mutate"; finish; }
 
 mutate_manifest() {          # name, replacement observable, expected complaint
   local name=$1 obs=$2 want=$3
@@ -700,6 +755,33 @@ exit_case "M20b a measured defect alone is 1"                2 0 1
 exit_case "M20c an abstention alone is 2, never 0"           0 3 2
 exit_case "M20d a defect AND an abstention is 1 — measured RED outranks NO VERDICT" 1 1 1
 
+# M21 — THE WHOLE-GATE CONTROL FLOW, not the arithmetic.
+#
+# M20 proves `final_exit_code` computes the priority correctly and would have gone
+# on proving it forever while the corpus fold's NO_VERDICT arm ran its own
+# `exit 2` and never called it. A pure function cannot see a terminal that
+# bypasses it. So these cases walk the REAL path — `apply_conformance_verdict`
+# into `finish` — in a subshell, with a prior measured RED already planted in the
+# counters, and read the exit code the gate would actually have produced.
+gate_terminal_case() {       # name, planted fails, planted abstentions, verdict, expected
+  local name=$1 f=$2 a=$3 v=$4 want=$5 got
+  ( fails=$f; abstained=$a; unrun=0
+    apply_conformance_verdict "$v" 2 "verified=85 untranscribed=0 failures=0" /dev/null
+    finish ) >/dev/null 2>&1
+  got=$?
+  if [ "$got" = "$want" ]; then ok "$name"; else bad "$name: the gate exited $got, expected $want"; fi
+}
+gate_terminal_case "M21a a prior measured RED survives a conformance NO_VERDICT — gate exits 1" \
+  1 0 NO_VERDICT 1
+gate_terminal_case "M21b paired control: NO_VERDICT with nothing measured wrong still exits 2" \
+  0 0 NO_VERDICT 2
+gate_terminal_case "M21c paired control: a green corpus with nothing else wrong exits 0" \
+  0 0 GREEN 0
+gate_terminal_case "M21d paired control: a RED corpus exits 1 through the same terminal" \
+  0 0 RED 1
+gate_terminal_case "M21e a prior RED and a prior abstention and a NO_VERDICT corpus still exits 1" \
+  2 3 NO_VERDICT 1
+
 # M17 — THE THREE-VALUED FOLD, over statuses this run did not produce. The
 # decision is a pure function precisely so it can be interrogated here; the live
 # call below feeds it the real corpus status.
@@ -737,31 +819,7 @@ conf_log="$TMPROOT/conformance.log"
 bash scripts/conformance.sh tests examples >"$conf_log" 2>&1
 conf_rc=$?
 summary=$(grep -m1 '^verified=' "$conf_log")
-case "$(fold_conformance_verdict "$conf_rc" "$summary")" in
-  GREEN)
-    ok "conformance green — $summary"
-    ok "$(grep -m1 '^diagnostic-codes' "$conf_log")" ;;
-  RED)
-    bad "conformance exited $conf_rc — $summary" ;;
-  NO_VERDICT)
-    printf '  %sNO VERDICT%s  conformance exited %s%s\n' "$YELLOW" "$NC" "$conf_rc" \
-      "${summary:+ — $summary}" >&2
-    echo "error: the corpus verdict could not be measured, so this gate has not" >&2
-    echo "       been shown to hold. Exit 2 is not a pass and not a failure." >&2
-    exit 2 ;;
-esac
+apply_conformance_verdict "$(fold_conformance_verdict "$conf_rc" "$summary")" \
+  "$conf_rc" "$summary" "$conf_log"
 
-echo
-[ "$unrun" -eq 0 ] || printf '%s%d control(s) NOT RUN, named above%s\n' "$YELLOW" "$unrun" "$NC"
-case "$(final_exit_code "$fails" "$abstained")" in
-  0) printf '%s✓ diagnostic codes: every check green%s\n' "$GREEN" "$NC"
-     exit 0 ;;
-  1) printf '%s✗ diagnostic codes: %d check(s) RED%s' "$RED" "$fails" "$NC"
-     [ "$abstained" -eq 0 ] \
-       && printf '\n' \
-       || printf '%s (and %d abstention(s), reported but outranked)%s\n' "$YELLOW" "$abstained" "$NC"
-     exit 1 ;;
-  2) printf '%s? diagnostic codes: nothing was found wrong, and %d check(s) could not be\n' "$YELLOW" "$abstained"
-     printf '  made. This is not a pass — the gate has not been shown to hold.%s\n' "$NC"
-     exit 2 ;;
-esac
+finish
