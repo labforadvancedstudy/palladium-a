@@ -29,15 +29,29 @@
 #                      `-` for a tombstone: its witnesses belong to the survivor.
 #   introduced_commit  The commit that first emitted this code, or `-` while the
 #                      row is still in a working tree. The gate accepts `-` or a
-#                      commit reachable from HEAD, and nothing else.
+#                      commit that is an ANCESTOR OF HEAD, and nothing else —
+#                      mere object existence was the earlier predicate and it
+#                      accepted every commit of every abandoned branch.
+#
+# WHY THE TOMBSTONES ARE GUARDED BY TWO FILES AND NOT BY THREE. A review asked
+# for a defence against a commit that revives a retired number by editing THIS
+# file and `src/errors/codes.rs` together. Declined, deliberately, on this
+# repository's own settled precedent: `scripts/thesis-exit.sh:14-21` carries a
+# duplicated contract and says of it that "weakening both together is possible
+# and is meant to be: it takes an edit to two files in one commit, which is
+# exactly the thing a reviewer can see." A reviewed cross-check is a pair of
+# independent derivations, not a lock; adding a third copy multiplies the places
+# that must agree without adding an authority that is harder to edit. The two
+# derivations here are this file and the binary's own `DiagnosticCode::TOMBSTONES`
+# (`pdc --dump-diagnostic-codes`), compared by `make check-diagnostic-codes`.
 #
 # SCOPE TODAY. su1 seeds the two conditions it wires end to end, plus the six
 # tombstones the su0 map review retired. The remaining conditions of the locked
 # 72-condition map are appended by the emission slices as their sites are wired —
 # a registry row whose code nothing can emit would be a promise, not a record.
 code	symbolic_name	status	semantic_condition	justification	first_witness	introduced_commit
-PD0002	const_initialiser_has_no_value	active	the initialiser of a top-level `const`/`static` has no value in the target's arithmetic	one `refuse` closure in `TypeChecker::const_eval` (src/typeck/mod.rs); the fault named after the colon — a zero divisor, an i64 overflow, a shift outside 0..63 — is the PARAMETER of one rule, so the six corpus witnesses share one code and are told apart by `msg~` on the payload. The doc comment above the closure states the closed set: 'the refusals are exactly these three'.	tests/reject/const_divide_by_zero.pd	-
-PD0003	cast_relation	active	a cast is legal only among the numeric primitives and `bool`, or between `char` and `i64`	one predicate over the PAIR — the `legal` match in `check_expr`'s `Expr::Cast` arm (src/typeck/mod.rs), whose middle arm is a symmetric or-pattern, so no branch is reached by direction. Direction lives in the formatted `found` clause, which is a particular; the four corpus witnesses are told apart by `msg~` on it.	tests/reject/bool_does_not_cast_to_char.pd	-
+PD0002	const_initialiser_has_no_value	active	the initialiser of a top-level `const`/`static` has no value in the target's arithmetic	one `refuse` closure in `TypeChecker::const_eval` (src/typeck/mod.rs); the fault named after the colon — a zero divisor, an i64 overflow, a shift outside 0..63 — is the PARAMETER of one rule, so the six corpus witnesses share one code and are told apart by `msg~` on the payload. The doc comment above the closure states the closed set: 'the refusals are exactly these three'.	tests/reject/const_divide_by_zero.pd	2d945d9
+PD0003	cast_relation	active	a cast is legal only among the numeric primitives and `bool`, or between `char` and `i64`	one predicate over the PAIR — the `legal` match in `check_expr`'s `Expr::Cast` arm (src/typeck/mod.rs), whose middle arm is a symmetric or-pattern, so no branch is reached by direction. Direction lives in the formatted `found` clause, which is a particular; the four corpus witnesses are told apart by `msg~` on it.	tests/reject/bool_does_not_cast_to_char.pd	2d945d9
 PD0025	nested_array_inner_length_field_spelling	tombstone	a nested array's inner length must resolve, `the field ...` caller spelling	RETIRED into PD0024 at su0 map review: one `Err` in `inner_dims_for_declarator`, and `what` is passed by the caller (field vs parameter). The caller's noun is the argument, not the rule.	-	-
 PD0047	argument_type_const_generic_spelling	tombstone	an argument must have the parameter's declared type, const-generic callee spelling	RETIRED into PD0042 at su0 map review: both spellings reach the same `Err`; an arity probe showed the const-generic callee is not on a separate path. `Int` vs `[Int; N]` is the expected type, i.e. the particular.	-	-
 PD0051	macro_rules_invocation_spelling	tombstone	`macro_rules!` is not this language's macro system, invocation-position spelling	RETIRED into PD0049 at su0 map review: N3-14 stated in two positions (item and invocation); after the lead the sentence is character-identical, and the source says the invocation position gets its own sentence 'as well as' the item position.	-	-

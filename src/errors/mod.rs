@@ -711,6 +711,11 @@ impl CompileError {
 
     /// The code this refusal carries, if any. `None` is the honest state for a
     /// site that has not been wired yet — there is no family fallback.
+    ///
+    /// The OUTERMOST code, if a caller hand-built a nested `Coded`: the last
+    /// site to speak is the one that knew most about the rule, which is also
+    /// what `to_diagnostic` renders (the inner code is stamped first and then
+    /// overwritten).
     pub fn code(&self) -> Option<DiagnosticCode> {
         match self {
             CompileError::Coded { code, .. } => Some(*code),
@@ -718,15 +723,24 @@ impl CompileError {
         }
     }
 
-    /// The underlying refusal, with any code wrapper removed.
+    /// The underlying refusal, with EVERY code wrapper removed.
     ///
     /// For the consumers that match on the VARIANT (the LSP bridge, tests):
     /// attaching a code must not make an error look like a different error.
+    ///
+    /// LOOPS RATHER THAN UNWRAPPING ONCE, and the one layer was not enough.
+    /// `with_code` cannot build a nested `Coded` — it replaces the code on one —
+    /// but `CompileError::Coded` is a public variant, so any caller can nest by
+    /// hand, and a single-layer `peel` would hand such an error back as a
+    /// `Coded` to a `match` that has no arm for it. The LSP bridge's arm for that
+    /// is its catch-all, which drops the span; the failure would be silent and
+    /// would look like a missing location, not like a nested wrapper.
     pub fn peel(&self) -> &CompileError {
-        match self {
-            CompileError::Coded { inner, .. } => inner,
-            other => other,
+        let mut here = self;
+        while let CompileError::Coded { inner, .. } = here {
+            here = inner;
         }
+        here
     }
 
     /// Convert this error into a diagnostic with helpful suggestions
@@ -1170,6 +1184,49 @@ impl Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `with_code` REPLACES, so the wrapper cannot nest by the sanctioned route.
+    #[test]
+    fn with_code_replaces_rather_than_nesting() {
+        let e = CompileError::Generic("x".into())
+            .with_code(DiagnosticCode::CastRelation)
+            .with_code(DiagnosticCode::ConstInitialiserHasNoValue);
+        assert_eq!(e.code(), Some(DiagnosticCode::ConstInitialiserHasNoValue));
+        assert!(
+            matches!(e.peel(), CompileError::Generic(_)),
+            "one `with_code` after another built a wrapper around a wrapper"
+        );
+    }
+
+    /// `Coded` is a public variant, so a caller CAN nest by hand even though
+    /// `with_code` will not. `peel` has to survive that, because the consumers
+    /// that match on the variant would otherwise fall to their catch-all — which
+    /// is how the LSP bridge would silently lose a span.
+    #[test]
+    fn peel_removes_every_layer_of_a_hand_nested_wrapper() {
+        let inner = CompileError::TypeMismatch {
+            expected: "a".into(),
+            found: "b".into(),
+            span: Some(Span::new(1, 2, 3, 4)),
+        };
+        let nested = CompileError::Coded {
+            code: DiagnosticCode::CastRelation,
+            inner: Box::new(CompileError::Coded {
+                code: DiagnosticCode::ConstInitialiserHasNoValue,
+                inner: Box::new(inner),
+            }),
+        };
+        assert!(
+            matches!(nested.peel(), CompileError::TypeMismatch { .. }),
+            "peel stopped at an inner wrapper instead of the refusal"
+        );
+        // The OUTERMOST code wins, and `to_diagnostic` agrees with `code()`.
+        assert_eq!(nested.code(), Some(DiagnosticCode::CastRelation));
+        assert_eq!(
+            nested.to_diagnostic().code,
+            Some(DiagnosticCode::CastRelation)
+        );
+    }
 
     #[test]
     fn test_span_new() {

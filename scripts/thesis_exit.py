@@ -3855,11 +3855,25 @@ def self_test() -> int:
     #   scripts/m2-exit.sh                   the aggregator that publishes the tri-state
     #   scripts/test-requirements-runner.sh  GI-09, which drives both
     # None carries an adversary score, so the backstop below has nothing to find in them.
+    #
+    # A FOURTH JOINED on 2026-09-01, and its membership is a different KIND, which is why
+    # it is written out rather than appended silently:
+    #   docs/contributing/diagnostic-codes.tsv   the GI-12 stable-code registry
+    # It does not copy this gate's contract and it does not report on a milestone. It cites
+    # `scripts/thesis-exit.sh:14-21` as a PRECEDENT — the passage saying that a duplicated
+    # contract is a reviewed cross-check and that "weakening both together ... takes an edit
+    # to two files in one commit, which is exactly the thing a reviewer can see." A review of
+    # GI-12 asked for a third guard against a two-file edit reviving a retired code; that
+    # passage is the settled answer, so the registry quotes where the answer lives. Carries
+    # no adversary score and no figure, so the backstop below still has nothing to find.
+    # Recorded here rather than reworded away: dropping the path to stay out of a derived
+    # set is how a citation becomes unfindable, and this pin exists to force the opposite.
     case("the scanned set is DERIVED from the tree, and is the reviewed one — a hand list "
          "of four was missing three files that cite this gate",
          _scan,
          ["Makefile", "docs/contributing/1.0-requirements.tsv",
-          "docs/contributing/MILESTONES.md", "scripts/m2-exit.sh",
+          "docs/contributing/MILESTONES.md",
+          "docs/contributing/diagnostic-codes.tsv", "scripts/m2-exit.sh",
           "scripts/requirements.py", "scripts/test-requirements-runner.sh",
           "scripts/thesis-exit.sh", "scripts/thesis_exit.py",
           "tests/callgraph-differential.tsv",

@@ -73,6 +73,7 @@ TMPROOT=$(mktemp -d) || exit 2
 trap 'rm -rf "$TMPROOT"' EXIT INT TERM
 
 fails=0
+unrun=0
 ok()   { printf '  %sok%s   %s\n' "$GREEN" "$NC" "$1"; }
 bad()  { printf '  %sRED%s  %s\n' "$RED" "$NC" "$1"; fails=$((fails+1)); }
 note() { printf '  %s--%s   %s\n' "$YELLOW" "$NC" "$1"; }
@@ -81,16 +82,47 @@ note() { printf '  %s--%s   %s\n' "$YELLOW" "$NC" "$1"; }
 # The checks, as FUNCTIONS OVER (registry, manifest), so the mutants below can
 # re-run exactly the code that certifies the live pair. A self-test that
 # exercised a re-implementation would prove nothing about the check that runs.
-# Each prints its complaints on stdout and returns the number of them.
+# Each prints its complaints on stdout, one per line, and returns a BOOLEAN
+# status: 0 clean, 1 complained. NOT the complaint COUNT — a shell status is
+# taken modulo 256, so a function returning `n` reports 256 complaints as
+# SUCCESS. The count is the number of lines the caller reads, which cannot wrap.
 # ---------------------------------------------------------------------------
 
 registry_rows() { grep -v '^#' "$1" | tail -n +2; }
 
-check_registry() {           # $1 = registry
+# THREE-VALUED, AND THE THIRD VALUE IS NOT ALLOWED TO BECOME THE SECOND. The
+# previous shape was `if [ "$conf_rc" -ne 0 ]; then bad`, which reported a
+# conformance run that COULD NOT MEASURE as a measured failure and left this gate
+# exiting 1. That is the GI-08 lesson verbatim, and it is reachable rather than
+# theoretical: `scripts/conformance.sh:1063` exits 2 under `CONFORMANCE_BLESS`
+# AFTER printing the `verified=` summary at :1006, so the "summary is present"
+# branch above did not protect against it either.
+#
+#   $1 = conformance's exit status, $2 = its summary line (may be empty)
+#   -> GREEN | RED | NO_VERDICT, on stdout. A pure decision, so the self-test
+#      below can hand it statuses this run did not produce.
+fold_conformance_verdict() {
+  local rc=$1 summary=$2
+  if [ -z "$summary" ]; then printf 'NO_VERDICT\n'; return; fi
+  case "$rc" in
+    0) printf 'GREEN\n' ;;
+    1) printf 'RED\n' ;;
+    *) printf 'NO_VERDICT\n' ;;
+  esac
+}
+
+check_registry() {           # $1 = registry -> 0 clean / 1 complained
   local reg=$1 n=0 line code name status cond just wit commit
   local -a seen_codes=() seen_names=()
 
-  if ! head -50 "$reg" | grep -q '^code	symbolic_name	status	semantic_condition	justification	first_witness	introduced_commit$'; then
+  # THE HEADER IS THE FIRST NON-COMMENT LINE, derived exactly the way
+  # `registry_rows` derives the data (it drops this line), so the two cannot
+  # disagree about where the table starts. This used to be `head -50`, a fixed
+  # window over a preamble that grows: adding a paragraph of documentation to the
+  # registry pushed the header to line 52 and the gate reported the columns
+  # missing. A window is not a derivation.
+  if [ "$(grep -v '^#' "$reg" | head -1)" != \
+       'code	symbolic_name	status	semantic_condition	justification	first_witness	introduced_commit' ]; then
     echo "registry header row is missing or has the wrong columns"; n=$((n+1))
   fi
 
@@ -132,9 +164,20 @@ check_registry() {           # $1 = registry
       [ "$wit" = "-" ] || { echo "$code: a tombstone may not claim a witness (its witnesses belong to the survivor)"; n=$((n+1)); }
     fi
 
-    # `-` while the row is still in a working tree; otherwise a real commit.
-    if [ "$commit" != "-" ] && ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
-      echo "$code: introduced_commit '$commit' is not a commit in this repository"; n=$((n+1))
+    # `-` while the row is still in a working tree; otherwise a commit REACHABLE
+    # FROM HEAD. `cat-file -e` was the wrong predicate and this is the difference
+    # it missed: every commit on every other branch, and every commit of an
+    # abandoned line of work, is an object in this repository. Measured here, 17
+    # such commits exist right now (`git rev-list --all --not HEAD`), so the old
+    # check would have accepted any of them as the provenance of a code that this
+    # history never introduced. The claim the column makes is "this tree's history
+    # contains the commit that first emitted this code", and that is ancestry.
+    if [ "$commit" != "-" ]; then
+      if ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
+        echo "$code: introduced_commit '$commit' is not a commit in this repository"; n=$((n+1))
+      elif ! git merge-base --is-ancestor "$commit" HEAD 2>/dev/null; then
+        echo "$code: introduced_commit '$commit' is a commit but is NOT an ancestor of HEAD — this history did not introduce it"; n=$((n+1))
+      fi
     fi
   done < <(registry_rows "$reg")
 
@@ -145,10 +188,10 @@ check_registry() {           # $1 = registry
   # `check_compiler_inventory`, where the binary's own `TOMBSTONES` is the second
   # authority, and in `src/errors/codes.rs`'s
   # `no_active_code_reuses_a_tombstoned_number`.
-  return $n
+  [ "$n" -eq 0 ]
 }
 
-check_compiler_inventory() { # $1 = registry
+check_compiler_inventory() { # $1 = registry -> 0 clean / 1 complained
   local reg=$1 n=0 code status name
   local dump="$TMPROOT/dump"
   if ! "$PDC" --dump-diagnostic-codes >"$dump" 2>/dev/null; then
@@ -175,10 +218,10 @@ check_compiler_inventory() { # $1 = registry
       echo "$code: symbolic_name disagrees — binary says '$name', registry says '$rname'"; n=$((n+1))
     fi
   done <"$dump"
-  return $n
+  [ "$n" -eq 0 ]
 }
 
-check_manifest_pins() {      # $1 = registry, $2 = manifest
+check_manifest_pins() {      # $1 = registry, $2 = manifest -> 0 clean / 1 complained
   local reg=$1 man=$2 n=0 path cls stage obs rest code
   while IFS=$'\t' read -r path cls stage obs rest; do
     case "$obs" in code=*|*';msg~'*|*'code ='*) ;; *) continue ;; esac
@@ -194,7 +237,7 @@ check_manifest_pins() {      # $1 = registry, $2 = manifest
       *) echo "$path: pins $code, which is not in the registry"; n=$((n+1)) ;;
     esac
   done < <(grep -v '^#' "$man")
-  return $n
+  [ "$n" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -231,27 +274,69 @@ fi
 # ---------------------------------------------------------------------------
 # 4 — first-witness emission, against THIS binary
 # ---------------------------------------------------------------------------
+
+# A REFUSAL WITNESS HAS TO REFUSE, AND THE EXIT STATUS IS THE ONLY THING THAT
+# SAYS SO. This loop used to run pdc in a subshell and DROP its status, then read
+# the stderr capture as if the capture alone settled the question. Two ways that
+# fails open, and neither is hypothetical: a witness fixture that becomes
+# ACCEPTED (the corpus calls that REJECT_ACCEPTED and treats it as a failure) is
+# a row whose refusal no longer exists, and a pdc killed by a signal produces a
+# short capture that parses to NO_CODE for a reason that has nothing to do with
+# codes. Both must be named, not read through.
+#
+# WHICH NONZERO STATUS COUNTS. `1` is the front-end refusal — the only failure a
+# fixture may declare, and the class every code in this registry names. `3/4/5/6`
+# are the structured BACKEND/toolchain verdicts (see `report_link` in
+# src/main.rs): the front end ACCEPTED and something later failed, so the
+# language rule was not enforced and this is not a witness to it. `>= 128` is a
+# death by signal. `0` is acceptance.
+#
+# $1 = registry -> 0 clean / 1 complained; complaints on stdout, one per line.
+check_first_witness_emission() {
+  local reg=$1 n=0 code name status cond just wit commit rc state
+  mkdir -p "$TMPROOT/run" || return 1
+  while IFS=$'\t' read -r code name status cond just wit commit; do
+    [ "${status:-}" = active ] || continue
+    [ -f "$wit" ] || continue
+
+    ( cd "$TMPROOT/run" && "$OLDPWD/$PDC" compile "$OLDPWD/$wit" -o w >/dev/null 2>"$TMPROOT/wit_stderr" )
+    rc=$?
+    case "$rc" in
+      0)   echo "$code: $wit was ACCEPTED (exit 0) — a refusal witness that does not refuse witnesses nothing"; n=$((n+1)); continue ;;
+      1)   ;;
+      3|4|5|6) echo "$code: $wit exited $rc, a backend/toolchain verdict — the front end accepted it, so it does not witness a language rule"; n=$((n+1)); continue ;;
+      *)   if [ "$rc" -ge 128 ]; then
+             echo "$code: $wit killed by signal $((rc-128)) — no verdict about $code was reached"
+           else
+             echo "$code: $wit exited $rc, which is not a front-end refusal (1) nor a structured backend verdict (3/4/5/6)"
+           fi
+           n=$((n+1)); continue ;;
+    esac
+
+    if ! state=$(pd_diag_parse "$TMPROOT/wit_stderr"); then
+      echo "$code: could not read the stderr capture of $wit"; n=$((n+1)); continue
+    fi
+    case "$(pd_diag_state "$state")" in
+      CODED)
+        if [ "$(pd_diag_code "$state")" = "$code" ]; then
+          echo "OK $code emitted by $wit (refused, exit 1)"
+        else
+          echo "$code: $wit emitted $(pd_diag_code "$state") instead"; n=$((n+1))
+        fi ;;
+      NO_CODE)   echo "$code: $wit refused with no code at all"; n=$((n+1)) ;;
+      MALFORMED) echo "$code: $wit printed $(pd_diag_code "$state") coded primary headers — cardinality-1 is broken"; n=$((n+1)) ;;
+    esac
+  done < <(registry_rows "$reg")
+  [ "$n" -eq 0 ]
+}
+
 echo
 echo "first-witness emission (real compiles):"
-mkdir -p "$TMPROOT/run" || exit 2
-while IFS=$'\t' read -r code name status cond just wit commit; do
-  [ "${status:-}" = active ] || continue
-  [ -f "$wit" ] || continue
-  ( cd "$TMPROOT/run" && "$OLDPWD/$PDC" compile "$OLDPWD/$wit" -o w >/dev/null 2>"$TMPROOT/wit_stderr" )
-  if ! state=$(pd_diag_parse "$TMPROOT/wit_stderr"); then
-    bad "$code: could not read the stderr capture of $wit"; continue
-  fi
-  case "$(pd_diag_state "$state")" in
-    CODED)
-      if [ "$(pd_diag_code "$state")" = "$code" ]; then
-        ok "$code emitted by $wit"
-      else
-        bad "$code: $wit emitted $(pd_diag_code "$state") instead"
-      fi ;;
-    NO_CODE)   bad "$code: $wit refused with no code at all" ;;
-    MALFORMED) bad "$code: $wit printed $(pd_diag_code "$state") coded primary headers — cardinality-1 is broken" ;;
-  esac
-done < <(registry_rows "$REGISTRY")
+out=$(check_first_witness_emission "$REGISTRY")
+while IFS= read -r l; do
+  [ -n "$l" ] || continue
+  case "$l" in OK\ *) ok "${l#OK }" ;; *) bad "witness: $l" ;; esac
+done <<<"$out"
 
 # ---------------------------------------------------------------------------
 # 5 — planted mutants. Temp dir, temp manifests, temp registries. The live
@@ -406,6 +491,87 @@ mutate_manifest "M12 a pin to an unregistered code is refused" \
   "code=PD0777" "not in the registry"
 mutate_manifest "M12b a whitespace variant of a well-formed pin is refused" \
   "code= PD0003" "is not exactly code=PD"
+
+# M15 — A WITNESS THAT DOES NOT REFUSE. The registry row is re-pointed at a
+# fixture pdc ACCEPTS (a `run`-class corpus row), which is the shape a witness
+# takes when the rule it names stops being enforced. Before the exit status was
+# read, this arrived as a stderr capture and was judged on its contents alone.
+# `NF==6 && $1 !~ /^#/`, for the reason `mkman` needs it too: the manifest's
+# preamble documents its own columns, so a bare `$2=="run"` matches the COMMENT
+# describing the `run` class and hands back a fragment of prose as a fixture path.
+accept_witness=$(awk -F'\t' 'NF==6 && $1 !~ /^#/ && $2=="run"{print $1; exit}' "$MANIFEST")
+if [ -z "$accept_witness" ] || [ ! -f "$accept_witness" ]; then
+  bad "M15: no accepted fixture available to re-point a witness at; this mutant proves nothing"
+else
+  awk -F'\t' -v OFS='\t' -v w="$accept_witness" \
+    '$1=="PD0003"{$6=w} {print}' "$REGISTRY" >"$M/reg.tsv"
+  if cmp -s "$REGISTRY" "$M/reg.tsv"; then
+    bad "M15: the mutation changed nothing, so this mutant proves nothing"
+  else
+    out=$(check_first_witness_emission "$M/reg.tsv")
+    if printf '%s' "$out" | grep -q "was ACCEPTED (exit 0)"; then
+      ok "M15 a witness that does not refuse is refused ($accept_witness)"
+    else
+      bad "M15 an accepting witness was taken as a refusal: ${out:-<nothing>}"
+    fi
+  fi
+fi
+
+# M16 — PROVENANCE THAT IS NOT THIS HISTORY. A real commit object that is not an
+# ancestor of HEAD: every abandoned branch in the repository is one, which is
+# exactly why `git cat-file -e` was the wrong predicate.
+#
+# The hash is DERIVED AT RUN TIME, never hard-coded — a literal would rot the
+# moment the branch it names is deleted, and a mutant that silently stops
+# mutating is worse than one that is absent. If a repository has no commit
+# outside HEAD's history the control cannot be run, and it says so and is
+# COUNTED rather than skipped, which is the seam convention this repo already
+# uses (`gate-receipts` prints `gate=N, NONE validated`; conformance prints
+# `N probe group(s) pinned as uncovered`).
+foreign=$(git rev-list --all --not HEAD 2>/dev/null | head -1)
+if [ -z "$foreign" ]; then
+  note "M16 NOT RUN (counted, not skipped): this repository has no commit outside HEAD's history to plant as false provenance"
+  unrun=$((unrun+1))
+else
+  awk -F'\t' -v OFS='\t' -v c="$foreign" '$1=="PD0003"{$7=c} {print}' "$REGISTRY" >"$M/reg.tsv"
+  if cmp -s "$REGISTRY" "$M/reg.tsv"; then
+    bad "M16: the mutation changed nothing, so this mutant proves nothing"
+  else
+    out=$(check_registry "$M/reg.tsv")
+    if printf '%s' "$out" | grep -q "NOT an ancestor of HEAD"; then
+      ok "M16 a real commit outside this history is refused as provenance (${foreign:0:7})"
+    else
+      bad "M16 a non-ancestor commit was accepted as provenance: ${out:-<nothing>}"
+    fi
+  fi
+  # The paired control: the SAME predicate must still accept a real ancestor, or
+  # M16 could be passing because the check refuses every hash.
+  awk -F'\t' -v OFS='\t' -v c="$(git rev-parse HEAD)" '$1=="PD0003"{$7=c} {print}' "$REGISTRY" >"$M/reg.tsv"
+  out=$(check_registry "$M/reg.tsv")
+  if printf '%s' "$out" | grep -q "ancestor"; then
+    bad "M16b control: HEAD itself was refused as provenance, so M16 proves nothing: $out"
+  else
+    ok "M16b control: an ancestor of HEAD is accepted as provenance"
+  fi
+fi
+
+# M17 — THE THREE-VALUED FOLD, over statuses this run did not produce. The
+# decision is a pure function precisely so it can be interrogated here; the live
+# call below feeds it the real corpus status.
+fold_case() {                # name, rc, summary, expected verdict
+  local got; got=$(fold_conformance_verdict "$2" "$3")
+  if [ "$got" = "$4" ]; then ok "$1"; else bad "$1: fold said $got, expected $4"; fi
+}
+fold_case "M17a conformance exit 0 with a summary folds GREEN" \
+  0 "verified=85 failures=0" GREEN
+fold_case "M17b conformance exit 1 with a summary folds RED" \
+  1 "verified=85 failures=1" RED
+fold_case "M17c conformance exit 2 WITH a summary folds NO_VERDICT, not RED" \
+  2 "verified=85 failures=0" NO_VERDICT
+fold_case "M17d conformance with no summary folds NO_VERDICT whatever the status" \
+  0 "" NO_VERDICT
+fold_case "M17e a signalled conformance folds NO_VERDICT" \
+  139 "verified=85 failures=0" NO_VERDICT
 # META-CONTROL for the mutant harness itself: the UNMUTATED copies must be green,
 # or every "refused" above could be the harness refusing everything.
 out=$(check_registry "$REGISTRY"); [ $? -eq 0 ] \
@@ -426,19 +592,22 @@ conf_log="$TMPROOT/conformance.log"
 bash scripts/conformance.sh tests examples >"$conf_log" 2>&1
 conf_rc=$?
 summary=$(grep -m1 '^verified=' "$conf_log")
-if [ -z "$summary" ]; then
-  echo "error: the conformance run produced no summary line — no corpus verdict to fold" >&2
-  printf '  %sNO VERDICT%s\n' "$YELLOW" "$NC"
-  exit 2
-fi
-if [ "$conf_rc" -ne 0 ]; then
-  bad "conformance exited $conf_rc — $summary"
-else
-  ok "conformance green — $summary"
-  ok "$(grep -m1 '^diagnostic-codes' "$conf_log")"
-fi
+case "$(fold_conformance_verdict "$conf_rc" "$summary")" in
+  GREEN)
+    ok "conformance green — $summary"
+    ok "$(grep -m1 '^diagnostic-codes' "$conf_log")" ;;
+  RED)
+    bad "conformance exited $conf_rc — $summary" ;;
+  NO_VERDICT)
+    printf '  %sNO VERDICT%s  conformance exited %s%s\n' "$YELLOW" "$NC" "$conf_rc" \
+      "${summary:+ — $summary}" >&2
+    echo "error: the corpus verdict could not be measured, so this gate has not" >&2
+    echo "       been shown to hold. Exit 2 is not a pass and not a failure." >&2
+    exit 2 ;;
+esac
 
 echo
+[ "$unrun" -eq 0 ] || printf '%s%d control(s) NOT RUN, named above%s\n' "$YELLOW" "$unrun" "$NC"
 if [ "$fails" -eq 0 ]; then
   printf '%s✓ diagnostic codes: every check green%s\n' "$GREEN" "$NC"
   exit 0
