@@ -100,9 +100,35 @@
 //! pair takes no `msg~` — there is nothing to tell apart, and the test asserts
 //! the identity rather than inventing a discriminator.
 //!
+//! THE THIRTY-EIGHT CONDITIONS su3 ADDS, and what is different about them
+//!
+//! su3 wires the TYPE-CHECKER family: thirty-eight conditions at fifty-two
+//! construction sites under `src/typeck/`. Two things change at this scale.
+//!
+//! POSITIONS OUTNUMBER WITNESSES. Fourteen of these rules are stated at more
+//! than one position — PD0001 at four, PD0005 at four, PD0009 at three, PD0046
+//! at three — and the corpus witnesses only some of them. The positions it does
+//! not witness are compiled here from programs written for the purpose, because
+//! a registry row that says "four positions" and a test that proves one is a
+//! claim resting on a comment.
+//!
+//! THE SHARED HELPER IS THE su2a MUTANT AGAIN, one layer up.
+//! `TypeErrorHelper::type_mismatch` is called by the annotated-`let` arm and by
+//! the ASSIGNMENT arm, which is a different rule with no code; `missing_main`
+//! is called by one predicate. Codes are attached at the CALL and never inside
+//! the helper, and the assignment program below is the control that would go RED
+//! under the cheap wiring.
+//!
+//! ONE DISPOSITION IS RECORDED RATHER THAN SMOOTHED OVER. The locked map held
+//! two numbers for calling a `&mut self` method through a receiver that is not
+//! one; both name a single `Err` whose `detail` the caller chooses, so su3 mints
+//! PD0021 and drops the second unminted rather than tombstoning it. The registry
+//! row says what that costs.
+//!
 //! WHAT IS NOT CLAIMED. Nothing here says the manifest pins codes: it does not,
 //! and will not until the cutover. These are the vertical proof that it CAN.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -209,6 +235,21 @@ fn compile_path(rel: &str) -> (Refusal, TempDir) {
         },
         dir,
     )
+}
+
+/// Compile a refusal witness named either way the corpus names one.
+///
+/// A bare `name.pd` is a `tests/reject/` row, which is where most of them live;
+/// a name with a `/` is a repo-relative path, which is what the rest need — the
+/// su3 family's witnesses include two `tests/xfail/` rows, a `tests/misc/` row
+/// and a package module under `tests/projects/`. Routing on the shape rather
+/// than duplicating the tables keeps the fixture column readable.
+fn compile_witness(name: &str) -> (Refusal, TempDir) {
+    if name.contains('/') {
+        compile_path(name)
+    } else {
+        compile_fixture(name)
+    }
 }
 
 /// Compile a program written HERE, and keep the refusal.
@@ -345,7 +386,7 @@ fn payloads(f: &Family) -> Vec<(&'static str, String)> {
     f.rows
         .iter()
         .map(|(fixture, _)| {
-            let (r, _dir) = compile_fixture(fixture);
+            let (r, _dir) = compile_witness(fixture);
             assert_eq!(
                 r.code,
                 Some(1),
@@ -698,14 +739,16 @@ fn main() {
 /// refusal gets SOME code — is the shape the LSP bridge already has
 /// (`_ => "E9999"`), and it makes "this refusal is attributable" unfalsifiable.
 ///
-/// THE CONTROL MOVED, AND THAT IS THE POINT. It used to be `ref_parameter.pd`,
-/// which su2b coded as PD0030. A control has to be a refusal NOTHING has judged
-/// yet, so it is replaced rather than kept: `at_binding_shadows_item.pd` is a
-/// type-checker refusal owned by a later slice. The day that slice lands, this
-/// control moves again — the moving is what keeps it a control.
+/// THE CONTROL MOVED TWICE, AND THAT IS THE POINT. It was `ref_parameter.pd`,
+/// which su2b coded as PD0030, then `at_binding_shadows_item.pd`, which su3
+/// coded as PD0004. A control has to be a refusal NOTHING has judged yet, so it
+/// is replaced rather than kept: `mut_borrow_of_immutable.pd` is a BORROW-CHECKER
+/// refusal — the locked map's PD0012, which su3's type-checker family does not
+/// reach — owned by a later slice. The day that slice lands, this control moves
+/// again; the moving is what keeps it a control.
 #[test]
 fn an_unwired_refusal_carries_no_code_rather_than_a_fallback() {
-    let (r, _dir) = compile_fixture("at_binding_shadows_item.pd");
+    let (r, _dir) = compile_fixture("mut_borrow_of_immutable.pd");
     assert_eq!(r.code, Some(1));
     assert!(
         r.coded_headers().is_empty(),
@@ -729,7 +772,7 @@ fn an_unwired_refusal_carries_no_code_rather_than_a_fallback() {
 fn a_refusal_prints_exactly_one_primary_header() {
     let mut fixtures: Vec<&str> = CAST.rows.iter().map(|(f, _)| *f).collect();
     fixtures.extend(CONST_INIT.rows.iter().map(|(f, _)| *f));
-    fixtures.push("at_binding_shadows_item.pd");
+    fixtures.push("mut_borrow_of_immutable.pd");
     fixtures.push("let_does_not_destructure.pd");
 
     for fixture in fixtures {
@@ -943,5 +986,697 @@ fn the_for_loops_twin_sentence_is_a_different_rule_and_stays_uncoded() {
         r.coded_headers().is_empty(),
         "the `for` position was given a code by its wording: {:?}",
         r.coded_headers()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// su3 — THE TYPE-CHECKER FAMILY
+// ---------------------------------------------------------------------------
+
+/// The fourteen su3 conditions with SEVERAL witnesses and a particular that
+/// tells them apart.
+///
+/// Same contract as `CAST` and `CONST_INIT`: one code, and a fragment that
+/// appears in its own fixture's payload and in no sibling's. Two entries are
+/// worth reading before the table.
+///
+/// PD0007's `static` pair is told apart only by the ITEM NAME, because the
+/// noun the message prints for `static` and for `static mut` is the same word.
+/// That is a corpus fact rather than a choice: the rule does not distinguish
+/// them, so nothing in the sentence can.
+///
+/// PD0022's second and third witnesses are `tests/xfail/` rows, not `reject`
+/// rows. The annotated-`let` site refuses them too — an alias that is not
+/// expanded before the comparison is this rule refusing a program it should
+/// accept — and that is what makes them xfail. They are listed because they are
+/// what the compiler DOES, and a table that hid them would be describing a
+/// compiler that does not exist.
+const SU3_FAMILIES: &[Family] = &[
+    // PD0004. Four binder kinds, ONE `Err` in `refuse_global_shadow`; the kind
+    // is passed in by the caller, so it is the parameter and the fragment.
+    Family {
+        code: "PD0004",
+        rows: &[
+            ("at_binding_shadows_item.pd", "the `@` binding `LIMIT`"),
+            ("const_local_shadows_item.pd", "the local `LIMIT`"),
+            ("for_binder_shadows_item.pd", "the loop variable `LIMIT`"),
+            (
+                "pattern_binder_shadows_item.pd",
+                "the pattern binding `LIMIT`",
+            ),
+        ],
+    },
+    // PD0005. ONE NAMESPACE, CHECKED IN BOTH DIRECTIONS — three positions in
+    // `register_global` and one in `refuse_global_collision`. Which direction
+    // was written is the particular.
+    Family {
+        code: "PD0005",
+        rows: &[
+            ("const_collides_with_enum.pd", "as an enum and"),
+            ("const_collides_with_function.pd", "as a function and"),
+            ("const_collides_with_type_alias.pd", "as a type alias and"),
+            (
+                "function_collides_with_const.pd",
+                "declared as a top-level `const` and as a function",
+            ),
+        ],
+    },
+    // PD0007. `const`, `static` and `static mut`, one predicate over
+    // `Visibility::Public`; the last two print the same noun (see above).
+    Family {
+        code: "PD0007",
+        rows: &[
+            ("pub_const_item.pd", "`pub` on a top-level `const`"),
+            ("pub_static_item.pd", "nothing exports `LIMIT`"),
+            ("pub_static_mut_item.pd", "nothing exports `COUNTER`"),
+        ],
+    },
+    // PD0009. The LITERAL position of the three that state this rule; the
+    // literal that was written is the particular.
+    Family {
+        code: "PD0009",
+        rows: &[
+            ("char_pattern_on_int_scrutinee.pd", "found the Char literal"),
+            ("enum_payload_literal_type.pd", "the String literal `\"a\"`"),
+            (
+                "literal_pattern_type_mismatch.pd",
+                "the String literal `\"two\"`",
+            ),
+        ],
+    },
+    // PD0010. One predicate over the two endpoints; the computed bounds in the
+    // payload are fixture data.
+    Family {
+        code: "PD0010",
+        rows: &[
+            ("char_range_pattern_empty.pd", "found `'z'..='a'`"),
+            ("range_pattern_empty.pd", "found `5..=1`"),
+            ("range_pattern_empty_exclusive.pd", "found `3..3`"),
+        ],
+    },
+    // PD0011. One `Err` over `first_binder`; the alternative it names is the
+    // particular.
+    Family {
+        code: "PD0011",
+        rows: &[
+            ("at_pattern_over_alternatives.pd", "the alternative `n @ 1`"),
+            (
+                "enum_payload_or_binds.pd",
+                "the alternative `x`, which binds",
+            ),
+            ("or_pattern_binds.pd", "the alternative `P::Num(x)`"),
+        ],
+    },
+    // PD0018. The entry point and the general `is_async` predicate, which the
+    // source calls a named sub-case of each other; the spelling is the
+    // parameter.
+    Family {
+        code: "PD0018",
+        rows: &[
+            (
+                "tests/misc/async_main_is_refused.pd",
+                "`async fn main` is not implemented",
+            ),
+            ("async_producer.pd", "`async fn` is not implemented"),
+        ],
+    },
+    // PD0019. One `Err` in `refuse_builtin_definition`; `reason` varies by
+    // whether the name is CALLABLE.
+    Family {
+        code: "PD0019",
+        rows: &[
+            (
+                "shadow_builtin.pd",
+                "a function is declared under that name",
+            ),
+            (
+                "shadow_builtin_type.pd",
+                "a struct is declared under that name",
+            ),
+        ],
+    },
+    // PD0021. One `Err`, `detail` chosen by the CALLER's receiver form — and
+    // the reason the locked map's second number for the by-value spelling was
+    // dropped rather than minted.
+    Family {
+        code: "PD0021",
+        rows: &[
+            (
+                "call_mut_method_through_by_value_receiver.pd",
+                "a by-value `self` receiver is a COPY, and the callee takes",
+            ),
+            (
+                "call_mut_method_through_chained_shared_receiver.pd",
+                "`D::bump`",
+            ),
+            (
+                "call_mut_method_through_shared_receiver.pd",
+                "`C::bump` through `self`: `&self` is a SHARED borrow",
+            ),
+        ],
+    },
+    // PD0022. The annotated arm of `Stmt::Let`; the type pair is fixture data.
+    Family {
+        code: "PD0022",
+        rows: &[
+            ("int_is_not_a_char.pd", "expected Char, found Int"),
+            (
+                "tests/xfail/alias_as_array_element.pd",
+                "expected [Edge; 2]",
+            ),
+            (
+                "tests/xfail/alias_nested_in_tuple_annotation.pd",
+                "expected (NodeId, NodeId, Int)",
+            ),
+        ],
+    },
+    // PD0042. One `Err` in the `Expr::Call` argument loop; the expected type is
+    // the particular, and the const-generic spelling is on the same path (which
+    // is what retired PD0047 into this code).
+    Family {
+        code: "PD0042",
+        rows: &[
+            ("char_is_not_an_int.pd", "expected Int, found Char"),
+            ("const_generic_param.pd", "expected [Int; N]"),
+        ],
+    },
+    // PD0046. The struct-literal position and the assignment-base position; the
+    // third (a field read) has no corpus row and is written below.
+    Family {
+        code: "PD0046",
+        rows: &[
+            ("try_block.pd", "Unknown struct type: try"),
+            (
+                "tests/xfail/alias_struct_behind_reference.pd",
+                "Unknown struct type: Graph",
+            ),
+        ],
+    },
+    // PD0055. Both directions of one rule — a bare `break` out of a value
+    // `loop`, and a valued `break` out of a statement loop — which is what
+    // retired PD0065 into this code.
+    Family {
+        code: "PD0055",
+        rows: &[
+            ("value_loop_bare_break.pd", "found a `break` with no value"),
+            (
+                "valued_break_in_nested_while.pd",
+                "found `break` carrying a Int",
+            ),
+        ],
+    },
+    // PD0060. One `Err` guarding `Stmt::Assign`; `detail` is chosen by the
+    // `SelfReceiver` kind, which is what retired PD0061 into this code.
+    Family {
+        code: "PD0060",
+        rows: &[
+            (
+                "self_write_through_by_value_receiver.pd",
+                "a by-value `self` receiver is a COPY, and not a `mut` binding",
+            ),
+            (
+                "self_write_through_shared_receiver.pd",
+                "`&self` is a SHARED borrow of the receiver. Take",
+            ),
+        ],
+    },
+];
+
+/// The nineteen su3 conditions with ONE witness, as (fixture, code, fragment).
+///
+/// The fragment is not a manifest pin — a code with one witness needs no
+/// discriminator — it answers WHICH refusal is wearing the code. That question
+/// is live here because several of these sit next to a sibling rule in the same
+/// function: PD0057 next to PD0058, PD0072 next to PD0059 next to PD0010,
+/// PD0062 next to PD0063.
+const SU3_SINGLE_WITNESS: &[(&str, &str, &str)] = &[
+    (
+        "char_arithmetic_is_not_an_int.pd",
+        "PD0043",
+        "expected Int, Float or String, found Char",
+    ),
+    (
+        "tests/projects/hello_pdm/src/math.pd",
+        "PD0044",
+        "No main function found",
+    ),
+    (
+        "pattern_omitted_field_is_unbound.pd",
+        "PD0045",
+        "Undefined variable: 'y'. Did you mean 'x'?",
+    ),
+    (
+        "generic_enum_constructor.pd",
+        "PD0048",
+        "constructs a variant of a GENERIC enum",
+    ),
+    (
+        "deref_self_is_not_a_place.pd",
+        "PD0050",
+        "`*self` is not a place",
+    ),
+    (
+        "method_mut_parameter.pd",
+        "PD0052",
+        "`mut` parameters on methods are not implemented",
+    ),
+    ("char_from_non_scalar.pd", "PD0053", "found `55296 as char`"),
+    (
+        "async_fn.pd",
+        "PD0054",
+        "a `return` with a value inside an `async fn` is not implemented",
+    ),
+    (
+        "const_string_type.pd",
+        "PD0056",
+        "may only have a numeric or `bool` type",
+    ),
+    (
+        "value_if_without_else.pd",
+        "PD0057",
+        "an `if` used as a value to have an `else` branch",
+    ),
+    (
+        "value_if_branch_types.pd",
+        "PD0058",
+        "both branches of this `if` to have type Int",
+    ),
+    (
+        "range_pattern_mixed_endpoints.pd",
+        "PD0059",
+        "both endpoints of a range pattern to be the same kind of literal",
+    ),
+    (
+        "static_assign_without_mut.pd",
+        "PD0062",
+        "a top-level item is read-only unless it is declared `static mut`",
+    ),
+    (
+        "self_is_not_reassignable.pd",
+        "PD0063",
+        "the receiver binding is not reassignable",
+    ),
+    (
+        "zero_length_array_self_reference.pd",
+        "PD0070",
+        "recursive type `Z` has no layout",
+    ),
+    (
+        "question_mark_operator.pd",
+        "PD0071",
+        "the `?` operator is not implemented",
+    ),
+    (
+        "range_pattern_endpoint_type.pd",
+        "PD0072",
+        "the endpoints of a range pattern to be integer or `char` literals",
+    ),
+    (
+        "shadow_builtin_parameter.pd",
+        "PD0075",
+        "the parameter `print_int` has the name of a built-in",
+    ),
+    (
+        "value_block_without_tail.pd",
+        "PD0076",
+        "this block to end in an expression",
+    ),
+];
+
+/// The four su3 pairs whose two witnesses have CHARACTER-IDENTICAL payloads.
+///
+/// Listed apart from the families because the family assertion would be false
+/// of them by construction: a fragment cannot select one of two identical
+/// payloads. The map records no discriminator for these, and the test below
+/// asserts the identity rather than inventing one.
+const SU3_IDENTICAL_PAIRS: &[(&str, &str, &str, &str)] = &[
+    (
+        "PD0014",
+        "field_shorthand_needs_a_struct_variant.pd",
+        "tuple_variant_braces_explicit.pd",
+        "Pattern structure doesn't match variant M::Pair",
+    ),
+    (
+        "PD0015",
+        "pattern_unknown_field.pd",
+        "pattern_unknown_field_explicit.pd",
+        "Unknown field z in P::At",
+    ),
+    (
+        "PD0016",
+        "bool_split_after_completion.pd",
+        "enum_payload_dead_arm.pd",
+        "Unreachable pattern detected",
+    ),
+    (
+        "PD0017",
+        "generic_method_call.pd",
+        "generic_method_path_call.pd",
+        "is a generic method, and generic methods are not implemented",
+    ),
+];
+
+/// PD0001's ten witnesses, as (fixture, fragment).
+///
+/// FOUR POSITIONS under `src/typeck/`, one rule, and the missing pattern is the
+/// parameter. Eight of the ten payloads are distinct; the remaining two PAIRS
+/// are character-identical, and the test below names them rather than pretending
+/// a fragment tells them apart — `Q::W` is missing from two different programs
+/// for the same reason, and the `_`-arm sentence says nothing about the program
+/// at all.
+const SU3_EXHAUSTIVENESS: &[(&str, &str)] = &[
+    ("bool_match_missing_false.pd", "missing patterns false"),
+    ("bool_match_true_guarded.pd", "missing patterns true"),
+    ("bool_split_ignores_guarded.pd", "missing patterns F::On"),
+    ("bool_split_is_not_nested.pd", "missing patterns Q::W"),
+    (
+        "bool_split_needs_irrefutable_rest.pd",
+        "missing patterns E::Pair",
+    ),
+    (
+        "bool_split_values_not_positions.pd",
+        "missing patterns E::P —",
+    ),
+    (
+        "enum_payload_collective_coverage.pd",
+        "missing patterns Q::W",
+    ),
+    ("enum_payload_not_exhaustive.pd", "missing patterns P::Num"),
+    (
+        "guarded_wildcard_only.pd",
+        "missing patterns a `_` or binding arm",
+    ),
+    (
+        "nonexhaustive_int_match.pd",
+        "missing patterns a `_` or binding arm",
+    ),
+];
+
+/// The fourteen multi-witness conditions, each one code told apart by its own
+/// particular.
+///
+/// One test over the table rather than fourteen tests: the assertion is
+/// `check_family`'s, identical for every row, and the panic names the fixture.
+#[test]
+fn each_multi_witness_condition_of_su3_is_one_code_told_apart_by_its_particular() {
+    for family in SU3_FAMILIES {
+        check_family(family);
+    }
+}
+
+/// The nineteen one-witness conditions, each on the refusal the registry names.
+#[test]
+fn each_one_witness_condition_of_su3_is_on_the_refusal_the_registry_names() {
+    for (fixture, want_code, fragment) in SU3_SINGLE_WITNESS {
+        let (r, _dir) = compile_witness(fixture);
+        assert_eq!(
+            r.code,
+            Some(1),
+            "{} is a refusal witness and must exit 1; it exited {:?}\n{}",
+            fixture,
+            r.code,
+            r.stderr
+        );
+        let (code, payload) = r.sole_coded_header(fixture);
+        assert_eq!(
+            code, *want_code,
+            "{} carries {} — the site was wired to the wrong condition",
+            fixture, code
+        );
+        assert!(
+            payload.contains(fragment),
+            "{} carries {} but not on the refusal that condition names.\n  want fragment: {}\n  got payload:   {}",
+            fixture,
+            code,
+            fragment,
+            payload
+        );
+    }
+}
+
+/// ONE CODE OVER TWO IDENTICAL PAYLOADS, four times.
+///
+/// The pair is asserted to be identical, not merely to share a code: if a later
+/// rewording splits one of these sentences, the map owes an answer about whether
+/// the rule split with it, and this is where that question surfaces.
+#[test]
+fn the_identical_payload_pairs_of_su3_take_one_code_and_no_discriminator() {
+    for (want_code, first, second, fragment) in SU3_IDENTICAL_PAIRS {
+        let (a, _d1) = compile_fixture(first);
+        let (b, _d2) = compile_fixture(second);
+        let (a_code, a_payload) = a.sole_coded_header(first);
+        let (b_code, b_payload) = b.sole_coded_header(second);
+        assert_eq!(a_code, *want_code, "{} carries {}", first, a_code);
+        assert_eq!(b_code, *want_code, "{} carries {}", second, b_code);
+        assert_eq!(
+            a_payload, b_payload,
+            "{} and {} no longer print the same sentence; the map records them as IDENTICAL",
+            first, second
+        );
+        assert!(
+            a_payload.contains(fragment),
+            "{} landed on a different refusal: {}",
+            first,
+            a_payload
+        );
+    }
+}
+
+/// PD0001 AT FOUR POSITIONS, over ten witnesses and eight distinct payloads.
+///
+/// The two identical pairs are asserted BY NAME. A test that only counted eight
+/// groups would stay green if a rewording moved a fixture from one pair to the
+/// other, and the pairs are the part of this family a reader is most likely to
+/// mistake for two rules.
+#[test]
+fn the_exhaustiveness_rule_is_one_code_over_ten_witnesses_and_eight_payloads() {
+    let mut measured: Vec<(&str, String)> = Vec::new();
+    for (fixture, fragment) in SU3_EXHAUSTIVENESS {
+        let (r, _dir) = compile_fixture(fixture);
+        let (code, payload) = r.sole_coded_header(fixture);
+        assert_eq!(code, "PD0001", "{} carries {}", fixture, code);
+        assert!(
+            payload.contains(fragment),
+            "{} carries PD0001 but not on the refusal the map names.\n  want: {}\n  got:  {}",
+            fixture,
+            fragment,
+            payload
+        );
+        measured.push((fixture, payload));
+    }
+
+    let same = |a: &str, b: &str| {
+        let get = |n: &str| {
+            measured
+                .iter()
+                .find(|(f, _)| *f == n)
+                .map(|(_, p)| p.clone())
+                .expect("compiled above")
+        };
+        assert_eq!(
+            get(a),
+            get(b),
+            "{} and {} were character-identical when the map was locked",
+            a,
+            b
+        );
+    };
+    same(
+        "bool_split_is_not_nested.pd",
+        "enum_payload_collective_coverage.pd",
+    );
+    same("guarded_wildcard_only.pd", "nonexhaustive_int_match.pd");
+
+    let distinct: HashSet<&str> = measured.iter().map(|(_, p)| p.as_str()).collect();
+    assert_eq!(
+        distinct.len(),
+        8,
+        "PD0001's ten witnesses printed {} distinct payloads, not the 8 the map records",
+        distinct.len()
+    );
+}
+
+/// A RULE STATED AT SEVERAL TYPE-CHECKER POSITIONS CARRIES THE CODE AT ALL OF
+/// THEM — including the positions the corpus does not witness.
+///
+/// Six positions, each reached by a program written here because no `.pd` in
+/// the tree reaches it. Without this the registry rows that say "three
+/// positions" or "four positions" would be prose: the witness compile proves
+/// one of them and a refactor could leave the rest uncoded.
+#[test]
+fn the_su3_positions_the_corpus_does_not_witness_carry_the_code_too() {
+    let cases: &[(&str, &str, &str, &str)] = &[
+        (
+            "PD0005, a global declared against a TYPE",
+            "type Meters = i64;\nconst Meters: i64 = 1;\nfn main() {\n    print_int(0);\n}\n",
+            "PD0005",
+            "as a top-level `const` and as a type",
+        ),
+        (
+            "PD0005, the same name declared twice at the top level",
+            "const A: i64 = 1;\nconst A: i64 = 2;\nfn main() {\n    print_int(A);\n}\n",
+            "PD0005",
+            "is declared twice at the top level",
+        ),
+        (
+            "PD0009, a TUPLE pattern against a non-tuple scrutinee",
+            "fn main() {\n    let x: i64 = 1;\n    match x {\n        (a, b) => {\n            print_int(a);\n        }\n    }\n}\n",
+            "PD0009",
+            "found a tuple pattern",
+        ),
+        (
+            "PD0009, a RANGE pattern whose endpoints are another type",
+            "fn main() {\n    let c: char = 'a';\n    match c {\n        1..=3 => {\n            print_int(1);\n        }\n        _ => {\n            print_int(0);\n        }\n    }\n}\n",
+            "PD0009",
+            "found a range pattern, which matches Int",
+        ),
+        (
+            "PD0046, the FIELD READ position",
+            "struct GraphData {\n    count: i64,\n}\n\ntype Graph = GraphData;\n\nfn read(g: &Graph) -> i64 {\n    return g.count;\n}\n\nfn main() {\n    let g: Graph = GraphData { count: 41 };\n    print_int(read(&g));\n}\n",
+            "PD0046",
+            "Unknown struct type: Graph",
+        ),
+        (
+            "PD0053, the OUT-OF-RANGE disjunct rather than the surrogate one",
+            "fn main() {\n    let n: i64 = 1114112 as char as i64;\n    print_int(n);\n}\n",
+            "PD0053",
+            "found `1114112 as char`",
+        ),
+    ];
+
+    for (what, source, want_code, fragment) in cases {
+        let (r, _dir) = compile_source(source);
+        assert_eq!(
+            r.code,
+            Some(1),
+            "{}: the program compiled\n{}",
+            what,
+            r.stdout
+        );
+        let (code, payload) = r.sole_coded_header(what);
+        assert_eq!(code, *want_code, "{}: carries {}", what, code);
+        assert!(
+            payload.contains(fragment),
+            "{}: reached a different refusal.\n  want fragment: {}\n  got payload:   {}",
+            what,
+            fragment,
+            payload
+        );
+    }
+}
+
+/// ONE HELPER IS NOT ONE RULE — the type-checker's twin of the `refuse`-closure
+/// mutant above.
+///
+/// `TypeErrorHelper::type_mismatch` is called from the annotated-`let` arm
+/// (PD0022) and from the ASSIGNMENT arm, which states a different rule and has
+/// no code. Attaching the code inside the helper — the cheap wiring — would give
+/// the assignment refusal PD0022, and every other assertion in this file would
+/// still pass. The assignment program below is the control that refuses it.
+#[test]
+fn the_assignment_arm_sharing_the_type_mismatch_helper_stays_uncoded() {
+    let (annotated, _d1) = compile_fixture("int_is_not_a_char.pd");
+    let (assigned, _d2) = compile_source(
+        "fn main() {\n    let mut n: i64 = 1;\n    n = 'a';\n    print_int(n);\n}\n",
+    );
+
+    let (annotated_code, _) = annotated.sole_coded_header("int_is_not_a_char.pd");
+    assert_eq!(annotated_code, "PD0022");
+
+    assert_eq!(assigned.code, Some(1), "the assignment program compiled");
+    assert!(
+        assigned.coded_headers().is_empty(),
+        "the assignment arm carries a code, so `with_code` went into the shared helper: {:?}",
+        assigned.coded_headers()
+    );
+    assert!(
+        strip_ansi(&assigned.stderr).starts_with("error: "),
+        "the uncoded assignment refusal must still print a bare primary header:\n{}",
+        assigned.stderr
+    );
+}
+
+/// THREE RECEIVER RULES, THREE CODES.
+///
+/// `self` is not reassignable (PD0063), a non-`&mut self` receiver may not be
+/// WRITTEN through (PD0060), and a `&mut self` method may not be CALLED through
+/// one (PD0021). The three sit within thirty lines of each other, print
+/// overlapping advice — all three say "Take `&mut self`" — and the map allocated
+/// three numbers. A collapse would pass every per-fixture assertion above.
+#[test]
+fn the_three_receiver_rules_keep_the_codes_the_map_allocated_them() {
+    let trio = [
+        ("self_is_not_reassignable.pd", "PD0063"),
+        ("self_write_through_shared_receiver.pd", "PD0060"),
+        ("call_mut_method_through_shared_receiver.pd", "PD0021"),
+    ];
+    let mut seen: Vec<String> = Vec::new();
+    for (fixture, want) in trio {
+        let (r, _dir) = compile_fixture(fixture);
+        let (code, _) = r.sole_coded_header(fixture);
+        assert_eq!(code, want, "{} carries {}", fixture, code);
+        assert!(
+            !seen.contains(&code),
+            "{} reused {}, which a neighbouring receiver rule already carries",
+            fixture,
+            code
+        );
+        seen.push(code);
+    }
+}
+
+/// THREE RANGE-PATTERN RULES, THREE CODES, IN THE ORDER THE CHECKER APPLIES
+/// THEM.
+///
+/// The endpoint KIND is tested first (PD0072), then that the two endpoints
+/// AGREE (PD0059), then that the range can match SOMETHING (PD0010). Each is
+/// reachable only when the one before it passed, which is exactly the shape that
+/// invites one code for "the range pattern rule".
+#[test]
+fn the_three_range_pattern_rules_keep_the_codes_the_map_allocated_them() {
+    let trio = [
+        ("range_pattern_endpoint_type.pd", "PD0072"),
+        ("range_pattern_mixed_endpoints.pd", "PD0059"),
+        ("range_pattern_empty.pd", "PD0010"),
+    ];
+    let mut seen: Vec<String> = Vec::new();
+    for (fixture, want) in trio {
+        let (r, _dir) = compile_fixture(fixture);
+        let (code, _) = r.sole_coded_header(fixture);
+        assert_eq!(code, want, "{} carries {}", fixture, code);
+        assert!(
+            !seen.contains(&code),
+            "{} reused {}, which a neighbouring range-pattern rule already carries",
+            fixture,
+            code
+        );
+        seen.push(code);
+    }
+}
+
+/// The acceptance side of su3, run to three values.
+///
+/// Thirty-eight refusals were wired into the type checker in one unit. Without a
+/// program that exercises their legal neighbours — a `&mut self` method called
+/// through a `&mut self` receiver, an exhaustive `match` with a range arm, an
+/// `if` used as a value — every assertion above would be satisfied by a compiler
+/// that had started refusing all of them.
+#[test]
+fn the_legal_neighbours_of_the_type_checker_family_still_compile_link_and_run() {
+    let out = compile_link_run(
+        "struct C {\n    n: i64,\n}\
+         \n\nimpl C {\n    fn bump(&mut self) {\n        self.n = self.n + 1;\n    }\
+         \n\n    fn drive(&mut self) {\n        self.bump();\n    }\n}\
+         \n\nfn classify(k: i64) -> i64 {\n    match k {\n        0..=9 => {\
+         \n            return 1;\n        }\n        _ => {\n            return 2;\
+         \n        }\n    }\n}\
+         \n\nfn main() {\n    let mut c: C = C { n: 41 };\n    c.drive();\
+         \n    print_int(c.n);\
+         \n\n    let picked: i64 = if c.n > 41 { 7 } else { 8 };\
+         \n    print_int(picked);\n    print_int(classify(3));\n}\n",
+    );
+    assert_eq!(
+        out, "42\n7\n1\n",
+        "the legal neighbours of the type-checker family did not produce their values"
     );
 }

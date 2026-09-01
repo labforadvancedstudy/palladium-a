@@ -1696,7 +1696,9 @@ impl Parser {
                 }
             }
 
-            // PD0030, the METHOD position of the same rule as parse_function's.
+            // PD0030, the TRAIT-METHOD position of the same rule as
+            // parse_function's — which is where free functions and `impl` methods
+            // both arrive, `parse_impl` having no parameter loop of its own.
             self.consume_coded(
                 Token::RightParen,
                 "Expected ')'",

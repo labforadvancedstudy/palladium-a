@@ -174,7 +174,7 @@ emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:182-182
 sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:2090-2091` and
 `src/typeck/mod.rs:1526-1526`, the two later codegen walks off their own sorted locals
 (`src/codegen/mod.rs:2184-2184`, `src/codegen/mod.rs:3153-3153`), and the instantiation keys at
-`src/typeck/mod.rs:6482-6483` and `src/typeck/mod.rs:6544-6545`. Pinned by
+`src/typeck/mod.rs:6545-6546` and `src/typeck/mod.rs:6607-6608`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and

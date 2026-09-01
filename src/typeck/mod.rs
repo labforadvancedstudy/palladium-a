@@ -1915,7 +1915,8 @@ impl TypeChecker {
                  visibility that does not exist. Drop `pub` — the item is visible to every \
                  function in its own file either way",
                 noun, global.name
-            )));
+            ))
+            .with_code(DiagnosticCode::PubOnATopLevelItemIsNotImplemented));
         }
 
         if !matches!(
@@ -1933,7 +1934,8 @@ impl TypeChecker {
                  `{}`: every other type is built by code that runs, and nothing runs before \
                  `main`",
                 noun, global.name, global.ty
-            )));
+            ))
+            .with_code(DiagnosticCode::TopLevelItemTypeIsNumericOrBool));
         }
 
         // A BUILT-IN IS ASKED ABOUT FIRST, because `self.functions` is SEEDED
@@ -1954,7 +1956,8 @@ impl TypeChecker {
                 "`{}` is declared as a top-level `{}` and as a function, and a program has one \
                  namespace for both: the emitted C would define the name twice",
                 global.name, noun
-            )));
+            ))
+            .with_code(DiagnosticCode::TopLevelNamesShareOneNamespace));
         }
         if self.type_aliases.contains_key(&global.name)
             || self.structs.contains_key(&global.name)
@@ -1964,7 +1967,8 @@ impl TypeChecker {
                 "`{}` is declared as a top-level `{}` and as a type, and a program has one \
                  namespace for both",
                 global.name, noun
-            )));
+            ))
+            .with_code(DiagnosticCode::TopLevelNamesShareOneNamespace));
         }
 
         // A second item under the same name is not a redefinition question the
@@ -1974,7 +1978,8 @@ impl TypeChecker {
             return Err(CompileError::Generic(format!(
                 "`{}` is declared twice at the top level (the first is at line {})",
                 global.name, previous.line
-            )));
+            ))
+            .with_code(DiagnosticCode::TopLevelNamesShareOneNamespace));
         }
 
         let declared = self.ast_type_to_checker_type(&global.ty);
@@ -2013,7 +2018,8 @@ impl TypeChecker {
                 "{} `{}` has the name of the top-level item declared at line {}: \
                  a local binding may not shadow it",
                 what, name, span.line
-            ))),
+            ))
+            .with_code(DiagnosticCode::LocalBindingMayNotShadowATopLevelItem)),
             None => Ok(()),
         }
     }
@@ -2055,7 +2061,8 @@ impl TypeChecker {
              declared under that name and {}. Rename it — the built-in cannot be \
              replaced, only hidden from the reader",
             name, what, reason
-        )))
+        ))
+        .with_code(DiagnosticCode::ProgramMayNotDefineABuiltInName))
     }
 
     /// Refuse a LOCAL binder that reuses a built-in name (N14-02).
@@ -2077,7 +2084,8 @@ impl TypeChecker {
              one: in this scope the name would mean the binding where a value is \
              wanted and the built-in where a call is written. Rename the binding",
             what, name
-        )))
+        ))
+        .with_code(DiagnosticCode::LocalBinderMayNotShadowABuiltIn))
     }
 
     /// The value of a top-level initialiser, computed rather than assumed.
@@ -2306,7 +2314,8 @@ impl TypeChecker {
                 "`{}` is declared as {} and as the top-level item at line {}, and a program has \
                  one namespace for both: the emitted C would define the name twice",
                 name, what, span.line
-            ))),
+            ))
+            .with_code(DiagnosticCode::TopLevelNamesShareOneNamespace)),
             None => Ok(()),
         }
     }
@@ -2367,7 +2376,8 @@ impl TypeChecker {
         // compiler making a claim it has not established.
         if let Some(span) = self.deferred_async_main {
             if !crate::ast::local_definition_shadows_import(program, "main") {
-                return Err(CompileError::async_main_unimplemented(span));
+                return Err(CompileError::async_main_unimplemented(span)
+                    .with_code(DiagnosticCode::AsyncFnIsNotImplemented));
             }
         }
 
@@ -2486,7 +2496,9 @@ impl TypeChecker {
                     head, repair
                 )
             };
-            return Err(CompileError::Generic(message));
+            return Err(
+                CompileError::Generic(message).with_code(DiagnosticCode::RecursiveTypeHasNoLayout)
+            );
         }
 
         // First pass: collect all function signatures and struct definitions
@@ -2766,7 +2778,9 @@ impl TypeChecker {
 
         // Check for main function
         if !self.functions.contains_key("main") {
-            return Err(TypeErrorHelper::missing_main());
+            return Err(
+                TypeErrorHelper::missing_main().with_code(DiagnosticCode::ProgramHasAMainFunction)
+            );
         }
 
         // Second pass: type check function bodies
@@ -2826,7 +2840,8 @@ impl TypeChecker {
                                  every call site passes a value. Take the value and return the \
                                  new one, or write a free `fn`",
                                 impl_block.for_type, method.name, param.name
-                            )));
+                            ))
+                            .with_code(DiagnosticCode::MutParameterOnAMethodIsNotImplemented));
                         }
                         // The receiver form, for the write rule below.
                         self.current_self_receiver = Self::self_receiver_of(method);
@@ -2866,7 +2881,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3156-3158`), and walking an imported
+        // return (`src/typeck/mod.rs:3172-3175`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3144,7 +3159,8 @@ impl TypeChecker {
         // Checked BEFORE the generic skip above would have applied, so a
         // hypothetical `async fn main<T>` cannot slip past it.
         if func.is_async && func.name == "main" {
-            return Err(CompileError::async_main_unimplemented(func.span));
+            return Err(CompileError::async_main_unimplemented(func.span)
+                .with_code(DiagnosticCode::AsyncFnIsNotImplemented));
         }
 
         // A value-carrying `return` inside an async function has nowhere to go:
@@ -3154,7 +3170,8 @@ impl TypeChecker {
         // that makes this reachable, which no enumeration of async *spellings*
         // would have found.
         if func.is_async && Self::has_value_return(&func.body) {
-            return Err(CompileError::async_value_return_unimplemented(func.span));
+            return Err(CompileError::async_value_return_unimplemented(func.span)
+                .with_code(DiagnosticCode::AsyncValueReturnIsNotImplemented));
         }
 
         // N7-18: AND `async fn` ITSELF, whatever the body does.
@@ -3183,7 +3200,8 @@ impl TypeChecker {
         // one that nothing instantiates is not part of the emitted program at
         // all. See `check`'s closing lines.
         if func.is_async {
-            return Err(CompileError::async_fn_unimplemented(func.span));
+            return Err(CompileError::async_fn_unimplemented(func.span)
+                .with_code(DiagnosticCode::AsyncFnIsNotImplemented));
         }
 
         // Skip generic functions - they'll be checked when instantiated
@@ -3324,14 +3342,22 @@ impl TypeChecker {
                 let value_type = self.check_expression(value)?;
 
                 // If type annotation is provided, check that it matches
+                //
+                // PD0022, AT THE CALL AND NOT IN THE HELPER. `type_mismatch` is
+                // also called from the ASSIGNMENT arm, which states a different
+                // rule; a code attached inside the helper would say the two were
+                // one. Same reason `consume_coded` takes the code per call site.
                 if let Some(annotated_type) = ty {
                     let expected_type = self.ast_type_to_checker_type(annotated_type);
                     if value_type != expected_type {
-                        return Err(self.error_helper.type_mismatch(
-                            &expected_type.to_string(),
-                            &value_type.to_string(),
-                            None,
-                        ));
+                        return Err(self
+                            .error_helper
+                            .type_mismatch(
+                                &expected_type.to_string(),
+                                &value_type.to_string(),
+                                None,
+                            )
+                            .with_code(DiagnosticCode::LetAnnotationAndInitialiserAgree));
                     }
                     // Define variable with annotated type
                     self.symbols.define(name.clone(), expected_type, *mutable)?;
@@ -3364,7 +3390,8 @@ impl TypeChecker {
                              Assign to its fields (`self.f = v`, which needs `&mut self`), or \
                              return a new value"
                                 .to_string(),
-                        ));
+                        )
+                        .with_code(DiagnosticCode::SelfIsNotReassignable));
                     }
                 }
                 if let Some(recv) = self.current_self_receiver {
@@ -3383,7 +3410,8 @@ impl TypeChecker {
                         return Err(CompileError::Generic(format!(
                             "cannot assign through `self`: {}",
                             detail
-                        )));
+                        ))
+                        .with_code(DiagnosticCode::ReceiverWriteThroughNeedsMutSelf));
                     }
                 }
                 match target {
@@ -3415,7 +3443,8 @@ impl TypeChecker {
                                     "cannot assign to `{}`: a top-level item is read-only \
                                      unless it is declared `static mut`",
                                     name
-                                )));
+                                ))
+                                .with_code(DiagnosticCode::TopLevelItemIsReadOnlyUnlessStaticMut));
                             }
                             return Err(self.error_helper.immutable_assignment(name));
                         }
@@ -3483,6 +3512,7 @@ impl TypeChecker {
                                 // Look up the struct fields
                                 let fields = self.structs.get(name).ok_or_else(|| {
                                     CompileError::Generic(format!("Unknown struct type: {}", name))
+                                        .with_code(DiagnosticCode::StructTypeIsDeclared)
                                 })?;
 
                                 // Find the field type
@@ -3714,7 +3744,8 @@ impl TypeChecker {
                                 .to_string(),
                             found: "a `break` with no value".to_string(),
                             span: Some(*span),
-                        }),
+                        }
+                        .with_code(DiagnosticCode::LoopAndItsBreaksAgreeAboutAValue)),
                         _ => Ok(()),
                     },
                     Some(expr) => {
@@ -3972,7 +4003,8 @@ impl TypeChecker {
                             return Err(CompileError::Generic(format!(
                                 "Undefined variable: '{}'. Did you mean '{}'?",
                                 name, suggestion
-                            )));
+                            ))
+                            .with_code(DiagnosticCode::MatchArmBodyUsesNamesItsPatternBinds));
                         }
 
                         // Check if it might be a typo for a function
@@ -4091,7 +4123,8 @@ impl TypeChecker {
                                     expected: expected_type.to_string(),
                                     found: arg_type.to_string(),
                                     span: None,
-                                });
+                                }
+                                .with_code(DiagnosticCode::ArgumentHasTheParameterType));
                             }
                         }
 
@@ -4144,7 +4177,8 @@ impl TypeChecker {
                                         expected: "Int, Float or String".to_string(),
                                         found: left_type.to_string(),
                                         span: None,
-                                    })
+                                    }
+                                    .with_code(DiagnosticCode::AdditionOperandIsIntFloatOrString))
                                 }
                             }
                         }
@@ -4496,7 +4530,10 @@ impl TypeChecker {
                 let struct_fields = self
                     .structs
                     .get(name)
-                    .ok_or_else(|| CompileError::Generic(format!("Unknown struct type: {}", name)))?
+                    .ok_or_else(|| {
+                        CompileError::Generic(format!("Unknown struct type: {}", name))
+                            .with_code(DiagnosticCode::StructTypeIsDeclared)
+                    })?
                     .clone();
 
                 // Check that all fields are provided and have correct types
@@ -4547,6 +4584,7 @@ impl TypeChecker {
                         // Look up the struct fields
                         let fields = self.structs.get(name).ok_or_else(|| {
                             CompileError::Generic(format!("Unknown struct type: {}", name))
+                                .with_code(DiagnosticCode::StructTypeIsDeclared)
                         })?;
 
                         // Find the field type
@@ -4643,7 +4681,8 @@ impl TypeChecker {
                                  call would fail at link time. Write a non-generic method, or \
                                  a free `fn` with the type parameter",
                                 enum_name, variant
-                            )));
+                            ))
+                            .with_code(DiagnosticCode::GenericMethodIsNotImplemented));
                         }
                         if self.functions.contains_key(&qualified)
                             || self.generic_functions.contains_key(&qualified)
@@ -4674,7 +4713,8 @@ impl TypeChecker {
                          constructor for one, so this would fail in the C compiler. Declare a \
                          non-generic enum for each concrete type you need",
                         enum_name, variant
-                    )));
+                    ))
+                    .with_code(DiagnosticCode::GenericEnumIsNotImplemented));
                 }
 
                 // Type check enum constructors
@@ -4951,7 +4991,8 @@ impl TypeChecker {
                                  second dereference, which reached gcc as an indirection on a \
                                  non-pointer"
                                     .to_string(),
-                            ));
+                            )
+                            .with_code(DiagnosticCode::DerefSelfIsNotAPlace));
                         }
                     }
                 }
@@ -4981,7 +5022,8 @@ impl TypeChecker {
             // The old type rules are deleted, not preserved: they encoded a
             // `Result` shape that a real implementation must not reuse, and git
             // holds them if they are ever wanted.
-            Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)),
+            Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)
+                .with_code(DiagnosticCode::QuestionOperatorIsNotImplemented)),
             Expr::MacroInvocation { .. } => {
                 // Macros should have been expanded before type checking
                 Err(CompileError::Generic(
@@ -5019,7 +5061,8 @@ impl TypeChecker {
                             .to_string(),
                         found: "an `if` with no `else`".to_string(),
                         span: Some(*span),
-                    });
+                    }
+                    .with_code(DiagnosticCode::ValueIfHasAnElse));
                 }
 
                 let then_type =
@@ -5038,7 +5081,8 @@ impl TypeChecker {
                         expected: format!("both branches of this `if` to have type {}", then_type),
                         found: format!("an `else` branch of type {}", else_type),
                         span: Some(*span),
-                    });
+                    }
+                    .with_code(DiagnosticCode::ValueIfBranchesAgree));
                 }
 
                 Ok(then_type)
@@ -5126,7 +5170,8 @@ impl TypeChecker {
                                     .to_string(),
                                 found: format!("`{} as char`", scalar),
                                 span: Some(*span),
-                            });
+                            }
+                            .with_code(DiagnosticCode::IntegerCastToCharIsAUnicodeScalar));
                         }
                     }
                 }
@@ -5342,7 +5387,8 @@ impl TypeChecker {
                     scrutinee
                 )],
                 span: Some(span),
-            });
+            }
+            .with_code(DiagnosticCode::MatchIsExhaustive));
         };
 
         let mut enum_infos = HashMap::new();
@@ -5402,7 +5448,8 @@ impl TypeChecker {
                     .to_string(),
                 found: format!("`break` carrying a {}", value_type),
                 span: Some(span),
-            }),
+            }
+            .with_code(DiagnosticCode::LoopAndItsBreaksAgreeAboutAValue)),
             Some(BreakTarget::Value(slot)) => match slot {
                 None => {
                     *slot = Some(value_type);
@@ -5470,7 +5517,8 @@ impl TypeChecker {
                  code generation emits no symbol for one, so the call would fail at link \
                  time. Write a non-generic method, or a free `fn` with the type parameter",
                 owner, field
-            )));
+            ))
+            .with_code(DiagnosticCode::GenericMethodIsNotImplemented));
         }
 
         if !self.functions.contains_key(&qualified)
@@ -5535,10 +5583,15 @@ impl TypeChecker {
                          the receiver, or return the new value"
                     }
                 };
+                // PD0021, ONE CODE FOR BOTH ARMS. The locked map carried the
+                // by-value spelling under a second number; both are this `Err`
+                // and `detail` is the parameter, so the second number is dropped
+                // unminted rather than allocated (see the registry row).
                 return Err(CompileError::Generic(format!(
                     "cannot call `{}::{}` through `self`: {}",
                     owner, field, detail
-                )));
+                ))
+                .with_code(DiagnosticCode::MutMethodCallNeedsAMutReceiver));
             }
         }
 
@@ -5591,7 +5644,8 @@ impl TypeChecker {
                     expected: "this block to end in an expression, so it has a value".to_string(),
                     found: "a block whose last statement ends in `;`".to_string(),
                     span: Some(span),
-                }),
+                }
+                .with_code(DiagnosticCode::ValueBlockEndsInAnExpression)),
             }
         })();
         self.symbols.exit_scope();
@@ -5625,7 +5679,8 @@ impl TypeChecker {
                                 alternative, binder
                             ),
                             span: None,
-                        });
+                        }
+                        .with_code(DiagnosticCode::OrPatternAlternativeBindsNothing));
                     }
                     self.check_pattern(alternative, expected_type)?;
                 }
@@ -5646,7 +5701,8 @@ impl TypeChecker {
                         ),
                         found: "a tuple pattern".to_string(),
                         span: None,
-                    });
+                    }
+                    .with_code(DiagnosticCode::PatternHasTheScrutineeType));
                 };
                 if elements.len() != element_types.len() {
                     return Err(CompileError::TypeMismatch {
@@ -5709,7 +5765,8 @@ impl TypeChecker {
                                 Pattern::Literal(literal.clone())
                             ),
                             span: None,
-                        });
+                        }
+                        .with_code(DiagnosticCode::RangePatternEndpointKind));
                     }
                 }
                 let (low, low_type) = ordered(lo).expect("checked just above");
@@ -5725,7 +5782,8 @@ impl TypeChecker {
                             pattern, low_type, high_type
                         ),
                         span: None,
-                    });
+                    }
+                    .with_code(DiagnosticCode::RangePatternEndpointsAgree));
                 }
                 if *expected_type != low_type {
                     return Err(CompileError::TypeMismatch {
@@ -5735,7 +5793,8 @@ impl TypeChecker {
                         ),
                         found: format!("a range pattern, which matches {}", low_type),
                         span: None,
-                    });
+                    }
+                    .with_code(DiagnosticCode::PatternHasTheScrutineeType));
                 }
                 let empty = if *inclusive { low > high } else { low >= high };
                 if empty {
@@ -5755,7 +5814,8 @@ impl TypeChecker {
                             high
                         ),
                         span: None,
-                    });
+                    }
+                    .with_code(DiagnosticCode::RangePatternMatchesSomething));
                 }
                 Ok(())
             }
@@ -5781,7 +5841,8 @@ impl TypeChecker {
                         ),
                         found: format!("the {} literal `{}`", literal_type, spelling),
                         span: None,
-                    })
+                    }
+                    .with_code(DiagnosticCode::PatternHasTheScrutineeType))
                 }
             }
             Pattern::Wildcard => {
@@ -5874,7 +5935,8 @@ impl TypeChecker {
                         return Err(CompileError::Generic(format!(
                             "Unknown field {} in {}::{}",
                             field_name, enum_name, variant
-                        )));
+                        ))
+                        .with_code(DiagnosticCode::VariantPatternFieldIsDeclared));
                     };
                     out.push((pattern, field_type.clone()));
                 }
@@ -6027,7 +6089,8 @@ impl TypeChecker {
                                     return Err(CompileError::Generic(format!(
                                         "Pattern structure doesn't match variant {}::{}",
                                         enum_name, variant
-                                    )));
+                                    ))
+                                    .with_code(DiagnosticCode::PatternShapeMatchesTheVariant));
                                 }
                             }
                         }
@@ -6802,8 +6865,13 @@ mod tests {
         }
         "#;
 
+    /// `peel()`: the refusals below now carry a GI-12 code, and a code is a
+    /// WRAPPER around the refusal rather than a field on it. Matching the
+    /// wrapper's variant here would say that attaching a code turned the error
+    /// into a different one, which is exactly what `CompileError::peel` exists
+    /// to keep false.
     fn unimplemented_span(source: &str) -> Span {
-        match check(source).unwrap_err() {
+        match check(source).unwrap_err().peel() {
             CompileError::Unimplemented { span, .. } => span.expect("span"),
             other => panic!("expected an Unimplemented error, got: {}", other),
         }
@@ -6812,7 +6880,7 @@ mod tests {
     #[test]
     fn test_question_operator_is_reported_as_unimplemented() {
         let err = check(SOURCE_WITH_QUESTION).unwrap_err();
-        let construct = match &err {
+        let construct = match err.peel() {
             CompileError::Unimplemented { construct, .. } => construct.clone(),
             other => panic!("expected an Unimplemented error, got: {}", other),
         };
@@ -6876,7 +6944,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4663-4671`, `src/parser/mod.rs:4426-4434`). That is not
+    /// (`src/parser/mod.rs:4665-4673`, `src/parser/mod.rs:4428-4436`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this
@@ -7554,9 +7622,10 @@ mod tests {
         let result = type_checker.check(&ast);
         assert!(result.is_err());
 
-        if let Err(CompileError::NonExhaustiveMatch {
+        // `peel()` for the reason `unimplemented_span` states.
+        if let CompileError::NonExhaustiveMatch {
             missing_patterns, ..
-        }) = result
+        } = result.unwrap_err().peel()
         {
             assert!(missing_patterns.contains(&"Color::Blue".to_string()));
         } else {
@@ -7621,7 +7690,8 @@ mod tests {
         let result = type_checker.check(&ast);
         assert!(result.is_err());
 
-        if let Err(CompileError::UnreachablePattern { .. }) = result {
+        // `peel()` for the reason `unimplemented_span` states.
+        if let CompileError::UnreachablePattern { .. } = result.unwrap_err().peel() {
             // Expected
         } else {
             panic!("Expected UnreachablePattern error");

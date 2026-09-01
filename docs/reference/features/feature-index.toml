@@ -190,7 +190,7 @@ description = "Restricted unsafe with side-channel protection; forbidden in #![t
 spec = "../../specification/language-spec.md#n12-memory-model"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:2450 Token::Unsafe => self.parse_unsafe()",
+  "src: src/parser/mod.rs:2452 Token::Unsafe => self.parse_unsafe()",
   "src: src/driver/mod.rs:189 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/11_unsafe_blocks.pd vacuous",
@@ -203,7 +203,7 @@ implementation = "partial"
 evidence = [
   "conformance: examples/tutorial/01_variables.pd run",
   "cmd: grep -rn 'HindleyMilner\\|unify\\|Substitution' src/typeck/ --include='*.rs' -> exit 0, 1 lines",
-  "src: src/typeck/mod.rs:6235-6235 'Cannot infer type from empty array'",
+  "src: src/typeck/mod.rs:6298-6298 'Cannot infer type from empty array'",
 ]
 note = "Local `let` inference works (the i64 default was replaced by real inference in 04104c5). There is no unification engine and no polymorphic generalisation, so it is not Hindley-Milner. The probe above moved from 0 hits to 1 with N4-12, and the hit is PROSE: a comment in the tuple case saying there is nothing to unify, because a tuple's elements are not required to agree with each other. An absence probe counts the surface, so a claim about the surface has to be re-derived when a comment moves it -- the absence itself is unchanged."
 
@@ -213,7 +213,7 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/codegen/mod.rs:2967-2967 'Generic types in structs not yet supported'",
-  "src: src/parser/mod.rs:3983-3993 all-uppercase name inside <...> reclassified as a const argument",
+  "src: src/parser/mod.rs:3985-3995 all-uppercase name inside <...> reclassified as a const argument",
   "conformance: tests/reject/generic_bound.pd reject",
   "conformance: tests/08_generics_basic.pd vacuous",
 ]
@@ -226,7 +226,7 @@ implementation = "unimplemented"
 evidence = [
   "src: src/parser/mod.rs:1526 fn parse_trait — traits do parse",
   "src: src/codegen/mod.rs:2397-2400 Item::Trait(_) => emits nothing",
-  "src: src/typeck/mod.rs:2784-2786 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
+  "src: src/typeck/mod.rs:2798-2800 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
   "src: src/parser/mod.rs:1659-1660 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd vacuous",
 ]
@@ -259,7 +259,7 @@ evidence = [
   "conformance: tests/reject/nonexhaustive_int_match.pd reject",
   "src: src/ast/mod.rs:572 pub enum Pattern — wildcard, binding, enum, literal, or, `@`, tuple, range",
   "src: src/typeck/exhaustiveness.rs:114 is_irrefutable, the question N6-10 asks of a non-enum scrutinee",
-  "src: src/typeck/mod.rs:5333 every other scrutinee type needs an irrefutable arm",
+  "src: src/typeck/mod.rs:5378 every other scrutinee type needs an irrefutable arm",
   "src: src/codegen/mod.rs:4498-4500 the chain ends in an `else` that traps (N6-11)",
 ]
 note = "The eight N6 rows M2 owns are satisfied: literal, range, tuple, or- and `@` patterns, guards, exhaustiveness for every scrutinee type, and the trap. FOUR forms N6 names are still absent -- slice patterns (N6-06, owned by M3, and there is no slice type to pattern yet), non-enum struct patterns, `ref`/`mut` bindings and `..` rest. Field shorthand in a struct-variant pattern and destructuring `let` are absent too. Exhaustiveness holds for EVERY scrutinee type, by the simple rule: some arm must match every value. No interval arithmetic -- ranges covering the whole domain are still refused, and the diagnostic says so."
@@ -282,8 +282,8 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
   "conformance: tests/04_control_flow_if.pd run",
-  "src: src/parser/mod.rs:2380-2382 the else arm tests for a following if and recurses, so else-if chains parse (N5-06)",
-  "src: src/parser/mod.rs:4108-4109 return self.parse_if_expression() -- `if` is read at the primary level, so it is an expression (N5-03)",
+  "src: src/parser/mod.rs:2382-2384 the else arm tests for a following if and recurses, so else-if chains parse (N5-06)",
+  "src: src/parser/mod.rs:4110-4111 return self.parse_if_expression() -- `if` is read at the primary level, so it is an expression (N5-03)",
 ]
 
 [core_language.functions.function_definitions]
@@ -337,7 +337,7 @@ description = "Built-in Result<T, E> with Ok/Err."
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "unimplemented"
 evidence = [
-  "src: src/typeck/mod.rs:4984-4984 the type checker refuses `?` outright with CompileError::question_unimplemented",
+  "src: src/typeck/mod.rs:5025-5025 the type checker refuses `?` outright with CompileError::question_unimplemented",
   "cmd: grep -rn 'prelude' src/driver/ --include='*.rs' -> exit 1, 0 lines (stdlib/prelude.pd is never loaded)",
 ]
 note = "Result and Option are ordinary user enums if you declare them."
@@ -347,7 +347,7 @@ description = "`?` for error propagation with early return."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "unimplemented"
 evidence = [
-  "src: src/typeck/mod.rs:4984-4984 the type checker refuses `?` by name, before any C exists",
+  "src: src/typeck/mod.rs:5025-5025 the type checker refuses `?` by name, before any C exists",
   "src: src/codegen/mod.rs:6533-6537 the code generator refuses it too, at the arm that used to lower it",
   "conformance: tests/reject/question_mark_operator.pd reject",
 ]
@@ -462,7 +462,7 @@ implementation = "partial"
 evidence = [
   "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
   "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
-  "src: src/parser/mod.rs:2348-2355 the last arm of token_to_ast_token — \"the macro token stream can carry identifiers, integer literals and\" single-character punctuation, and a token outside that set is refused by name rather than degraded",
+  "src: src/parser/mod.rs:2350-2357 the last arm of token_to_ast_token — \"the macro token stream can carry identifiers, integer literals and\" single-character punctuation, and a token outside that set is refused by name rather than degraded",
   "src: src/macros/expander.rs:400 substitute_template parenthesises every capture",
   "conformance: tests/reject/macro_invocation_bracket.pd reject",
   "conformance: tests/reject/macro_body_two_char_operator.pd reject",

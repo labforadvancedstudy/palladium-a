@@ -2,7 +2,7 @@
 // "Ensuring all possibilities are covered"
 
 use crate::ast::{Pattern, PatternData};
-use crate::errors::{CompileError, Result, Span};
+use crate::errors::{CompileError, DiagnosticCode, Result, Span};
 use std::collections::{HashMap, HashSet};
 
 /// Represents a pattern in exhaustiveness checking
@@ -136,7 +136,8 @@ impl ExhaustivenessChecker {
                 Err(CompileError::NonExhaustiveMatch {
                     missing_patterns: vec!["_ (wildcard pattern)".to_string()],
                     span: Some(span),
-                })
+                }
+                .with_code(DiagnosticCode::MatchIsExhaustive))
             } else {
                 Ok(())
             }
@@ -234,7 +235,8 @@ impl ExhaustivenessChecker {
         Err(CompileError::NonExhaustiveMatch {
             missing_patterns: missing,
             span: Some(span),
-        })
+        }
+        .with_code(DiagnosticCode::MatchIsExhaustive))
     }
 
     /// Check if patterns are exhaustive for an enum
@@ -357,7 +359,8 @@ impl ExhaustivenessChecker {
             return Err(CompileError::UnreachablePattern {
                 patterns: unreachable_patterns.into_iter().map(|(_, p)| p).collect(),
                 span: Some(span),
-            });
+            }
+            .with_code(DiagnosticCode::MatchArmIsReachable));
         }
 
         // (The bool split that completes a variant is promoted INSIDE the walk
@@ -399,7 +402,8 @@ impl ExhaustivenessChecker {
             return Err(CompileError::NonExhaustiveMatch {
                 missing_patterns: missing_variants,
                 span: Some(span),
-            });
+            }
+            .with_code(DiagnosticCode::MatchIsExhaustive));
         }
 
         Ok(())
@@ -567,11 +571,15 @@ mod tests {
         let result = checker.check_match("Option", &patterns, Span::dummy());
         assert!(result.is_err());
 
-        if let Err(CompileError::NonExhaustiveMatch {
+        // `peel()`: these refusals now carry a GI-12 code, and a code is a
+        // WRAPPER. Matching the wrapper's variant would say attaching a code
+        // turned this into a different error, which is the one thing
+        // `CompileError::Coded` promises it does not do.
+        if let CompileError::NonExhaustiveMatch {
             missing_patterns, ..
-        }) = result
+        } = result.unwrap_err().peel()
         {
-            assert_eq!(missing_patterns, vec!["Option::None"]);
+            assert_eq!(missing_patterns, &vec!["Option::None".to_string()]);
         } else {
             panic!("Expected NonExhaustiveMatch error");
         }
@@ -617,7 +625,8 @@ mod tests {
         let result = checker.check_match("Option", &patterns, Span::dummy());
         assert!(result.is_err());
 
-        if let Err(CompileError::UnreachablePattern { .. }) = result {
+        // `peel()` for the reason `test_non_exhaustive_enum_match` says.
+        if let CompileError::UnreachablePattern { .. } = result.unwrap_err().peel() {
             // Expected
         } else {
             panic!("Expected UnreachablePattern error");
@@ -652,7 +661,8 @@ mod tests {
         let result = checker.check_match("Option", &patterns, Span::dummy());
         assert!(result.is_err());
 
-        if let Err(CompileError::UnreachablePattern { .. }) = result {
+        // `peel()` for the reason `test_non_exhaustive_enum_match` says.
+        if let CompileError::UnreachablePattern { .. } = result.unwrap_err().peel() {
             // Expected
         } else {
             panic!("Expected UnreachablePattern error");
