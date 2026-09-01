@@ -225,7 +225,7 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///   `src/parser/mod.rs:339-371`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1193-1217`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1211-1235`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -572,7 +572,14 @@ impl Parser {
                 self.advance()?; // consume ','
             }
 
-            self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+            // PD0032. A generic parameter list holds bare names; the `:` of a trait
+            // bound ends the list, and the `>` position is where that is said. The
+            // four other declaration positions carry the same code — one rule.
+            self.consume_coded(
+                Token::Gt,
+                "Expected '>' after generic parameters",
+                DiagnosticCode::GenericParameterListIsBareNames,
+            )?;
         }
 
         Ok((lifetime_params, type_params, const_params))
@@ -1046,10 +1053,14 @@ impl Parser {
                         span: self.current_span(),
                     })
                 } else {
+                    // PD0013. The two witnesses print a CHARACTER-IDENTICAL payload — a
+                    // `package.pd` manifest and an `extern` block — and share this code with
+                    // no discriminator, because the rule refuses both for the one reason.
                     Err(CompileError::SyntaxError {
                         message: "Expected function, struct, enum, trait, type, impl, or macro declaration".to_string(),
                         span: self.current_span(),
-                    })
+                    }
+                    .with_code(DiagnosticCode::TopLevelItemIsADeclarationForm))
                 }
             }
         }
@@ -1161,7 +1172,14 @@ impl Parser {
             }
         }
 
-        self.consume(Token::RightParen, "Expected ')'")?;
+        // PD0030. A parameter list is `name: type` items closed by `)`, and the
+        // witness reaches here by writing a type the language does not have
+        // (`ref String`), which leaves an identifier where the `)` belongs.
+        self.consume_coded(
+            Token::RightParen,
+            "Expected ')'",
+            DiagnosticCode::ParameterListIsClosedByParen,
+        )?;
 
         // Parse return type if present
         let return_type = if self.check(&Token::Arrow) {
@@ -1562,7 +1580,12 @@ impl Parser {
                 self.advance()?; // consume ','
             }
 
-            self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+            // PD0032, the trait position.
+            self.consume_coded(
+                Token::Gt,
+                "Expected '>' after generic parameters",
+                DiagnosticCode::GenericParameterListIsBareNames,
+            )?;
         }
 
         self.consume(Token::LeftBrace, "Expected '{' after trait name")?;
@@ -1625,7 +1648,12 @@ impl Parser {
                     self.advance()?;
                 }
 
-                self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+                // PD0032, the trait-method position.
+                self.consume_coded(
+                    Token::Gt,
+                    "Expected '>' after generic parameters",
+                    DiagnosticCode::GenericParameterListIsBareNames,
+                )?;
             }
 
             // Parse parameters
@@ -1668,7 +1696,12 @@ impl Parser {
                 }
             }
 
-            self.consume(Token::RightParen, "Expected ')'")?;
+            // PD0030, the METHOD position of the same rule as parse_function's.
+            self.consume_coded(
+                Token::RightParen,
+                "Expected ')'",
+                DiagnosticCode::ParameterListIsClosedByParen,
+            )?;
 
             // Parse return type
             let return_type = if self.check(&Token::Arrow) {
@@ -1776,7 +1809,12 @@ impl Parser {
                 self.advance()?;
             }
 
-            self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+            // PD0032, the impl position.
+            self.consume_coded(
+                Token::Gt,
+                "Expected '>' after generic parameters",
+                DiagnosticCode::GenericParameterListIsBareNames,
+            )?;
         }
 
         // First, try to parse a type
@@ -1884,7 +1922,12 @@ impl Parser {
                 self.advance()?; // consume ','
             }
 
-            self.consume(Token::Gt, "Expected '>' after generic parameters")?;
+            // PD0032, the type-alias position.
+            self.consume_coded(
+                Token::Gt,
+                "Expected '>' after generic parameters",
+                DiagnosticCode::GenericParameterListIsBareNames,
+            )?;
         }
 
         self.consume(Token::Eq, "Expected '=' after type alias name")?;
@@ -2547,11 +2590,14 @@ impl Parser {
         let name = match self.advance()? {
             (Token::Identifier(name), _) => name,
             (token, _) => {
+                // PD0041. The `for` loop's variable position prints this same sentence
+                // and enforces a different rule, so it does not carry this code.
                 return Err(CompileError::UnexpectedToken {
                     expected: "variable name".to_string(),
                     found: token.to_string(),
                     span: self.current_span(),
-                });
+                }
+                .with_code(DiagnosticCode::LetBindsOneBareIdentifier));
             }
         };
 
@@ -2563,7 +2609,14 @@ impl Parser {
             None
         };
 
-        self.consume(Token::Eq, "Expected '=' after variable name")?;
+        // PD0031. One half of `grammar.ebnf`'s let_stmt, refused at the `=`; the
+        // other half (there are no `let` patterns) is PD0041 a few lines above,
+        // and they are separate rows because separate branches refuse them.
+        self.consume_coded(
+            Token::Eq,
+            "Expected '=' after variable name",
+            DiagnosticCode::LetInitialiserIsMandatory,
+        )?;
         let value = self.parse_expression()?;
         let end_span = self.consume(Token::Semicolon, "Expected ';' after let statement")?;
 
@@ -3170,13 +3223,15 @@ impl Parser {
                 PatternLiteral::Char(value)
             }
             found => {
+                // PD0034, the HIGH end. The low end is PD0035, a different position.
                 return Err(CompileError::UnexpectedToken {
                     expected: "a literal for the high end of this range pattern (open-ended \
                                range patterns are not in the language)"
                         .to_string(),
                     found: found.to_string(),
                     span: self.current_span(),
-                });
+                }
+                .with_code(DiagnosticCode::RangePatternHighEndIsALiteral));
             }
         };
         Ok(Pattern::Range { lo, hi, inclusive })
@@ -3269,26 +3324,30 @@ impl Parser {
                 self.consume(Token::RightParen, "Expected ')' after tuple pattern")?;
                 if elements.len() < 2 {
                     let _ = start;
+                    // PD0037, over PATTERNS. The value position states its own rule (PD0038).
                     return Err(CompileError::UnexpectedToken {
                         expected: "a tuple pattern to have at least two elements; grouping is not \
                                    a pattern form, so `(p)` is not a way to write `p`"
                             .to_string(),
                         found: format!("a pattern with {} element(s) in parentheses", elements.len()),
                         span: self.current_span(),
-                    });
+                    }
+                    .with_code(DiagnosticCode::TuplePatternHasAtLeastTwoElements));
                 }
                 Ok(Pattern::Tuple(elements))
             }
             // N6-03. A range needs a LOW end, and `..5` has none. Refused here
             // by name: the spec's two range forms are both closed, so this is a
             // form the language does not have rather than one nobody wrote yet.
+            // PD0035, the LOW end. The high end is PD0034, a different position.
             Token::DotDot | Token::DotDotEq => Err(CompileError::UnexpectedToken {
                 expected: "a range pattern to have both endpoints, as `lo..hi` or `lo..=hi` \
                            (open-ended range patterns are not in the language)"
                     .to_string(),
                 found: token.to_string(),
                 span: self.current_span(),
-            }),
+            }
+            .with_code(DiagnosticCode::RangePatternHasBothEndpoints)),
             Token::Identifier(name) => {
                 self.advance()?;
 
@@ -3393,11 +3452,13 @@ impl Parser {
                     Ok(Pattern::Ident(name))
                 }
             }
+            // PD0040. The pattern catch-all; its witness writes a bare `{ x }`.
             _ => Err(CompileError::UnexpectedToken {
                 expected: "pattern".to_string(),
                 found: token.to_string(),
                 span: self.current_span(),
-            }),
+            }
+            .with_code(DiagnosticCode::PatternPositionHoldsAPatternForm)),
         }
     }
 
@@ -4141,13 +4202,15 @@ impl Parser {
                 }
                 let end_span = self.consume(Token::RightParen, "Expected ')' after tuple")?;
                 if elements.len() < 2 {
+                    // PD0038, over VALUES. The pattern position states its own rule (PD0037).
                     return Err(CompileError::UnexpectedToken {
                         expected: "a tuple to have at least two elements; `(e)` is grouping and \
                                    a one-element tuple `(e,)` is not a form this language has"
                             .to_string(),
                         found: "a one-element tuple".to_string(),
                         span: self.current_span(),
-                    });
+                    }
+                    .with_code(DiagnosticCode::TupleHasAtLeastTwoElements));
                 }
                 Ok(Expr::Tuple {
                     elements,
@@ -4207,11 +4270,14 @@ impl Parser {
                     })
                 }
             }
+            // PD0039. The expression catch-all: whatever is here is not the start of
+            // any expression form this language has (its witness writes a closure).
             (token, _) => Err(CompileError::UnexpectedToken {
                 expected: "expression".to_string(),
                 found: token.to_string(),
                 span: self.current_span(),
-            }),
+            }
+            .with_code(DiagnosticCode::ExpressionPositionHoldsAnExpressionForm)),
         }
     }
 
@@ -4412,6 +4478,9 @@ impl Parser {
                             // program reads.
                             let width = span.end.saturating_sub(span.start);
                             if width > index.to_string().len() {
+                                // PD0036. The refusal above — a NEGATIVE
+                                // index — is a third rule with no corpus
+                                // witness, so it stays uncoded.
                                 return Err(CompileError::UnexpectedToken {
                                     expected: "a tuple index written without leading zeros"
                                         .to_string(),
@@ -4425,7 +4494,8 @@ impl Parser {
                                         index
                                     ),
                                     span: self.current_span(),
-                                });
+                                }
+                                .with_code(DiagnosticCode::TupleIndexHasNoLeadingZeros));
                             }
                             let end_span = span;
                             expr = Expr::TupleIndex {
@@ -4447,6 +4517,7 @@ impl Parser {
                         // 0.1, so recovering "10" from it would be a guess with a
                         // wrong answer available.
                         (Token::Float(_), _) => {
+                            // PD0033, the rule the comment above states.
                             return Err(CompileError::UnexpectedToken {
                                 expected: "a field name or a tuple index; a CHAINED tuple index \
                                            has to be parenthesised, as `(p.0).1`, because `.0.1` \
@@ -4455,7 +4526,8 @@ impl Parser {
                                     .to_string(),
                                 found: "a float literal".to_string(),
                                 span: self.current_span(),
-                            });
+                            }
+                            .with_code(DiagnosticCode::ChainedTupleIndexIsParenthesised));
                         }
                         (token, _) => {
                             return Err(CompileError::UnexpectedToken {
@@ -4607,7 +4679,14 @@ impl Parser {
                         self.advance()?; // consume '!'
 
                         // Parse macro arguments (simplified for now - just collect tokens in parens)
-                        self.consume(Token::LeftParen, "Expected '(' after macro name!")?;
+                        // PD0029. The macro system has ONE call shape, `name!(...)`, and this is
+                        // where the bracket form stops: `vec![7]` is refused here even though
+                        // src/macros/mod.rs registers a `vec!` builtin.
+                        self.consume_coded(
+                            Token::LeftParen,
+                            "Expected '(' after macro name!",
+                            DiagnosticCode::MacroInvocationIsParenthesised,
+                        )?;
 
                         let mut args = Vec::new();
                         let mut paren_depth = 1;
@@ -4747,6 +4826,24 @@ impl Parser {
                 span: self.current_span(),
             })
         }
+    }
+
+    /// `consume`, carrying the stable code of the rule THIS POSITION enforces.
+    ///
+    /// The code cannot be attached inside `consume`: 112 call sites share it and
+    /// they enforce 112 different rules, so a code that lived there would say
+    /// they were one — the same mistake `token_to_ast_token`'s shared `refuse`
+    /// closure avoids by taking the code as a parameter (PD0008 vs PD0074).
+    /// Positions that have not been judged keep calling `consume` and stay
+    /// uncoded, which is D1's honest state rather than a fallback.
+    fn consume_coded(
+        &mut self,
+        expected: Token,
+        message: &str,
+        code: DiagnosticCode,
+    ) -> Result<Span> {
+        self.consume(expected, message)
+            .map_err(|e| e.with_code(code))
     }
 }
 

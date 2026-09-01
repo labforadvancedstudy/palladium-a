@@ -116,12 +116,12 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 - Generic types in struct fields — error at `src/codegen/mod.rs:2965-2968`.
 - Reference types in struct fields — error at `src/codegen/mod.rs:2972-2972`.
 - Returning an array from a function — error at `src/codegen/mod.rs:3312-3316`.
-- `str`, `u8`, `usize` — no such primitives; `src/parser/mod.rs:3892-3901` is the whole
+- `str`, `u8`, `usize` — no such primitives; `src/parser/mod.rs:3953-3962` is the whole
   set the type parser recognises. `char` was in this bullet until N4-04 gave the language a
   distinct character type and N14-04 retyped the five character built-ins over it; PBS-1 needed
   it the same day, because `bootstrap/pdc.pd`'s lexer holds what `string_char_at` returns.
   `f32`/`f64` were in this bullet and no longer belong: M2 added
-  them (`src/parser/mod.rs:3895-3896`, requirement N4-02), so they stay out of PBS-1 by CHOICE,
+  them (`src/parser/mod.rs:3956-3957`, requirement N4-02), so they stay out of PBS-1 by CHOICE,
   which is a different reason from every other entry in this list.
 - Trait bounds (`<T: Display>`) — a parse error; `parse_generic_params` accepts bare names only.
 - `Option<T>` / `Result<T,E>` as built-ins — they do not exist. Declaring your own does not
@@ -131,7 +131,7 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 
 **Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
 parsing misclassifies any all-uppercase name as a *const* generic argument
-(`src/parser/mod.rs:3873-3901`), so `Foo<T>` does not mean what it looks like.
+(`src/parser/mod.rs:3934-3962`), so `Foo<T>` does not mean what it looks like.
 
 ## 3.1 Additional PBS-1 rules (measured, not stylistic)
 
@@ -193,7 +193,7 @@ return_stmt   = "return" [ expr ] ";" ;
 
 Hard constraints, each verified by running `pdc`:
 
-- **`let` requires an initializer.** `let x: i64;` is a parse error (`src/parser/mod.rs:965`).
+- **`let` requires an initializer.** `let x: i64;` is a parse error (`src/parser/mod.rs:972`).
 - **No `else if`.** The BOOTSTRAP parser does not REFUSE it — it ASSUMES a `{` and steps over it.
   On seeing `else` it emits `" else {"` and resumes at `after + 2`, skipping the `else` and
   whatever token follows it, whether or not that token is a brace

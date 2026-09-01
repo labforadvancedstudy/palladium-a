@@ -64,6 +64,42 @@
 //!   per construction site, which is the thing D1 says a code is not — and it is
 //!   what the su0 review already undid, retiring PD0051 and PD0073.
 //!
+//! THE FOURTEEN CONDITIONS su2b ADDS, and why their sites had to be MEASURED
+//!
+//! su2b wires the grammar positions whose refusal renders as
+//! `Expected ..., but found ...`. Six of the fourteen could not be attributed by
+//! reading the source: their sentence is split across Rust line continuations,
+//! or it is assembled by `consume()` from a message that a hundred other callers
+//! pass too — `Expected ')'` is written at eleven call sites. So the sites were
+//! named by a throwaway marker build: a unique marker per message literal, one
+//! release build, every witness compiled, the markers read off the headers, and
+//! every marker reverted before a single code was attached. The readings are in
+//! the unit's `su2b-attribution.tsv`; what is asserted BELOW is the same claim
+//! re-derived from the shipped binary, which is the form that survives.
+//!
+//! Thirteen of the fourteen have one witness each, and the shapes worth naming:
+//!
+//!   ONE SENTENCE, TWO RULES. `parse_let`'s name position and the `for` loop's
+//!   both print `Expected variable name, but found ...`. PD0041 is the let rule
+//!   only; the `for` position stays uncoded, and a test below writes the `for`
+//!   program to prove the code went to a site and not to a wording.
+//!
+//!   ONE RULE, SEVERAL POSITIONS. A parameter list is closed by `)` in two
+//!   places (function, method) and a generic parameter list by `>` in five
+//!   (function, trait, trait method, impl, type alias). All of them carry the
+//!   one code, as PD0049 does — and only the function position has a corpus
+//!   witness, so the others are proven here by programs written for the purpose.
+//!
+//!   TWO NEAR-IDENTICAL SENTENCES, TWO CODES. The tuple arity rule is stated
+//!   over values (PD0038) and over patterns (PD0037); the range-pattern rule is
+//!   refused at the low end (PD0035) and at the high end (PD0034). The locked
+//!   map keeps each pair apart, so a test below refuses their collapse.
+//!
+//! PD0013 is the fourteenth and the only one with two witnesses: a `package.pd`
+//! manifest and an `extern` block, whose payloads are CHARACTER-IDENTICAL. That
+//! pair takes no `msg~` — there is nothing to tell apart, and the test asserts
+//! the identity rather than inventing a discriminator.
+//!
 //! WHAT IS NOT CLAIMED. Nothing here says the manifest pins codes: it does not,
 //! and will not until the cutover. These are the vertical proof that it CAN.
 
@@ -148,13 +184,49 @@ fn strip_ansi(s: &str) -> String {
 /// `build_output/` relative to the CWD, and two tests compiling into the same
 /// name would race. Nothing is written into the tree under test.
 fn compile_fixture(name: &str) -> (Refusal, TempDir) {
+    compile_path(&format!("tests/reject/{}", name))
+}
+
+/// The same, for a corpus fixture that does not live under `tests/reject`.
+///
+/// PD0013's second witness is `tests/projects/hello_pdm/package.pd`, a package
+/// manifest whose refusal is what makes it a `skip` row rather than a program.
+fn compile_path(rel: &str) -> (Refusal, TempDir) {
     let dir = TempDir::new().expect("tempdir");
     let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
         .current_dir(dir.path())
         .arg("compile")
-        .arg(repo_root().join("tests/reject").join(name))
+        .arg(repo_root().join(rel))
         .arg("-o")
         .arg("probe")
+        .output()
+        .expect("run pdc");
+    (
+        Refusal {
+            code: out.status.code(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        },
+        dir,
+    )
+}
+
+/// Compile a program written HERE, and keep the refusal.
+///
+/// Needed because two of su2b's claims have no corpus witness by construction:
+/// a rule stated in several grammar positions is witnessed at one of them, and
+/// the position that must stay UNCODED has no fixture at all — the corpus only
+/// holds programs someone already decided to pin.
+fn compile_source(source: &str) -> (Refusal, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let src = dir.path().join("written.pd");
+    fs::write(&src, source).expect("write source");
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .current_dir(dir.path())
+        .arg("compile")
+        .arg(&src)
+        .arg("-o")
+        .arg("written")
         .output()
         .expect("run pdc");
     (
@@ -431,6 +503,79 @@ const SU2A_SINGLE_WITNESS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// The thirteen one-witness conditions of su2b, as (fixture, code, fragment).
+///
+/// Same contract as su2a's table: the fragment is not a manifest pin — a code
+/// with one witness needs no discriminator and the locked map records none — it
+/// answers WHICH refusal is wearing the code. That question is sharper here than
+/// anywhere else in this file, because seven of these thirteen are raised by
+/// `consume()`, whose message is passed IN by the caller: the same sentence is
+/// written at up to eleven call sites, so a code attached one call over would
+/// print an identical header.
+const SU2B_SINGLE_WITNESS: &[(&str, &str, &str)] = &[
+    (
+        "macro_invocation_bracket.pd",
+        "PD0029",
+        "Expected '(' after macro name!",
+    ),
+    ("ref_parameter.pd", "PD0030", "Expected ')' (Expected ')')"),
+    (
+        "let_needs_an_initializer.pd",
+        "PD0031",
+        "Expected '=' after variable name",
+    ),
+    (
+        "generic_bound.pd",
+        "PD0032",
+        "Expected '>' after generic parameters",
+    ),
+    (
+        "tuple_index_chained.pd",
+        "PD0033",
+        "a CHAINED tuple index has to be parenthesised",
+    ),
+    (
+        "range_pattern_open_ended.pd",
+        "PD0034",
+        "a literal for the high end of this range pattern",
+    ),
+    (
+        "range_pattern_open_low.pd",
+        "PD0035",
+        "a range pattern to have both endpoints",
+    ),
+    (
+        "tuple_index_leading_zero.pd",
+        "PD0036",
+        "a tuple index written without leading zeros",
+    ),
+    (
+        "tuple_pattern_one_element.pd",
+        "PD0037",
+        "a tuple pattern to have at least two elements",
+    ),
+    (
+        "tuple_one_element.pd",
+        "PD0038",
+        "a tuple to have at least two elements",
+    ),
+    (
+        "closure_literal.pd",
+        "PD0039",
+        "Expected expression, but found '|'",
+    ),
+    (
+        "brace_pattern_needs_a_variant_path.pd",
+        "PD0040",
+        "Expected pattern, but found '{'",
+    ),
+    (
+        "let_does_not_destructure.pd",
+        "PD0041",
+        "Expected variable name, but found '('",
+    ),
+];
+
 #[test]
 fn the_cast_relation_is_one_code_told_apart_by_its_found_clause() {
     check_family(&CAST);
@@ -552,9 +697,15 @@ fn main() {
 /// There is no family fallback and no sentinel code. The alternative — every
 /// refusal gets SOME code — is the shape the LSP bridge already has
 /// (`_ => "E9999"`), and it makes "this refusal is attributable" unfalsifiable.
+///
+/// THE CONTROL MOVED, AND THAT IS THE POINT. It used to be `ref_parameter.pd`,
+/// which su2b coded as PD0030. A control has to be a refusal NOTHING has judged
+/// yet, so it is replaced rather than kept: `at_binding_shadows_item.pd` is a
+/// type-checker refusal owned by a later slice. The day that slice lands, this
+/// control moves again — the moving is what keeps it a control.
 #[test]
 fn an_unwired_refusal_carries_no_code_rather_than_a_fallback() {
-    let (r, _dir) = compile_fixture("ref_parameter.pd");
+    let (r, _dir) = compile_fixture("at_binding_shadows_item.pd");
     assert_eq!(r.code, Some(1));
     assert!(
         r.coded_headers().is_empty(),
@@ -578,7 +729,8 @@ fn an_unwired_refusal_carries_no_code_rather_than_a_fallback() {
 fn a_refusal_prints_exactly_one_primary_header() {
     let mut fixtures: Vec<&str> = CAST.rows.iter().map(|(f, _)| *f).collect();
     fixtures.extend(CONST_INIT.rows.iter().map(|(f, _)| *f));
-    fixtures.push("ref_parameter.pd");
+    fixtures.push("at_binding_shadows_item.pd");
+    fixtures.push("let_does_not_destructure.pd");
 
     for fixture in fixtures {
         let (r, _dir) = compile_fixture(fixture);
@@ -635,6 +787,161 @@ fn a_fixture_containing_the_code_text_does_not_produce_a_coded_header() {
     assert!(
         r.coded_headers().is_empty(),
         "the fixture's own text was read as a coded header: {:?}",
+        r.coded_headers()
+    );
+}
+
+/// The thirteen one-witness conditions of su2b, each on its own refusal.
+#[test]
+fn each_one_witness_condition_of_su2b_is_on_the_refusal_the_registry_names() {
+    for (fixture, want_code, fragment) in SU2B_SINGLE_WITNESS {
+        let (r, _dir) = compile_fixture(fixture);
+        assert_eq!(
+            r.code,
+            Some(1),
+            "{} is a reject fixture and must exit 1; it exited {:?}\n{}",
+            fixture,
+            r.code,
+            r.stderr
+        );
+        let (code, payload) = r.sole_coded_header(fixture);
+        assert_eq!(
+            code, *want_code,
+            "{} carries {} — the site was wired to the wrong condition",
+            fixture, code
+        );
+        assert!(
+            payload.contains(fragment),
+            "{} carries {} but not on the refusal that condition names.\n  want fragment: {}\n  got payload:   {}",
+            fixture,
+            code,
+            fragment,
+            payload
+        );
+    }
+}
+
+/// PD0013: two witnesses, ONE code, and no discriminator because there is
+/// nothing to discriminate.
+///
+/// The payloads are asserted CHARACTER-IDENTICAL rather than each matched
+/// against a fragment. That is the honest shape for a deliberate parity pair: a
+/// fragment that told a `package.pd` manifest apart from an `extern` block would
+/// be pinning the fixture, and the rule refuses them for the one reason. If the
+/// two ever diverge, the map's `IDENTICAL` tag is stale and the pin needs
+/// revisiting — which is what this assertion is for.
+#[test]
+fn the_declaration_form_rule_is_one_code_over_two_identical_payloads() {
+    let (manifest, _d1) = compile_path("tests/projects/hello_pdm/package.pd");
+    let (extern_block, _d2) = compile_fixture("extern_block.pd");
+
+    let (manifest_code, manifest_payload) = manifest.sole_coded_header("package.pd");
+    let (extern_code, extern_payload) = extern_block.sole_coded_header("extern_block.pd");
+
+    assert_eq!(manifest_code, "PD0013");
+    assert_eq!(extern_code, "PD0013");
+    assert_eq!(
+        manifest_payload, extern_payload,
+        "the parity pair's payloads have diverged; the map records them as IDENTICAL"
+    );
+    assert!(
+        manifest_payload.contains("Expected function, struct, enum, trait, type, impl, or macro"),
+        "PD0013 landed on a different refusal: {}",
+        manifest_payload
+    );
+}
+
+/// TWO NEAR-IDENTICAL SENTENCES ARE NOT ONE RULE.
+///
+/// The tuple arity rule is stated over values and over patterns; the
+/// range-pattern rule is refused at the high end and at the low end. Each pair
+/// prints almost the same sentence from adjacent parser functions, which is the
+/// shape that invites one code — and the locked map allocated four. Under the
+/// collapse every other assertion in this file still passes, because each single
+/// witness only ever compares its code against the registry, never against its
+/// neighbour's.
+#[test]
+fn the_arity_and_range_pairs_keep_the_codes_the_map_allocated_them() {
+    let pairs = [
+        ("tuple_one_element.pd", "PD0038"),
+        ("tuple_pattern_one_element.pd", "PD0037"),
+        ("range_pattern_open_ended.pd", "PD0034"),
+        ("range_pattern_open_low.pd", "PD0035"),
+    ];
+    let mut seen: Vec<String> = Vec::new();
+    for (fixture, want) in pairs {
+        let (r, _dir) = compile_fixture(fixture);
+        let (code, _) = r.sole_coded_header(fixture);
+        assert_eq!(code, want, "{} carries {}", fixture, code);
+        assert!(
+            !seen.contains(&code),
+            "{} reused {}, which a sibling rule already carries",
+            fixture,
+            code
+        );
+        seen.push(code);
+    }
+}
+
+/// ONE RULE STATED IN SEVERAL POSITIONS CARRIES THE CODE AT ALL OF THEM.
+///
+/// The corpus witnesses the parameter-list rule at a free function and the
+/// generic-parameter rule at a function, so the other positions are asserted
+/// against programs written here. Without this, "all five positions carry the
+/// code" would be a claim in a comment: the registry row would say it, the
+/// witness compile would not test it, and a later refactor could quietly leave
+/// four of them uncoded.
+#[test]
+fn a_rule_written_in_several_grammar_positions_carries_one_code_at_each() {
+    let (method, _d1) = compile_source(
+        "struct S {\n    x: i64,\n}\n\nimpl S {\n    fn f(y: ref String) {}\n}\n\nfn main() {}\n",
+    );
+    let (code, payload) = method.sole_coded_header("a method's parameter list");
+    assert_eq!(
+        code, "PD0030",
+        "the METHOD position of the parameter-list rule carries {}",
+        code
+    );
+    assert!(payload.contains("Expected ')'"), "payload: {}", payload);
+
+    let (trait_generics, _d2) =
+        compile_source("trait T<X: Clone> {\n    fn f(self);\n}\n\nfn main() {}\n");
+    let (code, payload) = trait_generics.sole_coded_header("a trait's generic parameters");
+    assert_eq!(
+        code, "PD0032",
+        "the TRAIT position of the generic-parameter rule carries {}",
+        code
+    );
+    assert!(
+        payload.contains("Expected '>' after generic parameters"),
+        "payload: {}",
+        payload
+    );
+}
+
+/// THE SAME SENTENCE FROM A DIFFERENT RULE STAYS UNCODED.
+///
+/// `parse_let`'s name position and the `for` loop's print the identical string,
+/// `Expected variable name, but found '('`. PD0041 is the `let` rule — there are
+/// no `let` patterns — and the `for` position is a rule nothing has judged. If a
+/// future edit attached the code by matching the message instead of by knowing
+/// the site, this program is what goes red: a code that a phrase can earn is the
+/// phrase pin GI-12 replaces, wearing four digits.
+#[test]
+fn the_for_loops_twin_sentence_is_a_different_rule_and_stays_uncoded() {
+    let (r, _dir) = compile_source(
+        "fn main() {\n    for (a, b) in 0..2 {\n        print_int(a);\n    }\n}\n",
+    );
+    assert_eq!(r.code, Some(1));
+    let plain = strip_ansi(&r.stderr);
+    assert!(
+        plain.contains("Expected variable name, but found '('"),
+        "the control did not reach the twin sentence:\n{}",
+        r.stderr
+    );
+    assert!(
+        r.coded_headers().is_empty(),
+        "the `for` position was given a code by its wording: {:?}",
         r.coded_headers()
     );
 }

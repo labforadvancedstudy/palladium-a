@@ -126,7 +126,7 @@ description = "Lifetimes inferred; no 'a parameter lists. Explicit ref<'a> T onl
 spec = "core-language/implicit-lifetimes.md"
 implementation = "unimplemented"
 evidence = [
-  "src: src/parser/mod.rs:1308 lifetime_params, populated by the parser",
+  "src: src/parser/mod.rs:1326 lifetime_params, populated by the parser",
   "cmd: grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser' -> exit 0, 90 lines -- and some are REAL readers, not only test fixtures: src/typeck/mod.rs clones the list into its own records and src/codegen/mod.rs branches on `lifetime_params.is_empty()` before emitting a type. Five of the 90 are the recursive-layout analysis in src/typeck/mod.rs, which skips a generic definition on the SAME predicate code generation uses, so that it never refuses a declaration nothing emits. Two of the 90 are prose in the shared shadowing predicate in src/ast/mod.rs, recording that its test is the type-parameter list and NOT this field",
   "conformance: tests/regression/lifetimes_uninferred.pd run",
   "src: tests/regression/lifetimes_uninferred.pd:26-29 \"fn dangling() -> &i64\" returning \"return &x;\", a reference to a local that dies at the closing brace",
@@ -190,7 +190,7 @@ description = "Restricted unsafe with side-channel protection; forbidden in #![t
 spec = "../../specification/language-spec.md#n12-memory-model"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:2407 Token::Unsafe => self.parse_unsafe()",
+  "src: src/parser/mod.rs:2450 Token::Unsafe => self.parse_unsafe()",
   "src: src/driver/mod.rs:189 Phase 3.7 runs crate::unsafe_ops::UnsafeChecker",
   "cmd: grep -rniE 'constant.?time|side.?channel|timing' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/11_unsafe_blocks.pd vacuous",
@@ -213,7 +213,7 @@ spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
   "src: src/codegen/mod.rs:2967-2967 'Generic types in structs not yet supported'",
-  "src: src/parser/mod.rs:3922-3932 all-uppercase name inside <...> reclassified as a const argument",
+  "src: src/parser/mod.rs:3983-3993 all-uppercase name inside <...> reclassified as a const argument",
   "conformance: tests/reject/generic_bound.pd reject",
   "conformance: tests/08_generics_basic.pd vacuous",
 ]
@@ -224,10 +224,10 @@ description = "Trait definitions, impls, bounds on generics, associated types."
 spec = "../../specification/language-spec.md#n10-traits-and-generics"
 implementation = "unimplemented"
 evidence = [
-  "src: src/parser/mod.rs:1508 fn parse_trait — traits do parse",
+  "src: src/parser/mod.rs:1526 fn parse_trait — traits do parse",
   "src: src/codegen/mod.rs:2397-2400 Item::Trait(_) => emits nothing",
   "src: src/typeck/mod.rs:2784-2786 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
-  "src: src/parser/mod.rs:1631-1632 trait-method parameter loop, which has no self_param branch",
+  "src: src/parser/mod.rs:1659-1660 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd vacuous",
 ]
 note = "Design detail: ../../design/trait_system_design.md"
@@ -282,8 +282,8 @@ spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "partial"
 evidence = [
   "conformance: tests/04_control_flow_if.pd run",
-  "src: src/parser/mod.rs:2337-2339 the else arm tests for a following if and recurses, so else-if chains parse (N5-06)",
-  "src: src/parser/mod.rs:4047-4048 return self.parse_if_expression() -- `if` is read at the primary level, so it is an expression (N5-03)",
+  "src: src/parser/mod.rs:2380-2382 the else arm tests for a following if and recurses, so else-if chains parse (N5-06)",
+  "src: src/parser/mod.rs:4108-4109 return self.parse_if_expression() -- `if` is read at the primary level, so it is an expression (N5-03)",
 ]
 
 [core_language.functions.function_definitions]
@@ -325,7 +325,7 @@ description = "File-based modules, nested paths, visibility, `import`."
 spec = "../../specification/language-spec.md#n11-modules"
 implementation = "partial"
 evidence = [
-  "src: src/parser/mod.rs:674-675 while self.check(&Token::Import) — imports are drained before items",
+  "src: src/parser/mod.rs:681-682 while self.check(&Token::Import) — imports are drained before items",
   "cmd: grep -rn 'Item::Module\\|Token::Mod' src/ --include='*.rs' -> exit 1, 0 lines",
   "conformance: tests/12_modules_imports.pd vacuous",
   "conformance: tests/projects/hello_pdm/src/main.pd run",
@@ -368,7 +368,7 @@ spec = "async-system/async-as-effect.md"
 implementation = "unimplemented"
 evidence = [
   "src: src/lexer/token.rs:325 #[token(\"async\")] — one of the two things the definition removes",
-  "src: src/parser/mod.rs:1320 effects: None, // Effects will be inferred during analysis",
+  "src: src/parser/mod.rs:1338 effects: None, // Effects will be inferred during analysis",
   "src: src/driver/mod.rs:59 the analyser's result is println!ed by the driver and feeds no later phase",
   "src: src/effects/mod.rs:318 'If function is unknown, we conservatively assume it's pure' — the unsound direction",
   "cmd: grep -rn 'effects::' src/ --include='*.rs' | grep -v '^src/effects' -> exit 0, 8 lines -- 1 in src/driver/mod.rs (the analyser is run) and 7 in src/builtins.rs (each builtin declares an effect set, and the analyser's own unit tests live there); no phase after the driver reads the result",
@@ -462,7 +462,7 @@ implementation = "partial"
 evidence = [
   "src: src/macros/mod.rs:41 fn register_builtin_macros — four builtins, each taking exactly one expression",
   "src: src/macros/mod.rs:167 dbg! expands to a call to print_debug, which is defined nowhere",
-  "src: src/parser/mod.rs:2305-2312 the last arm of token_to_ast_token — \"the macro token stream can carry identifiers, integer literals and\" single-character punctuation, and a token outside that set is refused by name rather than degraded",
+  "src: src/parser/mod.rs:2348-2355 the last arm of token_to_ast_token — \"the macro token stream can carry identifiers, integer literals and\" single-character punctuation, and a token outside that set is refused by name rather than degraded",
   "src: src/macros/expander.rs:400 substitute_template parenthesises every capture",
   "conformance: tests/reject/macro_invocation_bracket.pd reject",
   "conformance: tests/reject/macro_body_two_char_operator.pd reject",

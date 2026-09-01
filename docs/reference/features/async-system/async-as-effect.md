@@ -268,12 +268,12 @@ citations in `language-spec.md` before this change were taken from the pre-clean
 `function` production carries an optional `async` (`docs/specification/grammar.ebnf:145`), `.await`
 is a postfix operator (`docs/specification/grammar.ebnf:352`), and the keyword list names both
 (`docs/specification/grammar.ebnf:90`). The parser sets `Function.is_async` from that keyword
-(`src/parser/mod.rs:965`, `src/parser/mod.rs:974`). The implementation therefore offers exactly the two things this
+(`src/parser/mod.rs:972`, `src/parser/mod.rs:981`). The implementation therefore offers exactly the two things this
 document says the language does not have: an `async` marker and an await operator.
 
 **2. Effects are inferred, but the result is print-only — it gates nothing.**
 The parser hardcodes `Function.effects` to `None`, commented "Effects will be inferred during
-analysis" (`src/parser/mod.rs:1318`). An effect analyser exists (`src/effects/mod.rs`, 479 lines;
+analysis" (`src/parser/mod.rs:1336`). An effect analyser exists (`src/effects/mod.rs`, 479 lines;
 `Effect` enum at `src/effects/mod.rs:16-29`, `analyze_function` at `src/effects/mod.rs:151`) and it does union effects across
 statements and calls (`src/effects/mod.rs:298`). But `crate::effects::` is referenced from exactly one place in
 the compiler — `src/driver/mod.rs:172` — and all the driver does with the result is `println!` it

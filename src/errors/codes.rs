@@ -64,6 +64,16 @@ pub enum DiagnosticCode {
     /// the two were.
     NonIntegerLiteralInMacroTokenStream,
 
+    /// PD0013 — a top-level item is one of the declaration forms this language
+    /// has. The `_` arm of `parse_item` (`src/parser/mod.rs`), which is where a
+    /// file that is not Palladium source at all arrives. TWO witnesses with
+    /// CHARACTER-IDENTICAL payloads and no discriminator between them, on
+    /// purpose: one is a `package.pd` manifest and the other an `extern` block,
+    /// and the rule refuses them for the same reason — neither is a declaration
+    /// — so a fragment telling them apart would be pinning the fixture rather
+    /// than the rule.
+    TopLevelItemIsADeclarationForm,
+
     /// PD0020 — a top-level initialiser has to be a constant expression. One
     /// `refuse` closure in `validate_global_initializer` (`src/parser/mod.rs`);
     /// the form it saw (a call, a name that reads another item, an array
@@ -71,6 +81,94 @@ pub enum DiagnosticCode {
     /// every one of them: the item becomes a C file-scope definition and
     /// nothing runs before `main`.
     TopLevelInitialiserMustBeConstant,
+
+    /// PD0029 — a macro invocation writes its arguments in PARENTHESES:
+    /// `name!(...)` is the one call shape. The `consume` after `!` in
+    /// `parse_postfix` (`src/parser/mod.rs`), so `vec![7]` — the spelling every
+    /// Rust program uses, and the one `src/macros/mod.rs` registers a builtin
+    /// for — does not parse.
+    MacroInvocationIsParenthesised,
+
+    /// PD0030 — a function's parameter list is `name: type` items closed by
+    /// `)`. TWO POSITIONS, one rule: the free function (`parse_function`) and
+    /// the method (`parse_impl`'s method loop), both `src/parser/mod.rs`. The
+    /// call-argument `)`s elsewhere in the file are a DIFFERENT rule and stay
+    /// uncoded — a shared token is not a shared condition.
+    ParameterListIsClosedByParen,
+
+    /// PD0031 — a `let` initialiser is mandatory: `=` follows the binding.
+    /// `parse_let` (`src/parser/mod.rs`). `grammar.ebnf`'s `let_stmt` has no
+    /// optional-initialiser branch, and this is the half of that production
+    /// refused by the `=` position; `LetBindsOneBareIdentifier` is the other
+    /// half, refused a few lines earlier by a different branch.
+    LetInitialiserIsMandatory,
+
+    /// PD0032 — a generic parameter list holds BARE NAMES and is closed by `>`;
+    /// the `:` that would introduce a trait bound ends the list. FIVE POSITIONS
+    /// declare generic parameters (function, trait, trait method, impl, type
+    /// alias — all `src/parser/mod.rs`) and all five carry this code, for the
+    /// reason PD0049 is one code in two positions. The generic ARGUMENT list at
+    /// a use site is a different rule and is not coded.
+    GenericParameterListIsBareNames,
+
+    /// PD0033 — a CHAINED tuple index has to be parenthesised. `.0.1` matches
+    /// the float rule (digits, dot, digits), so it arrives as ONE `Float` token
+    /// and the two indices are gone: `p.0.10` and `p.0.1` both hold 0.1, and a
+    /// compiler that recovered the digits would be guessing with a wrong answer
+    /// available. The `Token::Float` arm of the postfix `.` loop.
+    ChainedTupleIndexIsParenthesised,
+
+    /// PD0034 — the high end of a range pattern is a literal, because
+    /// open-ended range patterns are not in the language. `parse_range_pattern`
+    /// (`src/parser/mod.rs`), the arm reached after `..`/`..=`.
+    RangePatternHighEndIsALiteral,
+
+    /// PD0035 — a range pattern has BOTH endpoints. The `DotDot | DotDotEq` arm
+    /// of `parse_pattern_primary`: `..5` has no low end. A separate condition
+    /// from `RangePatternHighEndIsALiteral` because the locked map keeps them
+    /// apart — the missing end is a different position in the production, not a
+    /// parameter of one refusal.
+    RangePatternHasBothEndpoints,
+
+    /// PD0036 — a tuple index is written WITHOUT leading zeros. The lexer hands
+    /// the parser an `i64`, so the spelling is gone by then and the check is on
+    /// the SPAN: an index spelled wider than its value has digits. Without it
+    /// `p.01` compiled silently as `.1`, which is the shape of a typo that
+    /// changes which element a program reads. The neighbouring refusal in the
+    /// same arm (a NEGATIVE index) is a third rule with no corpus witness and
+    /// stays uncoded.
+    TupleIndexHasNoLeadingZeros,
+
+    /// PD0037 — a tuple PATTERN has at least two elements: grouping is not a
+    /// pattern form, so `(p)` is not a way to write `p`. `parse_pattern_primary`.
+    TuplePatternHasAtLeastTwoElements,
+
+    /// PD0038 — a tuple has at least two elements: `(e)` is grouping and the
+    /// one-element tuple `(e,)` is not a form this language has. The EXPRESSION
+    /// position, `parse_primary`. Kept apart from
+    /// `TuplePatternHasAtLeastTwoElements` by the locked map: one arity rule is
+    /// stated over values and the other over patterns, and the two productions
+    /// can move independently.
+    TupleHasAtLeastTwoElements,
+
+    /// PD0039 — an expression position holds one of the expression forms this
+    /// language has. The catch-all of `parse_primary` (`src/parser/mod.rs`), and
+    /// its corpus witness is a closure literal: there is no `Closure` node in
+    /// `src/ast/`, so `|` in expression position is not the start of anything.
+    ExpressionPositionHoldsAnExpressionForm,
+
+    /// PD0040 — a pattern position holds one of the pattern forms this language
+    /// has. The catch-all of `parse_pattern_primary`. Its witness is a bare
+    /// `{ x }`: field shorthand is a spelling INSIDE a variant path, so a brace
+    /// does not begin pattern content anywhere else.
+    PatternPositionHoldsAPatternForm,
+
+    /// PD0041 — `let` binds ONE BARE IDENTIFIER; there are no `let` patterns.
+    /// `parse_let` (`src/parser/mod.rs`). The `for` loop's variable position a
+    /// few hundred lines down prints the SAME SENTENCE and is a different rule,
+    /// so it is not coded with this number — which is the whole reason the code
+    /// is attached at a site and not derived from a message.
+    LetBindsOneBareIdentifier,
 
     /// PD0049 — `macro_rules!` is not this language's macro system: there is ONE
     /// and no procedural/declarative split (N3-14). Stated in TWO POSITIONS —
@@ -141,7 +239,21 @@ impl DiagnosticCode {
         DiagnosticCode::ConstInitialiserHasNoValue,
         DiagnosticCode::CastRelation,
         DiagnosticCode::NonIntegerLiteralInMacroTokenStream,
+        DiagnosticCode::TopLevelItemIsADeclarationForm,
         DiagnosticCode::TopLevelInitialiserMustBeConstant,
+        DiagnosticCode::MacroInvocationIsParenthesised,
+        DiagnosticCode::ParameterListIsClosedByParen,
+        DiagnosticCode::LetInitialiserIsMandatory,
+        DiagnosticCode::GenericParameterListIsBareNames,
+        DiagnosticCode::ChainedTupleIndexIsParenthesised,
+        DiagnosticCode::RangePatternHighEndIsALiteral,
+        DiagnosticCode::RangePatternHasBothEndpoints,
+        DiagnosticCode::TupleIndexHasNoLeadingZeros,
+        DiagnosticCode::TuplePatternHasAtLeastTwoElements,
+        DiagnosticCode::TupleHasAtLeastTwoElements,
+        DiagnosticCode::ExpressionPositionHoldsAnExpressionForm,
+        DiagnosticCode::PatternPositionHoldsAPatternForm,
+        DiagnosticCode::LetBindsOneBareIdentifier,
         DiagnosticCode::MacroRulesIsNotThisMacroSystem,
         DiagnosticCode::ReturnValueOnEveryPath,
         DiagnosticCode::SinglePassExpansion,
@@ -180,7 +292,21 @@ impl DiagnosticCode {
             DiagnosticCode::ConstInitialiserHasNoValue => 2,
             DiagnosticCode::CastRelation => 3,
             DiagnosticCode::NonIntegerLiteralInMacroTokenStream => 8,
+            DiagnosticCode::TopLevelItemIsADeclarationForm => 13,
             DiagnosticCode::TopLevelInitialiserMustBeConstant => 20,
+            DiagnosticCode::MacroInvocationIsParenthesised => 29,
+            DiagnosticCode::ParameterListIsClosedByParen => 30,
+            DiagnosticCode::LetInitialiserIsMandatory => 31,
+            DiagnosticCode::GenericParameterListIsBareNames => 32,
+            DiagnosticCode::ChainedTupleIndexIsParenthesised => 33,
+            DiagnosticCode::RangePatternHighEndIsALiteral => 34,
+            DiagnosticCode::RangePatternHasBothEndpoints => 35,
+            DiagnosticCode::TupleIndexHasNoLeadingZeros => 36,
+            DiagnosticCode::TuplePatternHasAtLeastTwoElements => 37,
+            DiagnosticCode::TupleHasAtLeastTwoElements => 38,
+            DiagnosticCode::ExpressionPositionHoldsAnExpressionForm => 39,
+            DiagnosticCode::PatternPositionHoldsAPatternForm => 40,
+            DiagnosticCode::LetBindsOneBareIdentifier => 41,
             DiagnosticCode::MacroRulesIsNotThisMacroSystem => 49,
             DiagnosticCode::ReturnValueOnEveryPath => 66,
             DiagnosticCode::SinglePassExpansion => 67,
@@ -201,9 +327,35 @@ impl DiagnosticCode {
             DiagnosticCode::NonIntegerLiteralInMacroTokenStream => {
                 "non_integer_literal_in_macro_token_stream"
             }
+            DiagnosticCode::TopLevelItemIsADeclarationForm => {
+                "top_level_item_is_a_declaration_form"
+            }
             DiagnosticCode::TopLevelInitialiserMustBeConstant => {
                 "top_level_initialiser_must_be_constant"
             }
+            DiagnosticCode::MacroInvocationIsParenthesised => "macro_invocation_is_parenthesised",
+            DiagnosticCode::ParameterListIsClosedByParen => "parameter_list_is_closed_by_paren",
+            DiagnosticCode::LetInitialiserIsMandatory => "let_initialiser_is_mandatory",
+            DiagnosticCode::GenericParameterListIsBareNames => {
+                "generic_parameter_list_is_bare_names"
+            }
+            DiagnosticCode::ChainedTupleIndexIsParenthesised => {
+                "chained_tuple_index_is_parenthesised"
+            }
+            DiagnosticCode::RangePatternHighEndIsALiteral => "range_pattern_high_end_is_a_literal",
+            DiagnosticCode::RangePatternHasBothEndpoints => "range_pattern_has_both_endpoints",
+            DiagnosticCode::TupleIndexHasNoLeadingZeros => "tuple_index_has_no_leading_zeros",
+            DiagnosticCode::TuplePatternHasAtLeastTwoElements => {
+                "tuple_pattern_has_at_least_two_elements"
+            }
+            DiagnosticCode::TupleHasAtLeastTwoElements => "tuple_has_at_least_two_elements",
+            DiagnosticCode::ExpressionPositionHoldsAnExpressionForm => {
+                "expression_position_holds_an_expression_form"
+            }
+            DiagnosticCode::PatternPositionHoldsAPatternForm => {
+                "pattern_position_holds_a_pattern_form"
+            }
+            DiagnosticCode::LetBindsOneBareIdentifier => "let_binds_one_bare_identifier",
             DiagnosticCode::MacroRulesIsNotThisMacroSystem => {
                 "macro_rules_is_not_this_macro_system"
             }
@@ -245,7 +397,7 @@ mod tests {
     fn every_code_is_in_all() {
         assert_eq!(
             DiagnosticCode::ALL.len(),
-            12,
+            26,
             "a code was added to the enum without being added to ALL (or this \
              literal was not updated with the new count)"
         );

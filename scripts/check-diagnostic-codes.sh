@@ -504,7 +504,14 @@ fi
 
 # M3 — UNCODED. A refusal from a site that is not wired yet says so; NO_CODE is
 # a state, never a silent pass.
-( cd "$TMPROOT/run" && "$OLDPWD/$PDC" compile "$OLDPWD/tests/reject/ref_parameter.pd" -o m3 >/dev/null 2>"$M/m3" )
+#
+# THE FIXTURE MOVES AS THE SLICES LAND, and that is the control working rather
+# than rotting. It was `ref_parameter.pd` until su2b coded that refusal PD0030;
+# an "unwired refusal" has to be a refusal nothing has judged, so this points at
+# a type-checker refusal owned by a later slice, and the slice that codes it will
+# move the pointer again. Picking a fixture that could never be coded would be
+# picking one that is not on the evidence path.
+( cd "$TMPROOT/run" && "$OLDPWD/$PDC" compile "$OLDPWD/tests/reject/at_binding_shadows_item.pd" -o m3 >/dev/null 2>"$M/m3" )
 expect_state "M3 an unwired refusal reports NO_CODE" "$M/m3" NO_CODE
 
 # M4 — TWO CODED PRIMARY HEADERS. The state the choke-point refactor made

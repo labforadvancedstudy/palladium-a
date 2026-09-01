@@ -1340,14 +1340,14 @@ fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
     );
 }
 
-/// A qualified call cannot be written. `src/parser/mod.rs:4466-4507` turns any
+/// A qualified call cannot be written. `src/parser/mod.rs:4538-4579` turns any
 /// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:4758-4762`
 /// then reports `Undefined enum type: lib2`. The same holds for an alias
 /// (`import lib2 as m;` → `Undefined enum type: m`), which makes `alias`
 /// unusable too. `register_imported_functions` registers `module::name` for
 /// parity with the type checker, but nothing can currently reach it.
 #[test]
-#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:4466-4507 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:4758-4762 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:4538-4579 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:4758-4762 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
 fn test_a_qualified_call_reaches_the_imported_function() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1362,13 +1362,13 @@ fn test_a_qualified_call_reaches_the_imported_function() {
 }
 
 /// A nested module path cannot be written either, one level below the
-/// resolver. `src/parser/mod.rs:804-815`: after `::`, if the token after the
+/// resolver. `src/parser/mod.rs:811-822`: after `::`, if the token after the
 /// next one is `;`, `,` or `{`, the segment is consumed as an ITEM name. So
 /// `import util::math;` parses as `path=["util"], items=["math"]` and the
 /// resolver looks for `util.pd`. The last segment of a path can never be a
 /// module, which means a module tree deeper than one level is unexpressible.
 #[test]
-#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:804-815 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:811-822 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M4, cross-file module imports)"]
 fn test_a_module_in_a_subdirectory_can_be_imported() {
     let (compiled, output, stdout) = compile_and_run(
         &[(
