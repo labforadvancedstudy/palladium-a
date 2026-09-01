@@ -41,7 +41,11 @@ impl LanguageServer {
 
     /// Convert compile error to diagnostic
     fn compile_error_to_diagnostic(&self, error: CompileError) -> Diagnostic {
-        let (message, span) = match &error {
+        // `peel()`: a GI-12 code is a WRAPPER, and matching the wrapper here
+        // would drop every span through the catch-all below. The LSP's own
+        // E-code scheme is untouched and its convergence with `PD####` is a
+        // recorded follow-up (spec D8/R10), not this unit's business.
+        let (message, span) = match error.peel() {
             CompileError::SyntaxError { message, span } => (message.clone(), span.as_ref()),
             CompileError::TypeMismatch {
                 expected,
@@ -85,7 +89,7 @@ impl LanguageServer {
 
     /// Get error code for compile error
     fn error_code(&self, error: &CompileError) -> String {
-        match error {
+        match error.peel() {
             CompileError::SyntaxError { .. } => "E0001".to_string(),
             CompileError::TypeMismatch { .. } => "E0002".to_string(),
             CompileError::UndefinedVariable { .. } => "E0003".to_string(),

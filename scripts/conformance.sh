@@ -196,6 +196,15 @@ canon() {
 
 strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
+# The shared diagnostic-header parser (GI-12). SOURCED, never copied: this file
+# and scripts/check-diagnostic-codes.sh must not be able to disagree about what a
+# coded header is. Today it is OBSERVATIONAL here — the reject verdict below is
+# still the whole-log fixed-string match, and the code pins arrive at the
+# cutover — so what it buys now is that the plumbing is exercised on the live
+# corpus every run instead of only in the gate's own fixtures.
+. scripts/lib/diag-parse.sh
+diag_coded=0; diag_uncoded=0; diag_malformed=0; diag_unreadable=0
+
 # grep answers three questions, not two: 0 matched, 1 did not match, 2 COULD NOT
 # LOOK. Collapsing 2 into "did not match" is how an unreadable fixture became a
 # harmless `skip` and a dangling symlink passed as a non-program. Every consumer
@@ -677,8 +686,33 @@ while IFS= read -r f; do
   fi
 
   log=$TMPROOT/log
-  "$PDC" compile "$f" -o "$out" >"$log" 2>&1
+  # R6: STDERR IS CAPTURED SEPARATELY, and the merged log is then rebuilt for
+  # every consumer that already existed. The parser must read stderr alone,
+  # because a fixture's own stdout can contain a line shaped like a header and a
+  # merged stream cannot tell the two producers apart — the same confusion, one
+  # stream up, that made a fixture containing `Linking` read as a link failure.
+  #
+  # THE REBUILD IS CONCATENATION, AND ITS COST IS MEASURED, NOT ASSUMED: over all
+  # 221 fixtures, stdout-then-stderr is line-identical to the interleaved capture
+  # for 220, and reorders lines for exactly one (`tests/03_const_items.pd`, whose
+  # gcc `note:` lines move relative to one stdout line). No consumer of "$log"
+  # here is order-sensitive — the fingerprint match and the gcc-contradiction
+  # check are both whole-log `grep -qF`.
+  "$PDC" compile "$f" -o "$out" >"$TMPROOT/pdc_stdout" 2>"$TMPROOT/pdc_stderr"
   pdc_rc=$?
+  cat "$TMPROOT/pdc_stdout" "$TMPROOT/pdc_stderr" >"$log"
+
+  if [ "$class" = "reject" ] || [ "$class" = "skip" ]; then
+    if diag_state=$(pd_diag_parse "$TMPROOT/pdc_stderr"); then
+      case "$(pd_diag_state "$diag_state")" in
+        CODED)     diag_coded=$((diag_coded+1)) ;;
+        MALFORMED) diag_malformed=$((diag_malformed+1)) ;;
+        *)         diag_uncoded=$((diag_uncoded+1)) ;;
+      esac
+    else
+      diag_unreadable=$((diag_unreadable+1))
+    fi
+  fi
   diag=$(strip_ansi <"$log" | grep -m1 -E 'error' | head -c 200)
 
   # TWO INDEPENDENT WITNESSES THAT THE FRONT END ACCEPTED, and either is enough.
@@ -970,6 +1004,12 @@ echo
 echo "=============================================="
 echo "fixtures=$n declared_in_scope=$declared_in_scope evaluated=$evaluated"
 echo "verified=$verified untranscribed=$untranscribed vacuous=$vacuous xfail=$xfail reject=$reject skip=$skip failures=$hard_fail"
+# OBSERVATIONAL, NOT A VERDICT (GI-12 su1). Counted from the shared parser over
+# the SEPARATE stderr capture, for every refusal-witness row. It says how far the
+# code rollout has got, and it is the live-corpus exercise of the parser the
+# cutover will make authoritative. `make check-diagnostic-codes` owns the
+# judgements; nothing here fails on these numbers.
+echo "diagnostic-codes(observational): coded=$diag_coded uncoded=$diag_uncoded malformed=$diag_malformed unreadable=$diag_unreadable"
 echo "  verified   = ran AND its stdout matched the recorded transcript byte for"
 echo "               byte. Only this column can see a wrong answer."
 echo "  untranscribed = ran and exited 0, but has NO transcript, so a wrong answer"

@@ -3,9 +3,12 @@
 
 use thiserror::Error;
 
+pub mod codes;
 pub mod pretty;
 pub mod reporter;
 pub mod suggestions;
+
+pub use codes::DiagnosticCode;
 
 pub type Result<T> = std::result::Result<T, CompileError>;
 
@@ -234,6 +237,27 @@ pub enum CompileError {
     UnreachablePattern {
         patterns: Vec<String>,
         span: Option<Span>,
+    },
+
+    /// A refusal that carries a stable diagnostic code (GI-12).
+    ///
+    /// WHY A WRAPPER AND NOT A FIELD. A code names a semantic CONDITION, and a
+    /// condition is a construction SITE's property, not a variant's:
+    /// `TypeMismatch` is raised from 73 places enforcing different rules, so a
+    /// `code` field on the variant would have to be filled in at every one of
+    /// them anyway, and a `code()` that dispatched on the variant would be
+    /// forced to answer one code for all 73. Wrapping lets the site that knows
+    /// the rule say so — `err.with_code(DiagnosticCode::CastRelation)` — and
+    /// leaves every uncoded site exactly as it was. D1's honest NO_CODE state
+    /// is the absence of this wrapper.
+    ///
+    /// DISPLAY IS THE INNER'S. `to_string()` must not change when a code is
+    /// attached, or attaching one would silently move every consumer that
+    /// formats an error as text.
+    #[error("{inner}")]
+    Coded {
+        code: DiagnosticCode,
+        inner: Box<CompileError>,
     },
 }
 
@@ -670,9 +694,50 @@ impl CompileError {
         }
     }
 
+    /// Attach a stable diagnostic code to this refusal (GI-12).
+    ///
+    /// Idempotent by REPLACEMENT rather than by nesting: a second call sets the
+    /// code instead of wrapping a wrapper, so `peel()` never has to loop and a
+    /// double-coded error cannot exist to be reported as two things.
+    pub fn with_code(self, code: DiagnosticCode) -> Self {
+        match self {
+            CompileError::Coded { inner, .. } => CompileError::Coded { code, inner },
+            other => CompileError::Coded {
+                code,
+                inner: Box::new(other),
+            },
+        }
+    }
+
+    /// The code this refusal carries, if any. `None` is the honest state for a
+    /// site that has not been wired yet — there is no family fallback.
+    pub fn code(&self) -> Option<DiagnosticCode> {
+        match self {
+            CompileError::Coded { code, .. } => Some(*code),
+            _ => None,
+        }
+    }
+
+    /// The underlying refusal, with any code wrapper removed.
+    ///
+    /// For the consumers that match on the VARIANT (the LSP bridge, tests):
+    /// attaching a code must not make an error look like a different error.
+    pub fn peel(&self) -> &CompileError {
+        match self {
+            CompileError::Coded { inner, .. } => inner,
+            other => other,
+        }
+    }
+
     /// Convert this error into a diagnostic with helpful suggestions
     pub fn to_diagnostic(&self) -> Diagnostic {
         match self {
+            // FIRST ARM ON PURPOSE. The catch-all at the bottom of this match
+            // would render a coded error as `Diagnostic::error(self.to_string())`
+            // — correct text, code silently dropped — and the loss would be
+            // invisible to every test that only reads the message.
+            CompileError::Coded { code, inner } => inner.to_diagnostic().with_code(*code),
+
             CompileError::UnexpectedChar {
                 ch,
                 line,
@@ -915,9 +980,23 @@ impl CompileError {
                 missing_patterns,
                 span,
             } => {
-                let mut diag = Diagnostic::error("Non-exhaustive match expression")
-                    .with_span(span.unwrap_or(Span::dummy()))
-                    .with_note("All possible patterns must be covered in a match expression");
+                // THE PARTICULARS BELONG ON THE PRIMARY HEADER. This used to
+                // read `Non-exhaustive match expression` — the rule with the
+                // parameters thrown away — while `Display` (and therefore the
+                // duplicate print in `main`, which the choke-point refactor
+                // deletes) carried WHICH patterns were missing. Measured on the
+                // corpus: ten reject fixtures shared that header character for
+                // character, and the only text distinguishing them lived on the
+                // line about to be deleted. A pin cannot select a fixture by
+                // text that no longer exists, so the discriminator moves to the
+                // header that survives, and its wording is `Display`'s so the
+                // two renderings of one refusal say the same thing.
+                let mut diag = Diagnostic::error(format!(
+                    "Non-exhaustive match: missing patterns {}",
+                    missing_patterns.join(", ")
+                ))
+                .with_span(span.unwrap_or(Span::dummy()))
+                .with_note("All possible patterns must be covered in a match expression");
 
                 if missing_patterns.len() == 1 {
                     diag = diag.with_suggestion(
@@ -1013,6 +1092,11 @@ impl CompileError {
 pub struct Diagnostic {
     pub level: DiagnosticLevel,
     pub message: String,
+    /// The stable code, carried from the `CompileError` through
+    /// `to_diagnostic()` to the single printing choke point. `None` renders a
+    /// bare `error:` header, which is what an unwired site and a legitimate CLI
+    /// error both get.
+    pub code: Option<DiagnosticCode>,
     pub span: Option<Span>,
     pub notes: Vec<String>,
     pub suggestions: Vec<Suggestion>,
@@ -1040,11 +1124,18 @@ impl Diagnostic {
         Self {
             level: DiagnosticLevel::Error,
             message: message.into(),
+            code: None,
             span: None,
             notes: Vec::new(),
             suggestions: Vec::new(),
             context_lines: 2,
         }
+    }
+
+    /// Stamp the stable code that the choke point renders in the header.
+    pub fn with_code(mut self, code: DiagnosticCode) -> Self {
+        self.code = Some(code);
+        self
     }
 
     pub fn with_span(mut self, span: Span) -> Self {

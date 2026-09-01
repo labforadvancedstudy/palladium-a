@@ -230,8 +230,21 @@ impl Cli {
                 let mut build_system = BuildSystem::new(config);
                 if let Err(o) = build_system.run_reporting(args) {
                     let code = o.exit_code();
-                    if !matches!(o, crate::driver::RunOutcome::Child { .. }) {
-                        eprintln!("\x1b[1;31merror:\x1b[0m {}", o.into_compile_error());
+                    // Child: already printed its own output. Compile: already
+                    // reported by the driver at the single choke point. Printing
+                    // either here is the duplicate primary header GI-12 deletes;
+                    // what is left is the link/toolchain verdict, which nothing
+                    // else has said out loud.
+                    if !matches!(
+                        o,
+                        crate::driver::RunOutcome::Child { .. }
+                            | crate::driver::RunOutcome::Compile(_)
+                    ) {
+                        crate::errors::reporter::emit_primary_header(
+                            crate::errors::DiagnosticLevel::Error,
+                            None,
+                            &o.into_compile_error().to_string(),
+                        );
                     }
                     std::process::exit(code);
                 }

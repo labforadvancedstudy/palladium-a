@@ -203,7 +203,7 @@ implementation = "partial"
 evidence = [
   "conformance: examples/tutorial/01_variables.pd run",
   "cmd: grep -rn 'HindleyMilner\\|unify\\|Substitution' src/typeck/ --include='*.rs' -> exit 0, 1 lines",
-  "src: src/typeck/mod.rs:6218-6218 'Cannot infer type from empty array'",
+  "src: src/typeck/mod.rs:6235-6235 'Cannot infer type from empty array'",
 ]
 note = "Local `let` inference works (the i64 default was replaced by real inference in 04104c5). There is no unification engine and no polymorphic generalisation, so it is not Hindley-Milner. The probe above moved from 0 hits to 1 with N4-12, and the hit is PROSE: a comment in the tuple case saying there is nothing to unify, because a tuple's elements are not required to agree with each other. An absence probe counts the surface, so a claim about the surface has to be re-derived when a comment moves it -- the absence itself is unchanged."
 
@@ -226,7 +226,7 @@ implementation = "unimplemented"
 evidence = [
   "src: src/parser/mod.rs:1495 fn parse_trait — traits do parse",
   "src: src/codegen/mod.rs:2397-2400 Item::Trait(_) => emits nothing",
-  "src: src/typeck/mod.rs:2776-2778 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
+  "src: src/typeck/mod.rs:2784-2786 Item::Trait(_) => 'TODO: Type check trait methods with bodies'",
   "src: src/parser/mod.rs:1618-1619 trait-method parameter loop, which has no self_param branch",
   "conformance: tests/07_traits_basic.pd vacuous",
 ]
@@ -259,7 +259,7 @@ evidence = [
   "conformance: tests/reject/nonexhaustive_int_match.pd reject",
   "src: src/ast/mod.rs:572 pub enum Pattern — wildcard, binding, enum, literal, or, `@`, tuple, range",
   "src: src/typeck/exhaustiveness.rs:114 is_irrefutable, the question N6-10 asks of a non-enum scrutinee",
-  "src: src/typeck/mod.rs:5316 every other scrutinee type needs an irrefutable arm",
+  "src: src/typeck/mod.rs:5333 every other scrutinee type needs an irrefutable arm",
   "src: src/codegen/mod.rs:4498-4500 the chain ends in an `else` that traps (N6-11)",
 ]
 note = "The eight N6 rows M2 owns are satisfied: literal, range, tuple, or- and `@` patterns, guards, exhaustiveness for every scrutinee type, and the trap. FOUR forms N6 names are still absent -- slice patterns (N6-06, owned by M3, and there is no slice type to pattern yet), non-enum struct patterns, `ref`/`mut` bindings and `..` rest. Field shorthand in a struct-variant pattern and destructuring `let` are absent too. Exhaustiveness holds for EVERY scrutinee type, by the simple rule: some arm must match every value. No interval arithmetic -- ranges covering the whole domain are still refused, and the diagnostic says so."
@@ -337,7 +337,7 @@ description = "Built-in Result<T, E> with Ok/Err."
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "unimplemented"
 evidence = [
-  "src: src/typeck/mod.rs:4976-4976 the type checker refuses `?` outright with CompileError::question_unimplemented",
+  "src: src/typeck/mod.rs:4984-4984 the type checker refuses `?` outright with CompileError::question_unimplemented",
   "cmd: grep -rn 'prelude' src/driver/ --include='*.rs' -> exit 1, 0 lines (stdlib/prelude.pd is never loaded)",
 ]
 note = "Result and Option are ordinary user enums if you declare them."
@@ -347,7 +347,7 @@ description = "`?` for error propagation with early return."
 spec = "../../specification/language-spec.md#n5-statements-and-expressions"
 implementation = "unimplemented"
 evidence = [
-  "src: src/typeck/mod.rs:4976-4976 the type checker refuses `?` by name, before any C exists",
+  "src: src/typeck/mod.rs:4984-4984 the type checker refuses `?` by name, before any C exists",
   "src: src/codegen/mod.rs:6533-6537 the code generator refuses it too, at the arm that used to lower it",
   "conformance: tests/reject/question_mark_operator.pd reject",
 ]
@@ -439,7 +439,7 @@ spec = "PALLADIUM_V1_FEATURES.md#41-verification"
 implementation = "unimplemented"
 milestone = "post-1.0"
 evidence = [
-  "cmd: grep -rn 'Coq\\|Lean\\|Isabelle\\|Proof' src/ --include='*.rs' -> exit 0, 2 lines -- both the marketing tagline \"Turing's Proofs Meet von Neumann's Performance\", at src/main.rs:104 and src/cli.rs:31",
+  "cmd: grep -rn 'Coq\\|Lean\\|Isabelle\\|Proof' src/ --include='*.rs' -> exit 0, 2 lines -- both the marketing tagline \"Turing's Proofs Meet von Neumann's Performance\", at src/main.rs:138 and src/cli.rs:31",
   "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.v' -> exit 0, 0 lines -- no Coq artifact is checked in",
   "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.thy' -> exit 0, 0 lines -- no Isabelle artifact is checked in",
   "cmd: find src stdlib runtime bootstrap tests examples docs scripts benchmarks -name '*.lean' -> exit 0, 0 lines -- no Lean artifact is checked in",
@@ -515,7 +515,7 @@ evidence = [
   "cmd: grep -n 'TODO: Implement' src/codegen/llvm_text_backend.rs -> exit 0, 1 line -- one survives, `TODO: Implement proper pattern matching`",
   "cmd: grep -rn -- '--llvm' scripts/ Makefile -> exit 1, 0 lines -- no gate selects this backend",
 ]
-note = "Refuses unconditionally as of the wholesale gate; the lowering is retained for development and is exercised only through compile_unchecked in that file's tests. Two corrections from executing this row's evidence on 2026-08-22. (1) It claimed zero `TODO: Implement` comments remain; one does. It was written as `grep -c`, which prints a count and therefore always emits exactly one line -- a line-count check over it can never disagree with anything, so it is now `grep -n` and the count IS the measurement. (2) The `--llvm` probe was recorded as `exit 1, 0 lines`; run, it exited 2 with `grep: unrecognized option`, having never searched. It needed `--` to end grep's own option parsing. A command that could not look is not a proof of absence. Note that `--llvm` IS a live CLI flag (src/main.rs:119); what no gate does is select it."
+note = "Refuses unconditionally as of the wholesale gate; the lowering is retained for development and is exercised only through compile_unchecked in that file's tests. Two corrections from executing this row's evidence on 2026-08-22. (1) It claimed zero `TODO: Implement` comments remain; one does. It was written as `grep -c`, which prints a count and therefore always emits exactly one line -- a line-count check over it can never disagree with anything, so it is now `grep -n` and the count IS the measurement. (2) The `--llvm` probe was recorded as `exit 1, 0 lines`; run, it exited 2 with `grep: unrecognized option`, having never searched. It needed `--` to end grep's own option parsing. A command that could not look is not a proof of absence. Note that `--llvm` IS a live CLI flag (src/main.rs:153); what no gate does is select it."
 
 [advanced_features.compilation.optimizer]
 description = "Inlining, const propagation, dead code elimination."
@@ -552,7 +552,15 @@ implementation = "unimplemented"
 milestone = "post-1.0"
 evidence = [
   "src: Cargo.toml:45 the first of three [[bin]] declarations — pdc, pdm, pls",
-  "cmd: grep -rn 'pdfmt' src/ Cargo.toml -> exit 1, 0 lines",
+  # `-l`, not bare `-rn`, and the reason is measured rather than stylistic. The
+  # gate proves an absence claim can READ by re-running the same command with a
+  # match-everything pattern, and that control DUMPS THE WHOLE SCOPE: over `src/`
+  # it was 4,186,140 bytes against a 4,194,304-byte cap — 0.2% of headroom, so
+  # any commit adding ~8KB of source turned this row RED for a reason that has
+  # nothing to do with pdfmt. `-l` prints one line per FILE (1,605 bytes, 73
+  # files), which is the SAME scope and the same absence claim — zero matching
+  # files is zero matching lines — with the fragility removed.
+  "cmd: grep -rln 'pdfmt' src/ Cargo.toml -> exit 1, 0 lines",
 ]
 
 [tooling.developer_tools.lsp_server]
@@ -606,7 +614,7 @@ evidence = [
   "src: stdlib/MANIFEST.tsv:1 the pinned per-file verdict and blocker the gate above recomputes",
   "src: src/resolver/mod.rs:51 the resolver reads PALLADIUM_PATH, so this is not a dead-resolver problem",
   "cmd: grep -rn stdlib .github/ -> exit 1, 0 lines -- stdlib is not packaged by any workflow, and neither Homebrew formula installs it",
-  "src: scripts/conformance.sh:270 the default SCOPES are tests and examples — stdlib/ is never scanned, which is why this was invisible",
+  "src: scripts/conformance.sh:279 the default SCOPES are tests and examples — stdlib/ is never scanned, which is why this was invisible",
 ]
 note = "Because nothing here has ever compiled, no compiler defect can have \"silently miscompiled the standard library\"; the D3 claim to that effect is retracted in language-spec.md A6.6."
 

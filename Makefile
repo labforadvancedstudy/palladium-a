@@ -266,6 +266,14 @@ conformance: build ## Compile+link+run every .pd under tests/ and examples/, aga
 test-conformance-runner: build ## Prove the conformance gate still goes RED when it should
 	@bash scripts/test-conformance-runner.sh
 
+# GI-12. NOT a second runner over the corpus: it owns the registry, the shared
+# parser and the pin grammar, and it INVOKES scripts/conformance.sh so the corpus
+# verdict is folded into its own (spec R2) — registry-green with the corpus RED
+# is RED here. Three-valued: 0 green, 1 red, 2 could not measure.
+.PHONY: check-diagnostic-codes
+check-diagnostic-codes: build ## Registry, shared parser and pin grammar for stable diagnostic codes
+	@bash scripts/check-diagnostic-codes.sh
+
 # M1's exit criterion, as a command.
 #
 # THERE ARE FOUR INVENTORIES IN THIS REPO, AND THIS USED TO READ ONE.
@@ -571,7 +579,7 @@ version-source-gate: ## Require that no source file states this compiler's versi
 # COST, MEASURED THE WAY THOSE TWO ENTRIES INSIST ON — `make gates` back to back without and
 # with this entry: 1m54s -> 1m56s. It builds nothing (no `build` prerequisite; it reads two
 # text files and shells out to `make -n`), so the 2s is its own runtime and not a rebuild.
-gates: conformance test-conformance-runner check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate version-source-gate check-retracted-claims test-thesis-runner test-xfail test-requirements-runner test-honest ## Run every language-level gate
+gates: conformance test-conformance-runner check-diagnostic-codes check-docs gate-receipts test-doc-evidence selfhost stdlib-gate test-gate-probe version-gate test-version-gate version-source-gate check-retracted-claims test-thesis-runner test-xfail test-requirements-runner test-honest ## Run every language-level gate
 	@echo "$(GREEN)✓ all gates green$(NC)"
 
 # `make gates` GREEN IS A STATEMENT ABOUT THIS WORKTREE, AND THAT IS NOT THE TREE

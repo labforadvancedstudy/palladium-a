@@ -174,7 +174,7 @@ emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:182-182
 sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:2090-2091` and
 `src/typeck/mod.rs:1526-1526`, the two later codegen walks off their own sorted locals
 (`src/codegen/mod.rs:2184-2184`, `src/codegen/mod.rs:3153-3153`), and the instantiation keys at
-`src/typeck/mod.rs:6465-6466` and `src/typeck/mod.rs:6527-6528`. Pinned by
+`src/typeck/mod.rs:6482-6483` and `src/typeck/mod.rs:6544-6545`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -793,9 +793,9 @@ enum-owned method is unreachable by its path form. Each row carries a
 8. **Gate integrity** (GI-06, GI-08, GI-09). **ALL THREE CLOSED.** GI-08 was the last, and it was
    the one whose residual this item used to state rather than gloss; that residual is quoted below
    with what closed it, because a closure with no trace of what it closed is not checkable.
-   GI-06: `make gates` (`Makefile:574`) runs `test-honest` (`Makefile:406-411`), so a non-ignored
+   GI-06: `make gates` (`Makefile:582`) runs `test-honest` (`Makefile:414-419`), so a non-ignored
    compiler regression can no longer coexist with a green gate.
-   **`make m2-exit` now exists** (`Makefile:327-386`), and before this it did not: the Exit line
+   **`make m2-exit` now exists** (`Makefile:335-394`), and before this it did not: the Exit line
    below named a target that `grep "^m2-exit:" Makefile` could not find, so M2 had no exit
    criterion at all. That is exactly how v0.3.0 shipped under M1's name while `make m1-exit` was
    RED. It reads **four** inventories — the three debt registers with the owner changed to M2, plus
@@ -1014,7 +1014,7 @@ enum-owned method is unreachable by its path form. Each row carries a
      one-element array. `A4.6` in the specification claimed `println!` and `assert!` were
      implemented; that claim was false when it was written and is corrected.
 
-**Exit**: `make m2-exit` (`Makefile:327-386`) — four inventories. **The condition is not "items
+**Exit**: `make m2-exit` (`Makefile:335-394`) — four inventories. **The condition is not "items
 1–9 land"**, and saying so was a category error this line carried for three rounds: the gate reads
 the MANIFEST, so it goes green when no row owned by M2 is `owed` or `blocked` — all 49 of them —
 and six of the eight still outstanding are named by no item at all. Even then it exits **2
@@ -1409,12 +1409,12 @@ the diagnostic and `grep -qF` searches the whole log. That is requirement **GI-1
 can appear anywhere. Until it lands, a `reject` row proves *the compiler refused this program* and
 *a declared phrase appears in the log* — not that the refusal was the one the row names.
 
-The chain, stated exactly, because condition 3 rests on it: `scripts/conformance.sh:870` runs
-`grep_status F "$fp" "$TMPROOT/diag"`, and `grep_status` (`scripts/conformance.sh:204-211`)
+The chain, stated exactly, because condition 3 rests on it: `scripts/conformance.sh:904` runs
+`grep_status F "$fp" "$TMPROOT/diag"`, and `grep_status` (`scripts/conformance.sh:213-220`)
 mode `F` is `grep -qF`. So the corpus's declared fingerprint is matched as a **literal
-substring of any line of the ANSI-stripped compiler log** (`scripts/conformance.sh:869`) — not
+substring of any line of the ANSI-stripped compiler log** (`scripts/conformance.sh:903`) — not
 an equality, not a regex. A log it cannot read is a third outcome, `HARNESS_ERROR`, kept
-distinct from "did not match" (`scripts/conformance.sh:920-925`). The thesis gate then requires
+distinct from "did not match" (`scripts/conformance.sh:954-959`). The thesis gate then requires
 the corpus's declaration to **equal** the fingerprint its row pins. Equality on the half this
 gate owns, substring on the half `conformance.sh` owns, and both stated rather than assumed —
 a sibling branch was caught doing substring where it meant equality.
@@ -1480,7 +1480,7 @@ self-test case pins that behaviour — it fails when N2-08 lands, forcing the tw
 `tests/conformance-manifest.txt` and nothing else, and no row there is owned by M1. On the
 integrated tree it read three inventories and exited **2**; that change arrived with
 `fix/d3b-tail-if` and is what the closing paragraph of this finding now records. It reads **four**
-today (`Makefile:324-325`, which now names `scripts/m1-exit.sh` rather than inlining the
+today (`Makefile:332-333`, which now names `scripts/m1-exit.sh` rather than inlining the
 aggregation): GI-08 added the requirement manifest, and the reading is still 0. The second owner inventory — the `(owned by M<n>)` tag every `#[ignore]` reason carries and
 `scripts/test-xfail.py:186` parses — had three M1 rows, all red. All three are now closed:
 

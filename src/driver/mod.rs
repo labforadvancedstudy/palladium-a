@@ -2,7 +2,7 @@
 // "The conductor of the legendary orchestra"
 
 use crate::codegen::CodeGenerator;
-use crate::errors::{reporter::ErrorReporter, CompileError, Result};
+use crate::errors::{reporter, reporter::ErrorReporter, CompileError, Result};
 use crate::lexer::Lexer;
 use crate::linker::{self, LinkError, OptLevel};
 use crate::macros::MacroExpander;
@@ -253,9 +253,23 @@ impl Driver {
         Ok(output_path)
     }
 
-    /// Compile a file and return the output path
+    /// Compile a file and return the output path.
+    ///
+    /// EVERY error out of here has already been reported, exactly once, at the
+    /// single choke point (`errors::reporter::emit_primary_header`). Callers must
+    /// not print it again — that duplicate print is what GI-12 removed.
     pub fn compile_file(&self, path: &Path) -> Result<PathBuf> {
-        let source = fs::read_to_string(path).map_err(CompileError::IoError)?;
+        // THE TWO REPORTER-LESS PATHS. Both of these refuse BEFORE a reporter can
+        // exist, so until GI-12 their only diagnostic was `main`'s duplicate
+        // print — and deleting that duplicate without routing them here would
+        // have made an unreadable source file exit nonzero in silence. They have
+        // no source to quote (that is precisely what failed), so they render
+        // through the header-only path rather than the snippet one.
+        let source = fs::read_to_string(path).map_err(|e| {
+            let err = CompileError::IoError(e);
+            reporter::report_without_source(&err.to_diagnostic());
+            err
+        })?;
 
         let filename = path
             .file_name()
@@ -263,8 +277,11 @@ impl Driver {
             .unwrap_or("unknown");
 
         // Create error reporter for better error messages
-        let reporter = ErrorReporter::new(path.to_string_lossy().to_string())
-            .map_err(CompileError::IoError)?;
+        let reporter = ErrorReporter::new(path.to_string_lossy().to_string()).map_err(|e| {
+            let err = CompileError::IoError(e);
+            reporter::report_without_source(&err.to_diagnostic());
+            err
+        })?;
 
         match self.compile_string(&source, filename) {
             Ok(output) => Ok(output),

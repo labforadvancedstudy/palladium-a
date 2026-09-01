@@ -2,7 +2,7 @@
 // "Ensuring legends are logically sound"
 
 use crate::ast::{AssignTarget, UnaryOp, *};
-use crate::errors::{CompileError, Result, Span};
+use crate::errors::{CompileError, DiagnosticCode, Result, Span};
 use std::collections::{HashMap, HashSet};
 
 mod suggestions;
@@ -2103,11 +2103,19 @@ impl TypeChecker {
     /// outside 0..63 are undefined in C, so no answer here could be checked
     /// against one there.
     fn const_eval(&self, expr: &Expr, name: &str) -> Result<ConstScalar> {
+        // PD0002. One closure, one rule: "the initialiser of a top-level
+        // const/static has no value in the target's arithmetic". The fault named
+        // after the colon (a zero divisor, an overflow, a shift outside 0..63) is
+        // the PARAMETER, which is why all six corpus witnesses share this code
+        // and are told apart by the message payload rather than by six codes.
         let refuse = |what: String| -> Result<ConstScalar> {
-            Err(CompileError::Generic(format!(
-                "the initialiser of `{}` has no value: {}",
-                name, what
-            )))
+            Err(
+                CompileError::Generic(format!(
+                    "the initialiser of `{}` has no value: {}",
+                    name, what
+                ))
+                .with_code(DiagnosticCode::ConstInitialiserHasNoValue),
+            )
         };
         match expr {
             Expr::Integer(n) => Ok(ConstScalar::Int(*n)),
@@ -2858,7 +2866,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3148-3150`), and walking an imported
+        // return (`src/typeck/mod.rs:3156-3158`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -5079,6 +5087,14 @@ impl TypeChecker {
                     (f, t) => numeric(f) && numeric(t),
                 };
                 if !legal {
+                    // PD0003. The code is attached HERE, at the site that knows
+                    // which rule is being enforced, because `TypeMismatch` is
+                    // raised from dozens of places enforcing different rules and
+                    // the variant cannot answer for any of them. The four corpus
+                    // witnesses share this one code: `legal`'s middle arm is a
+                    // symmetric or-pattern, so direction is never a branch — it
+                    // exists only in the formatted `found` clause below, which is
+                    // a particular and not identity.
                     return Err(CompileError::TypeMismatch {
                         expected: "a cast among the numeric primitives and `bool`, or between \
                                    `char` and `i64` — `char` crosses only to its code point, \
@@ -5086,7 +5102,8 @@ impl TypeChecker {
                             .to_string(),
                         found: format!("a cast from {} to {}", from, to),
                         span: Some(*span),
-                    });
+                    }
+                    .with_code(DiagnosticCode::CastRelation));
                 }
 
                 // A LITERAL OPERAND IS KNOWN NOW, SO IT IS REFUSED NOW.

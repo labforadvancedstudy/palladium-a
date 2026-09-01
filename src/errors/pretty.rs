@@ -507,6 +507,7 @@ mod tests {
     fn test_format_diagnostic() {
         let diagnostic = Diagnostic {
             level: DiagnosticLevel::Error,
+            code: None,
             message: "Test error message".to_string(),
             span: None,
             notes: vec![],
@@ -528,6 +529,7 @@ mod tests {
     fn test_format_diagnostic_with_color() {
         let diagnostic = Diagnostic {
             level: DiagnosticLevel::Warning,
+            code: None,
             message: "Test warning".to_string(),
             span: None,
             notes: vec![],

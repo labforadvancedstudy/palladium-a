@@ -2,6 +2,8 @@
 // "Where Legends Begin to Compile"
 
 use clap::Parser;
+use palladium::errors::reporter::emit_primary_header;
+use palladium::errors::DiagnosticLevel;
 use palladium::{driver::Driver, linker::OptLevel, package::PackageManager, runtime_paths};
 use std::path::Path;
 use std::process;
@@ -20,10 +22,28 @@ fn main() {
                 process::exit(0);
             }
             Err(e) => {
-                eprintln!("\x1b[1;31merror:\x1b[0m {}", e);
+                emit_primary_header(DiagnosticLevel::Error, None, &e.to_string());
                 process::exit(1);
             }
         }
+    }
+
+    // Before the banner, like `--print-runtime`: a consumer of this list parses
+    // stdout, and the banner is not parseable.
+    //
+    // THE TOMBSTONES ARE PRINTED TOO, and that is the point of listing codes from
+    // the binary at all: the registry cannot be its own witness that a retired
+    // number stayed retired — a commit that re-points a code can edit the
+    // registry row in the same breath, and then the file agrees with itself
+    // about something false. Two independent authorities have to agree.
+    if cli.dump_diagnostic_codes {
+        for code in palladium::errors::DiagnosticCode::ALL {
+            println!("{}\tactive\t{}", code, code.symbolic_name());
+        }
+        for (number, condition) in palladium::errors::DiagnosticCode::TOMBSTONES {
+            println!("PD{:04}\ttombstone\t{}", number, condition);
+        }
+        process::exit(0);
     }
 
     print_banner();
@@ -31,7 +51,11 @@ fn main() {
     let Some(command) = cli.command else {
         // Unreachable in practice: clap's arg_required_else_help covers the
         // no-argument case before we get here.
-        eprintln!("\x1b[1;31merror:\x1b[0m no command given (try: pdc --help)");
+        emit_primary_header(
+            DiagnosticLevel::Error,
+            None,
+            "no command given (try: pdc --help)",
+        );
         process::exit(2);
     };
 
@@ -80,8 +104,18 @@ fn main() {
         Commands::Bootstrap { command } => handle_bootstrap_command(command),
     };
 
+    // THIS IS NOT THE COMPILER'S ERROR PATH ANY MORE. It used to print a SECOND
+    // primary header for every refusal — `CompileError`'s `Display`, whose
+    // wording differs from the reporter's `to_diagnostic()` rendering — so every
+    // reject fixture in the corpus emitted two `error:` lines saying the same
+    // refusal in different words, and 4 manifest rows had come to pin wording
+    // only this line produced. `compile_file`/`run_file` below now leave through
+    // their own already-reported exits; what survives here is the
+    // package-management commands, which have no diagnostic path of their own.
+    // Their header is bare because they carry no code: NO_CODE is a state, not a
+    // failure (GI-12 D1).
     if let Err(e) = result {
-        eprintln!("\x1b[1;31merror:\x1b[0m {}", e);
+        emit_primary_header(DiagnosticLevel::Error, None, &e);
         process::exit(1);
     }
 }
@@ -143,7 +177,13 @@ fn compile_file(
             }
             Ok(())
         }
-        Err(e) => Err(e.to_string()),
+        // ALREADY REPORTED, AT THE CHOKE POINT. Returning the error here would
+        // hand `main` a string it would print as a second primary header, which
+        // is the duplicate GI-12 R1 deletes. Exiting directly is the shape
+        // `report_link`/`report_run` below already use for the same reason: the
+        // diagnostic is out, only the status is left to say. The status is
+        // unchanged (1), which is what the old path produced.
+        Err(_) => process::exit(1),
     }
 }
 
@@ -335,8 +375,9 @@ fn handle_bootstrap_command(command: BootstrapCommands) -> Result<(), String> {
 /// `EXIT_TOOLCHAIN` / `EXIT_GCC_UNEXPLAINED`; the human sentence still goes to
 /// stderr, unchanged in wording from before for the rejection case.
 fn report_link(e: palladium::linker::LinkError) -> ! {
-    // Byte-identical to main's handler: only the status carries the new fact.
-    eprintln!("\x1b[1;31merror:\x1b[0m {}", e);
+    // Through the single choke point, bare: a link failure is gcc's verdict, not
+    // a language rule this compiler enforces, so it has no PD code to carry.
+    emit_primary_header(DiagnosticLevel::Error, None, &e.to_string());
     process::exit(e.exit_code());
 }
 
@@ -354,7 +395,16 @@ fn report_run(o: palladium::driver::RunOutcome) -> ! {
         // the driver's `⚠️` line. Repeating it as a compiler `error:` would say
         // the COMPILATION failed, which it did not — the program did.
         RunOutcome::Child { .. } => {}
-        other => eprintln!("\x1b[1;31merror:\x1b[0m {}", other.into_compile_error()),
+        // A COMPILE refusal has already been reported by the driver, at the
+        // choke point, with the reporter's wording and its source snippet. This
+        // arm used to print it a second time in `Display`'s wording — the same
+        // duplicate `main`'s handler produced, one command along.
+        RunOutcome::Compile(_) => {}
+        other => emit_primary_header(
+            DiagnosticLevel::Error,
+            None,
+            &other.into_compile_error().to_string(),
+        ),
     }
     process::exit(code);
 }

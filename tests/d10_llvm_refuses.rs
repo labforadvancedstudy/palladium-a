@@ -376,8 +376,8 @@ fn the_default_backend_still_compiles_what_llvm_now_refuses() {
 //
 // Everything above drives `Driver::with_llvm()`, which leaves the two hops
 // between a user typing `--llvm` and that call unpinned: clap's parsing
-// (`src/cli.rs:60-62`, `src/cli.rs:78-80`) and the dispatch that turns the parsed
-// flag into `driver.with_llvm()` (`src/main.rs:119-121`, `src/main.rs:154-156`).
+// (`src/cli.rs:74-76`, `src/cli.rs:92-94`) and the dispatch that turns the parsed
+// flag into `driver.with_llvm()` (`src/main.rs:153-155`, `src/main.rs:194-196`).
 // A test that
 // asserts a refusal while calling past the flag is asserting the wrong claim —
 // the claim is about the flag.

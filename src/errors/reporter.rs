@@ -1,9 +1,60 @@
 // Error reporter for Palladium
 // "Making errors helpful, not scary"
 
-use super::{Diagnostic, DiagnosticLevel, Span, Suggestion};
+use super::{Diagnostic, DiagnosticCode, DiagnosticLevel, Span, Suggestion};
 use std::cmp::{max, min};
 use std::fs;
+
+/// THE CHOKE POINT: the one place in this compiler that writes a primary
+/// diagnostic header (GI-12 spec R1).
+///
+/// WHY IT IS A FUNCTION AND NOT A CONVENTION. Cardinality-1 — exactly one coded
+/// primary header per refusal — was previously a rule nobody could check, and it
+/// was FALSE: every reject fixture in the corpus printed two `error:` lines with
+/// different wording, one from `ErrorReporter::report` and one from `main`'s
+/// handler, and the corpus pinned whichever it happened to see. With one writer,
+/// cardinality is a property of the call graph instead of a promise.
+///
+/// CODED-NESS IS DECIDED BY THE CODE, NOT BY THE CALLER. A `Some(code)` renders
+/// `error[PD####]: <message>`; a `None` renders a bare `error: <message>`. There
+/// is no fallback code and no sentinel — an unwired refusal says so by being
+/// bare, and the parser reads a bare header as NO_CODE, never as malformed.
+///
+/// THE ANSI SHAPE IS LOAD-BEARING. The reset sits between the level (with its
+/// bracketed code) and the colon, so a consumer that strips ANSI sees the code at
+/// column 0: `error[PD0003]: ...`. Anything that moved the `[` outside the
+/// coloured run, or indented this line, would take the anchor with it.
+pub fn emit_primary_header(level: DiagnosticLevel, code: Option<DiagnosticCode>, message: &str) {
+    let (level_color, level_text) = match level {
+        DiagnosticLevel::Error => ("31", "error"),
+        DiagnosticLevel::Warning => ("33", "warning"),
+        DiagnosticLevel::Info => ("36", "info"),
+        DiagnosticLevel::Help => ("32", "help"),
+    };
+    let code = match code {
+        Some(c) => format!("[{}]", c),
+        None => String::new(),
+    };
+    eprintln!(
+        "\x1b[1;{}m{}{}\x1b[0m\x1b[1m: {}\x1b[0m",
+        level_color, level_text, code, message
+    );
+}
+
+/// Report a diagnostic that has no source text to quote.
+///
+/// The two paths this exists for are `Driver::compile_file`'s: the source could
+/// not be read, and the reporter itself could not be constructed. Both returned
+/// an error BEFORE a reporter existed, so their only diagnostic used to be the
+/// duplicate print in `main` — and deleting that duplicate without this would
+/// have made an unreadable source file exit nonzero in silence.
+pub fn report_without_source(diagnostic: &Diagnostic) {
+    emit_primary_header(diagnostic.level, diagnostic.code, &diagnostic.message);
+    for note in &diagnostic.notes {
+        eprintln!("\x1b[1;36m  = note:\x1b[0m {}", note);
+    }
+    eprintln!();
+}
 
 pub struct ErrorReporter {
     source_file: String,
@@ -20,18 +71,9 @@ impl ErrorReporter {
     }
 
     pub fn report(&self, diagnostic: &Diagnostic) {
-        // Print header with error level and message
-        let (level_color, level_text) = match diagnostic.level {
-            DiagnosticLevel::Error => ("31", "error"),
-            DiagnosticLevel::Warning => ("33", "warning"),
-            DiagnosticLevel::Info => ("36", "info"),
-            DiagnosticLevel::Help => ("32", "help"),
-        };
-
-        eprintln!(
-            "\x1b[1;{}m{}\x1b[0m\x1b[1m: {}\x1b[0m",
-            level_color, level_text, diagnostic.message
-        );
+        // Through the choke point, not a private copy of it: this used to hold
+        // its own `eprintln!` and was one of two writers of a primary header.
+        emit_primary_header(diagnostic.level, diagnostic.code, &diagnostic.message);
 
         // Show source location if available
         if let Some(span) = diagnostic.span {
@@ -470,6 +512,7 @@ mod tests {
 
         let diagnostic = Diagnostic {
             level: DiagnosticLevel::Error,
+            code: None,
             message: "Missing semicolon".to_string(),
             span: Some(Span::new(26, 27, 2, 14)),
             notes: vec!["Each statement must end with a semicolon".to_string()],
@@ -492,6 +535,7 @@ mod tests {
 
         let diagnostic = Diagnostic {
             level: DiagnosticLevel::Warning,
+            code: None,
             message: "Generic warning".to_string(),
             span: None,
             notes: vec!["This is a note".to_string()],
@@ -539,6 +583,7 @@ mod tests {
         ] {
             let diagnostic = Diagnostic {
                 level,
+                code: None,
                 message: format!("Test {:?} message", level),
                 span: None,
                 notes: vec![],
@@ -613,6 +658,7 @@ mod tests {
         let reporter = ErrorReporter::new(file.path().to_str().unwrap().to_string()).unwrap();
         let diagnostic = Diagnostic {
             level: DiagnosticLevel::Error,
+            code: None,
             message: "the LLVM backend (`--llvm`) is not implemented".to_string(),
             span: None,
             notes: vec!["kept for development".to_string()],

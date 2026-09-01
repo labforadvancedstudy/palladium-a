@@ -42,6 +42,20 @@ pub struct Cli {
     #[arg(long)]
     pub print_runtime: bool,
 
+    /// Print every stable diagnostic code this binary knows, and exit
+    ///
+    /// HIDDEN, AND WHY. This is not a user surface: it exists so that
+    /// `make check-diagnostic-codes` can ask the BINARY what codes it has
+    /// rather than grep the source for them. A grep is gameable in both
+    /// directions — a code named only in a comment reads as emitted, a code
+    /// built by `format!` reads as absent — and the registry's whole claim is
+    /// that it lists what this compiler can actually say.
+    ///
+    /// Machine-readable and banner-free, `PD####\t<status>\t<name>` per line,
+    /// on stdout, like `--print-runtime` above.
+    #[arg(long, hide = true)]
+    pub dump_diagnostic_codes: bool,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }

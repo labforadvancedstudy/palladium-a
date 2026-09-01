@@ -268,7 +268,9 @@ Recorded because a pessimistic manifest costs as much as an optimistic one.
 - **`[String; N]` fields work**, including assigning a run-time-built owned string into a slot —
   which is what makes decoded string values storable at all.
 - **Enums with payloads, `match` on them, and exhaustiveness all work.** `match e { E::A => … }`
-  missing an arm is `Non-exhaustive match expression`. N6-10 says "for EVERY scrutinee type"; for
+  missing an arm is `Non-exhaustive match: missing patterns <the ones missing>` — the particulars
+  moved onto the primary header in GI-12 su1, where the duplicate second `error:` line that used to
+  carry them was deleted. N6-10 says "for EVERY scrutinee type"; for
   the *enum* scrutinee it is already true today, so N6-10's residue is integers and strings, which
   is downstream of N6-02 rather than independent work.
 - **Effect inference already reads this program correctly** with no annotation: it reports
