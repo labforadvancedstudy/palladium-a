@@ -215,7 +215,7 @@ compiles and links. So the annotation burden the design deletes is currently the
 spelling.
 
 **3. Nothing consumes the lifetimes it parses.** `Function.lifetime_params` is populated
-(`src/parser/mod.rs:1295`) and, outside the parser, appears only as `vec![]` in test and LSP
+(`src/parser/mod.rs:1308`) and, outside the parser, appears only as `vec![]` in test and LSP
 fixtures — `grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/parser'` returns
 nothing else. There is no region inference of any kind: `grep -rn 'region\|Region' src/
 --include='*.rs'` returns nothing.

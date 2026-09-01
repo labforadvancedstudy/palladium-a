@@ -698,7 +698,7 @@ Items (`src/parser/mod.rs:937`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`
 [N11](#n11-modules)'s file-based modules exist only as far as `import` reaches.
 
 **implemented — top-level `const` and `static`** (N3-09, N3-10), parsed by
-`src/parser/mod.rs:1910`, registered by `src/typeck/mod.rs:1898` and emitted by
+`src/parser/mod.rs:1923`, registered by `src/typeck/mod.rs:1898` and emitted by
 `src/codegen/mod.rs:3038`. Both take a MANDATORY type and a MANDATORY initialiser:
 
 ```ebnf
@@ -721,7 +721,7 @@ collide with a libc symbol the program never mentions.
 rather than left to the C compiler, whose `initializer element is not constant` names generated
 code. Types: `i32`, `i64`/`int`, `u32`, `u64`, `f32`, `f64`, `bool`. Initialisers: integer and float
 literals, `true`/`false`, and unary and binary operators over them
-(`src/parser/mod.rs:2005`) — so a call, another item's name, a string, an array, a struct literal,
+(`src/parser/mod.rs:2018`) — so a call, another item's name, a string, an array, a struct literal,
 an enum constructor, an `if` or a `match` is a compile error. A `String` item is refused for the
 type and not only for the initialiser: a Palladium `String` is a pointer into a runtime arena, so
 its value needs code that runs, and nothing runs before `main`.
@@ -755,8 +755,8 @@ self_param = [ "&" ] [ "mut" ] "self" ;
 **unimplemented**: default parameter values, pattern parameters, varargs, `where` clauses.
 
 **unimplemented — effect clauses.** `![io]` does not exist in the surface syntax.
-`Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:1305`, corrected from
-v0.2's `src/parser/mod.rs:1289`, which is where the `Function` literal opens). Effects are *inferred* afterwards
+`Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:1318`, corrected from
+v0.2's `src/parser/mod.rs:1302`, which is where the `Function` literal opens). Effects are *inferred* afterwards
 (`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:176`, corrected
 from `src/driver/mod.rs:164-170`); they gate nothing. `crate::effects::` is referenced from exactly one place in
 the compiler, `src/driver/mod.rs:172`.
@@ -793,11 +793,11 @@ and `local_type_shadows_import` decides the rest.*
 
 ### A4.4 Traits
 
-**unimplemented.** Traits parse (`src/parser/mod.rs:1495`, corrected from line 736–960 of the pre-cleanup revision) and then
+**unimplemented.** Traits parse (`src/parser/mod.rs:1508`, corrected from line 736–960 of the pre-cleanup revision) and then
 emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2397-2400`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2772-2773`, corrected
 from `src/typeck/mod.rs:3182-3182`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
-(`src/parser/mod.rs:1618-1619`, corrected from line 863–897 of the pre-cleanup revision).
+(`src/parser/mod.rs:1631-1632`, corrected from line 863–897 of the pre-cleanup revision).
 
 So `trait Display { fn fmt(&self) -> String; }` does not parse, and
 [N10](#n10-traits-and-generics) has no implementation at all.
@@ -820,7 +820,7 @@ re-read; and on 2026-08-25, when `4690ef0` inserted above it).
 `4690ef0` the return type was substituted in code generation alone, so `fn new(..) -> Self` worked
 while `fn area(self)` reached the C compiler as `struct Self self` — a type nothing declares.
 **unimplemented**: associated constants and associated types are rejected — an impl body may
-contain only `fn` (`src/parser/mod.rs:1786-1792`, corrected from line 1030 of the pre-cleanup revision).
+contain only `fn` (`src/parser/mod.rs:1799-1805`, corrected from line 1030 of the pre-cleanup revision).
 **implemented**: methods are called with `.` syntax — see [A6.4](#a64-method-calls).
 `Type::method(receiver, args)` also works, which it did not when this section recommended it.
 
@@ -837,7 +837,7 @@ rendering the tokens back to source text and re-lexing them (`src/macros/expande
 item and invocation position (N3-14).
 
 **No macro parameter had ever been substituted, in either spelling, until 2026-08-26.**
-`token_to_ast_token` (`src/parser/mod.rs:2170`) did not list `Token::Dollar`, so `$x` in a body was
+`token_to_ast_token` (`src/parser/mod.rs:2189`) did not list `Token::Dollar`, so `$x` in a body was
 stored as the identifier `Dollar` followed by `x`, and `substitute_template`
 (`src/macros/expander.rs:372`), which keys on `Token::Dollar`, could never fire. Measured:
 `macro double!(x) { $x * 2 }` failed with "Undefined variable or function: 'Dollar'". Completing
@@ -896,8 +896,8 @@ unrelated reason.
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3853`, corrected from line 2038 of the pre-cleanup revision) |
-| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3842-3849` (corrected from line 2037–2043 of the pre-cleanup revision) |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3892`, corrected from line 2038 of the pre-cleanup revision) |
+| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3881-3888` (corrected from line 2037–2043 of the pre-cleanup revision) |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
@@ -915,7 +915,7 @@ unrelated reason.
 | `<T: Bound>`, `where` | unimplemented | `parse_generic_params` accepts bare names only; the `:` is a parse error |
 
 **partial — generic argument bug**: inside `<…>`, any identifier whose characters are all
-uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:3883-3893`,
+uppercase or `_` is reclassified as a *const generic argument* (`src/parser/mod.rs:3922-3932`,
 corrected from line 2054–2079 of the pre-cleanup revision). So `Foo<T>` yields a const-generic `T`, not a type argument. Only
 mixed-case names like `Vec<Item>` reach the type branch.
 
@@ -950,21 +950,21 @@ and then emit C for a `struct Result` layout nothing defines (see
 ### A6.1 Statements
 
 `let`, assignment, `if`/`else`, `while`, `for … in`, `match`, `return`, `break`, `continue`,
-`unsafe { }`, expression statements (`src/parser/mod.rs:2359`).
+`unsafe { }`, expression statements (`src/parser/mod.rs:2398`).
 
 - implemented: `let [mut] x [: T] = e;` — **the initializer is mandatory**
-  (`src/parser/mod.rs:2497`, corrected from line 1411 of the pre-cleanup revision); the binding must be a plain identifier
+  (`src/parser/mod.rs:2536`, corrected from line 1411 of the pre-cleanup revision); the binding must be a plain identifier
   (no patterns).
 - implemented: assignment targets — identifier, index, field, deref.
 - **implemented: `else if`** (N5-06). After `else` the parser looks for `if` and recurses
-  (`src/parser/mod.rs:2298-2300`), so a chain is nesting and there is no `ElseIf` node. The branch tail
+  (`src/parser/mod.rs:2337-2339`), so a chain is nesting and there is no `ElseIf` node. The branch tail
   travels with it, which is what keeps a tail-position chain returning. *(This bullet read
   "unimplemented — after `else` the parser requires `{`" until `66dab38`.)*
 - **implemented: `loop`** (N5-07), a keyword since `src/lexer/token.rs:250`, parsed at
-  `src/parser/mod.rs:2897` and emitted as C `while (1)` (`src/codegen/mod.rs:4347`). Its `break`
+  `src/parser/mod.rs:2936` and emitted as C `while (1)` (`src/codegen/mod.rs:4347`). Its `break`
   may carry a value. *(It read "not a keyword. Use `while true`" until `f729cda`.)*
 - **implemented: compound assignment** `+= -= *= /= %=` (N5-13), DESUGARED at
-  `src/parser/mod.rs:2404-2406` into `t = t op v` rather than emitted as C's own compound operator —
+  `src/parser/mod.rs:2443-2445` into `t = t op v` rather than emitted as C's own compound operator —
   Palladium's `+` on `String` is a runtime concatenation call, which C's `+=` cannot express. The
   residual that buys: the target is written twice, so it is evaluated twice, and `a[next()] += 1`
   calls `next()` twice.
@@ -1046,7 +1046,7 @@ implemented: literals, identifiers, struct literals, array literals `[a,b,c]` an
 indexing, field access, calls, enum construction, unary `- ! & *`, binary operators.
 
 - **implemented: `if`, `match`, blocks and `loop` are EXPRESSIONS** (N5-03/04/05/07). All four are
-  read at the primary level (`src/parser/mod.rs:4006-4018`) and each reuses the statement parser it
+  read at the primary level (`src/parser/mod.rs:4045-4057`) and each reuses the statement parser it
   already had, reinterpreting the statements-plus-tail it returns as statements-plus-value. C has
   no expression with a block in it, so they lower by HOISTING: a temporary, a statement-form
   computation that assigns it, and a use of the name. GNU statement-expressions would say it in one
@@ -1062,7 +1062,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   `(p.0).1`, because `.0.1` lexes as one float literal (`[0-9]+\.[0-9]+`) and `p.0.10` and `p.0.1`
   both round-trip to 0.1, so the second index cannot be recovered without guessing.
 - **implemented: `as` casts** (N5-15), parsed between multiplication and unary
-  (`src/parser/mod.rs:3693-3694`) so `10 / 4.0 as i64` is `10 / (4.0 as i64)`, and chainable. THE LEGAL
+  (`src/parser/mod.rs:3732-3733`) so `10 / 4.0 as i64` is `10 / (4.0 as i64)`, and chainable. THE LEGAL
   SET IS NARROW BECAUSE THIS DOCUMENT DOES NOT SAY WHAT IT IS: N5 names `as` casts and the grammar
   gives the form, neither says which conversions are meant, so conversions among the numeric
   primitives and `bool` are implemented and every other cast is refused by name. A cast to `bool`
@@ -1080,7 +1080,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
 the right side could not, and `a * -b` did not parse. It now parses both sides through the cast
-level, which is `parse_unary` plus the `as` suffix (`src/parser/mod.rs:3781-3781`). Every other level of
+level, which is `parse_unary` plus the `as` suffix (`src/parser/mod.rs:3820-3820`). Every other level of
 the ladder was already symmetric, which is why this was the only expression that failed.
 [N5](#n5-statements-and-expressions) requires `a * -b`; `ef74eba` delivered it.
 
@@ -1500,7 +1500,7 @@ v0.2 sentence is retracted; the surviving borrow-checker defect is
 **[N9](#n9-references-and-lifetimes) is unimplemented in full.** `ref` is not a keyword; the
 implemented spelling is Rust's `&`/`&mut` **with** `'a` parameter lists — the exact annotation
 burden the definition removes. `fn f<'a>(x: &'a String) -> &'a String { return x; }` compiles.
-`Function.lifetime_params` is parsed (`src/parser/mod.rs:1295`) and read nowhere outside test and
+`Function.lifetime_params` is parsed (`src/parser/mod.rs:1308`) and read nowhere outside test and
 LSP fixtures. There is no region inference: `grep -rn 'region\|Region' src/ --include='*.rs'`
 returns nothing.
 

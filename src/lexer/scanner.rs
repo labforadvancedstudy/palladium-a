@@ -2,7 +2,7 @@
 // "Reading the runes of modern sorcery"
 
 use super::token::{escape_spellings, string_escape_spellings, LexError, Token};
-use crate::errors::{CompileError, Result, Span};
+use crate::errors::{CompileError, DiagnosticCode, Result, Span};
 use logos::{Lexer as LogosLexer, Logos};
 
 pub struct Lexer<'a> {
@@ -61,11 +61,21 @@ impl<'a> Lexer<'a> {
                             )),
                         }
                     }
+                    // THE CODES ARE ATTACHED HERE, AND THEY HAVE NOWHERE ELSE
+                    // TO GO. The lexer refuses with a `LexError`, which is a
+                    // kind and carries no code; this match is where a lexical
+                    // refusal BECOMES a `CompileError`, so it is the first place
+                    // a code can be attached at all. It is also the right place:
+                    // `LexError::UnknownEscape` is raised from the string
+                    // position and the char position, which are one rule, and
+                    // this arm is what both reach.
                     LexError::UnterminatedBlockComment => {
                         CompileError::unterminated_block_comment(here)
+                            .with_code(DiagnosticCode::UnterminatedBlockComment)
                     }
                     LexError::UnknownEscape(c) => {
                         CompileError::unknown_escape(c, &escape_spellings(), here)
+                            .with_code(DiagnosticCode::UnknownEscapeSpelling)
                     }
                     LexError::NulInStringLiteral => {
                         CompileError::nul_in_string_literal(&string_escape_spellings(), here)

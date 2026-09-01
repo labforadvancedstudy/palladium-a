@@ -50,6 +50,85 @@ pub enum DiagnosticCode {
     /// formatted `found` clause, i.e. in the particulars, which are not
     /// identity.
     CastRelation,
+
+    /// PD0008 — a non-integer literal is not representable in the macro token
+    /// stream. One `refuse` closure in `token_to_ast_token`
+    /// (`src/parser/mod.rs`), whose `what` names the KIND that was written:
+    /// `AstToken::Literal` is a `String` carrying no kind, so a string, a float,
+    /// a char and a boolean all come back as text. The kind is the PARAMETER of
+    /// one rule, which is why the three corpus witnesses share this code.
+    ///
+    /// The closure is SHARED with `MultiCharacterOperatorInMacroTokenStream`, so
+    /// the code is passed to it per arm rather than attached inside it — one
+    /// closure is not one rule, and a code that lived in the closure would say
+    /// the two were.
+    NonIntegerLiteralInMacroTokenStream,
+
+    /// PD0020 — a top-level initialiser has to be a constant expression. One
+    /// `refuse` closure in `validate_global_initializer` (`src/parser/mod.rs`);
+    /// the form it saw (a call, a name that reads another item, an array
+    /// literal, an `if`) is the PARAMETER, because the reason is the same for
+    /// every one of them: the item becomes a C file-scope definition and
+    /// nothing runs before `main`.
+    TopLevelInitialiserMustBeConstant,
+
+    /// PD0049 — `macro_rules!` is not this language's macro system: there is ONE
+    /// and no procedural/declarative split (N3-14). Stated in TWO POSITIONS —
+    /// the item position in `parse_item` (`src/parser/mod.rs`) and the
+    /// invocation position in `unknown_macro` (`src/macros/mod.rs`) — and one
+    /// sentence said in two places is one rule, which is why PD0051 was retired
+    /// into this code rather than kept as the invocation spelling.
+    MacroRulesIsNotThisMacroSystem,
+
+    /// PD0066 — a function that declares a return type must produce a value on
+    /// every path. ONE predicate, `returns_on_every_path` in
+    /// `src/parser/mod.rs`: its two refusals differ only in what the author
+    /// wrote (a value in tail position on some paths, or no value anywhere),
+    /// not in the rule, so both carry this code. A non-void C function that
+    /// falls off its end returns the register's contents.
+    ReturnValueOnEveryPath,
+
+    /// PD0067 — macro expansion is a single pass, so an invocation PRODUCED by
+    /// an expansion is never expanded. Refused where the program can be edited,
+    /// in a macro BODY (`register_macro`) and in a macro ARGUMENT
+    /// (`refuse_nested_invocation`), both `src/macros/mod.rs`: the source calls
+    /// the second "the same one-pass fact seen from the other side", which is
+    /// why PD0073 was retired into this code.
+    SinglePassExpansion,
+
+    /// PD0068 — a macro body may substitute only its own parameters.
+    /// `register_macro` (`src/macros/mod.rs`): an unmatched `$name` was left in
+    /// place and re-parsed, so the diagnostic came from the CALL site about a
+    /// character the caller never wrote.
+    MacroBodySubstitutesOwnParameters,
+
+    /// PD0069 — a parameter named in a macro body must be written `$name`,
+    /// because a bare name resolves at the CALL site. Two arms of one match in
+    /// `register_macro` (`src/macros/mod.rs`) — position 0 and everywhere else —
+    /// which the source itself calls "the same defect with a cheaper test", so
+    /// they are one condition and carry one code.
+    MacroParameterNeedsDollar,
+
+    /// PD0074 — a multi-character operator may not appear in a macro body or
+    /// argument, because `AstToken::Punct` holds one `char` and `= =` is not
+    /// `==`. One arm over ten operator tokens in `token_to_ast_token`
+    /// (`src/parser/mod.rs`). It SHARES the `refuse` closure with
+    /// `NonIntegerLiteralInMacroTokenStream` and is a different rule: the
+    /// literal refusals are about a lost KIND, this one about a
+    /// representation that does not exist.
+    MultiCharacterOperatorInMacroTokenStream,
+
+    /// PD0077 — a `\` in a literal must be followed by a spelling the escape
+    /// table names. The lexer raises `LexError`, which carries no code, so the
+    /// code is attached where a lexical refusal BECOMES a `CompileError`
+    /// (`src/lexer/scanner.rs`) — the same place for the string position and the
+    /// char position, which are the one rule.
+    UnknownEscapeSpelling,
+
+    /// PD0078 — a `/*` must be closed. One nesting-aware site in the lexer,
+    /// coded at the `LexError` -> `CompileError` conversion for the reason
+    /// `UnknownEscapeSpelling` is.
+    UnterminatedBlockComment,
 }
 
 impl DiagnosticCode {
@@ -61,6 +140,16 @@ impl DiagnosticCode {
     pub const ALL: &'static [DiagnosticCode] = &[
         DiagnosticCode::ConstInitialiserHasNoValue,
         DiagnosticCode::CastRelation,
+        DiagnosticCode::NonIntegerLiteralInMacroTokenStream,
+        DiagnosticCode::TopLevelInitialiserMustBeConstant,
+        DiagnosticCode::MacroRulesIsNotThisMacroSystem,
+        DiagnosticCode::ReturnValueOnEveryPath,
+        DiagnosticCode::SinglePassExpansion,
+        DiagnosticCode::MacroBodySubstitutesOwnParameters,
+        DiagnosticCode::MacroParameterNeedsDollar,
+        DiagnosticCode::MultiCharacterOperatorInMacroTokenStream,
+        DiagnosticCode::UnknownEscapeSpelling,
+        DiagnosticCode::UnterminatedBlockComment,
     ];
 
     /// The numbers that are RETIRED and must never be allocated again, with the
@@ -90,6 +179,16 @@ impl DiagnosticCode {
         match self {
             DiagnosticCode::ConstInitialiserHasNoValue => 2,
             DiagnosticCode::CastRelation => 3,
+            DiagnosticCode::NonIntegerLiteralInMacroTokenStream => 8,
+            DiagnosticCode::TopLevelInitialiserMustBeConstant => 20,
+            DiagnosticCode::MacroRulesIsNotThisMacroSystem => 49,
+            DiagnosticCode::ReturnValueOnEveryPath => 66,
+            DiagnosticCode::SinglePassExpansion => 67,
+            DiagnosticCode::MacroBodySubstitutesOwnParameters => 68,
+            DiagnosticCode::MacroParameterNeedsDollar => 69,
+            DiagnosticCode::MultiCharacterOperatorInMacroTokenStream => 74,
+            DiagnosticCode::UnknownEscapeSpelling => 77,
+            DiagnosticCode::UnterminatedBlockComment => 78,
         }
     }
 
@@ -99,6 +198,26 @@ impl DiagnosticCode {
         match self {
             DiagnosticCode::ConstInitialiserHasNoValue => "const_initialiser_has_no_value",
             DiagnosticCode::CastRelation => "cast_relation",
+            DiagnosticCode::NonIntegerLiteralInMacroTokenStream => {
+                "non_integer_literal_in_macro_token_stream"
+            }
+            DiagnosticCode::TopLevelInitialiserMustBeConstant => {
+                "top_level_initialiser_must_be_constant"
+            }
+            DiagnosticCode::MacroRulesIsNotThisMacroSystem => {
+                "macro_rules_is_not_this_macro_system"
+            }
+            DiagnosticCode::ReturnValueOnEveryPath => "return_value_on_every_path",
+            DiagnosticCode::SinglePassExpansion => "single_pass_expansion",
+            DiagnosticCode::MacroBodySubstitutesOwnParameters => {
+                "macro_body_substitutes_own_parameters"
+            }
+            DiagnosticCode::MacroParameterNeedsDollar => "macro_parameter_needs_dollar",
+            DiagnosticCode::MultiCharacterOperatorInMacroTokenStream => {
+                "multi_character_operator_in_macro_token_stream"
+            }
+            DiagnosticCode::UnknownEscapeSpelling => "unknown_escape_spelling",
+            DiagnosticCode::UnterminatedBlockComment => "unterminated_block_comment",
         }
     }
 }
@@ -126,7 +245,7 @@ mod tests {
     fn every_code_is_in_all() {
         assert_eq!(
             DiagnosticCode::ALL.len(),
-            2,
+            12,
             "a code was added to the enum without being added to ALL (or this \
              literal was not updated with the new count)"
         );
@@ -166,5 +285,13 @@ mod tests {
             "PD0002"
         );
         assert_eq!(DiagnosticCode::CastRelation.to_string(), "PD0003");
+        assert_eq!(
+            DiagnosticCode::NonIntegerLiteralInMacroTokenStream.to_string(),
+            "PD0008"
+        );
+        assert_eq!(
+            DiagnosticCode::UnterminatedBlockComment.to_string(),
+            "PD0078"
+        );
     }
 }

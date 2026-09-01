@@ -5,7 +5,7 @@ pub mod expander;
 pub mod parser;
 
 use crate::ast::{Expr, Item, MacroDef, Program, Stmt};
-use crate::errors::{CompileError, Result};
+use crate::errors::{CompileError, DiagnosticCode, Result};
 use crate::lexer::{Lexer, Token};
 use expander::{expand_to_expr, expand_to_stmts, match_pattern, substitute_template};
 use parser::PatternElement;
@@ -264,6 +264,10 @@ impl MacroExpander {
                         }
                     };
                     if !macro_def.params.contains(&name) {
+                        // PD0068. The `is_empty()` tail below is the same rule
+                        // with a better sentence for the macro that takes no
+                        // parameters at all, so it is inside this one refusal
+                        // rather than beside it.
                         return Err(CompileError::Generic(format!(
                             "macro `{}` substitutes `${}`, which is not one of its parameters ({})",
                             macro_def.name,
@@ -273,7 +277,8 @@ impl MacroExpander {
                             } else {
                                 macro_def.params.join(", ")
                             }
-                        )));
+                        ))
+                        .with_code(DiagnosticCode::MacroBodySubstitutesOwnParameters));
                     }
                 }
                 // A MACRO BODY THAT INVOKES ANOTHER MACRO. Expansion is a
@@ -296,15 +301,23 @@ impl MacroExpander {
                 // `x` was multiplied instead, with no diagnostic anywhere.
                 Token::Identifier(name)
                     if macro_def.params.contains(name)
-                        && !matches!(template_tokens.get(i.wrapping_sub(1)), Some(Token::Dollar))
+                        && !matches!(
+                            template_tokens.get(i.wrapping_sub(1)),
+                            Some(Token::Dollar)
+                        )
                         && i > 0 =>
                 {
+                    // PD0069. The arm below carries the same code: the comment
+                    // there calls it "the same defect with a cheaper test", and a
+                    // code names the condition rather than the branch that
+                    // detected it. This arm is the one the corpus witnesses.
                     return Err(CompileError::Generic(format!(
                         "macro `{}` writes `{}` in its body, which is the name of a parameter \
                          but is not a substitution: write `${}`. A bare name resolves where the \
                          macro is CALLED, so this silently reads the caller's own `{}`",
                         macro_def.name, name, name, name
-                    )));
+                    ))
+                    .with_code(DiagnosticCode::MacroParameterNeedsDollar));
                 }
                 // The same name at the very start of a body cannot have a `$`
                 // before it, so it is the same defect with a cheaper test.
@@ -313,15 +326,23 @@ impl MacroExpander {
                         "macro `{}` writes `{}` in its body, which is the name of a parameter \
                          but is not a substitution: write `${}`",
                         macro_def.name, name, name
-                    )));
+                    ))
+                    .with_code(DiagnosticCode::MacroParameterNeedsDollar));
                 }
-                Token::Identifier(callee) if matches!(template_tokens.get(i + 1), Some(Token::Not)) => {
+                Token::Identifier(callee)
+                    if matches!(template_tokens.get(i + 1), Some(Token::Not)) =>
+                {
+                    // PD0067, the BODY position; `refuse_nested_invocation`
+                    // below carries the same code for the ARGUMENT position,
+                    // which is the same one-pass fact seen from the other side
+                    // (and which retired PD0073 into this number).
                     return Err(CompileError::Generic(format!(
                         "macro `{}` invokes the macro `{}` in its body, and expansion is a \
                          single pass: an invocation produced by an expansion is never expanded. \
                          Inline it, or call a function",
                         macro_def.name, callee
-                    )));
+                    ))
+                    .with_code(DiagnosticCode::SinglePassExpansion));
                 }
                 _ => {}
             }
@@ -722,11 +743,15 @@ impl Default for MacroExpander {
 /// name is a different macro SYSTEM, and this language has exactly one.
 fn unknown_macro(name: &str) -> CompileError {
     if name == "macro_rules" {
+        // PD0049, the INVOCATION position. The item position (`parse_item`,
+        // src/parser/mod.rs) carries the same code: one sentence said in two
+        // places is one rule, not two.
         return CompileError::Generic(
             "`macro_rules!` is not this language's macro syntax: there is ONE macro system and \
              no procedural/declarative split. Write `macro name!(params) { body }`"
                 .to_string(),
-        );
+        )
+        .with_code(DiagnosticCode::MacroRulesIsNotThisMacroSystem);
     }
     CompileError::Generic(format!("Unknown macro '{}'", name))
 }
@@ -755,7 +780,8 @@ fn refuse_nested_invocation(tokens: &[Token], outer: &str) -> Result<()> {
                      pass: an invocation that an expansion produces is never expanded. Bind it to \
                      a `let` first, or call a function",
                     outer, callee
-                )));
+                ))
+                .with_code(DiagnosticCode::SinglePassExpansion));
             }
         }
     }

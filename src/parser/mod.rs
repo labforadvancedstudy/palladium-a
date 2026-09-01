@@ -2,7 +2,7 @@
 // "Constructing legends from tokens"
 
 use crate::ast::{AssignTarget, Param, UnaryOp, *};
-use crate::errors::{CompileError, Result, Span};
+use crate::errors::{CompileError, DiagnosticCode, Result, Span};
 use crate::lexer::Token;
 
 /// The attributes this compiler implements. **EMPTY, and that is the answer.**
@@ -225,7 +225,7 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///   `src/parser/mod.rs:339-371`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1188-1212`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1193-1217`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -1026,13 +1026,18 @@ impl Parser {
             Token::Identifier(name)
                 if name == "macro_rules" && self.check_at(1, &Token::Not) =>
             {
+                // PD0049, the ITEM position. The invocation position
+                // (`unknown_macro`, src/macros/mod.rs) carries the same code:
+                // one sentence said in two places is one rule, which is what
+                // retired PD0051 into this number at the su0 map review.
                 Err(CompileError::SyntaxError {
                     message: "`macro_rules!` is not a declaration in this language: there is ONE \
                               macro system and no procedural/declarative split. Write \
                               `macro name!(params) { body }`"
                         .to_string(),
                     span: self.current_span(),
-                })
+                }
+                .with_code(DiagnosticCode::MacroRulesIsNotThisMacroSystem))
             }
             _ => {
                 if is_async {
@@ -1239,11 +1244,18 @@ impl Parser {
                 // Nothing correct is lost by refusing: to reach here a program
                 // must already contain a tail expression inside a branch, and
                 // every such program miscompiles today.
+                // PD0066. The SAME code as the refusal below, and deliberately:
+                // `returns_on_every_path` has answered one question, and the two
+                // arms differ in what the author wrote (a value in tail position
+                // on some paths, or no value anywhere), not in the rule. This
+                // arm has no corpus fixture; a code names the condition, not the
+                // witness, so it is coded anyway.
                 return Err(CompileError::tail_value_not_on_every_path(
                     body_tail.keyword(),
                     &missing_path(&body, &body_tail),
                     body_tail.span().unwrap_or(start_span),
-                ));
+                )
+                .with_code(DiagnosticCode::ReturnValueOnEveryPath));
             } else if returns_a_value(return_type.as_ref()) {
                 // NOTHING was written in tail position anywhere, and the body
                 // still has a path to its closing brace: `fn f() -> i64 { }`,
@@ -1277,7 +1289,8 @@ impl Parser {
                     &name,
                     &missing_path_from_body(&body, &body_tail),
                     body_tail.span().unwrap_or(start_span),
-                ));
+                )
+                .with_code(DiagnosticCode::ReturnValueOnEveryPath));
             }
             // Otherwise the function returns `()` — under either spelling — and
             // reaching the closing brace with no value is what it is for.
@@ -2003,6 +2016,11 @@ impl Parser {
     /// The refusal names the form it saw, so the reader learns the rule from
     /// one attempt rather than from this list.
     fn validate_global_initializer(expr: &Expr, noun: &str) -> Result<()> {
+        // PD0020, attached INSIDE the closure, unlike `token_to_ast_token`'s:
+        // here one closure really is one rule. The form it saw — a call, a name
+        // that reads another item, an array literal, an `if` — is the PARAMETER,
+        // because the reason is identical for every one of them, so the two
+        // corpus witnesses share this code and are told apart by the payload.
         let refuse = |form: &str, span: Span| -> Result<()> {
             Err(CompileError::SyntaxError {
                 message: format!(
@@ -2011,7 +2029,8 @@ impl Parser {
                     noun, form
                 ),
                 span: Some(span),
-            })
+            }
+            .with_code(DiagnosticCode::TopLevelInitialiserMustBeConstant))
         };
         match expr {
             Expr::Integer(_) | Expr::Float(_) | Expr::Bool(_) | Expr::Char(_) => Ok(()),
@@ -2170,13 +2189,27 @@ impl Parser {
     fn token_to_ast_token(&self, token: Token) -> Result<crate::ast::Token> {
         use crate::ast::Token as AstToken;
 
-        let refuse = |what: &str, why: &str| -> Result<crate::ast::Token> {
-            Err(CompileError::SyntaxError {
+        // TWO CONDITIONS SHARE THIS CLOSURE, SO THE CODE IS ITS PARAMETER.
+        // PD0008 is the literal-kind rule (a literal is stored as text with no
+        // kind) and PD0074 is the one-`char`-per-`Punct` rule; they print the
+        // same shape of sentence, which is precisely the coincidence a stable
+        // code exists to survive. A `with_code` inside the closure would say the
+        // two arms were one rule because they share a formatter.
+        //
+        // `None` for the `other` arm: it is a third rule, it has no corpus
+        // witness, and D1's honest state for a site nothing has judged is no
+        // code at all — not a fallback.
+        let refuse = |code: Option<DiagnosticCode>, what: &str, why: &str| -> Result<AstToken> {
+            let err = CompileError::SyntaxError {
                 message: format!(
                     "{} may not appear in a macro body or in a macro argument: {}",
                     what, why
                 ),
                 span: self.current_span(),
+            };
+            Err(match code {
+                Some(code) => err.with_code(code),
+                None => err,
             })
         };
 
@@ -2185,6 +2218,7 @@ impl Parser {
             Token::Integer(n) => AstToken::Literal(n.to_string()),
             Token::String(_) => {
                 return refuse(
+                    Some(DiagnosticCode::NonIntegerLiteralInMacroTokenStream),
                     "a string literal",
                     "the token stream stores a literal as text with no kind, so it comes back \
                      re-quoted and re-lexes as two empty strings around a bare identifier",
@@ -2192,6 +2226,7 @@ impl Parser {
             }
             Token::Float(_) => {
                 return refuse(
+                    Some(DiagnosticCode::NonIntegerLiteralInMacroTokenStream),
                     "a float literal",
                     "the token stream stores a literal as text with no kind, so it comes back \
                      as a string and `3.5` expands to the four characters, not the number",
@@ -2199,6 +2234,7 @@ impl Parser {
             }
             Token::Char(_) => {
                 return refuse(
+                    Some(DiagnosticCode::NonIntegerLiteralInMacroTokenStream),
                     "a character literal",
                     "the token stream stores a literal as text with no kind, so it comes back \
                      as a string",
@@ -2206,6 +2242,7 @@ impl Parser {
             }
             Token::True | Token::False => {
                 return refuse(
+                    Some(DiagnosticCode::NonIntegerLiteralInMacroTokenStream),
                     "a boolean literal",
                     "the token stream stores a literal as text with no kind, so `true` comes \
                      back as the string \"true\"",
@@ -2258,6 +2295,7 @@ impl Parser {
             | Token::DoubleColon
             | Token::DotDot => {
                 return refuse(
+                    Some(DiagnosticCode::MultiCharacterOperatorInMacroTokenStream),
                     &format!("the operator {}", token),
                     "a macro body stores one character per punctuation token, so a \
                      two-character operator cannot be written down; put it in a function and \
@@ -2266,6 +2304,7 @@ impl Parser {
             }
             other => {
                 return refuse(
+                    None,
                     &format!("{}", other),
                     "the macro token stream can carry identifiers, integer literals and \
                      single-character punctuation, and nothing else",

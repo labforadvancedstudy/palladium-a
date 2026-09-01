@@ -1,4 +1,4 @@
-//! Stable diagnostic codes, end to end — GI-12 su1's two seed conditions.
+//! Stable diagnostic codes, end to end — GI-12's seeds and the parser family.
 //!
 //! WHAT IS BEING PROVED, AND WHY IT NEEDS THE REAL BINARY
 //!
@@ -37,6 +37,32 @@
 //!   six places inside one closure that states one rule. If the rule is one, the
 //!   fault is a parameter, and the parameter has to be carried by the payload —
 //!   which is exactly what this file measures.
+//!
+//! THE TEN CONDITIONS su2a ADDS, and what each one is here to catch
+//!
+//! su2a wires the parser/macro/lexer family. Four of its conditions have several
+//! witnesses (PD0008, PD0020, PD0049, PD0067) and are checked by exactly the
+//! measurement above: one code, and a fragment that selects its own fixture and
+//! no sibling. Six have one witness each, and their fragments are NOT the map's
+//! — the map asks for no discriminator where there is no sibling to discriminate
+//! from. They are here for a different question: that the code landed on the
+//! refusal the registry names, and not on a neighbouring one that happens to be
+//! raised from the same function.
+//!
+//! Two shapes in this family are worth naming, because they are the two ways a
+//! per-condition code goes wrong and they point in OPPOSITE directions:
+//!
+//!   ONE FORMATTER, TWO RULES. `token_to_ast_token`'s `refuse` closure raises
+//!   both PD0008 (a literal has no kind in the macro token stream) and PD0074
+//!   (a `Punct` is one `char`, so `==` cannot be written down). Attaching a code
+//!   inside that closure — the obvious thing — would say the two were one rule
+//!   because they share a sentence template.
+//!
+//!   TWO SITES, ONE RULE. PD0049 is refused in item position by the parser and
+//!   in invocation position by the expander; PD0067 is refused over a macro BODY
+//!   and over a macro ARGUMENT. Giving either pair two codes would mint a number
+//!   per construction site, which is the thing D1 says a code is not — and it is
+//!   what the su0 review already undid, retiring PD0051 and PD0073.
 //!
 //! WHAT IS NOT CLAIMED. Nothing here says the manifest pins codes: it does not,
 //! and will not until the cutover. These are the vertical proof that it CAN.
@@ -315,6 +341,96 @@ fn check_family(f: &Family) {
     }
 }
 
+/// PD0008. Three witnesses, ONE `refuse` closure that it SHARES with PD0074,
+/// so the code is a parameter of the closure rather than a line inside it.
+const MACRO_LITERAL_KIND: Family = Family {
+    code: "PD0008",
+    rows: &[
+        ("macro_body_bool_literal.pd", "`true`"),
+        ("macro_body_float_literal.pd", "`3.5`"),
+        (
+            "macro_body_string_literal.pd",
+            "a string literal may not appear in a macro body or in a macro argument: the token \
+             stream s",
+        ),
+    ],
+};
+
+/// PD0020. Two witnesses, ONE `refuse` closure — and here the closure really is
+/// the rule, so the code is attached inside it. The form that was written is the
+/// parameter.
+const TOP_LEVEL_INITIALISER: Family = Family {
+    code: "PD0020",
+    rows: &[
+        ("const_initializer_calls.pd", "`main`"),
+        ("const_reads_another_item.pd", "`A`"),
+    ],
+};
+
+/// PD0049. ONE rule said in TWO POSITIONS — the parser's item position and the
+/// expander's invocation position. The lead sentence differs and the rule clause
+/// does not, which is why the fragments are the leads.
+const MACRO_RULES: Family = Family {
+    code: "PD0049",
+    rows: &[
+        ("macro_rules.pd", "is not a declaration in this language"),
+        (
+            "macro_rules_invocation.pd",
+            "is not this language's macro syntax",
+        ),
+    ],
+};
+
+/// PD0067. ONE rule seen from two sides: an invocation produced by an expansion,
+/// written in a macro BODY or passed as a macro ARGUMENT.
+const SINGLE_PASS_EXPANSION: Family = Family {
+    code: "PD0067",
+    rows: &[
+        (
+            "macro_invokes_macro.pd",
+            "in its body, and expansion is a single pass",
+        ),
+        (
+            "macro_argument_invokes_macro.pd",
+            "as an argument, and expansion is a single pass",
+        ),
+    ],
+};
+
+/// The six one-witness conditions of su2a, as (fixture, code, fragment).
+///
+/// THE FRAGMENT IS NOT A PIN HERE and is not the locked map's: a code with one
+/// witness needs no discriminator, and the map records none. It answers the
+/// question a bare `assert_eq!(code, "PD00nn")` cannot — WHICH refusal is
+/// wearing the code. Three of these six live in functions that raise a
+/// neighbouring refusal too (`returns_on_every_path`'s two arms,
+/// `register_macro`'s three, the `LexError` match's four), so a code attached
+/// one arm over would still be the right number on the wrong rule.
+const SU2A_SINGLE_WITNESS: &[(&str, &str, &str)] = &[
+    ("missing_return.pd", "PD0066", "may return without a value"),
+    (
+        "macro_unknown_substitution.pd",
+        "PD0068",
+        "which is not one of its parameters",
+    ),
+    (
+        "macro_bare_parameter.pd",
+        "PD0069",
+        "is not a substitution: write `$x`",
+    ),
+    (
+        "macro_body_two_char_operator.pd",
+        "PD0074",
+        "a macro body stores one character per punctuation token",
+    ),
+    ("unknown_escape.pd", "PD0077", "unknown escape sequence"),
+    (
+        "unterminated_block_comment.pd",
+        "PD0078",
+        "`/*` is never closed",
+    ),
+];
+
 #[test]
 fn the_cast_relation_is_one_code_told_apart_by_its_found_clause() {
     check_family(&CAST);
@@ -323,6 +439,90 @@ fn the_cast_relation_is_one_code_told_apart_by_its_found_clause() {
 #[test]
 fn the_const_initialiser_rule_is_one_code_told_apart_by_its_fault() {
     check_family(&CONST_INIT);
+}
+
+#[test]
+fn the_macro_literal_kinds_are_one_code_told_apart_by_the_kind_they_name() {
+    check_family(&MACRO_LITERAL_KIND);
+}
+
+#[test]
+fn the_top_level_initialiser_rule_is_one_code_told_apart_by_the_form_it_saw() {
+    check_family(&TOP_LEVEL_INITIALISER);
+}
+
+#[test]
+fn macro_rules_is_one_code_in_both_the_item_and_the_invocation_position() {
+    check_family(&MACRO_RULES);
+}
+
+#[test]
+fn single_pass_expansion_is_one_code_in_both_the_body_and_the_argument_position() {
+    check_family(&SINGLE_PASS_EXPANSION);
+}
+
+/// The six one-witness conditions, each on its own refusal.
+///
+/// One test rather than six because the assertion is identical and the failure
+/// message names the fixture; splitting it would buy parallelism over six
+/// compiles and cost the reader the list.
+#[test]
+fn each_one_witness_condition_of_su2a_is_on_the_refusal_the_registry_names() {
+    for (fixture, want_code, fragment) in SU2A_SINGLE_WITNESS {
+        let (r, _dir) = compile_fixture(fixture);
+        assert_eq!(
+            r.code,
+            Some(1),
+            "{} is a reject fixture and must exit 1; it exited {:?}\n{}",
+            fixture,
+            r.code,
+            r.stderr
+        );
+        let (code, payload) = r.sole_coded_header(fixture);
+        assert_eq!(
+            code, *want_code,
+            "{} carries {} — the site was wired to the wrong condition",
+            fixture, code
+        );
+        assert!(
+            payload.contains(fragment),
+            "{} carries {} but not on the refusal that condition names.\n  want fragment: {}\n  got payload:   {}",
+            fixture,
+            code,
+            fragment,
+            payload
+        );
+    }
+}
+
+/// ONE FORMATTER IS NOT ONE RULE.
+///
+/// `token_to_ast_token` has a single `refuse` closure and two conditions run
+/// through it, so the cheap wiring — `with_code` inside the closure — is a
+/// mutant this file has to exclude by measurement rather than by comment. Under
+/// it both fixtures below would carry the same code and every other assertion in
+/// this file would still pass, because each family only ever compares a code
+/// against its own siblings.
+///
+/// The third arm of that closure (`other`, the tokens the macro stream carries
+/// no representation for at all) is left UNCODED on purpose: it is a third rule
+/// with no corpus witness, and D1's honest state for an unjudged site is no
+/// code.
+#[test]
+fn two_conditions_sharing_one_refuse_closure_do_not_collapse_to_one_code() {
+    let (literal, _d1) = compile_fixture("macro_body_string_literal.pd");
+    let (operator, _d2) = compile_fixture("macro_body_two_char_operator.pd");
+
+    let (literal_code, _) = literal.sole_coded_header("macro_body_string_literal.pd");
+    let (operator_code, _) = operator.sole_coded_header("macro_body_two_char_operator.pd");
+
+    assert_eq!(literal_code, "PD0008");
+    assert_eq!(operator_code, "PD0074");
+    assert_ne!(
+        literal_code, operator_code,
+        "the lost-kind rule and the one-`char`-`Punct` rule were given one code — \
+         the code was attached inside the `refuse` closure they share"
+    );
 }
 
 /// The acceptance side of both seeds, run to a value.
