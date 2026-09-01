@@ -63,6 +63,12 @@ for var in CONFORMANCE_BLESS CONFORMANCE_MANIFEST CONFORMANCE_FORBID_OWNER PDC_O
 done
 
 [ -x "$PDC" ]      || { echo "error: $PDC not built. Run: cargo build --release" >&2; exit 2; }
+# Resolved ONCE, and absolute: the witness compiles run from a scratch directory,
+# so a repo-relative spelling would have to be rebuilt against `$OLDPWD` at every
+# call site. One variable also gives the mutants below a seam — a stub compiler
+# can be substituted for exactly one run without touching anything else.
+PDC_ABS="$(cd "$(dirname "$PDC")" && pwd)/$(basename "$PDC")"
+ROOT="$PWD"
 [ -r "$REGISTRY" ] || { echo "error: registry $REGISTRY not readable" >&2; exit 2; }
 [ -r "$MANIFEST" ] || { echo "error: manifest $MANIFEST not readable" >&2; exit 2; }
 [ -r scripts/lib/diag-parse.sh ] || { echo "error: shared parser missing" >&2; exit 2; }
@@ -72,11 +78,30 @@ done
 TMPROOT=$(mktemp -d) || exit 2
 trap 'rm -rf "$TMPROOT"' EXIT INT TERM
 
-fails=0
-unrun=0
+fails=0        # MEASURED defects. A statement about the codes.
+abstained=0    # measurements that COULD NOT BE MADE. Not a defect and not a pass.
+unrun=0        # controls this repository cannot host. Named, counted, never silent.
 ok()   { printf '  %sok%s   %s\n' "$GREEN" "$NC" "$1"; }
 bad()  { printf '  %sRED%s  %s\n' "$RED" "$NC" "$1"; fails=$((fails+1)); }
+absta(){ printf '  %sNO VERDICT%s  %s\n' "$YELLOW" "$NC" "$1"; abstained=$((abstained+1)); }
 note() { printf '  %s--%s   %s\n' "$YELLOW" "$NC" "$1"; }
+
+# THE AGGREGATION RULE, WRITTEN DOWN BECAUSE TWO NON-ZERO STATES CAN COEXIST.
+# A run can hold both a measured defect and a measurement that failed, and the
+# gate has one exit code to say it with. MEASURED RED WINS: 1 beats 2. If some
+# check found a real defect, that is the most useful true thing the gate knows,
+# and reporting `could not measure` instead would bury it behind whichever
+# unrelated capture happened to be unreadable. 2 is reserved for the case where
+# NOTHING was found wrong and something could not be looked at — the only case in
+# which "green" would be a claim the run did not earn.
+#
+#   $1 = measured failures, $2 = abstentions -> 0 | 1 | 2 on stdout.
+#   A pure function, so the priority is a checked case below and not a comment.
+final_exit_code() {
+  if [ "$1" -gt 0 ]; then printf '1\n'
+  elif [ "$2" -gt 0 ]; then printf '2\n'
+  else printf '0\n'; fi
+}
 
 # ---------------------------------------------------------------------------
 # The checks, as FUNCTIONS OVER (registry, manifest), so the mutants below can
@@ -291,43 +316,66 @@ fi
 # language rule was not enforced and this is not a witness to it. `>= 128` is a
 # death by signal. `0` is acceptance.
 #
-# $1 = registry -> 0 clean / 1 complained; complaints on stdout, one per line.
+# THREE-VALUED, LIKE THE CORPUS FOLD, AND FOR THE SAME REASON. The branches below
+# split into two kinds and only one of them is a finding about diagnostic codes:
+#
+#   MEASURED (RED)  the witness was ACCEPTED, or exited with a backend verdict, or
+#                   refused with the wrong code / no code / two coded headers.
+#                   Each is an answer: the registry's claim about this code is false.
+#   ABSTENTION      pdc was killed by a signal, exited a status with no defined
+#                   meaning, or its stderr capture could not be read. NOTHING was
+#                   learned about the code. Spending these as failures is the exact
+#                   defect this file fixed one section down in the corpus fold, and
+#                   it survived here: three branches printed "no verdict ... was
+#                   reached" and then incremented the failure count.
+#
+# Every line is tagged so the caller can route it without re-deciding:
+#   `OK <text>` passed, `RED <text>` measured defect, `NOVERDICT <text>` abstention.
+#
+# $1 = registry -> 0 all clean, 1 a measured defect, 2 an abstention (and no
+# measured defect). Tagged lines on stdout, one per line.
 check_first_witness_emission() {
-  local reg=$1 n=0 code name status cond just wit commit rc state
-  mkdir -p "$TMPROOT/run" || return 1
+  local reg=$1 n=0 v=0 code name status cond just wit commit rc state
+  if ! mkdir -p "$TMPROOT/run"; then
+    echo "NOVERDICT could not create a working directory to compile the witnesses in"
+    return 2
+  fi
   while IFS=$'\t' read -r code name status cond just wit commit; do
     [ "${status:-}" = active ] || continue
     [ -f "$wit" ] || continue
 
-    ( cd "$TMPROOT/run" && "$OLDPWD/$PDC" compile "$OLDPWD/$wit" -o w >/dev/null 2>"$TMPROOT/wit_stderr" )
+    ( cd "$TMPROOT/run" && "$PDC_ABS" compile "$ROOT/$wit" -o w >/dev/null 2>"$TMPROOT/wit_stderr" )
     rc=$?
     case "$rc" in
-      0)   echo "$code: $wit was ACCEPTED (exit 0) — a refusal witness that does not refuse witnesses nothing"; n=$((n+1)); continue ;;
+      0)   echo "RED $code: $wit was ACCEPTED (exit 0) — a refusal witness that does not refuse witnesses nothing"; n=$((n+1)); continue ;;
       1)   ;;
-      3|4|5|6) echo "$code: $wit exited $rc, a backend/toolchain verdict — the front end accepted it, so it does not witness a language rule"; n=$((n+1)); continue ;;
+      3|4|5|6) echo "RED $code: $wit exited $rc, a backend/toolchain verdict — the front end accepted it, so it does not witness a language rule"; n=$((n+1)); continue ;;
       *)   if [ "$rc" -ge 128 ]; then
-             echo "$code: $wit killed by signal $((rc-128)) — no verdict about $code was reached"
+             echo "NOVERDICT $code: $wit killed by signal $((rc-128)) — no verdict about $code was reached"
            else
-             echo "$code: $wit exited $rc, which is not a front-end refusal (1) nor a structured backend verdict (3/4/5/6)"
+             echo "NOVERDICT $code: $wit exited $rc, which is neither a front-end refusal (1) nor a structured backend verdict (3/4/5/6) — this status has no defined meaning, so it says nothing about $code"
            fi
-           n=$((n+1)); continue ;;
+           v=$((v+1)); continue ;;
     esac
 
     if ! state=$(pd_diag_parse "$TMPROOT/wit_stderr"); then
-      echo "$code: could not read the stderr capture of $wit"; n=$((n+1)); continue
+      echo "NOVERDICT $code: could not read the stderr capture of $wit — the refusal may or may not have carried its code"
+      v=$((v+1)); continue
     fi
     case "$(pd_diag_state "$state")" in
       CODED)
         if [ "$(pd_diag_code "$state")" = "$code" ]; then
           echo "OK $code emitted by $wit (refused, exit 1)"
         else
-          echo "$code: $wit emitted $(pd_diag_code "$state") instead"; n=$((n+1))
+          echo "RED $code: $wit emitted $(pd_diag_code "$state") instead"; n=$((n+1))
         fi ;;
-      NO_CODE)   echo "$code: $wit refused with no code at all"; n=$((n+1)) ;;
-      MALFORMED) echo "$code: $wit printed $(pd_diag_code "$state") coded primary headers — cardinality-1 is broken"; n=$((n+1)) ;;
+      NO_CODE)   echo "RED $code: $wit refused with no code at all"; n=$((n+1)) ;;
+      MALFORMED) echo "RED $code: $wit printed $(pd_diag_code "$state") coded primary headers — cardinality-1 is broken"; n=$((n+1)) ;;
     esac
   done < <(registry_rows "$reg")
-  [ "$n" -eq 0 ]
+  [ "$n" -eq 0 ] || return 1
+  [ "$v" -eq 0 ] || return 2
+  return 0
 }
 
 echo
@@ -335,7 +383,12 @@ echo "first-witness emission (real compiles):"
 out=$(check_first_witness_emission "$REGISTRY")
 while IFS= read -r l; do
   [ -n "$l" ] || continue
-  case "$l" in OK\ *) ok "${l#OK }" ;; *) bad "witness: $l" ;; esac
+  case "$l" in
+    OK\ *)        ok "${l#OK }" ;;
+    NOVERDICT\ *) absta "witness: ${l#NOVERDICT }" ;;
+    RED\ *)       bad "witness: ${l#RED }" ;;
+    *)            bad "witness: $l" ;;
+  esac
 done <<<"$out"
 
 # ---------------------------------------------------------------------------
@@ -555,6 +608,98 @@ else
   fi
 fi
 
+# M18/M19 — THE WITNESS EXECUTION PATH'S OWN THREE-VALUED CONTRACT.
+#
+# M17 below interrogates the CORPUS fold and would have found neither of these:
+# they live in `check_first_witness_emission`, which had the same collapse and
+# kept it after the fold was fixed. A gate that spends an abstention as a failure
+# reports a defect it did not find, and the next person to see this red spends a
+# day looking for a broken code that is not broken.
+witness_expect() {           # name, expected line tag, expected substring
+  local name=$1 tag=$2 want=$3 out=$4 rc=$5
+  if ! printf '%s' "$out" | grep -q "^$tag .*$want"; then
+    bad "$name: expected a '$tag' line matching '$want', got: ${out:-<nothing>}"; return
+  fi
+  # The RETURN CODE is half the contract: a caller routes on it, and a function
+  # that printed NOVERDICT and returned 1 would still be spent as a failure.
+  local wantrc=1; [ "$tag" = NOVERDICT ] && wantrc=2
+  if [ "$rc" != "$wantrc" ]; then
+    bad "$name: line was tagged $tag but the function returned $rc, not $wantrc"; return
+  fi
+  ok "$name"
+}
+
+# M18 — a witness compiler KILLED BY A SIGNAL. A stub that kills itself with
+# SIGKILL is the smallest faithful reproduction: pdc dies, the capture is short
+# and would parse as NO_CODE, and nothing whatever was learned about the code.
+cat >"$M/pdc-signal" <<'STUB'
+#!/bin/sh
+kill -9 $$
+STUB
+chmod +x "$M/pdc-signal"
+out=$( PDC_ABS="$M/pdc-signal"; check_first_witness_emission "$REGISTRY" ); rc=$?
+witness_expect "M18 a witness killed by a signal is an abstention, not a failure" \
+  NOVERDICT "killed by signal 9" "$out" "$rc"
+
+# M18b — a status with NO DEFINED MEANING. Not 0, not 1, not 3/4/5/6: the gate
+# cannot say whether the rule was enforced, so it must not say either.
+cat >"$M/pdc-weird" <<'STUB'
+#!/bin/sh
+exit 42
+STUB
+chmod +x "$M/pdc-weird"
+out=$( PDC_ABS="$M/pdc-weird"; check_first_witness_emission "$REGISTRY" ); rc=$?
+witness_expect "M18b an undefined exit status is an abstention, not a failure" \
+  NOVERDICT "exited 42" "$out" "$rc"
+
+# M18c — THE PAIRED CONTROL, or M18/M18b could be passing because the stub seam
+# turns everything into an abstention. A stub that REFUSES like the front end and
+# prints the wrong code must still be a measured RED.
+cat >"$M/pdc-wrongcode" <<'STUB'
+#!/bin/sh
+echo "error[PD0009]: a refusal wearing the wrong code" >&2
+exit 1
+STUB
+chmod +x "$M/pdc-wrongcode"
+out=$( PDC_ABS="$M/pdc-wrongcode"; check_first_witness_emission "$REGISTRY" ); rc=$?
+witness_expect "M18c control: a refusal carrying the wrong code is still a measured RED" \
+  RED "emitted PD0009 instead" "$out" "$rc"
+
+# M19 — THE STDERR CAPTURE COULD NOT BE READ. Reproduced through the real path by
+# making the capture path a DIRECTORY: the redirect fails, and the parser is then
+# handed something it cannot read. `pd_diag_parse` answers 2 for this and always
+# has; what was wrong was the caller spending that 2 as a defect.
+rm -f "$TMPROOT/wit_stderr"; mkdir -p "$TMPROOT/wit_stderr"
+if pd_diag_parse "$TMPROOT/wit_stderr" >/dev/null 2>&1; then
+  bad "M19: the parser read a directory as a capture, so this mutant plants nothing"
+fi
+out=$(check_first_witness_emission "$REGISTRY"); rc=$?
+witness_expect "M19 an unreadable stderr capture is an abstention, not a failure" \
+  NOVERDICT "could not read the stderr capture" "$out" "$rc"
+rmdir "$TMPROOT/wit_stderr" 2>/dev/null
+
+# M19b — meta-control: with the capture readable again, the live registry is
+# green through the same function. Without this, M19 could be passing because the
+# function has been left broken.
+out=$(check_first_witness_emission "$REGISTRY"); rc=$?
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -q '^RED \|^NOVERDICT '; then
+  ok "M19b meta-control: the unmutated witness set passes the same function"
+else
+  bad "M19b meta-control: the unmutated witness set failed (rc=$rc) — M18/M19 are uninformative: $out"
+fi
+
+# M20 — THE AGGREGATION PRIORITY, as a checked case rather than a comment. A run
+# holding both a measured defect and an abstention has one exit code to report
+# with, and burying the defect behind the abstention is the failure mode.
+exit_case() {                # name, fails, abstentions, expected
+  local got; got=$(final_exit_code "$2" "$3")
+  if [ "$got" = "$4" ]; then ok "$1"; else bad "$1: said $got, expected $4"; fi
+}
+exit_case "M20a nothing wrong and nothing unmeasurable is 0" 0 0 0
+exit_case "M20b a measured defect alone is 1"                2 0 1
+exit_case "M20c an abstention alone is 2, never 0"           0 3 2
+exit_case "M20d a defect AND an abstention is 1 — measured RED outranks NO VERDICT" 1 1 1
+
 # M17 — THE THREE-VALUED FOLD, over statuses this run did not produce. The
 # decision is a pure function precisely so it can be interrogated here; the live
 # call below feeds it the real corpus status.
@@ -608,9 +753,15 @@ esac
 
 echo
 [ "$unrun" -eq 0 ] || printf '%s%d control(s) NOT RUN, named above%s\n' "$YELLOW" "$unrun" "$NC"
-if [ "$fails" -eq 0 ]; then
-  printf '%s✓ diagnostic codes: every check green%s\n' "$GREEN" "$NC"
-  exit 0
-fi
-printf '%s✗ diagnostic codes: %d check(s) RED%s\n' "$RED" "$fails" "$NC"
-exit 1
+case "$(final_exit_code "$fails" "$abstained")" in
+  0) printf '%s✓ diagnostic codes: every check green%s\n' "$GREEN" "$NC"
+     exit 0 ;;
+  1) printf '%s✗ diagnostic codes: %d check(s) RED%s' "$RED" "$fails" "$NC"
+     [ "$abstained" -eq 0 ] \
+       && printf '\n' \
+       || printf '%s (and %d abstention(s), reported but outranked)%s\n' "$YELLOW" "$abstained" "$NC"
+     exit 1 ;;
+  2) printf '%s? diagnostic codes: nothing was found wrong, and %d check(s) could not be\n' "$YELLOW" "$abstained"
+     printf '  made. This is not a pass — the gate has not been shown to hold.%s\n' "$NC"
+     exit 2 ;;
+esac

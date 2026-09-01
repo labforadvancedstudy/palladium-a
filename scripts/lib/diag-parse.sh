@@ -47,7 +47,13 @@ pd_diag_strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 # Exit 0 = parsed, 2 = could not read the capture.
 pd_diag_parse() {
   local capture=$1 stripped n line
-  [ -r "$capture" ] || return 2
+  # `-f` AND `-r`, and the `-f` is the one that was missing. `-r` is true of a
+  # DIRECTORY, and redirecting stdin from one does not fail the enclosing command
+  # substitution on this platform — measured: the shell prints `Is a directory`,
+  # `sed` produces nothing, the assignment succeeds, and the capture parses as
+  # zero coded headers. That is NO_CODE, a verdict, reported for a stream that was
+  # never read. A capture is a regular file or it is not a capture.
+  [ -f "$capture" ] && [ -r "$capture" ] || return 2
   stripped=$(pd_diag_strip_ansi <"$capture") || return 2
 
   # grep's three outcomes matter here too: 0 matched, 1 no match, >1 could not
