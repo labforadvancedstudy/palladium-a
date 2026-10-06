@@ -286,14 +286,14 @@ src/ownership/borrow_checker.rs	982-989	docs/contributing/claude-md-coverage.md	
 src/ownership/borrow_checker.rs	988-988	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
 src/ownership/borrow_checker.rs	988-988	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
 src/ownership/borrow_checker.rs	988-988	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/mod.rs	101-126	docs/reference/features/feature-index.toml	087766658e2c	constraints: Vec<LifetimeConstraint>, /// Places *declared* by each open scop ... ] pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime,
-src/ownership/mod.rs	141-178	docs/specification/bootstrap-subset.md	670019bc9327	pub fn exit_scope(&mut self) { // End every borrow this scope (or anything ne ...  } None => { self.ownership.remove(&place); } } } } self.current_scope -= 1; }
-src/ownership/mod.rs	147-148	docs/reference/features/feature-index.toml	6bb90e116f0c	let closing = self.current_scope; self.release_borrows(|borrow| borrow.scope >= closing);
-src/ownership/mod.rs	148-148	docs/reference/features/core-language/implicit-lifetimes.md	c79f31f371ca	self.release_borrows(|borrow| borrow.scope >= closing);
-src/ownership/mod.rs	205-207	docs/reference/features/feature-index.toml	c9585753caf3	pub fn end_borrows(&mut self, lifetime: &Lifetime) { self.release_borrows(|borrow| &borrow.lifetime == lifetime); }
+src/ownership/mod.rs	101-130	docs/reference/features/feature-index.toml	bcc64127c8d1	constraints: Vec<LifetimeConstraint>, /// Places *declared* by each open scop ... ] pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime,
+src/ownership/mod.rs	165-206	docs/specification/bootstrap-subset.md	a93e1b0f2eea	pub fn exit_scope(&mut self) { // End every borrow this scope (or anything ne ... p.extend(states); self.borrows.extend(borrows); } } self.current_scope -= 1; }
+src/ownership/mod.rs	171-172	docs/reference/features/feature-index.toml	6bb90e116f0c	let closing = self.current_scope; self.release_borrows(|borrow| borrow.scope >= closing);
+src/ownership/mod.rs	172-172	docs/reference/features/core-language/implicit-lifetimes.md	c79f31f371ca	self.release_borrows(|borrow| borrow.scope >= closing);
 src/ownership/mod.rs	25-33	docs/reference/features/feature-index.toml	75384ea2397d	/// Lifetime representation #[derive(Debug, Clone, PartialEq, Eq, Hash)] pub  ...  lifetime ('a, 'b, etc.) Named(String), /// Anonymous lifetime Anonymous(u32),
+src/ownership/mod.rs	261-263	docs/reference/features/feature-index.toml	c9585753caf3	pub fn end_borrows(&mut self, lifetime: &Lifetime) { self.release_borrows(|borrow| &borrow.lifetime == lifetime); }
 src/ownership/mod.rs	27-27	docs/reference/features/core-language/implicit-lifetimes.md	e06a29f1a329	pub enum Lifetime {
-src/ownership/mod.rs	450-454	docs/reference/features/feature-index.toml	5d7e60bc0988	/// Add a lifetime constraint pub fn add_constraint(&mut self, longer: Lifeti ...  Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
+src/ownership/mod.rs	575-579	docs/reference/features/feature-index.toml	5d7e60bc0988	/// Add a lifetime constraint pub fn add_constraint(&mut self, longer: Lifeti ...  Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
 src/ownership/mod.rs	71-71	docs/reference/features/core-language/implicit-lifetimes.md	58cffd430bf7	pub scope: u32,
 src/ownership/mod.rs	95-95	docs/reference/features/core-language/implicit-lifetimes.md	a067fdd308d7	current_scope: u32,
 src/package/lockfile.rs	341-341	docs/reference/features/feature-index.toml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),

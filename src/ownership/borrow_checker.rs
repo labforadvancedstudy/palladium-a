@@ -777,12 +777,12 @@ impl BorrowChecker {
                     }
                 };
 
-                // Check if assignment is allowed
-                if let Some(from_place) = expr_to_place(value) {
-                    if !self.is_expr_copy(value) {
-                        // Move ownership
+                // Every assignment gives its target a new value; a non-Copy place is also moved.
+                match expr_to_place(value) {
+                    Some(from_place) if !self.is_expr_copy(value) => {
                         self.context.move_value(from_place, target_place, *span)?;
                     }
+                    _ => self.context.reinitialize(target_place),
                 }
             }
 

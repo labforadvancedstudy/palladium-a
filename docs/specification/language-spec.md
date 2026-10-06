@@ -1741,8 +1741,9 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-xfail-six`
 (2026-08-31):
 
-**verified 85 · untranscribed 0 · vacuous 6 · xfail 6 · reject 122 · skip 2 · failures 0**, over 221
-fixtures. (The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
+**verified 86 · untranscribed 0 · vacuous 6 · xfail 6 · reject 122 · skip 2 · failures 0**, over 222
+fixtures. (`fix/projection-move-scope` added one `run` fixture, `tests/regression/projection_move_scope.pd`:
+a move out of a field that used to outlive its function, measured 2026-10-06. The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
 fixture in which a method taking a reference receiver links at all, and four `reject`s for the
 writes through a receiver the type checker refuses — through `&self`, through a by-value
 `self`, `self` as an assignment target and `*self` as a place. Its review round added

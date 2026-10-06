@@ -237,7 +237,7 @@ The counter is a plain `u32` depth, and it is deliberately not routed through `L
 `Lifetime::Scope` is a declared variant that nothing ever constructs, so while `exit_scope` was
 written to release borrows by comparing against it, it released none and `borrows` accumulated for
 the whole compilation. Ending a borrow at its scope is now decided by the recorded depth
-(`src/ownership/mod.rs:148`) rather than by a lifetime value — which is the point of this
+(`src/ownership/mod.rs:172`) rather than by a lifetime value — which is the point of this
 document restated from the other side: the pass has scopes, and it has never had regions.
 
 *A previous version of this paragraph asserted a live defect here — that a call argument is
