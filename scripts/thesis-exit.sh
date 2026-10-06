@@ -22,11 +22,20 @@
 #
 # Conditions 2 and 3 are delegated to scripts/conformance.sh, which already
 # compiles, links, runs, diffs stdout against a recorded transcript, checks the
-# declared failure stage, matches the declared diagnostic fingerprint, reports
-# REJECT_ACCEPTED when a negative test is accepted, and reports MISSING when a
-# declared fixture is not on disk. The first version of this gate re-implemented
-# none of that and checked the manifest's TEXT instead, so a reject twin the
-# compiler happily accepted reported green.
+# declared failure stage, reports REJECT_ACCEPTED when a negative test is
+# accepted, and reports MISSING when a declared fixture is not on disk. It judges
+# a refusal by the row's CLASS, and since GI-12 the two kinds never share a
+# comparator. A `reject` or `skip` row pins a stable diagnostic code,
+# `code=PD####[;msg~<fragment>]`, held against the one coded primary header in
+# pdc's stderr, with the fragment looked for in that header's payload only — so
+# a refusal under another rule is WRONG_CODE (NO_CODE if it carries none), and
+# the right code with the fragment only in the echoed source is MSG_MISMATCH.
+# An `xfail` row is a debt record and keeps its declared phrase, matched as a
+# substring of the whole log. thesis_exit.py reads that dispatch out of
+# conformance.sh before it evaluates any row, and a declared `code` model the
+# dispatch does not implement is a harness error. The first version of this gate
+# re-implemented none of that and checked the manifest's TEXT instead, so a
+# reject twin the compiler happily accepted reported green.
 #
 # Usage:
 #   scripts/thesis-exit.sh              # exit 0 only when 1.0 is real

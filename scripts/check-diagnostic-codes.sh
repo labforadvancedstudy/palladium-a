@@ -123,18 +123,49 @@ note() { printf '  %s--%s   %s\n' "$YELLOW" "$NC" "$1"; }
 #
 # <ok-text> is printed as is, or — when it names a function — that function's
 # output AFTER the check ran, for an ok line that reports what the check produced.
+# An empty <ok-text> prints no summary line, for a check whose own lines say it.
+#
+# THREE-VALUED, LIKE THE GATE. A check returns 0 clean, 1 a measured defect, or
+# 2 COULD NOT LOOK, and `live` spends each as what it is: 2 is a NO VERDICT, never
+# a RED — `live` used to print every nonzero return as RED, which turns an
+# unreadable file into a finding about the codes. Any other status is not a
+# verdict at all and is a NO VERDICT too. Output lines are routed by their TAG
+# when they carry one (`OK `, `RED `, `NOVERDICT `, the dialect
+# `check_first_witness_emission` speaks, so that check goes through here like the
+# others); an untagged line takes the return code's meaning. A return of 1 that
+# names no defect, or of 2 that says nothing, is still spent as 1 or 2: the code
+# is the verdict and the lines only explain it. Pinned by M30 below.
 LIVE_REQUIRED=("registry" "inventory" "pin grammar" "every active code pinned"
                "R5 membership" "refusal-set size" "map = manifest" "pin grammar copies"
                "first-witness emission" "counts requirement")
 LIVE_REACHED=()
-live() {                     # label, ok-text | ok-function, check, args...
-  local label=$1 text=$2 out rc l; shift 2
+live() {                     # label, ok-text | ok-function | "", check, args...
+  local label=$1 text=$2 out rc l f0=$fails a0=$abstained; shift 2
   out=$("$@"); rc=$?
-  if [ "$rc" -eq 0 ]; then
+  case "$rc" in
+    0|1|2) ;;
+    *) absta "$label: the check returned $rc, which is none of 0 (clean), 1 (a measured defect) or 2 (could not look) — no verdict"
+       LIVE_REACHED+=("$label"); return ;;
+  esac
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    case "$l" in
+      OK\ *)        ok "${l#OK }" ;;
+      RED\ *)       bad "$label: ${l#RED }" ;;
+      NOVERDICT\ *) absta "$label: ${l#NOVERDICT }" ;;
+      *) case "$rc" in
+           1) bad "$label: $l" ;;
+           2) absta "$label: $l" ;;
+         esac ;;
+    esac
+  done <<<"$out"
+  if [ "$rc" -eq 1 ] && [ "$fails" -eq "$f0" ]; then
+    bad "$label: the check returned 1 and named no defect"
+  elif [ "$rc" -eq 2 ] && [ "$fails" -eq "$f0" ] && [ "$abstained" -eq "$a0" ]; then
+    absta "$label: the check returned 2 (could not look) and said nothing"
+  elif [ "$rc" -eq 0 ] && [ -n "$text" ]; then
     declare -F "$text" >/dev/null && text=$("$text")
     ok "$text"
-  else
-    while IFS= read -r l; do bad "$label: $l"; done <<<"${out:-the check returned $rc and said nothing}"
   fi
   LIVE_REACHED+=("$label")
 }
@@ -304,7 +335,7 @@ check_registry() {           # $1 = registry -> 0 clean / 1 complained
       [ "$wit" = "-" ] || { echo "$code: a tombstone may not claim a witness (its witnesses belong to the survivor)"; n=$((n+1)); }
     fi
 
-    # `-` while the row is still in a working tree; otherwise a commit REACHABLE
+    # `-` for a tombstone or a row still in a working tree; otherwise a commit REACHABLE
     # FROM HEAD. `cat-file -e` was the wrong predicate and this is the difference
     # it missed: every commit on every other branch, and every commit of an
     # abandoned line of work, is an object in this repository. Measured here, 17
@@ -331,13 +362,21 @@ check_registry() {           # $1 = registry -> 0 clean / 1 complained
   [ "$n" -eq 0 ]
 }
 
-check_compiler_inventory() { # $1 = registry -> 0 clean / 1 complained
+# A DUMP THAT COULD NOT BE TAKEN IS NOT A DISAGREEMENT. If the binary is missing,
+# cannot run, or fails the dump, it was never asked, and nothing is known about
+# its codes: that is a NO VERDICT (2), tagged so `live` spends it as one. It used
+# to return 1, which reported a broken binary as a finding about the registry.
+# A dump that SUCCEEDS and lists nothing stays a RED: the binary answered, an
+# inventory with no code in it contradicts the registry it is held to, and the
+# loop below would otherwise pass by having nothing to read. M31 pins both.
+check_compiler_inventory() { # $1 = registry -> 0 clean / 1 complained / 2 could not ask
   local reg=$1 n=0 code status name
   local dump="$TMPROOT/dump"
   if ! "$PDC" --dump-diagnostic-codes >"$dump" 2>/dev/null; then
-    echo "pdc --dump-diagnostic-codes did not succeed"; return 1
+    echo "NOVERDICT pdc --dump-diagnostic-codes did not succeed, so what the binary can emit is unknown"
+    return 2
   fi
-  [ -s "$dump" ] || { echo "pdc --dump-diagnostic-codes printed nothing"; return 1; }
+  [ -s "$dump" ] || { echo "RED pdc --dump-diagnostic-codes succeeded and listed no code at all"; return 1; }
   while IFS=$'\t' read -r code status name; do
     [ -n "$code" ] || continue
     local rstatus rname
@@ -668,16 +707,10 @@ check_first_witness_emission() {
 
 echo
 echo "first-witness emission (real compiles):"
-out=$(check_first_witness_emission "$REGISTRY"); LIVE_REACHED+=("first-witness emission")
-while IFS= read -r l; do
-  [ -n "$l" ] || continue
-  case "$l" in
-    OK\ *)        ok "${l#OK }" ;;
-    NOVERDICT\ *) absta "witness: ${l#NOVERDICT }" ;;
-    RED\ *)       bad "witness: ${l#RED }" ;;
-    *)            bad "witness: $l" ;;
-  esac
-done <<<"$out"
+# Through `live` like the other nine: its tagged lines are routed there, and the
+# call and the record that it ran are one statement. Its own lines name every
+# code, so it carries no summary text.
+live "first-witness emission" "" check_first_witness_emission "$REGISTRY"
 
 # ---------------------------------------------------------------------------
 # 5 — planted mutants. Temp dir, temp manifests, temp registries. The live
@@ -938,7 +971,7 @@ else
     "\$1==\"$r5_reject\"{\$3=\"run\"; \$4=\"exit=1\"} {print}" same
   out=$(check_membership "$MANIFEST") \
     && ok "M23d meta-control: the unmutated live manifest passes the same function" \
-    || bad "M23d meta-control: the unmutated manifest failed the membership pin — M23a-c are uninformative: $out"
+    || bad "M23d meta-control: the unmutated manifest failed the membership pin — M23a-c and M23e are uninformative: $out"
 fi
 
 # M24 — THE COUNTS REQUIREMENT, over lines this run did not produce. Each line is
@@ -1060,6 +1093,76 @@ fi
 out=$( LIVE_REACHED=("${LIVE_REQUIRED[@]}"); check_live_reached ) \
   && ok "M29b paired control: every label recorded passes" \
   || bad "M29b paired control: a complete record was refused: $out"
+
+# M30 — `live` ITSELF, three-valued. Each case drives `live` in a subshell with
+# fresh counters and a stub check, and reads back what it SPENT: failures,
+# abstentions, and whether the label was recorded. Before this, `live` printed
+# every nonzero return as RED, so a check that could not look was a finding.
+live_stub() {                # rc, then the lines to print
+  local rc=$1; shift
+  [ "$#" -gt 0 ] && printf '%s\n' "$@"
+  return "$rc"
+}
+live_spent() {               # live's arguments -> "<fails> <abstained> recorded|unrecorded"
+  ( fails=0; abstained=0; LIVE_REACHED=()
+    live "$@" >/dev/null
+    if [ "${#LIVE_REACHED[@]}" -eq 1 ] && [ "${LIVE_REACHED[0]}" = "$1" ]; then r=recorded; else r=unrecorded; fi
+    printf '%s %s %s\n' "$fails" "$abstained" "$r" )
+}
+live_case() {                # name, expected spend, live's arguments...
+  local name=$1 want=$2 got; shift 2
+  got=$(live_spent "$@")
+  if [ "$got" = "$want" ]; then ok "$name"; else bad "$name: spent '$got', expected '$want'"; fi
+}
+live_case "M30a a check that returns 2 is a NO VERDICT, not a RED, and is recorded" \
+  "0 1 recorded" probe "fine" live_stub 2 "could not read the file"
+live_case "M30b a check that returns 2 having said nothing is still a NO VERDICT" \
+  "0 1 recorded" probe "fine" live_stub 2
+live_case "M30c a check that returns 1 is a RED" \
+  "1 0 recorded" probe "fine" live_stub 1 "a defect"
+live_case "M30d a check that returns 1 having named only an abstention is still a RED" \
+  "1 1 recorded" probe "fine" live_stub 1 "NOVERDICT one capture was unreadable"
+live_case "M30e tagged lines are routed by their tag, whatever the return code" \
+  "1 1 recorded" probe "" live_stub 1 "OK PD0001 emitted" "RED PD0002 not emitted" "NOVERDICT PD0003 unreadable"
+live_case "M30f a status that is none of 0, 1 and 2 is a NO VERDICT, not a pass" \
+  "0 1 recorded" probe "fine" live_stub 7 "something"
+live_case "M30g paired control: a check that returns 0 spends nothing and is recorded" \
+  "0 0 recorded" probe "fine" live_stub 0 "an untagged line from a clean check"
+
+# M31 — THE INVENTORY, through `live`, with a stub binary in place of pdc. The
+# subshell carries its own PDC and its own TMPROOT, so the live run's dump is
+# not overwritten. A dump that FAILS is a NO VERDICT; the paired controls are a
+# dump that DISAGREES with the registry and one that lists nothing, both RED —
+# without them M31a could pass because the stub seam made everything abstain.
+inventory_spent() {          # stub pdc -> what `live` spent on the inventory check
+  ( PDC=$1; TMPROOT="$M/inv"; mkdir -p "$TMPROOT" || exit 3
+    live_spent "inventory" "" check_compiler_inventory "$REGISTRY" )
+}
+inventory_case() {           # name, stub pdc, expected spend
+  local got; got=$(inventory_spent "$2")
+  if [ "$got" = "$3" ]; then ok "$1"; else bad "$1: spent '${got:-<nothing>}', expected '$3'"; fi
+}
+cat >"$M/pdc-nodump" <<'STUB'
+#!/bin/sh
+exit 1
+STUB
+cat >"$M/pdc-unknowncode" <<'STUB'
+#!/bin/sh
+[ "$1" = --dump-diagnostic-codes ] || exit 1
+printf 'PD9999\tactive\tnot_in_the_registry\n'
+STUB
+cat >"$M/pdc-emptydump" <<'STUB'
+#!/bin/sh
+[ "$1" = --dump-diagnostic-codes ] || exit 1
+exit 0
+STUB
+chmod +x "$M/pdc-nodump" "$M/pdc-unknowncode" "$M/pdc-emptydump"
+inventory_case "M31a a binary whose dump FAILS is a NO VERDICT for the inventory, not a RED" \
+  "$M/pdc-nodump" "0 1 recorded"
+inventory_case "M31b paired control: a dump that names a code the registry lacks is still a RED" \
+  "$M/pdc-unknowncode" "1 0 recorded"
+inventory_case "M31c paired control: a dump that succeeds and lists nothing is still a RED" \
+  "$M/pdc-emptydump" "1 0 recorded"
 
 # M15 — A WITNESS THAT DOES NOT REFUSE. The registry row is re-pointed at a
 # fixture pdc ACCEPTS (a `run`-class corpus row), which is the shape a witness

@@ -14,15 +14,15 @@ witness program meeting the same conditions.**
 
 That gate is in the repository now, and **it refuses to answer**. `make thesis-exit` exits 2:
 two of its 26 `thesis` rows — GI-11 and GI-12 — are not scored rows at all but
-**preconditions on the command's ability to compute a verdict**, and both are outstanding.
-It still prints every row's state (1 of 23 evaluated rows would pass), labelled as
+**preconditions on the command's ability to compute a verdict**. GI-12 is met: the gate reads `scripts/conformance.sh`'s reject/skip dispatch and finds a code comparator there, not a phrase match, so attribution no longer blocks it. GI-11 is still outstanding, and on its own it holds the exit at 2.
+Today the command stops even earlier. Every `|` is refused as a possible closure (R4), and `|` is now an ordinary token — bitwise-or and or-patterns — that both witnesses contain, so it exits at a TH-03 harness error before it prints a single row (issue #48). Until then it printed every row's state (1 of 23 evaluated rows would pass), labelled as
 information rather than a verdict ([`scripts/thesis-exit.sh`](../../scripts/thesis-exit.sh) →
-[`scripts/thesis_exit.py`](../../scripts/thesis_exit.py)). It is committed red on purpose: the
+[`scripts/thesis_exit.py`](../../scripts/thesis_exit.py)); that figure is this file's last record and cannot be re-measured until #48 is fixed. It is committed red on purpose: the
 definition of 1.0 has to live here as a command, because prose drifts and commands do not.
 
 It does not read the manifest's *text*. Conditions 2 and 3 are delegated to
 `scripts/conformance.sh`, which compiles, links, runs, diffs stdout against a recorded
-transcript, checks the declared failure stage, matches the declared diagnostic fingerprint, and
+transcript, checks the declared failure stage, holds a refusal to the diagnostic CODE its row pins (only an `xfail` debt row still matches a phrase — [F14](#f14-the-gate-that-defines-10-could-never-say-10-was-reached)), and
 reports `REJECT_ACCEPTED` when a negative test is accepted. A fixture the gate names and the
 corpus does not run is reported **DECLARED, ABSENT** — loudly, not as a pass
 ([F13](#f13-the-first-thesis-gate-was-blind-in-the-way-m1-spent-itself-curing)).
@@ -59,29 +59,29 @@ a release**.
 
 ### What `make thesis-exit` green would mean today — and what it would not
 
-Stated here, and printed by the command itself on every run, because a green command called
+Stated here, and printed by the command itself on every run that gets past its harness checks (today none does — issue #48), because a green command called
 "the definition of Palladium 1.0" that meant less than its name is the worst available outcome.
 
-**Today there is no green available at all.** The command exits 2. Two things it would have to
-reason with are disclosed as unsound — the lexical liveness model and the substring rejection
-matcher — so it declines to compute a verdict rather than reporting "not reached yet", which
+**Today there is no green available at all.** The command exits 2. One thing it would have to
+reason with is disclosed as unsound — the lexical liveness model; the substring rejection matcher
+was the second, until GI-12 replaced it with a code comparator — so it declines to compute a verdict rather than reporting "not reached yet", which
 would itself be a measurement. That refusal is decided by introspecting the gate's own wiring,
 not by checking whether some artifact exists: four rounds running, a check on a not-yet-existing
 artifact degenerated to *"something by that name did not fail"* — an empty `#[test]` satisfied
 one level, `@true` satisfied the next.
 
 **When a verdict becomes available, green would mean**: every differentiator's construct exists
-in both witnesses; each has a non-vacuous conformance fixture and a reject twin refused at its
-declared fingerprint; and `bootstrap/pdc.pd` still reaches a byte-identical fixed point.
+in both witnesses; each has a non-vacuous conformance fixture and a reject twin refused under its
+pinned diagnostic code; and `bootstrap/pdc.pd` still reaches a byte-identical fixed point.
 
 **What it would say about liveness and attribution is not fixed here, deliberately.** The
 command derives that from the models actually wired at the time, and prints it. A paragraph
 fixed in prose would have gone on denying liveness after GI-11 landed — the same half-applied
 retraction the banned-phrase lint exists to catch, which I repaired in code last round and left
-here. Today those models are the lexical one and the substring matcher, so today there is no
-verdict at all; when they are replaced, the command will say what the replacements establish.
+here. Today attribution is the code comparator GI-12 wired, and liveness is still the lexical
+model, so today there is still no verdict; when GI-11 replaces it, the command will say what that replacement establishes.
 
-Those two gaps are **GI-11** and **GI-12**. They are not scored rows — scoring them was the
+Those two gaps were **GI-11** and **GI-12**; GI-12 is closed and GI-11 is open. They are not scored rows — scoring them was the
 defect. **Five** rungs of the same ladder were climbed and each was satisfiable by a replacement
 that did nothing: a name exists, a test exists, a test passes, a target exits 0, and finally the
 source has the right shape — that last one measured, by renaming the probes to `cg_*` wrappers.
@@ -233,7 +233,7 @@ each shipped a fail-open path, the differentiator probes stopped guessing: a gre
 means the construct **exists in the source**, and a RED may additionally mean it sits in a function
 **nothing in the unit names** — sound in that direction. **Liveness is no longer asserted.** That
 obligation is **GI-11**, which is now a *thesis* row, so `make thesis-exit` cannot go green while
-this lexical model is in use. Likewise **GI-12** for attributable rejections. Both were ordinary
+this lexical model is in use. **GI-12**, for attributable rejections, held it the same way until conformance judged every reject row by its code; it is closed. Both were ordinary
 `1.0` rows and were therefore not preconditions of the gate they safeguard; that is fixed.
 
 **Condition 3 is load-bearing and must never be dropped. For an inference feature, the rejection is
@@ -244,7 +244,7 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 78 satisfied · 111 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 79 satisfied · 110 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
@@ -350,7 +350,7 @@ Measured at this revision; every row names the command that produced it.
 
 | | | Command |
 |---|---|---|
-| **The thesis** | **exit 2 — no verdict available**; 1 of 23 evaluated rows would pass | `make thesis-exit` |
+| **The thesis** | **exit 2 — no verdict available**. It passes its own wiring check (GI-12 met) and then stops at a TH-03 harness error before printing any row: every pipe token is refused as a possible closure, and both witnesses now contain one (issue #48). Behind that, GI-11 would still hold it at 2 | `make thesis-exit` |
 | Self-hosting | fixed point over PBS-1 — stage1 and stage2 C byte-identical (`e8bd8cda…`) | `make selfhost` |
 | Conformance | `verified=85 untranscribed=0 vacuous=6 xfail=6 reject=122 skip=2 failures=0` over 221 (N6 field shorthand added seven, in four roles: one `run` fixture, `tests/06_field_shorthand.pd`, for what the shorthand ACCEPTS; two `reject` fixtures for the two BOUNDARIES it does not reach — `tests/reject/brace_pattern_needs_a_variant_path.pd` (the parser's: a brace with no variant path is not a pattern at all) and `tests/reject/field_shorthand_needs_a_struct_variant.pd` (the type checker's: the brace form on a TUPLE variant); and two `reject` fixtures for the two halves of the SUBSET rule, which a run fixture cannot carry because both are refusals — `tests/reject/pattern_unknown_field.pd` (a field the variant lacks) and `tests/reject/pattern_omitted_field_is_unbound.pd` (reading a field the pattern omitted); and two `reject` fixtures for PARITY, each executing the EXPLICIT spelling of a refusal its shorthand sibling already pins, because "the explicit form is refused identically" is a claim about a second rejection that no single fixture can hold — `tests/reject/pattern_unknown_field_explicit.pd` and `tests/reject/tuple_variant_braces_explicit.pd`; re-measured on the merged tree: `main` added 16 rows, 14 of them `reject`; `fix/d3b-tail-if` added 3 more and turned the D3b defect fixture into a verified one; `fix/m2-async-producer` added `tests/reject/async_producer.pd`, the N7-18 repro; `fix/m2-lexical` added 8 — three `run` fixtures for the N2 literals and escapes, five `reject`s for the unknown attribute, its two other shapes, an unknown escape and an unterminated comment; `feat/m2-witness-json` added one `run` row, `tests/witness/json_parser.pd`; `feat/m2-expressions` added 11 `run` fixtures, one per N5 row it closed, and TRANSITIONED `tests/reject/loop_keyword.pd` from `reject` to `run` — that fixture asserted the absence of `loop`, N5-07 removed the absence, and a reject row whose refusal stops happening is REJECT_ACCEPTED rather than a row to delete, which is why `reject` fell by one while `verified` rose by twelve; then `feat/m2-items` added FIFTEEN across two commits — three `run` fixtures (top-level `const`, top-level `static`, the macro system) plus the `02_types_enums` vacuous->run transition, and twelve `reject`s: five for the const/static rules, `missing_return.pd` for N3-03, and six for the macro system, every one of the six replacing either a SILENT wrong expansion or a diagnostic that named a compiler phase; then `1f64c32` added three; then `feat/m2-xfail-six`'s su2 round added FIVE for receiver lowering and `self` as a place, in two roles: one `run` fixture, `tests/04_self_place.pd`, for what a `&self`/`&mut self` method CAN now do — it is the first fixture that links at all, since a method taking a reference receiver used to fail at the C compiler — and four `reject`s for the four writes the type checker refuses, none of which a run fixture could witness because every one of them is a refusal: `tests/reject/self_write_through_shared_receiver.pd` (a field write through `&self`), `tests/reject/self_write_through_by_value_receiver.pd` (the same write through a by-value `self`, which used to mutate a copy in silence), `tests/reject/self_is_not_reassignable.pd` (`self` itself as an assignment target) and `tests/reject/deref_self_is_not_a_place.pd` (`*self` as one); then the su2 REVIEW round added two more `reject`s, both for the CALL path the assignment rule did not cover — `tests/reject/call_mut_method_through_shared_receiver.pd` (a `&self` method calling a `&mut self` method on `self`, which ran and let the caller observe the mutation) and `tests/reject/call_mut_method_through_by_value_receiver.pd` (the same call under a by-value receiver, which mutates the copy and which no C diagnostic objects to at all); and the gpt56 review round that followed added one more, `tests/reject/reference_param_needs_a_place.pd` — a PRE-EXISTING hole the receiver lowering now owns: a reference parameter takes its argument's address, and a call's result has none, so `sink(make())` passed the whole front end and died in gcc; then su3 added three — `tests/reject/call_mut_method_through_chained_shared_receiver.pd`, the same call rule one field hop deeper (`self.d.bump()`), and two that had been NORMATIVE AND UNWITNESSED until an `#[ignore]`d Rust test was found demanding them: `tests/reject/let_needs_an_initializer.pd` and `tests/reject/let_does_not_destructure.pd`, the two halves of grammar.ebnf's let_stmt comment; then the su3 review round added FIVE `xfail`s under tests/xfail/, one per distinct alias-resolution failure the type-alias probe measured — indexing an array alias through a parameter, an alias as a tuple component, an alias as an array element, and a tuple and a struct alias each behind a reference — all owned by M3, whose monomorphisation work has to build the alias normaliser they are all missing. Two further shapes from the same probe are NOT here and could not be: the front end accepts them and gcc refuses the emitted C, which scripts/conformance.sh forbids any manifest column to declare, so they are `owed` rows in tests/rust-debt-manifest.txt; then the char-pattern round added four — one `run` fixture, `tests/06_char_patterns.pd`, for what a char pattern ACCEPTS (a literal arm, an or-pattern, a code-point range, a binding over one, and a match in value position), and three `reject`s for the boundaries a run fixture cannot witness: `tests/reject/range_pattern_mixed_endpoints.pd` (one end `char`, one end integer), `tests/reject/char_pattern_on_int_scrutinee.pd` (N4-04 in pattern position — in C both sides are a `long long`, so nothing downstream would have objected) and `tests/reject/char_range_pattern_empty.pd` (`'z'..='a'`, refused by code point)
 `run` fixtures for the review-round repairs and SEVEN `reject`s for the refusals those repairs
@@ -369,14 +369,14 @@ type, and the non-exhaustive integer match N6-10 now refuses; then the round-3 r
 them never covered — `1 << 63`, whose shift AMOUNT is legal and whose VALUE is not, and
 `(0 - 1) << 3`, a negative left operand C leaves undefined however small the result, so
 reverting either guard alone now fails a fixture of its own; then `feat/m2-types-semantics` added SIXTEEN, counted with `git diff --name-status $(git merge-base HEAD main)` rather than from memory — the count said eight while the list held ten, then fifteen while the groups summed thirteen. Two `run` fixtures: `tests/02_types_nested_arrays.pd` (N4-10) and `tests/03_arg_evaluation_order.pd` (N13-03, call arguments read left to right). Fourteen `reject`s, in three groups that sum: N4-10's THREE (`for_over_nested_array.pd` and the two inner-length declarator positions, parameter and struct field); N14-02's THREE built-in-name positions (a definition, a local binder and a type, refused for two DIFFERENT reasons and so needing three rows rather than one); and N4-04's EIGHT — one per DIRECTION of the char/i64 split, because a one-way widening would have left `char` an `i64` wearing a hat; the binary-operator branch; the four forbidden cast cells, one fixture per direction because the defect they correct was symmetric; and the non-scalar `as char`) | `make conformance` |
-| Conformance gate itself | 133 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
-| Thesis gate itself | 292 unique cases, **checked** and digest-pinned; 67 drive `main()` end to end and 225 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
-| Documentation | every snippet compiles; 420 citations fingerprinted, 29 no-compile fences pinned | `make check-docs` |
+| Conformance gate itself | 172 cases, each pinning a way it must still go RED | `make test-conformance-runner` |
+| Thesis gate itself | 329 unique cases, **checked** and digest-pinned; 72 drive `main()` end to end and 257 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
+| Documentation | every snippet compiles; 427 citations fingerprinted, 29 no-compile fences pinned | `make check-docs` |
 | Rust tests | 930 pass, **0 fail**, 46 ignored (569 lib + 361 integration, 28 binaries) | `make test-honest` |
 | Declared failures | 45 `xfail` + 1 `slow`, none passing; 45 of 45 failing for their DECLARED diagnostic | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 78 satisfied · 111 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 79 satisfied · 110 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -544,7 +544,7 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
 
-**Owns 49 requirement rows, 2 of them still owed**, **no** `#[ignore]` row still tagged M2, and
+**Owns 49 requirement rows, 1 of them still owed**, **no** `#[ignore]` row still tagged M2, and
 **no vacuous fixture** — `tests/02_types_enums.pd` was M2's last one and item 9 turned it
 into a `run` fixture that constructs and destructures a unit, a tuple and a struct variant.
 *(It read "seventeen … (fourteen tagged M2, three
@@ -565,7 +565,7 @@ was written to M4 on a stale sibling's precedent until the milestone table turne
 contract, C1, as M7. Only the final tally is quoted here, because an intermediate one recorded
 inline is just the next stale figure: re-measure with the same command and it reads M3 4, M4 34,
 M5 1, M7 1, unscheduled 5, and no M2 line at all — M2's remaining debt is entirely in the
-requirements TSV (WT-01, GI-12). NONE of the four was paid; all four were retagged, and the
+requirements TSV (WT-01 and GI-12 when this was measured; WT-01 alone since GI-12 closed). NONE of the four was paid; all four were retagged, and the
 distinction matters: a milestone whose debt reaches zero by retagging has finished nothing, it has
 only stopped being the wrong address.)* *(It read "45
 rows" while GI-06 was `owed`; GI-06, GI-09 and N14-01 are now `satisfied`, and 46 was the count of
@@ -862,23 +862,23 @@ enum-owned method is unreachable by its path form. Each row carries a
    reason `m2-exit`'s did: the mapping needs a state meaning "would not measure", and folding it
    onto OWED would report an abstention as a measurement. 0 still means what it meant and every
    previous 1 is still nonzero, so no consumer that reads zero-or-not is made worse.
-   **`m2-exit` is RED and that is the correct state.** It reports 2 rows `OWED_TO_M2`, down from
-   25 — item 9's seven N3 rows moved to `satisfied` on `feat/m2-items`, after item 4's eight N6
+   **`m2-exit` is RED and that is the correct state.** It reports 1 rows `OWED_TO_M2` (the plural is the gated sentence's, kept so the ledger check still finds it), down from
+   2 until GI-12 closed, and from 25 before item 9's seven N3 rows moved to `satisfied` on `feat/m2-items`, after item 4's eight N6
    rows plus N4-12 had taken the figure from 34 to 25, item 3's eleven N5 rows had taken it from 47
    to 36, and item 5 (lexical completion) from 43 to 36 with N2-03, N2-04, N2-08, N2-09, N2-10,
    N2-11 and N4-02. A green `m2-exit` before M2 is done would be the defect.
 
-   *The 2, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list —
-   and the list is where they belong, which is not the same question as which item names them:*
-   WT-01 (item 7); and **one owned by M2 without being ASSIGNED AS AN ITEM DELIVERABLE** — GI-12.
-   It was THREE until GI-08 closed, and EIGHT until `feat/m2-types-semantics` closed five of them
+   *The 1, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list —
+   and the list is where it belongs, which is not the same question as which item names it:*
+   WT-01 (item 7). It was TWO until GI-12 closed — the one row **owned by M2 without being ASSIGNED AS AN ITEM DELIVERABLE** —
+   THREE until GI-08 closed, and EIGHT until `feat/m2-types-semantics` closed five of them
    (N4-04, N4-10, N13-03, N14-02, N14-04), and THIRTEEN before item
    9, and the six that left it are the record of what an item deliverable is worth: N3-05, N3-09,
    N3-10, N3-12 and N3-14 became item 9's deliverables and are `satisfied`, and N3-13 left M2
    entirely (see below). Item 3's sentence had NAMED N3-09 and N3-10 without shipping them, which
    is the distinction the original paragraph was written to make — being mentioned in an item's
-   prose is not the same as being what that item ships. The six that remain are mentioned nowhere,
-   and the effect is the one worth recording: a list of items and a manifest of rows drift while
+   prose is not the same as being what that item ships. GI-12 was the last owed row no item named, and none remains:
+   the one still owed is item 7's. The effect is still the one worth recording: a list of items and a manifest of rows drift while
    both look complete.
    **Its verdict is three-valued and Make cannot carry it**, so the aggregation lives in
    `scripts/m2-exit.sh` and the verdict is published on the last line of stdout as
@@ -1017,7 +1017,7 @@ enum-owned method is unreachable by its path form. Each row carries a
 **Exit**: `make m2-exit` (`Makefile:335-394`) — four inventories. **The condition is not "items
 1–9 land"**, and saying so was a category error this line carried for three rounds: the gate reads
 the MANIFEST, so it goes green when no row owned by M2 is `owed` or `blocked` — all 49 of them —
-and six of the eight still outstanding are named by no item at all. Even then it exits **2
+and when this line was written six of the eight then outstanding were named by no item at all; today one row is outstanding, WT-01, and item 7 names it. Even then it exits **2
 (NO_VERDICT)** rather than 0, because steps 3 and 4 of its own specification do not run: it does
 not resolve each evidence locator and execute it, and it does not reconcile the Rust debt inventory
 by `req:` id. "No row says owed" is a statement about a status column.
@@ -1399,25 +1399,55 @@ sibling branch **without a compiler change**, and a runner that sees only `REJEC
 So the manifest gained a ninth column and each thesis reject row **names the diagnostic its
 refusal must carry**.
 
-**And condition 3 is currently weaker than its own banner says.** *"For an inference feature the
-rejection is the product"* requires knowing **which** rejection you got. The corpus cannot tell:
-measured, a fixture that fails on a stray `@@@` — an entirely incidental lex error — whose source
-line happens to contain the phrase `there is no ``async`` keyword` is reported `REJECTED` at that
-fingerprint and counted as `reject=1` coverage, exit 0. The compiler echoes the source line into
-the diagnostic and `grep -qF` searches the whole log. That is requirement **GI-12**, owned by M2:
-`pdc` emits a stable diagnostic **code**, and a reject row pins the code rather than a phrase that
-can appear anywhere. Until it lands, a `reject` row proves *the compiler refused this program* and
-*a declared phrase appears in the log* — not that the refusal was the one the row names.
+**Condition 3 was weaker than its own banner said, until GI-12 closed.** *"For an inference
+feature the rejection is the product"* requires knowing **which** rejection you got, and the
+corpus could not tell. Measured before GI-12: a fixture that fails on a stray `@@@` — an entirely
+incidental parse refusal — whose source line happens to contain the phrase
+`there is no ``async`` keyword` was reported `REJECTED` at that fingerprint and counted as
+`reject=1` coverage, exit 0, because the compiler echoes the source line into the diagnostic and
+the reject arm searched the whole log with `grep -qF`. So a `reject` row proved *the compiler
+refused this program* and *a declared phrase appears in the log*, not that the refusal was the one
+the row names. That was requirement **GI-12**, owned by M2, and it is now `satisfied`: `pdc` prints
+a stable diagnostic **code** in the primary header of every refusal the corpus witnesses, and every
+refusal row pins one — conformance's own counts line reads
+`diagnostic-codes: coded=124 uncoded=0 malformed=0 unreadable=0`. A refusal no row witnesses may
+still print a bare `error:`; that is the honest uncoded state, not a fallback code.
 
-The chain, stated exactly, because condition 3 rests on it: `scripts/conformance.sh:241` runs
-`grep_status F "$fp" "$TMPROOT/diag"`, and `grep_status` (`scripts/conformance.sh:217-224`)
-mode `F` is `grep -qF`. So the corpus's declared fingerprint is matched as a **literal
-substring of any line of the ANSI-stripped compiler log** (`scripts/conformance.sh:240`) — not
-an equality, not a regex. A log it cannot read is a third outcome, `HARNESS_ERROR`, kept
-distinct from "did not match" (`scripts/conformance.sh:1042-1047`). The thesis gate then requires
-the corpus's declaration to **equal** the fingerprint its row pins. Equality on the half this
-gate owns, substring on the half `conformance.sh` owns, and both stated rather than assumed —
-a sibling branch was caught doing substring where it meant equality.
+What a reject row's pin is now, stated exactly, because condition 3 rests on it. Column 4 of every
+`reject` and `skip` row is `code=PD####`, optionally followed by `;msg~<fragment>`, and the class
+dispatch hands it to `coded_pin_verdict` together with pdc's **stderr alone** — never the merged
+log, which a fixture's own stdout can write into — and never to the phrase matcher
+(`scripts/conformance.sh:980-995`). `coded_pin_verdict` (`scripts/conformance.sh:264-287`) reads
+the capture through the shared header parser, requires **exactly one** coded primary header,
+compares its code with the pin for **equality**, and looks for the fragment only in that header's
+**payload** — the text after `error[PD####]: ` on that one line — so the echoed source line and the
+notes cannot satisfy it. Each way a refusal can miss is its own verdict, `WRONG_CODE`, `NO_CODE`,
+`MALFORMED` or `MSG_MISMATCH`, and a capture that could not be read is `HARNESS_ERROR`
+(`scripts/conformance.sh:1052-1075`).
+
+**The `@@@` case is measured both ways now, and neither counts.** Pinned to the code of the rule
+whose phrase it carries, `code=PD0054;msg~there is no async keyword`, it is `WRONG_CODE`: the
+refusal really carries PD0039, the parser's expected-expression rule. Pinned to PD0039 itself with
+the phrase as its fragment — the right code, with the phrase only in the echoed source — it is
+`MSG_MISMATCH`. `scripts/test-conformance-runner.sh` pins both shapes, and a third in which the
+fixture echoes the row's whole pin; the thesis gate's self-test drives the real
+`scripts/conformance.sh` through the `MSG_MISMATCH` shape as its cross-layer probe.
+
+The phrase matcher survives for the one class it was always right for. An `xfail` row's
+fingerprint is a debt record — "this is the failure we already know about" — and it is still
+matched as a **literal substring of any line of the ANSI-stripped compiler log**: `grep_status`
+(`scripts/conformance.sh:217-224`) mode `F` is `grep -qF`, run at `scripts/conformance.sh:241`
+over the log stripped at `scripts/conformance.sh:240`, and a log it cannot read is a third
+outcome, `HARNESS_ERROR`, kept distinct from "did not match"
+(`scripts/conformance.sh:1042-1047`). No reject or skip row reaches it.
+
+The thesis gate holds the corpus's declaration to the pin in its own contract for **equality**,
+which a sibling branch was once caught doing as a substring. Today that comparison is not reached
+for any thesis reject row: all six still name an UNMINTED rule phrase, because no code has been
+minted for those rules, and `p_verdict` in `scripts/thesis_exit.py` reports such a row owed before
+anything is compared — no manifest pin could equal a phrase. **What closing GI-12 does not buy is
+a verdict:** GI-11 still holds `make thesis-exit` at exit 2, and issue #48 stops it earlier still,
+at a harness error before any row is printed.
 
 ### F13. The first thesis gate was blind in the way M1 spent itself curing
 

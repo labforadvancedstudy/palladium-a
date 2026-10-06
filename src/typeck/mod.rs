@@ -1090,9 +1090,9 @@ pub struct TypeChecker {
     /// It is a second list rather than a widened predicate on the first because
     /// the two carry DIFFERENT WORDING for the same rule, exactly as
     /// `check_function`'s three arms do, and the more specific one must win.
-    /// Merging them would either lose the value-return diagnostic (whose text
-    /// `tests/conformance-manifest.txt` fingerprints for
-    /// `tests/reject/async_fn.pd`) or make one list report two messages.
+    /// Merging them would either lose the value-return diagnostic (whose local
+    /// arm's code, PD0054 and not PD0018, `tests/conformance-manifest.txt` pins
+    /// for `tests/reject/async_fn.pd`) or make one list report two messages.
     ///
     /// NON-GENERIC imported async functions need no list at all: `check`'s
     /// third pass hands every public, non-generic, unshadowed imported function

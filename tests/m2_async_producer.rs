@@ -365,9 +365,9 @@ fn async_main_keeps_its_more_specific_refusal() {
 
 /// A value-carrying return inside an `async fn` keeps its OWN diagnostic.
 ///
-/// `tests/conformance-manifest.txt` fingerprints this exact text for
-/// `tests/reject/async_fn.pd`, so a general arm that fired first would move a
-/// fingerprint while claiming to add coverage.
+/// `tests/conformance-manifest.txt` pins its CODE, `code=PD0054`, for
+/// `tests/reject/async_fn.pd`; the general arm is PD0018, so firing it first
+/// would turn that row WRONG_CODE. Its TEXT is pinned here, by the assertion.
 #[test]
 fn an_async_value_return_keeps_its_more_specific_refusal() {
     let err = compile_to_c(
